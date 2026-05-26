@@ -222,8 +222,18 @@ object ClasspathOrchestrator:
                                             val bytesMB     = bytesRaw / (1024L * 1024L)
                                             val constructMs = PerfCounters.jarConstructTimeNs.get() / 1_000_000L
                                             val readMs      = PerfCounters.jarReadTimeNs.get() / 1_000_000L
+                                            val headerMs    = PerfCounters.tastyHeaderTimeNs.get() / 1_000_000L
+                                            val namesMs     = PerfCounters.nameUnpicklerTimeNs.get() / 1_000_000L
+                                            val sectionMs   = PerfCounters.sectionIndexTimeNs.get() / 1_000_000L
+                                            val attrMs      = PerfCounters.attributeUnpicklerTimeNs.get() / 1_000_000L
+                                            val astMs       = PerfCounters.astPass1TimeNs.get() / 1_000_000L
+                                            val posMs       = PerfCounters.positionsUnpicklerTimeNs.get() / 1_000_000L
+                                            val commentsMs  = PerfCounters.commentsUnpicklerTimeNs.get() / 1_000_000L
                                             java.lang.System.err.println(
                                                 s"[kyo-reflect] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars (construct=${constructMs}ms read=${readMs}ms) entries=$entries bytes=${bytesMB}MB"
+                                            )
+                                            java.lang.System.err.println(
+                                                s"[kyo-reflect]   decode-breakdown: header=${headerMs}ms names=${namesMs}ms section=${sectionMs}ms attr=${attrMs}ms ast=${astMs}ms pos=${posMs}ms comments=${commentsMs}ms"
                                             )
                                     else
                                         Kyo.unit
@@ -477,6 +487,19 @@ object ClasspathOrchestrator:
             Map.empty
         )
 
+    /** Wrap a synchronous Kyo computation, adding elapsed nanoseconds to `counter` after it completes.
+      *
+      * `t0` is captured when `timed` is invoked -- i.e., when this for-yield step starts. The `.map` fires after `v` returns, so the delta
+      * covers exactly the unpickler's execution. Safe only for purely-Sync computations with no Async suspension (all unpicklers in
+      * decodeTastyBytes satisfy this invariant).
+      */
+    private def timed[A, S](counter: java.util.concurrent.atomic.AtomicLong)(v: A < S)(using Frame): A < S =
+        val t0 = java.lang.System.nanoTime()
+        v.map: a =>
+            counter.addAndGet(java.lang.System.nanoTime() - t0)
+            a
+    end timed
+
     /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
     private def decodeTastyBytes(
         file: String,
@@ -488,33 +511,33 @@ object ClasspathOrchestrator:
         val home  = new ClasspathRef
         val arena = new TypeArena
         for
-            _        <- TastyHeader.read(view)
-            names    <- NameUnpickler.read(view, interner)
-            sections <- SectionIndex.read(view, names)
-            attrs <- sections.get(TastyFormat.AttributesSection) match
+            _        <- timed(PerfCounters.tastyHeaderTimeNs)(TastyHeader.read(view))
+            names    <- timed(PerfCounters.nameUnpicklerTimeNs)(NameUnpickler.read(view, interner))
+            sections <- timed(PerfCounters.sectionIndexTimeNs)(SectionIndex.read(view, names))
+            attrs <- timed(PerfCounters.attributeUnpicklerTimeNs)(sections.get(TastyFormat.AttributesSection) match
                 case Present((offset, length)) =>
                     val attrView = view.subView(offset, offset + length)
                     AttributeUnpickler.read(attrView, names)
                 case Absent =>
-                    Sync.defer(FileAttributes.default)
-            pass1Result <- sections.get(TastyFormat.ASTsSection) match
+                    Sync.defer(FileAttributes.default))
+            pass1Result <- timed(PerfCounters.astPass1TimeNs)(sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
                     AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
-                    Abort.fail(ReflectError.MalformedSection("ASTs", s"$file: ASTs section not found"))
-            commentsBySymbol <- sections.get(TastyFormat.CommentsSection) match
+                    Abort.fail(ReflectError.MalformedSection("ASTs", s"$file: ASTs section not found")))
+            commentsBySymbol <- timed(PerfCounters.commentsUnpicklerTimeNs)(sections.get(TastyFormat.CommentsSection) match
                 case Present((offset, length)) =>
                     val commentsView = view.subView(offset, offset + length)
                     CommentsUnpickler.read(commentsView, pass1Result.addrMap)
                 case Absent =>
-                    Sync.defer(Map.empty[Reflect.Symbol, String])
-            positionsBySymbol <- sections.get(TastyFormat.PositionsSection) match
+                    Sync.defer(Map.empty[Reflect.Symbol, String]))
+            positionsBySymbol <- timed(PerfCounters.positionsUnpicklerTimeNs)(sections.get(TastyFormat.PositionsSection) match
                 case Present((offset, length)) =>
                     val posView = view.subView(offset, offset + length)
                     PositionsUnpickler.read(posView, pass1Result.addrMap, attrs.sourceFile)
                 case Absent =>
-                    Sync.defer(Map.empty[Reflect.Symbol, Reflect.Position])
+                    Sync.defer(Map.empty[Reflect.Symbol, Reflect.Position]))
         yield
             val pairs = pass1Result.symbols.flatMap: sym =>
                 val fqn = nameToString(sym.fullName)

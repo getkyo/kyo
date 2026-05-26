@@ -1,0 +1,3748 @@
+--- Execution profile ---
+Total samples       : 34981
+
+--- 15100000000 ns (4.32%), 1510 samples
+  [ 0] G1ParScanThreadState::do_copy_to_survivor_space
+  [ 1] G1ParScanThreadState::trim_queue_to_threshold
+  [ 2] G1ParScanThreadState::steal_and_trim_queue
+  [ 3] G1ParEvacuateFollowersClosure::do_void
+  [ 4] G1EvacuateRegionsTask::evacuate_live_objects
+  [ 5] G1EvacuateRegionsBaseTask::work
+  [ 6] WorkerThread::run
+  [ 7] Thread::call_run
+  [ 8] thread_native_entry
+  [ 9] _pthread_start
+  [10] thread_start
+
+--- 11580000000 ns (3.31%), 1158 samples
+  [ 0] G1ParScanThreadState::trim_queue_to_threshold
+  [ 1] G1ParScanThreadState::steal_and_trim_queue
+  [ 2] G1ParEvacuateFollowersClosure::do_void
+  [ 3] G1EvacuateRegionsTask::evacuate_live_objects
+  [ 4] G1EvacuateRegionsBaseTask::work
+  [ 5] WorkerThread::run
+  [ 6] Thread::call_run
+  [ 7] thread_native_entry
+  [ 8] _pthread_start
+  [ 9] thread_start
+
+--- 8380000000 ns (2.40%), 838 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.Scheduler.$init$$$anonfun$10
+  [ 6] kyo.scheduler.Scheduler.$init$$$anonfun$adapted$1
+  [ 7] kyo.scheduler.Scheduler$$Lambda.0x00003ffe01148fc0.call
+  [ 8] java.util.concurrent.FutureTask.run
+  [ 9] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [10] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [11] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 7890000000 ns (2.26%), 789 samples
+  [ 0] void OopOopIterateBackwardsDispatch<G1ScanEvacuatedObjClosure>::Table::oop_oop_iterate_backwards<InstanceKlass, narrowOop>
+  [ 1] G1ParScanThreadState::do_copy_to_survivor_space
+  [ 2] G1ParScanThreadState::trim_queue_to_threshold
+  [ 3] G1ParScanThreadState::steal_and_trim_queue
+  [ 4] G1ParEvacuateFollowersClosure::do_void
+  [ 5] G1EvacuateRegionsTask::evacuate_live_objects
+  [ 6] G1EvacuateRegionsBaseTask::work
+  [ 7] WorkerThread::run
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 3010000000 ns (0.86%), 301 samples
+  [ 0] G1ParScanThreadState::do_copy_to_survivor_space
+  [ 1] G1ParScanThreadState::trim_queue_to_threshold
+  [ 2] G1ScanHRForRegionClosure::scan_memregion
+  [ 3] void G1ScanHRForRegionClosure::ChunkScanner::on_dirty_cards<G1ScanHRForRegionClosure::scan_heap_roots(G1HeapRegion*)::'lambda'(unsigned char*, unsigned char*)>
+  [ 4] G1ScanHRForRegionClosure::scan_heap_roots
+  [ 5] G1ScanHRForRegionClosure::do_heap_region
+  [ 6] G1RemSet::scan_heap_roots
+  [ 7] G1EvacuateRegionsTask::scan_roots
+  [ 8] G1EvacuateRegionsBaseTask::work
+  [ 9] WorkerThread::run
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 2220000000 ns (0.63%), 222 samples
+  [ 0] G1ParScanThreadState::do_copy_to_survivor_space
+  [ 1] G1ParScanThreadState::trim_queue_to_threshold
+  [ 2] G1ParEvacuateFollowersClosure::do_void
+  [ 3] G1EvacuateRegionsTask::evacuate_live_objects
+  [ 4] G1EvacuateRegionsBaseTask::work
+  [ 5] WorkerThread::run
+  [ 6] Thread::call_run
+  [ 7] thread_native_entry
+  [ 8] _pthread_start
+  [ 9] thread_start
+
+--- 2090000000 ns (0.60%), 209 samples
+  [ 0] G1ParScanThreadState::trim_queue_to_threshold
+  [ 1] G1ScanHRForRegionClosure::scan_memregion
+  [ 2] void G1ScanHRForRegionClosure::ChunkScanner::on_dirty_cards<G1ScanHRForRegionClosure::scan_heap_roots(G1HeapRegion*)::'lambda'(unsigned char*, unsigned char*)>
+  [ 3] G1ScanHRForRegionClosure::scan_heap_roots
+  [ 4] G1ScanHRForRegionClosure::do_heap_region
+  [ 5] G1RemSet::scan_heap_roots
+  [ 6] G1EvacuateRegionsTask::scan_roots
+  [ 7] G1EvacuateRegionsBaseTask::work
+  [ 8] WorkerThread::run
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 2010000000 ns (0.57%), 201 samples
+  [ 0] G1ParScanThreadState::trim_queue_to_threshold
+  [ 1] G1ParEvacuateFollowersClosure::do_void
+  [ 2] G1EvacuateRegionsTask::evacuate_live_objects
+  [ 3] G1EvacuateRegionsBaseTask::work
+  [ 4] WorkerThread::run
+  [ 5] Thread::call_run
+  [ 6] thread_native_entry
+  [ 7] _pthread_start
+  [ 8] thread_start
+
+--- 1730000000 ns (0.49%), 173 samples
+  [ 0] void OopOopIterateBackwardsDispatch<G1ScanEvacuatedObjClosure>::Table::oop_oop_iterate_backwards<InstanceKlass, narrowOop>
+  [ 1] G1ParScanThreadState::do_copy_to_survivor_space
+  [ 2] G1ParScanThreadState::trim_queue_to_threshold
+  [ 3] G1ScanHRForRegionClosure::scan_memregion
+  [ 4] void G1ScanHRForRegionClosure::ChunkScanner::on_dirty_cards<G1ScanHRForRegionClosure::scan_heap_roots(G1HeapRegion*)::'lambda'(unsigned char*, unsigned char*)>
+  [ 5] G1ScanHRForRegionClosure::scan_heap_roots
+  [ 6] G1ScanHRForRegionClosure::do_heap_region
+  [ 7] G1RemSet::scan_heap_roots
+  [ 8] G1EvacuateRegionsTask::scan_roots
+  [ 9] G1EvacuateRegionsBaseTask::work
+  [10] WorkerThread::run
+  [11] Thread::call_run
+  [12] thread_native_entry
+  [13] _pthread_start
+  [14] thread_start
+
+--- 1310000000 ns (0.37%), 131 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.Scheduler.$init$$$anonfun$10
+  [ 6] kyo.scheduler.Scheduler.$init$$$anonfun$adapted$1
+  [ 7] kyo.scheduler.Scheduler$$Lambda.0x00003ffe01148fc0.call
+  [ 8] java.util.concurrent.FutureTask.run
+  [ 9] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [10] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [11] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 1260000000 ns (0.36%), 126 samples
+  [ 0] read
+  [ 1] readBytes
+  [ 2] java.io.RandomAccessFile.readBytes0
+  [ 3] java.io.RandomAccessFile.readBytes
+  [ 4] java.io.RandomAccessFile.read
+  [ 5] java.io.RandomAccessFile.readFully
+  [ 6] java.util.zip.ZipFile$Source.readFullyAt
+  [ 7] java.util.zip.ZipFile$Source.initCEN
+  [ 8] java.util.zip.ZipFile$Source.<init>
+  [ 9] java.util.zip.ZipFile$Source.get
+  [10] java.util.zip.ZipFile$CleanableResource.<init>
+  [11] java.util.zip.ZipFile.<init>
+  [12] java.util.zip.ZipFile.<init>
+  [13] java.util.jar.JarFile.<init>
+  [14] java.util.jar.JarFile.<init>
+  [15] java.util.jar.JarFile.<init>
+  [16] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 1240000000 ns (0.35%), 124 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.BlockingMonitor.loop$1
+  [ 6] kyo.scheduler.BlockingMonitor.$init$$$anonfun$2
+  [ 7] kyo.scheduler.BlockingMonitor.$init$$$anonfun$adapted$1
+  [ 8] kyo.scheduler.BlockingMonitor$$Lambda.0x00003ffe01148d90.call
+  [ 9] java.util.concurrent.FutureTask.run
+  [10] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [11] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [12] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [13] java.lang.Thread.runWith
+  [14] java.lang.Thread.run
+
+--- 1210000000 ns (0.35%), 121 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.InternalClock.update
+  [ 6] kyo.scheduler.InternalClock.$init$$$anonfun$1
+  [ 7] kyo.scheduler.InternalClock$$Lambda.0x00003ffe01127608.run
+  [ 8] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [ 9] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [10] java.lang.Thread.runWith
+  [11] java.lang.Thread.run
+
+--- 1160000000 ns (0.33%), 116 samples
+  [ 0] void OopOopIterateBackwardsDispatch<G1ScanEvacuatedObjClosure>::Table::oop_oop_iterate_backwards<InstanceKlass, narrowOop>
+  [ 1] G1ParScanThreadState::do_copy_to_survivor_space
+  [ 2] G1ParScanThreadState::trim_queue_to_threshold
+  [ 3] G1ParEvacuateFollowersClosure::do_void
+  [ 4] G1EvacuateRegionsTask::evacuate_live_objects
+  [ 5] G1EvacuateRegionsBaseTask::work
+  [ 6] WorkerThread::run
+  [ 7] Thread::call_run
+  [ 8] thread_native_entry
+  [ 9] _pthread_start
+  [10] thread_start
+
+--- 1030000000 ns (0.29%), 103 samples
+  [ 0] G1ParScanThreadState::do_copy_to_survivor_space
+  [ 1] G1ParScanThreadState::steal_and_trim_queue
+  [ 2] G1ParEvacuateFollowersClosure::do_void
+  [ 3] G1EvacuateRegionsTask::evacuate_live_objects
+  [ 4] G1EvacuateRegionsBaseTask::work
+  [ 5] WorkerThread::run
+  [ 6] Thread::call_run
+  [ 7] thread_native_entry
+  [ 8] _pthread_start
+  [ 9] thread_start
+
+--- 950000000 ns (0.27%), 95 samples
+  [ 0] void OopOopIterateBackwardsDispatch<G1ScanEvacuatedObjClosure>::Table::oop_oop_iterate_backwards<InstanceKlass, narrowOop>
+  [ 1] G1ParScanThreadState::trim_queue_to_threshold
+  [ 2] G1ParScanThreadState::steal_and_trim_queue
+  [ 3] G1ParEvacuateFollowersClosure::do_void
+  [ 4] G1EvacuateRegionsTask::evacuate_live_objects
+  [ 5] G1EvacuateRegionsBaseTask::work
+  [ 6] WorkerThread::run
+  [ 7] Thread::call_run
+  [ 8] thread_native_entry
+  [ 9] _pthread_start
+  [10] thread_start
+
+--- 890000000 ns (0.25%), 89 samples
+  [ 0] copy_byte_f
+  [ 1] arrayof_jint_disjoint_arraycopy
+  [ 2] java.util.Arrays.copyOf
+  [ 3] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 4] kyo.internal.reflect.symbol.Interner.intern
+  [ 5] kyo.Reflect$Name$.apply
+  [ 6] kyo.Reflect$Symbol$.computeFullName
+  [ 7] kyo.Reflect$Symbol.fullName
+  [ 8] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 9] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [10] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [12] kyo.Chunk.strictOptimizedFlatMap
+  [13] scala.collection.StrictOptimizedIterableOps.flatMap
+  [14] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [15] kyo.Chunk.flatMap
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [19] kyo.Abort$$anon$2.apply
+  [20] kyo.Abort$$anon$1.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [31] kyo.Kyo$$anon$190.apply
+  [32] kyo.Kyo$$anon$191.apply
+  [33] kyo.Stream$$anon$220.apply
+  [34] kyo.Stream$$anon$221.apply
+  [35] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [36] kyo.scheduler.IOTask.partialLoop$1
+  [37] kyo.scheduler.IOTask.eval
+  [38] kyo.scheduler.IOTask.run
+  [39] kyo.scheduler.Worker.runTask
+  [40] kyo.scheduler.Worker.run
+  [41] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [42] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [43] java.lang.Thread.runWith
+  [44] java.lang.Thread.run
+
+--- 850000000 ns (0.24%), 85 samples
+  [ 0] inflate_fast
+  [ 1] Java_java_util_zip_Inflater_inflateBytesBytes
+  [ 2] java.util.zip.Inflater.inflateBytesBytes
+  [ 3] java.util.zip.Inflater.inflate
+  [ 4] java.util.zip.InflaterInputStream.read
+  [ 5] java.io.InputStream.readNBytes
+  [ 6] java.io.InputStream.readAllBytes
+  [ 7] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [ 8] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [ 9] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [10] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [11] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [12] kyo.Abort$$anon$2.apply
+  [13] kyo.Abort$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [18] kyo.Scope$$anon$5$$anon$10.apply
+  [19] kyo.Scope$$anon$5$$anon$13.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.Scope$$anon$5$$anon$6.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Kyo$$anon$190.apply
+  [25] kyo.Kyo$$anon$191.apply
+  [26] kyo.Stream$$anon$220.apply
+  [27] kyo.Stream$$anon$221.apply
+  [28] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [29] kyo.scheduler.IOTask.partialLoop$1
+  [30] kyo.scheduler.IOTask.eval
+  [31] kyo.scheduler.IOTask.run
+  [32] kyo.scheduler.Worker.runTask
+  [33] kyo.scheduler.Worker.run
+  [34] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [35] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [36] java.lang.Thread.runWith
+  [37] java.lang.Thread.run
+
+--- 780000000 ns (0.22%), 78 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.Scheduler.$init$$$anonfun$10
+  [ 6] kyo.scheduler.Scheduler.$init$$$anonfun$adapted$1
+  [ 7] kyo.scheduler.Scheduler$$Lambda.0x00003ffe01148fc0.call
+  [ 8] java.util.concurrent.FutureTask.run
+  [ 9] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [10] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [11] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 760000000 ns (0.22%), 76 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 720000000 ns (0.21%), 72 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.InternalClock.update
+  [ 6] kyo.scheduler.InternalClock.$init$$$anonfun$1
+  [ 7] kyo.scheduler.InternalClock$$Lambda.0x00003ffe01127608.run
+  [ 8] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [ 9] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [10] java.lang.Thread.runWith
+  [11] java.lang.Thread.run
+
+--- 710000000 ns (0.20%), 71 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.countFilled
+  [ 1] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 2] kyo.internal.reflect.symbol.Interner.intern
+  [ 3] kyo.Reflect$Name$.apply
+  [ 4] kyo.internal.reflect.snapshot.SnapshotReader$.readSymbolsMapped$$anonfun$1
+  [ 5] kyo.internal.reflect.snapshot.SnapshotReader$$$Lambda.0x00003ffe0128fb28.apply$mcVI$sp
+  [ 6] scala.runtime.java8.JFunction1$mcVI$sp.apply
+  [ 7] scala.collection.ArrayOps$.foreach$extension
+  [ 8] kyo.internal.reflect.snapshot.SnapshotReader$.readSymbolsMapped
+  [ 9] kyo.internal.reflect.snapshot.SnapshotReader$.deserializeMapped
+  [10] kyo.internal.reflect.snapshot.SnapshotReader$.readMappedView
+  [11] kyo.internal.reflect.snapshot.PlatformMmapReader$$anon$2.apply
+  [12] kyo.internal.reflect.snapshot.PlatformMmapReader$$anon$2.apply
+  [13] kyo.Abort$$anon$2.apply
+  [14] kyo.Abort$$anon$1.apply
+  [15] kyo.Reflect$Classpath$$anon$15.apply
+  [16] kyo.bench.ColdLoadFullBench$$anon$3.apply
+  [17] kyo.Scope$$anon$5$$anon$10.apply
+  [18] kyo.Scope$$anon$5$$anon$13.apply
+  [19] kyo.Abort$$anon$2.apply
+  [20] kyo.Abort$$anon$1.apply
+  [21] kyo.Scope$$anon$5$$anon$6.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.bench.ColdLoadFullBench$$anon$1.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Abort$$anon$2.apply
+  [31] kyo.Abort$$anon$1.apply
+  [32] kyo.KyoApp$$anon$5.apply
+  [33] kyo.Fiber$package$Fiber$$anon$7$$anon$8.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 600000000 ns (0.17%), 60 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.Scheduler.$init$$$anonfun$10
+  [ 6] kyo.scheduler.Scheduler.$init$$$anonfun$adapted$1
+  [ 7] kyo.scheduler.Scheduler$$Lambda.0x00003ffe01148fc0.call
+  [ 8] java.util.concurrent.FutureTask.run
+  [ 9] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [10] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [11] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 540000000 ns (0.15%), 54 samples
+  [ 0] inflate_fast
+  [ 1] Java_java_util_zip_Inflater_inflateBytesBytes
+  [ 2] java.util.zip.Inflater.inflateBytesBytes
+  [ 3] java.util.zip.Inflater.inflate
+  [ 4] java.util.zip.InflaterInputStream.read
+  [ 5] java.io.InputStream.readNBytes
+  [ 6] java.io.InputStream.readAllBytes
+  [ 7] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [ 8] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [ 9] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [10] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [11] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [12] kyo.Abort$$anon$2.apply
+  [13] kyo.Abort$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [18] kyo.Scope$$anon$5$$anon$10.apply
+  [19] kyo.Scope$$anon$5$$anon$13.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.Scope$$anon$5$$anon$6.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Kyo$$anon$190.apply
+  [25] kyo.Kyo$$anon$191.apply
+  [26] kyo.Stream$$anon$220.apply
+  [27] kyo.Stream$$anon$221.apply
+  [28] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [29] kyo.scheduler.IOTask.partialLoop$1
+  [30] kyo.scheduler.IOTask.eval
+  [31] kyo.scheduler.IOTask.run
+  [32] kyo.scheduler.Worker.runTask
+  [33] kyo.scheduler.Worker.run
+  [34] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [35] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [36] java.lang.Thread.runWith
+  [37] java.lang.Thread.run
+
+--- 510000000 ns (0.15%), 51 samples
+  [ 0] large_arrays_hashcode_boolean
+  [ 1] jdk.internal.util.ArraysSupport.hashCodeOfUnsigned
+  [ 2] java.util.zip.ZipCoder$UTF8ZipCoder.checkedHash
+  [ 3] java.util.zip.ZipFile$Source.checkAndAddEntry
+  [ 4] java.util.zip.ZipFile$Source.initCEN
+  [ 5] java.util.zip.ZipFile$Source.<init>
+  [ 6] java.util.zip.ZipFile$Source.get
+  [ 7] java.util.zip.ZipFile$CleanableResource.<init>
+  [ 8] java.util.zip.ZipFile.<init>
+  [ 9] java.util.zip.ZipFile.<init>
+  [10] java.util.jar.JarFile.<init>
+  [11] java.util.jar.JarFile.<init>
+  [12] java.util.jar.JarFile.<init>
+  [13] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [14] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [15] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [18] kyo.Abort$$anon$2.apply
+  [19] kyo.Abort$$anon$1.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [30] kyo.Kyo$$anon$190.apply
+  [31] kyo.Kyo$$anon$191.apply
+  [32] kyo.Stream$$anon$220.apply
+  [33] kyo.Stream$$anon$221.apply
+  [34] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [35] kyo.scheduler.IOTask.partialLoop$1
+  [36] kyo.scheduler.IOTask.eval
+  [37] kyo.scheduler.IOTask.run
+  [38] kyo.scheduler.Worker.runTask
+  [39] kyo.scheduler.Worker.run
+  [40] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [41] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [42] java.lang.Thread.runWith
+  [43] java.lang.Thread.run
+
+--- 480000000 ns (0.14%), 48 samples
+  [ 0] pthread_jit_write_protect_np
+  [ 1] JVM_IHashCode
+  [ 2] java.lang.Object.hashCode
+  [ 3] java.util.HashMap.hash
+  [ 4] java.util.HashMap.put
+  [ 5] java.util.HashSet.add
+  [ 6] kyo.Reflect$Classpath$.assignHomes
+  [ 7] kyo.Reflect$Classpath$.kyo$Reflect$Classpath$$$_$flatMapLoop$4
+  [ 8] kyo.Reflect$Classpath$$anon$15.apply
+  [ 9] kyo.bench.ColdLoadFullBench$$anon$3.apply
+  [10] kyo.Scope$$anon$5$$anon$10.apply
+  [11] kyo.Scope$$anon$5$$anon$13.apply
+  [12] kyo.Abort$$anon$2.apply
+  [13] kyo.Abort$$anon$1.apply
+  [14] kyo.Scope$$anon$5$$anon$6.apply
+  [15] kyo.Abort$$anon$2.apply
+  [16] kyo.Abort$$anon$1.apply
+  [17] kyo.bench.ColdLoadFullBench$$anon$1.apply
+  [18] kyo.Scope$$anon$5$$anon$10.apply
+  [19] kyo.Scope$$anon$5$$anon$13.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.Scope$$anon$5$$anon$6.apply
+  [23] kyo.Abort$$anon$2.apply
+  [24] kyo.Abort$$anon$1.apply
+  [25] kyo.KyoApp$$anon$5.apply
+  [26] kyo.Fiber$package$Fiber$$anon$7$$anon$8.apply
+  [27] kyo.scheduler.IOTask.partialLoop$1
+  [28] kyo.scheduler.IOTask.eval
+  [29] kyo.scheduler.IOTask.run
+  [30] kyo.scheduler.Worker.runTask
+  [31] kyo.scheduler.Worker.run
+  [32] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [33] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [34] java.lang.Thread.runWith
+  [35] java.lang.Thread.run
+
+--- 470000000 ns (0.13%), 47 samples
+  [ 0] count_positives
+  [ 1] java.lang.System$1.uncheckedCountPositives
+  [ 2] java.util.zip.ZipCoder$UTF8ZipCoder.checkedHash
+  [ 3] java.util.zip.ZipFile$Source.checkAndAddEntry
+  [ 4] java.util.zip.ZipFile$Source.initCEN
+  [ 5] java.util.zip.ZipFile$Source.<init>
+  [ 6] java.util.zip.ZipFile$Source.get
+  [ 7] java.util.zip.ZipFile$CleanableResource.<init>
+  [ 8] java.util.zip.ZipFile.<init>
+  [ 9] java.util.zip.ZipFile.<init>
+  [10] java.util.jar.JarFile.<init>
+  [11] java.util.jar.JarFile.<init>
+  [12] java.util.jar.JarFile.<init>
+  [13] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [14] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [15] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [18] kyo.Abort$$anon$2.apply
+  [19] kyo.Abort$$anon$1.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [30] kyo.Kyo$$anon$190.apply
+  [31] kyo.Kyo$$anon$191.apply
+  [32] kyo.Stream$$anon$220.apply
+  [33] kyo.Stream$$anon$221.apply
+  [34] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [35] kyo.scheduler.IOTask.partialLoop$1
+  [36] kyo.scheduler.IOTask.eval
+  [37] kyo.scheduler.IOTask.run
+  [38] kyo.scheduler.Worker.runTask
+  [39] kyo.scheduler.Worker.run
+  [40] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [41] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [42] java.lang.Thread.runWith
+  [43] java.lang.Thread.run
+
+--- 470000000 ns (0.13%), 47 samples
+  [ 0] void OopOopIterateDispatch<G1ScanCardClosure>::Table::oop_oop_iterate<InstanceKlass, narrowOop>
+  [ 1] HeapWordImpl** G1HeapRegion::oops_on_memregion_iterate<G1ScanCardClosure, true>
+  [ 2] G1ScanHRForRegionClosure::scan_memregion
+  [ 3] void G1ScanHRForRegionClosure::ChunkScanner::on_dirty_cards<G1ScanHRForRegionClosure::scan_heap_roots(G1HeapRegion*)::'lambda'(unsigned char*, unsigned char*)>
+  [ 4] G1ScanHRForRegionClosure::scan_heap_roots
+  [ 5] G1ScanHRForRegionClosure::do_heap_region
+  [ 6] G1RemSet::scan_heap_roots
+  [ 7] G1EvacuateRegionsTask::scan_roots
+  [ 8] G1EvacuateRegionsBaseTask::work
+  [ 9] WorkerThread::run
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 460000000 ns (0.13%), 46 samples
+  [ 0] read
+  [ 1] readBytes
+  [ 2] java.io.RandomAccessFile.readBytes0
+  [ 3] java.io.RandomAccessFile.readBytes
+  [ 4] java.io.RandomAccessFile.read
+  [ 5] java.io.RandomAccessFile.readFully
+  [ 6] java.util.zip.ZipFile$Source.readFullyAt
+  [ 7] java.util.zip.ZipFile$Source.initCEN
+  [ 8] java.util.zip.ZipFile$Source.<init>
+  [ 9] java.util.zip.ZipFile$Source.get
+  [10] java.util.zip.ZipFile$CleanableResource.<init>
+  [11] java.util.zip.ZipFile.<init>
+  [12] java.util.zip.ZipFile.<init>
+  [13] java.util.jar.JarFile.<init>
+  [14] java.util.jar.JarFile.<init>
+  [15] java.util.jar.JarFile.<init>
+  [16] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 430000000 ns (0.12%), 43 samples
+  [ 0] copy_byte_f
+  [ 1] arrayof_jint_disjoint_arraycopy
+  [ 2] java.util.Arrays.copyOf
+  [ 3] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 4] kyo.internal.reflect.symbol.Interner.intern
+  [ 5] kyo.Reflect$Name$.apply
+  [ 6] kyo.Reflect$Symbol$.computeFullName
+  [ 7] kyo.Reflect$Symbol.fullName
+  [ 8] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 9] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [10] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [12] kyo.Chunk.strictOptimizedFlatMap
+  [13] scala.collection.StrictOptimizedIterableOps.flatMap
+  [14] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [15] kyo.Chunk.flatMap
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [19] kyo.Abort$$anon$2.apply
+  [20] kyo.Abort$$anon$1.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [31] kyo.Kyo$$anon$190.apply
+  [32] kyo.Kyo$$anon$191.apply
+  [33] kyo.Stream$$anon$220.apply
+  [34] kyo.Stream$$anon$221.apply
+  [35] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [36] kyo.scheduler.IOTask.partialLoop$1
+  [37] kyo.scheduler.IOTask.eval
+  [38] kyo.scheduler.IOTask.run
+  [39] kyo.scheduler.Worker.runTask
+  [40] kyo.scheduler.Worker.run
+  [41] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [42] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [43] java.lang.Thread.runWith
+  [44] java.lang.Thread.run
+
+--- 420000000 ns (0.12%), 42 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 1] kyo.internal.reflect.symbol.Interner.intern
+  [ 2] kyo.Reflect$Name$.apply
+  [ 3] kyo.Reflect$Symbol$.computeFullName
+  [ 4] kyo.Reflect$Symbol.fullName
+  [ 5] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [ 7] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [ 8] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [ 9] kyo.Chunk.strictOptimizedFlatMap
+  [10] scala.collection.StrictOptimizedIterableOps.flatMap
+  [11] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [12] kyo.Chunk.flatMap
+  [13] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.Scope$$anon$5$$anon$10.apply
+  [23] kyo.Scope$$anon$5$$anon$13.apply
+  [24] kyo.Abort$$anon$2.apply
+  [25] kyo.Abort$$anon$1.apply
+  [26] kyo.Scope$$anon$5$$anon$6.apply
+  [27] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [28] kyo.Kyo$$anon$190.apply
+  [29] kyo.Kyo$$anon$191.apply
+  [30] kyo.Stream$$anon$220.apply
+  [31] kyo.Stream$$anon$221.apply
+  [32] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [33] kyo.scheduler.IOTask.partialLoop$1
+  [34] kyo.scheduler.IOTask.eval
+  [35] kyo.scheduler.IOTask.run
+  [36] kyo.scheduler.Worker.runTask
+  [37] kyo.scheduler.Worker.run
+  [38] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [39] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [40] java.lang.Thread.runWith
+  [41] java.lang.Thread.run
+
+--- 420000000 ns (0.12%), 42 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.countFilled
+  [ 1] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 2] kyo.internal.reflect.symbol.Interner.intern
+  [ 3] kyo.Reflect$Name$.apply
+  [ 4] kyo.Reflect$Symbol$.computeFullName
+  [ 5] kyo.Reflect$Symbol.fullName
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [ 8] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [ 9] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [10] kyo.Chunk.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.flatMap
+  [12] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [13] kyo.Chunk.flatMap
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 410000000 ns (0.12%), 41 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.countFilled
+  [ 1] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 2] kyo.internal.reflect.symbol.Interner.intern
+  [ 3] kyo.Reflect$Name$.apply
+  [ 4] kyo.Reflect$Symbol$.computeFullName
+  [ 5] kyo.Reflect$Symbol.fullName
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [ 8] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [ 9] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [10] kyo.Chunk.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.flatMap
+  [12] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [13] kyo.Chunk.flatMap
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 410000000 ns (0.12%), 41 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.$plus
+  [ 2] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.mutable.Growable.addAll
+  [ 5] scala.collection.mutable.Growable.addAll$
+  [ 6] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 7] scala.collection.immutable.IntMap$.from
+  [ 8] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.Scope$$anon$5$$anon$10.apply
+  [27] kyo.Scope$$anon$5$$anon$13.apply
+  [28] kyo.Abort$$anon$2.apply
+  [29] kyo.Abort$$anon$1.apply
+  [30] kyo.Scope$$anon$5$$anon$6.apply
+  [31] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [32] kyo.Kyo$$anon$190.apply
+  [33] kyo.Kyo$$anon$191.apply
+  [34] kyo.Stream$$anon$220.apply
+  [35] kyo.Stream$$anon$221.apply
+  [36] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [37] kyo.scheduler.IOTask.partialLoop$1
+  [38] kyo.scheduler.IOTask.eval
+  [39] kyo.scheduler.IOTask.run
+  [40] kyo.scheduler.Worker.runTask
+  [41] kyo.scheduler.Worker.run
+  [42] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [43] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [44] java.lang.Thread.runWith
+  [45] java.lang.Thread.run
+
+--- 400000000 ns (0.11%), 40 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 400000000 ns (0.11%), 40 samples
+  [ 0] scala.collection.immutable.IntMap$Bin.left
+  [ 1] scala.collection.immutable.IntMap.updated
+  [ 2] scala.collection.immutable.IntMap.$plus
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 5] scala.collection.mutable.Growable.addAll
+  [ 6] scala.collection.mutable.Growable.addAll$
+  [ 7] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 8] scala.collection.immutable.IntMap$.from
+  [ 9] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [17] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 390000000 ns (0.11%), 39 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 390000000 ns (0.11%), 39 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 380000000 ns (0.11%), 38 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 380000000 ns (0.11%), 38 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 360000000 ns (0.10%), 36 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.countFilled
+  [ 1] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 2] kyo.internal.reflect.symbol.Interner.intern
+  [ 3] kyo.Reflect$Name$.apply
+  [ 4] kyo.Reflect$Symbol$.computeFullName
+  [ 5] kyo.Reflect$Symbol.fullName
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [ 8] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [ 9] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [10] kyo.Chunk.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.flatMap
+  [12] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [13] kyo.Chunk.flatMap
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 360000000 ns (0.10%), 36 samples
+  [ 0] PhaseChaitin::Split
+  [ 1] PhaseChaitin::Register_Allocate
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 360000000 ns (0.10%), 36 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 350000000 ns (0.10%), 35 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.countFilled
+  [ 1] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 2] kyo.internal.reflect.symbol.Interner.intern
+  [ 3] kyo.Reflect$Name$.apply
+  [ 4] kyo.Reflect$Symbol$.computeFullName
+  [ 5] kyo.Reflect$Symbol.fullName
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [ 8] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [ 9] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [10] kyo.Chunk.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.flatMap
+  [12] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [13] kyo.Chunk.flatMap
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 350000000 ns (0.10%), 35 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.$plus
+  [ 2] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.mutable.Growable.addAll
+  [ 5] scala.collection.mutable.Growable.addAll$
+  [ 6] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 7] scala.collection.immutable.IntMap$.from
+  [ 8] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.Scope$$anon$5$$anon$10.apply
+  [27] kyo.Scope$$anon$5$$anon$13.apply
+  [28] kyo.Abort$$anon$2.apply
+  [29] kyo.Abort$$anon$1.apply
+  [30] kyo.Scope$$anon$5$$anon$6.apply
+  [31] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [32] kyo.Kyo$$anon$190.apply
+  [33] kyo.Kyo$$anon$191.apply
+  [34] kyo.Stream$$anon$220.apply
+  [35] kyo.Stream$$anon$221.apply
+  [36] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [37] kyo.scheduler.IOTask.partialLoop$1
+  [38] kyo.scheduler.IOTask.eval
+  [39] kyo.scheduler.IOTask.run
+  [40] kyo.scheduler.Worker.runTask
+  [41] kyo.scheduler.Worker.run
+  [42] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [43] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [44] java.lang.Thread.runWith
+  [45] java.lang.Thread.run
+
+--- 350000000 ns (0.10%), 35 samples
+  [ 0] large_arrays_hashcode_boolean
+  [ 1] jdk.internal.util.ArraysSupport.hashCodeOfUnsigned
+  [ 2] java.util.zip.ZipCoder$UTF8ZipCoder.checkedHash
+  [ 3] java.util.zip.ZipFile$Source.checkAndAddEntry
+  [ 4] java.util.zip.ZipFile$Source.initCEN
+  [ 5] java.util.zip.ZipFile$Source.<init>
+  [ 6] java.util.zip.ZipFile$Source.get
+  [ 7] java.util.zip.ZipFile$CleanableResource.<init>
+  [ 8] java.util.zip.ZipFile.<init>
+  [ 9] java.util.zip.ZipFile.<init>
+  [10] java.util.jar.JarFile.<init>
+  [11] java.util.jar.JarFile.<init>
+  [12] java.util.jar.JarFile.<init>
+  [13] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [14] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [15] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [18] kyo.Abort$$anon$2.apply
+  [19] kyo.Abort$$anon$1.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [30] kyo.Kyo$$anon$190.apply
+  [31] kyo.Kyo$$anon$191.apply
+  [32] kyo.Stream$$anon$220.apply
+  [33] kyo.Stream$$anon$221.apply
+  [34] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [35] kyo.scheduler.IOTask.partialLoop$1
+  [36] kyo.scheduler.IOTask.eval
+  [37] kyo.scheduler.IOTask.run
+  [38] kyo.scheduler.Worker.runTask
+  [39] kyo.scheduler.Worker.run
+  [40] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [41] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [42] java.lang.Thread.runWith
+  [43] java.lang.Thread.run
+
+--- 350000000 ns (0.10%), 35 samples
+  [ 0] read
+  [ 1] readBytes
+  [ 2] java.io.RandomAccessFile.readBytes0
+  [ 3] java.io.RandomAccessFile.readBytes
+  [ 4] java.io.RandomAccessFile.read
+  [ 5] java.io.RandomAccessFile.readFully
+  [ 6] java.util.zip.ZipFile$Source.readFullyAt
+  [ 7] java.util.zip.ZipFile$Source.initCEN
+  [ 8] java.util.zip.ZipFile$Source.<init>
+  [ 9] java.util.zip.ZipFile$Source.get
+  [10] java.util.zip.ZipFile$CleanableResource.<init>
+  [11] java.util.zip.ZipFile.<init>
+  [12] java.util.zip.ZipFile.<init>
+  [13] java.util.jar.JarFile.<init>
+  [14] java.util.jar.JarFile.<init>
+  [15] java.util.jar.JarFile.<init>
+  [16] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 340000000 ns (0.10%), 34 samples
+  [ 0] inflate_fast
+  [ 1] Java_java_util_zip_Inflater_inflateBytesBytes
+  [ 2] java.util.zip.Inflater.inflateBytesBytes
+  [ 3] java.util.zip.Inflater.inflate
+  [ 4] java.util.zip.InflaterInputStream.read
+  [ 5] java.io.InputStream.readNBytes
+  [ 6] java.io.InputStream.readAllBytes
+  [ 7] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [ 8] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [ 9] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [10] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [11] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [12] kyo.Abort$$anon$2.apply
+  [13] kyo.Abort$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [18] kyo.Scope$$anon$5$$anon$10.apply
+  [19] kyo.Scope$$anon$5$$anon$13.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.Scope$$anon$5$$anon$6.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Kyo$$anon$190.apply
+  [25] kyo.Kyo$$anon$191.apply
+  [26] kyo.Stream$$anon$220.apply
+  [27] kyo.Stream$$anon$221.apply
+  [28] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [29] kyo.scheduler.IOTask.partialLoop$1
+  [30] kyo.scheduler.IOTask.eval
+  [31] kyo.scheduler.IOTask.run
+  [32] kyo.scheduler.Worker.runTask
+  [33] kyo.scheduler.Worker.run
+  [34] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [35] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [36] java.lang.Thread.runWith
+  [37] java.lang.Thread.run
+
+--- 340000000 ns (0.10%), 34 samples
+  [ 0] __psynch_cvwait
+  [ 1] PlatformMonitor::wait
+  [ 2] Monitor::wait
+  [ 3] CompileQueue::get
+  [ 4] CompileBroker::compiler_thread_loop
+  [ 5] JavaThread::thread_main_inner
+  [ 6] Thread::call_run
+  [ 7] thread_native_entry
+  [ 8] _pthread_start
+  [ 9] thread_start
+
+--- 330000000 ns (0.09%), 33 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.updated
+  [ 2] scala.collection.immutable.IntMap.$plus
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 5] scala.collection.mutable.Growable.addAll
+  [ 6] scala.collection.mutable.Growable.addAll$
+  [ 7] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 8] scala.collection.immutable.IntMap$.from
+  [ 9] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [17] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 320000000 ns (0.09%), 32 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 320000000 ns (0.09%), 32 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [18] kyo.Abort$$anon$2.apply
+  [19] kyo.Abort$$anon$1.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [30] kyo.Kyo$$anon$190.apply
+  [31] kyo.Kyo$$anon$191.apply
+  [32] kyo.Stream$$anon$220.apply
+  [33] kyo.Stream$$anon$221.apply
+  [34] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [35] kyo.scheduler.IOTask.partialLoop$1
+  [36] kyo.scheduler.IOTask.eval
+  [37] kyo.scheduler.IOTask.run
+  [38] kyo.scheduler.Worker.runTask
+  [39] kyo.scheduler.Worker.run
+  [40] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [41] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [42] java.lang.Thread.runWith
+  [43] java.lang.Thread.run
+
+--- 310000000 ns (0.09%), 31 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 1] kyo.internal.reflect.symbol.Interner.intern
+  [ 2] kyo.internal.reflect.tasty.NameUnpickler$.readUnsafe
+  [ 3] kyo.internal.reflect.tasty.NameUnpickler$.read
+  [ 4] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$10
+  [ 5] kyo.internal.reflect.query.ClasspathOrchestrator$.decodeTastyBytes
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$9
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [ 8] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [ 9] kyo.Abort$$anon$2.apply
+  [10] kyo.Abort$$anon$1.apply
+  [11] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [12] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [13] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [15] kyo.Scope$$anon$5$$anon$10.apply
+  [16] kyo.Scope$$anon$5$$anon$13.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.Scope$$anon$5$$anon$6.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [21] kyo.Kyo$$anon$190.apply
+  [22] kyo.Kyo$$anon$191.apply
+  [23] kyo.Stream$$anon$220.apply
+  [24] kyo.Stream$$anon$221.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 300000000 ns (0.09%), 30 samples
+  [ 0] Arena::contains
+  [ 1] Matcher::xform
+  [ 2] Matcher::match
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 300000000 ns (0.09%), 30 samples
+  [ 0] __psynch_cvwait
+  [ 1] PlatformEvent::park_nanos
+  [ 2] JavaThread::sleep_nanos
+  [ 3] JVM_SleepNanos
+  [ 4] java.lang.Thread.sleepNanos0
+  [ 5] java.lang.Thread.sleepNanos
+  [ 6] java.lang.Thread.sleep
+  [ 7] kyo.scheduler.util.Sleep$.apply
+  [ 8] kyo.scheduler.Scheduler.$init$$$anonfun$6
+  [ 9] kyo.scheduler.Scheduler$$Lambda.0x00003ffe01140870.apply$mcVI$sp
+  [10] kyo.scheduler.regulator.Concurrency.probe
+  [11] kyo.scheduler.regulator.Regulator.collect
+  [12] kyo.scheduler.regulator.Regulator.$init$$$anonfun$1
+  [13] kyo.scheduler.regulator.Regulator.$init$$$anonfun$adapted$1
+  [14] kyo.scheduler.regulator.Regulator$$Lambda.0x00003ffe0113f658.apply
+  [15] scala.Function0.apply$mcV$sp
+  [16] kyo.scheduler.InternalTimer$.kyo$scheduler$InternalTimer$$anon$1$$_$_$$anonfun$1
+  [17] kyo.scheduler.InternalTimer$$anon$1$$Lambda.0x00003ffe0113f920.run
+  [18] java.util.concurrent.Executors$RunnableAdapter.call
+  [19] java.util.concurrent.FutureTask.runAndReset
+  [20] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [21] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [22] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [23] java.lang.Thread.runWith
+  [24] java.lang.Thread.run
+
+--- 300000000 ns (0.09%), 30 samples
+  [ 0] scala.collection.immutable.IntMap$Bin.left
+  [ 1] scala.collection.immutable.IntMap.updated
+  [ 2] scala.collection.immutable.IntMap.$plus
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 5] scala.collection.mutable.Growable.addAll
+  [ 6] scala.collection.mutable.Growable.addAll$
+  [ 7] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 8] scala.collection.immutable.IntMap$.from
+  [ 9] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [17] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 300000000 ns (0.09%), 30 samples
+  [ 0] copy_byte_f
+  [ 1] arrayof_jint_disjoint_arraycopy
+  [ 2] java.util.Arrays.copyOf
+  [ 3] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 4] kyo.internal.reflect.symbol.Interner.intern
+  [ 5] kyo.Reflect$Name$.apply
+  [ 6] kyo.Reflect$Symbol$.computeFullName
+  [ 7] kyo.Reflect$Symbol.fullName
+  [ 8] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 9] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [10] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [12] kyo.Chunk.strictOptimizedFlatMap
+  [13] scala.collection.StrictOptimizedIterableOps.flatMap
+  [14] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [15] kyo.Chunk.flatMap
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [19] kyo.Abort$$anon$2.apply
+  [20] kyo.Abort$$anon$1.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [31] kyo.Kyo$$anon$190.apply
+  [32] kyo.Kyo$$anon$191.apply
+  [33] kyo.Stream$$anon$220.apply
+  [34] kyo.Stream$$anon$221.apply
+  [35] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [36] kyo.scheduler.IOTask.partialLoop$1
+  [37] kyo.scheduler.IOTask.eval
+  [38] kyo.scheduler.IOTask.run
+  [39] kyo.scheduler.Worker.runTask
+  [40] kyo.scheduler.Worker.run
+  [41] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [42] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [43] java.lang.Thread.runWith
+  [44] java.lang.Thread.run
+
+--- 290000000 ns (0.08%), 29 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.HashMap$HashMapIterator.next
+  [ 2] scala.collection.mutable.Growable.addAll
+  [ 3] scala.collection.mutable.Growable.addAll$
+  [ 4] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 5] scala.collection.immutable.IntMap$.from
+  [ 6] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [18] kyo.Abort$$anon$2.apply
+  [19] kyo.Abort$$anon$1.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [30] kyo.Kyo$$anon$190.apply
+  [31] kyo.Kyo$$anon$191.apply
+  [32] kyo.Stream$$anon$220.apply
+  [33] kyo.Stream$$anon$221.apply
+  [34] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [35] kyo.scheduler.IOTask.partialLoop$1
+  [36] kyo.scheduler.IOTask.eval
+  [37] kyo.scheduler.IOTask.run
+  [38] kyo.scheduler.Worker.runTask
+  [39] kyo.scheduler.Worker.run
+  [40] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [41] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [42] java.lang.Thread.runWith
+  [43] java.lang.Thread.run
+
+--- 290000000 ns (0.08%), 29 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 280000000 ns (0.08%), 28 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.countFilled
+  [ 1] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 2] kyo.internal.reflect.symbol.Interner.intern
+  [ 3] kyo.internal.reflect.tasty.NameUnpickler$.readUnsafe
+  [ 4] kyo.internal.reflect.tasty.NameUnpickler$.read
+  [ 5] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$10
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$.decodeTastyBytes
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$9
+  [ 8] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [ 9] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [10] kyo.Abort$$anon$2.apply
+  [11] kyo.Abort$$anon$1.apply
+  [12] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [13] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [16] kyo.Scope$$anon$5$$anon$10.apply
+  [17] kyo.Scope$$anon$5$$anon$13.apply
+  [18] kyo.Abort$$anon$2.apply
+  [19] kyo.Abort$$anon$1.apply
+  [20] kyo.Scope$$anon$5$$anon$6.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [22] kyo.Kyo$$anon$190.apply
+  [23] kyo.Kyo$$anon$191.apply
+  [24] kyo.Stream$$anon$220.apply
+  [25] kyo.Stream$$anon$221.apply
+  [26] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [27] kyo.scheduler.IOTask.partialLoop$1
+  [28] kyo.scheduler.IOTask.eval
+  [29] kyo.scheduler.IOTask.run
+  [30] kyo.scheduler.Worker.runTask
+  [31] kyo.scheduler.Worker.run
+  [32] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [33] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [34] java.lang.Thread.runWith
+  [35] java.lang.Thread.run
+
+--- 280000000 ns (0.08%), 28 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.awaitNanos
+  [ 6] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [ 7] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [ 8] java.util.concurrent.ThreadPoolExecutor.getTask
+  [ 9] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [10] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [11] java.lang.Thread.runWith
+  [12] java.lang.Thread.run
+
+--- 270000000 ns (0.08%), 27 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 270000000 ns (0.08%), 27 samples
+  [ 0] scala.collection.immutable.BitmapIndexedMapNode.getValue
+  [ 1] scala.collection.immutable.HashMapBuilder.update
+  [ 2] scala.collection.immutable.HashMapBuilder.update
+  [ 3] scala.collection.immutable.HashMapBuilder.update
+  [ 4] scala.collection.immutable.HashMapBuilder.update
+  [ 5] scala.collection.immutable.HashMapBuilder.addOne
+  [ 6] scala.collection.immutable.MapBuilderImpl.addOne
+  [ 7] scala.collection.immutable.MapBuilderImpl.addOne
+  [ 8] scala.collection.immutable.MapBuilderImpl.addOne
+  [ 9] scala.collection.mutable.Growable.addAll
+  [10] scala.collection.mutable.Growable.addAll$
+  [11] scala.collection.immutable.MapBuilderImpl.addAll
+  [12] scala.collection.immutable.MapBuilderImpl.addAll
+  [13] scala.collection.immutable.Map$.from
+  [14] scala.collection.IterableOnceOps.toMap
+  [15] scala.collection.IterableOnceOps.toMap$
+  [16] scala.collection.AbstractIterable.toMap
+  [17] kyo.internal.reflect.snapshot.SnapshotReader$.readSymbolsMapped
+  [18] kyo.internal.reflect.snapshot.SnapshotReader$.deserializeMapped
+  [19] kyo.internal.reflect.snapshot.SnapshotReader$.readMappedView
+  [20] kyo.internal.reflect.snapshot.PlatformMmapReader$$anon$2.apply
+  [21] kyo.internal.reflect.snapshot.PlatformMmapReader$$anon$2.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Reflect$Classpath$$anon$15.apply
+  [25] kyo.bench.ColdLoadFullBench$$anon$3.apply
+  [26] kyo.Scope$$anon$5$$anon$10.apply
+  [27] kyo.Scope$$anon$5$$anon$13.apply
+  [28] kyo.Abort$$anon$2.apply
+  [29] kyo.Abort$$anon$1.apply
+  [30] kyo.Scope$$anon$5$$anon$6.apply
+  [31] kyo.Abort$$anon$2.apply
+  [32] kyo.Abort$$anon$1.apply
+  [33] kyo.bench.ColdLoadFullBench$$anon$1.apply
+  [34] kyo.Scope$$anon$5$$anon$10.apply
+  [35] kyo.Scope$$anon$5$$anon$13.apply
+  [36] kyo.Abort$$anon$2.apply
+  [37] kyo.Abort$$anon$1.apply
+  [38] kyo.Scope$$anon$5$$anon$6.apply
+  [39] kyo.Abort$$anon$2.apply
+  [40] kyo.Abort$$anon$1.apply
+  [41] kyo.KyoApp$$anon$5.apply
+  [42] kyo.Fiber$package$Fiber$$anon$7$$anon$8.apply
+  [43] kyo.scheduler.IOTask.partialLoop$1
+  [44] kyo.scheduler.IOTask.eval
+  [45] kyo.scheduler.IOTask.run
+  [46] kyo.scheduler.Worker.runTask
+  [47] kyo.scheduler.Worker.run
+  [48] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [49] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [50] java.lang.Thread.runWith
+  [51] java.lang.Thread.run
+
+--- 270000000 ns (0.08%), 27 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 260000000 ns (0.07%), 26 samples
+  [ 0] G1ParScanThreadState::do_copy_to_survivor_space
+  [ 1] G1ParScanThreadState::trim_queue_to_threshold
+  [ 2] void G1ParCopyClosure<(G1Barrier)0, false>::do_oop_work<oopDesc*>
+  [ 3] void OopMapDo<OopClosure, DerivedOopClosure, SkipNullValue>::iterate_oops_do<RegisterMap>
+  [ 4] ImmutableOopMap::oops_do
+  [ 5] frame::oops_nmethod_do
+  [ 6] JavaThread::oops_do_frames
+  [ 7] Thread::oops_do
+  [ 8] Threads::possibly_parallel_threads_do
+  [ 9] Threads::possibly_parallel_oops_do
+  [10] G1RootProcessor::process_java_roots
+  [11] G1RootProcessor::evacuate_roots
+  [12] G1EvacuateRegionsTask::scan_roots
+  [13] G1EvacuateRegionsBaseTask::work
+  [14] WorkerThread::run
+  [15] Thread::call_run
+  [16] thread_native_entry
+  [17] _pthread_start
+  [18] thread_start
+
+--- 260000000 ns (0.07%), 26 samples
+  [ 0] read
+  [ 1] readBytes
+  [ 2] java.io.RandomAccessFile.readBytes0
+  [ 3] java.io.RandomAccessFile.readBytes
+  [ 4] java.io.RandomAccessFile.read
+  [ 5] java.io.RandomAccessFile.readFully
+  [ 6] java.util.zip.ZipFile$Source.readFullyAt
+  [ 7] java.util.zip.ZipFile$Source.initCEN
+  [ 8] java.util.zip.ZipFile$Source.<init>
+  [ 9] java.util.zip.ZipFile$Source.get
+  [10] java.util.zip.ZipFile$CleanableResource.<init>
+  [11] java.util.zip.ZipFile.<init>
+  [12] java.util.zip.ZipFile.<init>
+  [13] java.util.jar.JarFile.<init>
+  [14] java.util.jar.JarFile.<init>
+  [15] java.util.jar.JarFile.<init>
+  [16] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 250000000 ns (0.07%), 25 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.$plus
+  [ 2] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.mutable.Growable.addAll
+  [ 5] scala.collection.mutable.Growable.addAll$
+  [ 6] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 7] scala.collection.immutable.IntMap$.from
+  [ 8] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.Scope$$anon$5$$anon$10.apply
+  [27] kyo.Scope$$anon$5$$anon$13.apply
+  [28] kyo.Abort$$anon$2.apply
+  [29] kyo.Abort$$anon$1.apply
+  [30] kyo.Scope$$anon$5$$anon$6.apply
+  [31] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [32] kyo.Kyo$$anon$190.apply
+  [33] kyo.Kyo$$anon$191.apply
+  [34] kyo.Stream$$anon$220.apply
+  [35] kyo.Stream$$anon$221.apply
+  [36] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [37] kyo.scheduler.IOTask.partialLoop$1
+  [38] kyo.scheduler.IOTask.eval
+  [39] kyo.scheduler.IOTask.run
+  [40] kyo.scheduler.Worker.runTask
+  [41] kyo.scheduler.Worker.run
+  [42] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [43] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [44] java.lang.Thread.runWith
+  [45] java.lang.Thread.run
+
+--- 250000000 ns (0.07%), 25 samples
+  [ 0] fwd_copy_again
+  [ 1] G1ParScanThreadState::trim_queue_to_threshold
+  [ 2] G1ParScanThreadState::steal_and_trim_queue
+  [ 3] G1ParEvacuateFollowersClosure::do_void
+  [ 4] G1EvacuateRegionsTask::evacuate_live_objects
+  [ 5] G1EvacuateRegionsBaseTask::work
+  [ 6] WorkerThread::run
+  [ 7] Thread::call_run
+  [ 8] thread_native_entry
+  [ 9] _pthread_start
+  [10] thread_start
+
+--- 240000000 ns (0.07%), 24 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.updated
+  [ 2] scala.collection.immutable.IntMap.$plus
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 5] scala.collection.mutable.Growable.addAll
+  [ 6] scala.collection.mutable.Growable.addAll$
+  [ 7] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 8] scala.collection.immutable.IntMap$.from
+  [ 9] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [17] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 240000000 ns (0.07%), 24 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.countFilled
+  [ 1] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 2] kyo.internal.reflect.symbol.Interner.intern
+  [ 3] kyo.Reflect$Name$.apply
+  [ 4] kyo.Reflect$Symbol$.computeFullName
+  [ 5] kyo.Reflect$Symbol.fullName
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [ 8] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [ 9] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [10] kyo.Chunk.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.flatMap
+  [12] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [13] kyo.Chunk.flatMap
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 240000000 ns (0.07%), 24 samples
+  [ 0] __open
+  [ 1] handleOpen
+  [ 2] fileOpen
+  [ 3] java.io.RandomAccessFile.open0
+  [ 4] java.io.RandomAccessFile.open
+  [ 5] java.io.RandomAccessFile.<init>
+  [ 6] java.io.RandomAccessFile.<init>
+  [ 7] java.util.zip.ZipFile$Source.<init>
+  [ 8] java.util.zip.ZipFile$Source.get
+  [ 9] java.util.zip.ZipFile$CleanableResource.<init>
+  [10] java.util.zip.ZipFile.<init>
+  [11] java.util.zip.ZipFile.<init>
+  [12] java.util.jar.JarFile.<init>
+  [13] java.util.jar.JarFile.<init>
+  [14] java.util.jar.JarFile.<init>
+  [15] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [16] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.Scope$$anon$5$$anon$10.apply
+  [27] kyo.Scope$$anon$5$$anon$13.apply
+  [28] kyo.Abort$$anon$2.apply
+  [29] kyo.Abort$$anon$1.apply
+  [30] kyo.Scope$$anon$5$$anon$6.apply
+  [31] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [32] kyo.Kyo$$anon$190.apply
+  [33] kyo.Kyo$$anon$191.apply
+  [34] kyo.Stream$$anon$220.apply
+  [35] kyo.Stream$$anon$221.apply
+  [36] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [37] kyo.scheduler.IOTask.partialLoop$1
+  [38] kyo.scheduler.IOTask.eval
+  [39] kyo.scheduler.IOTask.run
+  [40] kyo.scheduler.Worker.runTask
+  [41] kyo.scheduler.Worker.run
+  [42] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [43] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [44] java.lang.Thread.runWith
+  [45] java.lang.Thread.run
+
+--- 230000000 ns (0.07%), 23 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.countFilled
+  [ 1] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 2] kyo.internal.reflect.symbol.Interner.intern
+  [ 3] kyo.Reflect$Name$.apply
+  [ 4] kyo.Reflect$Symbol$.computeFullName
+  [ 5] kyo.Reflect$Symbol.fullName
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [ 8] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [ 9] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [10] kyo.Chunk.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.flatMap
+  [12] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [13] kyo.Chunk.flatMap
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 230000000 ns (0.07%), 23 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.$plus
+  [ 2] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.mutable.Growable.addAll
+  [ 5] scala.collection.mutable.Growable.addAll$
+  [ 6] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 7] scala.collection.immutable.IntMap$.from
+  [ 8] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.Scope$$anon$5$$anon$10.apply
+  [27] kyo.Scope$$anon$5$$anon$13.apply
+  [28] kyo.Abort$$anon$2.apply
+  [29] kyo.Abort$$anon$1.apply
+  [30] kyo.Scope$$anon$5$$anon$6.apply
+  [31] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [32] kyo.Kyo$$anon$190.apply
+  [33] kyo.Kyo$$anon$191.apply
+  [34] kyo.Stream$$anon$220.apply
+  [35] kyo.Stream$$anon$221.apply
+  [36] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [37] kyo.scheduler.IOTask.partialLoop$1
+  [38] kyo.scheduler.IOTask.eval
+  [39] kyo.scheduler.IOTask.run
+  [40] kyo.scheduler.Worker.runTask
+  [41] kyo.scheduler.Worker.run
+  [42] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [43] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [44] java.lang.Thread.runWith
+  [45] java.lang.Thread.run
+
+--- 230000000 ns (0.07%), 23 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.updated
+  [ 2] scala.collection.immutable.IntMap.$plus
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 5] scala.collection.mutable.Growable.addAll
+  [ 6] scala.collection.mutable.Growable.addAll$
+  [ 7] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 8] scala.collection.immutable.IntMap$.from
+  [ 9] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [17] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 230000000 ns (0.07%), 23 samples
+  [ 0] scala.collection.immutable.IntMap.get
+  [ 1] kyo.internal.reflect.tasty.PositionsUnpickler$.readSync
+  [ 2] kyo.internal.reflect.tasty.PositionsUnpickler$.read
+  [ 3] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$15
+  [ 4] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$52.apply
+  [ 5] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$52.apply
+  [ 6] kyo.Abort$$anon$2.apply
+  [ 7] kyo.Abort$$anon$1.apply
+  [ 8] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [ 9] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [10] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [11] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [12] kyo.Scope$$anon$5$$anon$10.apply
+  [13] kyo.Scope$$anon$5$$anon$13.apply
+  [14] kyo.Abort$$anon$2.apply
+  [15] kyo.Abort$$anon$1.apply
+  [16] kyo.Scope$$anon$5$$anon$6.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [18] kyo.Kyo$$anon$190.apply
+  [19] kyo.Kyo$$anon$191.apply
+  [20] kyo.Stream$$anon$220.apply
+  [21] kyo.Stream$$anon$221.apply
+  [22] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [23] kyo.scheduler.IOTask.partialLoop$1
+  [24] kyo.scheduler.IOTask.eval
+  [25] kyo.scheduler.IOTask.run
+  [26] kyo.scheduler.Worker.runTask
+  [27] kyo.scheduler.Worker.run
+  [28] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [29] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [30] java.lang.Thread.runWith
+  [31] java.lang.Thread.run
+
+--- 230000000 ns (0.07%), 23 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.updated
+  [ 2] scala.collection.immutable.IntMap.$plus
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 5] scala.collection.mutable.Growable.addAll
+  [ 6] scala.collection.mutable.Growable.addAll$
+  [ 7] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 8] scala.collection.immutable.IntMap$.from
+  [ 9] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [17] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [33] kyo.Kyo$$anon$190.apply
+  [34] kyo.Kyo$$anon$191.apply
+  [35] kyo.Stream$$anon$220.apply
+  [36] kyo.Stream$$anon$221.apply
+  [37] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [38] kyo.scheduler.IOTask.partialLoop$1
+  [39] kyo.scheduler.IOTask.eval
+  [40] kyo.scheduler.IOTask.run
+  [41] kyo.scheduler.Worker.runTask
+  [42] kyo.scheduler.Worker.run
+  [43] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [44] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [45] java.lang.Thread.runWith
+  [46] java.lang.Thread.run
+
+--- 230000000 ns (0.07%), 23 samples
+  [ 0] inflate_fast
+  [ 1] Java_java_util_zip_Inflater_inflateBytesBytes
+  [ 2] java.util.zip.Inflater.inflateBytesBytes
+  [ 3] java.util.zip.Inflater.inflate
+  [ 4] java.util.zip.InflaterInputStream.read
+  [ 5] java.io.InputStream.readNBytes
+  [ 6] java.io.InputStream.readAllBytes
+  [ 7] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$readJarEntry
+  [ 8] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [ 9] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [10] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [11] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$45.apply
+  [12] kyo.Abort$$anon$2.apply
+  [13] kyo.Abort$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [18] kyo.Scope$$anon$5$$anon$10.apply
+  [19] kyo.Scope$$anon$5$$anon$13.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.Scope$$anon$5$$anon$6.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Kyo$$anon$190.apply
+  [25] kyo.Kyo$$anon$191.apply
+  [26] kyo.Stream$$anon$220.apply
+  [27] kyo.Stream$$anon$221.apply
+  [28] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [29] kyo.scheduler.IOTask.partialLoop$1
+  [30] kyo.scheduler.IOTask.eval
+  [31] kyo.scheduler.IOTask.run
+  [32] kyo.scheduler.Worker.runTask
+  [33] kyo.scheduler.Worker.run
+  [34] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [35] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [36] java.lang.Thread.runWith
+  [37] java.lang.Thread.run
+
+--- 220000000 ns (0.06%), 22 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 220000000 ns (0.06%), 22 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 220000000 ns (0.06%), 22 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.$plus
+  [ 2] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.mutable.Growable.addAll
+  [ 5] scala.collection.mutable.Growable.addAll$
+  [ 6] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 7] scala.collection.immutable.IntMap$.from
+  [ 8] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.Scope$$anon$5$$anon$10.apply
+  [27] kyo.Scope$$anon$5$$anon$13.apply
+  [28] kyo.Abort$$anon$2.apply
+  [29] kyo.Abort$$anon$1.apply
+  [30] kyo.Scope$$anon$5$$anon$6.apply
+  [31] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [32] kyo.Kyo$$anon$190.apply
+  [33] kyo.Kyo$$anon$191.apply
+  [34] kyo.Stream$$anon$220.apply
+  [35] kyo.Stream$$anon$221.apply
+  [36] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [37] kyo.scheduler.IOTask.partialLoop$1
+  [38] kyo.scheduler.IOTask.eval
+  [39] kyo.scheduler.IOTask.run
+  [40] kyo.scheduler.Worker.runTask
+  [41] kyo.scheduler.Worker.run
+  [42] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [43] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [44] java.lang.Thread.runWith
+  [45] java.lang.Thread.run
+
+--- 220000000 ns (0.06%), 22 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 210000000 ns (0.06%), 21 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 210000000 ns (0.06%), 21 samples
+  [ 0] kyo.internal.reflect.symbol.Interner.countFilled
+  [ 1] kyo.internal.reflect.symbol.Interner.internInShard
+  [ 2] kyo.internal.reflect.symbol.Interner.intern
+  [ 3] kyo.Reflect$Name$.apply
+  [ 4] kyo.Reflect$Symbol$.computeFullName
+  [ 5] kyo.Reflect$Symbol.fullName
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$.$anonfun$9
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$$$Lambda.0x00003ffe012077d8.apply
+  [ 8] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap
+  [ 9] scala.collection.StrictOptimizedIterableOps.strictOptimizedFlatMap$
+  [10] kyo.Chunk.strictOptimizedFlatMap
+  [11] scala.collection.StrictOptimizedIterableOps.flatMap
+  [12] scala.collection.StrictOptimizedIterableOps.flatMap$
+  [13] kyo.Chunk.flatMap
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$mapLoop$4
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$53.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 210000000 ns (0.06%), 21 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.park
+  [ 5] java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionNode.block
+  [ 6] java.util.concurrent.ForkJoinPool.unmanagedBlock
+  [ 7] java.util.concurrent.ForkJoinPool.managedBlock
+  [ 8] java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await
+  [ 9] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [10] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [11] java.util.concurrent.ThreadPoolExecutor.getTask
+  [12] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [13] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [14] java.lang.Thread.runWith
+  [15] java.lang.Thread.run
+
+--- 210000000 ns (0.06%), 21 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 210000000 ns (0.06%), 21 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 200000000 ns (0.06%), 20 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 200000000 ns (0.06%), 20 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.readDefDefReturnType
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 200000000 ns (0.06%), 20 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.awaitNanos
+  [ 6] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [ 7] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [ 8] java.util.concurrent.ThreadPoolExecutor.getTask
+  [ 9] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [10] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [11] java.lang.Thread.runWith
+  [12] java.lang.Thread.run
+
+--- 200000000 ns (0.06%), 20 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.HashMap$HashMapIterator.next
+  [ 2] scala.collection.mutable.Growable.addAll
+  [ 3] scala.collection.mutable.Growable.addAll$
+  [ 4] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 5] scala.collection.immutable.IntMap$.from
+  [ 6] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [18] kyo.Abort$$anon$2.apply
+  [19] kyo.Abort$$anon$1.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [30] kyo.Kyo$$anon$190.apply
+  [31] kyo.Kyo$$anon$191.apply
+  [32] kyo.Stream$$anon$220.apply
+  [33] kyo.Stream$$anon$221.apply
+  [34] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [35] kyo.scheduler.IOTask.partialLoop$1
+  [36] kyo.scheduler.IOTask.eval
+  [37] kyo.scheduler.IOTask.run
+  [38] kyo.scheduler.Worker.runTask
+  [39] kyo.scheduler.Worker.run
+  [40] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [41] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [42] java.lang.Thread.runWith
+  [43] java.lang.Thread.run
+
+--- 200000000 ns (0.06%), 20 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 190000000 ns (0.05%), 19 samples
+  [ 0] scala.collection.immutable.IntMap.updated
+  [ 1] scala.collection.immutable.IntMap.$plus
+  [ 2] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 3] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 4] scala.collection.mutable.Growable.addAll
+  [ 5] scala.collection.mutable.Growable.addAll$
+  [ 6] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 7] scala.collection.immutable.IntMap$.from
+  [ 8] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [16] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [26] kyo.Scope$$anon$5$$anon$10.apply
+  [27] kyo.Scope$$anon$5$$anon$13.apply
+  [28] kyo.Abort$$anon$2.apply
+  [29] kyo.Abort$$anon$1.apply
+  [30] kyo.Scope$$anon$5$$anon$6.apply
+  [31] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [32] kyo.Kyo$$anon$190.apply
+  [33] kyo.Kyo$$anon$191.apply
+  [34] kyo.Stream$$anon$220.apply
+  [35] kyo.Stream$$anon$221.apply
+  [36] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [37] kyo.scheduler.IOTask.partialLoop$1
+  [38] kyo.scheduler.IOTask.eval
+  [39] kyo.scheduler.IOTask.run
+  [40] kyo.scheduler.Worker.runTask
+  [41] kyo.scheduler.Worker.run
+  [42] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [43] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [44] java.lang.Thread.runWith
+  [45] java.lang.Thread.run
+
+--- 190000000 ns (0.05%), 19 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.InternalClock.update
+  [ 6] kyo.scheduler.InternalClock.$init$$$anonfun$1
+  [ 7] kyo.scheduler.InternalClock$$Lambda.0x00003ffe01127608.run
+  [ 8] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [ 9] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [10] java.lang.Thread.runWith
+  [11] java.lang.Thread.run
+
+--- 190000000 ns (0.05%), 19 samples
+  [ 0] PhaseIdealLoop::build_loop_late
+  [ 1] PhaseIdealLoop::build_and_optimize
+  [ 2] PhaseIdealLoop::PhaseIdealLoop
+  [ 3] PhaseIdealLoop::optimize
+  [ 4] Compile::optimize_loops
+  [ 5] Compile::Optimize
+  [ 6] Compile::Compile
+  [ 7] C2Compiler::compile_method
+  [ 8] CompileBroker::invoke_compiler_on_method
+  [ 9] CompileBroker::compiler_thread_loop
+  [10] JavaThread::thread_main_inner
+  [11] Thread::call_run
+  [12] thread_native_entry
+  [13] _pthread_start
+  [14] thread_start
+
+--- 190000000 ns (0.05%), 19 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 190000000 ns (0.05%), 19 samples
+  [ 0] __gettimeofday
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.Scheduler.$init$$$anonfun$10
+  [ 6] kyo.scheduler.Scheduler.$init$$$anonfun$adapted$1
+  [ 7] kyo.scheduler.Scheduler$$Lambda.0x00003ffe01148fc0.call
+  [ 8] java.util.concurrent.FutureTask.run
+  [ 9] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [10] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [11] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 190000000 ns (0.05%), 19 samples
+  [ 0] PhaseChaitin::build_ifg_physical
+  [ 1] PhaseChaitin::Register_Allocate
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 190000000 ns (0.05%), 19 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.InternalClock.update
+  [ 6] kyo.scheduler.InternalClock.$init$$$anonfun$1
+  [ 7] kyo.scheduler.InternalClock$$Lambda.0x00003ffe01127608.run
+  [ 8] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [ 9] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [10] java.lang.Thread.runWith
+  [11] java.lang.Thread.run
+
+--- 190000000 ns (0.05%), 19 samples
+  [ 0] scala.collection.immutable.IntMap.$plus
+  [ 1] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 2] scala.collection.immutable.IntMap$$anon$2.addOne
+  [ 3] scala.collection.mutable.Growable.addAll
+  [ 4] scala.collection.mutable.Growable.addAll$
+  [ 5] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 6] scala.collection.immutable.IntMap$.from
+  [ 7] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [14] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [15] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [17] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [19] kyo.Abort$$anon$2.apply
+  [20] kyo.Abort$$anon$1.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [31] kyo.Kyo$$anon$190.apply
+  [32] kyo.Kyo$$anon$191.apply
+  [33] kyo.Stream$$anon$220.apply
+  [34] kyo.Stream$$anon$221.apply
+  [35] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [36] kyo.scheduler.IOTask.partialLoop$1
+  [37] kyo.scheduler.IOTask.eval
+  [38] kyo.scheduler.IOTask.run
+  [39] kyo.scheduler.Worker.runTask
+  [40] kyo.scheduler.Worker.run
+  [41] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [42] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [43] java.lang.Thread.runWith
+  [44] java.lang.Thread.run
+
+--- 190000000 ns (0.05%), 19 samples
+  [ 0] scala.collection.mutable.HashMap$HashMapIterator.hasNext
+  [ 1] scala.collection.mutable.Growable.addAll
+  [ 2] scala.collection.mutable.Growable.addAll$
+  [ 3] scala.collection.mutable.ImmutableBuilder.addAll
+  [ 4] scala.collection.immutable.IntMap$.from
+  [ 5] kyo.internal.reflect.tasty.TypeUnpickler$.readTypeIntoSession
+  [ 6] kyo.internal.reflect.tasty.AstUnpickler$.decodeOneTypeIfPresent
+  [ 7] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 8] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 9] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [10] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [11] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [12] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [13] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$50.apply
+  [17] kyo.Abort$$anon$2.apply
+  [18] kyo.Abort$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$42.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$40.apply
+  [23] kyo.Scope$$anon$5$$anon$10.apply
+  [24] kyo.Scope$$anon$5$$anon$13.apply
+  [25] kyo.Abort$$anon$2.apply
+  [26] kyo.Abort$$anon$1.apply
+  [27] kyo.Scope$$anon$5$$anon$6.apply
+  [28] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [29] kyo.Kyo$$anon$190.apply
+  [30] kyo.Kyo$$anon$191.apply
+  [31] kyo.Stream$$anon$220.apply
+  [32] kyo.Stream$$anon$221.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+          ns  percent  samples  top
+  ----------  -------  -------  ---
+ 73450000000   21.00%     7345  scala.collection.immutable.IntMap.updated
+ 30830000000    8.81%     3083  scala.collection.immutable.IntMap$Bin$.apply
+ 29290000000    8.37%     2929  scala.collection.mutable.HashMap$HashMapIterator.hasNext
+ 22500000000    6.43%     2250  G1ParScanThreadState::do_copy_to_survivor_space
+ 17300000000    4.95%     1730  __psynch_cvwait
+ 16150000000    4.62%     1615  G1ParScanThreadState::trim_queue_to_threshold
+ 15330000000    4.38%     1533  scala.collection.immutable.IntMap$Bin.left
+ 13740000000    3.93%     1374  scala.collection.immutable.IntMap$Tip$.apply
+ 12430000000    3.55%     1243  void OopOopIterateBackwardsDispatch<G1ScanEvacuatedObjClosure>::Table::oop_oop_iterate_backwards<InstanceKlass, narrowOop>
+  8660000000    2.48%      866  scala.collection.immutable.IntMap$Bin.prefix
+  7670000000    2.19%      767  kyo.internal.reflect.symbol.Interner.countFilled
+  6380000000    1.82%      638  scala.collection.immutable.IntMapUtils$.join
+  6350000000    1.82%      635  scala.collection.immutable.IntMap$Bin.<init>
+  5490000000    1.57%      549  kyo.internal.reflect.symbol.Interner.internInShard
+  3560000000    1.02%      356  read
+  3490000000    1.00%      349  copy_byte_f
+  2880000000    0.82%      288  scala.collection.immutable.IntMap.$plus
+  2780000000    0.79%      278  scala.collection.generic.BitOperations$Int.hasMatch
+  2730000000    0.78%      273  scala.collection.immutable.IntMap$Bin.right
+  2590000000    0.74%      259  pthread_jit_write_protect_np
+  2490000000    0.71%      249  inflate_fast
+  1710000000    0.49%      171  scala.runtime.BoxesRunTime.boxToInteger
+  1650000000    0.47%      165  large_arrays_hashcode_boolean
+  1290000000    0.37%      129  java_lang_Throwable::fill_in_stack_trace
+  1260000000    0.36%      126  count_positives
+  1250000000    0.36%      125  kyo.internal.reflect.symbol.Interner.bytesEqual
+  1190000000    0.34%      119  scala.collection.immutable.IntMap.get
+  1160000000    0.33%      116  scala.collection.mutable.HashMap$Node._value
+  1110000000    0.32%      111  scala.collection.mutable.HashMap$HashMapIterator.next
+  1040000000    0.30%      104  __psynch_mutexwait
+  1010000000    0.29%      101  scala.collection.mutable.HashMap.growTable
+   910000000    0.26%       91  scala.runtime.BoxesRunTime.unboxToInt
+   840000000    0.24%       84  java.util.zip.ZipFile$Source.checkAndAddEntry
+   760000000    0.22%       76  __open
+   730000000    0.21%       73  scala.collection.mutable.Growable.addAll
+   730000000    0.21%       73  scala.collection.immutable.IntMap$$anon$2.addOne
+   680000000    0.19%       68  BacktraceBuilder::push
+   620000000    0.18%       62  scala.collection.immutable.BitmapIndexedMapNode.getValue
+   580000000    0.17%       58  kyo.internal.reflect.symbol.Interner.computeHash
+   580000000    0.17%       58  scala.collection.mutable.HashMap$Node.key
+   550000000    0.16%       55  itable stub
+   550000000    0.16%       55  scala.collection.immutable.HashMapBuilder.insertValue
+   540000000    0.15%       54  zero_blocks
+   510000000    0.15%       51  scala.collection.mutable.HashMap.put0
+   500000000    0.14%       50  void OopOopIterateDispatch<G1ScanCardClosure>::Table::oop_oop_iterate<InstanceKlass, narrowOop>
+   490000000    0.14%       49  kyo.internal.reflect.tasty.PositionsUnpickler$.readSync
+   480000000    0.14%       48  java.util.zip.ZipFile$Source.initCEN
+   470000000    0.13%       47  scala.collection.immutable.HashMapBuilder.update
+   460000000    0.13%       46  stat64
+   440000000    0.13%       44  PcDescContainer::find_pc_desc_internal
+   430000000    0.12%       43  scala.runtime.BoxesRunTime.boxToDouble
+   430000000    0.12%       43  kyo.internal.reflect.tasty.NameUnpickler$.readUnsafe
+   420000000    0.12%       42  java.lang.Integer.intValue
+   390000000    0.11%       39  kyo.Reflect$Symbol.<init>
+   380000000    0.11%       38  _platform_memset
+   370000000    0.11%       37  _platform_memmove
+   360000000    0.10%       36  fwd_copy_again
+   360000000    0.10%       36  PhaseChaitin::Split
+   350000000    0.10%       35  kyo.internal.reflect.symbol.Interner.grow
+   340000000    0.10%       34  void G1ScanEvacuatedObjClosure::do_oop_work<narrowOop>
+   340000000    0.10%       34  kyo.internal.reflect.tasty.TypeUnpickler$.decodeTag
+   330000000    0.09%       33  jbyte_disjoint_arraycopy
+   320000000    0.09%       32  scala.collection.immutable.BitmapIndexedMapNode.originalHashes
+   320000000    0.09%       32  AccessInternal::PostRuntimeDispatch<G1BarrierSet::AccessBarrier<1335398ull, G1BarrierSet>, (AccessInternal::BarrierType)1, 1335398ull>::oop_access_barrier
+   320000000    0.09%       32  semaphore_wait_trap
+   320000000    0.09%       32  kyo.internal.reflect.binary.ByteView$Heap.readByte
+   300000000    0.09%       30  Arena::contains
+   290000000    0.08%       29  __gettimeofday
+   290000000    0.08%       29  inflate
+   280000000    0.08%       28  java.lang.System$1.uncheckedCountPositives
+   280000000    0.08%       28  frame::sender_for_compiled_frame
+   280000000    0.08%       28  java.lang.invoke.VarHandleReferences$FieldInstanceReadWrite.compareAndSet
+   260000000    0.07%       26  inflate_table
+   240000000    0.07%       24  java.lang.String.getBytes
+   240000000    0.07%       24  scala.runtime.function.JProcedure1.apply
+   230000000    0.07%       23  fwd_copy_drain
+   230000000    0.07%       23  mach_msg2_trap
+   220000000    0.06%       22  scala.collection.mutable.HashMap.findNode
+   220000000    0.06%       22  PhaseIdealLoop::build_loop_late
+   220000000    0.06%       22  kyo.internal.reflect.query.ClasspathOrchestrator$MergeState.fqnIndex
+   220000000    0.06%       22  kyo.Reflect$Name$.asString
+   190000000    0.05%       19  PhaseChaitin::build_ifg_physical
+   190000000    0.05%       19  IndexSetIterator::advance_and_next
+   190000000    0.05%       19  fwd_copy_aligned
+   180000000    0.05%       18  kyo.internal.reflect.snapshot.SnapshotReader$.copyViewRange
+   180000000    0.05%       18  tlv_get_addr
+   180000000    0.05%       18  arrayof_oop_arraycopy
+   170000000    0.05%       17  kyo.internal.reflect.binary.Varint$.readNat
+   160000000    0.05%       16  mach_absolute_time
+   160000000    0.05%       16  kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+   160000000    0.05%       16  PhaseLive::compute
+   150000000    0.04%       15  __lseek
+   150000000    0.04%       15  scala.Array$.copy
+   150000000    0.04%       15  frame::sender_raw
+   150000000    0.04%       15  PhaseIdealLoop::build_loop_late_post_work
+   140000000    0.04%       14  scala.collection.mutable.HashMap$Node.findNode
+   140000000    0.04%       14  java.util.HashMap.resize
+   130000000    0.04%       13  scala.collection.mutable.HashMap.foreach
+   130000000    0.04%       13  java.util.concurrent.atomic.AtomicReference.get
+   130000000    0.04%       13  java.nio.Buffer.session
+   130000000    0.04%       13  PhaseIdealLoop::build_loop_early
+   130000000    0.04%       13  java.util.zip.ZipCoder$UTF8ZipCoder.checkedHash
+   130000000    0.04%       13  kyo.internal.reflect.query.ClasspathOrchestrator$$anon$41$$Lambda.0x00003ffe0121e198.applyVoid
+   130000000    0.04%       13  PhaseChaitin::post_allocate_copy_removal
+   120000000    0.03%       12  scala.collection.immutable.BitmapIndexedMapNode.migrateFromInlineToNodeInPlace
+   120000000    0.03%       12  java.util.HashMap.putVal
+   120000000    0.03%       12  java.util.concurrent.atomic.AtomicBoolean.get
+   120000000    0.03%       12  Compile::identify_useful_nodes
+   120000000    0.03%       12  java.lang.AbstractStringBuilder.append
+   120000000    0.03%       12  java.util.Arrays.copyOf
+   120000000    0.03%       12  kyo.internal.reflect.tasty.NameUnpickler$.readBytes
+   120000000    0.03%       12  arrayof_jint_disjoint_arraycopy
+   120000000    0.03%       12  arrayof_oop_disjoint_arraycopy
+   110000000    0.03%       11  scala.collection.mutable.ArrayBuffer.addOne
+   110000000    0.03%       11  _Copy_disjoint_words
+   110000000    0.03%       11  scala.collection.immutable.IntMap$Tip.<init>
+   110000000    0.03%       11  arrayof_jlong_disjoint_arraycopy
+   110000000    0.03%       11  kyo.Reflect$Symbol$.make
+   110000000    0.03%       11  PhaseAggressiveCoalesce::insert_copies
+   110000000    0.03%       11  CodeHeap::find_blob
+   100000000    0.03%       10  scala.collection.mutable.ArrayBuffer.apply
+   100000000    0.03%       10  InstanceKlass::find_method_index
+   100000000    0.03%       10  Continuation::is_continuation_enterSpecial
+   100000000    0.03%       10  os::javaTimeNanos
+   100000000    0.03%       10  fstat
+   100000000    0.03%       10  kyo.internal.reflect.tasty.TypeUnpickler$.readTypeNode
+   100000000    0.03%       10  kyo.internal.reflect.symbol.SingleAssign.<init>
+   100000000    0.03%       10  kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+   100000000    0.03%       10  close
+   100000000    0.03%       10  Compile::final_graph_reshaping_walk
+   100000000    0.03%       10  PhaseIdealLoop::split_if_with_blocks
+   100000000    0.03%       10  PhaseChaitin::elide_copy
+   100000000    0.03%       10  write
+    90000000    0.03%        9  kyo.internal.reflect.symbol.Interner.intern
+    90000000    0.03%        9  G1BarrierSet::write_region
+    90000000    0.03%        9  MemAllocator::Allocation::notify_allocation
+    90000000    0.03%        9  scala.collection.immutable.BitmapIndexedMapNode.content
+    90000000    0.03%        9  kyo.internal.reflect.binary.Varint$.readInt
+    90000000    0.03%        9  _platform_bzero
+    90000000    0.03%        9  scala.collection.mutable.HashMap$Node._next_$eq
+    80000000    0.02%        8  Matcher::xform
+    80000000    0.02%        8  java.lang.String.coder
+    80000000    0.02%        8  HeapWordImpl** G1HeapRegion::oops_on_memregion_iterate<G1ScanCardClosure, true>
+    80000000    0.02%        8  ciObjectFactory::get_metadata
+    80000000    0.02%        8  kyo.internal.reflect.query.ClasspathOrchestrator$.mergeOneInto$$anonfun$1
+    80000000    0.02%        8  kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$anon$41$$_$apply$$anonfun$14
+    80000000    0.02%        8  MemAllocator::Allocation::check_out_of_memory
+    80000000    0.02%        8  ObjArrayAllocator::initialize
+    80000000    0.02%        8  scala.collection.mutable.ArrayBuffer.update
+    80000000    0.02%        8  kyo.internal.reflect.snapshot.SnapshotWriter$$$Lambda.0x00003ffe0123f0c8.apply
+    80000000    0.02%        8  java.lang.StringCoding.hasNegatives
+    80000000    0.02%        8  TypeArrayKlass::allocate_common
+    80000000    0.02%        8  scala.collection.immutable.HashMapBuilder.insertElement
+    80000000    0.02%        8  MultiNode::is_CFG
+    80000000    0.02%        8  scala.runtime.Statics.anyHash
+    80000000    0.02%        8  PhaseChaitin::gather_lrg_masks
+    80000000    0.02%        8  scala.collection.IndexedSeqView$IndexedSeqViewIterator.next
+    80000000    0.02%        8  Continuation::is_return_barrier_entry
+    80000000    0.02%        8  ProjNode::is_CFG
+    80000000    0.02%        8  NodeHash::hash_find_insert
+    80000000    0.02%        8  PhaseIdealLoop::build_loop_tree
+    80000000    0.02%        8  BacktraceBuilder::expand
+    70000000    0.02%        7  ObjAllocator::initialize
+    70000000    0.02%        7  scala.Tuple2$.apply
+    70000000    0.02%        7  PhaseIterGVN::add_users_of_use_to_worklist
+    70000000    0.02%        7  semaphore_signal_trap
+    70000000    0.02%        7  Node::is_CFG
+    70000000    0.02%        7  java.util.zip.ZipUtils.CENNAM
+    70000000    0.02%        7  Unsafe_Park
+    70000000    0.02%        7  PhaseIterGVN::transform_old
+    70000000    0.02%        7  PhaseLive::add_liveout
+    70000000    0.02%        7  unsigned long PartialArraySplitter::start<OverflowTaskQueue<ScannerTask, (MemTag)5, 131072u>>
+    70000000    0.02%        7  SafepointMechanism::update_poll_values
+    70000000    0.02%        7  java.lang.Integer.toUnsignedLong
+    70000000    0.02%        7  kyo.internal.reflect.tasty.AstUnpickler$.skipTreeBody
+    70000000    0.02%        7  PhaseIdealLoop::dom_lca_for_get_late_ctrl_internal
+    70000000    0.02%        7  Type::Initialize_shared(Compile*)::$_0::__invoke
+    70000000    0.02%        7  PhaseIdealLoop::Dominators
+    70000000    0.02%        7  java.util.Arrays.copyOfRange
+    70000000    0.02%        7  scala.collection.mutable.ArrayBuffer.array
+    70000000    0.02%        7  MemAllocator::allocate
+    70000000    0.02%        7  scala.collection.immutable.Node$.indexFrom
+    70000000    0.02%        7  DIR_Chunk* GrowableArrayWithAllocator<DIR_Chunk*, GrowableArray<DIR_Chunk*>>::insert_sorted<&DIR_Chunk::compare(DIR_Chunk* const&, DIR_Chunk* const&)>
+    70000000    0.02%        7  Klass::check_array_allocation_length
+    70000000    0.02%        7  kyo.scheduler.Worker.checkAvailability
+    60000000    0.02%        6  kyo.Chunk$Indexed$.from
+    60000000    0.02%        6  scala.collection.immutable.BitmapIndexedMapNode.mergeTwoKeyValPairs
+    60000000    0.02%        6  Node::Node
+    60000000    0.02%        6  kyo.scheduler.BlockingMonitor.loop$1
+    60000000    0.02%        6  Unique_Node_List::remove
+    60000000    0.02%        6  sys_icache_invalidate
+    60000000    0.02%        6  swtch_pri
+    60000000    0.02%        6  jdk.internal.util.ArraysSupport.hashCodeOfUnsigned
+    60000000    0.02%        6  PhaseIFG::effective_degree
+    60000000    0.02%        6  Matcher::Label_Root
+    60000000    0.02%        6  PhaseIFG::SquareUp
+    60000000    0.02%        6  Node::set_req_X
+    60000000    0.02%        6  java.util.zip.ZipUtils.get32
+    60000000    0.02%        6  __psynch_mutexdrop
+    60000000    0.02%        6  pthread_mutex_unlock
