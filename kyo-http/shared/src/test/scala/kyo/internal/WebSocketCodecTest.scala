@@ -357,4 +357,45 @@ class WebSocketCodecTest extends kyo.Test:
         }
     }
 
+    "decodeClosePayload extracts code and reason" in {
+        val payload = Span.fromUnsafe(Array[Byte](
+            ((4001 >> 8) & 0xff).toByte,
+            (4001 & 0xff).toByte
+        ) ++ "bye".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        val (code, reason) = WebSocketCodec.decodeClosePayload(payload)
+        assert(code == 4001)
+        assert(reason == "bye")
+    }
+
+    "decodeClosePayload returns (1005, \"\") on empty payload" in {
+        val (code, reason) = WebSocketCodec.decodeClosePayload(Span.empty[Byte])
+        assert(code == 1005)
+        assert(reason == "")
+    }
+
+    "decodeClosePayload returns (code, \"\") when only the 2-byte code is present" in {
+        val payload        = Span.fromUnsafe(Array[Byte](0x03, 0xe8.toByte)) // 1000
+        val (code, reason) = WebSocketCodec.decodeClosePayload(payload)
+        assert(code == 1000)
+        assert(reason == "")
+    }
+
+    "parseResponseSubprotocol extracts the value (case-insensitive)" in {
+        val r1 = WebSocketCodec.parseResponseSubprotocol(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nSec-WebSocket-Protocol: graphql-transport-ws\r\n\r\n"
+        )
+        assert(r1.contains("graphql-transport-ws"))
+        val r2 = WebSocketCodec.parseResponseSubprotocol(
+            "HTTP/1.1 101 Switching Protocols\r\nsec-websocket-protocol:  chat  \r\n\r\n"
+        )
+        assert(r2.contains("chat"))
+    }
+
+    "parseResponseSubprotocol returns None when header absent" in {
+        val r = WebSocketCodec.parseResponseSubprotocol(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
+        )
+        assert(r.isEmpty)
+    }
+
 end WebSocketCodecTest

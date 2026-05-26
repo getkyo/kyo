@@ -739,14 +739,20 @@ final private[kyo] class HttpClientBackend[Handle] private (
 
                     Fiber.initUnscoped {
                         Loop(wsStream) { stream =>
-                            WebSocketCodec.readFrameWith(stream, transportStream, config.maxFrameSize) { (frame, remaining) =>
+                            WebSocketCodec.readFrameWith(
+                                stream,
+                                transportStream,
+                                config.maxFrameSize,
+                                (cr: (Int, String)) => closeReasonRef.set(Present(cr))
+                            ) { (frame, remaining) =>
                                 inbound.put(frame).andThen(Loop.continue(remaining))
                             }
                         }
                     }.map { readFiber =>
                         Fiber.initUnscoped {
                             readFiber.getResult.map { _ =>
-                                inbound.close.unit
+                                // Close both channels so the write fiber observes EOF on outbound.take and exits promptly.
+                                inbound.close.unit.andThen(outbound.close.unit)
                             }
                         }.map { monitorFiber =>
                             Fiber.initUnscoped {
