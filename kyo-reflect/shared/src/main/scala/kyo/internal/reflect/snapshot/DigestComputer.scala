@@ -61,11 +61,15 @@ object DigestComputer:
 
     /** Compute a 64-bit digest of sorted (path, mtime, size) tuples from the given roots.
       *
+      * For jar roots (paths ending with `.jar`, case-insensitive), hashes `(jarPath, jarMtime, jarSize)` directly via `source.stat` without
+      * enumerating jar entries. For `jrt:/` roots and directory roots, retains the existing per-file enumeration via
+      * `source.list(root, ".tasty")`.
+      *
       * Deterministic: same input files and metadata always produce the same 8-byte result. The digest is returned as an 8-byte
       * little-endian array.
       */
     def compute(roots: Seq[String], source: FileSource)(using Frame): Array[Byte] < (Sync & Abort[ReflectError]) =
-        collectStats(roots, source).map: stats =>
+        collectAllStats(roots, source).map: stats =>
             val sorted = stats.sortBy(_._1)
             var hash   = fnv1aOffset
             for (path, mtime, size) <- sorted do
@@ -77,10 +81,13 @@ object DigestComputer:
 
     /** Compute a 64-bit digest of sorted (path, content) tuples from the given roots.
       *
+      * For jar roots, hashes `(jarPath, jarBytes)` by reading the entire jar file's raw bytes. For `jrt:/` and directory roots, retains the
+      * existing per-file content hashing.
+      *
       * Slower than `compute` but detects content changes that leave mtime+size unchanged (e.g., in-place content edit with `touch -t`).
       */
     def computeParanoid(roots: Seq[String], source: FileSource)(using Frame): Array[Byte] < (Sync & Abort[ReflectError]) =
-        collectFiles(roots, source).flatMap: files =>
+        collectAllFiles(roots, source).flatMap: files =>
             val sorted = files.sortBy(identity)
             Kyo.foreach(sorted): path =>
                 source.read(path).map: bytes =>
@@ -92,7 +99,45 @@ object DigestComputer:
                     hash = fnv1aUpdate(hash, bytes)
                 longToBytes(hash)
 
-    /** Collect (path, mtime, size) for all .tasty files reachable from roots. */
+    /** Collect (path, mtime, size) for all roots, branching by root type.
+      *
+      * Jar roots contribute one triple `(jarPath, jarMtime, jarSize)` via `source.stat`. `jrt:/` roots and directory roots contribute one
+      * triple per `.tasty` file found by `source.list`. All triples from all roots are collected into one flat sequence; the caller sorts
+      * globally before hashing.
+      */
+    private def collectAllStats(
+        roots: Seq[String],
+        source: FileSource
+    )(using Frame): Seq[(String, Long, Long)] < (Sync & Abort[ReflectError]) =
+        Kyo.foreach(roots): root =>
+            if root.startsWith("jrt:/") then
+                collectStats(Seq(root), source)
+            else if root.toLowerCase.endsWith(".jar") then
+                source.stat(root).map: st =>
+                    Seq((root, st.mtimeMs, st.size))
+            else
+                collectStats(Seq(root), source)
+        .map(_.flatten.toSeq)
+
+    /** Collect all file paths for `computeParanoid`, branching by root type.
+      *
+      * Jar roots contribute the jar path itself (to be read as raw bytes). `jrt:/` roots and directory roots contribute per-file `.tasty`
+      * paths from `source.list`.
+      */
+    private def collectAllFiles(
+        roots: Seq[String],
+        source: FileSource
+    )(using Frame): Seq[String] < (Sync & Abort[ReflectError]) =
+        Kyo.foreach(roots): root =>
+            if root.startsWith("jrt:/") then
+                collectFiles(Seq(root), source)
+            else if root.toLowerCase.endsWith(".jar") then
+                Seq(root)
+            else
+                collectFiles(Seq(root), source)
+        .map(_.flatten.toSeq)
+
+    /** Collect (path, mtime, size) for all .tasty files reachable from the given roots (directory or jrt:/ roots only). */
     private def collectStats(
         roots: Seq[String],
         source: FileSource
@@ -102,7 +147,7 @@ object DigestComputer:
                 source.stat(path).map: st =>
                     (path, st.mtimeMs, st.size)
 
-    /** Collect all .tasty file paths from roots. */
+    /** Collect all .tasty file paths from directory or jrt:/ roots. */
     private def collectFiles(
         roots: Seq[String],
         source: FileSource
