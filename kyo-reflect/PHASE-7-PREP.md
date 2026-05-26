@@ -1,700 +1,507 @@
-# Phase 7 Preparation Notes: Query API + File Sources + Snapshot Cache + Cross-Platform Orchestration
+# Phase 7 Prep — sbt plugin via fork-JVM
 
-Phase 7 is the final and largest implementation phase. It wires all prior-phase pieces into the real `Classpath.open` implementation, replaces all stubs in `Reflect.scala`, and delivers Phase A/B/C parallel orchestration (DESIGN.md §15), file sources per platform (DESIGN.md §14), snapshot KRFL read/write (DESIGN.md §16), and the `Query` combinator API (DESIGN.md §12).
-
----
-
-## 1. Verbatim Public API Signatures
-
-These are the exact signatures from `Reflect.scala` (current stub skeleton) plus the additions Phase 7 must provide.
-
-### `Classpath` factory methods (in `object Classpath`)
-
-```scala
-// Current stubs — Phase 7 replaces with real implementations:
-def open(roots: Seq[String])(using Frame): Classpath < (Sync & Scope & Abort[ReflectError])
-def open(roots: Seq[String], strict: Boolean)(using Frame): Classpath < (Sync & Scope & Abort[ReflectError])
-def openCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Scope & Abort[ReflectError])
-def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < Sync
-```
-
-Note: `Reflect.scala` uses `String` for paths (not `java.nio.file.Path`), consistent with the existing skeleton. The DESIGN.md shows `Path` in some places but the skeleton was committed with `String`; Phase 7 follows the skeleton exactly.
-
-### Extension methods on `Classpath` (current stubs)
-
-```scala
-extension (cp: Classpath)(using Frame)
-    def findClass(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError])
-    def findPackage(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError])
-    def packages: Chunk[Symbol] < (Sync & Abort[ReflectError])
-    def topLevelClasses: Chunk[Symbol] < (Sync & Abort[ReflectError])
-    def errors: Chunk[ReflectError] < Sync
-```
-
-### New extensions Phase 7 adds
-
-```scala
-extension (cp: Classpath)(using Frame)
-    def query[A](using Reads[A]): Query[A]
-    def findClassByBinary(binaryName: String): Maybe[Symbol] < (Sync & Abort[ReflectError])
-```
-
-`findClassByBinary` canonicalizes its argument via `FqnCanonicalizer.toFullName` (converting `"java/util/Map$Entry"` to `"java.util.Map.Entry"`) then delegates to `findClass`.
-
-### `Query[A]` combinators
-
-```scala
-final class Query[A] private[reflect] (impl: Query.Internal[A]):
-    def filter(p: A => Boolean): Query[A]
-    def where(p: Reflect.Symbol => Boolean): Query[A]
-    def withFlag(f: Flag): Query[A]
-    def named(name: String): Query[A]
-    def extending(parent: Symbol): Query[A]
-    def map[B](f: A => B): Query[B]
-    def stream: Stream[A, Sync & Abort[ReflectError]]
-    def run: Chunk[A] < (Sync & Abort[ReflectError])
-```
-
-Combinators compose into an intermediate plan evaluated lazily on `.run` / `.stream`. The plan is a single traversal over the bound classpath's symbol cache, touching only the fields the `Reads[A]` declares via `touchedFields`.
-
-### `Reflect.Snapshot` object (public, in `kyo.reflect` or on `object Reflect`)
-
-```scala
-object Reflect:
-    object Snapshot:
-        def evictOlderThan(d: Duration): Unit < (Sync & Scope)
-```
-
-On JS browser (no filesystem), `evictOlderThan` returns immediately without error — the platform `FileSource`'s `list` method returns `Abort.fail(...)` which the implementation absorbs silently.
-
-### `Reflect.classFqn[A]` (already correct from Phase 0)
-
-```scala
-inline def classFqn[A](using t: Tag[A]): String = t.show
-```
+Source of truth: `kyo-reflect/execution-plan-perf.md` Phase 7 section.
+Structural reference: `build.sbt` lines 1269-1296 (`kyo-compat` plugin definition).
+Plugin precedent: `kyo-compat/plugin/src/main/scala/io/getkyo/compat/CompatPlugin.scala`.
 
 ---
 
-## 2. Classpath State Machine Design (DESIGN.md §15)
+## The two-module structure
 
-The `Classpath` opaque type aliases a `final class Classpath` with an `AtomicRef[Classpath.State]`. The class is constructed in `Building` state BEFORE Phase B starts, so every `Symbol` created during decode can immediately receive a non-null, stable `home: Classpath` reference.
+Phase 7 creates TWO new sbt subprojects:
 
-### Exact internal class structure
+### 1. `kyo-reflect-sbt-plugin` (Scala 2.12 — sbt 1.x requires 2.12)
+
+- Path: `kyo-reflect-sbt/plugin/src/main/scala/kyo/KyoReflectPlugin.scala`
+- Defines `object KyoReflectPlugin extends AutoPlugin`
+- Setting key: `reflectSnapshotDir: SettingKey[File]` (default: `target.value / "kyo-reflect-snapshots"`)
+- Task key: `reflectSnapshot: TaskKey[File]` (returns the produced snapshot file path)
+- The task:
+  1. Collects `(Compile / fullClasspath).value` entries as `Seq[File]`
+  2. Locates the runner JAR (see Runner Deployment below)
+  3. Spawns a forked JVM via `sbt.Fork.java` running `kyo.internal.reflect.sbt.SnapshotRunner`
+  4. Passes two arguments: (a) colon-separated classpath root paths, (b) absolute output file path
+  5. Parses exit code 0 = success; non-zero = failure (throws `sbt.internal.util.MessageOnlyException`)
+
+### 2. `kyo-reflect-sbt-runner` (Scala 3 — depends on `kyo-reflect.jvm`)
+
+- Path: `kyo-reflect-sbt/runner/src/main/scala/kyo/internal/reflect/sbt/SnapshotRunner.scala`
+- `object SnapshotRunner`
+- `def main(args: Array[String]): Unit`
+  - `args(0)`: colon-separated classpath root paths (split on `File.pathSeparator`)
+  - `args(1)`: absolute path to output directory (becomes the `cacheDir` argument)
+  - Invokes `Reflect.Classpath.openCached(roots, cacheDir)` via `KyoApp.run` (or `Sync.Unsafe.evalOrThrow`)
+  - Exits with code 0 on success, 1 on failure with a printed error message
+
+---
+
+## build.sbt mirror of kyo-compat
+
+The `kyo-compat` definition at lines 1269-1296 is the structural template. Verbatim for reference:
 
 ```scala
-// kyo-reflect/shared/src/main/scala/kyo/internal/reflect/query/Classpath.scala
-final class Classpath private[reflect] (
-    private val state: AtomicRef[Classpath.State]
-):
-    private[reflect] def checkOpen(using Frame): Unit < (Sync & Abort[ReflectError]) =
-        state.get.map {
-            case State.Building(_, _) => Abort.fail(ReflectError.ClasspathBuilding)
-            case State.Ready(_, _, _) => Kyo.unit
-            case State.Closed         => Abort.fail(ReflectError.ClasspathClosed)
+lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
+    .enablePlugins(SbtPlugin)
+    .settings(
+        moduleName         := "kyo-compat",
+        scalaVersion       := "2.12.20",
+        crossScalaVersions := Seq("2.12.20"),
+        sbtPlugin          := true,
+        addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.10.1"),
+        addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2"),
+        addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2"),
+        scriptedLaunchOpts := Seq(
+            "-Xmx1024M",
+            "-Dplugin.version=" + version.value
+        ),
+        scriptedBufferLog := false
+    )
+```
+
+Phase 7 adds two analogous entries to build.sbt. The plugin module:
+
+```scala
+lazy val `kyo-reflect-sbt-plugin` = (project in file("kyo-reflect-sbt/plugin"))
+    .enablePlugins(SbtPlugin)
+    .settings(
+        moduleName         := "kyo-reflect-sbt",
+        scalaVersion       := "2.12.20",
+        crossScalaVersions := Seq("2.12.20"),
+        sbtPlugin          := true,
+        scriptedLaunchOpts := Seq(
+            "-Xmx1024M",
+            "-Dplugin.version=" + version.value,
+            "-Drunner.version=" + version.value
+        ),
+        scriptedBufferLog  := false
+    )
+```
+
+The runner module (regular Scala 3 JVM-only project):
+
+```scala
+lazy val `kyo-reflect-sbt-runner` = (project in file("kyo-reflect-sbt/runner"))
+    .settings(
+        moduleName := "kyo-reflect-sbt-runner",
+        `kyo-settings`
+    )
+    .jvmSettings(mimaCheck(false))
+    .dependsOn(`kyo-reflect`.jvm)
+```
+
+Note: `kyo-reflect` is a `CrossProject`; the runner depends on `\`kyo-reflect\`.jvm` (the JVM project reference). The runner is a plain `project`, not a `crossProject`, because sbt plugins and their runners run on JVM only.
+
+Both new subprojects are aggregated into `kyoJVM` (not `kyoJS` / `kyoNative`) for the same reason `kyo-compat` is — they are JVM-only build-tool artifacts. Add both to the `kyoJVM.aggregate(...)` list.
+
+---
+
+## Verbatim API signatures
+
+### `Reflect.Classpath.openCached`
+
+From `kyo-reflect/shared/src/main/scala/kyo/Reflect.scala` line 828:
+
+```scala
+def openCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Async & Scope & Abort[ReflectError]) =
+    openCachedImpl(roots, cacheDir)
+```
+
+The runner invokes this and must discharge all four effects. The effect stack discharged by `KyoApp.run` (via `KyoAppPlatformSpecific`):
+
+- `Scope` discharged by `Scope.run` inside `KyoAppRunnerWithInterrupts.handle`
+- `Async` discharged by `KyoApp.runAndBlock(timeout)(...)` which calls `Fiber.initUnscoped` + `fiber.block`
+- `Abort[ReflectError]` discharged by wrapping in `Abort.run[ReflectError]`
+- `Sync` discharged by `Sync.Unsafe.evalOrThrow` inside `KyoAppRunnerPlatform.registerEffect`
+
+The standard `extends KyoApp` pattern handles all of this automatically. The runner's `main` method comes from `KyoApp.Base.main`, which calls `runInitCode()` after `run { ... }` registers the effect block.
+
+Full runner skeleton:
+
+```scala
+package kyo.internal.reflect.sbt
+
+import kyo.*
+
+object SnapshotRunner extends KyoApp:
+    run {
+        val roots   = args.toSeq.head.split(java.io.File.pathSeparatorChar).toSeq.filterNot(_.isEmpty)
+        val cacheDir = args.toSeq(1)
+        Reflect.Classpath.openCached(roots, cacheDir).map { _ =>
+            java.lang.System.out.println(s"kyo-reflect-sbt: snapshot written to $cacheDir")
         }
-
-object Classpath:
-    private[reflect] enum State:
-        case Building(symbols: ChunkBuilder[Symbol], arenas: Chunk[TypeArena])
-        case Ready(symbols: Chunk[Symbol], canonical: TypeArena, fqnIndex: Map[String, Symbol])
-        case Closed
-```
-
-### Lifecycle transitions
-
-1. Orchestrator creates `cp = new Classpath(AtomicRef.init(State.Building(...)))`.
-2. Phase B fibers create `Symbol` instances with `home = cp`. State is `Building`; resolving accessors would fail with `ClasspathBuilding` (defense-in-depth; user code cannot reach the classpath yet).
-3. Phase C completes; orchestrator CAS-transitions state from `Building` to `Ready` with the merged data.
-4. `cp` is returned from `Classpath.open`. All resolving accessors now return real data.
-5. Outer `Scope.run` exit fires a `Scope.ensure` finalizer that CAS-transitions state from `Ready` to `Closed`. Subsequent resolving calls return `Abort.fail(ReflectError.ClasspathClosed)`.
-
-The `Scope.ensure` finalizer is registered on the enclosing `Scope` (the one wrapping the `Classpath.open` call), not on a per-file inner scope.
-
-### CAS transition code (sketched)
-
-```scala
-// Phase C completion:
-state.compareAndSet(State.Building(...), State.Ready(symbols, canonical, fqnIndex))
-
-// Scope.ensure finalizer:
-Scope.ensure {
-    Sync.defer { state.unsafe.set(State.Closed) }
-}
-```
-
----
-
-## 3. Phase A/B/C Orchestration (DESIGN.md §15)
-
-### Phase A: header sweep (~100 µs per file)
-
-Per-file inner `Scope.run` is load-bearing. Without it, every `Scope.acquireRelease` registers into the outer scope's finalizer queue; file descriptors pile up and FD exhaustion occurs at large classpath sizes (200+ files). With the inner scope, each handle is released as soon as that file's Phase A completes.
-
-```scala
-// DESIGN.md §15 pseudocode (verbatim):
-val fqnIndex: Map[FQN, FileRef] < (Sync & Abort[ReflectError] & Scope) =
-    Async.foreach(tastyFiles, concurrency = cores) { file =>
-        Scope.run {
-            for
-                handle <- Scope.acquireRelease(openFile(file))(close)
-                header <- parseHeader(handle)                  // magic, version, UUID
-                names  <- parseNameTable(handle)               // into per-file Array[Name]
-                topRefs = indexTopLevelDecls(header, names)    // FQN -> (file, addr)
-            yield topRefs
-        }
-    }.map(_.foldLeft(Map.empty)(_ ++ _))
-```
-
-Output: a global `Map[FQN, FileRef]` mapping each top-level FQN to the file and byte offset of its definition.
-
-### Phase B: parallel body decode
-
-Each fiber owns its own `TypeArena` — no cross-fiber contention. Bodies are stored as `Span[Byte]` views into the heap-resident `Array[Byte]` (which lives as long as the `Classpath`). Cross-file type references are recorded as internal `UnresolvedRef(fqn)` placeholders, not yet public `Type` values.
-
-```scala
-// DESIGN.md §15 pseudocode (verbatim):
-Async.foreach(tastyFiles, concurrency = cores) { file =>
-    Scope.run {
-        for
-            handle  <- Scope.acquireRelease(openFile(file))(close)
-            bytes   <- Sync.defer(readAllBytes(handle))         // heap-resident copy
-            arena   <- Sync.defer(TypeArena())                  // per-fiber, no synchronization
-            symbols <- decodeAstSection(bytes, arena, fqnIndex) // skeleton-eager + lazy bodies
-        yield PerFileResult(file, symbols, arena)
     }
-}
 ```
 
-### Phase C: single-threaded merge (~50ms for 200 files)
+If `args` is shorter than 2 elements, `run` will throw and `KyoApp` will call `exitHook(1)`. The plugin should also validate argument count before forking.
 
-Runs after all Phase B fibers complete. Resolves placeholders via O(1) FQN hash lookup. Structurally-equal types from different fibers collapse to one canonical instance.
+### `sbt.Fork.java`
+
+From `sbt/run_2.12-1.11.7.jar` (sbt 1.x stable API, unchanged since 1.0):
 
 ```scala
-// DESIGN.md §15 pseudocode (verbatim):
-val canonical = TypeArena.canonical()
-for (file, result) <- allResults do
-    for ph @ UnresolvedRef(fqn) <- result.placeholders do
-        val targetSym = fqnIndex(fqn).resolveSymbol()
-        result.replacePlaceholder(ph, Type.Named(targetSym))
-    canonical.mergeFrom(result.arena)
+// sbt.Fork (Scala 2.12 companion object singleton)
+Fork.java: sbt.Fork       // pre-built Fork instance for "java" executable
+
+// Apply method (blocking — waits for process exit):
+def apply(options: ForkOptions, arguments: Seq[String]): Int
+// Fork method (non-blocking — returns Process):
+def fork(options: ForkOptions, arguments: Seq[String]): scala.sys.process.Process
 ```
 
-After Phase C, the orchestrator CAS-transitions the `Classpath` state to `Ready`.
-
-### Failure modes
-
-- Phase A failure: file marked unreadable; Phase B skips it. Error appended to accumulator.
-- Phase B failure inside one file: that file's symbols become `SymbolKind.Unresolved`; error appended. All other files continue.
-- Phase C placeholder miss: `Type.Named(unresolvedSymbol)` where `unresolvedSymbol.kind == SymbolKind.Unresolved`; resolving accessors on it return `Abort.fail(ReflectError.SymbolNotFound)`.
-- Soft-fail mode (default): errors accumulate in `Classpath.errors`. Strict mode: `Classpath.open(roots, strict = true)` fails the entire load on first error.
-
----
-
-## 4. KRFL Snapshot Format (DESIGN.md §16)
-
-### Header layout
-
-```
-+------------------+
-| magic    "KRFL"  | 4 bytes (4 ASCII chars, little-endian)
-| version  M.m.p.0 | 4 bytes (kyo-reflect version triple)
-| flags            | 8 bytes (byteOrder in bit 0: 0=LE, 1=BE)
-+------------------+
-| inputDigest      | 32 bytes (FNV-1a 64-bit hash, zero-padded to 32)
-| compilerVersion  | 16 bytes (Scala major.minor.exp.0 + 12 reserved bytes)
-+------------------+
-| sectionCount     | 4 bytes
-| sectionIndex     | sectionCount * 24 bytes each:
-|   name           |   8 bytes (fixed-length section ID, zero-padded ASCII)
-|   offset         |   8 bytes (byte offset from start of file)
-|   length         |   8 bytes (byte length of section)
-+------------------+
-```
-
-### Nine sections
-
-| Section ID   | Content |
-|---|---|
-| `NAMES`      | Shared byte arena + `(offset: Int, length: Int)` table indexed by `NameId`. |
-| `SYMBOLS`    | Packed fixed-size records: `(kindByte, flags: Long, nameId, ownerId, declaredTypeId, parentsListId, membersListId, bodyFileId, bodyStart, bodyEnd)`. `home` is NOT serialized; restored from enclosing `Classpath` on load. |
-| `TYPES`      | Packed records indexed by canonical type ID: `(kindByte, operandAId, operandBId, extraDataOffset)`. Multi-operand types reference `TYPES_EXTRA` by offset. |
-| `TYPES_EXTRA`| Variable-length operand data for types needing more than two operands (Applied, Function, Tuple, MatchType). |
-| `PARENTS`    | Int arrays of type IDs for class parent lists. |
-| `MEMBERS`    | Int arrays of symbol IDs for class member lists. |
-| `FILES`      | Per-source-file metadata: `(path: String, mtime: Long, size: Long, uuid: String)`. |
-| `BODY_BYTES` | Inline byte storage for lazy body decode. Symbol records in `SYMBOLS` reference offsets into this section. |
-| `ERRORS`     | Serialized `ReflectError` cases accumulated during decode. Restored into `Classpath.errors` on snapshot load. |
-
-### Atomic-rename concurrent write strategy
-
-```
-write   -> tmp-${digest}-${pid}-${nonce}.krfl
-fsync
-rename  -> ${digest}.krfl   (atomic on POSIX; MOVEFILE_REPLACE_EXISTING on Windows)
-```
-
-Two concurrent processes decoding the same input both produce identical tmp files (decode is deterministic) and both attempt rename. The last rename wins; the loser's tmp is silently discarded. No file locking, no corruption. Documented in `SnapshotWriter.scala`.
-
-Stale tmp files (from crashed writers) are removed by `Reflect.Snapshot.evictOlderThan(d)`.
-
-### Versioning policy
-
-- Major bump: invalidates all old snapshots; full re-decode + fresh write; reader emits `ReflectError.SnapshotVersionMismatch`.
-- Minor bump: add-only sections; old snapshots load (new sections are empty).
-- Patch bump: format-stable.
-
-### Endianness
-
-All multi-byte integers are little-endian. Header `flags` byte encodes `byteOrder` (bit 0: 0=LE, 1=BE). Reader checks; mismatch triggers byte-swap or rejection.
-
-### Open path pseudocode
+`ForkOptions` constructor (the `apply()` with no args returns a default):
 
 ```scala
-def openCached(roots: Seq[String], cacheDir: String) =
-    for
-        currentDigest <- computeDigest(roots)
-        snapshot      <- findSnapshot(cacheDir, currentDigest)
-        cp <- snapshot match
-            case Present(file) => loadSnapshot(file)
-            case Absent        =>
-                for
-                    cp <- openFresh(roots)
-                    _  <- writeSnapshotAtomically(cp, cacheDir, currentDigest)
-                yield cp
-    yield cp
+ForkOptions()
+    .withJavaHome(javaHome: Option[File])        // typically javaHome.value from sbt
+    .withOutputStrategy(outputStrategy: Option[OutputStrategy])
+    .withBootJars(bootJars: Vector[File])        // JARs prepended before -classpath
+    .withWorkingDirectory(wd: Option[File])      // baseDirectory.value
+    .withRunJVMOptions(opts: Vector[String])     // JVM flags (e.g., -Xmx256m)
+    .withConnectInput(b: Boolean)
+    .withEnvVars(vars: Map[String, String])
 ```
 
-### Browser no-op
+The `arguments` passed to `Fork.java.apply(opts, args)` are:
+- `-classpath <cp>`  — runner JAR plus kyo-reflect JARs
+- `kyo.internal.reflect.sbt.SnapshotRunner`  — main class name
+- `<roots>`  — colon-separated root paths
+- `<cacheDir>`  — output directory
 
-`Reflect.Classpath.openCached` on JS browser degrades to `open(roots)` (always-miss, never-write). The `JsFileSource` returns `Abort.fail(ReflectError.FileNotFound("browser: use fromPickles"))` for all `read` and `list` calls when no Node.js `process` object is detected.
-
----
-
-## 5. FNV-1a 64-bit Digest (Supervisor Override)
-
-The supervisor has overridden the agent's default recommendation of SHA-256 for the input digest. Phase 7 uses **FNV-1a 64-bit**, a pure-Scala non-cryptographic hash. Approximately 30 LOC, identical on all platforms, zero external dependencies.
-
-### Algorithm
-
-```
-FNV-1a 64-bit:
-  offset_basis = 14695981039346656037UL (as Long = -3750763034362895579L)
-  prime        = 1099511628211L
-
-  def hash(data: Array[Byte]): Long =
-      var h = offset_basis
-      var i = 0
-      while i < data.length do
-          h ^= (data(i) & 0xff).toLong
-          h *= prime
-          i += 1
-      h
-```
-
-### Application to input digest
+Note: `Fork.java` already inserts the `-classpath` and main class from its `arguments` seq starting at index 0. The actual invocation in the plugin task:
 
 ```scala
-// Sorted (path, mtime, size) tuples — deterministic across builds
-val tuples: Seq[(String, Long, Long)] = roots.flatMap { root =>
-    source.list(root, ".tasty").map { path =>
-        val stat = source.stat(path)   // mtime + size
-        (path, stat.mtime, stat.size)
+val exitCode = Fork.java(
+    ForkOptions()
+        .withJavaHome(javaHome.value)
+        .withOutputStrategy(Some(StdoutOutput))
+        .withWorkingDirectory(Some(baseDirectory.value)),
+    Seq(
+        "-classpath", runnerClasspath.mkString(java.io.File.pathSeparator),
+        "kyo.internal.reflect.sbt.SnapshotRunner",
+        roots.mkString(java.io.File.pathSeparator),
+        snapshotDir.getAbsolutePath
+    )
+)
+if (exitCode != 0)
+    throw new sbt.internal.util.MessageOnlyException(
+        s"kyo-reflect-sbt: SnapshotRunner exited with code $exitCode. " +
+        s"Check output above for details."
+    )
+```
+
+`sbt.internal.util.MessageOnlyException` is in `util-control_2.12`. sbt exposes it in the plugin compile classpath automatically when `sbtPlugin := true`. Its `toString` omits the class name, producing a clean error message in the sbt console.
+
+### `KyoApp.run` (Scala 3 entry point)
+
+From `kyo-core/shared/src/main/scala/kyo/KyoApp.scala`:
+
+```scala
+abstract class KyoApp extends KyoAppPlatformSpecific
+// KyoAppPlatformSpecific extends KyoApp.Base[Async & Scope & Abort[Any]]
+//   with KyoAppRunnerWithInterrupts with KyoAppRunnerPlatform
+
+object KyoApp:
+    // The run block registration method (inherited via KyoAppPlatformSpecific):
+    protected def run[A](v: => A < (Async & Scope & Abort[Any]))(using Frame, Render[A]): Unit
+    // The base main method fires registerEffect for each run { ... } block.
+```
+
+Usage pattern from `kyo-pod/shared/src/test/scala/demo/CodeSandbox.scala`:
+
+```scala
+object MyRunner extends KyoApp:
+    run {
+        // A < (Async & Scope & Abort[Any]) computation here
+        someEffect
     }
-}.sortBy(_._1)
+```
 
-// Hash each tuple sequentially into a 64-bit accumulator
-val digest = tuples.foldLeft(fnv1aOffset) { case (h, (path, mtime, size)) =>
-    fnv1aUpdate(fnv1aUpdate(fnv1aUpdate(h, path.getBytes("UTF-8")), longToBytes(mtime)), longToBytes(size))
+`KyoApp.Base.main(args: Array[String])` calls `runInitCode()`, which runs each registered `run { ... }` block via `KyoApp.runAndBlock(runTimeout)(handle(effect))` on the platform scheduler. On JVM, `Sync.Unsafe.evalOrThrow` drives the block synchronously.
+
+The `args` are accessible inside `run { ... }` via `protected def args: Chunk[String]` (inherited from `KyoApp.Base`).
+
+---
+
+## Scripted test layout
+
+Scripted test format is established by `kyo-compat/plugin/src/sbt-test/kyo-compat/`. Each test is a directory containing:
+- `test` — scripted commands (one per line; `>` = sbt task; `->` = expected-failure task)
+- `build.sbt` — test build definition
+- `project/plugins.sbt` — plugin wiring
+- `project/build.properties` — sbt version pin
+
+### Verbatim example: `kyo-compat/plugin/src/sbt-test/kyo-compat/jvm-only/project/plugins.sbt`
+
+```scala
+sys.props.get("plugin.version") match {
+    case Some(x) => addSbtPlugin("io.getkyo" % "kyo-compat" % x)
+    case _       => sys.error("plugin.version not set")
+}
+addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.10.1")
+addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2")
+addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.20.2")
+addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % "0.5.10")
+addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2")
+```
+
+The `plugin.version` system property is injected by `scriptedLaunchOpts := Seq("-Dplugin.version=" + version.value)` in the plugin's build.sbt settings. The scripted test reads it to resolve the locally-published plugin artifact.
+
+### Test 1: `basic` (positive case)
+
+`kyo-reflect-sbt/plugin/src/sbt-test/kyo-reflect-sbt/basic/project/plugins.sbt`:
+
+```scala
+sys.props.get("plugin.version") match {
+    case Some(x) => addSbtPlugin("io.getkyo" % "kyo-reflect-sbt" % x)
+    case _       => sys.error("plugin.version not set")
 }
 ```
 
-The 64-bit hash is stored as a hex string in the snapshot filename: `${digest.toHexString}.krfl`.
+`kyo-reflect-sbt/plugin/src/sbt-test/kyo-reflect-sbt/basic/project/build.properties`:
 
-### `computeParanoid`
+```
+sbt.version=1.12.5
+```
 
-Uses FNV-1a 64-bit of file **contents** rather than mtime+size. Slower; detects content changes that leave mtime and size unchanged (e.g., `touch -t` + in-place content edit).
-
-### Per-platform mtime source
-
-- JVM: `java.nio.file.Files.getLastModifiedTime(path).toMillis`
-- Native: POSIX `stat()` via FFI, `st_mtimespec.tv_sec * 1000 + tv_nsec / 1000000`
-- JS-Node: `fs.statSync(path).mtimeMs`
-- JS-browser: `openCached` returns `Abort.fail(ReflectError.FileNotFound("browser: use fromPickles"))` before any digest computation
-
----
-
-## 6. mmap on JVM/Native, read-into-Array on JS (DESIGN.md §16)
-
-### JVM snapshot read path (preferred)
-
-From DESIGN.md §16:
-
-> `FileChannel.map(MapMode.READ_ONLY, 0, size)` returns a `MappedByteBuffer`, or on JDK 22+ a `MemorySegment` via `Arena.ofShared.allocate(...)`. The Classpath holds one Arena; `Scope.ensure` closes it at scope exit. Body slices reference offsets into the mapped region directly; demand paging brings them in lazily on first touch.
-
-The execution plan (line 616) clarifies: `java.lang.foreign.Arena.ofShared().allocate(size, 1)` returns a `MemorySegment`; file bytes are loaded via `MemorySegment.copy`; body slices reference offsets into the segment directly (zero-copy); the `Arena` is closed explicitly by `Scope.ensure` at scope exit — deterministic release, not GC-dependent.
-
-This differs from the `MappedByteBuffer` pattern in `kyo-examples/jvm/...ledger/db/Index.scala` (which uses `file.map(READ_WRITE, 0, fileSize)` returning a `MappedByteBuffer`). The snapshot uses `MemorySegment` from `java.lang.foreign` because JDK 25 is required and `MemorySegment` supports snapshots larger than 2 GB cleanly.
-
-### Native snapshot read path
-
-POSIX `mmap()` via Scala Native FFI. Single handle, demand paging, `munmap` on `Scope.run` exit (via `Scope.ensure`).
-
-### JS snapshot read path
-
-`fs.readFileSync(path)` on Node.js reads into an `Array[Byte]` fallback. No mmap available on JS. JS browser falls through to `Reflect.Classpath.fromPickles` — no snapshot use at all.
-
-### For .tasty files during decode (Phase B)
-
-Tasty files use `readAllBytes` into heap-resident `Array[Byte]` on ALL platforms (not mmap). This is intentional: mmap of 200+ small files causes FD exhaustion risk. The heap `Array[Byte]` lives as long as the `Classpath` and is what enables lazy body slices without needing open file handles.
-
-The `ByteView` sealed adapter handles both cases:
+`kyo-reflect-sbt/plugin/src/sbt-test/kyo-reflect-sbt/basic/build.sbt`:
 
 ```scala
-sealed trait ByteView:
-    def peekByte(at: Int): Byte
-    def subView(from: Int, until: Int): ByteView
+ThisBuild / scalaVersion := "3.7.0"
 
-object ByteView:
-    final class Heap(bytes: Array[Byte], start: Int, end: Int) extends ByteView
-    final class Mapped(segment: java.lang.foreign.MemorySegment, start: Long, end: Long) extends ByteView
-    // Mapped is only compiled in jvm/ and native/ platform-specific source trees
+lazy val root = (project in file("."))
+    .enablePlugins(KyoReflectPlugin)
+    .settings(
+        organization := "com.example",
+        version      := "0.1.0-TEST",
+        name         := "basic-scripted-test"
+    )
 ```
 
----
-
-## 7. JS Browser vs Node Detection
-
-The exact guard from `kyo-core/js/src/main/scala/kyo/internal/SystemPlatformSpecific.scala` is the canonical precedent:
+`kyo-reflect-sbt/plugin/src/sbt-test/kyo-reflect-sbt/basic/src/main/scala/Foo.scala`:
 
 ```scala
-js.typeOf(js.Dynamic.global.process) != "undefined" &&
-js.typeOf(js.Dynamic.global.process.platform) != "undefined"
+object Foo { val x = 1 }
 ```
 
-The execution plan (line 607) specifies the extended form for `JsFileSource`:
+`kyo-reflect-sbt/plugin/src/sbt-test/kyo-reflect-sbt/basic/test`:
+
+```
+# Positive case: plugin produces a snapshot file and the file exists with size > 0.
+> compile
+> reflectSnapshot
+$ exists target/kyo-reflect-snapshots
+```
+
+The `$ exists` command in scripted asserts a path exists on the filesystem. There is no built-in "file size > 0" assertion in scripted; verify non-emptiness by adding a custom `checkSnapshot: TaskKey[Unit]` assertion task to `build.sbt` that opens the file and checks its length, then calling `> checkSnapshot`.
+
+Extended `build.sbt` with assertion task:
 
 ```scala
-js.typeOf(js.Dynamic.global.process) != "undefined" &&
-js.typeOf(js.Dynamic.global.process.platform) != "undefined"
-```
-
-When this guard is `true`: Node.js path — `fs.readFileSync`, `fs.readdirSync`, `fs.statSync`.
-When this guard is `false`: browser path — all `read` and `list` calls return `Abort.fail(ReflectError.FileNotFound("browser: use fromPickles"))`.
-
-The `fromPickles` path is the supported browser entry point. Consumers provide `Span[Byte]` blobs via `fetch` or bundled imports.
-
----
-
-## 8. FileSource Per-Platform Interfaces (DESIGN.md §14)
-
-### Shared trait
-
-```scala
-// kyo-reflect/shared/src/main/scala/kyo/internal/reflect/query/FileSource.scala
-trait FileSource:
-    def read(path: String): Array[Byte] < (Sync & Abort[ReflectError])
-    def list(dir: String, suffix: String): Chunk[String] < (Sync & Abort[ReflectError])
-    def exists(path: String): Boolean < Sync
-```
-
-`exists` returns `Boolean < Sync` (no `Abort`) — a non-existent path is a valid `false`, not an error. Callers that need an error on absence use `read` directly. This keeps the call-site effect row lighter for common use (short-circuit guard before attempting `read`).
-
-### JVM implementation
-
-```scala
-// kyo-reflect/jvm/src/main/scala/kyo/internal/reflect/query/JvmFileSource.scala
-object JvmFileSource extends FileSource:
-    def read(path: String): Array[Byte] < (Sync & Abort[ReflectError]) =
-        // primary: java.nio.file.Files.readAllBytes(Path.of(path))
-        // jrt:/ support: java.nio.file.FileSystems.getFileSystem(URI.create("jrt:/"))
-        //   used for JDK module resolution (java.lang.*, java.base module in JDK 25)
-        //   detected via: path.startsWith("jrt:/") or via System.getProperty("java.home")
-    def list(dir: String, suffix: String): Chunk[String] < (Sync & Abort[ReflectError]) =
-        // Walks JAR entries for .tasty and .class suffix via JarFile/ZipEntry
-        // For plain directories: java.nio.file.Files.walk(...)
-    def exists(path: String): Boolean < Sync = Sync.defer(Files.exists(Path.of(path)))
-```
-
-### JS implementation
-
-```scala
-// kyo-reflect/js/src/main/scala/kyo/internal/reflect/query/JsFileSource.scala
-object JsFileSource extends FileSource:
-    private val isNode: Boolean =
-        js.typeOf(js.Dynamic.global.process) != "undefined" &&
-        js.typeOf(js.Dynamic.global.process.platform) != "undefined"
-
-    def read(path: String): Array[Byte] < (Sync & Abort[ReflectError]) =
-        if isNode then
-            Sync.defer {
-                // fs.readFileSync(path) returns a Node.js Buffer (Int8Array view)
-                // Copy element-by-element into Array[Byte]
-                val buf = js.Dynamic.global.require("fs").readFileSync(path)
-                val arr = new Array[Byte](buf.length.asInstanceOf[Int])
-                var i = 0
-                while i < arr.length do
-                    arr(i) = buf(i).asInstanceOf[Byte]
-                    i += 1
-                arr
-            }
-        else
-            Abort.fail(ReflectError.FileNotFound("browser: use fromPickles"))
-    // list: fs.readdirSync on node; Abort.fail on browser
-    // exists: fs.existsSync on node; Sync.defer(false) on browser
-```
-
-### Native implementation
-
-```scala
-// kyo-reflect/native/src/main/scala/kyo/internal/reflect/query/NativeFileSource.scala
-object NativeFileSource extends FileSource:
-    // read: POSIX open(path, O_RDONLY) -> read(fd, buf, size) -> close(fd)
-    //   via @extern FFI bindings
-    // list: opendir(path) -> readdir(dir) -> closedir(dir)
-    //   follows symlinks via stat() to resolve real type
-    // exists: stat(path, statBuf) returning 0 = exists
-```
-
----
-
-## 9. Query Combinator Design
-
-`Query[A]` is obtained via `cp.query[A](using Reads[A])` and closes over its source `Classpath`. Terminal operations `.run` and `.stream` do not need an implicit `Classpath`; the binding is captured at construction.
-
-### Combinator plan composition
-
-Combinators compose into an intermediate `Query.Internal[A]` plan. On `.run` or `.stream`, the plan executes as a single traversal over the classpath symbol cache, applying:
-
-1. `symbolKinds` filter from `Reads[A]` — prunes entire symbol categories at scan time
-2. `where(p)` and `withFlag(f)` predicates — applied before `Reads.read`
-3. `named(name)` — matches symbol name string
-4. `extending(parent)` — matches symbols with `parent` in their parent list
-5. `filter(p: A => Boolean)` — applied after `Reads.read`
-6. `map[B](f: A => B)` — applied after `filter`
-
-### Effect rows
-
-- `stream` returns `Stream[A, Sync & Abort[ReflectError]]` — lazy pull-based stream
-- `run` returns `Chunk[A] < (Sync & Abort[ReflectError])` — strict materialization
-
-### Builder pattern flow
-
-```scala
-// Typical usage:
-cp.query[Simple]                    // Query[Simple] — no Async yet
-    .where(_.kind == SymbolKind.Method)  // Query[Simple]
-    .withFlag(Flag.Inline)               // Query[Simple]
-    .named("toString")                   // Query[Simple]
-    .map(_.name)                         // Query[Name]
-    .run                                 // Chunk[Name] < (Sync & Abort[ReflectError])
-```
-
-No `Async` effect in `Query` combinators or terminal operations — the query layer is synchronous after Phase C completes.
-
----
-
-## 10. All 38 Tests Enumerated
-
-### `QueryApiTest`
-
-1. `Reflect.Classpath.fromPickles(Seq.empty)` succeeds and returns a classpath where `findClass("anything")` returns `Absent`.
-2. `cp.findClass("kyo.fixtures.FixtureClasses")` on a classpath opened from fixture TASTy returns `Present(sym)` with `sym.kind == SymbolKind.Class`.
-3. `cp.findClass("nonexistent.Class.XYZ")` returns `Absent`.
-4. `cp.findPackage("kyo.fixtures")` returns `Present(pkg)` with `pkg.kind == SymbolKind.Package`.
-5. `cp.topLevelClasses` returns a non-empty `Chunk[Symbol]` for a classpath with fixture TASTy.
-6. `cp.packages` returns at least `"kyo.fixtures"` as a package symbol.
-7. `cp.errors` returns `Chunk.empty` for a clean classpath.
-8. `cp.errors` returns at least one `ReflectError` for a classpath with one corrupt TASTy file (synthesized fixture).
-9. `cp.query[Simple].run` (where `case class Simple(name: Name, flags: Flags) derives Reads`) returns all symbols in the fixture classpath.
-10. `cp.query[Simple].where(_.kind == SymbolKind.Method).run` returns only method symbols.
-11. `cp.query[Simple].withFlag(Flag.Inline).run` returns only symbols with `Flag.Inline`.
-12. `cp.query[Simple].named("toString").run` returns only symbols named `toString`.
-13. `cp.query[Simple].map(_.name).run` applies the mapping and returns `Chunk[Name]`.
-14. `cp.query[Simple].stream.run` returns the same result as `.run`.
-15. Classpath after its outer `Scope.run` has exited: `sym.declaredType` returns `Abort.fail(ReflectError.ClasspathClosed)`.
-16. Classpath `state` transitions: `Building` before Phase C completes, `Ready` after `open` returns, `Closed` after scope exits.
-17. Strict mode: `Classpath.open(roots, strict = true)` on a classpath with one corrupt file fails with `Abort.fail(ReflectError.CorruptedFile(...))`.
-18. Soft-fail (default) mode: `Classpath.open(roots)` with one corrupt file succeeds; `cp.errors` is non-empty; other symbols still resolve.
-19. (Skipped — numbered in SymbolResolutionTest block below, this slot belongs to test 31.)
-31. Phase A/B/C orchestration: a classpath with 3 fixture TASTy files is loaded with `concurrency = 3`; all symbols are present after `open` returns.
-32. Phase B interruption: a classpath is opened with n fixture TASTy files where exactly one file is synthetically corrupted; after `open` returns, assert `cp.topLevelClasses.size == n-1` AND `cp.errors.size == 1`.
-33. `cp.findClassByBinary("java/util/Map$Entry")` returns the same `Symbol` as `cp.findClass("java.util.Map.Entry")` (reference-equal after canonicalization).
-34. `cp.findClassByBinary("no/such/Class$Nested")` returns `Absent`.
-36. Phase B interrupt with file-handle release: simulate 200 files where file number 3 throws during decode; each file's inner `Scope.run` increments an `AtomicInt` counter on acquire and decrements it on finalizer; after parallel decode returns, assert counter equals `0` (no descriptor leak).
-24b. `Classpath.open(Seq("/nonexistent/root"), ...)` produces `Abort.fail(ReflectError.FileNotFound("/nonexistent/root"))` (missing root is immediate error in both strict and soft-fail modes).
-
-### `SymbolResolutionTest`
-
-19. Two concurrent `findClass("kyo.fixtures.FixtureClasses")` calls produce reference-equal `Symbol` instances (deduplication via `Cache.memo`).
-20. Two concurrent `findClass` calls for different FQNs both resolve independently.
-21. `Unresolved` sentinel: `cp.findClass("no.such.Class")` returns `Absent` in soft-fail mode; a symbol in a partial-classpath fixture has `kind == SymbolKind.Unresolved` and `sym.declaredType` returns `Abort.fail(ReflectError.SymbolNotFound(...))`.
-35. Cross-classpath FQN structural equality: open two `Classpath` instances over the same roots; look up the same FQN in each; verify `sym1 ne sym2` (not reference-equal across classpaths) AND `sym1.fullName == sym2.fullName` (structural equality by FQN).
-
-### `SnapshotRoundTripTest`
-
-22. Write snapshot to a temp dir, read it back, compare `topLevelClasses` by FQN (structural equality).
-23. Reading a snapshot with wrong magic produces `ReflectError.SnapshotFormatError`.
-24. Reading a snapshot with different major version produces `ReflectError.SnapshotVersionMismatch` and falls through to full decode.
-24a. Attempting to write a snapshot to an unwritable directory (e.g., a path under `/dev/null/impossible`) produces `Abort.fail(ReflectError.SnapshotIoError(...))`.
-25. Two concurrent snapshot writers for the same input produce one valid snapshot file (last-write-wins atomic rename; no corrupt output). Implementation: `Async.parallel(2)`, bound with `Async.timeout(1.second)`. Flakiness budget: zero.
-26. `openCached` on a warm cache hit returns the same symbol graph as cold `open` (structural equality by FQN).
-27. `openCached` on a cold miss writes a snapshot file to the cache dir.
-28. `Reflect.Snapshot.evictOlderThan(0.millis)` removes all snapshot and tmp files from the cache dir.
-29. `DigestComputer.compute` for the same roots returns the same digest byte array (deterministic).
-30. `DigestComputer.compute` for two different file sets returns different digest byte arrays.
-
-**Total: 38 tests** (plan numbering has 1-18, 19-21, 22-36 with 24a+24b inserted, and 31-36; matches the plan's "Total tests: 38").
-
-### Verification command
-
-```
-sbt 'project kyo-reflect; testOnly kyo.QueryApiTest kyo.SymbolResolutionTest kyo.SnapshotRoundTripTest'
-```
-
-Cross-platform (one at a time per `feedback_sequential_test_runs`):
-
-```
-sbt 'kyo-reflectJS/test'
-sbt 'kyo-reflectNative/test'
-```
-
----
-
-## 11. Edge Cases and Gotchas
-
-### `Async.foreach` + per-file inner `Scope.run` (critical)
-
-Per `feedback_kyo_scope_fiber_shared`: `Scope` is a `ContextEffect` shared across all `Async.foreach` worker fibers. An `acquireRelease` inside a worker fiber WITHOUT an inner `Scope.run` registers into the **outer** scope's finalizer queue — the handle is not released until the outer `Scope.run` completes. With 200 files, this exhausts file descriptors.
-
-**Rule**: every `Scope.acquireRelease` inside `Async.foreach` workers MUST be wrapped in its own `Scope.run`.
-
-Correct pattern:
-
-```scala
-Async.foreach(files, concurrency = cores) { file =>
-    Scope.run {          // inner scope — releases handle when this lambda completes
-        for
-            handle <- Scope.acquireRelease(open(file))(close)
-            ...
-        yield result
-    }
+val checkSnapshot = taskKey[Unit]("assert snapshot file is non-empty")
+checkSnapshot := {
+    val snapshotDir = (Compile / reflectSnapshotDir).value
+    val files = Option(snapshotDir.listFiles()).getOrElse(Array.empty)
+        .filter(_.getName.endsWith(".krfl"))
+    if (files.isEmpty)
+        sys.error(s"No .krfl snapshot file found in $snapshotDir")
+    val f = files.head
+    if (f.length() == 0L)
+        sys.error(s"Snapshot file ${f.getName} has size 0")
+    println(s"checkSnapshot OK: ${f.getName} (${f.length()} bytes)")
 }
 ```
 
-Wrong pattern (DO NOT DO):
+Extended `test` file:
 
-```scala
-Async.foreach(files, concurrency = cores) { file =>
-    for
-        handle <- Scope.acquireRelease(open(file))(close)   // registers in OUTER scope!
-        ...
-    yield result
-}
+```
+> compile
+> reflectSnapshot
+> checkSnapshot
 ```
 
-### FD exhaustion if outer `Scope.run` holds all handles
+### Test 2: `missing-runner` (failure-mode case)
 
-Even with inner `Scope.run` per file, if Phase B opens all 200 files simultaneously with full concurrency, the 200 open handles exist concurrently. This is bounded by the `concurrency = cores` parameter (typically 8-32). Not an issue in practice because `concurrency` is bounded, but document the invariant: `concurrency` must be much less than the system FD limit.
-
-### Browser `fromPickles` fallback
-
-When `JsFileSource.read` returns `Abort.fail(ReflectError.FileNotFound("browser: use fromPickles"))`, the orchestrator must NOT treat this as a hard failure that aborts the whole classpath load in soft-fail mode. Browser consumers are expected to use `fromPickles` directly. `Classpath.open` on browser with real paths will accumulate `FileNotFound` errors in `Classpath.errors`.
-
-### Cross-classpath structural FQN equality test (Test 35)
-
-Two `Classpath` instances over the same roots produce distinct `Symbol` instances (not reference-equal across classpaths). Structural equality is by `sym.fullName`, which is a pure accessor (works even after `Closed`). Test 35 verifies: `sym1 ne sym2` AND `sym1.fullName == sym2.fullName`.
-
-### `Symbol.Unresolved` sentinel (partial-classpath mode)
-
-When Phase C cannot resolve a placeholder FQN (the FQN does not appear in the classpath), the placeholder is replaced with `Type.Named(unresolvedSym)` where `unresolvedSym.kind == SymbolKind.Unresolved`. Resolving accessors on `unresolvedSym` return `Abort.fail(ReflectError.SymbolNotFound(fqn))`. This is the soft-fail path. `cp.findClass("missing.FQN")` returns `Absent` (not an error); an unresolved cross-reference embedded in a type returns `SymbolNotFound` only when the accessor is called.
-
-### `ReflectError.SnapshotIoError` — missing from current `ReflectError.scala`
-
-The current committed `ReflectError.scala` does NOT include `SnapshotIoError`. The execution plan (line 615) requires it. Phase 7 must add:
+`kyo-reflect-sbt/plugin/src/sbt-test/kyo-reflect-sbt/missing-runner/build.sbt`:
 
 ```scala
-case SnapshotIoError(cause: String)
+ThisBuild / scalaVersion := "3.7.0"
+
+lazy val root = (project in file("."))
+    .enablePlugins(KyoReflectPlugin)
+    .settings(
+        name := "missing-runner-scripted-test"
+    )
 ```
 
-to `ReflectError.scala`. This is a modification to an existing file.
+`kyo-reflect-sbt/plugin/src/sbt-test/kyo-reflect-sbt/missing-runner/test`:
 
-### `Cache.memo` actual signature
-
-The actual `Cache.memo` signature in `Cache.scala` is:
-
-```scala
-def memo[A](
-    maxSize: Int,
-    expireAfterAccess: Duration = Duration.Zero,
-    expireAfterWrite: Duration = Duration.Zero
-)[B, S](
-    f: A => B < S
-)(using Frame): (A => B < (Async & S)) < Sync
+```
+# Failure-mode case: when runner JAR is absent, task fails with useful message.
+-> reflectSnapshot
 ```
 
-Note the extra `Async` in the result: `Cache.memo` makes the memoized function `A => B < (Async & S)`, not `A => B < S`. This is because callers that lose the Promise race wait on the winner's result via `promise.get`, which is `Async`. `Resolver.scala` must account for this extra `Async` in its type signatures.
-
-### `Async.foreach` isolate requirement
-
-`Async.foreach` signature:
-
-```scala
-def foreach[E, A, B, S](
-    using isolate: Isolate[S, Abort[E] & Async, S]
-)(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
-    f: A => B < (Abort[E] & Async & S)
-)(using Frame): Chunk[B] < (Abort[E] & Async & S)
-```
-
-`S` must have an `Isolate` instance. Effects that don't isolate cleanly (e.g., `Scope` directly) must be handled via the inner `Scope.run` pattern to remove `Scope` from the effect row before passing the lambda to `foreach`.
-
-### `Async.parallel` for test 25
-
-The plan specifies `Async.parallel(2)` for the concurrent-writers test. Check the actual `Async` API — if `parallel` doesn't exist, use `Fiber.init` + `fiber.get` twice or `Async.foreach(Seq(writer1, writer2), concurrency = 2)(identity)`.
+The `->` prefix means sbt scripted expects this command to fail. To force the runner JAR to be absent, the `build.sbt` must override `reflectRunnerJar` (a `SettingKey[Option[File]]` or equivalent) to point at a non-existent path. The plugin task must check runner JAR existence before forking and throw `MessageOnlyException` with a message that names the missing JAR path, so the user sees a useful error rather than a `NullPointerException`.
 
 ---
 
-## 12. Concerns Surfaced During Prep
+## Runner deployment
 
-### Concern 1: `SnapshotIoError` absent from `ReflectError.scala`
+This is the principal design question Phase 7 must resolve before implementation starts.
 
-The committed `ReflectError.scala` has no `SnapshotIoError` case. The execution plan mandates it (test 24a). Phase 7 MUST add this case as the first modification step.
+### Option A: Separate Maven artifact (production approach)
 
-### Concern 2: DESIGN.md §16 says SHA-256; supervisor says FNV-1a
-
-DESIGN.md §16 explicitly says "SHA-256 of sorted file paths + mtimes + sizes" in the header diagram and again in the Input Digest Policy section. The execution plan (Phase 7 spec, line 617 and 781) says "FNV-1a 64-bit hash". The execution plan supersedes the DESIGN.md for implementation purposes (it contains the supervisor's corrections). **Use FNV-1a 64-bit** — do not use SHA-256.
-
-### Concern 3: `inputDigest` field size
-
-DESIGN.md §16 shows `inputDigest | 32` (32 bytes) in the header layout, which matches SHA-256. FNV-1a 64-bit produces only 8 bytes. The agent must decide: use 8 bytes (FNV-1a native size) or zero-pad to 32. Recommendation: use 8 bytes for the actual digest and document that the field is 8 bytes for FNV-1a (not 32). This is a minor format decision; document clearly in `SnapshotFormat.scala` constants.
-
-### Concern 4: `Async.parallel` API existence
-
-The plan references `Async.parallel(2)` for test 25. This API may not exist in the current kyo-core. Verify before use. Fallback: `Async.foreach(Seq(writer1, writer2), concurrency = 2)(f)`.
-
-### Concern 5: `Classpath` opaque type aliasing
-
-`Reflect.scala` currently declares:
+The plugin declares the runner as a `libraryDependency` with the `runner.version` system property injected via `scriptedLaunchOpts`:
 
 ```scala
-opaque type Classpath = ClasspathState
-final private class ClasspathState
+// Inside KyoReflectPlugin.reflectSnapshot task implementation:
+val runnerVersion = getClass.getPackage.getImplementationVersion
+val runnerDeps = Seq(
+    "io.getkyo" % "kyo-reflect-sbt-runner" % runnerVersion
+)
+val runnerJar: File = resolveRunnerJar(runnerDeps, streams.value.log)
 ```
 
-Phase 7 replaces `ClasspathState` with the real `final class Classpath` from `kyo.internal.reflect.query.Classpath`. The opaque alias in `Reflect.scala` must be updated to alias the internal class. Since `Classpath` is defined in `internal`, the opaque alias crosses package boundaries — verify Scala 3 allows `opaque type Classpath = kyo.internal.reflect.query.Classpath` and that the internal class remains accessible.
+Resolution uses sbt's `update` key or a standalone `DependencyResolution` call. The runner JAR and all its transitive dependencies (kyo-reflect.jvm, kyo-core.jvm, etc.) are placed on the forked JVM classpath.
 
-### Concern 6: `Reflect.Snapshot` object placement
+Advantage: works in any project that publishes kyo artifacts (CI, Maven Central).
+Disadvantage: requires the runner to be published before the plugin can be tested end-to-end. During local development within the kyo build, this requires `publishLocal` of both artifacts before running `scripted`.
 
-The execution plan says `kyo-reflect/shared/src/main/scala/kyo/reflect/Snapshot.scala` for `object Reflect.Snapshot`. This places `Snapshot` as a nested object inside `Reflect` but in a separate file — Scala 3 allows `object Reflect` to span multiple files via `package object`-style extension. Verify the correct pattern for extending `object Reflect` across files (likely requires `extension object` or placing the `Snapshot` definition inside the main `Reflect.scala` object).
+### Option B: In-tree JAR path (development shortcut)
 
-### Concern 7: `NativeFileSource` FFI scope
+The plugin reads `runner.jar` system property (injected via `scriptedLaunchOpts := Seq("-Drunner.jar=" + ...)`) pointing at the locally-built runner assembly JAR. This avoids Maven resolution for local testing.
 
-The plan calls for POSIX `open`/`read`/`close` and `opendir`/`readdir`/`closedir` via `@extern`. These require `scala.scalanative.unsafe.*` imports and `@extern` objects. The agent must ensure the `@extern` FFI bindings compile with Scala Native 0.5.x (JDK 25 target). Check the existing `kyo-reflect/native/` Utf8.scala for FFI precedent.
+```scala
+// In plugin task:
+val runnerJarPath = sys.props.getOrElse("runner.jar",
+    throw new MessageOnlyException("kyo-reflect-sbt: runner.jar system property not set"))
+val runnerJar = file(runnerJarPath)
+if (!runnerJar.exists())
+    throw new MessageOnlyException(
+        s"kyo-reflect-sbt: runner JAR not found at $runnerJarPath. " +
+        s"Run `kyo-reflect-sbt-runner/assembly` first.")
+```
 
-### Concern 8: `JvmFileSource` `jrt:/` support
+The `build.sbt` plugin definition injects this path:
 
-`jrt:/` filesystem requires `java.nio.file.FileSystems.getFileSystem(URI.create("jrt:/"))`. This call can throw if the JRT filesystem is not mounted (e.g., non-JDK JRE). The implementation must catch and convert to `Abort.fail(ReflectError.FileNotFound(...))`.
+```scala
+scriptedLaunchOpts := Seq(
+    "-Xmx1024M",
+    "-Dplugin.version=" + version.value,
+    "-Drunner.jar=" + (`kyo-reflect-sbt-runner` / assembly).value.getAbsolutePath
+)
+```
 
-### Concern 9: Test 36 uses `AtomicInt` in test fixture
+This requires `sbt-assembly` to be added to `project/plugins.sbt`. Note: `(`kyo-reflect-sbt-runner` / assembly).value` forces the runner assembly to be built before `scripted` runs.
 
-Test 36 needs an `AtomicInt` (or `AtomicBoolean`) counter that increments in `Scope.acquireRelease`'s acquire thunk and decrements in the release thunk. This is a test-only construct. Use `kyo.AtomicInt` (or `java.util.concurrent.atomic.AtomicInteger` if `AtomicInt` is not in kyo-core's API).
+Advantage: no Maven resolution; deterministic in-tree path; reliable for CI.
+Disadvantage: requires `sbt-assembly` as an additional dependency; the runner assembly must be built before scripted runs.
+
+### Recommendation
+
+Use **Option B** for the initial implementation. It is simpler, deterministic, and avoids the publish-before-test bootstrapping problem. The production deployment (Option A) can be layered on top once the plugin works end-to-end. For the scripted `missing-runner` test, override the `runner.jar` property to a non-existent path.
+
+---
+
+## Forked JVM classpath construction
+
+The runner JAR needs kyo-reflect.jvm and all transitive dependencies on the forked JVM classpath. With Option B (assembly JAR), this is automatic — `sbt-assembly` packages kyo-reflect and all dependencies into one fat JAR.
+
+With Option A (Maven artifacts), the plugin task must construct the full classpath:
+
+```scala
+// Conceptual — actual sbt API:
+val runnerClasspath: Seq[File] = runnerJar +: runnerTransitiveDeps
+Fork.java(
+    ForkOptions().withJavaHome(javaHome.value),
+    Seq(
+        "-classpath", runnerClasspath.map(_.getAbsolutePath).mkString(java.io.File.pathSeparator),
+        "kyo.internal.reflect.sbt.SnapshotRunner",
+        compileClasspathRoots.mkString(java.io.File.pathSeparator),
+        snapshotDir.getAbsolutePath
+    )
+)
+```
+
+The compile classpath roots (passed as argument 0 to the runner) come from `(Compile / fullClasspath).value.map(_.data.getAbsolutePath)`. These are the project's class directories and JAR dependencies — what `openCached` will index.
+
+---
+
+## Snapshot location convention
+
+`openCached(roots, cacheDir)` writes the snapshot to `cacheDir/<hexDigest>.krfl`. The plugin sets `cacheDir = (Compile / reflectSnapshotDir).value.getAbsolutePath`, which defaults to `target/kyo-reflect-snapshots`. This is:
+
+- Per-project (inside `target/`), so different projects with different classpaths get independent caches
+- Gitignored by default (sbt's `.gitignore` template ignores `target/`)
+- Cleaned by `sbt clean`
+
+For shared snapshot caches across projects (e.g., CI layer caching), users can override `reflectSnapshotDir` to a shared directory such as `sys.props.getOrElse("user.home", ".") + "/.cache/kyo-reflect"`.
+
+The scripted `basic` test runs in a fresh `target/` directory (scripted creates a temp directory per test), so no stale digest hits are possible during scripted testing.
+
+---
+
+## Edge cases and gotchas
+
+**Plugin Scala version**: sbt 1.x plugins compile against Scala 2.12. The plugin can ONLY use 2.12-compatible code in `KyoReflectPlugin.scala`. No Scala 3 features: no `given`/`using`, no extension methods, no `enum`, no opaque types, no union/intersection types. The plugin file must be valid Scala 2.12 as compiled by sbt's internal `zinc` + Scala 2.12.x.
+
+**kyo-compat uses `sbt.internal.ProjectMatrix`**: the `kyo-compat` plugin imports `sbt.internal.ProjectMatrix` (internal sbt API). `KyoReflectPlugin` does NOT need this — it only uses stable `sbt.Keys` (`fullClasspath`, `baseDirectory`, `target`, etc.) and `sbt.Fork`. Stay on stable APIs.
+
+**`autoImport` visibility**: settings and tasks added to `autoImport` are automatically imported into the user's `build.sbt`. Do not put helper types into `autoImport` unless they need to be user-facing. `reflectSnapshotDir` and `reflectSnapshot` should be in `autoImport`; internal helpers stay inside the plugin object.
+
+**`override def trigger`**: use `noTrigger` (not `allRequirements`). The plugin should be explicitly enabled via `enablePlugins(KyoReflectPlugin)`. Automatic activation on all projects (like `kyo-compat`'s `allRequirements`) is wrong here — not every project wants snapshot generation.
+
+**`override def requires`**: `sbt.plugins.JvmPlugin` is sufficient. No additional plugin requirements.
+
+**Runner `System.exit`**: `KyoApp` calls `exit(code)` (which calls `internal.Platform.exit`) on non-success results. On JVM, `Platform.exit` delegates to `java.lang.Runtime.getRuntime.halt(code)` or `System.exit(code)`. The forked JVM receives this as a process exit code. The plugin checks the exit code via `Fork.java.apply(...): Int`.
+
+**Path separators**: use `java.io.File.pathSeparator` (`:` on Unix, `;` on Windows) to join root paths. Do NOT hardcode `:`. The runner splits on `java.io.File.pathSeparatorChar`.
+
+**Spaces in paths**: individual root paths may contain spaces. Joining with `pathSeparator` and passing as a single argument string to the forked JVM is fine as long as the argument is passed as one element of the `Seq[String]` (not interpolated into a shell command). `Fork.java` uses `ProcessBuilder` internally, which handles args without shell expansion.
+
+**Output strategy**: use `Some(StdoutOutput)` in `ForkOptions` so runner output (including error messages) is visible in the sbt console. `sbt.StdoutOutput` pipes the forked process's stdout and stderr to sbt's output stream.
+
+**JVM startup cost**: approximately 1-2 seconds per `reflectSnapshot` task execution. Acceptable for build-time use. The snapshot file persists in `target/kyo-reflect-snapshots/`; subsequent `openCached` calls on an unchanged classpath hit the cache (O(jars) stat calls) rather than re-running the forked JVM.
+
+**Snapshot cross-platform loadability**: the plugin runs on JVM only (sbt runs on JVM). The `.krfl` snapshot it produces must be loadable by `Reflect.Classpath.openCached` on JVM, JS, and Native. The scripted test covers JVM loadability. JS and Native loadability is covered by the existing `SnapshotRoundTripTest` suite, which already exercises the snapshot read path on all three platforms.
+
+**Two-level fork depth in scripted tests**: sbt scripted runs in a forked sbt process (level 1). The plugin task spawns a second forked JVM for the runner (level 2). Level 1 is controlled by `scriptedLaunchOpts`; level 2 is controlled by `ForkOptions` inside the plugin task. Both forks are sequential, not concurrent, so port/resource conflicts are not an issue.
+
+**Digest-keyed snapshot naming**: `openCached` names the snapshot `<hexDigest>.krfl` where the digest is computed from classpath root metadata (mtime + size after Phase 2). If Phase 2 is not yet committed when Phase 7 is implemented, the digest computation may still open every JAR. The scripted test does not assert specific digest values; it only checks that a `.krfl` file exists with size > 0.
+
+---
+
+## Anti-flakiness notes
+
+- JVM startup time varies (1-3s). Do not assert wall-clock budgets in scripted tests.
+- The snapshot file is keyed by digest. Scripted tests run in a fresh `target/` (sbt scripted creates a temp project directory per test run), so stale digest hits cannot occur.
+- The `missing-runner` test relies on `-> reflectSnapshot` (expected failure). The runner JAR path must be reliably absent for this test to pass consistently. Use a hardcoded non-existent path such as `file("/nonexistent/kyo-reflect-sbt-runner.jar")` rather than trying to delete a real file.
+- `Fork.java.apply` blocks until the forked process exits. Scripted tests have a timeout (default 5 minutes per step in sbt 1.x scripted). Runner execution on a minimal classpath (one class file) takes under 5 seconds.
+
+---
+
+## Concerns requiring supervisor attention
+
+### Concern 1: Runner JAR resolution strategy must be decided before implementation starts
+
+The plugin task needs to locate the runner JAR at task execution time. Option A (Maven resolution) and Option B (assembly JAR via system property) have different build.sbt implications:
+
+- Option A requires: no `sbt-assembly`; `libraryDependencies` resolution inside the plugin task; runner must be published (or in Maven local) before scripted runs. Bootstrapping for `publishLocal` requires `kyo-reflect-sbt-runner` to be built and published first.
+- Option B requires: `sbt-assembly` plugin added to `project/plugins.sbt`; `scriptedLaunchOpts` injects `-Drunner.jar=...` pointing at the assembled fat JAR; `scripted` depends on `kyo-reflect-sbt-runner/assembly` task completing first.
+
+The recommendation is Option B. Supervisor should confirm before implementation so the build.sbt additions are correct.
+
+### Concern 2: `kyo-reflect-sbt-runner` as plain `project` vs `crossProject`
+
+`kyo-reflect-sbt-runner` is proposed as a plain `project in file("kyo-reflect-sbt/runner")` (not a `crossProject`), because the runner is JVM-only (sbt runs on JVM). This means it cannot use the `kyo-settings` macro that `crossProject`s use. The runner's `build.sbt` settings need to include `scalaVersion` explicitly. Confirm the correct Scala 3 version string (the rest of kyo uses `3.7.0` or the `dottyVersion` variable in build.sbt).
+
+### Concern 3: Snapshot directory convention — per-project vs shared
+
+The default `target/kyo-reflect-snapshots` is cleaned by `sbt clean`, which means every clean build regenerates the snapshot (one fork per build). For projects with large classpaths, this adds 1-2 seconds to each post-clean build. An alternative default of `sys.props("user.home") + "/.cache/kyo-reflect"` would persist across clean builds but requires users to manually evict stale snapshots. The plan says `target/kyo-reflect-snapshots`; confirm this is the intended default.
+
+### Concern 4: `trigger = noTrigger` vs `allRequirements`
+
+The plan (execution-plan-perf.md Phase 7) says the plugin "does NOT add itself as a compile or test dependency to the project it is applied to". This implies `noTrigger` so users opt in via `enablePlugins(KyoReflectPlugin)`. The `kyo-compat` plugin uses `allRequirements` because it injects `compatKyoVersion` into every `JvmPlugin`-enabled project. `KyoReflectPlugin` should NOT do this. Confirm `noTrigger` is the right choice.
+
+### Concern 5: Effect discharge in `SnapshotRunner.main`
+
+`Reflect.Classpath.openCached` returns `Classpath < (Sync & Async & Scope & Abort[ReflectError])`. The runner must discharge all four effects before `main` returns. Using `object SnapshotRunner extends KyoApp` with `run { openCached(...) }` is the cleanest approach (all discharge happens inside `KyoApp`). However, `KyoApp` exits with code 1 and prints a stack trace on `Abort[Any]` failure. The runner needs `Abort[ReflectError]` failure to produce a human-readable message without a stack trace. Override `onResult` or use `Abort.run[ReflectError](openCached(...)).map { case Failure(e) => java.lang.System.err.println(...); exit(1); case _ => () }` inside the `run { ... }` block. Confirm the failure-output format before implementation.

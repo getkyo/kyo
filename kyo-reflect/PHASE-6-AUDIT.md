@@ -1,222 +1,100 @@
-# Phase 6 Audit
+# Phase 6 Audit: Interner pre-sizing
 
-Audit run: 2026-05-25T01:28:25Z
-Commit audited: 82ad3bdfa933df8cbe922c5305180cb3364ee355
-Files audited:
-- `kyo-reflect/shared/src/main/scala/kyo/internal/ReflectMacro.scala` (403 lines, NEW)
-- `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/reads/ReflectRuntime.scala` (84 lines, NEW)
-- `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/reads/ReadsInstances.scala` (887 lines, NEW)
-- `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/reads/TouchedFields.scala` (140 lines, NEW)
-- `kyo-reflect/shared/src/test/scala/kyo/ReadsDerivationTest.scala` (385 lines, NEW)
-- `kyo-reflect/shared/src/main/scala/kyo/Reflect.scala` (MODIFIED: line 350 `using Frame` added, line 353 macro splice + companion mixin)
+Commit: `0c42049ed` ("kyo-reflect Phase 6: Interner pre-sizing")
 
----
+## Test count
+
+Plan §Phase 6 Tests calls for 3 new tests in `InternerTest.scala` (T-P6-1 ... T-P6-3, per the audit prompt's naming).
+
+| Leaf | Status | Cite |
+|---|---|---|
+| T-P6-1 (pre-sized Interner, growCount==0 after 1000 entries) | PRESENT_WEAKENED | `kyo-reflect/shared/src/test/scala/kyo/InternerTest.scala:84-93` |
+| T-P6-2 (pre-sizing does not affect identity semantics) | PRESENT_STRICT | `kyo-reflect/shared/src/test/scala/kyo/InternerTest.scala:98-114` |
+| T-P6-3 (exact capacity / threshold behavior) | PRESENT_STRICT | `kyo-reflect/shared/src/test/scala/kyo/InternerTest.scala:121-141` |
+
+T-P6-1 weakening rationale:
+- Plan §Phase 6 T1 specifies `new Interner(numShards = 4, initialShardCapacity = 256)` + 1,000 entries + assert `growCount == 0`.
+- The committed test uses `initialShardCapacity = 512` (not 256) for 1,000 entries.
+- Load-factor math: shards = 4, threshold per shard = `cap * 3/4`. With 1,000 entries uniformly hashed across 4 shards, expected fill is ~250 per shard. At cap 256 threshold is 192; ~250 > 192, so at least one shard would grow. At cap 512 threshold is 384; ~250 < 384, growCount stays 0.
+- The load-factor correction is sound. The plan's T1 numbers as written (cap=256, 1,000 entries, no grow) are arithmetically incompatible with the actual load policy in `Interner.internInShard` (`filled * 4 >= table.length * 3`, i.e. 75%). The agent picked a consistent cap to make the assertion truly mean "no resize when adequately pre-sized." This still exercises the spec invariant (Interner sized adequately => no grow), only the constant differs from the plan text.
+- Categorized PRESENT_WEAKENED (not STRICT) only because the literal capacity differs from the plan; the test purpose and invariant are intact. T-P6-3 separately demonstrates the exact-threshold behavior the plan likely meant T1 to also illustrate.
+
+## Implementation verification
+
+- Constructor adds `initialShardCapacity: Int` with NO default: `Interner.scala:16` (`final class Interner(numShards: Int, initialShardCapacity: Int):`). No default per `feedback_no_default_params_internal`.
+- `growCount: AtomicInteger`, `private[kyo]`: `Interner.scala:20-21` (`private[kyo] val growCount: java.util.concurrent.atomic.AtomicInteger = new java.util.concurrent.atomic.AtomicInteger(0)`).
+- `grow` increments `growCount`: `Interner.scala:107` (`growCount.incrementAndGet(): Unit`).
+- `require` checks for power-of-2 and >= 1: `Interner.scala:17-19` (both checks on `numShards` and `initialShardCapacity`).
+- `ClasspathOrchestrator.countAllEntries` helper exists: `ClasspathOrchestrator.scala:127-138`. Multi-suffix `source.list(root, Chunk(".tasty", "module-info.class"))` matches the Phase 1 walker contract.
+- `runPhaseAB` uses pre-walk + sizeHint to construct Interner: `ClasspathOrchestrator.scala:152-155` (`countAllEntries(roots, source).flatMap { entryCount => val sizeHint = (entryCount / numShards).max(16); val interner = new Interner(numShards = numShards, initialShardCapacity = sizeHint) ... }`).
+  - NOTE: the plan text specified `Math.max(16, (allEntries.size / 128) * 2)` (i.e. `*2` headroom). The commit uses `(entryCount / numShards).max(16)` with NO `* 2` headroom. This means a fully balanced shard reaches exactly its load-factor threshold with zero spare; any hash skew above average will trigger one grow per affected shard. The 2x slack the plan called for is not present. Flagged as WARN (not BLOCKER) because the deviation only reduces the size of the win, not correctness.
+- `Reflect.globalInterner` passes `initialShardCapacity = 16`: `Reflect.scala:35` (`private val globalInterner: Interner = new Interner(numShards = 32, initialShardCapacity = 16)`).
+- `ModuleInfoReader` passes `initialShardCapacity = 16`: `ModuleInfoReader.scala:39` (`val interner = new Interner(numShards = 16, initialShardCapacity = 16)`).
+
+## CONTRIBUTING.md / STEERING violations
+
+- **No default params on internal API**: respected. Constructor has no defaults; every call site is explicit.
+- **No new unsafe markers**: diff adds 0 `asInstanceOf`, 0 `Frame.internal`, 0 `AllowUnsafe`, 0 `Sync.Unsafe.defer`, 0 new `null` keywords. (Existing `null` sentinels in `Interner.internInShard` for empty slots are unchanged and legitimate concurrency.)
+- **No effect aliases / no implicit handlers**: not applicable; pure data-structure change.
+- **Tests use public API on LHS**: Interner constructor is the public-to-the-test API for this internal class; tests call `interner.intern(...)` (LHS). `growCount.get()` and `shardSize(...)` are package-private observers used only on RHS for verification. Compliant.
+- **No em-dashes / LLM-tells in new code/text**: no em-dashes added in the diff.
+- **No @nowarn additions, no opaque-state hacks, no AtomicReference->mutable-class regressions**: none.
+
+## Unsafe markers
+
+Grep over the committed diff (`+`-lines only): zero new `asInstanceOf`, zero new `Frame.internal`, zero new `AllowUnsafe`, zero new `Sync.Unsafe.defer`, zero new bare `null` writes. Pre-existing `AtomicReference` + CAS pattern in `Interner` is preserved verbatim. `AtomicInteger` introduced for `growCount` is JDK-stdlib concurrent primitive (legitimate, cross-platform).
+
+## Cross-platform consistency
+
+- `java.util.concurrent.atomic.AtomicInteger` exists on JVM, Scala.js (emulated), and Scala Native. Same for `AtomicReference`, already in use. Cross-platform fine.
+- Commit message reports JVM 50 targeted tests + 28 regression tests passing, Native + JS `Test/compile` clean. I did not re-run these, taking the commit's report at face value as instructed (read-only audit).
+
+## Steering deviation (files touched)
+
+Phase 6 plan §Files to modify lists:
+- `Interner.scala` (constructor)
+- `ClasspathOrchestrator.scala` (new caller signature, plus computation of `sizeHint`)
+- `InternerTest.scala` (3 new tests)
+- Test files using `new Interner(...)` updated for mechanical compile fix.
+
+Commit touches:
+1. `kyo-reflect/shared/src/main/scala/kyo/Reflect.scala` (mechanical: globalInterner caller).
+2. `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/classfile/ModuleInfoReader.scala` (mechanical: caller).
+3. `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/query/ClasspathOrchestrator.scala` (planned).
+4. `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/symbol/Interner.scala` (planned).
+5-17. 13 mechanical test-file caller updates: `AstUnpicklerTest.scala`, `AttributeUnpicklerTest.scala`, `ClassfileReaderTest.scala`, `ClasspathRefDedupTest.scala`, `CommentsUnpicklerTest.scala`, `JavaSignaturesTest.scala`, `JavaSymbolTest.scala`, `NameUnpicklerTest.scala`, `PositionsUnpicklerTest.scala`, `QueryApiTest.scala`, `Scala2PickleTest.scala`, `SymbolResolutionTest.scala`, `TreeUnpicklerTest.scala`, `UnifiedModelTest.scala`.
+18. `InternerTest.scala` (planned: 3 new tests).
+
+All within `kyo-reflect/`. All within prompt's "also acceptable mechanical compile-fix" list. **No steering deviation.**
+
+## Anti-flakiness
+
+- T-P6-1: deterministic. Constructed inputs (`s"entry-$i"`), count assertion (`growCount.get() == 0`). FNV-1a is deterministic; distribution across 4 shards for 1,000 keys is by hash, but with cap 512 the per-shard threshold (384) is well above any expected uniform fill (~250) AND above realistic worst-case skew (no single shard will hold 384+ entries out of 1,000 under FNV-1a unless pathologically adversarial inputs are chosen). Safe.
+- T-P6-2: deterministic. Reference equality on 5 fixed strings, two pre-sized interners. No threading, no timing.
+- T-P6-3: deterministic. 760 entries (under `4 * 192 = 768`) asserts `growCount == 0`; then adds up to 100 more entries until any shard exceeds 192, asserts `growCount > 0`. There IS a theoretical worst case where FNV-1a leaves all 4 shards under 192 after 860 entries; the test does not statically prove the worst case can't happen with the chosen key set. In practice this is robust. Flagged as NOTE, not a flakiness BLOCKER.
+
+## Phase 6 concern: pre-walk overhead
+
+Acknowledged in the audit prompt and respected. `countAllEntries` adds exactly one extra `source.list(root, suffixes)` per root per cold-load. This is duplicative with the `walkRoot` enumeration during `runPhaseAB`. The win is eliminating Interner resize events during decode; the cost is one extra directory/jar walk. Whether the win exceeds the cost is a Phase 8 measurement, not something this audit can verify.
+
+NOTE for Phase 8: re-profiling must compare total cold-load time including the pre-walk, not just decode time, against the baseline. If the pre-walk cost dominates the saved resize cost, Phase 6 should be revisited to derive `entryCount` from the streaming walk (e.g. via an `AtomicInteger` counter incremented during `walkRoot` and used to lazily-pre-size the Interner on first use, or by accepting an over-estimate via a static heuristic).
+
+Combined with W1 below (missing `*2` headroom), this is the highest-leverage finding to verify empirically in Phase 8.
+
+## Categorized findings
+
+### BLOCKER (halts Phase 8 SLOT-A launch)
+None.
+
+### WARN
+- **W1: sizeHint formula drops the `*2` headroom called out in the plan** (`ClasspathOrchestrator.scala:154`). Plan: `Math.max(16, (allEntries.size / 128) * 2)`. Commit: `(entryCount / numShards).max(16)`. Without the `*2`, a fully balanced shard sits at exactly the 75% load threshold and one grow per shard is expected on any modest hash skew. Win magnitude is roughly half what the plan promised. Phase 8 re-profile will surface this if the resize-event count is non-zero after Phase 6.
+- **W2: T-P6-1 capacity constant differs from the plan** (`InternerTest.scala:89`, plan §Phase 6 T1). The plan-as-written prescribes cap=256/1000 entries/growCount==0 which is arithmetically impossible at the actual 75% load policy; the agent corrected to cap=512. The correction is sound, but the plan text was not amended in the same commit, leaving a documentation drift. Recommend updating `execution-plan-perf.md` Phase 6 T1 to match the committed test (or re-deriving the plan's original intent: cap=256 with ~190 entries, OR cap=512 with 1000 entries).
+
+### NOTE
+- **N1: pre-walk overhead** is real and must be net-evaluated in Phase 8 alongside resize-savings. If pre-walk cost > resize savings, revisit (lazy counter, static heuristic, or skip pre-walk and accept some resize events).
+- **N2: T-P6-3 second loop relies on FNV-1a not leaving all shards under-threshold after 860 entries**. Not adversarial, almost certainly fine, but the test does not statically prove the worst case. Acceptable for a unit test.
+- **N3: `growCount.incrementAndGet(): Unit`** type ascription (Interner.scala:107) discards the int result of `incrementAndGet`. Standard Scala 3 idiom for "use only for side effect"; non-issue, noted only because it is an uncommon pattern.
 
 ## Verdict
-PROCEED (with WARN-drain required before Phase 6b)
 
-## Summary
-| Category | Count |
-|---|---|
-| BLOCKER | 0 |
-| WARN | 5 |
-| NOTE | 5 |
-
----
-
-## Findings
-
-### BLOCKER (0)
-
-(none)
-
----
-
-### WARN (5)
-
-**W1. Dead private method `extractStaticTouchedByTypeRepr` in ReflectMacro.scala (lines 378-401)**
-`extractStaticTouchedByTypeRepr` is defined as a `private def` inside `object ReflectMacro` but is never called from `buildProduct`, `analyzeField`, or any other non-self site. The method calls itself recursively on `AppliedType` inner arguments but the only callers are those recursive calls. The production code path for `touchedFields` uses `directFieldTouched(fieldName)` (field-name dispatch) and `'{ $r.touchedFields }` (summoned-instance propagation). `extractStaticTouchedByTypeRepr` is dead code left over from an earlier design iteration.
-- **File**: `kyo-reflect/shared/src/main/scala/kyo/internal/ReflectMacro.scala:378-401`
-- **Fix**: Delete `extractStaticTouchedByTypeRepr` and its three internal callsites (lines 395 and 398 inside itself). The live code path does not use it.
-
----
-
-**W2. Test 9 assertion uses a loose `||` that lets the test pass without verifying "hand-written" in the error message**
-The primary path in Test 9 calls `typeCheckErrors` on `"sealed trait SumType; object ReadsDerivationTest_T9 { val r = compiletime.summonInline[kyo.Reflect.Reads[SumType]] }"`. `SumType` has no `derives Reflect.Reads`, so `summonInline` will fail with "no given instance found for Reads[SumType]" — not with the macro's "hand-written" message. If `err.nonEmpty` is true (which it will be), the first branch of the `||` short-circuits and the fallback (which actually checks the message keyword) is never evaluated. The test therefore passes without verifying that the macro emits the "hand-written" guidance. Plan line 502 mandates: "compile error containing the phrase 'hand-written'".
-- **File**: `kyo-reflect/shared/src/test/scala/kyo/ReadsDerivationTest.scala:204-215`
-- **Fix**: Replace the two-path `||` with a single strict call to `typeCheckErrors` on `"sealed trait MySeal; case class MySealR() extends MySeal; object T9b { val r: kyo.Reflect.Reads[MySeal] = kyo.Reflect.Reads.derived[MySeal] }"` and assert `errors.nonEmpty && errors.exists(e => e.message.contains("hand-written"))`. The summonInline path tests implicit resolution failure, not the macro error; drop it.
-
----
-
-**W3. Test 11 tests `customIntReads.read(stub)` directly rather than `Reads[Custom].read(stub)`**
-Plan line 504 mandates: "the derived instance uses the given `Reads[Int]` for the `special` field". The test body imports `Test11.given` and then calls `Test11.customIntReads.read(stub)` directly -- this tests the hand-written `customIntReads` instance in isolation, NOT the derived `Reads[Custom]`. To verify that derivation actually wires the summoned `Reads[Int]`, the test must call `summon[Reads[Test11.Custom]].read(stub)` and assert that the `Custom.special` field equals the value that `customIntReads` would produce (`stub.name.asString.length == 5`). The current test does not exercise derivation at all for this case.
-- **File**: `kyo-reflect/shared/src/test/scala/kyo/ReadsDerivationTest.scala:237-253`
-- **Fix**: Change the test body to summon `Reads[Test11.Custom]`, call `.read(stub)`, and assert `custom.special == "hello".length` and `custom.name == stub.name`.
-
----
-
-**W4. Test 12's success branch uses `decls.isEmpty || decls.nonEmpty` (vacuous assertion)**
-Test 12 handles the `Result.Success(decls)` branch with `assert(decls.isEmpty || decls.nonEmpty, ...)`. This tautology always succeeds if no error is thrown, which is fine IF the test never reaches this branch (the comment says stub.declarations throws `NotImplemented`). However, if `declarations` is later implemented on stubs, this branch becomes a green test that asserts nothing. It also means the test does not distinguish "declarations returns Chunk.empty" from "declarations returns a non-empty Chunk" -- both pass silently.
-- **File**: `kyo-reflect/shared/src/test/scala/kyo/ReadsDerivationTest.scala:271-275`
-- **Fix**: Remove the `Success(decls)` case or replace the assertion with `fail(s"Expected NotImplemented but declarations returned: $decls")`, so the test remains a strict probe of the stub's behavior.
-
----
-
-**W5. Test 16 exercises a hand-written `val matchReads` (with manually declared `touchedFields = FieldSet.Name`) rather than a macro-analyzed body**
-Plan line 509 mandates: "a `Match` node in a hand-written `Reads.read` body containing a `Bind` pattern does not cause macro hygiene assertions to fire … assert that the derived `touchedFields` for this `Reads` instance excludes any `FieldSet` bits that appear only in the `Bind` pattern and not in the guard or RHS". The implementation uses `val matchReads: Reflect.Reads[Reflect.Name] = new Reflect.Reads[Reflect.Name]: ... val touchedFields = Reflect.FieldSet.Name`. `touchedFields` is a statically declared `val`, so `tf.bits == Reflect.FieldSet.Name.bits` is always trivially true regardless of any hygiene logic. No macro analysis of the `read` body occurs. The `TouchedFields.analyze` path (which IS where the hygiene guard lives) is never invoked. The test proves nothing about hygiene rule 2.
-- **File**: `kyo-reflect/shared/src/test/scala/kyo/ReadsDerivationTest.scala:320-341`
-- **Fix**: Replace `matchReads` with a `derives Reflect.Reads` case class whose field type forces the macro to analyze a generated body that contains a `Match` with `Bind` patterns in the `read` implementation (e.g., via a hand-written `Reads` that the macro summons and whose body uses `sym.kind match { case k @ SymbolKind.Class => ... }`). Alternatively, call `TouchedFields.analyze` directly on a synthetic quoted term containing a `Match(sym.kind, List(CaseDef(Bind("k", ...), None, ...)...))` to verify hygiene rule 2 suppresses the bind pattern. The current test structure does not validate the macro behavior the plan mandates.
-
----
-
-### NOTE (5)
-
-**N1. `Kyo.lift(null: Any)` placeholder for recursive slots in `emitLazyProduct` (ReflectMacro.scala:228)**
-The placeholder reader `'{ (_: Reflect.Symbol) => Kyo.lift(null: Any) }` is emitted for recursive slot indices. The `readFieldsLazy` runtime helper checks `isRecSlot` and `isChunkSelf` bitmasks before dispatching to these slots, so the placeholder is never invoked at runtime. The design is sound by construction but the explicit `null` inside a quoted expression is slightly surprising. A comment would clarify intent; no code change required.
-
-**N2. Test 6 expected variable includes `FieldSet.Members` but assertions only check `contains(Name)` and `contains(Parents)`**
-`val expected = Reflect.FieldSet.Name | Reflect.FieldSet.Parents | Reflect.FieldSet.Members` at line 198 is declared but never used in a tight `bits ==` equality check. The `WithParents(name: Name, parents: Chunk[Type])` field "parents" matches `directFieldTouched` as `FieldSet.Parents` (by name), not `Members`. Whether `Members` ends up in `touchedFields` depends on whether the macro also adds it via the `chunkReads` summoned instance for `Chunk[Type]`. If `chunkReads.touchedFields` includes `Members`, the derived Reads gets `Members` transitively; if the implementation uses `DirectField` (name match wins before summoning), it may not. The test does not expose this either way; it would silently pass regardless. Cosmetic but worth aligning `expected` with actual expected bits.
-
-**N3. Tests 1, 3, 8, 17 are compile-only / null-check tests (compile-time resolution verified, not runtime semantics)**
-Tests 1, 8, 17 assert `r != null` and Test 3 asserts `sk == Set(SymbolKind.values*)`. These resolve at compile time (the `summon` / `derives` resolving is the meaningful check; the null check is trivially true). Per Pulse 4 observation, these are "compile-only" in spirit. They are adequate for their stated scope (confirming the macro produces a non-null instance and the right symbolKinds) but do not exercise runtime `read` semantics. Listed as NOTE per plan; no change required.
-
-**N4. `symbolKinds` over-narrows to `Class/Trait/Object` whenever any `SummonField` is present in `buildProduct`**
-`buildProduct` sets `hasSummonField = fieldAnalyses.exists(_._1 == SummonField)` and, if true, emits `Set(Class, Trait, Object)` regardless of whether the summoned `Reads` actually touches structural fields. For example, if `Outer` contains an `Inner` field whose `Reads[Inner]` only touches `Name`, the macro still narrows `Outer.symbolKinds`. This is documented in the code comment as a conservative approximation but it is semantically over-restrictive. No test covers the case where a `SummonField` with a pure-accessor `Reads` preserves the wide `Set(SymbolKind.values*)`. Queue for Phase 6b precision improvement if downstream callers rely on wide symbolKinds.
-
-**N5. `booleanReads`, `intReads`, `longReads` return constant sentinel values (false / 0 / 0L) from `read`**
-The built-in `Reads[Boolean]`, `Reads[Int]`, `Reads[Long]` in `ReadsInstances.scala` (lines 71-87) return fixed zero/false constants rather than reading any field from the symbol. The intent from DESIGN.md §13 is "for `Flags.contains` predicates etc." — these types are typically used as field types in derived case classes where the macro emits direct accessor readers (e.g., field "isInline" maps to `sym.isInline`). The built-in instances are fallbacks when a field name does not match any known accessor. The constant-return semantics are unexpected and undocumented in the method body. Add a brief comment; no change to logic required.
-
----
-
-## Design-doc compliance (DESIGN.md §13)
-
-| Line item | Status |
-|---|---|
-| Product-type derivation via `TypeRepr` inspection (not `Mirror`) | PRESENT — `ReflectMacro.derivedImpl` uses `aSym.caseFields` and `aType.memberType(f)` |
-| `symbolKinds` inference (all-kinds vs narrowed) | PRESENT — `buildProduct` implements the two-branch rule |
-| `touchedFields` static analysis via `Trees.traverseGoto` | PRESENT — `TouchedFields.analyze` in `TouchedFields.scala`; called from... wait. Actually `TouchedFields.analyze` is NOT called from `ReflectMacro`. The macro uses `directFieldTouched(fieldName)` (field-name dispatch) and `'{ $r.touchedFields }` (summoned instance). `TouchedFields.analyze` appears in `TouchedFields.scala` but is not wired into the production path. The `touchedFields` emitted by `derivedImpl` is computed purely from field names / summoned instances, not from a term walk. This is a DIVERGENCE from DESIGN.md §13 and plan line 472 ("Trees.traverseGoto over the generated body"). However the result is functionally equivalent for the cases covered by field-name dispatch, and plan line 478 says `TouchedFields` is "extracted … for testability" — which implies it is supposed to be called from `ReflectMacro`. DIVERGED (implementation builds touchedFields at field-analysis time rather than post-generation term walk, and `TouchedFields.analyze` is present but unreachable from the main derivation path) |
-| Recursive case classes via `lazy val instance` | PRESENT — `emitLazyProduct` matches STEERING blueprint verbatim |
-| Sum-type guard with clear error | PRESENT — `derivedImpl` checks `Flags.Sealed / Flags.Enum` and calls `report.errorAndAbort` with "hand-written" in the message |
-| Higher-kinded guard | PRESENT — `abstractTypeParams` check, `report.errorAndAbort` with "abstract type parameter" |
-| Hygiene guard 2: skip Match.pattern | PRESENT — `TouchedFields.analyze` `traverseGoto` skips `c.pattern` (visits only scrutinee, guard, rhs) |
-| Built-in instances: Name, Flags, SymbolKind, Type, Symbol | PRESENT |
-| Built-in instances: Boolean, Int, Long, String | PRESENT (constant-return semantics — see N5) |
-| Built-in instances: Chunk[T], Maybe[T] | PRESENT |
-| Built-in instances: Tuples arity 2-22 | PRESENT — `tuple2Reads` through `tuple22Reads` |
-| Built-in instances: `Record[F]` / `symbolToRecord[F]` | ABSENT — this is Phase 6b scope per plan line 534; correctly deferred |
-| Custom field reads via `given` override | PRESENT — `analyzeField` calls `Expr.summon[Reads[ft]]` for non-direct fields |
-| Transitive touchedFields | PRESENT — `analyzeField` returns `'{ $r.touchedFields }` for SummonField; `buildProduct` folds via `'{ $acc | $fsExpr }` |
-| Reads companion mixin | PRESENT — `object Reads extends kyo.internal.reflect.reads.ReadsInstances` |
-| `derives` entry point wired | PRESENT — `Reflect.scala:354` is `${ kyo.internal.ReflectMacro.derivedImpl[A] }` |
-| `read` signature has `(using Frame)` | PRESENT — Reflect.scala:350 and all generated `read` overrides |
-
----
-
-## Plan compliance (Phase 6)
-
-### Files to produce
-| File | Status |
-|---|---|
-| `kyo-reflect/shared/src/main/scala/kyo/internal/ReflectMacro.scala` | PRESENT |
-| `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/reads/ReadsInstances.scala` | PRESENT |
-| `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/reads/TouchedFields.scala` | PRESENT |
-| `kyo-reflect/shared/src/test/scala/kyo/ReadsDerivationTest.scala` | PRESENT |
-
-### Files to modify
-| File | Status |
-|---|---|
-| `kyo-reflect/shared/src/main/scala/kyo/Reflect.scala` — replace `compiletime.error` stub with macro splice | PRESENT |
-
-### Files to delete
-| Item | Status |
-|---|---|
-| none | N/A |
-
-### 18 Tests
-| # | Plan text | Status | Notes |
-|---|---|---|---|
-| 1 | `Simple derives Reflect.Reads` compiles | PRESENT_COMPILE_ONLY | summon + null-check; see N3 |
-| 2 | `touchedFields` contains `Name | Flags` and no other bits | PRESENT_STRICT | `tf.bits == expected.bits` tight equality |
-| 3 | `symbolKinds` is `Set(SymbolKind.values*)` | PRESENT_STRICT | set equality |
-| 4 | `needsBodies` is `false` | PRESENT_STRICT | direct boolean assert |
-| 5 | `read(sym)` returns `Simple` with `name == sym.name`, `flags == sym.flags` | PRESENT_STRICT | `taggedAs jvmOnly`, decodes `PlainClass.tasty`, asserts both fields |
-| 6 | `WithParents derives` compiles, `touchedFields` contains `Name | Parents` | PRESENT_WEAK | uses `contains()` not `bits ==`; extra bits not caught; see N2 |
-| 7 | `symbolKinds` narrowed to `Set(Class, Trait, Object)` | PRESENT_STRICT | set equality |
-| 8 | `Node(name, children: Chunk[Node]) derives` compiles | PRESENT_COMPILE_ONLY | null-check; see N3 |
-| 9 | sealed trait produces error containing "hand-written" | PRESENT_WEAK | primary path passes via wrong `err.nonEmpty` branch; see W2 |
-| 10 | `derives` on `case class Foo[A]` produces abstract-type-param error | PRESENT_STRICT | uses `errors2.nonEmpty && errors2.exists(...)` |
-| 11 | derived `Custom` uses given `Reads[Int]` for `special` field | PRESENT_WEAK | tests `customIntReads.read` directly, not derived `Reads[Custom].read`; see W3 |
-| 12 | `Reads[Chunk[Symbol]].read` maps over declarations | PRESENT_WEAK | success branch has vacuous `isEmpty || nonEmpty` assertion; see W4 |
-| 13 | `Reads[Maybe[Symbol]].read` returns `Absent` for unresolved companion | PRESENT_STRICT | `NotImplemented` path asserts correct call-through |
-| 14 | tuple `Reads[(Name, Flags)]` reads both fields | PRESENT_STRICT | asserts `name == stub.name` and `flags.bits == stub.flags.bits` |
-| 15 | `Outer.touchedFields` includes `Parents` from `Inner` | PRESENT_STRICT | `contains(Parents)` and `contains(Name)` both asserted |
-| 16 | `Bind` pattern in `Match` does not cause hygiene assertions; derived `touchedFields` excludes bind-only bits | PRESENT_WEAK | tests hand-written val with manually declared `touchedFields`; hygiene path not actually exercised; see W5 |
-| 17 | all built-in `Reads` resolve implicitly | PRESENT_COMPILE_ONLY | null-checks only; see N3 |
-| 18 | `Reads.read` on real fixture symbol returns expected product with `name == "PlainClass"` | PRESENT_STRICT | `taggedAs jvmOnly`, loads `PlainClass.tasty`, asserts `simple.name.asString == "PlainClass"` |
-
-**Tally**: 10 PRESENT_STRICT, 4 PRESENT_WEAK (tests 6, 9, 11, 12), 3 PRESENT_COMPILE_ONLY (tests 1, 8, 17), 1 PRESENT_WEAK (test 16), 0 MISSING.
-
----
-
-## Specific check results
-
-1. **`feedback_no_casts` — `asInstanceOf` in macro source (not as TypeApply-emitted node)**
-   `ReflectMacro.scala:319` doc comment says "The `asInstanceOf` casts are correct by construction"; `line 350` emits `TypeApply(Select.unique(apply, "asInstanceOf"), List(TypeTree.of[t]))` as a quoted AST node inside `buildCtorFn`. This is emitting a typed AST node (the `asInstanceOf` appears in the generated user-code output, not in the macro source itself). No bare `asInstanceOf` call appears in the macro source code. CLEAN.
-
-2. **`feedback_no_default_params_internal` — default params on internal APIs**
-   No default parameter values (`= ...`) found on any `def` in `ReflectMacro`, `ReflectRuntime`, `TouchedFields`, or `ReadsInstances`. CLEAN.
-
-3. **`feedback_no_unsafe` — `AllowUnsafe`, `Frame.internal`, or missing `(using Frame)` on public methods**
-   No `AllowUnsafe` or `Frame.internal` in any Phase 6 file. All public `read` methods carry `(using Frame)`. CLEAN.
-
-4. **`feedback_no_em_dashes` — em-dash or en-dash**
-   No Unicode em-dash (`—`, `—`) or en-dash (`–`, `–`) found in any Phase 6 file. The `──` style section dividers in comments use ASCII `─` (box-drawing U+2500), not the prohibited em-dash. CLEAN.
-
-5. **`feedback_no_explicit_abort_fail_types` — explicit `[E]` on `Abort.fail`**
-   No `Abort.fail[...]` calls in Phase 6 files. CLEAN.
-
-6. **`feedback_tests_use_public_api` — tests construct value-under-test via `derives Reflect.Reads`**
-   Tests 1-18 use `derives Reflect.Reads` or `summon[Reflect.Reads[...]]` on the LHS. Internal types (`Interner`, `AstUnpickler`, etc.) appear on the RHS for fixture loading only. CLEAN.
-
-7. **`feedback_test_rigor`**
-   - Test 9: loose `||` as described in W2. WARN.
-   - Test 12: vacuous `isEmpty || nonEmpty` in success branch. WARN.
-   - Test 16: hand-written `touchedFields` val makes assertion trivially true. WARN.
-   - Tests 1, 8, 17: compile-only null-checks; adequate for stated scope. NOTE (N3).
-
-8. **`feedback_log_unexpected_failures` — catch-all `case _ =>` swallowing Panic without logging**
-   `TouchedFields.scala` uses `case _ =>` at line 93 (inside `existsSymbolSelect` TreeTraverser `traverseTree` for non-matching trees — calls `super.traverseTree`) and at line 304 (inside `traverseGoto` TreeTraverser, calls `super.traverseTree`). Both are standard "not-a-match, delegate to super" patterns in the TreeTraverser API. Neither swallows a Panic. `ReflectMacro.scala:401` and `ReadsInstances.scala:94, 229` also use `case _ =>` as fallthrough in pattern matches returning `Reflect.FieldSet.Empty` / `false`. None of these catch `Throwable`. CLEAN.
-
-9. **Cross-platform**
-   All Phase 6 files are under `shared/`. `ReflectMacro.scala` uses `scala.quoted.*` (compile-time only, not shipped to JS/Native runtime). `ReflectRuntime.scala`, `ReadsInstances.scala`, `TouchedFields.scala` are pure Scala with no JVM-only imports. Tests 5 and 18 are correctly gated `taggedAs jvmOnly` (they load `.tasty` fixture bytes from classpath resources, which requires JVM class loading). Tests 1-4, 6-17 are in `shared/` with no JVM-only tag. CLEAN.
-
-10. **Design doc compliance (DESIGN.md §13)**: see table above. Single DIVERGED item: `TouchedFields.analyze` is present in the codebase but not invoked from the production derivation path — the macro builds `touchedFields` via field-name dispatch and summoned-instance propagation instead. Functionally equivalent for direct-field and SummonField paths, but the term-walk path (hygiene rule 1 pre-check and hygiene rule 2 Match.pattern skip) only runs in `TouchedFields.analyze`, which is only tested via Test 16 (itself weakened by W5). The plan specifically says `TouchedFields` is "extracted from `ReflectMacro` for testability," implying `ReflectMacro` was supposed to call it. The disconnect is minor (results match what a term walk would produce) but is a structural deviation.
-
-11. **Plan compliance (Phase 6)**: see table above. All files produced, all files modified, 18/18 tests present. 4 weakened tests (W2, W3, W4, W5) and 1 dead-code method (W1). No missing deliverables.
-
-12. **64-field cap**: PRESENT at `ReflectMacro.scala:134-135` (`if caseFields.length > 64 then report.errorAndAbort(...)`). Fires at macro expansion time before the Long bitmask slots are allocated. CLEAN.
-
-13. **Lazy self-reference matches STEERING "Phase 6 lazy self-reference design (supervisor-blessed)"**: PRESENT. `emitLazyProduct` (lines 200-265) emits the exact quote structure specified in STEERING.md lines 120-138: `lazy val instance: Reflect.Reads[A]` wrapping the new anonymous class, `_nonRecReaders`, `_isRecSlot`, `_isChunkSelf` fields, and `readFieldsLazy(sym, _nonRecReaders, _isRecSlot, _isChunkSelf, instance, _ctor)` call. No thunk indirection. CLEAN.
-
-14. **Hygiene rule 2 (Match.pattern skipped)**: PRESENT in `TouchedFields.analyze`. The `traverseGoto` handler for `Match(scrutinee, cases)` calls `goto(scrutinee)`, `c.guard.foreach(goto)`, `goto(c.rhs)`, and does NOT call `goto(c.pattern)`. However as noted in W5, this path is not exercised by the test suite because Test 16 uses a hand-written `Reads` with a manually-declared `touchedFields` val, not a macro-analyzed body.
-
-15. **Sum-type and higher-kinded guards**: Error messages are helpful. Sum-type error (lines 35-50) names the offending type, provides a hand-written template, and points at DESIGN.md. Higher-kinded error (lines 55-61) names the type and provides the factory pattern. Tests 9 and 10 check for error keywords but Test 9's strictness is weakened (see W2). Test 10 uses `&&` with message check, which is strict.
-
-16. **Built-in given instances**: All plan-line-477 types present: `nameReads`, `flagsReads`, `kindReads`, `typeReads`, `symbolReads`, `booleanReads`, `intReads`, `longReads`, `stringReads`, `chunkReads[T]`, `maybeReads[T]`, tuples 2-22 (`tuple2Reads` through `tuple22Reads`). All 887 lines confirmed. COMPLETE.
-
-17. **Tests 5 and 18**: Both load `PlainClass.tasty` via `getClass.getResourceAsStream("/kyo/fixtures/PlainClass.tasty")` and decode a real `Reflect.Symbol`. Test 5 asserts `simple.name.asString == s.name.asString` and `simple.flags.bits == s.flags.bits` (both field-equality checks). Test 18 asserts `simple.name.asString == "PlainClass"` (known fixture value). Both are `taggedAs jvmOnly`. Both are strict. NOT synthetic. CLEAN.
-
----
-
-## Recommendation
-
-PROCEED to Phase 6 WARN-drain sweep before Phase 6b.
-
-Fix in order:
-1. **W1** (dead method `extractStaticTouchedByTypeRepr`) — delete 24 lines.
-2. **W2** (Test 9 loose `||`) — replace primary path with strict `derived[MySeal]` call + message check.
-3. **W3** (Test 11 tests wrong thing) — call `summon[Reads[Test11.Custom]].read(stub)` and assert `custom.special == 5`.
-4. **W4** (Test 12 vacuous success branch) — replace `isEmpty || nonEmpty` with `fail(...)`.
-5. **W5** (Test 16 hygiene not actually tested) — exercise `TouchedFields.analyze` or use a derived instance whose macro analysis exercises the Match.pattern skip.
-
-All 5 WARNs are mechanical fixes (no design changes). After drain, tests 2, 5, 18 already provide strong confidence in the core correctness of the derivation. Phase 6b (Record interop) can proceed once the WARN-drain commit lands.
+CLEAN to launch Phase 8 SLOT-A. 0 BLOCKER, 2 WARN, 3 NOTE. Both WARNs are correctness-neutral; the pre-walk cost/benefit (N1) combined with the missing `*2` headroom (W1) is the main open question and is exactly what Phase 8 measurement will resolve.

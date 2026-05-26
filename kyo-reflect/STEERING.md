@@ -101,3 +101,19 @@ Notes:
 - No AtomicRef sidechannel. Strict-mode Abort propagates naturally through Async.gather, which interrupts the other fibers (Scope.ensure closes channels), unwinding cleanly.
 
 After applying the fix, run `sbt 'kyo-reflect/testOnly *ClasspathOrchestratorPipelineTest *QueryApiTest' 2>&1 | tail -20`. T1 should populate the symbol set (no data loss). T5 should fail-fast with Abort, no hang.
+
+### 2026-05-26: Phase 7 sbt plugin decisions
+
+PHASE-7-PREP.md flagged 5 design decisions for supervisor resolution. All resolved:
+
+1. **Runner JAR resolution: Option B (assembly JAR via system property).** The plugin reads the runner JAR path from a system property or sbt setting set at plugin-publish time. For initial implementation: bundle the runner JAR as a resource in the plugin's published artifact, or accept the runner classpath as an sbt setting (`reflectRunnerClasspath: SettingKey[Classpath]`) that defaults to the locally-resolved runner artifact. Option A (full Maven coordinate resolution + sbt update) adds bootstrap complexity; Option B keeps the plugin's task self-contained.
+
+2. **Runner as plain `project`, not `crossProject`.** The runner only needs to run on JVM (it's spawned from sbt). The snapshot it produces is read by JVM/JS/Native `openCached`, but the runner itself doesn't need cross-platform builds. Plain `(project in file("kyo-reflect-sbt/runner"))` with Scala 3, depends on `kyo-reflect.jvm`.
+
+3. **Snapshot directory: per-project, default `target/kyo-reflect-snapshot/`.** Setting key `reflectSnapshotDir: SettingKey[File]` defaults to `(Compile / target).value / "kyo-reflect-snapshot"`. Per-project keeps the snapshot adjacent to the compiled classes (simpler), at the cost of duplication for multi-project builds. A shared `~/.cache/coursier`-style location is a future optimization.
+
+4. **`KyoReflectPlugin` uses `override def trigger = noTrigger`.** User explicitly enables via `enablePlugins(KyoReflectPlugin)`. Auto-trigger would force the plugin on every project including non-Scala-3 / non-Kyo projects, which is wrong.
+
+5. **Failure output format in `SnapshotRunner`:** non-zero exit code (1 for known failure, 2 for unexpected panic) plus a single-line error message printed to stderr. The plugin's task catches non-zero exit, captures stderr, and raises `sbt.internal.util.MessageOnlyException` with the captured message. No stack traces in the user-facing error.
+
+Use `KyoApp` as the runner's entrypoint: `object SnapshotRunner extends KyoApp { run { ... openCached.flatMap(_ => Sync.defer(System.exit(0))) } }`. KyoApp discharges Sync/Async/Scope/Abort.
