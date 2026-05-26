@@ -87,9 +87,8 @@ object ClasspathOrchestrator:
                 if !ex then Abort.fail(ReflectError.FileNotFound(root))
                 else Kyo.unit
         .andThen:
-            collectTastyFiles(roots, source).flatMap: tastyFiles =>
-                collectModuleInfoFiles(roots, source).flatMap: moduleFiles =>
-                    runPhaseAB(tastyFiles, moduleFiles, strict, source, concurrency, cp)
+            collectAllEntries(roots, source).flatMap: (tastyFiles, moduleFiles) =>
+                runPhaseAB(tastyFiles, moduleFiles, strict, source, concurrency, cp)
 
     /** Phase A: read all .tasty bytes concurrently; Phase B: decode each file concurrently. Returns merged FileResult list. */
     private def runPhaseAB(
@@ -214,20 +213,29 @@ object ClasspathOrchestrator:
         end for
     end decodeTastyBytes
 
-    /** Collect all module-info.class files from the root paths. */
-    private def collectModuleInfoFiles(
+    /** Collect all .tasty and module-info.class entries from roots in a single walk per root.
+      *
+      * Returns (tastyFiles, moduleFiles) by partitioning the combined listing by suffix. Replaces the two sequential collectTastyFiles +
+      * collectModuleInfoFiles calls, eliminating one JAR open per root.
+      */
+    private def collectAllEntries(
         roots: Seq[String],
         source: FileSource
-    )(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+    )(using Frame): (Chunk[String], Chunk[String]) < (Sync & Abort[ReflectError]) =
         Kyo.foreach(Chunk.from(roots)): root =>
-            source.list(root, "module-info.class").flatMap: listed =>
+            source.list(root, Chunk(".tasty", "module-info.class")).flatMap: listed =>
                 if listed.isEmpty then
                     source.exists(root).map: ex =>
-                        if ex && root.endsWith("module-info.class") then Chunk(root)
+                        if ex && root.endsWith(".tasty") then Chunk(root)
+                        else if ex && root.endsWith("module-info.class") then Chunk(root)
                         else listed
                 else
                     listed
-        .map(_.flatten)
+        .map: allListed =>
+            val flat    = allListed.flatten
+            val tasty   = flat.filter(_.endsWith(".tasty"))
+            val modules = flat.filter(_.endsWith("module-info.class"))
+            (tasty, modules)
 
     /** Read and parse all module-info.class files, returning a map from module name to descriptor.
       *
@@ -252,22 +260,6 @@ object ClasspathOrchestrator:
                     else Maybe.Absent
         .map: results =>
             results.collect { case Present((k, v)) => k -> v }.toMap
-
-    /** Collect all .tasty files from the root paths. */
-    private def collectTastyFiles(
-        roots: Seq[String],
-        source: FileSource
-    )(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
-        Kyo.foreach(Chunk.from(roots)): root =>
-            source.list(root, ".tasty").flatMap: listed =>
-                if listed.isEmpty then
-                    // Root may itself be a .tasty file
-                    source.exists(root).map: ex =>
-                        if ex && root.endsWith(".tasty") then Chunk(root)
-                        else listed
-                else
-                    listed
-        .map(_.flatten)
 
     /** Phase C: merge all per-file results into the Classpath. */
     private def mergeResults(

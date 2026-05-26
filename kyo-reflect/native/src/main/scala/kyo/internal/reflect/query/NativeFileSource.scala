@@ -46,13 +46,18 @@ object NativeFileSource extends FileSource:
                 case ex: Throwable =>
                     Abort.fail(ReflectError.SnapshotIoError(ex.getMessage))
 
-    def list(dir: String, suffix: String)(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
-        Sync.defer:
-            try
-                listDirNative(dir, suffix)
-            catch
-                case ex: Throwable =>
-                    Abort.fail(ReflectError.FileNotFound(s"$dir: ${ex.getMessage}"))
+    def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+        if suffixes.isEmpty then Sync.defer(Chunk.empty)
+        else
+            // JAR roots are not supported on Scala Native; only directory roots are walked.
+            // A JAR path is treated as a plain path, which either doesn't exist or is not a directory,
+            // and will return Chunk.empty from listDirNative.
+            Sync.defer:
+                try
+                    listDirNativeMulti(dir, suffixes)
+                catch
+                    case ex: Throwable =>
+                        Abort.fail(ReflectError.FileNotFound(s"$dir: ${ex.getMessage}"))
 
     def exists(path: String)(using Frame): Boolean < Sync =
         Sync.defer:
@@ -139,6 +144,48 @@ object NativeFileSource extends FileSource:
             end try
         Chunk.from(results.toSeq)
     end listDirNative
+
+    /** Multi-suffix variant: iterate the directory once, matching against any suffix in the chunk. */
+    private def listDirNativeMulti(dir: String, suffixes: Chunk[String]): Chunk[String] =
+        val results = scala.collection.mutable.ArrayBuffer.empty[String]
+        Zone:
+            val dirPtr = PosixFileBindings.opendir(toCString(dir))
+            if dirPtr == null then throw new java.io.IOException(s"opendir failed for $dir")
+            try
+                var entry = PosixFileBindings.readdir(dirPtr)
+                while entry != null do
+                    val name = fromCString(PosixFileBindings.direntName(entry))
+                    if name != "." && name != ".." then
+                        val full = s"$dir/$name"
+                        val isFile = Zone:
+                            val statBuf = alloc[PosixFileBindings.StatBuf]()
+                            PosixFileBindings.stat(toCString(full), statBuf) == 0 &&
+                            (statBuf._2 & 0xf000).toInt == 0x8000 // S_IFREG
+                        if isFile then
+                            var i     = 0
+                            var found = false
+                            while i < suffixes.length && !found do
+                                if name.endsWith(suffixes(i)) then
+                                    results += full
+                                    found = true
+                                i += 1
+                            end while
+                        else
+                            val isDir = Zone:
+                                val statBuf = alloc[PosixFileBindings.StatBuf]()
+                                PosixFileBindings.stat(toCString(full), statBuf) == 0 &&
+                                (statBuf._2 & 0xf000).toInt == 0x4000 // S_IFDIR
+                            if isDir then
+                                results ++= listDirNativeMulti(full, suffixes).toSeq
+                        end if
+                    end if
+                    entry = PosixFileBindings.readdir(dirPtr)
+                end while
+            finally
+                val _ = PosixFileBindings.closedir(dirPtr)
+            end try
+        Chunk.from(results.toSeq)
+    end listDirNativeMulti
 
     private def statPathExists(path: String): Boolean =
         Zone:

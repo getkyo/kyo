@@ -48,9 +48,9 @@ class SymbolResolutionTest extends Test:
         def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[ReflectError]) =
             Kyo.unit
 
-        def list(dir: String, suffix: String)(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+        def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
             Sync.defer:
-                Chunk.from(files.keys.filter(k => k.startsWith(dir + "/") && k.endsWith(suffix)).toSeq)
+                Chunk.from(files.keys.filter(k => k.startsWith(dir + "/") && suffixes.exists(k.endsWith)).toSeq)
 
         def exists(path: String)(using Frame): Boolean < Sync =
             Sync.defer(files.contains(path) || files.keys.exists(_.startsWith(path + "/")))

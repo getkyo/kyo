@@ -44,9 +44,9 @@ class QueryApiTest extends Test:
         def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[ReflectError]) =
             Kyo.unit
 
-        def list(dir: String, suffix: String)(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+        def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
             Sync.defer:
-                Chunk.from(files.keys.filter(k => k.startsWith(dir + "/") && k.endsWith(suffix)).toSeq)
+                Chunk.from(files.keys.filter(k => k.startsWith(dir + "/") && suffixes.exists(k.endsWith)).toSeq)
 
         def exists(path: String)(using Frame): Boolean < Sync =
             Sync.defer(files.contains(path) || files.keys.exists(_.startsWith(path + "/")))
@@ -463,12 +463,13 @@ class QueryApiTest extends Test:
                         case Result.Panic(t)   => throw t
                     end match
             end read
-            def write(path: String, bytes: Array[Byte])(using Frame): Unit < (Sync & Abort[ReflectError])    = src.write(path, bytes)
-            def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[ReflectError])           = src.rename(from, to)
-            def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[ReflectError])                       = src.mkdirs(path)
-            def list(dir: String, suffix: String)(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) = src.list(dir, suffix)
-            def exists(path: String)(using Frame): Boolean < Sync                                            = src.exists(path)
-            def stat(path: String)(using Frame): FileSource.FileStat < (Sync & Abort[ReflectError])          = src.stat(path)
+            def write(path: String, bytes: Array[Byte])(using Frame): Unit < (Sync & Abort[ReflectError]) = src.write(path, bytes)
+            def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[ReflectError])        = src.rename(from, to)
+            def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[ReflectError])                    = src.mkdirs(path)
+            def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+                src.list(dir, suffixes)
+            def exists(path: String)(using Frame): Boolean < Sync                                   = src.exists(path)
+            def stat(path: String)(using Frame): FileSource.FileStat < (Sync & Abort[ReflectError]) = src.stat(path)
 
         Scope.run:
             Abort.run[ReflectError]:

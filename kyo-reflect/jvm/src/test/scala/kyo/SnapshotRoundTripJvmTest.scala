@@ -26,9 +26,9 @@ class SnapshotRoundTripJvmTest extends Test:
 
         def getBytes(path: String): Option[Array[Byte]] = files.get(path)
 
-        def list(dir: String, suffix: String)(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+        def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
             Sync.defer:
-                Chunk.from(files.keys.filter(k => k.startsWith(dir + "/") && k.endsWith(suffix)).toSeq)
+                Chunk.from(files.keys.filter(k => k.startsWith(dir + "/") && suffixes.exists(k.endsWith)).toSeq)
 
         def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[ReflectError]) =
             files.get(path) match

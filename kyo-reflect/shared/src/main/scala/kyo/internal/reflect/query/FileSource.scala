@@ -38,8 +38,18 @@ trait FileSource:
       *
       * On browser JS, returns `Abort.fail(ReflectError.FileNotFound("browser: use fromPickles"))`. Does not recurse into subdirectories;
       * callers that need recursive walk iterate over sub-paths returned by the top-level listing.
+      *
+      * Delegates to the multi-suffix variant with a single-element Chunk.
       */
-    def list(dir: String, suffix: String)(using Frame): Chunk[String] < (Sync & Abort[ReflectError])
+    def list(dir: String, suffix: String)(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+        list(dir, Chunk(suffix))
+
+    /** List all files in the directory whose names end with any of the given suffixes.
+      *
+      * Performs a single directory or JAR walk and returns all entries matching any suffix. An empty suffix list returns Chunk.empty
+      * without touching the filesystem. On browser JS, returns `Abort.fail(ReflectError.FileNotFound("browser: use fromPickles"))`.
+      */
+    def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[ReflectError])
 
     /** Test whether a file or directory exists at the given path.
       *

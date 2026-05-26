@@ -80,26 +80,15 @@ object JsFileSource extends FileSource:
                     case ex: Throwable =>
                         Abort.fail(ReflectError.SnapshotIoError(ex.getMessage))
 
-    def list(dir: String, suffix: String)(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
-        if !isNode then Abort.fail(browserError)
+    def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+        if suffixes.isEmpty then Sync.defer(Chunk.empty)
+        else if !isNode then Abort.fail(browserError)
         else
             Sync.defer:
                 try
-                    val fs      = jsGlobal.require("fs").asInstanceOf[js.Dynamic]
-                    val path0   = jsGlobal.require("path").asInstanceOf[js.Dynamic]
-                    val entries = fs.readdirSync(dir).asInstanceOf[js.Array[String]]
-                    val results = Chunk.from(
-                        entries.toSeq.flatMap: entry =>
-                            val full = path0.join(dir, entry).asInstanceOf[String]
-                            val stat = fs.statSync(full).asInstanceOf[js.Dynamic]
-                            if stat.isFile().asInstanceOf[Boolean] && entry.endsWith(suffix) then Seq(full)
-                            else if stat.isDirectory().asInstanceOf[Boolean] then
-                                // Recurse into subdirectory
-                                listNodeSync(fs, path0, full, suffix)
-                            else Seq.empty
-                            end if
-                    )
-                    results
+                    val fs    = jsGlobal.require("fs").asInstanceOf[js.Dynamic]
+                    val path0 = jsGlobal.require("path").asInstanceOf[js.Dynamic]
+                    Chunk.from(listNodeSyncMulti(fs, path0, dir, suffixes))
                 catch
                     case ex: Throwable =>
                         Abort.fail(ReflectError.FileNotFound(s"$dir: ${ex.getMessage}"))
@@ -128,7 +117,7 @@ object JsFileSource extends FileSource:
                     case ex: Throwable =>
                         Abort.fail(ReflectError.FileNotFound(s"$path: ${ex.getMessage}"))
 
-    /** Synchronous recursive directory listing (Node.js only). */
+    /** Synchronous recursive directory listing (Node.js only), single suffix. */
     private def listNodeSync(
         fs: js.Dynamic,
         path0: js.Dynamic,
@@ -143,6 +132,32 @@ object JsFileSource extends FileSource:
                 if stat.isFile().asInstanceOf[Boolean] && entry.endsWith(suffix) then Seq(full)
                 else if stat.isDirectory().asInstanceOf[Boolean] then listNodeSync(fs, path0, full, suffix)
                 else Seq.empty
+        catch
+            case _: Throwable => Seq.empty
+
+    /** Synchronous recursive directory listing (Node.js only), multi-suffix: single walk matching any suffix. */
+    private def listNodeSyncMulti(
+        fs: js.Dynamic,
+        path0: js.Dynamic,
+        dir: String,
+        suffixes: Chunk[String]
+    ): Seq[String] =
+        try
+            val entries = fs.readdirSync(dir).asInstanceOf[js.Array[String]]
+            entries.toSeq.flatMap: entry =>
+                val full = path0.join(dir, entry).asInstanceOf[String]
+                val stat = fs.statSync(full).asInstanceOf[js.Dynamic]
+                if stat.isFile().asInstanceOf[Boolean] then
+                    var i     = 0
+                    var found = false
+                    while i < suffixes.length && !found do
+                        if entry.endsWith(suffixes(i)) then found = true
+                        i += 1
+                    if found then Seq(full) else Seq.empty
+                else if stat.isDirectory().asInstanceOf[Boolean] then
+                    listNodeSyncMulti(fs, path0, full, suffixes)
+                else Seq.empty
+                end if
         catch
             case _: Throwable => Seq.empty
 

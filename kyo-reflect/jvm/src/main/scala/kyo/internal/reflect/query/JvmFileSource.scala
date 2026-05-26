@@ -7,7 +7,6 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
-import java.util.jar.JarFile
 import kyo.*
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.*
@@ -16,7 +15,7 @@ import scala.jdk.CollectionConverters.*
   *
   * Supports:
   *   - Plain directory trees (recursively lists `.tasty` and `.class` files via `Files.walk`)
-  *   - JAR files (lists entries via `JarFile`)
+  *   - JAR files (lists entries via JarCentralDirectory, a direct CEN reader)
   *   - JDK module paths via `jrt:/` URI scheme (accessible via `FileSystems.getFileSystem(URI.create("jrt:/"))`)
   *
   * All paths use `String` to remain consistent with the shared API. The `jrt:/` filesystem is accessed lazily to avoid loading it when not
@@ -68,27 +67,41 @@ object JvmFileSource extends FileSource:
                 case ex: java.io.IOException =>
                     Abort.fail(ReflectError.SnapshotIoError(ex.getMessage))
 
-    def list(dir: String, suffix: String)(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
-        Sync.defer:
-            try
-                if dir.startsWith("jrt:/") then
-                    listJrtPath(dir, suffix)
-                else if dir.toLowerCase.endsWith(".jar") then
-                    listJarEntries(dir, suffix)
-                else
+    def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[ReflectError]) =
+        if suffixes.isEmpty then Sync.defer(Chunk.empty)
+        else if dir.startsWith("jrt:/") then
+            Sync.defer:
+                try
+                    listJrtPathMulti(dir, suffixes)
+                catch
+                    case ex: java.io.IOException =>
+                        Abort.fail(ReflectError.FileNotFound(s"$dir: ${ex.getMessage}"))
+        else if dir.toLowerCase.endsWith(".jar") then
+            JarCentralDirectory.list(dir, suffixes).map: pairs =>
+                pairs.map((jarPath, entryName) => s"$jarPath!/$entryName")
+        else
+            Sync.defer:
+                try
                     val root = Paths.get(dir)
                     if !Files.exists(root) then Chunk.empty
                     else
                         val results = mutable.ArrayBuffer.empty[String]
                         Files.walk(root).iterator().asScala.foreach: p =>
                             val name = p.getFileName.toString
-                            if name.endsWith(suffix) && Files.isRegularFile(p) then
-                                results += p.toString
+                            val isMatch = Files.isRegularFile(p) && {
+                                var i     = 0
+                                var found = false
+                                while i < suffixes.length && !found do
+                                    if name.endsWith(suffixes(i)) then found = true
+                                    i += 1
+                                found
+                            }
+                            if isMatch then results += p.toString
                         Chunk.from(results.toSeq)
                     end if
-            catch
-                case ex: java.io.IOException =>
-                    Abort.fail(ReflectError.FileNotFound(s"$dir: ${ex.getMessage}"))
+                catch
+                    case ex: java.io.IOException =>
+                        Abort.fail(ReflectError.FileNotFound(s"$dir: ${ex.getMessage}"))
 
     def exists(path: String)(using Frame): Boolean < Sync =
         Sync.defer:
@@ -125,7 +138,7 @@ object JvmFileSource extends FileSource:
         Files.readAllBytes(jrtPath)
     end readJrtPath
 
-    private def listJrtPath(dir: String, suffix: String): Chunk[String] =
+    private def listJrtPathMulti(dir: String, suffixes: Chunk[String]): Chunk[String] =
         val fs = jrtFileSystem
         if fs == null then Chunk.empty
         else
@@ -135,24 +148,19 @@ object JvmFileSource extends FileSource:
                 val results = mutable.ArrayBuffer.empty[String]
                 Files.walk(jrtPath).iterator().asScala.foreach: p =>
                     val name = p.getFileName.toString
-                    if name.endsWith(suffix) && Files.isRegularFile(p) then
-                        results += "jrt:/" + p.toString
+                    if Files.isRegularFile(p) then
+                        var i     = 0
+                        var found = false
+                        while i < suffixes.length && !found do
+                            if name.endsWith(suffixes(i)) then
+                                results += "jrt:/" + p.toString
+                                found = true
+                            i += 1
+                        end while
+                    end if
                 Chunk.from(results.toSeq)
             end if
         end if
-    end listJrtPath
-
-    private def listJarEntries(jarPath: String, suffix: String): Chunk[String] =
-        val jar     = new JarFile(jarPath)
-        val results = mutable.ArrayBuffer.empty[String]
-        try
-            jar.entries().asIterator().asScala.foreach: entry =>
-                if !entry.isDirectory && entry.getName.endsWith(suffix) then
-                    results += s"$jarPath!/${entry.getName}"
-        finally
-            jar.close()
-        end try
-        Chunk.from(results.toSeq)
-    end listJarEntries
+    end listJrtPathMulti
 
 end JvmFileSource
