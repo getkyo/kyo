@@ -95,7 +95,7 @@ object TypeUnpickler:
       */
     final private[tasty] class TreeTypeSession(
         val names: Array[Reflect.Name],
-        val addrMap: Map[Int, Reflect.Symbol],
+        val addrMap: scala.collection.Map[Int, Reflect.Symbol],
         val arena: TypeArena,
         val home: ClasspathRef,
         val sectionBytes: Array[Byte],
@@ -205,7 +205,7 @@ object TypeUnpickler:
     // Pass null when decoding from a live DecodeSession (Pass 1) where addrCache is always pre-populated.
     final private class DecodeCtx(
         val names: Array[Reflect.Name],
-        val addrMap: Map[Int, Reflect.Symbol],
+        val addrMap: scala.collection.Map[Int, Reflect.Symbol],
         val arena: TypeArena,
         val home: ClasspathRef,
         val addrCache: mutable.HashMap[Int, Reflect.Type],

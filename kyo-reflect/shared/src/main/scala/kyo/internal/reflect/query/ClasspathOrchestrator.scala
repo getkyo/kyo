@@ -47,14 +47,18 @@ object ClasspathOrchestrator:
       * `parentsBySymbol` and `childrenByOwner` are pre-indexed maps from Pass1Result used by `finalizeMerge` to assign `_parents`,
       * `_typeParams`, and `_declarations` on each symbol after Phase C placeholder resolution completes.
       */
+    /** Fields `parentsBySymbol`, `childrenByOwner`, and `typeBySymbol` are `mutable.HashMap` instances. They are safe because `FileResult`
+      * is written by a single decoder fiber and consumed exclusively by the single-threaded merger fiber after the channel put/take
+      * provides a happens-before edge.
+      */
     final private case class FileResult(
         fqns: Chunk[(String, Reflect.Symbol)],
         arena: TypeArena,
         errors: Seq[ReflectError],
         placeholders: Chunk[UnresolvedRef],
-        parentsBySymbol: Map[Reflect.Symbol, Chunk[Reflect.Type]],
-        childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]],
-        typeBySymbol: Map[Reflect.Symbol, Reflect.Type],
+        parentsBySymbol: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]],
+        childrenByOwner: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Symbol]],
+        typeBySymbol: mutable.HashMap[Reflect.Symbol, Reflect.Type],
         commentsBySymbol: Map[Reflect.Symbol, String],
         positionsBySymbol: Map[Reflect.Symbol, Reflect.Position]
     )
@@ -415,9 +419,9 @@ object ClasspathOrchestrator:
             TypeArena.canonical(),
             Seq(err),
             Chunk.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
+            mutable.HashMap.empty[Reflect.Symbol, Chunk[Reflect.Type]],
+            mutable.HashMap.empty[Reflect.Symbol, Chunk[Reflect.Symbol]],
+            mutable.HashMap.empty[Reflect.Symbol, Reflect.Type],
             Map.empty,
             Map.empty
         )

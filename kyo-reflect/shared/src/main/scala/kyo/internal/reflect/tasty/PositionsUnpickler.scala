@@ -42,7 +42,7 @@ object PositionsUnpickler:
       */
     def read(
         view: ByteView,
-        addrMap: Map[Int, Reflect.Symbol],
+        addrMap: scala.collection.Map[Int, Reflect.Symbol],
         sourceFile: Maybe[String]
     )(using Frame): Map[Reflect.Symbol, Reflect.Position] < (Sync & Abort[ReflectError]) =
         val result =
@@ -57,7 +57,7 @@ object PositionsUnpickler:
 
     private def readSync(
         view: ByteView,
-        addrMap: Map[Int, Reflect.Symbol],
+        addrMap: scala.collection.Map[Int, Reflect.Symbol],
         sourceFile: Maybe[String]
     ): Map[Reflect.Symbol, Reflect.Position] =
         // An empty section has no data at all; return an empty map immediately without trying to read.

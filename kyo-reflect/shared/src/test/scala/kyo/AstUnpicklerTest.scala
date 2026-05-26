@@ -11,6 +11,7 @@ import kyo.internal.reflect.tasty.SectionIndex
 import kyo.internal.reflect.tasty.TastyFormat
 import kyo.internal.reflect.tasty.TastyHeader
 import kyo.internal.reflect.type_.TypeArena
+import scala.collection.mutable
 
 /** Tests for AstUnpickler.readPass1.
   *
@@ -554,6 +555,64 @@ class AstUnpicklerTest extends Test:
                             succeed
                         case other =>
                             fail(s"Expected Type.Named for content in typeBySymbol but got $other")
+                    end match
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // T-P4-1: Pass1Result fields are mutable.HashMap instances (Phase 4 type check).
+    // Assigns the four map fields to explicitly typed mutable.HashMap variables; the assignment
+    // compiles only if Phase 4 changed the field types correctly. Asserts structural invariants.
+    "T-P4-1: Pass1Result map fields are mutable.HashMap instances" in run {
+        val bytes = loadFixtureBytes("GenericBox.tasty")
+        val arena = TypeArena.canonical()
+        Abort.run[ReflectError](runPass1WithArena(bytes, arena)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    val addrMapH: mutable.HashMap[Int, Reflect.Symbol]                      = r.addrMap
+                    val parentsByH: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]]    = r.parentsBySymbol
+                    val childrenByH: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Symbol]] = r.childrenByOwner
+                    val typeByH: mutable.HashMap[Reflect.Symbol, Reflect.Type]              = r.typeBySymbol
+                    assert(addrMapH.nonEmpty, "addrMap should be non-empty for GenericBox.tasty")
+                    val aOpt = addrMapH.find { case (_, sym) =>
+                        sym.name.asString == "A" && sym.kind == Reflect.SymbolKind.TypeParam
+                    }
+                    assert(aOpt.isDefined, "addrMap should contain the TypeParam A symbol")
+                    assert(parentsByH != null, "parentsBySymbol should not be null")
+                    assert(childrenByH != null, "childrenByOwner should not be null")
+                    assert(typeByH != null, "typeBySymbol should not be null")
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+        }
+    }
+
+    // T-P4-3: TastyOrigin.addrMap returns a non-empty map after pass1 sets it.
+    // Accesses origin._addrMap via AllowUnsafe and verifies it was populated by AstUnpickler.
+    "T-P4-3: TastyOrigin.addrMap is populated after pass1 completes" in run {
+        val bytes = loadFixtureBytes("PlainClass.tasty")
+        val arena = TypeArena.canonical()
+        Abort.run[ReflectError](runPass1WithArena(bytes, arena)).map { result =>
+            result match
+                case Result.Success(r) =>
+                    import AllowUnsafe.embrace.danger
+                    val classSymOpt = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Reflect.SymbolKind.Class)
+                    assert(classSymOpt.isDefined, "No PlainClass symbol found")
+                    val classSym = classSymOpt.get
+                    classSym.origin match
+                        case o: Reflect.Symbol.TastyOrigin =>
+                            val am = o.addrMap
+                            assert(am.nonEmpty, "TastyOrigin.addrMap should be non-empty after pass1")
+                            val foundPlainClass = am.values.exists(s =>
+                                s.name.asString == "PlainClass" && s.kind == Reflect.SymbolKind.Class
+                            )
+                            assert(foundPlainClass, "TastyOrigin.addrMap should contain the PlainClass symbol")
+                        case Reflect.Symbol.JavaOrigin =>
+                            fail("Expected TastyOrigin but got JavaOrigin")
                     end match
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")

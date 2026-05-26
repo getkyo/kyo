@@ -55,14 +55,18 @@ object AstUnpickler:
       *   by mergeResults to assign `Symbol._declarations` (after filtering out TypeParam-kinded children per the declarations contract) and
       *   `Symbol._typeParams` (TypeParam-kinded children only).
       */
+    /** Fields `addrMap`, `parentsBySymbol`, `childrenByOwner`, and `typeBySymbol` are `mutable.HashMap` instances. They are safe because
+      * `Pass1Result` is produced by a single decoder fiber and consumed by the single-threaded merger fiber after the channel put/take
+      * provides a happens-before edge. No concurrent access occurs.
+      */
     final case class Pass1Result(
         symbols: Chunk[Reflect.Symbol],
-        addrMap: Map[Int, Reflect.Symbol],
+        addrMap: mutable.HashMap[Int, Reflect.Symbol],
         placeholders: Chunk[UnresolvedRef],
         rootSymbol: Reflect.Symbol,
-        parentsBySymbol: Map[Reflect.Symbol, Chunk[Reflect.Type]],
-        childrenByOwner: Map[Reflect.Symbol, Chunk[Reflect.Symbol]],
-        typeBySymbol: Map[Reflect.Symbol, Reflect.Type]
+        parentsBySymbol: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Type]],
+        childrenByOwner: mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Symbol]],
+        typeBySymbol: mutable.HashMap[Reflect.Symbol, Reflect.Type]
     )
 
     /** Run pass 1 over the AST section.
@@ -150,32 +154,36 @@ object AstUnpickler:
         // This allows TreeUnpickler (called lazily from Symbol.body) to resolve IDENT/SELECT addr references.
         // Unsafe: SingleAssign.set is an unsafe-tier helper; AllowUnsafe is embraced here.
         import AllowUnsafe.embrace.danger
-        val finalAddrMap = addrMap.toMap
         for sym <- allSymbols do
             sym.origin match
                 case o: Reflect.Symbol.TastyOrigin =>
                     if !o._addrMap.isSet then
-                        o._addrMap.set(finalAddrMap)
+                        o._addrMap.set(addrMap)
                 case _ => ()
         end for
 
         // Build childrenByOwner: group all non-root symbols by their owner.
-        val childrenByOwner = new mutable.HashMap[Reflect.Symbol, mutable.ArrayBuffer[Reflect.Symbol]]()
+        val childrenByOwnerBuf = new mutable.HashMap[Reflect.Symbol, mutable.ArrayBuffer[Reflect.Symbol]]()
         for sym <- allSymbols.tail do // skip root
             val owner = sym.owner
             if owner != null then
-                childrenByOwner.getOrElseUpdate(owner, new mutable.ArrayBuffer[Reflect.Symbol]()) += sym
+                childrenByOwnerBuf.getOrElseUpdate(owner, new mutable.ArrayBuffer[Reflect.Symbol]()) += sym
             end if
         end for
 
+        // Convert ArrayBuffer values to Chunk, producing the final mutable.HashMap for Pass1Result.
+        val childrenChunks = new mutable.HashMap[Reflect.Symbol, Chunk[Reflect.Symbol]]()
+        for (owner, buf) <- childrenByOwnerBuf do
+            childrenChunks(owner) = Chunk.from(buf.toSeq)
+
         Pass1Result(
             symbols = Chunk.from(allSymbols.tail), // exclude root
-            addrMap = finalAddrMap,
+            addrMap = addrMap,
             placeholders = Chunk.from(typeSession.placeholders),
             rootSymbol = root,
-            parentsBySymbol = parentsBySymbol.view.mapValues(identity).toMap,
-            childrenByOwner = childrenByOwner.view.mapValues(buf => Chunk.from(buf.toSeq)).toMap,
-            typeBySymbol = typeBySymbol.view.mapValues(identity).toMap
+            parentsBySymbol = parentsBySymbol,
+            childrenByOwner = childrenChunks,
+            typeBySymbol = typeBySymbol
         )
     end runPass1
 

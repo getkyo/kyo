@@ -927,4 +927,25 @@ class QueryApiTest extends Test:
         end match
     }
 
+    // T-P4-2: Merger accepts FileResult with mutable.HashMap fields (Phase 4 behavioral regression check).
+    // Opens fixture classpath through the full orchestrator pipeline. After Phase 4, FileResult values
+    // carry mutable.HashMap for parentsBySymbol, childrenByOwner, and typeBySymbol. The merger reads
+    // these maps during finalizeMerge. Verifies that the full pipeline produces the expected FQN index entry.
+    "T-P4-2: merger processes mutable.HashMap FileResult fields and produces expected FQN entry" in run {
+        Scope.run:
+            Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                cp.findClass("kyo.fixtures.PlainClass")).map:
+                case Result.Success(Present(sym)) =>
+                    assert(
+                        sym.kind == Reflect.SymbolKind.Class,
+                        s"Expected Class kind for kyo.fixtures.PlainClass but got ${sym.kind}"
+                    )
+                case Result.Success(Absent) =>
+                    fail("Expected Present(sym) for kyo.fixtures.PlainClass but got Absent")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
 end QueryApiTest

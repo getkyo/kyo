@@ -773,12 +773,12 @@ object Reflect:
             val bodyView: kyo.internal.reflect.binary.ByteView | Null
         ) extends Origin:
             // Write-once: populated by AstUnpickler after pass1 completes. Unsafe: SingleAssign is unsafe-tier.
-            private[kyo] val _addrMap: kyo.internal.reflect.symbol.SingleAssign[Map[Int, Reflect.Symbol]] =
+            private[kyo] val _addrMap: kyo.internal.reflect.symbol.SingleAssign[scala.collection.mutable.HashMap[Int, Reflect.Symbol]] =
                 new kyo.internal.reflect.symbol.SingleAssign
 
-            def addrMap(using AllowUnsafe): Map[Int, Reflect.Symbol] =
+            def addrMap(using AllowUnsafe): scala.collection.Map[Int, Reflect.Symbol] =
                 if _addrMap.isSet then _addrMap.get()
-                else Map.empty
+                else scala.collection.mutable.HashMap.empty
 
             override def equals(other: Any): Boolean = other match
                 case o: TastyOrigin =>

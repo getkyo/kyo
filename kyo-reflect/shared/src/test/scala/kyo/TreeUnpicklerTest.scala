@@ -361,7 +361,7 @@ class TreeUnpicklerTest extends Test:
                                     null
                                 )
                                 import AllowUnsafe.embrace.danger
-                                truncated._addrMap.set(Map.empty)
+                                truncated._addrMap.set(scala.collection.mutable.HashMap.empty)
                                 // decodeSync should either succeed (single-byte literal) or throw a caught exception.
                                 val ok =
                                     try

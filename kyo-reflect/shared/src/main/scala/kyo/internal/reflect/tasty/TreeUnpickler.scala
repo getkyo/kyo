@@ -109,7 +109,7 @@ object TreeUnpickler:
 
     final private class DecodeCtx(
         val names: Array[Reflect.Name],
-        val addrMap: Map[Int, Reflect.Symbol],
+        val addrMap: scala.collection.Map[Int, Reflect.Symbol],
         val home: ClasspathRef,
         val typeSession: TypeUnpickler.TreeTypeSession,
         val treeAddrCache: mutable.HashMap[Int, Reflect.Tree]
