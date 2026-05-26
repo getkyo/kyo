@@ -1,0 +1,2937 @@
+--- Execution profile ---
+Total samples       : 1539
+
+--- 1320000000 ns (8.58%), 132 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 870000000 ns (5.65%), 87 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 320000000 ns (2.08%), 32 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.Scheduler.$init$$$anonfun$10
+  [ 6] kyo.scheduler.Scheduler.$init$$$anonfun$adapted$1
+  [ 7] kyo.scheduler.Scheduler$$Lambda.0x0000700001148fc0.call
+  [ 8] java.util.concurrent.FutureTask.run
+  [ 9] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [10] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [11] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 300000000 ns (1.95%), 30 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 240000000 ns (1.56%), 24 samples
+  [ 0] __open
+  [ 1] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 2] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 3] sun.nio.fs.UnixNativeDispatcher.open
+  [ 4] sun.nio.fs.UnixChannelFactory.open
+  [ 5] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 6] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 7] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [ 8] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [ 9] java.nio.file.Files.newByteChannel
+  [10] java.nio.file.Files.newByteChannel
+  [11] java.nio.file.Files.readAllBytes
+  [12] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [13] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [20] kyo.Scope$$anon$5$$anon$10.apply
+  [21] kyo.Scope$$anon$5$$anon$13.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Scope$$anon$5$$anon$6.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 220000000 ns (1.43%), 22 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 220000000 ns (1.43%), 22 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.Scheduler.$init$$$anonfun$10
+  [ 6] kyo.scheduler.Scheduler.$init$$$anonfun$adapted$1
+  [ 7] kyo.scheduler.Scheduler$$Lambda.0x0000700001148fc0.call
+  [ 8] java.util.concurrent.FutureTask.run
+  [ 9] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [10] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [11] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 210000000 ns (1.36%), 21 samples
+  [ 0] __open
+  [ 1] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 2] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 3] sun.nio.fs.UnixNativeDispatcher.open
+  [ 4] sun.nio.fs.UnixChannelFactory.open
+  [ 5] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 6] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 7] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [ 8] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [ 9] java.nio.file.Files.newByteChannel
+  [10] java.nio.file.Files.newByteChannel
+  [11] java.nio.file.Files.readAllBytes
+  [12] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [13] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [20] kyo.Scope$$anon$5$$anon$10.apply
+  [21] kyo.Scope$$anon$5$$anon$13.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Scope$$anon$5$$anon$6.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 210000000 ns (1.36%), 21 samples
+  [ 0] __psynch_cvwait
+  [ 1] PlatformMonitor::wait
+  [ 2] Monitor::wait
+  [ 3] CompileQueue::get
+  [ 4] CompileBroker::compiler_thread_loop
+  [ 5] JavaThread::thread_main_inner
+  [ 6] Thread::call_run
+  [ 7] thread_native_entry
+  [ 8] _pthread_start
+  [ 9] thread_start
+
+--- 160000000 ns (1.04%), 16 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 130000000 ns (0.84%), 13 samples
+  [ 0] __psynch_mutexdrop
+  [ 1] _pthread_mutex_firstfit_unlock_slow
+  [ 2] ExceptionsEventLog::log
+  [ 3] Exceptions::_throw
+  [ 4] jni_Throw
+  [ 5] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 6] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open
+  [ 8] sun.nio.fs.UnixChannelFactory.open
+  [ 9] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [13] java.nio.file.Files.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.readAllBytes
+  [16] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [30] kyo.scheduler.IOTask.partialLoop$1
+  [31] kyo.scheduler.IOTask.eval
+  [32] kyo.scheduler.IOTask.run
+  [33] kyo.scheduler.Worker.runTask
+  [34] kyo.scheduler.Worker.run
+  [35] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [36] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [37] java.lang.Thread.runWith
+  [38] java.lang.Thread.run
+
+--- 130000000 ns (0.84%), 13 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 120000000 ns (0.78%), 12 samples
+  [ 0] __open
+  [ 1] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 2] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 3] sun.nio.fs.UnixNativeDispatcher.open
+  [ 4] sun.nio.fs.UnixChannelFactory.open
+  [ 5] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 6] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 7] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [ 8] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [ 9] java.nio.file.Files.newByteChannel
+  [10] java.nio.file.Files.newByteChannel
+  [11] java.nio.file.Files.readAllBytes
+  [12] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [13] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [20] kyo.Scope$$anon$5$$anon$10.apply
+  [21] kyo.Scope$$anon$5$$anon$13.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Scope$$anon$5$$anon$6.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 120000000 ns (0.78%), 12 samples
+  [ 0] __psynch_mutexdrop
+  [ 1] _pthread_mutex_firstfit_unlock_slow
+  [ 2] ExceptionsEventLog::log
+  [ 3] Exceptions::_throw
+  [ 4] jni_Throw
+  [ 5] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 6] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open
+  [ 8] sun.nio.fs.UnixChannelFactory.open
+  [ 9] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [13] java.nio.file.Files.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.readAllBytes
+  [16] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [30] kyo.scheduler.IOTask.partialLoop$1
+  [31] kyo.scheduler.IOTask.eval
+  [32] kyo.scheduler.IOTask.run
+  [33] kyo.scheduler.Worker.runTask
+  [34] kyo.scheduler.Worker.run
+  [35] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [36] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [37] java.lang.Thread.runWith
+  [38] java.lang.Thread.run
+
+--- 110000000 ns (0.71%), 11 samples
+  [ 0] PhaseChaitin::Split
+  [ 1] PhaseChaitin::Register_Allocate
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 100000000 ns (0.65%), 10 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 100000000 ns (0.65%), 10 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 90000000 ns (0.58%), 9 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.BlockingMonitor.loop$1
+  [ 6] kyo.scheduler.BlockingMonitor.$init$$$anonfun$2
+  [ 7] kyo.scheduler.BlockingMonitor.$init$$$anonfun$adapted$1
+  [ 8] kyo.scheduler.BlockingMonitor$$Lambda.0x0000700001148d90.call
+  [ 9] java.util.concurrent.FutureTask.run
+  [10] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [11] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [12] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [13] java.lang.Thread.runWith
+  [14] java.lang.Thread.run
+
+--- 90000000 ns (0.58%), 9 samples
+  [ 0] __open
+  [ 1] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 2] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 3] sun.nio.fs.UnixNativeDispatcher.open
+  [ 4] sun.nio.fs.UnixChannelFactory.open
+  [ 5] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 6] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 7] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [ 8] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [ 9] java.nio.file.Files.newByteChannel
+  [10] java.nio.file.Files.newByteChannel
+  [11] java.nio.file.Files.readAllBytes
+  [12] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [13] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [20] kyo.Scope$$anon$5$$anon$10.apply
+  [21] kyo.Scope$$anon$5$$anon$13.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Scope$$anon$5$$anon$6.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 80000000 ns (0.52%), 8 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 80000000 ns (0.52%), 8 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.InternalClock.update
+  [ 6] kyo.scheduler.InternalClock.$init$$$anonfun$1
+  [ 7] kyo.scheduler.InternalClock$$Lambda.0x0000700001127608.run
+  [ 8] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [ 9] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [10] java.lang.Thread.runWith
+  [11] java.lang.Thread.run
+
+--- 80000000 ns (0.52%), 8 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 80000000 ns (0.52%), 8 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 70000000 ns (0.45%), 7 samples
+  [ 0] PhaseChaitin::elide_copy
+  [ 1] PhaseChaitin::post_allocate_copy_removal
+  [ 2] PhaseChaitin::Register_Allocate
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 60000000 ns (0.39%), 6 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 50000000 ns (0.32%), 5 samples
+  [ 0] PhaseChaitin::build_ifg_physical
+  [ 1] PhaseChaitin::Register_Allocate
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 50000000 ns (0.32%), 5 samples
+  [ 0] __open
+  [ 1] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 2] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 3] sun.nio.fs.UnixNativeDispatcher.open
+  [ 4] sun.nio.fs.UnixChannelFactory.open
+  [ 5] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 6] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 7] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [ 8] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [ 9] java.nio.file.Files.newByteChannel
+  [10] java.nio.file.Files.newByteChannel
+  [11] java.nio.file.Files.readAllBytes
+  [12] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [13] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [20] kyo.Scope$$anon$5$$anon$10.apply
+  [21] kyo.Scope$$anon$5$$anon$13.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Scope$$anon$5$$anon$6.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 50000000 ns (0.32%), 5 samples
+  [ 0] __open
+  [ 1] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 2] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 3] sun.nio.fs.UnixNativeDispatcher.open
+  [ 4] sun.nio.fs.UnixChannelFactory.open
+  [ 5] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 6] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 7] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [ 8] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [ 9] java.nio.file.Files.newByteChannel
+  [10] java.nio.file.Files.newByteChannel
+  [11] java.nio.file.Files.readAllBytes
+  [12] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [13] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [20] kyo.Scope$$anon$5$$anon$10.apply
+  [21] kyo.Scope$$anon$5$$anon$13.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Scope$$anon$5$$anon$6.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 50000000 ns (0.32%), 5 samples
+  [ 0] Arena::contains
+  [ 1] Matcher::xform
+  [ 2] Matcher::match
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] PhaseIdealLoop::build_loop_early
+  [ 1] PhaseIdealLoop::build_and_optimize
+  [ 2] PhaseIdealLoop::PhaseIdealLoop
+  [ 3] PhaseIdealLoop::optimize
+  [ 4] Compile::Optimize
+  [ 5] Compile::Compile
+  [ 6] C2Compiler::compile_method
+  [ 7] CompileBroker::invoke_compiler_on_method
+  [ 8] CompileBroker::compiler_thread_loop
+  [ 9] JavaThread::thread_main_inner
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] __open
+  [ 1] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 2] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 3] sun.nio.fs.UnixNativeDispatcher.open
+  [ 4] sun.nio.fs.UnixChannelFactory.open
+  [ 5] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 6] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 7] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [ 8] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [ 9] java.nio.file.Files.newByteChannel
+  [10] java.nio.file.Files.newByteChannel
+  [11] java.nio.file.Files.readAllBytes
+  [12] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [13] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [20] kyo.Scope$$anon$5$$anon$10.apply
+  [21] kyo.Scope$$anon$5$$anon$13.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Scope$$anon$5$$anon$6.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] __psynch_mutexdrop
+  [ 1] _pthread_mutex_firstfit_unlock_slow
+  [ 2] ExceptionsEventLog::log
+  [ 3] Exceptions::_throw
+  [ 4] jni_Throw
+  [ 5] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 6] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open
+  [ 8] sun.nio.fs.UnixChannelFactory.open
+  [ 9] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [13] java.nio.file.Files.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.readAllBytes
+  [16] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [30] kyo.scheduler.IOTask.partialLoop$1
+  [31] kyo.scheduler.IOTask.eval
+  [32] kyo.scheduler.IOTask.run
+  [33] kyo.scheduler.Worker.runTask
+  [34] kyo.scheduler.Worker.run
+  [35] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [36] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [37] java.lang.Thread.runWith
+  [38] java.lang.Thread.run
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.InternalClock.update
+  [ 6] kyo.scheduler.InternalClock.$init$$$anonfun$1
+  [ 7] kyo.scheduler.InternalClock$$Lambda.0x0000700001127608.run
+  [ 8] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [ 9] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [10] java.lang.Thread.runWith
+  [11] java.lang.Thread.run
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] Matcher::xform
+  [ 1] Matcher::match
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] java_lang_Throwable::fill_in_stack_trace
+  [ 1] java_lang_Throwable::fill_in_stack_trace
+  [ 2] JVM_FillInStackTrace
+  [ 3] Java_java_lang_Throwable_fillInStackTrace
+  [ 4] java.lang.Throwable.fillInStackTrace
+  [ 5] java.lang.Throwable.fillInStackTrace
+  [ 6] java.lang.Throwable.<init>
+  [ 7] java.lang.Exception.<init>
+  [ 8] java.io.IOException.<init>
+  [ 9] java.nio.file.FileSystemException.<init>
+  [10] java.nio.file.NoSuchFileException.<init>
+  [11] sun.nio.fs.UnixException.translateToIOException
+  [12] sun.nio.fs.UnixException.rethrowAsIOException
+  [13] sun.nio.fs.UnixException.rethrowAsIOException
+  [14] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [15] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [16] java.nio.file.Files.newByteChannel
+  [17] java.nio.file.Files.newByteChannel
+  [18] java.nio.file.Files.readAllBytes
+  [19] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [20] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [23] kyo.Abort$$anon$2.apply
+  [24] kyo.Abort$$anon$1.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [33] kyo.scheduler.IOTask.partialLoop$1
+  [34] kyo.scheduler.IOTask.eval
+  [35] kyo.scheduler.IOTask.run
+  [36] kyo.scheduler.Worker.runTask
+  [37] kyo.scheduler.Worker.run
+  [38] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [39] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [40] java.lang.Thread.runWith
+  [41] java.lang.Thread.run
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] __psynch_mutexdrop
+  [ 1] _pthread_mutex_firstfit_unlock_slow
+  [ 2] ExceptionsEventLog::log
+  [ 3] Exceptions::_throw
+  [ 4] jni_Throw
+  [ 5] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 6] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open
+  [ 8] sun.nio.fs.UnixChannelFactory.open
+  [ 9] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [13] java.nio.file.Files.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.readAllBytes
+  [16] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [30] kyo.scheduler.IOTask.partialLoop$1
+  [31] kyo.scheduler.IOTask.eval
+  [32] kyo.scheduler.IOTask.run
+  [33] kyo.scheduler.Worker.runTask
+  [34] kyo.scheduler.Worker.run
+  [35] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [36] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [37] java.lang.Thread.runWith
+  [38] java.lang.Thread.run
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.awaitNanos
+  [ 6] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [ 7] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [ 8] java.util.concurrent.ThreadPoolExecutor.getTask
+  [ 9] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [10] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [11] java.lang.Thread.runWith
+  [12] java.lang.Thread.run
+
+--- 40000000 ns (0.26%), 4 samples
+  [ 0] PhaseChaitin::gather_lrg_masks
+  [ 1] PhaseChaitin::Register_Allocate
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] PhaseIdealLoop::Dominators
+  [ 1] PhaseIdealLoop::build_and_optimize
+  [ 2] PhaseIdealLoop::PhaseIdealLoop
+  [ 3] PhaseIdealLoop::optimize
+  [ 4] Compile::Optimize
+  [ 5] Compile::Compile
+  [ 6] C2Compiler::compile_method
+  [ 7] CompileBroker::invoke_compiler_on_method
+  [ 8] CompileBroker::compiler_thread_loop
+  [ 9] JavaThread::thread_main_inner
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] __open
+  [ 1] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 2] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 3] sun.nio.fs.UnixNativeDispatcher.open
+  [ 4] sun.nio.fs.UnixChannelFactory.open
+  [ 5] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 6] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 7] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [ 8] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [ 9] java.nio.file.Files.newByteChannel
+  [10] java.nio.file.Files.newByteChannel
+  [11] java.nio.file.Files.readAllBytes
+  [12] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [13] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [20] kyo.Scope$$anon$5$$anon$10.apply
+  [21] kyo.Scope$$anon$5$$anon$13.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Scope$$anon$5$$anon$6.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.awaitNanos
+  [ 6] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [ 7] java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take
+  [ 8] java.util.concurrent.ThreadPoolExecutor.getTask
+  [ 9] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [10] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [11] java.lang.Thread.runWith
+  [12] java.lang.Thread.run
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] __psynch_mutexdrop
+  [ 1] _pthread_mutex_firstfit_unlock_slow
+  [ 2] ExceptionsEventLog::log
+  [ 3] Exceptions::_throw
+  [ 4] jni_Throw
+  [ 5] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 6] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open
+  [ 8] sun.nio.fs.UnixChannelFactory.open
+  [ 9] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [13] java.nio.file.Files.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.readAllBytes
+  [16] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [30] kyo.scheduler.IOTask.partialLoop$1
+  [31] kyo.scheduler.IOTask.eval
+  [32] kyo.scheduler.IOTask.run
+  [33] kyo.scheduler.Worker.runTask
+  [34] kyo.scheduler.Worker.run
+  [35] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [36] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [37] java.lang.Thread.runWith
+  [38] java.lang.Thread.run
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.BlockingMonitor.loop$1
+  [ 6] kyo.scheduler.BlockingMonitor.$init$$$anonfun$2
+  [ 7] kyo.scheduler.BlockingMonitor.$init$$$anonfun$adapted$1
+  [ 8] kyo.scheduler.BlockingMonitor$$Lambda.0x0000700001148d90.call
+  [ 9] java.util.concurrent.FutureTask.run
+  [10] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [11] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [12] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [13] java.lang.Thread.runWith
+  [14] java.lang.Thread.run
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] RegMask::is_UP
+  [ 1] PhaseChaitin::raise_pressure
+  [ 2] PhaseChaitin::compute_initial_block_pressure
+  [ 3] PhaseChaitin::build_ifg_physical
+  [ 4] PhaseChaitin::Register_Allocate
+  [ 5] Compile::Code_Gen
+  [ 6] Compile::Compile
+  [ 7] C2Compiler::compile_method
+  [ 8] CompileBroker::invoke_compiler_on_method
+  [ 9] CompileBroker::compiler_thread_loop
+  [10] JavaThread::thread_main_inner
+  [11] Thread::call_run
+  [12] thread_native_entry
+  [13] _pthread_start
+  [14] thread_start
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] BarrierSetC2::compute_liveness_at_stubs
+  [ 1] G1BarrierSetC2::late_barrier_analysis
+  [ 2] PhaseOutput::Output
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] __psynch_cvwait
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] java.util.concurrent.LinkedTransferQueue$DualNode.await
+  [ 6] java.util.concurrent.SynchronousQueue$Transferer.xferLifo
+  [ 7] java.util.concurrent.SynchronousQueue.xfer
+  [ 8] java.util.concurrent.SynchronousQueue.poll
+  [ 9] java.util.concurrent.ThreadPoolExecutor.getTask
+  [10] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [11] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] PhaseCCP::push_and
+  [ 1] PhaseCCP::push_child_nodes_to_worklist
+  [ 2] PhaseCCP::analyze
+  [ 3] PhaseCCP::PhaseCCP
+  [ 4] Compile::Optimize
+  [ 5] Compile::Compile
+  [ 6] C2Compiler::compile_method
+  [ 7] CompileBroker::invoke_compiler_on_method
+  [ 8] CompileBroker::compiler_thread_loop
+  [ 9] JavaThread::thread_main_inner
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] java_lang_Throwable::fill_in_stack_trace
+  [ 1] java_lang_Throwable::fill_in_stack_trace
+  [ 2] JVM_FillInStackTrace
+  [ 3] Java_java_lang_Throwable_fillInStackTrace
+  [ 4] java.lang.Throwable.fillInStackTrace
+  [ 5] java.lang.Throwable.fillInStackTrace
+  [ 6] java.lang.Throwable.<init>
+  [ 7] java.lang.Exception.<init>
+  [ 8] java.io.IOException.<init>
+  [ 9] java.nio.file.FileSystemException.<init>
+  [10] java.nio.file.NoSuchFileException.<init>
+  [11] sun.nio.fs.UnixException.translateToIOException
+  [12] sun.nio.fs.UnixException.rethrowAsIOException
+  [13] sun.nio.fs.UnixException.rethrowAsIOException
+  [14] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [15] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [16] java.nio.file.Files.newByteChannel
+  [17] java.nio.file.Files.newByteChannel
+  [18] java.nio.file.Files.readAllBytes
+  [19] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [20] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [23] kyo.Abort$$anon$2.apply
+  [24] kyo.Abort$$anon$1.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [33] kyo.scheduler.IOTask.partialLoop$1
+  [34] kyo.scheduler.IOTask.eval
+  [35] kyo.scheduler.IOTask.run
+  [36] kyo.scheduler.Worker.runTask
+  [37] kyo.scheduler.Worker.run
+  [38] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [39] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [40] java.lang.Thread.runWith
+  [41] java.lang.Thread.run
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] PhaseCFG::partial_latency_of_defs
+  [ 1] PhaseCFG::global_code_motion
+  [ 2] PhaseCFG::do_global_code_motion
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] PhaseIdealLoop::build_loop_late_post_work
+  [ 1] PhaseIdealLoop::build_loop_late
+  [ 2] PhaseIdealLoop::build_and_optimize
+  [ 3] PhaseIdealLoop::PhaseIdealLoop
+  [ 4] PhaseIdealLoop::optimize
+  [ 5] Compile::Optimize
+  [ 6] Compile::Compile
+  [ 7] C2Compiler::compile_method
+  [ 8] CompileBroker::invoke_compiler_on_method
+  [ 9] CompileBroker::compiler_thread_loop
+  [10] JavaThread::thread_main_inner
+  [11] Thread::call_run
+  [12] thread_native_entry
+  [13] _pthread_start
+  [14] thread_start
+
+--- 30000000 ns (0.19%), 3 samples
+  [ 0] PhaseAggressiveCoalesce::insert_copies
+  [ 1] PhaseChaitin::Register_Allocate
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] _pthread_cond_wait
+  [ 3] PlatformMonitor::wait
+  [ 4] Monitor::wait
+  [ 5] CompileQueue::get
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] ChunkPool::allocate_chunk
+  [ 3] Arena::grow
+  [ 4] Node::clone
+  [ 5] PhaseIdealLoop::split_thru_phi
+  [ 6] PhaseIdealLoop::split_if_with_blocks_pre
+  [ 7] PhaseIdealLoop::split_if_with_blocks
+  [ 8] PhaseIdealLoop::build_and_optimize
+  [ 9] PhaseIdealLoop::PhaseIdealLoop
+  [10] PhaseIdealLoop::optimize
+  [11] Compile::optimize_loops
+  [12] Compile::Optimize
+  [13] Compile::Compile
+  [14] C2Compiler::compile_method
+  [15] CompileBroker::invoke_compiler_on_method
+  [16] CompileBroker::compiler_thread_loop
+  [17] JavaThread::thread_main_inner
+  [18] Thread::call_run
+  [19] thread_native_entry
+  [20] _pthread_start
+  [21] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] PhaseChaitin::build_ifg_virtual
+  [ 1] PhaseChaitin::Register_Allocate
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] mach_msg2_trap
+  [ 1] thread_info
+  [ 2] os::thread_cpu_time
+  [ 3] jmm_GetThreadCpuTimeWithKind
+  [ 4] sun.management.ThreadImpl.getThreadUserCpuTime0
+  [ 5] sun.management.ThreadImpl.getThreadUserTime
+  [ 6] com.sun.management.internal.HotSpotThreadImpl.getThreadUserTime
+  [ 7] kyo.scheduler.util.ThreadUserTime$.userTimes
+  [ 8] kyo.scheduler.BlockingMonitor.cycle
+  [ 9] kyo.scheduler.BlockingMonitor.loop$1
+  [10] kyo.scheduler.BlockingMonitor.$init$$$anonfun$2
+  [11] kyo.scheduler.BlockingMonitor.$init$$$anonfun$adapted$1
+  [12] kyo.scheduler.BlockingMonitor$$Lambda.0x0000700001148d90.call
+  [13] java.util.concurrent.FutureTask.run
+  [14] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [15] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [16] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [17] java.lang.Thread.runWith
+  [18] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __open
+  [ 1] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 2] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 3] sun.nio.fs.UnixNativeDispatcher.open
+  [ 4] sun.nio.fs.UnixChannelFactory.open
+  [ 5] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 6] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [ 7] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [ 8] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [ 9] java.nio.file.Files.newByteChannel
+  [10] java.nio.file.Files.newByteChannel
+  [11] java.nio.file.Files.readAllBytes
+  [12] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [13] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [16] kyo.Abort$$anon$2.apply
+  [17] kyo.Abort$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [20] kyo.Scope$$anon$5$$anon$10.apply
+  [21] kyo.Scope$$anon$5$$anon$13.apply
+  [22] kyo.Abort$$anon$2.apply
+  [23] kyo.Abort$$anon$1.apply
+  [24] kyo.Scope$$anon$5$$anon$6.apply
+  [25] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [26] kyo.scheduler.IOTask.partialLoop$1
+  [27] kyo.scheduler.IOTask.eval
+  [28] kyo.scheduler.IOTask.run
+  [29] kyo.scheduler.Worker.runTask
+  [30] kyo.scheduler.Worker.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] PhaseCFG::sched_call
+  [ 1] PhaseCFG::schedule_local
+  [ 2] PhaseCFG::global_code_motion
+  [ 3] PhaseCFG::do_global_code_motion
+  [ 4] Compile::Code_Gen
+  [ 5] Compile::Compile
+  [ 6] C2Compiler::compile_method
+  [ 7] CompileBroker::invoke_compiler_on_method
+  [ 8] CompileBroker::compiler_thread_loop
+  [ 9] JavaThread::thread_main_inner
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] IndexSet::alloc_block_containing
+  [ 1] PhaseChaitin::Register_Allocate
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __gettimeofday
+  [ 1] Parker::park
+  [ 2] Unsafe_Park
+  [ 3] jdk.internal.misc.Unsafe.park
+  [ 4] java.util.concurrent.locks.LockSupport.parkNanos
+  [ 5] kyo.scheduler.Scheduler.$init$$$anonfun$10
+  [ 6] kyo.scheduler.Scheduler.$init$$$anonfun$adapted$1
+  [ 7] kyo.scheduler.Scheduler$$Lambda.0x0000700001148fc0.call
+  [ 8] java.util.concurrent.FutureTask.run
+  [ 9] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [10] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [11] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] large_arrays_hashcode_boolean
+  [ 1] jdk.internal.util.ArraysSupport.hashCodeOfUnsigned
+  [ 2] java.util.zip.ZipCoder$UTF8ZipCoder.checkedHash
+  [ 3] java.util.zip.ZipFile$Source.checkAndAddEntry
+  [ 4] java.util.zip.ZipFile$Source.initCEN
+  [ 5] java.util.zip.ZipFile$Source.<init>
+  [ 6] java.util.zip.ZipFile$Source.get
+  [ 7] java.util.zip.ZipFile$CleanableResource.<init>
+  [ 8] java.util.zip.ZipFile.<init>
+  [ 9] java.util.zip.ZipFile.<init>
+  [10] java.util.jar.JarFile.<init>
+  [11] java.util.jar.JarFile.<init>
+  [12] java.util.jar.JarFile.<init>
+  [13] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$listJarEntries
+  [14] kyo.internal.reflect.query.JvmFileSource$$anon$10.apply
+  [15] kyo.internal.reflect.query.JvmFileSource$$anon$10.apply
+  [16] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$29.apply
+  [17] kyo.Kyo$$anon$176.apply
+  [18] kyo.Kyo$$anon$178.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$28.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$8.apply
+  [21] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$3.apply
+  [22] kyo.Reflect$Classpath$$anon$10.apply
+  [23] kyo.bench.ColdLoadFullBench$$anon$2.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.bench.ColdLoadFullBench$$anon$1.apply
+  [32] kyo.Scope$$anon$5$$anon$10.apply
+  [33] kyo.Scope$$anon$5$$anon$13.apply
+  [34] kyo.Abort$$anon$2.apply
+  [35] kyo.Abort$$anon$1.apply
+  [36] kyo.Scope$$anon$5$$anon$6.apply
+  [37] kyo.Abort$$anon$2.apply
+  [38] kyo.Abort$$anon$1.apply
+  [39] kyo.KyoApp$$anon$5.apply
+  [40] kyo.Fiber$package$Fiber$$anon$7$$anon$8.apply
+  [41] kyo.scheduler.IOTask.partialLoop$1
+  [42] kyo.scheduler.IOTask.eval
+  [43] kyo.scheduler.IOTask.run
+  [44] kyo.scheduler.Worker.runTask
+  [45] kyo.scheduler.Worker.run
+  [46] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [47] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [48] java.lang.Thread.runWith
+  [49] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __psynch_cvwait
+  [ 1] PlatformEvent::park_nanos
+  [ 2] JavaThread::sleep_nanos
+  [ 3] JVM_SleepNanos
+  [ 4] java.lang.Thread.sleepNanos0
+  [ 5] java.lang.Thread.sleepNanos
+  [ 6] java.lang.Thread.sleep
+  [ 7] kyo.scheduler.util.Sleep$.apply
+  [ 8] kyo.scheduler.Scheduler.$init$$$anonfun$6
+  [ 9] kyo.scheduler.Scheduler$$Lambda.0x0000700001140870.apply$mcVI$sp
+  [10] kyo.scheduler.regulator.Concurrency.probe
+  [11] kyo.scheduler.regulator.Regulator.collect
+  [12] kyo.scheduler.regulator.Regulator.$init$$$anonfun$1
+  [13] kyo.scheduler.regulator.Regulator.$init$$$anonfun$adapted$1
+  [14] kyo.scheduler.regulator.Regulator$$Lambda.0x000070000113f658.apply
+  [15] scala.Function0.apply$mcV$sp
+  [16] kyo.scheduler.InternalTimer$.kyo$scheduler$InternalTimer$$anon$1$$_$_$$anonfun$1
+  [17] kyo.scheduler.InternalTimer$$anon$1$$Lambda.0x000070000113f920.run
+  [18] java.util.concurrent.Executors$RunnableAdapter.call
+  [19] java.util.concurrent.FutureTask.runAndReset
+  [20] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [21] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [22] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [23] java.lang.Thread.runWith
+  [24] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] PhaseIdealLoop::build_loop_late
+  [ 1] PhaseIdealLoop::build_and_optimize
+  [ 2] PhaseIdealLoop::PhaseIdealLoop
+  [ 3] PhaseIdealLoop::optimize
+  [ 4] Compile::optimize_loops
+  [ 5] Compile::Optimize
+  [ 6] Compile::Compile
+  [ 7] C2Compiler::compile_method
+  [ 8] CompileBroker::invoke_compiler_on_method
+  [ 9] CompileBroker::compiler_thread_loop
+  [10] JavaThread::thread_main_inner
+  [11] Thread::call_run
+  [12] thread_native_entry
+  [13] _pthread_start
+  [14] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] scala.runtime.BoxesRunTime.boxToInteger
+  [ 1] kyo.internal.reflect.tasty.AstUnpickler$.walkStats
+  [ 2] kyo.internal.reflect.tasty.AstUnpickler$.runPass1
+  [ 3] kyo.internal.reflect.tasty.AstUnpickler$.readPass1
+  [ 4] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$11
+  [ 5] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$20.apply
+  [ 6] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$20.apply
+  [ 7] kyo.Abort$$anon$2.apply
+  [ 8] kyo.Abort$$anon$1.apply
+  [ 9] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [10] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [11] kyo.Scope$$anon$5$$anon$10.apply
+  [12] kyo.Scope$$anon$5$$anon$13.apply
+  [13] kyo.Abort$$anon$2.apply
+  [14] kyo.Abort$$anon$1.apply
+  [15] kyo.Scope$$anon$5$$anon$6.apply
+  [16] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [17] kyo.scheduler.IOTask.partialLoop$1
+  [18] kyo.scheduler.IOTask.eval
+  [19] kyo.scheduler.IOTask.run
+  [20] kyo.scheduler.Worker.runTask
+  [21] kyo.scheduler.Worker.run
+  [22] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [23] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [24] java.lang.Thread.runWith
+  [25] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] read
+  [ 1] readBytes
+  [ 2] java.io.RandomAccessFile.readBytes0
+  [ 3] java.io.RandomAccessFile.readBytes
+  [ 4] java.io.RandomAccessFile.read
+  [ 5] java.io.RandomAccessFile.readFully
+  [ 6] java.util.zip.ZipFile$Source.readFullyAt
+  [ 7] java.util.zip.ZipFile$Source.initCEN
+  [ 8] java.util.zip.ZipFile$Source.<init>
+  [ 9] java.util.zip.ZipFile$Source.get
+  [10] java.util.zip.ZipFile$CleanableResource.<init>
+  [11] java.util.zip.ZipFile.<init>
+  [12] java.util.zip.ZipFile.<init>
+  [13] java.util.jar.JarFile.<init>
+  [14] java.util.jar.JarFile.<init>
+  [15] java.util.jar.JarFile.<init>
+  [16] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$listJarEntries
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$10.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$10.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$29.apply
+  [20] kyo.Kyo$$anon$176.apply
+  [21] kyo.Kyo$$anon$178.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$28.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$8.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$3.apply
+  [25] kyo.Reflect$Classpath$$anon$10.apply
+  [26] kyo.bench.ColdLoadFullBench$$anon$2.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.Abort$$anon$2.apply
+  [33] kyo.Abort$$anon$1.apply
+  [34] kyo.bench.ColdLoadFullBench$$anon$1.apply
+  [35] kyo.Scope$$anon$5$$anon$10.apply
+  [36] kyo.Scope$$anon$5$$anon$13.apply
+  [37] kyo.Abort$$anon$2.apply
+  [38] kyo.Abort$$anon$1.apply
+  [39] kyo.Scope$$anon$5$$anon$6.apply
+  [40] kyo.Abort$$anon$2.apply
+  [41] kyo.Abort$$anon$1.apply
+  [42] kyo.KyoApp$$anon$5.apply
+  [43] kyo.Fiber$package$Fiber$$anon$7$$anon$8.apply
+  [44] kyo.scheduler.IOTask.partialLoop$1
+  [45] kyo.scheduler.IOTask.eval
+  [46] kyo.scheduler.IOTask.run
+  [47] kyo.scheduler.Worker.runTask
+  [48] kyo.scheduler.Worker.run
+  [49] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [50] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [51] java.lang.Thread.runWith
+  [52] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] BacktraceBuilder::push
+  [ 1] java_lang_Throwable::fill_in_stack_trace
+  [ 2] java_lang_Throwable::fill_in_stack_trace
+  [ 3] JVM_FillInStackTrace
+  [ 4] Java_java_lang_Throwable_fillInStackTrace
+  [ 5] java.lang.Throwable.fillInStackTrace
+  [ 6] java.lang.Throwable.fillInStackTrace
+  [ 7] java.lang.Throwable.<init>
+  [ 8] java.lang.Exception.<init>
+  [ 9] java.io.IOException.<init>
+  [10] java.nio.file.FileSystemException.<init>
+  [11] java.nio.file.NoSuchFileException.<init>
+  [12] sun.nio.fs.UnixException.translateToIOException
+  [13] sun.nio.fs.UnixException.rethrowAsIOException
+  [14] sun.nio.fs.UnixException.rethrowAsIOException
+  [15] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [16] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [17] java.nio.file.Files.newByteChannel
+  [18] java.nio.file.Files.newByteChannel
+  [19] java.nio.file.Files.readAllBytes
+  [20] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [21] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [24] kyo.Abort$$anon$2.apply
+  [25] kyo.Abort$$anon$1.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [27] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [28] kyo.Scope$$anon$5$$anon$10.apply
+  [29] kyo.Scope$$anon$5$$anon$13.apply
+  [30] kyo.Abort$$anon$2.apply
+  [31] kyo.Abort$$anon$1.apply
+  [32] kyo.Scope$$anon$5$$anon$6.apply
+  [33] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [34] kyo.scheduler.IOTask.partialLoop$1
+  [35] kyo.scheduler.IOTask.eval
+  [36] kyo.scheduler.IOTask.run
+  [37] kyo.scheduler.Worker.runTask
+  [38] kyo.scheduler.Worker.run
+  [39] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [40] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [41] java.lang.Thread.runWith
+  [42] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] Compile::remove_speculative_types
+  [ 1] Compile::Optimize
+  [ 2] Compile::Compile
+  [ 3] C2Compiler::compile_method
+  [ 4] CompileBroker::invoke_compiler_on_method
+  [ 5] CompileBroker::compiler_thread_loop
+  [ 6] JavaThread::thread_main_inner
+  [ 7] Thread::call_run
+  [ 8] thread_native_entry
+  [ 9] _pthread_start
+  [10] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] read
+  [ 1] readBytes
+  [ 2] java.io.RandomAccessFile.readBytes0
+  [ 3] java.io.RandomAccessFile.readBytes
+  [ 4] java.io.RandomAccessFile.read
+  [ 5] java.io.RandomAccessFile.readFully
+  [ 6] java.util.zip.ZipFile$Source.readFullyAt
+  [ 7] java.util.zip.ZipFile$Source.initCEN
+  [ 8] java.util.zip.ZipFile$Source.<init>
+  [ 9] java.util.zip.ZipFile$Source.get
+  [10] java.util.zip.ZipFile$CleanableResource.<init>
+  [11] java.util.zip.ZipFile.<init>
+  [12] java.util.zip.ZipFile.<init>
+  [13] java.util.jar.JarFile.<init>
+  [14] java.util.jar.JarFile.<init>
+  [15] java.util.jar.JarFile.<init>
+  [16] kyo.internal.reflect.query.JvmFileSource$.kyo$internal$reflect$query$JvmFileSource$$$listJarEntries
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$10.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$10.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$37.apply
+  [20] kyo.Kyo$$anon$176.apply
+  [21] kyo.Kyo$$anon$178.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$36.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$7.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$3.apply
+  [25] kyo.Reflect$Classpath$$anon$10.apply
+  [26] kyo.bench.ColdLoadFullBench$$anon$3.apply
+  [27] kyo.Scope$$anon$5$$anon$10.apply
+  [28] kyo.Scope$$anon$5$$anon$13.apply
+  [29] kyo.Abort$$anon$2.apply
+  [30] kyo.Abort$$anon$1.apply
+  [31] kyo.Scope$$anon$5$$anon$6.apply
+  [32] kyo.Abort$$anon$2.apply
+  [33] kyo.Abort$$anon$1.apply
+  [34] kyo.bench.ColdLoadFullBench$$anon$1.apply
+  [35] kyo.Scope$$anon$5$$anon$10.apply
+  [36] kyo.Scope$$anon$5$$anon$13.apply
+  [37] kyo.Abort$$anon$2.apply
+  [38] kyo.Abort$$anon$1.apply
+  [39] kyo.Scope$$anon$5$$anon$6.apply
+  [40] kyo.Abort$$anon$2.apply
+  [41] kyo.Abort$$anon$1.apply
+  [42] kyo.KyoApp$$anon$5.apply
+  [43] kyo.Fiber$package$Fiber$$anon$7$$anon$8.apply
+  [44] kyo.scheduler.IOTask.partialLoop$1
+  [45] kyo.scheduler.IOTask.eval
+  [46] kyo.scheduler.IOTask.run
+  [47] kyo.scheduler.Worker.runTask
+  [48] kyo.scheduler.Worker.run
+  [49] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [50] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [51] java.lang.Thread.runWith
+  [52] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] PhaseIdealLoop::build_loop_early
+  [ 1] PhaseIdealLoop::build_and_optimize
+  [ 2] PhaseIdealLoop::PhaseIdealLoop
+  [ 3] PhaseIdealLoop::optimize
+  [ 4] Compile::optimize_loops
+  [ 5] Compile::Optimize
+  [ 6] Compile::Compile
+  [ 7] C2Compiler::compile_method
+  [ 8] CompileBroker::invoke_compiler_on_method
+  [ 9] CompileBroker::compiler_thread_loop
+  [10] JavaThread::thread_main_inner
+  [11] Thread::call_run
+  [12] thread_native_entry
+  [13] _pthread_start
+  [14] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] RegMask::clear_to_sets
+  [ 1] PhaseChaitin::Select
+  [ 2] PhaseChaitin::Register_Allocate
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] LinearScan::build_intervals
+  [ 1] LinearScan::do_linear_scan
+  [ 2] Compilation::emit_lir
+  [ 3] Compilation::compile_java_method
+  [ 4] Compilation::compile_method
+  [ 5] Compilation::Compilation
+  [ 6] Compiler::compile_method
+  [ 7] CompileBroker::invoke_compiler_on_method
+  [ 8] CompileBroker::compiler_thread_loop
+  [ 9] JavaThread::thread_main_inner
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] kyo.internal.reflect.tasty.PositionsUnpickler$.readSync
+  [ 1] kyo.internal.reflect.tasty.PositionsUnpickler$.read
+  [ 2] kyo.internal.reflect.query.ClasspathOrchestrator$.kyo$internal$reflect$query$ClasspathOrchestrator$$$_$flatMapLoop$13
+  [ 3] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$22.apply
+  [ 4] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$22.apply
+  [ 5] kyo.Abort$$anon$2.apply
+  [ 6] kyo.Abort$$anon$1.apply
+  [ 7] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [ 8] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [ 9] kyo.Scope$$anon$5$$anon$10.apply
+  [10] kyo.Scope$$anon$5$$anon$13.apply
+  [11] kyo.Abort$$anon$2.apply
+  [12] kyo.Abort$$anon$1.apply
+  [13] kyo.Scope$$anon$5$$anon$6.apply
+  [14] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [15] kyo.scheduler.IOTask.partialLoop$1
+  [16] kyo.scheduler.IOTask.eval
+  [17] kyo.scheduler.IOTask.run
+  [18] kyo.scheduler.Worker.runTask
+  [19] kyo.scheduler.Worker.run
+  [20] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [21] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [22] java.lang.Thread.runWith
+  [23] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] java.lang.String.checkIndex
+  [ 1] java.lang.StringLatin1.charAt
+  [ 2] java.lang.String.charAt
+  [ 3] sun.nio.fs.UnixPath.normalizeAndCheck
+  [ 4] sun.nio.fs.UnixPath.<init>
+  [ 5] sun.nio.fs.UnixFileSystem.getPath
+  [ 6] java.nio.file.Path.of
+  [ 7] java.nio.file.Paths.get
+  [ 8] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [ 9] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [10] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [11] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [12] kyo.Abort$$anon$2.apply
+  [13] kyo.Abort$$anon$1.apply
+  [14] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [15] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [16] kyo.Scope$$anon$5$$anon$10.apply
+  [17] kyo.Scope$$anon$5$$anon$13.apply
+  [18] kyo.Abort$$anon$2.apply
+  [19] kyo.Abort$$anon$1.apply
+  [20] kyo.Scope$$anon$5$$anon$6.apply
+  [21] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [22] kyo.scheduler.IOTask.partialLoop$1
+  [23] kyo.scheduler.IOTask.eval
+  [24] kyo.scheduler.IOTask.run
+  [25] kyo.scheduler.Worker.runTask
+  [26] kyo.scheduler.Worker.run
+  [27] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [28] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [29] java.lang.Thread.runWith
+  [30] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] BarrierSetAssembler::refine_register
+  [ 1] G1BarrierSetC2::late_barrier_analysis
+  [ 2] PhaseOutput::Output
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] ChunkPool::allocate_chunk
+  [ 3] Arena::Arena
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] Node::dominates
+  [ 1] MemNode::maybe_all_controls_dominate
+  [ 2] InitializeNode::detect_init_independence
+  [ 3] InitializeNode::can_capture_store
+  [ 4] StoreNode::Ideal
+  [ 5] PhaseIterGVN::transform_old
+  [ 6] PhaseIterGVN::optimize
+  [ 7] Compile::Optimize
+  [ 8] Compile::Compile
+  [ 9] C2Compiler::compile_method
+  [10] CompileBroker::invoke_compiler_on_method
+  [11] CompileBroker::compiler_thread_loop
+  [12] JavaThread::thread_main_inner
+  [13] Thread::call_run
+  [14] thread_native_entry
+  [15] _pthread_start
+  [16] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] PhaseIterGVN::transform_old
+  [ 1] PhaseIterGVN::optimize
+  [ 2] PhaseIdealLoop::optimize
+  [ 3] Compile::optimize_loops
+  [ 4] Compile::Optimize
+  [ 5] Compile::Compile
+  [ 6] C2Compiler::compile_method
+  [ 7] CompileBroker::invoke_compiler_on_method
+  [ 8] CompileBroker::compiler_thread_loop
+  [ 9] JavaThread::thread_main_inner
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] InitializedAssertionPredicate::is_predicate
+  [ 1] RegularPredicateBlockIterator::for_each
+  [ 2] PredicateBlockIterator::for_each
+  [ 3] PredicateIterator::for_each
+  [ 4] PhaseIdealLoop::build_loop_late_post_work
+  [ 5] PhaseIdealLoop::build_loop_late
+  [ 6] PhaseIdealLoop::build_and_optimize
+  [ 7] PhaseIdealLoop::PhaseIdealLoop
+  [ 8] PhaseIdealLoop::optimize
+  [ 9] Compile::optimize_loops
+  [10] Compile::Optimize
+  [11] Compile::Compile
+  [12] C2Compiler::compile_method
+  [13] CompileBroker::invoke_compiler_on_method
+  [14] CompileBroker::compiler_thread_loop
+  [15] JavaThread::thread_main_inner
+  [16] Thread::call_run
+  [17] thread_native_entry
+  [18] _pthread_start
+  [19] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] PhaseCFG::select
+  [ 1] PhaseCFG::schedule_local
+  [ 2] PhaseCFG::global_code_motion
+  [ 3] PhaseCFG::do_global_code_motion
+  [ 4] Compile::Code_Gen
+  [ 5] Compile::Compile
+  [ 6] C2Compiler::compile_method
+  [ 7] CompileBroker::invoke_compiler_on_method
+  [ 8] CompileBroker::compiler_thread_loop
+  [ 9] JavaThread::thread_main_inner
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] OopMapSort::sort
+  [ 1] ImmutableOopMap::ImmutableOopMap
+  [ 2] ImmutableOopMapBuilder::build
+  [ 3] ImmutableOopMapSet::build_from
+  [ 4] CodeBlob::CodeBlob
+  [ 5] nmethod::nmethod
+  [ 6] nmethod::new_nmethod
+  [ 7] ciEnv::register_method
+  [ 8] Compilation::compile_method
+  [ 9] Compilation::Compilation
+  [10] Compiler::compile_method
+  [11] CompileBroker::invoke_compiler_on_method
+  [12] CompileBroker::compiler_thread_loop
+  [13] JavaThread::thread_main_inner
+  [14] Thread::call_run
+  [15] thread_native_entry
+  [16] _pthread_start
+  [17] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] OopFlow::compute_reach
+  [ 1] PhaseOutput::BuildOopMaps
+  [ 2] PhaseOutput::Output
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] mach_msg2_trap
+  [ 1] thread_info
+  [ 2] os::thread_cpu_time
+  [ 3] jmm_GetThreadCpuTimesWithKind
+  [ 4] sun.management.ThreadImpl.getThreadUserCpuTime1
+  [ 5] sun.management.ThreadImpl.getThreadUserTime
+  [ 6] com.sun.management.internal.HotSpotThreadImpl.getThreadUserTime
+  [ 7] kyo.scheduler.util.ThreadUserTime$.userTimes
+  [ 8] kyo.scheduler.BlockingMonitor.cycle
+  [ 9] kyo.scheduler.BlockingMonitor.loop$1
+  [10] kyo.scheduler.BlockingMonitor.$init$$$anonfun$2
+  [11] kyo.scheduler.BlockingMonitor.$init$$$anonfun$adapted$1
+  [12] kyo.scheduler.BlockingMonitor$$Lambda.0x0000700001148d90.call
+  [13] java.util.concurrent.FutureTask.run
+  [14] java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run
+  [15] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [16] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [17] java.lang.Thread.runWith
+  [18] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __sfvwrite
+  [ 1] __vfprintf
+  [ 2] _vsnprintf
+  [ 3] os::vsnprintf
+  [ 4] outputStream::do_vsnprintf
+  [ 5] outputStream::do_vsnprintf_and_write
+  [ 6] outputStream::print
+  [ 7] oopDesc::print_address_on
+  [ 8] InstanceKlass::oop_print_value_on
+  [ 9] ExceptionsEventLog::log
+  [10] Exceptions::_throw
+  [11] jni_Throw
+  [12] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [13] sun.nio.fs.UnixNativeDispatcher.open0
+  [14] sun.nio.fs.UnixNativeDispatcher.open
+  [15] sun.nio.fs.UnixChannelFactory.open
+  [16] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [17] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [18] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [19] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [20] java.nio.file.Files.newByteChannel
+  [21] java.nio.file.Files.newByteChannel
+  [22] java.nio.file.Files.readAllBytes
+  [23] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [24] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [25] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [26] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [30] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [31] kyo.Scope$$anon$5$$anon$10.apply
+  [32] kyo.Scope$$anon$5$$anon$13.apply
+  [33] kyo.Abort$$anon$2.apply
+  [34] kyo.Abort$$anon$1.apply
+  [35] kyo.Scope$$anon$5$$anon$6.apply
+  [36] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [37] kyo.scheduler.IOTask.partialLoop$1
+  [38] kyo.scheduler.IOTask.eval
+  [39] kyo.scheduler.IOTask.run
+  [40] kyo.scheduler.Worker.runTask
+  [41] kyo.scheduler.Worker.run
+  [42] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [43] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [44] java.lang.Thread.runWith
+  [45] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] ChunkPool::deallocate_chunk
+  [ 3] Chunk::next_chop
+  [ 4] Matcher::match_tree
+  [ 5] Matcher::xform
+  [ 6] Matcher::match
+  [ 7] Compile::Code_Gen
+  [ 8] Compile::Compile
+  [ 9] C2Compiler::compile_method
+  [10] CompileBroker::invoke_compiler_on_method
+  [11] CompileBroker::compiler_thread_loop
+  [12] JavaThread::thread_main_inner
+  [13] Thread::call_run
+  [14] thread_native_entry
+  [15] _pthread_start
+  [16] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __psynch_mutexdrop
+  [ 1] _pthread_mutex_firstfit_unlock_slow
+  [ 2] ExceptionsEventLog::log
+  [ 3] Exceptions::_throw
+  [ 4] jni_Throw
+  [ 5] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 6] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open
+  [ 8] sun.nio.fs.UnixChannelFactory.open
+  [ 9] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [13] java.nio.file.Files.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.readAllBytes
+  [16] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.Abort$$anon$2.apply
+  [21] kyo.Abort$$anon$1.apply
+  [22] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.Scope$$anon$5$$anon$10.apply
+  [25] kyo.Scope$$anon$5$$anon$13.apply
+  [26] kyo.Abort$$anon$2.apply
+  [27] kyo.Abort$$anon$1.apply
+  [28] kyo.Scope$$anon$5$$anon$6.apply
+  [29] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [30] kyo.scheduler.IOTask.partialLoop$1
+  [31] kyo.scheduler.IOTask.eval
+  [32] kyo.scheduler.IOTask.run
+  [33] kyo.scheduler.Worker.runTask
+  [34] kyo.scheduler.Worker.run
+  [35] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [36] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [37] java.lang.Thread.runWith
+  [38] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] C1 Runtime slow_subtype_check_blob
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] Node_List::size
+  [ 1] IdealLoopTree::policy_range_check
+  [ 2] PhaseIdealLoop::build_and_optimize
+  [ 3] PhaseIdealLoop::PhaseIdealLoop
+  [ 4] PhaseIdealLoop::optimize
+  [ 5] Compile::optimize_loops
+  [ 6] Compile::Optimize
+  [ 7] Compile::Compile
+  [ 8] C2Compiler::compile_method
+  [ 9] CompileBroker::invoke_compiler_on_method
+  [10] CompileBroker::compiler_thread_loop
+  [11] JavaThread::thread_main_inner
+  [12] Thread::call_run
+  [13] thread_native_entry
+  [14] _pthread_start
+  [15] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] PhaseLive::compute
+  [ 1] PhaseChaitin::Register_Allocate
+  [ 2] Compile::Code_Gen
+  [ 3] Compile::Compile
+  [ 4] C2Compiler::compile_method
+  [ 5] CompileBroker::invoke_compiler_on_method
+  [ 6] CompileBroker::compiler_thread_loop
+  [ 7] JavaThread::thread_main_inner
+  [ 8] Thread::call_run
+  [ 9] thread_native_entry
+  [10] _pthread_start
+  [11] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] LinearScanWalker::free_collect_inactive_fixed
+  [ 1] LinearScanWalker::alloc_free_reg
+  [ 2] LinearScanWalker::activate_current
+  [ 3] IntervalWalker::walk_to
+  [ 4] LinearScan::allocate_registers
+  [ 5] LinearScan::do_linear_scan
+  [ 6] Compilation::emit_lir
+  [ 7] Compilation::compile_java_method
+  [ 8] Compilation::compile_method
+  [ 9] Compilation::Compilation
+  [10] Compiler::compile_method
+  [11] CompileBroker::invoke_compiler_on_method
+  [12] CompileBroker::compiler_thread_loop
+  [13] JavaThread::thread_main_inner
+  [14] Thread::call_run
+  [15] thread_native_entry
+  [16] _pthread_start
+  [17] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] Node_Backward_Iterator::next
+  [ 1] PhaseCFG::schedule_late
+  [ 2] PhaseCFG::global_code_motion
+  [ 3] PhaseCFG::do_global_code_motion
+  [ 4] Compile::Code_Gen
+  [ 5] Compile::Compile
+  [ 6] C2Compiler::compile_method
+  [ 7] CompileBroker::invoke_compiler_on_method
+  [ 8] CompileBroker::compiler_thread_loop
+  [ 9] JavaThread::thread_main_inner
+  [10] Thread::call_run
+  [11] thread_native_entry
+  [12] _pthread_start
+  [13] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] kyo.scheduler.IOTask.partialLoop$1
+  [ 1] kyo.scheduler.IOTask.eval
+  [ 2] kyo.scheduler.IOTask.run
+  [ 3] kyo.scheduler.Worker.runTask
+  [ 4] kyo.scheduler.Worker.run
+  [ 5] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [ 6] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [ 7] java.lang.Thread.runWith
+  [ 8] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] __psynch_mutexwait
+  [ 1] _pthread_mutex_firstfit_lock_slow
+  [ 2] Mutex::lock_without_safepoint_check
+  [ 3] ExceptionsEventLog::log
+  [ 4] Exceptions::_throw
+  [ 5] jni_Throw
+  [ 6] Java_sun_nio_fs_UnixNativeDispatcher_open0
+  [ 7] sun.nio.fs.UnixNativeDispatcher.open0
+  [ 8] sun.nio.fs.UnixNativeDispatcher.open
+  [ 9] sun.nio.fs.UnixChannelFactory.open
+  [10] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [11] sun.nio.fs.UnixChannelFactory.newFileChannel
+  [12] sun.nio.fs.UnixFileSystemProvider.newFileChannel
+  [13] sun.nio.fs.UnixFileSystemProvider.newByteChannel
+  [14] java.nio.file.Files.newByteChannel
+  [15] java.nio.file.Files.newByteChannel
+  [16] java.nio.file.Files.readAllBytes
+  [17] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [18] kyo.internal.reflect.query.JvmFileSource$$anon$1.apply
+  [19] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [20] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$16.apply
+  [21] kyo.Abort$$anon$2.apply
+  [22] kyo.Abort$$anon$1.apply
+  [23] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [24] kyo.internal.reflect.query.ClasspathOrchestrator$$anon$13.apply
+  [25] kyo.Scope$$anon$5$$anon$10.apply
+  [26] kyo.Scope$$anon$5$$anon$13.apply
+  [27] kyo.Abort$$anon$2.apply
+  [28] kyo.Abort$$anon$1.apply
+  [29] kyo.Scope$$anon$5$$anon$6.apply
+  [30] kyo.Fiber$package$Fiber$internal$$anon$59$$anon$61.apply
+  [31] kyo.scheduler.IOTask.partialLoop$1
+  [32] kyo.scheduler.IOTask.eval
+  [33] kyo.scheduler.IOTask.run
+  [34] kyo.scheduler.Worker.runTask
+  [35] kyo.scheduler.Worker.run
+  [36] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [37] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [38] java.lang.Thread.runWith
+  [39] java.lang.Thread.run
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] CProjNode::is_CFG
+  [ 1] PhaseIdealLoop::try_sink_out_of_loop
+  [ 2] PhaseIdealLoop::split_if_with_blocks_post
+  [ 3] PhaseIdealLoop::split_if_with_blocks
+  [ 4] PhaseIdealLoop::build_and_optimize
+  [ 5] PhaseIdealLoop::PhaseIdealLoop
+  [ 6] PhaseIdealLoop::optimize
+  [ 7] Compile::optimize_loops
+  [ 8] Compile::Optimize
+  [ 9] Compile::Compile
+  [10] C2Compiler::compile_method
+  [11] CompileBroker::invoke_compiler_on_method
+  [12] CompileBroker::compiler_thread_loop
+  [13] JavaThread::thread_main_inner
+  [14] Thread::call_run
+  [15] thread_native_entry
+  [16] _pthread_start
+  [17] thread_start
+
+--- 20000000 ns (0.13%), 2 samples
+  [ 0] Compile::identify_useful_nodes
+  [ 1] Matcher::specialize_generic_vector_operands
+  [ 2] Matcher::match
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] _pthread_start
+  [12] thread_start
+
+          ns  percent  samples  top
+  ----------  -------  -------  ---
+  4520000000   29.37%      452  __psynch_mutexwait
+  1280000000    8.32%      128  __psynch_cvwait
+   980000000    6.37%       98  __open
+   530000000    3.44%       53  __psynch_mutexdrop
+   300000000    1.95%       30  pthread_jit_write_protect_np
+   110000000    0.71%       11  PhaseChaitin::Split
+   100000000    0.65%       10  read
+    90000000    0.58%        9  lstat64
+    90000000    0.58%        9  java_lang_Throwable::fill_in_stack_trace
+    80000000    0.52%        8  kyo.scheduler.IOTask.partialLoop$1
+    80000000    0.52%        8  scala.collection.immutable.BitmapIndexedMapNode.getKey
+    80000000    0.52%        8  PhaseChaitin::elide_copy
+    80000000    0.52%        8  large_arrays_hashcode_boolean
+    70000000    0.45%        7  tlv_get_addr
+    60000000    0.39%        6  PhaseIdealLoop::build_loop_early
+    60000000    0.39%        6  InstanceKlass::find_method_index
+    60000000    0.39%        6  ciObjectFactory::get_metadata
+    60000000    0.39%        6  kyo.Tag$package$Tag$internal$.checkTypes
+    60000000    0.39%        6  kyo.internal.reflect.symbol.Interner.internInShard
+    50000000    0.32%        5  stat64
+    50000000    0.32%        5  scala.runtime.BoxesRunTime.boxToInteger
+    50000000    0.32%        5  Arena::contains
+    50000000    0.32%        5  PhaseChaitin::build_ifg_physical
+    50000000    0.32%        5  mach_msg2_trap
+    40000000    0.26%        4  Matcher::xform
+    40000000    0.26%        4  arrayof_oop_disjoint_arraycopy
+    40000000    0.26%        4  __gettimeofday
+    40000000    0.26%        4  kyo.kernel.internal.Safepoint.enter
+    40000000    0.26%        4  CodeHeap::find_blob
+    40000000    0.26%        4  sun.nio.fs.UnixPath.normalizeAndCheck
+    40000000    0.26%        4  BacktraceBuilder::push
+    40000000    0.26%        4  PhaseChaitin::gather_lrg_masks
+    40000000    0.26%        4  PhaseIdealLoop::Dominators
+    40000000    0.26%        4  zero_blocks
+    40000000    0.26%        4  Node::is_CFG
+    40000000    0.26%        4  DIR_Chunk* GrowableArrayWithAllocator<DIR_Chunk*, GrowableArray<DIR_Chunk*>>::insert_sorted<&DIR_Chunk::compare(DIR_Chunk* const&, DIR_Chunk* const&)>
+    40000000    0.26%        4  java.lang.String.newStringUTF8NoRepl
+    40000000    0.26%        4  itable stub
+    40000000    0.26%        4  _platform_bzero
+    40000000    0.26%        4  _platform_memset
+    30000000    0.19%        3  __sfvwrite
+    30000000    0.19%        3  kyo.internal.reflect.tasty.PositionsUnpickler$.readSync
+    30000000    0.19%        3  Dictionary::find_class
+    30000000    0.19%        3  access
+    30000000    0.19%        3  _qsort
+    30000000    0.19%        3  count_positives
+    30000000    0.19%        3  _platform_memmove
+    30000000    0.19%        3  inflate_fast
+    30000000    0.19%        3  java.lang.String.startsWith
+    30000000    0.19%        3  scala.collection.immutable.MapBuilderImpl.addOne
+    30000000    0.19%        3  CProjNode::is_CFG
+    30000000    0.19%        3  stub:pthread_jit_write_protect_np
+    30000000    0.19%        3  java.lang.StringCoding.countPositives
+    30000000    0.19%        3  RuntimePredicate::is_predicate
+    30000000    0.19%        3  RelocIterator::set_limits
+    30000000    0.19%        3  RegMask::is_UP
+    30000000    0.19%        3  IndexSet::alloc_block_containing
+    30000000    0.19%        3  PhiNode::Ideal
+    30000000    0.19%        3  PhaseIdealLoop::build_loop_late_post_work
+    30000000    0.19%        3  InitializedAssertionPredicate::is_predicate
+    30000000    0.19%        3  BarrierSetC2::compute_liveness_at_stubs
+    30000000    0.19%        3  BarrierSetAssembler::refine_register
+    30000000    0.19%        3  java.lang.StringLatin1.toLowerCase
+    30000000    0.19%        3  java.lang.ThreadLocal.get
+    30000000    0.19%        3  java.util.zip.ZipFile$Source.checkAndAddEntry
+    30000000    0.19%        3  outputStream::do_vsnprintf
+    30000000    0.19%        3  Compile::identify_useful_nodes
+    30000000    0.19%        3  PhaseCFG::partial_latency_of_defs
+    30000000    0.19%        3  PhaseCCP::push_and
+    30000000    0.19%        3  PhaseAggressiveCoalesce::insert_copies
+    30000000    0.19%        3  Node_Backward_Iterator::next
+    30000000    0.19%        3  scala.collection.immutable.HashMapBuilder.insertValue
+    20000000    0.13%        2  vtable stub
+    20000000    0.13%        2  PhaseCFG::select
+    20000000    0.13%        2  vframeStream::vframeStream
+    20000000    0.13%        2  Arena::Arealloc
+    20000000    0.13%        2  LinearScan::build_intervals
+    20000000    0.13%        2  C1 Runtime slow_subtype_check_blob
+    20000000    0.13%        2  scala.collection.mutable.HashMap.foreach
+    20000000    0.13%        2  scala.collection.mutable.GrowableBuilder.addOne
+    20000000    0.13%        2  scala.collection.immutable.Node$.indexFrom
+    20000000    0.13%        2  LinearScanWalker::free_collect_inactive_fixed
+    20000000    0.13%        2  CallNode::bottom_type
+    20000000    0.13%        2  scala.collection.immutable.HashMapBuilder.insertElement
+    20000000    0.13%        2  LinkResolver::resolve_method
+    20000000    0.13%        2  scala.collection.immutable.BitmapIndexedMapNode.mergeTwoKeyValPairs
+    20000000    0.13%        2  scala.Tuple2$.apply
+    20000000    0.13%        2  pthread_mutex_unlock
+    20000000    0.13%        2  MachNode::rematerialize
+    20000000    0.13%        2  os::current_thread_enable_wx
+    20000000    0.13%        2  mach_absolute_time
+    20000000    0.13%        2  kyo.scheduler.IOPromise.complete
+    20000000    0.13%        2  kyo.kernel.internal.KyoContinue.tag
+    20000000    0.13%        2  kyo.kernel.internal.KyoContinue.<init>
+    20000000    0.13%        2  Compile::flatten_alias_type
+    20000000    0.13%        2  kyo.internal.reflect.tasty.NameUnpickler$.readUnsafe
+    20000000    0.13%        2  Compile::remove_speculative_types
+    20000000    0.13%        2  kyo.internal.reflect.symbol.Interner.bytesEqual
+    20000000    0.13%        2  kyo.Maybe$package$Maybe$.get
+    20000000    0.13%        2  MemAllocator::Allocation::notify_allocation
+    20000000    0.13%        2  MemAllocator::Allocation::notify_allocation_jfr_sampler
+    20000000    0.13%        2  kyo.Chunk.loop$8
+    20000000    0.13%        2  MemNode::optimize_simple_memory_chain
+    20000000    0.13%        2  MergeMemNode::Ideal
+    20000000    0.13%        2  kyo.Abort$$anon$2.apply
+    20000000    0.13%        2  java.util.jar.JarFile.entryFor
+    20000000    0.13%        2  java.lang.String.length
+    20000000    0.13%        2  java.lang.String.checkIndex
+    20000000    0.13%        2  java.lang.String.<init>
+    20000000    0.13%        2  java.lang.CharacterDataLatin1.toLowerCase
+    20000000    0.13%        2  MultiNode::is_CFG
+    20000000    0.13%        2  AccessInternal::PostRuntimeDispatch<G1BarrierSet::AccessBarrier<1335398ull, G1BarrierSet>, (AccessInternal::BarrierType)1, 1335398ull>::oop_access_barrier
+    20000000    0.13%        2  call_stub
+    20000000    0.13%        2  NTarjan::DFS
+    20000000    0.13%        2  bsearch
+    20000000    0.13%        2  _platform_strlen
+    20000000    0.13%        2  __vfprintf
+    20000000    0.13%        2  Node::dominates
+    20000000    0.13%        2  ValueRecorder<Metadata*>::maybe_find_index
+    20000000    0.13%        2  TypeOopPtr::TypeOopPtr
+    20000000    0.13%        2  Type::hashcons
+    20000000    0.13%        2  Node::isa_IfTrue
+    20000000    0.13%        2  Node::latency
+    20000000    0.13%        2  Node::out_grow
+    20000000    0.13%        2  Type::Initialize_shared(Compile*)::$_0::__invoke
+    20000000    0.13%        2  SymbolTable::lookup_shared
+    20000000    0.13%        2  SymbolTable::do_lookup
+    20000000    0.13%        2  Rewriter::scan_method
+    20000000    0.13%        2  Node::unique_ctrl_out_or_null
+    20000000    0.13%        2  RegMask::is_bound
+    20000000    0.13%        2  NodeHash::hash_find_insert
+    20000000    0.13%        2  RegMask::clear_to_sets
+    20000000    0.13%        2  ProjNode::is_CFG
+    20000000    0.13%        2  Klass::check_array_allocation_length
+    20000000    0.13%        2  Node_List::size
+    20000000    0.13%        2  PhaseLive::compute
+    20000000    0.13%        2  PhaseIterGVN::transform_old
+    20000000    0.13%        2  PhaseIterGVN::add_users_of_use_to_worklist
+    20000000    0.13%        2  IndexSetIterator::advance_and_next
+    20000000    0.13%        2  OopFlow::compute_reach
+    20000000    0.13%        2  OopMapSort::sort
+    20000000    0.13%        2  PhaseIdealLoop::build_loop_late
+    20000000    0.13%        2  PhaseIFG::SquareUp
+    20000000    0.13%        2  PhaseChaitin::yank_if_dead_recurse
+    20000000    0.13%        2  PhaseChaitin::build_ifg_virtual
+    20000000    0.13%        2  PathFrequency::to
+    20000000    0.13%        2  PhaseCFG::sched_call
+    10000000    0.06%        1  Klass::next_sibling
+    10000000    0.06%        1  ciObjectFactory::ciObjectFactory
+    10000000    0.06%        1  PhaseCCP::transform
+    10000000    0.06%        1  PhaseCFG::build_dominator_tree
+    10000000    0.06%        1  PhaseCFG::hoist_to_cheaper_block
+    10000000    0.06%        1  PhaseCFG::implicit_null_check
+    10000000    0.06%        1  PhaseCFG::is_uncommon
+    10000000    0.06%        1  JavaFrameAnchor::make_walkable
+    10000000    0.06%        1  JavaThread::pd_last_frame
+    10000000    0.06%        1  PhaseCFG::schedule_early
+    10000000    0.06%        1  PhaseCFG::schedule_late
+    10000000    0.06%        1  PhaseCFG::schedule_local
+    10000000    0.06%        1  PhaseCFG::schedule_pinned_nodes
+    10000000    0.06%        1  JavaThread::threadObj
+    10000000    0.06%        1  PhaseChaitin::Select
+    10000000    0.06%        1  PhaseChaitin::Simplify
+    10000000    0.06%        1  JavaCalls::call_helper
+    10000000    0.06%        1  JVMState::of_depth
+    10000000    0.06%        1  ParsePredicate::is_valid
+    10000000    0.06%        1  JVMState::clone_shallow
+    10000000    0.06%        1  InterpreterRuntime::ldc
+    10000000    0.06%        1  Parse::merge_memory_edges
+    10000000    0.06%        1  Parse::merge_common
+    10000000    0.06%        1  InstanceKlass::uncached_lookup_method
+    10000000    0.06%        1  InstanceKlass::check_valid_for_instantiation
+    10000000    0.06%        1  OopMapValue::write_on
+    10000000    0.06%        1  ObjectMonitor::try_spin
+    10000000    0.06%        1  PhaseIdealLoop::is_dominator
+    10000000    0.06%        1  PhaseIdealLoop::loop_predication_impl
+    10000000    0.06%        1  PhaseIdealLoop::recompute_dom_depth
+    10000000    0.06%        1  PhaseIdealLoop::sort
+    10000000    0.06%        1  PhaseIdealLoop::split_if_with_blocks
+    10000000    0.06%        1  PhaseIdealLoop::split_if_with_blocks_post
+    10000000    0.06%        1  ObjArrayKlass::copy_array
+    10000000    0.06%        1  PhaseIterGVN::add_users_to_worklist
+    10000000    0.06%        1  PhaseIterGVN::optimize
+    10000000    0.06%        1  NonSafepointEmitter::emit_non_safepoint
+    10000000    0.06%        1  Node_Stack::find
+    10000000    0.06%        1  PhaseOutput::BuildOopMaps
+    10000000    0.06%        1  PhaseOutput::FillLocArray
+    10000000    0.06%        1  IndexSet::insert
+    10000000    0.06%        1  PhiNode::in_RegMask
+    10000000    0.06%        1  PhiNode::wait_for_region_igvn
+    10000000    0.06%        1  PhiSimplifier::block_do
+    10000000    0.06%        1  Node_Array::remove
+    10000000    0.06%        1  RegMask::AND
+    10000000    0.06%        1  NodeHash::hash_insert
+    10000000    0.06%        1  ImmutableOopMap::update_register_map
+    10000000    0.06%        1  NodeHash::hash_delete
+    10000000    0.06%        1  RegMask::num_registers
+    10000000    0.06%        1  RegularPredicateBlockIterator::RegularPredicateBlockIterator
+    10000000    0.06%        1  IfTrueNode::Opcode
+    10000000    0.06%        1  ResolvedMethodGet::operator()

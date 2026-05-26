@@ -1,132 +1,151 @@
-# Phase 1 In-Flight Review (pulse 1)
+# Phase 1 In-Flight Review (pulse 1) — cold-load perf plan
 
-Pulse 1: 2026-05-24T00:00:00Z
+Pulse 1: 2026-05-26T00:00:00Z
 Files reviewed:
-- kyo-reflect/execution-plan.md lines 54-126
-- kyo-reflect/PHASE-1-PREP.md (full)
-- kyo-reflect/STEERING.md (full)
-- kyo-reflect/shared/src/main/scala/kyo/internal/reflect/binary/ByteView.scala
-- kyo-reflect/shared/src/main/scala/kyo/internal/reflect/binary/Varint.scala
-- kyo-reflect/shared/src/main/scala/kyo/internal/reflect/binary/Utf8.scala (shared stub)
-- kyo-reflect/jvm/src/main/scala/kyo/internal/reflect/binary/Utf8.scala
-- kyo-reflect/js/src/main/scala/kyo/internal/reflect/binary/Utf8.scala
-- kyo-reflect/native/src/main/scala/kyo/internal/reflect/binary/Utf8.scala
-- kyo-reflect/shared/src/main/scala/kyo/internal/reflect/tasty/TastyFormat.scala
-- kyo-reflect/shared/src/main/scala/kyo/internal/reflect/tasty/TastyHeader.scala
-- kyo-reflect/shared/src/test/scala/kyo/ByteViewTest.scala
-- kyo-reflect/shared/src/test/scala/kyo/TastyHeaderTest.scala
-- kyo-reflect/shared/src/test/scala/kyo/Utf8Test.scala
-
----
+- `kyo-reflect/execution-plan-perf.md` Phase 1 section (lines 41-99)
+- `kyo-reflect/jvm/src/main/scala/kyo/internal/reflect/query/JarCentralDirectory.scala` (NEW, 289 lines)
+- `kyo-reflect/jvm/src/test/scala/kyo/JarCentralDirectoryTest.scala` (NEW, 376 lines)
+- `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/query/FileSource.scala` (MODIFIED, 71 lines)
+- `kyo-reflect/jvm/src/main/scala/kyo/internal/reflect/query/JvmFileSource.scala` (MODIFIED, diff)
+- `kyo-reflect/native/src/main/scala/kyo/internal/reflect/query/NativeFileSource.scala` (MODIFIED, lines 148-188)
+- `kyo-reflect/js/src/main/scala/kyo/internal/reflect/query/JsFileSource.scala` (MODIFIED, diff)
+- `kyo-reflect/shared/src/main/scala/kyo/internal/reflect/query/ClasspathOrchestrator.scala` (MODIFIED, diff)
+- `kyo-reflect/shared/src/test/scala/kyo/QueryApiTest.scala` (MODIFIED, diff)
+- `kyo-reflect/shared/src/test/scala/kyo/SnapshotRoundTripTest.scala` (MODIFIED, diff)
+- `kyo-reflect/shared/src/test/scala/kyo/SymbolResolutionTest.scala` (MODIFIED, diff)
+- `kyo-reflect/shared/src/test/scala/kyo/TreeUnpicklerTest.scala` (MODIFIED, diff)
+- `kyo-reflect/jvm/src/test/scala/kyo/SnapshotRoundTripJvmTest.scala` (MODIFIED, diff)
 
 ## Plan anchor
 
-### Files to produce (plan mandates 8 files)
+- ### Files to produce: 2 expected | 1 of 2 new files present as named by the plan
+  - `JarCentralDirectory.scala`: PRESENT at correct path `kyo-reflect/jvm/src/main/scala/kyo/internal/reflect/query/JarCentralDirectory.scala`
+  - `JarCentralDirectoryTest.scala`: PRESENT but at a different path from the plan (see Other observations — flat `kyo/` convention is acceptable)
+  - `FileSourceTest.scala`: ABSENT — the plan mandates "4 new in `FileSourceTest.scala`"; that file does not exist anywhere in the tree
 
-| File | Present? | Notes |
-|---|---|---|
-| `shared/.../binary/ByteView.scala` | PRESENT | sealed trait + Heap + Mapped stub |
-| `shared/.../binary/Varint.scala` | PRESENT | standalone object |
-| `shared/.../binary/Utf8.scala` | PRESENT (shared stub only) | abstract class Utf8Impl, no object Utf8 in shared |
-| `jvm/.../binary/Utf8.scala` | PRESENT | object Utf8 extends Utf8Impl |
-| `js/.../binary/Utf8.scala` | PRESENT | object Utf8 extends Utf8Impl |
-| `native/.../binary/Utf8.scala` | PRESENT | object Utf8 extends Utf8Impl |
-| `shared/.../tasty/TastyFormat.scala` | PRESENT | all constants present |
-| `shared/.../tasty/TastyHeader.scala` | PRESENT | read() method present |
+- ### Files to modify: 5 expected | all 5 present and modified, matching the plan
+  - `FileSource.scala`: single-suffix variant converted to delegate; new abstract multi-suffix method added
+  - `JvmFileSource.scala`: `JarFile` import removed; JAR path delegates to `JarCentralDirectory.list`; `listJarEntries` deleted; `listJrtPath` renamed `listJrtPathMulti`
+  - `NativeFileSource.scala`: new `listDirNativeMulti` added; `list` override updated
+  - `JsFileSource.scala`: new `listNodeSyncMulti` added; `list` override updated
+  - `ClasspathOrchestrator.scala`: `collectAllEntries` added; two sequential calls collapsed to one
 
-All 8 mandated files are present. No missing files.
+- ### Tests: 14 expected in JarCentralDirectoryTest + 4 in FileSourceTest = 18 leaves | 14 present, 4 MISSING
+  - T1-T6 and T11-T14 in `JarCentralDirectoryTest.scala`: all 14 present
+  - T7/F1-T10/F4 (plan "4 new in FileSourceTest.scala"): ENTIRELY ABSENT — `FileSourceTest.scala` was never created
 
-### Test class count vs plan
-
-| Class | Plan tests | Actual tests in file | Notes |
-|---|---|---|---|
-| ByteViewTest | 6 (tests 1-6) | 6 | Matches |
-| VarintTest | 8 (tests 7-14) | 8 | Matches |
-| Utf8Test | 4 (tests 15-18) | 4 | Matches |
-| TastyHeaderTest | 6 (tests 19-24) | 6 + 3 extra | 3 extra: truncated, UUID format, tooling version |
-
-Total plan-mandated: 24. All 24 present. 3 bonus tests in TastyHeaderTest (truncated header, UUID hex format, tooling version decode) -- these are additive, not substitutes.
-
----
+- ### Public API additions: `FileSource.list(dir: String, suffixes: Chunk[String])` | PRESENT at `FileSource.scala` line 52
 
 ## Reward-hacking checks
 
 | Pattern | Verdict | Citation |
 |---|---|---|
-| Verification commands actually run | CANNOT CONFIRM | No compile/test output observable; tree is dirty, no test result artifacts. Supervisor must run the verification command before commit. |
-| Compile-only "success" claim | NOT OBSERVED | No such claim in files read. |
-| Priority inference / silently skipped items | CLEAN | All 24 plan leaves present; no "edge-case" dropout. |
-| Scope substitution (simpler equivalent) | FLAG (minor) | Shared Utf8.scala defines `abstract private[binary] class Utf8Impl` rather than an `expect` or abstract dispatch object. This is a valid cross-platform pattern in Scala but diverges from the plan's "expect-object pattern or conditional import" phrasing. The actual runtime dispatch works via each platform's `object Utf8 extends Utf8Impl`. See MINOR section. |
-| `foreach`-discards-assert in tests | CLEAN | No `foreach { assert(...) }` pattern found. Assertions are direct. |
-| Stale-state / tautological matchers | CLEAN | No `assert(true)`, no `>= 0` assertions. All assertions on concrete values. |
-| LEB128 signed encoding: 2's complement (NOT zigzag per STEERING) | CLEAN -- CORRECT | Varint.readInt uses `((b << 1).toByte >> 1).toLong` sign-extension, matching dotty TastyReader.readLongInt verbatim. The comment in Varint.scala explicitly flags zigzag as wrong. STEERING directive honored. |
-
----
+| Verification commands actually run | NOT VERIFIABLE — no test output artifacts present in tree | n/a |
+| Compile-only "success" claim | CANNOT RULE OUT — `FileSourceTest.scala` absent means 4 plan-mandated tests never ran; verification command would fail | FileSourceTest.scala absent |
+| Priority inference (item skipped) | SUSPECT — F1-F4 are the only tests that exercise the `FileSource` multi-suffix API via shared in-memory fixture (cross-platform coverage); silently omitting them leaves the shared contract untested | Plan lines 86-90 |
+| Scope substitution (simpler equivalent shipped) | PARTIAL — `collectAllEntries` is correct but dead methods `collectTastyFiles` and `collectModuleInfoFiles` were not removed (see CRITICAL C2) | ClasspathOrchestrator.scala diff |
+| Foreach-discards-assert in tests | CLEAN — all assertions are evaluated inside `Result.Success(...)` match arms | JarCentralDirectoryTest.scala throughout |
+| Stale-state passing / tautological coverage | CLEAN for JarCentralDirectoryTest; UNKNOWN for FileSource contract (file missing) | — |
 
 ## Drifting checks
 
 | Pattern | Verdict | Citation |
 |---|---|---|
-| Public API signatures match plan exactly | CLEAN | `peekByte(at: Int): Byte`, `readByte(): Byte`, `readNat(): Int`, `readInt(): Int`, `readLongNat(): Long`, `readEnd(): Int`, `subView(from: Int, until: Int): ByteView`, `goto(addr: Int): Unit`, `remaining: Int`, `position: Int` -- all present and matching. |
-| No off-plan architecture substitution | FLAG (minor) | ByteView.Heap.subView returns type `ByteView` at the trait level, but the plan says `subView` returns `ByteView`. CLEAN. However, ByteView.readEnd() is declared at the trait level despite only Heap implementing it. Mapped stub does NOT override readEnd; if Mapped is ever used, it will trigger a compile error (abstract method). This is acceptable for Phase 1 stub since Mapped is only a compile stub. |
-| No cross-cutting refactor outside Phase 1 scope | CLEAN | No modifications to files outside kyo-reflect. |
-| Internal helpers stay in `kyo.internal.reflect.*` | CLEAN | All new files are under `kyo.internal.reflect.binary` or `kyo.internal.reflect.tasty`. |
-| Version check uses verbatim dotty formula | CLEAN | TastyFormat.isVersionCompatible matches the dotty formula verbatim. Test 23 correctly expects FAIL for minor=9 (correcting the plan's misleading "succeeds" description). |
-| TastyFormat.MajorVersion == 28, MinorVersion == 8, ExperimentalVersion == 0 | CLEAN | Lines 24-26 of TastyFormat.scala. |
-| Header read order: magic, major, minor, experimental, toolingLen+bytes, UUID | CLEAN | TastyHeader.readBytes follows the dotty order exactly. |
-| UUID read as two uncompressed Longs, not LEB128 | CLEAN | readUncompressedLong reads 8 bytes big-endian. |
+| Public API signature matches plan (`FileSource.list` multi-suffix) | MATCHES — `def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[ReflectError])` | FileSource.scala line 52 |
+| No off-plan architecture substitution | CLEAN — JarCentralDirectory uses `RandomAccessFile` to read CEN bytes directly; no `JarFile.entries()`, no `ZipFile.entries()`, no per-entry wrapper objects allocated | JarCentralDirectory.scala lines 64-111 |
+| No cross-cutting refactor outside phase | CLEAN — 5 existing test file changes are pure compile-fix API ripple, no behavioral changes (verified below) | All 5 test diffs |
+| Internal helpers stay `private[kyo]` | MATCHES — `private[kyo] object JarCentralDirectory` | JarCentralDirectory.scala line 25 |
 
----
+## Existing test file changes — clean or critical?
 
-## Scope-cutting checks (all 24 plan-mandated test leaves)
+Every one of the 5 modified test files contains an in-process `MemoryFileSource` / anonymous `FileSource` that formerly overrode the single-suffix `def list(dir, suffix: String)`. The API change to `def list(dir, suffixes: Chunk[String])` makes the old signature a non-override; the compile fix in each file is the same mechanical substitution:
+
+```
+- def list(dir: String, suffix: String)(...) =
+-     Chunk.from(files.keys.filter(k => k.startsWith(dir + "/") && k.endsWith(suffix)).toSeq)
++ def list(dir: String, suffixes: Chunk[String])(...) =
++     Chunk.from(files.keys.filter(k => k.startsWith(dir + "/") && suffixes.exists(k.endsWith)).toSeq)
+```
+
+Semantics are preserved: `suffixes.exists(k.endsWith)` on a single-element `Chunk` is equivalent to the old `k.endsWith(suffix)`. No assertion was weakened, no test was deleted, no matcher was loosened. In `QueryApiTest.scala` an anonymous inner `FileSource` (lines 463-469 in the diff) also receives the same mechanical signature update.
+
+Verdict: **CLEAN** for all 5 existing test files.
+
+## Scope-cutting checks (per plan-mandated test leaf)
 
 | Leaf | Status | Notes |
 |---|---|---|
-| 1: peekByte(at) reads without advancing position | PRESENT_STRICT | ByteViewTest, asserts b==30 and position==0 |
-| 2: readByte() advances position by 1 | PRESENT_STRICT | Reads two bytes, asserts position 1 then 2 |
-| 3: readByte() at end produces AIOOBE | PRESENT_STRICT | assertThrows[ArrayIndexOutOfBoundsException] |
-| 4: subView shares same underlying array | PRESENT_STRICT | casts to ByteView.Heap, asserts start/end/position and `bytes eq bytes` reference equality |
-| 5: goto(addr) sets position to addr | PRESENT_STRICT | goto(3), asserts position==3, reads byte and checks value |
-| 6: remaining returns end - position | PRESENT_STRICT | Three-step check: fresh (5), after readByte (4), after goto(3) (2) |
-| 7: readNat decodes 0 | PRESENT_STRICT | Array(0x80) -> 0; correct TASTy encoding (stop-bit set, value 0) |
-| 8: readNat decodes 127 | PRESENT_STRICT | Array(0xFF) -> 127; 0xFF = 0x7F | 0x80 correct |
-| 9: readNat decodes 128 | PRESENT_STRICT | Array(0x01, 0x80) -> 128; correct two-byte TASTy encoding |
-| 10: readNat decodes 16383 | PRESENT_STRICT | Array(0x7F, 0xFF) -> 16383 |
-| 11: readNat decodes Int.MaxValue (5 bytes) | PRESENT_STRICT | Array(0x07,0x7F,0x7F,0x7F,0xFF) -> Int.MaxValue |
-| 12: readInt decodes -1 | PRESENT_STRICT | Array(0xFF) -> -1; correct dotty semantics, NOT zigzag |
-| 13: readInt decodes Int.MinValue | PRESENT_STRICT | Array(0x78,0x00,0x00,0x00,0x80) -> Int.MinValue; includes full derivation comment verifying the encoding |
-| 14: readLongNat decodes Long.MaxValue | PRESENT_STRICT | Array(9 x 0x7F except last is 0xFF) -> Long.MaxValue; derivation shown |
-| 15: Utf8.decode ASCII bytes | PRESENT_STRICT | "hello" roundtrip |
-| 16: Utf8.decode 2-byte UTF-8 (U+00E9) | PRESENT_STRICT | asserts result == "é" and length == 1 |
-| 17: Utf8.decode 4-byte UTF-8 (U+1F600) | PRESENT_STRICT | asserts codePointAt(0) == 0x1F600 (platform-safe, avoids String.length which differs JVM vs JS/Native) |
-| 18: Utf8.decode with offset+length sub-range | PRESENT_STRICT | Array with sentinel 0xFF at start and end, offset=1, length=3 -> "中" |
-| 19: TastyHeader reads 28.8.0 successfully | PRESENT_STRICT | headerBytes(validMagic, 28, 8, 0, ...), checks data.major/minor/experimental |
-| 20: wrong magic -> CorruptedFile | PRESENT_STRICT | wrongMagic = 0xDEADBEEF, matches ReflectError.CorruptedFile pattern |
-| 21: major=99 -> UnsupportedVersion | PRESENT_STRICT | headerBytes with major=99, asserts found.major==99 and supported.major==28 |
-| 22: minor=7, experimental=0 -> success | PRESENT_STRICT | backward compatible; asserts data.minor==7 |
-| 23: minor=9, experimental=0 -> UnsupportedVersion | PRESENT_STRICT (CORRECTED from plan) | Plan said "succeeds"; PREP doc and dotty formula show minor=9>8 fails. Impl correctly fails. Test assertion checks Failure(UnsupportedVersion(found,_)) with found.minor==9. This is correct per dotty rule. |
-| 24: experimental=1, supportedExperimental=0 -> UnsupportedVersion | WEAKENED -- FLAG | Test uses `Result.Fail(...)` pattern match (line 155). The correct Kyo Result extractor for Abort failures is `Result.Failure(...)` not `Result.Fail(...)`. Same issue at lines 171, 194, 210 in additional tests. If `Result.Fail` does not exist or does not match, the test falls through to the `other =>` arm and calls `fail(...)` -- which would surface as a test failure at runtime. But if `Result.Fail` is a valid alias for `Result.Failure` in this codebase, it is fine. This MUST be verified. |
+| T1 (empty JAR) | PRESENT\_STRICT | Lines 66-79; asserts `entries.isEmpty` with message |
+| T2 (.tasty only) | PRESENT\_STRICT | Lines 83-117; asserts count==3, all end `.tasty`, all jarPath fields match; cross-checks `.class` returns empty |
+| T3 (.class only) | PRESENT\_STRICT | Lines 120-149; count==2; cross-checks `.tasty` returns empty |
+| T4 (mixed) | PRESENT\_STRICT | Lines 152-185; count==4, all entries end `.tasty` or `.class`, no `.java` entries |
+| T5 (large >500 entries) | PRESENT\_STRICT | Lines 188-217; 1200-entry JAR (600 pairs), count==1200 asserted, 5 named spot-checks |
+| T6 (non-JAR file) | PRESENT\_WEAK | Lines 220-233; asserts any `Result.Failure(e)` — does not pin to `ReflectError.MalformedSection`; plan said "Abort[ReflectError] raised, not unchecked exception" which is met but weaker than T11's typed assertion. Minor. |
+| T11 (corrupted EOCD) | PRESENT\_STRICT | Lines 236-273; asserts `Result.Failure(ReflectError.MalformedSection(_, _))` specifically |
+| T12 (data descriptor bit 3) | PRESENT\_WEAK | Lines 276-318; exercises DEFLATED entries (not raw bit-3 data descriptor). Both `Result.Success` and `Result.Failure(ReflectError.MalformedSection)` accepted; catch-all `Result.Failure(e) => succeed` on line 313 accepts any ReflectError. Intentional per plan spec ("if implementation does not support data descriptors, asserts Abort[ReflectError]") but the catch-all arm is loose. |
+| T13 (empty JAR with only EOCD) | PRESENT\_STRICT | Lines 321-335; asserts `entries.isEmpty`. NOTE: T1 and T13 use identical JAR construction (`writeJar(path, Seq.empty)`); T1 tests multi-suffix, T13 tests zero-entry EOCD semantics. Same underlying bytes — minor duplication. |
+| T14 (UTF-8 entry names bit 11) | PRESENT\_STRICT | Lines 338-374; asserts all three names (two non-ASCII + one ASCII) present in result set |
+| F1 (list multi-suffix merged results) | MISSING | FileSourceTest.scala not created |
+| F2 (list empty suffix chunk) | MISSING | FileSourceTest.scala not created |
+| F3 (list single-suffix matches old behavior) | MISSING | FileSourceTest.scala not created |
+| F4 (list ordering deterministic) | MISSING | FileSourceTest.scala not created |
 
----
+## Other observations
+
+### Test file path: plan vs actual
+Plan specified `kyo-reflect/jvm/src/test/scala/kyo/internal/reflect/query/JarCentralDirectoryTest.scala`. Actual path: `kyo-reflect/jvm/src/test/scala/kyo/JarCentralDirectoryTest.scala`.
+
+Verified by `ls`: all existing JVM test files (`ModuleInfoJvmTest.scala`, `SnapshotRoundTripJvmTest.scala`) are at the flat `kyo/` level, as are all shared test files (30+ files). **Acceptable** — the flat `kyo/` convention is the codebase norm. The plan's subdirectory path was aspirational.
+
+### Dead methods not removed from ClasspathOrchestrator
+The agent added `collectAllEntries` and updated the call site. Both `collectTastyFiles` and `collectModuleInfoFiles` private methods remain in the file as dead code. These are unreachable after the refactor and will mislead the Phase 3 agent, which modifies the same file.
+
+### NativeFileSource: double-stat per entry in listDirNativeMulti
+`listDirNativeMulti` calls `stat()` twice per entry: once to check `S_IFREG`, and if not a regular file, again to check `S_IFDIR`. This is a faithful copy of the same pattern from the pre-existing `listDirNative`. Not a Phase 1 regression but worth noting.
+
+### collectAllEntries: out-of-scope single-file-root fallback
+The new `collectAllEntries` includes a fallback for when `source.list` returns empty: it checks `source.exists(root)` and handles the case where `root` itself is a `.tasty` or `module-info.class` file path. This logic was not called for by the plan and has no test coverage. It replicates implicit behavior from the old `collectTastyFiles`. Functionally likely correct but untested.
+
+### JvmFileSource list return format: path composition
+The plan specifies: "store raw `(jarPath, entryName)` pairs and build the composite path only once at the point where file content is read (not at enumeration time)". In the current implementation, `JvmFileSource.list` calls `JarCentralDirectory.list` (which returns `Chunk[(jarPath, entryName)]`) and immediately maps over it to compose `s"$jarPath!/$entryName"` strings:
+
+```scala
+JarCentralDirectory.list(dir, suffixes).map: pairs =>
+    pairs.map((jarPath, entryName) => s"$jarPath!/$entryName")
+```
+
+This composition happens at enumeration time (in `list`), not deferred to the point of reading file content. The plan said to defer composition to the read site. However, the `FileSource.list` return type is `Chunk[String]` (not `Chunk[(String,String)]`), so the composed string is the only option the shared API can return. The plan's deferral goal would require changing the `FileSource.list` return type or adding a separate `listPairs` method — neither of which the plan specifies as a `FileSource` API change. This is an acceptable implementation choice given the constraint; the per-entry string allocation still exists but is bounded to enumeration (not reads), which is an improvement over the old `JarFile.entries()` path. **Not a blocking issue.**
 
 ## CRITICAL (steer immediately)
 
-1. **TastyHeaderTest.scala, lines 155, 171, 194, 210: `Result.Fail` pattern extractor** -- If `Result.Fail` is not the correct pattern extractor for `Abort` failures in this Kyo version (the correct form used elsewhere in the same file is `Result.Failure`), tests 24 and the three bonus tests will fall to the `other =>` arm and call `fail(s"Expected ... but got: $other")`. All four of the affected match arms need to use `Result.Failure` consistently. The same file uses `Result.Failure` correctly at lines 74, 90, etc. but then switches to `Result.Fail` at line 155 -- this looks like a typo. Verify and fix: `Result.Fail` -> `Result.Failure` in TastyHeaderTest.scala lines 155, 171, 194, 210.
+**C1 — `FileSourceTest.scala` entirely absent: F1-F4 (T7-T10) tests never written.**
+The plan mandates 4 shared tests that validate `FileSource.list(dir, Chunk[String])` via an in-memory fixture, running on all three platforms. They are absent. The plan's verification command (`sbt 'kyo-reflectJVM/testOnly *FileSourceTest *JarCentralDirectoryTest'`) will fail to find `FileSourceTest`.
 
----
+Fix: create `kyo-reflect/shared/src/test/scala/kyo/FileSourceTest.scala` with tests F1-F4:
+- F1: `list(dir, Chunk(".tasty", ".class"))` on an in-memory root returns entries matching either suffix
+- F2: `list(dir, Chunk.empty)` returns `Chunk.empty` without touching the filesystem
+- F3: `list(dir, Chunk(".tasty"))` returns the same result as `list(dir, ".tasty")`
+- F4: two calls on the same root return chunks with equal element sets (deterministic)
+
+Use the same `MemoryFileSource` pattern from `QueryApiTest.scala` (lines 35-57 of that file's in-memory implementation).
+
+**C2 — Dead private methods `collectTastyFiles` and `collectModuleInfoFiles` not removed from ClasspathOrchestrator.**
+Both methods are now unreachable. They sit alongside `collectAllEntries` and `runPhaseAB`. Phase 3 modifies `ClasspathOrchestrator.scala` heavily; leaving dead methods in place risks the Phase 3 agent re-wiring them by mistake. Remove both before committing Phase 1.
 
 ## MINOR (queue for post-commit audit)
 
-1. **Shared Utf8.scala** declares `abstract private[binary] class Utf8Impl` rather than an `expect` object or direct Scala 3 cross-platform dispatch. The plan mentions "expect-object pattern or conditional import". The current approach (abstract class + platform-specific object extending it) works in Scala 3 cross-platform builds as long as each platform sourceDir provides `object Utf8 extends Utf8Impl`. Verify this compiles on all three platforms in the verification step.
+**M1 — T1 and T13 use identical JAR construction.**
+Both `writeJar(path, Seq.empty)` produce byte-for-byte identical files. T1 covers the multi-suffix path; T13 covers the zero-entry EOCD semantics. Both pass independently but test the same underlying bytes. If T13 was intended to test a hand-crafted minimal EOCD (e.g., one where `totalEntries` field is explicitly zero while entries are non-zero in the central directory), it should be strengthened in a post-commit pass.
 
-2. **ByteView.Mapped** is declared as `sealed abstract class Mapped extends ByteView`. The plan says "Mapped stubs (Mapped is platform-specific; the trait and Heap are shared)". In the current implementation, Mapped has no abstract method overrides and ByteView's abstract methods are not overridden in Mapped, so compiling Mapped as a concrete subclass would fail. As a `sealed abstract class` it compiles fine since it cannot be instantiated. CLEAN for Phase 1; just note that ByteView.readEnd(), subView(), goto(), remaining, position are still abstract in Mapped and will need platform-specific implementations in the Mapped phase.
+**M2 — T6 assertion looseness.**
+T6 accepts any `Result.Failure(e: ReflectError)` for a non-JAR file, not specifically `MalformedSection`. Tighten in a post-commit pass to match T11's precision.
 
-3. **Test 13 (readInt Int.MinValue)**: The comment block in ByteViewTest.scala lines 133-212 is extremely long (80+ lines of derivation). Correct but noisy. Post-commit: trim to essentials.
+**M3 — NativeFileSource double-stat is a pre-existing pattern, not a regression.**
+The `listDirNativeMulti` double-stat (once for `S_IFREG`, once for `S_IFDIR`) is copied from `listDirNative`. A future filesystem optimization could combine both checks in a single `stat` call. Not Phase 1 scope.
 
-4. **TastyHeaderTest `encodeNat` helper** (lines 36-57): Multi-byte encodeNat has a subtlety -- for values where `x` reaches 0 after the first iteration (e.g., x=128: groups=[0,1], reversed=[1,0], first byte=1 (continuation), last byte=0|0x80=0x80). This is correct. However if `v == 0`, the while loop body never executes and groups is empty, causing `gs.last` to throw. Fortunately v=0 is never passed (version 0 is encoded as `(0|0x80)=0x80` via the `v < 128` branch). CLEAN for the test cases used, but fragile.
+**M4 — `collectAllEntries` single-file-root fallback is untested.**
+The fallback that handles `root` being a direct `.tasty` or `module-info.class` file path has no test. Add a scenario in `FileSourceTest.scala` when F1-F4 are written.
 
----
+## Recommendation: STEER — fix C1 (create FileSourceTest.scala) and C2 (remove dead methods) before commit.
 
-## Recommendation: STEER
-
-**STEER: Fix `Result.Fail` -> `Result.Failure` in TastyHeaderTest.scala lines 155, 171, 194, 210 before running the verification command; this is a likely typo that will cause tests 24 and 3 bonus tests to spuriously fail.**
+JarCentralDirectory implementation is solid and all 14 JarCentralDirectory tests are present and strict. The 5 API-ripple changes in existing test files are CLEAN. The blocking issues are: (1) `FileSourceTest.scala` was never created, leaving the cross-platform `FileSource` multi-suffix contract untested, and (2) dead methods `collectTastyFiles`/`collectModuleInfoFiles` remain and will confuse Phase 3.
