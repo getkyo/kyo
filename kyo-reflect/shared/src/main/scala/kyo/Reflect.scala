@@ -32,7 +32,7 @@ object Reflect:
     // ── Names and flags ─────────────────────────────────────────────────────
 
     // A module-level interner used by Name.apply(String) so the public API stays unchanged.
-    private val globalInterner: Interner = new Interner(numShards = 32, initialShardCapacity = 16)
+    private val globalInterner: Interner = new Interner(numShards = 32, initialShardCapacity = 512)
 
     /** An interned name backed by a byte sequence.
       *

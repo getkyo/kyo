@@ -1,5 +1,6 @@
 package kyo.internal.reflect.symbol
 
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kyo.internal.reflect.binary.Utf8
 
@@ -11,6 +12,9 @@ import kyo.internal.reflect.binary.Utf8
   * The table uses `numShards` shards (must be a power of 2, default 32). Each shard is a lock-free linear-probe hash table backed by an
   * `AtomicReference[Array[Entry]]`. Reads are lock-free; inserts use CAS with retry on grow.
   *
+  * Load factor is tracked per shard via an `AtomicInteger` counter that is incremented on each successful CAS insert. This replaces the
+  * previous O(N) `countFilled` scan with an O(1) check.
+  *
   * Thread safety: concurrent `intern` calls for the same byte sequence are guaranteed to return the same `Entry` object.
   */
 final class Interner(numShards: Int, initialShardCapacity: Int):
@@ -18,24 +22,31 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
     require((initialShardCapacity & (initialShardCapacity - 1)) == 0, "initialShardCapacity must be a power of 2")
     require(initialShardCapacity >= 1, "initialShardCapacity must be at least 1")
 
-    private[kyo] val growCount: java.util.concurrent.atomic.AtomicInteger =
-        new java.util.concurrent.atomic.AtomicInteger(0)
+    private[kyo] val growCount: AtomicInteger =
+        new AtomicInteger(0)
 
     private val shards: Array[AtomicReference[Array[Interner.Entry]]] =
         Array.tabulate(numShards)(_ =>
             new AtomicReference(new Array[Interner.Entry](initialShardCapacity))
         )
 
+    // Per-shard load counters: incremented on each successful CAS insert.
+    // The counter is never reset on grow because the items remain present after copying.
+    // A slightly stale read is acceptable: it only means we might grow one slot late.
+    private[kyo] val shardLoadCounters: Array[AtomicInteger] =
+        Array.fill(numShards)(new AtomicInteger(0))
+
     /** Intern the byte slice `bytes[offset .. offset+length)`, returning a canonical `Entry`. */
     def intern(bytes: Array[Byte], offset: Int, length: Int): Interner.Entry =
         val hash     = computeHash(bytes, offset, length)
         val shardIdx = hash & (numShards - 1)
         val shard    = shards(shardIdx)
-        internInShard(shard, hash, bytes, offset, length)
+        internInShard(shard, shardLoadCounters(shardIdx), hash, bytes, offset, length)
     end intern
 
     private def internInShard(
         shard: AtomicReference[Array[Interner.Entry]],
+        loadCounter: AtomicInteger,
         hash: Int,
         bytes: Array[Byte],
         offset: Int,
@@ -57,12 +68,11 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
                     length,
                     new OnceCell(() => Utf8.decode(bytes, offset, length))
                 )
-                // Check load factor before inserting; grow if needed.
-                val filled = countFilled(table)
-                if filled * 4 >= table.length * 3 then
-                    // Load factor > 0.75: grow and retry from scratch.
-                    grow(shard, table)
-                    return internInShard(shard, hash, bytes, offset, length)
+                // O(1) load factor check using the per-shard counter.
+                if loadCounter.get() * 4 >= table.length * 3 then
+                    // Load factor >= 0.75: grow and retry from scratch.
+                    grow(shard, loadCounter, table)
+                    return internInShard(shard, loadCounter, hash, bytes, offset, length)
                 end if
                 // Atomically claim the slot by publishing from null to newEntry.
                 // We can't CAS a single slot in an Array atomically without a lock;
@@ -73,10 +83,12 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
                 if copy(slot) == null then
                     copy(slot) = newEntry
                     if shard.compareAndSet(table, copy) then
+                        // Successful insert: increment the load counter.
+                        loadCounter.incrementAndGet(): Unit
                         return newEntry
                     else
                         // CAS failed: another thread modified the table. Retry.
-                        return internInShard(shard, hash, bytes, offset, length)
+                        return internInShard(shard, loadCounter, hash, bytes, offset, length)
                     end if
                 else
                     // Another thread filled this slot while we were preparing. Check it.
@@ -84,7 +96,7 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
                     if concurrent.hash == hash && bytesEqual(concurrent, bytes, offset, length) then
                         return concurrent
                     else
-                        return internInShard(shard, hash, bytes, offset, length)
+                        return internInShard(shard, loadCounter, hash, bytes, offset, length)
                     end if
                 end if
             else if entry.hash == hash && bytesEqual(entry, bytes, offset, length) then
@@ -97,11 +109,15 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
             end if
         end while
         // Table is full (shouldn't happen if load factor check is working): grow and retry.
-        grow(shard, table)
-        internInShard(shard, hash, bytes, offset, length)
+        grow(shard, loadCounter, table)
+        internInShard(shard, loadCounter, hash, bytes, offset, length)
     end internInShard
 
-    private def grow(shard: AtomicReference[Array[Interner.Entry]], expected: Array[Interner.Entry]): Unit =
+    private def grow(
+        shard: AtomicReference[Array[Interner.Entry]],
+        loadCounter: AtomicInteger,
+        expected: Array[Interner.Entry]
+    ): Unit =
         val current = shard.get()
         if current eq expected then
             growCount.incrementAndGet(): Unit
@@ -122,15 +138,6 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
             shard.compareAndSet(expected, newTable): Unit
         end if
     end grow
-
-    private def countFilled(table: Array[Interner.Entry]): Int =
-        var count = 0
-        var i     = 0
-        while i < table.length do
-            if table(i) != null then count += 1
-            i += 1
-        count
-    end countFilled
 
     private def bytesEqual(entry: Interner.Entry, bytes: Array[Byte], offset: Int, length: Int): Boolean =
         entry.length == length && {
@@ -156,7 +163,7 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
     end computeHash
 
     /** Return the number of filled slots in shard `idx`. Package-accessible; for testing only. */
-    private[kyo] def shardSize(idx: Int): Int = countFilled(shards(idx).get())
+    private[kyo] def shardSize(idx: Int): Int = shardLoadCounters(idx).get()
 
 end Interner
 
