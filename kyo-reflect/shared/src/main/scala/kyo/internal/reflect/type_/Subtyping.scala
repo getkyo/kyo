@@ -27,6 +27,9 @@ import kyo.internal.reflect.query.Classpath as InternalClasspath
   * even a maximally-nested Rec type will terminate. The caller (`Type.isSubtypeOf`) always starts with `budget = 64`.
   *
   * The budget applies only to Rec unfolding, not to structural recursion depth over other ADT cases.
+  *
+  * Pure (v3 Phase 3): all parent-chain lookups read from pre-populated `_parents` SingleAssign slots via AllowUnsafe. No Sync or Abort
+  * effects are required.
   */
 object Subtyping:
 
@@ -40,13 +43,11 @@ object Subtyping:
       * @param sup
       *   candidate supertype
       * @param cp
-      *   classpath for parent-chain resolution
+      *   classpath for parent-chain resolution (accessed via pure AllowUnsafe reads on Symbol._parents slots)
       * @param budget
       *   remaining Rec-unfolding steps; 0 means return false conservatively
       */
-    def isSubtype(sub: Reflect.Type, sup: Reflect.Type, cp: InternalClasspath, budget: Int)(using
-        Frame
-    ): Boolean < (Sync & Abort[ReflectError]) =
+    def isSubtype(sub: Reflect.Type, sup: Reflect.Type, cp: InternalClasspath, budget: Int): Boolean =
         if budget <= 0 then false
         else
             // Any is supertype of everything
@@ -55,9 +56,7 @@ object Subtyping:
                     true
                 // T <: OrType(L, R) iff T <: L or T <: R (applies to all sub-types)
                 case Reflect.Type.OrType(supLeft, supRight) =>
-                    isSubtype(sub, supLeft, cp, budget).flatMap:
-                        case true  => true
-                        case false => isSubtype(sub, supRight, cp, budget)
+                    isSubtype(sub, supLeft, cp, budget) || isSubtype(sub, supRight, cp, budget)
                 case _ =>
                     sub match
                         // Nothing is subtype of everything
@@ -77,23 +76,19 @@ object Subtyping:
                         case Reflect.Type.Applied(subBase, subArgs) =>
                             sup match
                                 case Reflect.Type.Applied(supBase, supArgs) =>
-                                    isSubtype(subBase, supBase, cp, budget).flatMap:
-                                        case false => false
-                                        case true =>
-                                            if subArgs.length != supArgs.length then false
-                                            else
-                                                val baseSymOpt = subBase match
-                                                    case Reflect.Type.Named(s) => Maybe(s)
-                                                    case _                     => Maybe.Absent
-                                                checkAppliedArgs(subArgs, supArgs, baseSymOpt, cp, budget)
+                                    if !isSubtype(subBase, supBase, cp, budget) then false
+                                    else if subArgs.length != supArgs.length then false
+                                    else
+                                        val baseSymOpt = subBase match
+                                            case Reflect.Type.Named(s) => Maybe(s)
+                                            case _                     => Maybe.Absent
+                                        checkAppliedArgs(subArgs, supArgs, baseSymOpt, cp, budget)
                                 case _ =>
                                     false
 
                         // AndType(L, R) <: T iff L <: T or R <: T
                         case Reflect.Type.AndType(left, right) =>
-                            isSubtype(left, sup, cp, budget).flatMap:
-                                case true  => true
-                                case false => isSubtype(right, sup, cp, budget)
+                            isSubtype(left, sup, cp, budget) || isSubtype(right, sup, cp, budget)
 
                         // TypeLambda: alpha-equivalence
                         case Reflect.Type.TypeLambda(subParams, subBody) =>
@@ -113,9 +108,7 @@ object Subtyping:
                             sup match
                                 case Reflect.Type.Wildcard(supLo, supHi) =>
                                     // Contravariant lower, covariant upper
-                                    isSubtype(supLo, subLo, cp, budget).flatMap:
-                                        case false => false
-                                        case true  => isSubtype(subHi, supHi, cp, budget)
+                                    isSubtype(supLo, subLo, cp, budget) && isSubtype(subHi, supHi, cp, budget)
                                 case _ =>
                                     false
 
@@ -140,8 +133,9 @@ object Subtyping:
         supSym: Reflect.Symbol,
         cp: InternalClasspath,
         budget: Int
-    )(using Frame): Boolean < (Sync & Abort[ReflectError]) =
+    ): Boolean =
         // Unsafe: SingleAssign is an unsafe-tier helper; AllowUnsafe is embraced here for the parents accessor.
+        // Reading immutable Ready-state data set during open, before any user access.
         import AllowUnsafe.embrace.danger
         if subSym._parents.isSet then
             val parents = subSym._parents.get()
@@ -158,22 +152,18 @@ object Subtyping:
         supSym: Reflect.Symbol,
         cp: InternalClasspath,
         budget: Int
-    )(using Frame): Boolean < (Sync & Abort[ReflectError]) =
+    ): Boolean =
         if parents.isEmpty then false
         else
             parents.head match
                 case Reflect.Type.Named(parentSym) =>
                     if parentSym eq supSym then true
-                    else
-                        isNamedSubNamed(parentSym, supSym, cp, budget).flatMap:
-                            case true  => true
-                            case false => checkParents(parents.tail, supSym, cp, budget)
+                    else if isNamedSubNamed(parentSym, supSym, cp, budget) then true
+                    else checkParents(parents.tail, supSym, cp, budget)
                 case Reflect.Type.Applied(Reflect.Type.Named(parentSym), _) =>
                     if parentSym eq supSym then true
-                    else
-                        isNamedSubNamed(parentSym, supSym, cp, budget).flatMap:
-                            case true  => true
-                            case false => checkParents(parents.tail, supSym, cp, budget)
+                    else if isNamedSubNamed(parentSym, supSym, cp, budget) then true
+                    else checkParents(parents.tail, supSym, cp, budget)
                 case _ =>
                     checkParents(parents.tail, supSym, cp, budget)
 
@@ -188,8 +178,9 @@ object Subtyping:
         baseSymOpt: Maybe[Reflect.Symbol],
         cp: InternalClasspath,
         budget: Int
-    )(using Frame): Boolean < (Sync & Abort[ReflectError]) =
+    ): Boolean =
         // Unsafe: SingleAssign is an unsafe-tier helper.
+        // Reading immutable Ready-state data set during open, before any user access.
         import AllowUnsafe.embrace.danger
         val typeParamsOpt: Maybe[Chunk[Reflect.Symbol]] = baseSymOpt.flatMap: baseSym =>
             if baseSym._typeParams.isSet then Maybe(baseSym._typeParams.get())
@@ -204,7 +195,7 @@ object Subtyping:
         idx: Int,
         cp: InternalClasspath,
         budget: Int
-    )(using Frame): Boolean < (Sync & Abort[ReflectError]) =
+    ): Boolean =
         if idx >= subArgs.length then true
         else
             val subArg = subArgs(idx)
@@ -218,19 +209,16 @@ object Subtyping:
                 else Maybe.Absent
             // Default to invariant (0) when variance info is absent
             val variance = varianceOpt.getOrElse(0)
-            val argCheck: Boolean < (Sync & Abort[ReflectError]) =
+            val argOk: Boolean =
                 if variance == 1 then
                     isSubtype(subArg, supArg, cp, budget) // covariant
                 else if variance == -1 then
                     isSubtype(supArg, subArg, cp, budget) // contravariant
                 else
                     // invariant: both directions
-                    isSubtype(subArg, supArg, cp, budget).flatMap:
-                        case false => false
-                        case true  => isSubtype(supArg, subArg, cp, budget)
-            argCheck.flatMap:
-                case false => false
-                case true  => checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, cp, budget)
+                    isSubtype(subArg, supArg, cp, budget) && isSubtype(supArg, subArg, cp, budget)
+            if !argOk then false
+            else checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, cp, budget)
 
     /** Structural alpha-equivalence for TypeLambda: rename params to positional de Bruijn-like indices.
       *

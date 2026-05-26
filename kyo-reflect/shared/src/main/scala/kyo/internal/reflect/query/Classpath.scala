@@ -10,9 +10,12 @@ import scala.collection.mutable
   *
   * The opaque type `Reflect.Classpath` aliases this class. Extension methods in `Reflect` delegate to the methods here.
   *
-  * `lookupClass` and `lookupPackage` read directly from the immutable `fqnIndex` / `packageIndex` maps stored in the `Ready` state. Both
-  * return `Sync & Abort[ReflectError]` with no `Async` suspension: the caller must not call them before the classpath is Ready (the `open`
-  * factory ensures this by not returning the `Classpath` handle until `transitionToReady` completes).
+  * Pure accessors read immutable Ready-state data via `AllowUnsafe`. The caller contract is: pure accessors are valid only after `open`
+  * returns (i.e. the classpath is in Ready state). Using them before `open` returns is a programmer error. After close, pure accessors
+  * return whatever heap data is there (closed-state enforcement is the responsibility of `body` alone, added in Phase 4).
+  *
+  * Effectful accessors (`lookupClass`, `lookupPackage`, `checkOpen`) are retained for internal use (e.g. tests that verify closed-state
+  * behavior, or internal orchestration code that runs before Ready).
   */
 final class Classpath private[reflect] (
     private[kyo] val stateRef: AtomicRef[Classpath.State]
@@ -26,7 +29,7 @@ final class Classpath private[reflect] (
             case _: Classpath.State.Ready    => Kyo.unit
             case Classpath.State.Closed      => Abort.fail(ReflectError.ClasspathClosed)
 
-    /** Look up a class symbol by fully-qualified dotted name.
+    /** Look up a class symbol by fully-qualified dotted name (effectful, for internal/test use).
       *
       * Reads directly from the immutable `fqnIndex` HashMap in the `Ready` state. Returns `Absent` if not found (soft-fail). Fails with
       * `ClasspathClosed` if the classpath has been closed.
@@ -37,7 +40,7 @@ final class Classpath private[reflect] (
             case _: Classpath.State.Building => Abort.fail(ReflectError.ClasspathBuilding)
             case Classpath.State.Closed      => Abort.fail(ReflectError.ClasspathClosed)
 
-    /** Look up a package symbol by fully-qualified dotted name.
+    /** Look up a package symbol by fully-qualified dotted name (effectful, for internal/test use).
       *
       * Reads directly from the immutable `packageIndex` HashMap in the `Ready` state. Returns `Absent` if not found. Fails with
       * `ClasspathClosed` if the classpath has been closed.
@@ -48,7 +51,65 @@ final class Classpath private[reflect] (
             case _: Classpath.State.Building => Abort.fail(ReflectError.ClasspathBuilding)
             case Classpath.State.Closed      => Abort.fail(ReflectError.ClasspathClosed)
 
-    /** All top-level class symbols (not packages). */
+    // ── Pure accessors (v3 Phase 3) ──────────────────────────────────────────
+
+    /** Pure class lookup: reads the fqnIndex directly via AllowUnsafe.
+      *
+      * Valid only after `open` returns (Ready state). After close, returns whatever the heap state happens to be (closed-state enforcement
+      * is Body-only, Phase 4).
+      */
+    private[kyo] def pureClass(fqn: String): Maybe[Reflect.Symbol] =
+        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
+        import AllowUnsafe.embrace.danger
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready => Maybe(s.fqnIndex.get(fqn).orNull)
+            case _                        => Maybe.Absent
+        end match
+    end pureClass
+
+    /** Pure package lookup: reads the packageIndex directly via AllowUnsafe. */
+    private[kyo] def purePackage(fqn: String): Maybe[Reflect.Symbol] =
+        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
+        import AllowUnsafe.embrace.danger
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready => Maybe(s.packageIndex.get(fqn).orNull)
+            case _                        => Maybe.Absent
+        end match
+    end purePackage
+
+    /** Pure module lookup: reads the moduleIndex directly via AllowUnsafe. */
+    private[kyo] def pureModule(name: String): Maybe[Reflect.ModuleDescriptor] =
+        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
+        import AllowUnsafe.embrace.danger
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready => Maybe(s.moduleIndex.get(name).orNull)
+            case _                        => Maybe.Absent
+        end match
+    end pureModule
+
+    /** Pure top-level classes: reads the topLevelClasses Chunk directly via AllowUnsafe. */
+    private[kyo] def pureTopLevelClasses: Chunk[Reflect.Symbol] =
+        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
+        import AllowUnsafe.embrace.danger
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready => s.topLevelClasses
+            case _                        => Chunk.empty
+        end match
+    end pureTopLevelClasses
+
+    /** Pure packages: reads the packages Chunk directly via AllowUnsafe. */
+    private[kyo] def purePackages: Chunk[Reflect.Symbol] =
+        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
+        import AllowUnsafe.embrace.danger
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready => s.packages
+            case _                        => Chunk.empty
+        end match
+    end purePackages
+
+    // ── End pure accessors ───────────────────────────────────────────────────
+
+    /** All top-level class symbols (not packages). Effectful version retained for internal orchestration. */
     private[kyo] def allTopLevelClasses(using Frame): Chunk[Reflect.Symbol] < (Sync & Abort[ReflectError]) =
         checkOpen.andThen:
             stateRef.get.map:
@@ -56,7 +117,7 @@ final class Classpath private[reflect] (
                 case _: Classpath.State.Building => Chunk.empty
                 case Classpath.State.Closed      => Chunk.empty
 
-    /** All package symbols. */
+    /** All package symbols. Effectful version retained for internal orchestration. */
     private[kyo] def allPackages(using Frame): Chunk[Reflect.Symbol] < (Sync & Abort[ReflectError]) =
         checkOpen.andThen:
             stateRef.get.map:
@@ -75,7 +136,7 @@ final class Classpath private[reflect] (
         end match
     end accumulatedErrors
 
-    /** Look up a JPMS module descriptor by module name (e.g., "java.base"). */
+    /** Look up a JPMS module descriptor by module name (e.g., "java.base"). Effectful version retained for internal use. */
     private[kyo] def lookupModule(name: String)(using Frame): Maybe[Reflect.ModuleDescriptor] < (Sync & Abort[ReflectError]) =
         checkOpen.andThen:
             stateRef.get.map:

@@ -143,10 +143,10 @@ class SymbolResolutionTest extends Test:
         Scope.run:
             Abort.run[ReflectError](
                 openClasspath(src1).flatMap: cp1 =>
-                    openClasspath(src2).flatMap: cp2 =>
-                        cp1.findClass("kyo.fixtures.PlainClass").flatMap: sym1Opt =>
-                            cp2.findClass("kyo.fixtures.PlainClass").map: sym2Opt =>
-                                (sym1Opt, sym2Opt)
+                    openClasspath(src2).map: cp2 =>
+                        val sym1Opt = cp1.findClass("kyo.fixtures.PlainClass")
+                        val sym2Opt = cp2.findClass("kyo.fixtures.PlainClass")
+                        (sym1Opt, sym2Opt)
             ).map:
                 case Result.Success((Present(sym1), Present(sym2))) =>
                     assert(sym1 ne sym2, "Symbols from different Classpath instances must not be reference-equal")

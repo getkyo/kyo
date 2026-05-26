@@ -81,9 +81,9 @@ class QueryApiTest extends Test:
     // Test 1: fromPickles(Seq.empty) succeeds; findClass("anything") returns Absent
     "fromPickles(Seq.empty) succeeds and findClass returns Absent" in run {
         Scope.run:
-            Reflect.Classpath.fromPickles(Seq.empty).flatMap: cp =>
-                cp.findClass("some.Class").map: result =>
-                    assert(result == Maybe.Absent)
+            Reflect.Classpath.fromPickles(Seq.empty).map: cp =>
+                val result = cp.findClass("some.Class")
+                assert(result == Maybe.Absent)
     }
 
     // Test 2: cp.findClass on fixture classpath returns Present(sym) with kind == Class
@@ -337,10 +337,10 @@ class QueryApiTest extends Test:
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(src, strict = false).flatMap: cp =>
-                cp.errors.flatMap: errs =>
-                    cp.findClass("kyo.fixtures.PlainClass").map: cls =>
-                        (errs, cls)).map:
-                case Result.Success((errs: Chunk[ReflectError], cls: Maybe[Reflect.Symbol])) =>
+                val errs = cp.errors
+                val cls  = cp.findClass("kyo.fixtures.PlainClass")
+                (errs, cls)).map:
+                case Result.Success((errs, cls)) =>
                     assert(errs.nonEmpty, "Expected at least one error from corrupt file")
                     assert(cls.isDefined, "Expected PlainClass to be found despite corrupt file")
                 case Result.Failure(e) =>
@@ -411,10 +411,10 @@ class QueryApiTest extends Test:
     "findClassByBinary canonicalizes binary name to dotted FQN" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                cp.findClassByBinary("kyo/fixtures/PlainClass").flatMap: byBinary =>
-                    cp.findClass("kyo.fixtures.PlainClass").map: byFqn =>
-                        (byBinary, byFqn)).map:
-                case Result.Success((byBinary: Maybe[Reflect.Symbol], byFqn: Maybe[Reflect.Symbol])) =>
+                val byBinary = cp.findClassByBinary("kyo/fixtures/PlainClass")
+                val byFqn    = cp.findClass("kyo.fixtures.PlainClass")
+                (byBinary, byFqn)).map:
+                case Result.Success((byBinary, byFqn)) =>
                     assert(
                         byBinary.isDefined == byFqn.isDefined,
                         s"findClassByBinary and findClass should return same result: $byBinary vs $byFqn"
@@ -489,11 +489,11 @@ class QueryApiTest extends Test:
         src.add("root/ChildClass.tasty", kyo.fixtures.Embedded.childClassTasty)
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
-                cp.errors.flatMap: errs =>
-                    cp.findClass("kyo.fixtures.ChildClass").flatMap: childOpt =>
-                        cp.findClass("kyo.fixtures.BaseClass").map: baseOpt =>
-                            (errs, childOpt, baseOpt)).map:
-                case Result.Success((errs: Chunk[ReflectError], childOpt: Maybe[Reflect.Symbol], baseOpt: Maybe[Reflect.Symbol])) =>
+                val errs     = cp.errors
+                val childOpt = cp.findClass("kyo.fixtures.ChildClass")
+                val baseOpt  = cp.findClass("kyo.fixtures.BaseClass")
+                (errs, childOpt, baseOpt)).map:
+                case Result.Success((errs, childOpt, baseOpt)) =>
                     assert(errs.isEmpty, s"Expected no errors but got: $errs")
                     assert(childOpt.isDefined, "Expected ChildClass to be found")
                     assert(baseOpt.isDefined, "Expected BaseClass to be found")
@@ -508,7 +508,7 @@ class QueryApiTest extends Test:
     "Phase 3: sym.parents for PlainClass returns a non-empty Chunk[Type]" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                cp.findClass("kyo.fixtures.PlainClass") match
                     case Present(sym) => sym.parents
                     case Absent       => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(parents) =>
@@ -528,12 +528,16 @@ class QueryApiTest extends Test:
         src.add("root/GenericBox.tasty", kyo.fixtures.Embedded.genericBoxTasty)
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
-                cp.findClass("kyo.fixtures.GenericBox").flatMap:
-                    case Present(sym) => sym.typeParams
-                    case Absent       => Abort.fail(ReflectError.NotImplemented("GenericBox not found"))).map:
-                case Result.Success(tps) =>
-                    assert(tps.length == 1, s"Expected 1 type param for GenericBox[A] but got ${tps.length}: ${tps.map(_.name.asString)}")
-                    assert(tps(0).name.asString == "A", s"Expected type param name 'A' but got '${tps(0).name.asString}'")
+                cp.findClass("kyo.fixtures.GenericBox") match
+                    case Present(sym) =>
+                        val tps = sym.typeParams
+                        assert(
+                            tps.length == 1,
+                            s"Expected 1 type param for GenericBox[A] but got ${tps.length}: ${tps.map(_.name.asString)}"
+                        )
+                        assert(tps(0).name.asString == "A", s"Expected type param name 'A' but got '${tps(0).name.asString}'")
+                    case Absent => Abort.fail(ReflectError.NotImplemented("GenericBox not found"))).map:
+                case Result.Success(_) => succeed
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
@@ -544,49 +548,48 @@ class QueryApiTest extends Test:
     "Phase 3: sym.declarations for PlainClass contains known field x" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                cp.findClass("kyo.fixtures.PlainClass").flatMap:
-                    case Present(sym) => sym.declarations
-                    case Absent       => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))).map:
-                case Result.Success(decls) =>
-                    assert(decls.nonEmpty, s"Expected non-empty declarations for PlainClass but got empty")
-                    val names = decls.map(_.name.asString).toSet
-                    assert(
-                        names.contains("x"),
-                        s"Expected declarations to contain field 'x' but names were: ${names.mkString(", ")}"
-                    )
+                cp.findClass("kyo.fixtures.PlainClass") match
+                    case Present(sym) =>
+                        val decls = sym.declarations
+                        assert(decls.nonEmpty, s"Expected non-empty declarations for PlainClass but got empty")
+                        val names = decls.map(_.name.asString).toSet
+                        assert(
+                            names.contains("x"),
+                            s"Expected declarations to contain field 'x' but names were: ${names.mkString(", ")}"
+                        )
+                    case Absent => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))).map:
+                case Result.Success(_) => succeed
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
                     throw t
     }
 
-    // Phase 3 Test 4 (G21 closed): sym.parents called after classpath close returns ClasspathClosed.
-    "Phase 3: sym.parents after classpath close returns ClasspathClosed" in run {
+    // Phase 3 Test 4 (G21 post-close): sym.parents after classpath close returns the pre-populated Chunk.
+    // After Phase 3, pure accessors read immutable SingleAssign slots, which remain populated after close.
+    "Phase 3: sym.parents after classpath close returns the pre-populated Chunk (no failure)" in run {
         // Capture the symbol from inside the scope, then check parents after scope exits.
         // Scope.run returns Result[ReflectError, Symbol] after running finalizers (closing classpath).
         val captureResult: Result[ReflectError, Reflect.Symbol] < Async =
             Scope.run:
                 Abort.run[ReflectError]:
                     openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                        cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                        cp.findClass("kyo.fixtures.PlainClass") match
                             case Present(sym) => Kyo.lift(sym)
                             case Absent       => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))
-        captureResult.flatMap:
+        captureResult.map:
             case Result.Failure(e) =>
                 fail(s"Expected success capturing PlainClass symbol but got: $e")
             case Result.Panic(t) =>
                 throw t
             case Result.Success(sym) =>
-                // Scope has exited; classpath is now closed. sym is captured.
-                Abort.run[ReflectError](sym.parents).map:
-                    case Result.Failure(ReflectError.ClasspathClosed) =>
-                        succeed
-                    case Result.Failure(e) =>
-                        fail(s"Expected ClasspathClosed but got: $e")
-                    case Result.Success(p) =>
-                        fail(s"Expected ClasspathClosed but parents succeeded with: $p")
-                    case Result.Panic(t) =>
-                        throw t
+                // Scope has exited; classpath is now closed. sym.parents is pure and reads the
+                // pre-populated SingleAssign slot, which remains valid post-close.
+                val parents = sym.parents
+                assert(
+                    parents.nonEmpty,
+                    "Expected non-empty parents from pre-populated slot after classpath close"
+                )
     }
 
     // Phase 3 Test 5 (G21/G22/G23 classfile): for ArrayRecord.class (Java record), sym.parents includes
@@ -605,12 +608,12 @@ class QueryApiTest extends Test:
                     cr
         .flatMap:
             case Result.Success(cr) =>
-                val sym = cr.classSymbol
+                val sym        = cr.classSymbol
+                val parents    = sym.parents
+                val typeParams = sym.typeParams
+                val decls      = sym.declarations
                 Abort.run[ReflectError]:
-                    sym.parents.flatMap: parents =>
-                        sym.typeParams.flatMap: typeParams =>
-                            sym.declarations.map: decls =>
-                                (parents, typeParams, decls)
+                    Kyo.lift((parents, typeParams, decls))
                 .map:
                     case Result.Success((parents, typeParams, decls)) =>
                         assert(parents.nonEmpty, s"Expected non-empty parents for ArrayRecord but got empty")
@@ -643,12 +646,12 @@ class QueryApiTest extends Test:
         src.add("root/SomeCaseClass.tasty", kyo.fixtures.Embedded.someCaseClassTasty)
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
-                cp.topLevelClasses.flatMap: topLevel =>
-                    topLevel
-                        .filter(sym => sym.kind == Reflect.SymbolKind.Class && sym.name.asString == "SomeCaseClass")
-                        .headMaybe match
-                        case Present(classSym) => classSym.companion
-                        case Absent => Abort.fail(ReflectError.NotImplemented("SomeCaseClass Class not found in topLevelClasses"))).map:
+                val topLevel = cp.topLevelClasses
+                topLevel
+                    .filter(sym => sym.kind == Reflect.SymbolKind.Class && sym.name.asString == "SomeCaseClass")
+                    .headMaybe match
+                    case Present(classSym) => Kyo.lift(classSym.companion)
+                    case Absent => Abort.fail(ReflectError.NotImplemented("SomeCaseClass Class not found in topLevelClasses"))).map:
                 case Result.Success(Present(objectSym: Reflect.Symbol)) =>
                     assert(
                         objectSym.kind == Reflect.SymbolKind.Object,
@@ -673,12 +676,12 @@ class QueryApiTest extends Test:
         src.add("root/SomeCaseClass.tasty", kyo.fixtures.Embedded.someCaseClassTasty)
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
-                cp.topLevelClasses.flatMap: topLevel =>
-                    topLevel
-                        .filter(sym => sym.kind == Reflect.SymbolKind.Object && sym.name.asString.contains("SomeCaseClass"))
-                        .headMaybe match
-                        case Present(objectSym) => objectSym.companion
-                        case Absent => Abort.fail(ReflectError.NotImplemented("SomeCaseClass Object not found in topLevelClasses"))).map:
+                val topLevel = cp.topLevelClasses
+                topLevel
+                    .filter(sym => sym.kind == Reflect.SymbolKind.Object && sym.name.asString.contains("SomeCaseClass"))
+                    .headMaybe match
+                    case Present(objectSym) => Kyo.lift(objectSym.companion)
+                    case Absent => Abort.fail(ReflectError.NotImplemented("SomeCaseClass Object not found in topLevelClasses"))).map:
                 case Result.Success(Present(classSym: Reflect.Symbol)) =>
                     assert(
                         classSym.kind == Reflect.SymbolKind.Class,
@@ -701,10 +704,10 @@ class QueryApiTest extends Test:
     "Phase 4: PlainClass.companion returns Absent (no companion object)" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                cp.findClass("kyo.fixtures.PlainClass") match
                     case Present(sym) =>
                         assert(sym.kind == Reflect.SymbolKind.Class, s"Expected Class kind but got ${sym.kind}")
-                        sym.companion
+                        Kyo.lift(sym.companion)
                     case Absent =>
                         Abort.fail(ReflectError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(Absent) =>
@@ -717,30 +720,29 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Phase 4 Test 4 (G24): companion called after classpath close returns ClasspathClosed.
-    "Phase 4: sym.companion after classpath close returns ClasspathClosed" in run {
+    // Phase 4 Test 4 (G24): companion called after classpath close returns Absent.
+    // After Phase 3, companion is pure: it reads stateRef.unsafe.get() which returns Closed post-close.
+    // The Closed branch returns Maybe.Absent (no failure).
+    "Phase 4: sym.companion after classpath close returns Absent (pure, no failure)" in run {
         val captureResult: Result[ReflectError, Reflect.Symbol] < Async =
             Scope.run:
                 Abort.run[ReflectError]:
                     openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                        cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                        cp.findClass("kyo.fixtures.PlainClass") match
                             case Present(sym) => Kyo.lift(sym)
                             case Absent       => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))
-        captureResult.flatMap:
+        captureResult.map:
             case Result.Failure(e) =>
                 fail(s"Expected success capturing PlainClass symbol but got: $e")
             case Result.Panic(t) =>
                 throw t
             case Result.Success(sym) =>
-                Abort.run[ReflectError](sym.companion).map:
-                    case Result.Failure(ReflectError.ClasspathClosed) =>
-                        succeed
-                    case Result.Failure(e) =>
-                        fail(s"Expected ClasspathClosed but got: $e")
-                    case Result.Success(v) =>
-                        fail(s"Expected ClasspathClosed but companion succeeded with: $v")
-                    case Result.Panic(t) =>
-                        throw t
+                // Scope has exited; classpath is now closed. companion reads stateRef -> Closed -> Absent.
+                val result = sym.companion
+                assert(
+                    result == Maybe.Absent,
+                    s"Expected Absent for companion post-close but got: $result"
+                )
     }
 
     // Phase 5 Test 1 (G20): sym.declaredType for val x: Int in PlainClass returns a type.
@@ -750,20 +752,20 @@ class QueryApiTest extends Test:
     "Phase 5: sym.declaredType for PlainClass.x (val x: Int) returns a type" in run {
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                cp.findClass("kyo.fixtures.PlainClass") match
                     case Absent => Abort.fail(ReflectError.NotImplemented("PlainClass not found"))
                     case Present(classSym) =>
-                        classSym.declarations.flatMap: decls =>
-                            val xOpt = decls.find(s => s.name.asString == "x")
-                            xOpt match
-                                case None =>
-                                    Abort.fail(
-                                        ReflectError.NotImplemented(
-                                            s"No field 'x' in PlainClass declarations: ${decls.map(_.name.asString).mkString(", ")}"
-                                        )
+                        val decls = classSym.declarations
+                        val xOpt  = decls.find(s => s.name.asString == "x")
+                        xOpt match
+                            case None =>
+                                Abort.fail(
+                                    ReflectError.NotImplemented(
+                                        s"No field 'x' in PlainClass declarations: ${decls.map(_.name.asString).mkString(", ")}"
                                     )
-                                case Some(xSym) =>
-                                    xSym.declaredType).map:
+                                )
+                            case Some(xSym) =>
+                                Kyo.lift(xSym.declaredType)).map:
                 case Result.Success(tpe) =>
                     // declaredType must return a valid type (not null); the exact constructor
                     // depends on how the TASTy encoder represents Int (Named or TermRef).
@@ -783,22 +785,22 @@ class QueryApiTest extends Test:
         src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
         Scope.run:
             Abort.run[ReflectError](openFixtureClasspath(src).flatMap: cp =>
-                cp.findClass("kyo.fixtures.SomeTrait").flatMap:
+                cp.findClass("kyo.fixtures.SomeTrait") match
                     case Absent => Abort.fail(ReflectError.NotImplemented("SomeTrait not found"))
                     case Present(traitSym) =>
-                        traitSym.declarations.flatMap: decls =>
-                            val computeOpt = decls.find(s => s.name.asString == "compute" && s.kind == Reflect.SymbolKind.Method)
-                            computeOpt match
-                                case None =>
-                                    Abort.fail(
-                                        ReflectError.NotImplemented(
-                                            s"No method 'compute' in SomeTrait declarations: ${decls.map(s =>
-                                                    s"${s.name.asString}:${s.kind}"
-                                                ).mkString(", ")}"
-                                        )
+                        val decls      = traitSym.declarations
+                        val computeOpt = decls.find(s => s.name.asString == "compute" && s.kind == Reflect.SymbolKind.Method)
+                        computeOpt match
+                            case None =>
+                                Abort.fail(
+                                    ReflectError.NotImplemented(
+                                        s"No method 'compute' in SomeTrait declarations: ${decls.map(s =>
+                                                s"${s.name.asString}:${s.kind}"
+                                            ).mkString(", ")}"
                                     )
-                                case Some(computeSym) =>
-                                    computeSym.declaredType).map:
+                                )
+                            case Some(computeSym) =>
+                                Kyo.lift(computeSym.declaredType)).map:
                 case Result.Success(tpe) =>
                     // The return type is populated (not a stub failure); exact constructor
                     // depends on how the DEFDEF return type is encoded in TASTy.
@@ -822,7 +824,7 @@ class QueryApiTest extends Test:
                 val syms = Reflect.Classpath.unwrap(cp).allSymbols.filter(_.name.asString == "StringList")
                 syms.headMaybe match
                     case Absent             => Abort.fail(ReflectError.NotImplemented("No StringList symbol found"))
-                    case Present(stringSym) => stringSym.declaredType).map:
+                    case Present(stringSym) => Kyo.lift(stringSym.declaredType)).map:
                 case Result.Success(tpe) =>
                     // StringList is a type alias for List[String]. The declared type is the alias body.
                     // It could be Type.Applied(Named(List), Chunk(Named(String))) or similar.
@@ -857,7 +859,7 @@ class QueryApiTest extends Test:
                     case None =>
                         fail(s"No 'values' member in ArrayRecord. Members: ${cr.symbols.map(_.name.asString).mkString(", ")}")
                     case Some(valuesSym) =>
-                        Abort.run[ReflectError](valuesSym.declaredType).map:
+                        Abort.run[ReflectError](Kyo.lift(valuesSym.declaredType)).map:
                             case Result.Success(tpe) =>
                                 tpe match
                                     case Reflect.Type.Array(Reflect.Type.Named(elemSym)) =>
@@ -884,34 +886,31 @@ class QueryApiTest extends Test:
     }
 
     // Phase 5 Test 5 (G20): sym.declaredType called after classpath close returns ClasspathClosed.
-    "Phase 5: sym.declaredType after classpath close returns ClasspathClosed" in run {
+    // Phase 5 Test 5 (G20 post-close): sym.declaredType after classpath close returns the pre-populated type.
+    // After Phase 3, declaredType is pure and reads the SingleAssign slot, which remains valid post-close.
+    "Phase 5: sym.declaredType after classpath close returns pre-populated type (no failure)" in run {
         val captureResult: Result[ReflectError, Reflect.Symbol] < Async =
             Scope.run:
                 Abort.run[ReflectError]:
                     openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                        cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                        cp.findClass("kyo.fixtures.PlainClass") match
                             case Present(sym) =>
-                                sym.declarations.flatMap: decls =>
-                                    decls.find(s => s.name.asString == "x") match
-                                        case Some(xSym) => Kyo.lift(xSym)
-                                        case None       => Kyo.lift(sym)
+                                val decls = sym.declarations
+                                decls.find(s => s.name.asString == "x") match
+                                    case Some(xSym) => Kyo.lift(xSym)
+                                    case None       => Kyo.lift(sym)
                             case Absent =>
                                 Abort.fail(ReflectError.NotImplemented("PlainClass not found"))
-        captureResult.flatMap:
+        captureResult.map:
             case Result.Failure(e) =>
                 fail(s"Expected success capturing symbol but got: $e")
             case Result.Panic(t) =>
                 throw t
             case Result.Success(sym) =>
-                Abort.run[ReflectError](sym.declaredType).map:
-                    case Result.Failure(ReflectError.ClasspathClosed) =>
-                        succeed
-                    case Result.Failure(e) =>
-                        fail(s"Expected ClasspathClosed but got: $e")
-                    case Result.Success(v) =>
-                        fail(s"Expected ClasspathClosed but declaredType succeeded with: $v")
-                    case Result.Panic(t) =>
-                        throw t
+                // Scope has exited; classpath is now closed. declaredType is pure and reads
+                // the pre-populated SingleAssign slot, which remains valid post-close.
+                val tpe = sym.declaredType
+                assert(tpe != null, "Expected non-null declaredType from pre-populated slot after classpath close")
     }
 
     // Test G19 (Phase 13): InconsistentClasspath uses java.util.UUID for both UUID fields

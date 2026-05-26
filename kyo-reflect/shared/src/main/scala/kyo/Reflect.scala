@@ -514,94 +514,95 @@ object Reflect:
           *   - For a TYPEDEF (type alias or abstract type): the alias body or bounds type.
           *   - For a class/trait/object TYPEDEF: Type.Named(sym) (the class type itself).
           *   - For a DEFDEF: the return type (reconstructed in mergeResults from Pass 1 data).
-          *   - For Package symbols: fails with ReflectError.NotImplemented.
+          *   - For Package symbols: throws IllegalArgumentException (pure accessor; programmer error).
           * @note
-          *   Implemented in v2 Phase 5. Populated eagerly during Pass 1 / mergeResults.
+          *   Implemented in v2 Phase 5. Populated eagerly during Pass 1 / mergeResults. Pure in v3 Phase 3.
           */
-        def declaredType(using Frame): Type < (Sync & Abort[ReflectError]) =
+        def declaredType: Type =
             if kind == SymbolKind.Package then
-                Abort.fail(ReflectError.NotImplemented("Symbol.declaredType is not available for Package symbols"))
-            else if !home.isAssigned then stub("Symbol.declaredType")
+                throw new IllegalArgumentException("Symbol.declaredType is not available for Package symbols")
             else
-                home.get().checkOpen.andThen:
-                    // Unsafe: SingleAssign.get() and isSet are unsafe-tier helpers; AllowUnsafe is embraced here at the public accessor boundary.
-                    import AllowUnsafe.embrace.danger
-                    if _declaredType.isSet then _declaredType.get()
-                    else
-                        import Reflect.Name.asString
-                        Abort.fail(
-                            ReflectError.NotImplemented(s"Symbol.declaredType not populated for symbol '${name.asString}' of kind $kind")
-                        )
-                    end if
+                // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
+                // Reading immutable Ready-state data populated during open, before any user access.
+                import AllowUnsafe.embrace.danger
+                _declaredType.get()
 
-        /** The parent types of this symbol (superclass and mixed-in traits). */
-        def parents(using Frame): Chunk[Type] < (Sync & Abort[ReflectError]) =
-            if !home.isAssigned then stub("Symbol.parents")
-            else
-                home.get().checkOpen.andThen:
-                    // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced at the public accessor boundary.
-                    import AllowUnsafe.embrace.danger
-                    _parents.get()
+        /** The parent types of this symbol (superclass and mixed-in traits).
+          *
+          * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
+          */
+        def parents: Chunk[Type] =
+            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
+            // Reading immutable Ready-state data set during open, before any user access.
+            import AllowUnsafe.embrace.danger
+            _parents.get()
+        end parents
 
-        /** The type parameters of this symbol. */
-        def typeParams(using Frame): Chunk[Symbol] < (Sync & Abort[ReflectError]) =
-            if !home.isAssigned then stub("Symbol.typeParams")
-            else
-                home.get().checkOpen.andThen:
-                    // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced at the public accessor boundary.
-                    import AllowUnsafe.embrace.danger
-                    _typeParams.get()
+        /** The type parameters of this symbol.
+          *
+          * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
+          */
+        def typeParams: Chunk[Symbol] =
+            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
+            // Reading immutable Ready-state data set during open, before any user access.
+            import AllowUnsafe.embrace.danger
+            _typeParams.get()
+        end typeParams
 
-        /** The member declarations of this symbol (methods, fields, nested types). */
-        def declarations(using Frame): Chunk[Symbol] < (Sync & Abort[ReflectError]) =
-            if !home.isAssigned then stub("Symbol.declarations")
-            else
-                home.get().checkOpen.andThen:
-                    // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced at the public accessor boundary.
-                    import AllowUnsafe.embrace.danger
-                    _declarations.get()
+        /** The member declarations of this symbol (methods, fields, nested types).
+          *
+          * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
+          */
+        def declarations: Chunk[Symbol] =
+            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
+            // Reading immutable Ready-state data set during open, before any user access.
+            import AllowUnsafe.embrace.danger
+            _declarations.get()
+        end declarations
 
         /** The companion object symbol of this class or trait, if one exists.
           *
           * For a `Class` or `Trait` symbol, looks up the companion object via FQN `owner.fqn + "." + name + "$"`. For an `Object` symbol,
           * looks up the companion class via the owner FQN and the simple name with any trailing `$` stripped. Java symbols always return
           * `Absent`. All other kinds return `Absent`.
+          *
+          * Pure accessor: reads from the fqnIndex HashMap in the immutable Ready state via AllowUnsafe. Valid after `open` returns.
           */
-        def companion(using Frame): Maybe[Symbol] < (Sync & Abort[ReflectError]) =
-            if isJava then Kyo.lift(Maybe.Absent)
-            else if !home.isAssigned then Kyo.lift(Maybe.Absent)
+        def companion: Maybe[Symbol] =
+            if isJava then Maybe.Absent
+            else if !home.isAssigned then Maybe.Absent
             else
-                home.get().checkOpen.andThen:
-                    import Name.asString
-                    // Helper: true when the owner is null or is the synthetic root-package sentinel
-                    // (identified by owner.owner eq owner, i.e. the root owns itself).
-                    // For root-owned or unowned symbols the owner FQN is empty, so we use the
-                    // symbol's own fullName to form the companion FQN rather than concatenating
-                    // an empty prefix (which would produce ".ClassName$").
-                    def isRootOwner: Boolean = owner == null || (owner.owner eq owner)
-                    kind match
-                        case SymbolKind.Class | SymbolKind.Trait =>
-                            // Companion object FQN uses the "$"-suffixed key convention established in fqnIndex.
-                            // fqnIndex stores Object-kind symbols under "OwnerFqn.SimpleName$".
-                            val companionFqn =
-                                if isRootOwner then fullName.asString + "$"
-                                else owner.fullName.asString + "." + name.asString + "$"
-                            home.get().lookupClass(companionFqn).map:
-                                case Present(s) if s.kind == SymbolKind.Object => Maybe(s)
-                                case _                                         => Maybe.Absent
-                        case SymbolKind.Object =>
-                            // Companion class FQN: owner FQN + simple name without trailing "$".
-                            // The simple name may or may not end in "$" depending on TASTy encoding;
-                            // strip it and look up the class symbol by the plain dotted FQN.
-                            val simpleName = name.asString.stripSuffix("$")
-                            val companionFqn =
-                                if isRootOwner then simpleName
-                                else owner.fullName.asString + "." + simpleName
-                            home.get().lookupClass(companionFqn).map:
-                                case Present(s) if s.kind == SymbolKind.Class || s.kind == SymbolKind.Trait => Maybe(s)
-                                case _                                                                      => Maybe.Absent
-                        case _ => Kyo.lift(Maybe.Absent)
-                    end match
+                import Name.asString
+                // Unsafe: reading immutable Ready-state fqnIndex via AllowUnsafe; populated during open, before any user access.
+                // Helper: true when the owner is null or is the synthetic root-package sentinel
+                // (identified by owner.owner eq owner, i.e. the root owns itself).
+                // For root-owned or unowned symbols the owner FQN is empty, so we use the
+                // symbol's own fullName to form the companion FQN rather than concatenating
+                // an empty prefix (which would produce ".ClassName$").
+                def isRootOwner: Boolean = owner == null || (owner.owner eq owner)
+                kind match
+                    case SymbolKind.Class | SymbolKind.Trait =>
+                        // Companion object FQN uses the "$"-suffixed key convention established in fqnIndex.
+                        // fqnIndex stores Object-kind symbols under "OwnerFqn.SimpleName$".
+                        val companionFqn =
+                            if isRootOwner then fullName.asString + "$"
+                            else owner.fullName.asString + "." + name.asString + "$"
+                        home.get().pureClass(companionFqn) match
+                            case Present(s) if s.kind == SymbolKind.Object => Maybe(s)
+                            case _                                         => Maybe.Absent
+                    case SymbolKind.Object =>
+                        // Companion class FQN: owner FQN + simple name without trailing "$".
+                        // The simple name may or may not end in "$" depending on TASTy encoding;
+                        // strip it and look up the class symbol by the plain dotted FQN.
+                        val simpleName = name.asString.stripSuffix("$")
+                        val companionFqn =
+                            if isRootOwner then simpleName
+                            else owner.fullName.asString + "." + simpleName
+                        home.get().pureClass(companionFqn) match
+                            case Present(s) if s.kind == SymbolKind.Class || s.kind == SymbolKind.Trait => Maybe(s)
+                            case _                                                                      => Maybe.Absent
+                    case _ => Maybe.Absent
+                end match
 
         // Java-specific side door.
         def javaSpecific: Maybe[JavaMetadata] = javaMetadata
@@ -909,28 +910,56 @@ object Reflect:
 
     end Classpath
 
-    extension (cp: Classpath)(using Frame)
-        def findClass(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError])   = cp.lookupClass(fqn)
-        def findPackage(fqn: String): Maybe[Symbol] < (Sync & Abort[ReflectError]) = cp.lookupPackage(fqn)
-        def packages: Chunk[Symbol] < (Sync & Abort[ReflectError])                 = cp.allPackages
-        def topLevelClasses: Chunk[Symbol] < (Sync & Abort[ReflectError])          = cp.allTopLevelClasses
-        def errors: Chunk[ReflectError] < Sync                                     = Sync.defer(cp.accumulatedErrors)
+    extension (cp: Classpath)
+        /** Look up a class symbol by fully-qualified dotted name.
+          *
+          * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns. After close, returns
+          * whatever heap state is there (closed-state enforcement is Body-only, Phase 4).
+          */
+        def findClass(fqn: String): Maybe[Symbol] = cp.pureClass(fqn)
+
+        /** Look up a package symbol by fully-qualified dotted name.
+          *
+          * Pure accessor: reads from the immutable packageIndex HashMap in Ready state. Valid after `open` returns.
+          */
+        def findPackage(fqn: String): Maybe[Symbol] = cp.purePackage(fqn)
+
+        /** All package symbols in this classpath.
+          *
+          * Pure accessor: reads from the immutable packages Chunk in Ready state. Valid after `open` returns.
+          */
+        def packages: Chunk[Symbol] = cp.purePackages
+
+        /** All top-level class symbols (not packages) in this classpath.
+          *
+          * Pure accessor: reads from the immutable topLevelClasses Chunk in Ready state. Valid after `open` returns.
+          */
+        def topLevelClasses: Chunk[Symbol] = cp.pureTopLevelClasses
+
+        /** Errors accumulated during loading (soft-fail mode).
+          *
+          * Pure accessor: reads from immutable error state populated after Phase C. Empty for clean classpaths.
+          */
+        def errors: Chunk[ReflectError] = cp.accumulatedErrors
 
         /** Look up a JPMS module descriptor by module name (e.g., "java.base").
           *
           * Returns `Present(descriptor)` if a `module-info.class` with the given module name was found in the classpath roots. Returns
-          * `Absent` if no matching module was found. Fails with `ReflectError.ClasspathClosed` if the classpath has been closed.
+          * `Absent` if no matching module was found.
+          *
+          * Pure accessor: reads from the immutable moduleIndex HashMap in Ready state. Valid after `open` returns.
           */
-        def findModule(name: String): Maybe[ModuleDescriptor] < (Sync & Abort[ReflectError]) =
-            cp.lookupModule(name)
+        def findModule(name: String): Maybe[ModuleDescriptor] = cp.pureModule(name)
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
           *
           * Converts the binary name to a dotted FQN and delegates to `findClass`.
+          *
+          * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns.
           */
-        def findClassByBinary(binaryName: String): Maybe[Symbol] < (Sync & Abort[ReflectError]) =
+        def findClassByBinary(binaryName: String): Maybe[Symbol] =
             val fqn = binaryName.replace('/', '.').replace('$', '.')
-            cp.lookupClass(fqn)
+            cp.pureClass(fqn)
 
     end extension
 
@@ -955,7 +984,17 @@ object Reflect:
       *   the classpath used for transitive parent-chain resolution
       */
     extension (t: Type)
-        def isSubtypeOf(other: Type)(using cp: Classpath)(using Frame): Boolean < (Sync & Abort[ReflectError]) =
+        /** Check whether `t` is a subtype of `other` using the structural covariant rules in `kyo.internal.reflect.type_.Subtyping`.
+          *
+          * Pure accessor: parent-chain lookups use the pre-populated `_parents` SingleAssign slots in each Symbol, which are set during
+          * classpath open and are immutable thereafter. No classpath I/O is performed.
+          *
+          * @param other
+          *   the candidate supertype
+          * @param cp
+          *   the classpath used for transitive parent-chain resolution (accessed via pure AllowUnsafe reads)
+          */
+        def isSubtypeOf(other: Type)(using cp: Classpath): Boolean =
             kyo.internal.reflect.type_.Subtyping.isSubtype(t, other, cp, budget = 64)
     end extension
 

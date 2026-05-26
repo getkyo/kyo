@@ -312,7 +312,7 @@ class TreeUnpicklerTest extends Test:
             Scope.run:
                 Abort.run[ReflectError]:
                     openPlainClassCp.flatMap: cp =>
-                        cp.findClass("kyo.fixtures.PlainClass").flatMap:
+                        cp.findClass("kyo.fixtures.PlainClass") match
                             case Present(sym) => Kyo.lift(sym)
                             case Absent       => Abort.fail(ReflectError.NotImplemented("PlainClass not found in fixture"))
         captureResult.flatMap:

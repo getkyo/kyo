@@ -5,8 +5,8 @@ import kyo.Reflect.*
 
 /** Code-generation use case: enumerate top-level classes in a classpath, project each into a typed descriptor, emit code.
   *
-  * Phase 0 status: compiles against the skeleton. Each accessor call returns `Abort.fail(ReflectError.NotImplemented)` until the real
-  * implementation lands per the phased plan in DESIGN.md.
+  * Updated for v3 Phase 3: all Symbol accessors (parents, declarations, declaredType) are now pure values. The for-comprehension no longer
+  * threads effects through these calls.
   */
 object CodegenExample:
 
@@ -30,23 +30,21 @@ object CodegenExample:
         for
             cp <- Reflect.Classpath.openCached(roots, cacheDir = ".kyo-reflect-cache")
             given Classpath = cp
-            classes <- cp.topLevelClasses
-            facades <- Kyo.foreach(classes)(buildFacadeType)
-            _       <- Kyo.foreach(facades)(f => Sync.defer(println(renderFacade(f))))
+            facades         = cp.topLevelClasses.map(buildFacadeType)
+            _ <- Kyo.foreach(facades)(f => Sync.defer(println(renderFacade(f))))
         yield ()
 
-    private def buildFacadeType(sym: Reflect.Symbol)(using Frame): FacadeType < (Sync & Abort[ReflectError]) =
-        for
-            parents <- sym.parents
-            decls   <- sym.declarations
-            methods <- Kyo.foreach(decls.filter(_.kind == Reflect.SymbolKind.Method))(buildFacadeMethod)
-        yield FacadeType(sym.name, sym.flags, parents, methods)
+    private def buildFacadeType(sym: Reflect.Symbol): FacadeType =
+        val parents = sym.parents
+        val decls   = sym.declarations
+        val methods = decls.filter(_.kind == Reflect.SymbolKind.Method).map(buildFacadeMethod)
+        FacadeType(sym.name, sym.flags, parents, methods)
+    end buildFacadeType
 
-    private def buildFacadeMethod(sym: Reflect.Symbol)(using Frame): FacadeMethod < (Sync & Abort[ReflectError]) =
-        sym.declaredType.map {
+    private def buildFacadeMethod(sym: Reflect.Symbol): FacadeMethod =
+        sym.declaredType match
             case f: Reflect.Type.Function => FacadeMethod(sym.name, sym.flags, f.result, f.params)
             case other                    => FacadeMethod(sym.name, sym.flags, other, Chunk.empty)
-        }
 
     private def renderFacade(f: FacadeType): String =
         val methodLines = f.methods.map(m => s"  ${m.name.asString}: ${m.returnType.show}").mkString("\n")

@@ -88,22 +88,22 @@ class SnapshotRoundTripJvmTest extends Test:
         Scope.run:
             Abort.run[ReflectError](
                 openClasspath(fixtSrc).flatMap: origCp =>
-                    origCp.topLevelClasses.flatMap: origClasses =>
-                        InternalClasspath.allocate.flatMap: rawCp =>
-                            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                                ClasspathOrchestrator.openInto(Seq("root"), false, fixtSrc, 1, rawCp).andThen:
-                                    SnapshotWriter.write(rawCp, tmpDir, digest, platSrc).andThen:
-                                        val hex      = DigestComputer.toHexString(digest)
-                                        val snapPath = s"$tmpDir/$hex.krfl"
-                                        InternalClasspath.allocate.flatMap: rawCp2 =>
-                                            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp2))).andThen:
-                                                SnapshotReader.readMapped(snapPath, platSrc, rawCp2).andThen:
-                                                    ClasspathTestHelpers.assignHomesForTest(rawCp2)
-                                                    rawCp2.allTopLevelClasses.map: warmClasses =>
-                                                        (
-                                                            origClasses.map(_.fullName.asString).toSet,
-                                                            warmClasses.map(_.fullName.asString).toSet
-                                                        )
+                    val origClasses = origCp.topLevelClasses
+                    InternalClasspath.allocate.flatMap: rawCp =>
+                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
+                            ClasspathOrchestrator.openInto(Seq("root"), false, fixtSrc, 1, rawCp).andThen:
+                                SnapshotWriter.write(rawCp, tmpDir, digest, platSrc).andThen:
+                                    val hex      = DigestComputer.toHexString(digest)
+                                    val snapPath = s"$tmpDir/$hex.krfl"
+                                    InternalClasspath.allocate.flatMap: rawCp2 =>
+                                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCp2))).andThen:
+                                            SnapshotReader.readMapped(snapPath, platSrc, rawCp2).andThen:
+                                                ClasspathTestHelpers.assignHomesForTest(rawCp2)
+                                                rawCp2.allTopLevelClasses.map: warmClasses =>
+                                                    (
+                                                        origClasses.map(_.fullName.asString).toSet,
+                                                        warmClasses.map(_.fullName.asString).toSet
+                                                    )
             ).map:
                 case Result.Success((origFqns: Set[String], warmFqns: Set[String])) =>
                     assert(

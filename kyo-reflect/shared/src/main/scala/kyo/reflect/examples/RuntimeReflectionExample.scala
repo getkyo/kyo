@@ -7,6 +7,8 @@ import kyo.Reflect.*
   *
   * Replaces use cases that would otherwise reach for `scala.reflect.runtime` or `java.lang.reflect`. Compile-time type info from TASTy
   * means no runtime classloading; works on Scala Native and Scala.js where standard reflection isn't fully available.
+  *
+  * Updated for v3 Phase 3: findClass, declarations, parents, and declaredType are now pure values.
   */
 object RuntimeReflectionExample:
 
@@ -14,13 +16,12 @@ object RuntimeReflectionExample:
     def fieldsOf[A](using t: Tag[A], frame: Frame): Chunk[(String, Reflect.Type)] < (Sync & Async & Abort[ReflectError] & Scope) =
         val fqn = Reflect.classFqn[A]
         for
-            cp     <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
-            clsOpt <- cp.findClass(fqn)
-            cls    <- requireFound(clsOpt, fqn)
-            decls  <- cls.declarations
-            vals = decls.filter(_.kind == Reflect.SymbolKind.Val)
-            out <- Kyo.foreach(vals)(f => f.declaredType.map(t => (f.name.asString, t)))
-        yield out
+            cp  <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
+            cls <- requireFound(cp.findClass(fqn), fqn)
+        yield
+            val decls = cls.declarations
+            val vals  = decls.filter(_.kind == Reflect.SymbolKind.Val)
+            vals.map(f => (f.name.asString, f.declaredType))
         end for
     end fieldsOf
 
@@ -28,11 +29,11 @@ object RuntimeReflectionExample:
     def describe[A](using t: Tag[A], frame: Frame): String < (Sync & Async & Abort[ReflectError] & Scope) =
         val fqn = Reflect.classFqn[A]
         for
-            cp      <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
-            clsOpt  <- cp.findClass(fqn)
-            cls     <- requireFound(clsOpt, fqn)
-            parents <- cls.parents
-        yield s"$fqn extends ${parents.map(_.show).mkString(" with ")}"
+            cp  <- Reflect.Classpath.openCached(Seq("."), cacheDir = ".kyo-reflect-cache")
+            cls <- requireFound(cp.findClass(fqn), fqn)
+        yield
+            val parents = cls.parents
+            s"$fqn extends ${parents.map(_.show).mkString(" with ")}"
         end for
     end describe
 
