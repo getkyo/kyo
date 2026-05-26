@@ -146,6 +146,7 @@ object JvmFileSource extends FileSource:
     end readJrtPath
 
     private def readJarEntry(jarPath: String, entryName: String): Array[Byte] =
+        PerfCounters.jarOpenCount.incrementAndGet()
         val jf = new java.util.jar.JarFile(jarPath)
         try
             val entry = jf.getJarEntry(entryName)

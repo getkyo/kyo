@@ -36,6 +36,9 @@ import scala.collection.mutable
   */
 object ClasspathOrchestrator:
 
+    /** Whether to emit the one-line timing summary to stderr. Set -Dkyo.reflect.timing=true to enable. */
+    private val timingEnabled: Boolean = java.lang.System.getProperty("kyo.reflect.timing") == "true"
+
     /** Minimum concurrency for Phase A and B. Bounded by available processors. */
     private def defaultConcurrency: Int = Runtime.getRuntime.availableProcessors().max(1)
 
@@ -147,6 +150,15 @@ object ClasspathOrchestrator:
         val sizeHint = 128
         val interner = new Interner(numShards = numShards, initialShardCapacity = sizeHint)
 
+        // Timing instrumentation: snapshot nanoTime at each stage boundary.
+        // AtomicLong used so decoder fibers can record t_decodeEnd from any thread.
+        val t_start     = new java.util.concurrent.atomic.AtomicLong(java.lang.System.nanoTime())
+        val t_listEnd   = new java.util.concurrent.atomic.AtomicLong(0L)
+        val t_decodeEnd = new java.util.concurrent.atomic.AtomicLong(0L)
+        val t_mergeEnd  = new java.util.concurrent.atomic.AtomicLong(0L)
+
+        PerfCounters.reset()
+
         Scope.run:
             Channel.initUnscoped[(String, String)](entryCap, Access.MultiProducerMultiConsumer).flatMap: entryCh =>
                 Channel.initUnscoped[DecodeResult](resultCap, Access.MultiProducerMultiConsumer).flatMap: resultCh =>
@@ -171,19 +183,48 @@ object ClasspathOrchestrator:
 
                             // Producer closes entryCh after all puts complete (closeAwaitEmpty so decoders drain buffer).
                             val producerWithClose: Unit < (Abort[ReflectError] & Async) =
-                                producerStage.andThen(entryCh.closeAwaitEmpty.unit)
+                                producerStage
+                                    .andThen(Sync.defer(t_listEnd.set(java.lang.System.nanoTime())))
+                                    .andThen(entryCh.closeAwaitEmpty.unit)
                             // Decoders close resultCh after all puts complete.
                             val decoderWithClose: Unit < (Abort[ReflectError] & Async) =
-                                decoderStage.andThen(resultCh.closeAwaitEmpty.unit)
+                                decoderStage
+                                    .andThen(Sync.defer(t_decodeEnd.set(java.lang.System.nanoTime())))
+                                    .andThen(resultCh.closeAwaitEmpty.unit)
+                            // Merger records its end time after draining resultCh.
+                            val mergerWithTiming: Unit < (Async & Abort[ReflectError]) =
+                                mergerStage.andThen(Sync.defer(t_mergeEnd.set(java.lang.System.nanoTime())))
 
                             // Async.foreach with concurrency=3 and 3 items runs all 3 stages concurrently.
                             // Unlike Async.gather, Async.foreach propagates the first Abort failure and
                             // interrupts the other fibers (including a stuck merger) via IOPromise.interrupts.
                             val stages: Chunk[Unit < (Abort[ReflectError] & Async)] =
-                                Chunk(producerWithClose, decoderWithClose, mergerStage)
+                                Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
                             Async.foreach(stages, 3): stage =>
                                 stage
                             .andThen(finalizeMerge(mergeState, source, strict, cp))
+                                .andThen:
+                                    if timingEnabled then
+                                        Sync.defer:
+                                            val t_end      = java.lang.System.nanoTime()
+                                            val t0         = t_start.get()
+                                            val tList      = t_listEnd.get()
+                                            val tDec       = t_decodeEnd.get()
+                                            val tMrg       = t_mergeEnd.get()
+                                            val listMs     = if tList > 0 then (tList - t0) / 1_000_000L else -1L
+                                            val decodeMs   = if tDec > 0 then (tDec - t0) / 1_000_000L else -1L
+                                            val mergeMs    = if tMrg > 0 then (tMrg - t0) / 1_000_000L else -1L
+                                            val totalMs    = (t_end - t0) / 1_000_000L
+                                            val finalizeMs = if tMrg > 0 then (t_end - tMrg) / 1_000_000L else -1L
+                                            val jars       = PerfCounters.jarOpenCount.get()
+                                            val entries    = PerfCounters.entryReadCount.get()
+                                            val bytesRaw   = PerfCounters.bytesReadTotal.get()
+                                            val bytesMB    = bytesRaw / (1024L * 1024L)
+                                            java.lang.System.err.println(
+                                                s"[kyo-reflect] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars entries=$entries bytes=${bytesMB}MB"
+                                            )
+                                    else
+                                        Kyo.unit
     end runPhaseAB
 
     /** Walk a single root, putting (entryPath, kind) pairs into entryCh.
@@ -228,6 +269,8 @@ object ClasspathOrchestrator:
         if kind == "module-info.class" then
             Abort.run[ReflectError](
                 source.read(entryPath).flatMap: bytes =>
+                    PerfCounters.entryReadCount.incrementAndGet()
+                    PerfCounters.bytesReadTotal.addAndGet(bytes.length.toLong)
                     ModuleInfoReader.read(bytes)
             ).flatMap:
                 case Result.Success(desc) =>
@@ -400,6 +443,8 @@ object ClasspathOrchestrator:
     )(using Frame): FileResult < (Sync & Abort[ReflectError]) =
         Abort.run[ReflectError](
             source.read(file).flatMap: bytes =>
+                PerfCounters.entryReadCount.incrementAndGet()
+                PerfCounters.bytesReadTotal.addAndGet(bytes.length.toLong)
                 decodeTastyBytes(file, bytes, interner, cp)
         ).map:
             case Result.Success(fr) => fr
