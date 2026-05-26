@@ -634,25 +634,32 @@ object Reflect:
                                 // The try/catch runs before entering any kyo effect so exceptions become Either.
                                 // Unsafe: Memo.get() is an unsafe-tier helper; AllowUnsafe is embraced here.
                                 import AllowUnsafe.embrace.danger
-                                val decoded: Either[ReflectError, Tree] =
-                                    try Right(_bodyMemo.get())
-                                    catch
-                                        case ex: kyo.internal.reflect.tasty.TreeUnpickler.DecodeException =>
-                                            Left(ReflectError.MalformedSection(
-                                                "ASTs",
-                                                s"body decode failed for '${name.asString}': ${ex.getMessage}"
-                                            ))
-                                        case ex: ArrayIndexOutOfBoundsException =>
-                                            Left(ReflectError.MalformedSection(
-                                                "ASTs",
-                                                s"body truncated for '${name.asString}': ${ex.getMessage}"
-                                            ))
-                                        case _: IllegalStateException =>
-                                            // Thrown when a mmap-backed ByteView is read after its arena was closed.
-                                            Left(ReflectError.ClasspathClosed)
-                                decoded match
-                                    case Right(t) => Sync.defer(t)
-                                    case Left(e)  => Abort.fail(e)
+                                // Unsafe: Reading classpath state under AllowUnsafe to detect closed classpath
+                                // before body decode; state transitions are monotonic (Closed is terminal) so
+                                // a stale read returns a conservative result.
+                                if home.get().isClosed then
+                                    Abort.fail(ReflectError.ClasspathClosed)
+                                else
+                                    val decoded: Either[ReflectError, Tree] =
+                                        try Right(_bodyMemo.get())
+                                        catch
+                                            case ex: kyo.internal.reflect.tasty.TreeUnpickler.DecodeException =>
+                                                Left(ReflectError.MalformedSection(
+                                                    "ASTs",
+                                                    s"body decode failed for '${name.asString}': ${ex.getMessage}"
+                                                ))
+                                            case ex: ArrayIndexOutOfBoundsException =>
+                                                Left(ReflectError.MalformedSection(
+                                                    "ASTs",
+                                                    s"body truncated for '${name.asString}': ${ex.getMessage}"
+                                                ))
+                                            case _: IllegalStateException =>
+                                                // Thrown when a mmap-backed ByteView is read after its arena was closed.
+                                                Left(ReflectError.ClasspathClosed)
+                                    decoded match
+                                        case Right(t) => Sync.defer(t)
+                                        case Left(e)  => Abort.fail(e)
+                                end if
             end match
         end body
     end Symbol

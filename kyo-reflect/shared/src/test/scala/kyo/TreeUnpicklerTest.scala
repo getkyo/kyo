@@ -409,4 +409,46 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
+    // ── Test 10: regression: sym.body after Scope close returns ClasspathClosed ──
+
+    "sym.body after Scope close returns Abort.fail(ClasspathClosed)" in run {
+        // Open a classpath inside a Scope, find a method symbol with a body, exit the
+        // Scope (which closes the classpath), then assert body returns ClasspathClosed.
+        val captureResult: Result[ReflectError, Reflect.Symbol] < Async =
+            Scope.run:
+                Abort.run[ReflectError]:
+                    openPlainClassCp.flatMap: cp =>
+                        cp.findClass("kyo.fixtures.PlainClass") match
+                            case Present(classSym) =>
+                                // Find a declaration with a non-zero body slice (a method).
+                                val memberWithBody = classSym.declarations.find: s =>
+                                    s.origin match
+                                        case o: Reflect.Symbol.TastyOrigin => o.bodyStart > 0 && o.bodyEnd > 0
+                                        case _                             => false
+                                memberWithBody match
+                                    case Some(sym) => Kyo.lift(sym)
+                                    case None      => Abort.fail(ReflectError.NotImplemented("no member with body in PlainClass"))
+                            case Absent =>
+                                Abort.fail(ReflectError.NotImplemented("PlainClass not found in fixture"))
+        captureResult.flatMap:
+            case Result.Success(sym) =>
+                // Scope has exited; classpath is closed. body must return ClasspathClosed.
+                Abort.run[ReflectError](sym.body).map:
+                    case Result.Failure(ReflectError.ClasspathClosed) =>
+                        succeed
+                    case Result.Failure(e) =>
+                        fail(s"Expected ClasspathClosed but got: $e")
+                    case Result.Success(_) =>
+                        fail("Expected ClasspathClosed but body decode succeeded on closed classpath")
+                    case Result.Panic(t) =>
+                        throw t
+            case Result.Failure(ReflectError.NotImplemented(msg)) =>
+                // No member with a body found; treat as a test infrastructure limitation.
+                pending
+            case Result.Failure(e) =>
+                fail(s"Failed to capture symbol: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
 end TreeUnpicklerTest

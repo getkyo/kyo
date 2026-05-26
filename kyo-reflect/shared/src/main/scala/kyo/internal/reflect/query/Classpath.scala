@@ -20,6 +20,13 @@ import scala.collection.mutable
 final class Classpath private[reflect] (
     private[kyo] val stateRef: AtomicRef[Classpath.State]
 ):
+    /** Returns true if the classpath is in the Closed state. Used by Symbol.body for the explicit pre-decode guard.
+      *
+      * Requires AllowUnsafe because it reads the AtomicRef without an effect context.
+      */
+    private[kyo] def isClosed(using AllowUnsafe): Boolean =
+        stateRef.unsafe.get() == Classpath.State.Closed
+
     /** Guard used by resolving accessors. Fails with ClasspathClosed if state is Closed. Fails with ClasspathBuilding if state is Building
       * (defense-in-depth; user code cannot reach the classpath in Building state via non-lookup paths).
       */
