@@ -38,9 +38,14 @@ private[kyo] object Orchestrator:
                     cache       <- BlockCache.init(config.cache)
                     fingerprint <- ClasspathFingerprint.compute(config.classpath)
                     scalaVer = scala.util.Properties.versionNumberString
-                    allOutcomes <- processAllSources(config, driver, cache, fingerprint, scalaVer)
-                yield buildReport(allOutcomes)
+                    allOutcomes  <- processAllSources(config, driver, cache, fingerprint, scalaVer)
+                    linkFailures <- validateAllLinks(config.sources)
+                yield buildReport(allOutcomes, linkFailures)
             }
+
+    // Validate internal links in every source. Failures are merged into the final report.
+    private def validateAllLinks(sources: Chunk[Path])(using Frame): Chunk[Doctest.Failure] < (Sync & Abort[Doctest.Error]) =
+        Kyo.foreach(sources)(LinkValidator.validate).map(_.flatten)
 
     // Processes all source files, returning a flat list of per-block outcomes.
     private def processAllSources(
@@ -193,8 +198,8 @@ private[kyo] object Orchestrator:
         failures: List[Doctest.Failure]
     )
 
-    // Assembles the final Report from all per-block outcomes.
-    private def buildReport(outcomes: Chunk[BlockOutcome]): Doctest.Report =
+    // Assembles the final Report from all per-block outcomes and link-validation failures.
+    private def buildReport(outcomes: Chunk[BlockOutcome], linkFailures: Chunk[Doctest.Failure]): Doctest.Report =
         val acc = outcomes.toSeq.foldLeft(ReportAcc(0, 0, 0, Nil)) { (a, outcome) =>
             outcome match
                 case BlockOutcome.Skipped(_, _) =>
@@ -213,7 +218,7 @@ private[kyo] object Orchestrator:
                         a.copy(totalBlocks = a.totalBlocks + 1, compiled = a.compiled + 1, failures = a.failures :+ failure)
                     end if
         }
-        Doctest.Report(acc.totalBlocks, acc.cacheHits, acc.compiled, Chunk.from(acc.failures))
+        Doctest.Report(acc.totalBlocks, acc.cacheHits, acc.compiled, Chunk.from(acc.failures) ++ linkFailures)
     end buildReport
 
 end Orchestrator

@@ -85,7 +85,12 @@ object Runner {
                 resultFile.getAbsolutePath
             )
 
-            log.info(s"doctest: validating ${sources.size} file(s) with ${classpath.size} classpath entries")
+            val cwd = new File(".").getCanonicalFile.getAbsolutePath
+            val labels = sources.map { f =>
+                val abs = f.getCanonicalFile.getAbsolutePath
+                if (abs.startsWith(cwd + "/")) abs.substring(cwd.length + 1) else abs
+            }.mkString(", ")
+            log.info(s"doctest: validating $labels (${classpath.size} classpath entries)")
             log.debug(s"doctest: fork command: ${command.mkString(" ")}")
 
             val process = new ProcessBuilder(command: _*)

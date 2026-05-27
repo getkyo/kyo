@@ -1,8 +1,3 @@
-<!-- doctest:setup
-```scala
-import AllowUnsafe.embrace.danger
-```
--->
 <img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png" width="200" alt="Kyo">
 
 [![Build Status](https://github.com/getkyo/kyo/workflows/build/badge.svg)](https://github.com/getkyo/kyo/actions)
@@ -22,7 +17,19 @@ For a deeper context, see [Suspension: the magic behind composability](https://w
 
 > Looking for the published documentation site? See https://getkyo.io.
 
-## The pending type
+## Introduction to Kyo
+
+This section is the working vocabulary needed before opening any module README: how to import Kyo, the pending type, how to compose effects, the shape every effect follows, how handler ordering shows up in the result type, and the recommended writing style. Each subsection links back into the relevant per-module deep dive.
+
+### Imports: one `import kyo.*` covers the user-facing surface
+
+Kyo deliberately exposes its user-facing types and effects through a single package: `kyo`. A single `import kyo.*` brings in everything you need at a call site, including the pending type `<`, value types like `Maybe` / `Result` / `Chunk` / `Span`, effects like `Sync` / `Async` / `Abort` / `Env` / `Var` / `Scope` / `Emit`, and primitives like `Fiber` / `Channel` / `Promise` / `AtomicRef`. There is no second import to learn for the everyday surface.
+
+What's actually available under `kyo.*` depends on which modules are on the compilation classpath. `kyo-data` contributes the value types; `kyo-prelude` contributes the strictly-pure effects (`Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`); `kyo-core` contributes I/O and concurrency (`Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`, `Path`); and every other module adds its own types into the same namespace. Adding a module to the build adds its types; removing the module removes them. There is no per-module import to remember.
+
+A small number of subpackages exist for specialized or low-level use. `kyo.kernel.*` exposes the algebraic effects substrate (`ArrowEffect`, `ContextEffect`, multi-shot continuations) and is needed when defining a new effect. `kyo.compat.*` is the runtime-portable library-author surface; see [`kyo-compat`](kyo-compat/README.md). Any module that asks for an explicit import beyond `kyo.*` will say so in its README and show the import in its code blocks.
+
+### The pending type
 
 The pending type is the one piece of vocabulary you need before reading the rest of the docs. Kyo wraps every effectful computation in an opaque type `A < S` ("`A` pending `S`"), where `A` is the value the computation will produce and `S` is the *set* of effects it depends on. `S` is a Scala 3 intersection type built from individual effect markers like `Sync`, `Async`, `Abort[E]`, `Env[R]`, `Var[V]`, `Emit[V]`, `Scope`, and any custom effect you define. An effect is *added* to the row by mentioning it in the type; an effect is *removed* by applying its handler.
 
@@ -46,12 +53,23 @@ Handlers discharge one effect at a time, returning a value whose row no longer m
 ```scala doctest:scope=inherited
 // Abort.run handles Abort[String], leaving < Sync
 val d: Result[String, Int] < Sync = Abort.run(c)
-
-// Sync.Unsafe.evalOrThrow handles Sync, returning the value
-val e: Result[String, Int] = Sync.Unsafe.evalOrThrow(d)
 ```
 
 `.eval` is the universal "give me the value" call, but the compiler will refuse it until every effect in the row has been handled. A `< (Sync & Abort[E])` value cannot escape into plain Scala without `Sync` and `Abort` being explicitly handled first; the unhandled-effect set is part of the value's type. This is the single property that makes the rest of Kyo work: every signature spells out exactly which capabilities it consumes, and the call site decides where each one gets interpreted.
+
+The expected way to discharge `Sync` is through an entrypoint that owns the side-effecting boundary: `kyo.KyoApp` for applications (see [`kyo-core`](kyo-core/README.md)), `kyo.Test` (from a module's test framework binding) for tests. A direct `Sync.Unsafe.evalOrThrow` exists for scripts and REPL exploration but requires an explicit `AllowUnsafe` witness in scope, which is the project-wide convention for "I am opting into an escape hatch that bypasses suspension." Importing `kyo.AllowUnsafe.embrace.danger` provides that witness:
+
+```scala doctest:scope=inherited
+// Bring an AllowUnsafe witness into scope. Anyone reading the code sees the opt-in,
+// and the compiler refuses any unsafe call unless this import is present.
+import kyo.AllowUnsafe.embrace.danger
+
+// Sync.Unsafe.evalOrThrow drops the row's last effect and returns the bare value.
+// Side effects fire immediately on the calling thread.
+val e: Result[String, Int] = Sync.Unsafe.evalOrThrow(d)
+```
+
+> **Caution:** `AllowUnsafe.embrace.danger` is, as the name implies, dangerous. It loses the runtime guarantees the effect system provides: the call is no longer fiber-aware (it runs synchronously on the calling thread), cancellation does not propagate into it, and `Sync` is collapsed by running its body rather than by handling it. Reach for it in scripts, demos, test harnesses, and the small set of bridge points where a non-Kyo runtime must drive a Kyo computation. Production code should reach `Sync` through a `KyoApp` entrypoint.
 
 ### Composing computations: `map`, `flatMap`, and `for`
 
@@ -110,7 +128,76 @@ Once you have a collection of `A < S` values, two companions cover collection-st
 
 Mental model: reach for `Kyo.*` when sequential processing is sufficient, `Async.*` when concurrent execution would help. The Kyo companion lives in kyo-prelude alongside the core effects, not on `Sync` or `Async` themselves, because it works for any effect row.
 
-## Idiomatic style: monadic by default
+### The shape of an effect
+
+Every Kyo effect has the same three-phase shape: it is *introduced* into the row, *used* inside a computation, and *discharged* by its handler. Once you have read one effect, you have read all of them. The companion-object methods follow a small naming convention that mirrors those three phases:
+
+- `init*` constructs an instance of the effect's container type (`Fiber.init`, `Promise.init`, `Channel.init`, `Hub.init`).
+- `get*` lifts an existing value into the effect's row (`Abort.get(Right(42))` produces an `Int < Abort[Nothing]`, `Env.get[Config]` reads the environment value, `Var.get[V]` reads the current state).
+- `run*` discharges the effect, returning a computation whose row no longer mentions it (`Abort.run`, `Env.run(config)`, `Var.run(init)`, `Sync.Unsafe.evalOrThrow`).
+
+The same shape applies to effects you define yourself: a `get*` to suspend a call into the row, a `run*` to discharge it. New effects are an open set, not a closed taxonomy. See [`kyo-kernel`](kyo-kernel/README.md) for the substrate (`ArrowEffect`, `ContextEffect`) and how to introduce a new effect of your own.
+
+```scala doctest:scope=inherited
+val program: Int < (Abort[String] & Env[Int]) =
+    for
+        v <- Abort.get(Right(42))  // introduce a value into Abort[String]'s row
+        e <- Env.get[Int]          // read the Env[Int] context value
+    yield v + e                    // use both; Kyo tracks the row in the type
+
+// run* discharges one effect at a time, narrowing the row
+val handled: Result[String, Int] < Any =
+    Env.run(10)(Abort.run(program))
+
+val result: Result[String, Int] = handled.eval
+```
+
+When more than one handler is needed, the `.handle` method chains them left-to-right without nesting parentheses. It takes any number of functions and applies them in order, so a handler pipeline reads top-down the way the row shrinks:
+
+```scala doctest:scope=inherited
+val viaHandle: Result[String, Int] =
+    program.handle(Abort.run(_), Env.run(10)).eval
+
+// equivalent to the nested form above
+val viaNesting: Result[String, Int] =
+    Env.run(10)(Abort.run(program)).eval
+
+// .handle also accepts ordinary transformations and `.eval` itself
+val unwrapped: Int =
+    program.handle(Abort.run(_), Env.run(10), _.map(_.getOrElse(0)), _.eval)
+```
+
+### Effect ordering
+
+Swapping the order in which two handlers run changes the result type of the computation, not just its runtime semantics. The inner handler's residual type is the outer handler's input, so the resulting shape is composed bottom-up. The type checker catches mismatches at the call site.
+
+A short illustration with `Var[Int]` and `Abort[String]`. `Var.runTuple(init)(v)` pairs the final state with the result; `Abort.run(v)` lifts a possible failure into a `Result`. Running them in opposite orders produces different return types:
+
+```scala doctest:scope=inherited
+val counted: Int < (Abort[String] & Var[Int]) =
+    for
+        _ <- Var.update[Int](_ + 1)
+        n <- Var.get[Int]
+        _ <- if n < 5 then ().asInstanceOf[Unit < Any] else Abort.fail("limit reached")
+    yield n
+
+// Var.runTuple inside, Abort.run outside.
+// The Var folds its state into a tuple. If Abort fires, the whole computation aborts
+// before the tuple is built. Result: Result[String, (Int, Int)].
+val varInner: Result[String, (Int, Int)] =
+    counted.handle(Var.runTuple(0), Abort.run(_)).eval
+
+// Abort.run inside, Var.runTuple outside.
+// Abort.run wraps the Int in a Result while Var is still in the row, so when
+// Var.runTuple runs it pairs its state with that Result. State survives the abort.
+// Result: (Int, Result[String, Int]).
+val varOuter: (Int, Result[String, Int]) =
+    counted.handle(Abort.run(_), Var.runTuple(0)).eval
+```
+
+The state visibility differs: `varOuter` lets you read the final counter even when the computation aborted, because `Var.runTuple` saw the `Result` instead of being short-circuited; `varInner` discards any state that did not survive into the produced tuple. The same pattern shows up for `Choice` with `Abort` (a `Seq[Result[E, A]]` versus a `Result[E, Seq[A]]`), for `Emit` with `Abort` (emitted values up to the failure point are kept or lost), and for any pair of effects where one observes the other. See [`kyo-prelude`](kyo-prelude/README.md) and [`kyo-kernel`](kyo-kernel/README.md) for the per-effect discussion.
+
+### Idiomatic style: monadic by default
 
 Kyo is programs-as-values: every `A < S` is a pure description that handlers interpret. The recommended way to write Kyo code is the monadic style introduced above: `map`, `flatMap`, and Scala 3's for-comprehensions over `A < S` values, with handler chains (`comp.handle(Abort.run, Env.run(config))`) discharging effects until `.eval` runs the program. The rest of the documentation, the worked examples, and the library code itself are written in this form because monadic composition needs no macro, no compiler-plugin syntax, and no rewrite rules: it is just the pure-monad style you already use elsewhere.
 
@@ -252,8 +339,8 @@ CLI-parser bridge, runnable end-to-end programs, and the cross-runtime benchmark
 | Module                                       | JVM | JS  | Native | Identity                                                                                                  |
 | -------------------------------------------- | --- | --- | ------ | --------------------------------------------------------------------------------------------------------- |
 | [kyo-case-app](kyo-case-app/README.md)       | ✅   | ✅   | ✅      | Bridge case-app annotation-driven CLI parsing into a Kyo `run { options => ... }` entrypoint              |
-| [kyo-examples](kyo-examples/README.md)       | ✅   | ❌   | ❌      | Two runnable programs: a ledger HTTP service and an N-queens solver (run with `sbt`)                      |
-| [kyo-bench](kyo-bench/README.md)             | ✅   | ❌   | ❌      | JMH suite with side-by-side Kyo / Cats Effect / ZIO implementations for each scenario                     |
+| `kyo-examples`                               | ✅   | ❌   | ❌      | Two runnable programs: a ledger HTTP service and an N-queens solver (run with `sbt`)                      |
+| `kyo-bench`                                  | ✅   | ❌   | ❌      | JMH suite with side-by-side Kyo / Cats Effect / ZIO implementations for each scenario                     |
 
 ## Getting Started
 
@@ -268,7 +355,7 @@ libraryDependencies ++= Seq(
 
 Use `%%` for JVM and Scala Native, `%%%` for Scala.js cross-compilation. See the [Modules](#modules) tables above for platform support per module. Replace `<version>` with: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)
 
-A first read-through of [`kyo-core/README.md`](kyo-core/README.md) covers `Sync`, `Async`, `Scope`, `Fiber`, `KyoApp` (the entrypoint trait that discharges the effect row your `main` body produces), and the standard concurrent primitives. The natural follow-up for an application developer is [`kyo-http`](kyo-http/README.md). From there, drop into the rest of the module map above as your application grows. Worked end-to-end programs live in [`kyo-examples`](kyo-examples/README.md).
+A first read-through of [`kyo-core/README.md`](kyo-core/README.md) covers `Sync`, `Async`, `Scope`, `Fiber`, `KyoApp` (the entrypoint trait that discharges the effect row your `main` body produces), and the standard concurrent primitives. The natural follow-up for an application developer is [`kyo-http`](kyo-http/README.md). From there, drop into the rest of the module map above as your application grows. Worked end-to-end programs live in `kyo-examples`.
 
 ## Drop-in scheduler for ZIO, Cats Effect, Pekko, Finagle
 

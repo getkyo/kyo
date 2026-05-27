@@ -30,9 +30,22 @@ object KyoDoctestPlugin extends AutoPlugin {
     // Each module's doctest forks a JVM and uses its full doctestParallel budget
     // internally; without a limit, the aggregate `doctest` command would launch
     // one fork per enabled project simultaneously and oversubscribe the machine.
-    private val DoctestTag = Tags.Tag("doctest")
+    //
+    // Exposed via autoImport.DoctestTag so a build that replaces sbt's
+    // `Global / concurrentRestrictions` wholesale (e.g. with `:=` rather than
+    // `+=`) can include the doctest limit explicitly. The plugin still adds the
+    // limit via `+=` in globalSettings, but `:=` in a downstream build will
+    // override it without an explicit reference.
+    private[sbt] val DoctestTag: Tags.Tag = Tags.Tag("doctest")
 
     object autoImport {
+
+        /** Task tag attached to every `doctest` / `doctestFresh` task. A build that replaces sbt's
+          * `Global / concurrentRestrictions` with `:=` (instead of `+=`) should include
+          * `Tags.limit(KyoDoctestPlugin.DoctestTag, N)` in the replacement list to keep the
+          * per-fork concurrency bound the plugin would otherwise add.
+          */
+        val DoctestTag: Tags.Tag = KyoDoctestPlugin.DoctestTag
 
         /** Markdown files to scan for scala code blocks. Defaults to README.md in the project base directory. */
         val doctestSources: SettingKey[Seq[File]] = settingKey[Seq[File]](
@@ -117,15 +130,21 @@ object KyoDoctestPlugin extends AutoPlugin {
             if (refs.isEmpty) {
                 state.log.warn(s"$name: no projects have KyoDoctestPlugin enabled")
                 state
-            } else {
-                // Schedule all module doctest tasks as a single `all` task so sbt
-                // executes them in its task engine, where the DoctestTag limit
-                // (see globalSettings) caps concurrent forks. Each module's
-                // doctest forks a JVM that uses its own doctestParallel budget
-                // internally; the global cap prevents N concurrent forks each
-                // using all cores from oversubscribing the machine.
+            } else if (name == "doctestClean") {
+                // doctestClean has no upstream compile dependency, just emit it.
                 val cmds = refs.map(r => s"${r.project}/$name").mkString(" ")
                 s"all $cmds" :: state
+            } else {
+                // Two-phase scheduling. Phase 1: bring every doctest-enabled
+                // module's Test scope up to date under sbt's normal task
+                // parallelism, so the compile cascade is its own bounded burst
+                // rather than interleaving with doctest forks. Phase 2: run
+                // doctest tasks; Test/fullClasspath is already up-to-date so
+                // the only work is the forks themselves, subject to
+                // Tags.limit(DoctestTag, 1) in globalSettings.
+                val compileCmds = refs.map(r => s"${r.project}/Test/compile").mkString(" ")
+                val doctestCmds = refs.map(r => s"${r.project}/$name").mkString(" ")
+                s"all $compileCmds" :: s"all $doctestCmds" :: state
             }
         }
 
@@ -135,12 +154,13 @@ object KyoDoctestPlugin extends AutoPlugin {
             aggregateCommand("doctestFresh"),
             aggregateCommand("doctestClean")
         ),
-        // Cap concurrent doctest task instances across the whole build. Each
-        // task forks a JVM that runs a dotty driver, so unbounded parallelism
-        // (one fork per enabled project at once) oversubscribes the machine.
-        // 2 keeps total parallel forks small while letting cross-module work
-        // overlap and serves cache hits cheaply.
-        concurrentRestrictions += Tags.limit(DoctestTag, 2)
+        // Cap concurrent doctest task instances across the whole build to 1.
+        // Each task forks a JVM that runs a dotty driver; serialising at the
+        // tag level keeps the plugin's CPU contribution bounded to a single
+        // fork regardless of how many modules have doctest enabled. The fork
+        // itself is further capped by doctestForkJavaOptions's
+        // -XX:ActiveProcessorCount=2.
+        concurrentRestrictions += Tags.limit(DoctestTag, 1)
     )
 
     /** Version of the kyo-doctest library to inject.
@@ -170,18 +190,24 @@ object KyoDoctestPlugin extends AutoPlugin {
         },
         doctestScalacOptions := Seq("-release", "17"),
         doctestCacheDir      := target.value / "doctest-cache",
-        // Per-module block compile concurrency. The aggregate `doctest` command
-        // runs multiple modules through sbt's task engine concurrently (capped
-        // by DoctestTag in globalSettings), and each module's forked JVM uses
-        // this budget internally. The default halves availableProcessors so the
-        // product across modules stays bounded; override per-module when a
-        // README has many independent blocks and is run in isolation.
-        doctestParallel      := math.max(1, java.lang.Runtime.getRuntime.availableProcessors / 2),
+        // Per-module fiber concurrency inside the doctest fork. Block compiles
+        // are serialised on a single compiler-thread executor because dotty's
+        // ContextBase has a thread-ownership assertion, so a higher value here
+        // adds fibers that all queue on the same single thread (no speedup on
+        // cold runs, measured 10s for both 1 and 6 on a 54-block kyo-core
+        // compile). Cache lookups are fast enough that the IO concurrency from
+        // a higher setting is not measurable. Default of 1 keeps the fiber
+        // count equal to the actual compile concurrency.
+        doctestParallel      := 1,
         doctestPredef        := Seq.empty[String],
         doctestFreshDriver   := false,
-        doctestForkJavaOptions := Seq("-Xmx8G", "-Xss10M"),
+        // -XX:ActiveProcessorCount caps the JVM's view of available processors,
+        // so dotty's internal worker pools (backend, parallel phases, JIT
+        // compilation) size themselves to that number. Keeps a fork's CPU
+        // contribution bounded to ~2 cores regardless of the host's core count.
+        doctestForkJavaOptions := Seq("-Xmx8G", "-Xss10M", "-XX:ActiveProcessorCount=2"),
 
-        doctest := (Def.task {
+        doctest := Def.task {
             val log         = streams.value.log
             val sources     = doctestSources.value
             val classpath   = (Test / fullClasspath).value.files
@@ -203,9 +229,9 @@ object KyoDoctestPlugin extends AutoPlugin {
                 writeCache  = true,
                 log         = log
             )
-        }).tag(DoctestTag).value,
+        }.tag(DoctestTag).value,
 
-        doctestFresh := (Def.task {
+        doctestFresh := Def.task {
             val log         = streams.value.log
             val sources     = doctestSources.value
             val classpath   = (Test / fullClasspath).value.files
@@ -227,7 +253,7 @@ object KyoDoctestPlugin extends AutoPlugin {
                 writeCache  = false,
                 log         = log
             )
-        }).tag(DoctestTag).value,
+        }.tag(DoctestTag).value,
 
         doctestClean := {
             val log      = streams.value.log

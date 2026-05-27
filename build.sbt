@@ -79,7 +79,14 @@ Global / concurrentRestrictions := {
         Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
         Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
         Tags.limit(Tags.Test, testLimit),
-        Tags.limit(Tags.ForkedTestGroup, forkLimit)
+        Tags.limit(Tags.ForkedTestGroup, forkLimit),
+        // Cap concurrent doctest forks. Each fork already uses dotty's internal
+        // multi-thread backend; allowing 2 keeps cross-module work overlapping
+        // without saturating the host. The plugin adds this same limit via
+        // `+=` in globalSettings, but our `:=` above replaces
+        // concurrentRestrictions wholesale, so we restate it here. See
+        // KyoDoctestPlugin.scala for the tag's role.
+        Tags.limit(DoctestTag, 2)
     )
 }
 

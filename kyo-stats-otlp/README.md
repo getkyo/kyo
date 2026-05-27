@@ -8,16 +8,15 @@ The module is published for JVM, Scala.js, and Scala Native. The wire encoding i
 
 <!-- doctest:setup
 ```scala
-import kyo.*
 import kyo.stats.otlp.*
-import AllowUnsafe.embrace.danger
 ```
 -->
 
+Every example in this README that calls a low-level instrument or factory needs `AllowUnsafe.embrace.danger` in scope. The import is shown explicitly in every code block that needs it. The opt-in is a deliberate marker: the call bypasses the effect system, runs synchronously on the calling thread, ignores fiber and cancellation rules, and the project-wide convention reserves it for scripts, demos, exporter bootstrap, and the small set of bridge points where a non-Kyo runtime must drive Kyo internals. Production application code should reach `Sync` through a `KyoApp` entrypoint and let the runtime discharge effects without ever needing an `AllowUnsafe` witness.
+
 ```scala
-import kyo.*
 import kyo.stats.otlp.OTLPConfig
-import AllowUnsafe.embrace.danger
+import kyo.AllowUnsafe.embrace.danger
 
 // With OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 set, this is Present
 val maybe: Maybe[OTLPConfig] = OTLPConfig.loadIfEnabled()
@@ -71,7 +70,7 @@ export OTEL_SERVICE_NAME=my-service
 ```scala
 import kyo.*
 import kyo.stats.otlp.OTLPConfig
-import AllowUnsafe.embrace.danger
+import kyo.AllowUnsafe.embrace.danger
 
 val maybe: Maybe[OTLPConfig] = OTLPConfig.loadIfEnabled()
 

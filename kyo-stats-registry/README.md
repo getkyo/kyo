@@ -4,19 +4,21 @@ kyo-stats-registry is the low-level metrics and tracing substrate the rest of Ky
 
 Everything in `kyo.stats.internal` is `Unsafe`: the methods take an `AllowUnsafe` evidence and skip the effect system. That is intentional. This is the layer exporters and instrumented hot paths talk to directly; higher layers are responsible for wrapping calls in effects when they need to. The tracing side mirrors the same shape: `TraceExporter.get` runs `java.util.ServiceLoader` discovery against `ExporterFactory` implementations on the classpath, composes them with `TraceExporter.all`, and hands back a single exporter that mints `UnsafeTraceSpan` handles for spans.
 
+Every example in this README that calls a counter, gauge, histogram, or tracing instrument needs an `AllowUnsafe` witness in scope. The import is written out in each code block so it is visible at every call site. The witness is the project-wide opt-in marker for "I am bypassing the effect system on purpose." The risks are real: the call runs synchronously on the calling thread, ignores fiber and cancellation rules, and discharges `Sync` by running rather than handling. The exporter and registry layers are the documented users of this surface; application code should usually go through a higher layer like `Stat.initScope(...).initCounter(...)` in `kyo-core`.
+
 <!-- doctest:setup
 ```scala
-import kyo.*
 import kyo.stats.*
 import kyo.stats.internal.*
 import java.time.Instant
-implicit val _au: AllowUnsafe = AllowUnsafe.embrace.danger
 val httpClientScope = StatsRegistry.scope("kyo", "http", "client")
 def currentInFlightCount: Double = 0.0
 ```
 -->
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val requests = StatsRegistry.scope("kyo", "http", "client").counter("requests")
 requests.inc()
 requests.add(4)
@@ -75,6 +77,8 @@ All methods take an implicit `AllowUnsafe`. There is no effect-system wrapping a
 When the instrumented code path emits a discrete event per increment, `Scope.counter` mints an `UnsafeCounter`: a monotonic, thread-safe count backed by `LongAdder`. `inc()` and `add(v)` are the hot-path writes.
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val requests = httpClientScope.counter("requests", "HTTP requests issued")
 requests.inc()
 requests.inc()
@@ -84,6 +88,8 @@ requests.add(8)
 `get()` and `delta()` are the two ways to read. They behave differently and serve different consumers.
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val requests = httpClientScope.counter("requests", "HTTP requests issued")
 val polled: Long = requests.get()    // sumThenReset: returns total and zeroes
 val sinceLast: Long = requests.delta() // stateful: total minus last delta() value
@@ -100,6 +106,8 @@ When to use which: an exporter that publishes cumulative counts to a backend tha
 When the value being recorded is a distribution rather than a count, `Scope.histogram` mints an `UnsafeHistogram`: a fixed-bucket distribution with inclusive upper bounds. `observe(v: Long)` and `observe(v: Double)` are the hot-path writes; `summary()` is the poll-time read.
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val latency = httpClientScope.histogram("latency_ms", "Request latency in ms")
 latency.observe(42L)
 latency.observe(173.4)
@@ -127,6 +135,8 @@ val custom = new UnsafeHistogram(Array(1.0, 10.0, 100.0, 1000.0))
 > **Caution:** the defaults are ms latency only. Using them for byte counts, request sizes, queue depths, or any other non-latency-like quantity will dump nearly every observation into the overflow bucket. Pass an explicit `boundaries` array when the quantity is not "milliseconds in the 0..10000 range."
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val payloadBytes = httpClientScope.histogram(
     "payload_bytes",
     "Response payload size",
@@ -140,6 +150,8 @@ payloadBytes.observe(4096L)
 `Summary` is the value-class snapshot returned by `UnsafeHistogram.summary()`. It carries the boundaries, per-bucket counts, total count, min, and max. `percentile(p)` linearly interpolates within the bucket containing the target rank.
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val latency = httpClientScope.histogram("latency_ms", "Outbound request latency in milliseconds")
 val s: Summary = latency.summary()
 val p50: Double = s.percentile(50.0)
@@ -153,6 +165,8 @@ val p99: Double = s.percentile(99.0)
 When the value already lives somewhere the exporter can read on demand, `Scope.gauge` mints an `UnsafeGauge`: a pull-model double-valued sample. The thunk re-runs every time `collect()` is called, so the exporter sees the current value.
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val inFlight = httpClientScope.gauge("in_flight", "Currently outstanding requests")(
     currentInFlightCount
 )
@@ -166,6 +180,8 @@ val sample: Double = inFlight.collect()
 When the monotonic source is the JVM (GC count, classes loaded, etc.) rather than the application, `Scope.counterGauge` mints an `UnsafeCounterGauge`: a pull-model monotonic counter. The thunk samples the externally-maintained value on demand rather than counting application-side writes.
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val gcCount = StatsRegistry.scope("kyo", "runtime").counterGauge("gc_count")(
     java.lang.management.ManagementFactory.getGarbageCollectorMXBeans
         .stream().mapToLong(_.getCollectionCount).sum()
@@ -250,6 +266,8 @@ class MyTraceSpan(scope: List[String], name: String) extends UnsafeTraceSpan {
 At startup the application calls `TraceExporter.get` once; it runs `ServiceLoader.load(classOf[ExporterFactory])`, calls `traceExporter()` on each factory, flattens the `Some` results, and composes them. Zero exporters returns `noop`; one returns that one; many returns `TraceExporter.all(list)`, which fans out every method call to every exporter.
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val exporter: TraceExporter = TraceExporter.get
 val span = exporter.startSpan(
     scope = List("kyo", "http", "client"),
@@ -269,6 +287,8 @@ span.end(Instant.now())
 Between `startSpan` and the call that ends it, the caller drives an `UnsafeTraceSpan`. Three methods, all `Unsafe`:
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 val exporter: TraceExporter = TraceExporter.noop
 val span: UnsafeTraceSpan = exporter.startSpan(
     List("kyo", "http", "client"),
@@ -385,11 +405,10 @@ A realistic instrumented module wires the registry, the instruments, and an expo
 import kyo.*
 import kyo.stats.*
 import kyo.stats.internal.*
+import kyo.AllowUnsafe.embrace.danger
 import java.time.Instant
 
 object HttpClientTelemetry {
-
-    implicit val _au: AllowUnsafe = AllowUnsafe.embrace.danger
 
     private val scope = StatsRegistry.scope("kyo", "http", "client")
 
@@ -426,8 +445,9 @@ object HttpClientTelemetry {
 An exporter polls the instruments on its own clock:
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 object HttpClientTelemetry {
-    implicit val _au: AllowUnsafe = AllowUnsafe.embrace.danger
     private val scope = StatsRegistry.scope("kyo", "http", "client")
     val requests = scope.counter("requests", "HTTP requests issued")
     val latency  = scope.histogram("latency_ms", "Request latency in ms")
