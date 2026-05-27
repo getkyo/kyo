@@ -390,26 +390,6 @@ object SnapshotReader:
         )
     end readSymbolsMapped
 
-    /** Decode a UTF-8 string from bytes[pos..pos+len) using the platform scratch buffer.
-      *
-      * Copies bytes[pos..pos+len) into scratch[0..len) and calls `new String(scratch, 0, len, UTF_8)`. With offset=0 the JDK String
-      * constructor skips its internal `Arrays.copyOfRange` call, so no intermediate byte[] is allocated. The scratch array is grown on
-      * demand (doubling) and reused across calls. The String constructor does not retain a reference to the input array, so reusing scratch
-      * is safe.
-      */
-    private def decodeStringViaScratch(bytes: Array[Byte], pos: Int, len: Int): String =
-        if len == 0 then ""
-        else
-            var scratch = PlatformScratchBuffer.get()
-            if scratch.length < len then
-                scratch = new Array[Byte](len.max(scratch.length * 2))
-                PlatformScratchBuffer.set(scratch)
-            end if
-            java.lang.System.arraycopy(bytes, pos, scratch, 0, len)
-            new String(scratch, 0, len, java.nio.charset.StandardCharsets.UTF_8)
-        end if
-    end decodeStringViaScratch
-
     /** Read the name pool from the NAMES section. */
     private def readNamePool(bytes: Array[Byte], offset: Int, length: Int): Array[String] =
         val count = SnapshotFormat.readInt32LE(bytes, offset)
@@ -419,7 +399,7 @@ object SnapshotReader:
         while i < count do
             val strLen = SnapshotFormat.readInt32LE(bytes, pos)
             pos += 4
-            pool(i) = decodeStringViaScratch(bytes, pos, strLen)
+            pool(i) = SnapshotFormat.decodeString(bytes, pos, strLen)
             pos += strLen
             i += 1
         end while
@@ -573,7 +553,7 @@ object SnapshotReader:
             while i < count do
                 val msgLen = SnapshotFormat.readInt32LE(bytes, pos)
                 pos += 4
-                val msg = decodeStringViaScratch(bytes, pos, msgLen)
+                val msg = SnapshotFormat.decodeString(bytes, pos, msgLen)
                 pos += msgLen
                 // Parse enough to reconstruct common errors; use NotImplemented for unrecognized
                 buf += parseErrorString(msg)
