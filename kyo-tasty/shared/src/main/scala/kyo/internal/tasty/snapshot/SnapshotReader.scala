@@ -133,9 +133,9 @@ object SnapshotReader:
         end while
 
         // Read NAMES section
-        val namePool: Array[Tasty.Name] = sectionMap.get(SnapshotFormat.sectionNAMES) match
+        val namePool = sectionMap.get(SnapshotFormat.sectionNAMES) match
             case Some((offset, length)) => readNamePool(bytes, offset, length)
-            case None                   => Array.empty[Tasty.Name]
+            case None                   => Array.empty[String]
 
         // Read BODY_BYTES section: shared backing store for all TASTy body slices
         val bodyBytesArray: Array[Byte] = sectionMap.get(SnapshotFormat.sectionBODYBYTES) match
@@ -211,8 +211,7 @@ object SnapshotReader:
         val namesBytes = sectionMap.get(SnapshotFormat.sectionNAMES) match
             case Some((off, len)) => copyViewRange(view, off, off + len)
             case None             => Array.empty[Byte]
-        val namePool: Array[Tasty.Name] =
-            if namesBytes.nonEmpty then readNamePool(namesBytes, 0, namesBytes.length) else Array.empty[Tasty.Name]
+        val namePool = if namesBytes.nonEmpty then readNamePool(namesBytes, 0, namesBytes.length) else Array.empty[String]
 
         // Keep BODY_BYTES in mapped memory via a ByteView sub-view.
         val bodyView: ByteView | Null = sectionMap.get(SnapshotFormat.sectionBODYBYTES) match
@@ -279,7 +278,7 @@ object SnapshotReader:
         bytes: Array[Byte],
         offset: Int,
         length: Int,
-        namePool: Array[Tasty.Name],
+        namePool: Array[String],
         bodyViewOpt: ByteView | Null
     ): (
         Chunk[Tasty.Symbol],
@@ -329,15 +328,11 @@ object SnapshotReader:
         val order   = (0 until count).sortBy(depth).toArray
         val created = new Array[Tasty.Symbol](count)
 
-        // Unsafe: OnceCell.get() inside Entry.string is an unsafe-tier helper; AllowUnsafe is embraced
-        // here for the single-threaded snapshot deserialisation path.
-        import AllowUnsafe.embrace.danger
-
         for idx <- order do
             val raw   = raws(idx)
             val kind  = kindFromOrd(raw.kindOrd)
             val flags = new Tasty.Flags(raw.flagBits)
-            val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then namePool(raw.nameId) else Tasty.Name("")
+            val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
             val owner = if raw.ownerId >= 0 && raw.ownerId < count && created(raw.ownerId) != null then created(raw.ownerId) else null
             val home  = new ClasspathRef
             val origin: Tasty.Symbol.Origin =
@@ -366,8 +361,7 @@ object SnapshotReader:
         i = 0
         while i < count do
             val raw = raws(i)
-            val fqn =
-                if raw.fqnId >= 0 && raw.fqnId < namePool.length then namePool(raw.fqnId).asString else ""
+            val fqn = if raw.fqnId >= 0 && raw.fqnId < namePool.length then namePool(raw.fqnId) else ""
             val sym = created(i)
             if sym != null then
                 allSymbols += sym
@@ -396,21 +390,16 @@ object SnapshotReader:
         )
     end readSymbolsMapped
 
-    /** Read the name pool from the NAMES section.
-      *
-      * Returns an array of interned Entries rather than decoded Strings. Each entry is interned directly from the raw UTF-8 bytes in the
-      * snapshot buffer using Tasty.Name.fromBytes, which hashes and compares bytes in-place and only copies to a canonical backing array on
-      * first insertion. This eliminates the intermediate byte[] + String allocations that decodeString previously produced for every name.
-      */
-    private def readNamePool(bytes: Array[Byte], offset: Int, length: Int): Array[Tasty.Name] =
+    /** Read the name pool from the NAMES section. */
+    private def readNamePool(bytes: Array[Byte], offset: Int, length: Int): Array[String] =
         val count = SnapshotFormat.readInt32LE(bytes, offset)
-        val pool  = new Array[Tasty.Name](count)
+        val pool  = new Array[String](count)
         var pos   = offset + 4
         var i     = 0
         while i < count do
             val strLen = SnapshotFormat.readInt32LE(bytes, pos)
             pos += 4
-            pool(i) = Tasty.Name.fromBytes(bytes, pos, strLen)
+            pool(i) = SnapshotFormat.decodeString(bytes, pos, strLen)
             pos += strLen
             i += 1
         end while
@@ -438,7 +427,7 @@ object SnapshotReader:
         bytes: Array[Byte],
         offset: Int,
         length: Int,
-        namePool: Array[Tasty.Name],
+        namePool: Array[String],
         bodyBytesArray: Array[Byte]
     ): (
         Chunk[Tasty.Symbol],
@@ -495,15 +484,11 @@ object SnapshotReader:
         // Allocate symbols in topological order
         val created = new Array[Tasty.Symbol](count)
 
-        // Unsafe: OnceCell.get() inside Entry.string is an unsafe-tier helper; AllowUnsafe is embraced
-        // here for the single-threaded snapshot deserialisation path.
-        import AllowUnsafe.embrace.danger
-
         for idx <- order do
             val raw   = raws(idx)
             val kind  = kindFromOrd(raw.kindOrd)
             val flags = new Tasty.Flags(raw.flagBits)
-            val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then namePool(raw.nameId) else Tasty.Name("")
+            val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
             val owner = if raw.ownerId >= 0 && raw.ownerId < count && created(raw.ownerId) != null then created(raw.ownerId) else null
             val home  = new ClasspathRef
             val origin: Tasty.Symbol.Origin =
@@ -528,8 +513,7 @@ object SnapshotReader:
         i = 0
         while i < count do
             val raw = raws(i)
-            val fqn =
-                if raw.fqnId >= 0 && raw.fqnId < namePool.length then namePool(raw.fqnId).asString else ""
+            val fqn = if raw.fqnId >= 0 && raw.fqnId < namePool.length then namePool(raw.fqnId) else ""
             val sym = created(i)
             if sym != null then
                 allSymbols += sym
