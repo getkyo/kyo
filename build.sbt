@@ -525,6 +525,9 @@ lazy val `kyo-tasty-bench` =
         .dependsOn(`kyo-stats-otlp`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
+        .jvmSettings(
+            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0"
+        )
         .disablePlugins(MimaPlugin)
 
 lazy val `kyo-logging-jpl` =
