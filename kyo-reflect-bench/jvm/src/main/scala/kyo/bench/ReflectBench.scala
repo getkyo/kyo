@@ -142,7 +142,7 @@ object ReflectBench:
     /** Open a classpath that the caller is responsible for closing via InternalClasspath.close. No Scope finalizer registered. */
     private def openClasspathManual(
         src: FileSource
-    )(using Frame): (Reflect.Classpath, InternalClasspath) < (Sync & Async & Abort[ReflectError]) =
+    )(using Frame): (Reflect.Classpath, InternalClasspath) < (Sync & Async & Scope & Abort[ReflectError]) =
         InternalClasspath.allocate.flatMap: rawCp =>
             ClasspathOrchestrator.openInto(Seq("fixtures"), strict = false, src, concurrency = 1, rawCp).map: _ =>
                 val cp = Reflect.Classpath.wrap(rawCp)

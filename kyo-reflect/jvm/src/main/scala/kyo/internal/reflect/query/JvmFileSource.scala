@@ -7,6 +7,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.*
@@ -20,6 +21,9 @@ import scala.jdk.CollectionConverters.*
   *
   * All paths use `String` to remain consistent with the shared API. The `jrt:/` filesystem is accessed lazily to avoid loading it when not
   * needed.
+  *
+  * Jar reads: within a `withReadBatch` scope, jar entries are read via a shared JarMappedReaderPool (one MappedByteBuffer per jar, shared
+  * across fibers). Outside a batch scope, a fallback mmap read is performed without pooling.
   */
 object JvmFileSource extends FileSource:
 
@@ -132,6 +136,28 @@ object JvmFileSource extends FileSource:
                 case ex: java.io.IOException =>
                     Abort.fail(ReflectError.FileNotFound(s"$path: ${ex.getMessage}"))
 
+    /** Currently active JarMappedReaderPool, installed by withReadBatch.
+      *
+      * Unsafe: null sentinel is Java-interop for "no active pool"; checked on every readJarEntry call. AtomicReference provides visibility
+      * across fibers without locks.
+      */
+    // Unsafe: null sentinel for "no active pool"; Java AtomicReference interop
+    private val activePool: AtomicReference[JarMappedReaderPool] = new AtomicReference(null)
+
+    /** Install a fresh JarMappedReaderPool for the duration of `body`, then clear it on exit.
+      *
+      * A Scope.ensure finalizer calls pool.closeAll() on any exit (success, Abort, interrupt), dropping all cached MappedByteBuffer
+      * references. The Scope effect is introduced here and discharged by the enclosing Scope.run in ClasspathOrchestrator.
+      */
+    override def withReadBatch[A, S](body: A < S)(using Frame): A < (S & Sync & Scope) =
+        Sync.defer:
+            val pool = new JarMappedReaderPool()
+            activePool.set(pool)
+            pool
+        .flatMap: pool =>
+            Scope.ensure(Sync.defer(pool.closeAll()).andThen(Sync.defer(activePool.set(null)))).andThen:
+                body
+
     /** Lazy JRT filesystem handle. Returns null if JRT filesystem is unavailable. */
     private lazy val jrtFileSystem: java.nio.file.FileSystem =
         try FileSystems.getFileSystem(URI.create("jrt:/"))
@@ -148,23 +174,26 @@ object JvmFileSource extends FileSource:
     private def readJarEntry(jarPath: String, entryName: String): Array[Byte] =
         PerfCounters.jarOpenCount.incrementAndGet()
         val t0 = java.lang.System.nanoTime()
-        val jf = new java.util.jar.JarFile(jarPath)
-        val t1 = java.lang.System.nanoTime()
-        PerfCounters.jarConstructTimeNs.addAndGet(t1 - t0)
-        try
-            val entry = jf.getJarEntry(entryName)
-            if entry == null then
-                throw new java.io.FileNotFoundException(s"$jarPath!/$entryName: entry not found in jar")
-            val is = jf.getInputStream(entry)
-            try
-                val bytes = is.readAllBytes()
-                val t2    = java.lang.System.nanoTime()
-                PerfCounters.jarReadTimeNs.addAndGet(t2 - t1)
-                bytes
-            finally is.close()
-            end try
-        finally jf.close()
-        end try
+        // Unsafe: activePool.get() may return null when no batch is active
+        val pool = activePool.get()
+        if pool != null then
+            val reader = pool.get(jarPath)
+            val t1     = java.lang.System.nanoTime()
+            PerfCounters.jarConstructTimeNs.addAndGet(t1 - t0)
+            val bytes = reader.readEntry(entryName)
+            val t2    = java.lang.System.nanoTime()
+            PerfCounters.jarReadTimeNs.addAndGet(t2 - t1)
+            bytes
+        else
+            // Fallback: open-on-demand mmap reader (not pooled; GC handles cleanup)
+            val reader = JarMappedReader.open(jarPath)
+            val t1     = java.lang.System.nanoTime()
+            PerfCounters.jarConstructTimeNs.addAndGet(t1 - t0)
+            val bytes = reader.readEntry(entryName)
+            val t2    = java.lang.System.nanoTime()
+            PerfCounters.jarReadTimeNs.addAndGet(t2 - t1)
+            bytes
+        end if
     end readJarEntry
 
     private def listJrtPathMulti(dir: String, suffixes: Chunk[String]): Chunk[String] =

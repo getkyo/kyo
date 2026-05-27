@@ -63,6 +63,17 @@ trait FileSource:
       */
     def stat(path: String)(using Frame): FileSource.FileStat < (Sync & Abort[ReflectError])
 
+    /** Execute `body` within a read-batch context.
+      *
+      * The default no-op implementation simply runs `body` unchanged. The JVM implementation overrides this to install a
+      * JarMappedReaderPool for the duration of `body`, so that repeated jar reads within one `openInto` call share memory-mapped buffers
+      * instead of constructing a new JarFile per read.
+      *
+      * Called by ClasspathOrchestrator.openInto to wrap the entire scan+decode pipeline.
+      */
+    def withReadBatch[A, S](body: A < S)(using Frame): A < (S & Sync & Scope) =
+        body
+
 end FileSource
 
 object FileSource:

@@ -113,14 +113,17 @@ object ClasspathOrchestrator:
         source: FileSource,
         concurrency: Int,
         cp: Classpath
-    )(using Frame): Unit < (Sync & Async & Abort[ReflectError]) =
+    )(using Frame): Unit < (Sync & Async & Scope & Abort[ReflectError]) =
         // Validate roots exist first (both strict and soft-fail report FileNotFound immediately)
         Kyo.foreach(roots): root =>
             source.exists(root).flatMap: ex =>
                 if !ex then Abort.fail(ReflectError.FileNotFound(root))
                 else Kyo.unit
         .andThen:
-            runPhaseAB(roots, strict, source, concurrency, cp)
+            // Install a read-batch context so JvmFileSource can share mmap readers across the scan+decode pipeline.
+            // The default FileSource.withReadBatch is a no-op; JvmFileSource overrides it.
+            source.withReadBatch:
+                runPhaseAB(roots, strict, source, concurrency, cp)
 
     /** Phase A+B+C pipeline via Channels.
       *
