@@ -402,25 +402,11 @@ object ClasspathOrchestrator:
                         end for
                     end for
 
-                    // Set _parents, _typeParams, _declarations to empty for all symbols not covered by the above loops.
-                    for sym <- allSyms do
-                        if !sym._parents.isSet then sym._parents.set(Chunk.empty)
-                        if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
-                        if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
-                    end for
-
                     // Phase 5 (G20): assign _declaredType AFTER Phase C placeholder resolution.
                     for fr <- fileResults do
                         for (sym, t) <- fr.typeBySymbol do
                             if !sym._declaredType.isSet then sym._declaredType.set(t)
                         end for
-                    end for
-                    for sym <- allSyms do
-                        if !sym._declaredType.isSet && (sym.kind == Tasty.SymbolKind.Class ||
-                                sym.kind == Tasty.SymbolKind.Trait ||
-                                sym.kind == Tasty.SymbolKind.Object)
-                        then
-                            sym._declaredType.set(Tasty.Type.Named(sym))
                     end for
 
                     // Phase 6 (G3): assign _scaladoc from commentsBySymbol.
@@ -429,9 +415,6 @@ object ClasspathOrchestrator:
                             if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe(text))
                         end for
                     end for
-                    for sym <- allSyms do
-                        if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe.Absent)
-                    end for
 
                     // Phase 7 (G2): assign _position from positionsBySymbol.
                     for fr <- fileResults do
@@ -439,7 +422,20 @@ object ClasspathOrchestrator:
                             if !sym._position.isSet then sym._position.set(Maybe(pos))
                         end for
                     end for
+
+                    // Single pass over allSyms: fill defaults for all fields not set by the per-file loops above.
+                    // _declaredType fallback: Class/Trait/Object symbols without an explicit type get a self-referential Named type.
                     for sym <- allSyms do
+                        if !sym._parents.isSet then sym._parents.set(Chunk.empty)
+                        if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
+                        if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
+                        if !sym._declaredType.isSet then
+                            if sym.kind == Tasty.SymbolKind.Class ||
+                                sym.kind == Tasty.SymbolKind.Trait ||
+                                sym.kind == Tasty.SymbolKind.Object
+                            then sym._declaredType.set(Tasty.Type.Named(sym))
+                        end if
+                        if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe.Absent)
                         if !sym._position.isSet then sym._position.set(Maybe.Absent)
                     end for
             }.andThen:
