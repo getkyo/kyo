@@ -23,4 +23,3 @@ Compile / unmanagedSourceDirectories +=
 // publishes the plugin."
 Compile / unmanagedSourceDirectories +=
     baseDirectory.value.getParentFile / "sbt-kyo-doctest" / "src" / "main" / "scala"
-

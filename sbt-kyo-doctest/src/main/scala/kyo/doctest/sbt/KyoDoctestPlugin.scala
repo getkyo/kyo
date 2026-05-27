@@ -91,6 +91,16 @@ object KyoDoctestPlugin extends AutoPlugin {
             "JVM options forwarded to the forked doctest driver (default: -Xmx8G -Xss10M)."
         )
 
+        /** Extra jars appended to the doctest fork's classpath, used to inject the kyo-doctest library without going through
+          * `Test / unmanagedJars` (which would leak onto Test compile and crash dotty on Scala 3 LTS fallback modules).
+          *
+          * When an entry here contributes a `scala3-library_3-*.jar`, the plugin drops mismatched copies coming from
+          * `Test / fullClasspath` so the fork sees exactly one scala3-library, matching the dotty driver inside this classpath.
+          */
+        val doctestExtraClasspath: TaskKey[Seq[File]] = taskKey[Seq[File]](
+            "Extra jars appended to the doctest fork's classpath (default: empty)."
+        )
+
         /** Run validation; exit 1 on any block failure. Writes the cache. */
         val doctest: TaskKey[Unit] = taskKey[Unit](
             "Validate all scala code blocks in doctestSources. Exits 1 on any failure."
@@ -163,16 +173,24 @@ object KyoDoctestPlugin extends AutoPlugin {
         concurrentRestrictions += Tags.limit(DoctestTag, 1)
     )
 
+    private val scala3LibPattern = """^scala3-library_3-.*\.jar$""".r
+
+    /** Merges `base` (project's Test/fullClasspath) with `extra` (doctest framework classpath). When both bring a
+      * `scala3-library_3-*.jar` at different versions, only `extra`'s is kept (the dotty driver inside `extra` was compiled
+      * against it).
+      */
+    private[sbt] def reconcileClasspath(base: Seq[File], extra: Seq[File]): Seq[File] = {
+        val extraScala3Lib = extra.find(f => scala3LibPattern.findFirstIn(f.getName).isDefined).map(_.getName)
+        val keptBase = extraScala3Lib match {
+            case Some(keepName) =>
+                base.filterNot(f => scala3LibPattern.findFirstIn(f.getName).isDefined && f.getName != keepName)
+            case None => base
+        }
+        keptBase ++ extra
+    }
+
     override lazy val projectSettings: Seq[Setting[?]] = Seq(
-        // The kyo-doctest library must be on the doctest fork's classpath so the fork
-        // can find `kyo.doctest.internal.cli.Main`. The plugin does NOT add it via
-        // `libraryDependencies` because that creates a coursier bootstrap cycle: any
-        // project with the plugin enabled would need kyo-doctest in ivy before
-        // kyo-doctest itself can be published. The consumer build is expected to
-        // wire kyo-doctest's full Compile classpath onto each enabled project's
-        // `Test / unmanagedJars` via a project-graph dependency (in the kyo build
-        // this lives in `kyo-settings`). Project-graph deps are resolved by sbt's
-        // task engine, not coursier, so no cycle.
+        doctestExtraClasspath := Seq.empty,
         doctestSources := {
             val base   = baseDirectory.value
             val direct = base / "README.md"
@@ -202,7 +220,9 @@ object KyoDoctestPlugin extends AutoPlugin {
         doctest := Def.task {
             val log         = streams.value.log
             val sources     = doctestSources.value
-            val classpath   = (Test / fullClasspath).value.files
+            val baseCp      = (Test / fullClasspath).value.files
+            val extraCp     = doctestExtraClasspath.value
+            val classpath   = reconcileClasspath(baseCp, extraCp)
             val scalacOpts  = doctestScalacOptions.value
             val cacheDir    = doctestCacheDir.value
             val parallel    = doctestParallel.value
@@ -225,7 +245,9 @@ object KyoDoctestPlugin extends AutoPlugin {
         doctestFresh := Def.task {
             val log         = streams.value.log
             val sources     = doctestSources.value
-            val classpath   = (Test / fullClasspath).value.files
+            val baseCp      = (Test / fullClasspath).value.files
+            val extraCp     = doctestExtraClasspath.value
+            val classpath   = reconcileClasspath(baseCp, extraCp)
             val scalacOpts  = doctestScalacOptions.value
             val cacheDir    = doctestCacheDir.value
             val parallel    = doctestParallel.value
