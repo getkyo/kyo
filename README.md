@@ -55,7 +55,7 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-cats             | ✅   | ✅   | ❌      | Bidirectional Cats IO interop with support for Sync, Async and Abort |
 | kyo-stats-registry   | ✅   | ✅   | ✅      | Metrics collection with counters, histograms, and gauges             |
 | kyo-stats-otlp       | ✅   | ✅   | ✅      | OpenTelemetry integration for metrics and tracing export             |
-| kyo-playwright       | ✅   | ❌   | ❌      | Browser automation testing using Microsoft Playwright                |
+| kyo-browser          | ✅   | ✅   | ✅      | Browser automation via Chrome DevTools Protocol                      |
 | kyo-reactive-streams | ✅   | ❌   | ❌      | Bidirectional Reactive Streams interop implementation                |
 | kyo-aeron            | ✅   | ❌   | ❌      | High-performance messaging using Aeron transport                     |
 
