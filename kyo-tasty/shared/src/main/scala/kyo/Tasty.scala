@@ -158,7 +158,76 @@ object Tasty:
       */
     final case class Position(sourceFile: Maybe[String], line: Int, column: Int)
 
-    final case class Annotation(annotationType: Type, argsPickle: Chunk[Byte])
+    /** A Scala annotation as it appears on a [[Type]] (`Type.Annotated`).
+      *
+      * `annotationType` is the annotation class type (resolved best-effort during pass 1; may be a placeholder symbol). `argsPickle` is the
+      * raw TASTy term bytes for the annotation's argument expression (e.g. `new Foo(1, "x")`). Call [[args]] to lazily decode those bytes
+      * into a [[Tree]] via TreeUnpickler.
+      *
+      * Equality is structural over (annotationType, argsPickle); the internal decode context is intentionally excluded so two annotations
+      * with identical type and pickle are equal regardless of which file they came from.
+      */
+    final class Annotation(
+        val annotationType: Type,
+        val argsPickle: Chunk[Byte],
+        private[kyo] val _decodeCtx: Annotation.DecodeContext | Null
+    ):
+        /** Decode the annotation's argument expression into a [[Tree]]. Returns `NotImplemented` if the annotation has no decode context
+          * (e.g. synthetic annotations constructed in tests).
+          */
+        def args(using Frame): Tree < (Sync & Abort[TastyError]) =
+            _decodeCtx match
+                case null =>
+                    Abort.fail(TastyError.NotImplemented("annotation args decode requires file decode context"))
+                case ctx: Annotation.DecodeContext =>
+                    if argsPickle.isEmpty then
+                        Abort.fail(TastyError.NotImplemented("annotation argsPickle is empty"))
+                    else
+                        Sync.defer:
+                            try Right(kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(argsPickle, ctx))
+                            catch
+                                case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                    Left(TastyError.MalformedSection("ASTs", s"annotation arg decode failed: ${ex.getMessage}"))
+                                case ex: ArrayIndexOutOfBoundsException =>
+                                    Left(TastyError.MalformedSection("ASTs", s"annotation arg truncated: ${ex.getMessage}"))
+                        .map:
+                            case Right(t) => t
+                            case Left(e)  => Abort.fail(e)
+
+        override def equals(other: Any): Boolean = other match
+            case a: Annotation =>
+                // Types are interned via TypeArena, so structural equality reduces to reference equality.
+                (annotationType eq a.annotationType) && argsPickle.toArray.sameElements(a.argsPickle.toArray)
+            case _ => false
+        override def hashCode(): Int  = annotationType.hashCode * 31 + java.util.Arrays.hashCode(argsPickle.toArray)
+        override def toString: String = s"Annotation($annotationType, argsPickle=${argsPickle.length} bytes)"
+    end Annotation
+
+    object Annotation:
+        /** Public factory for tests / synthetic annotations. The resulting annotation has no decode context, so [[Annotation.args]] returns
+          * `NotImplemented`.
+          */
+        def apply(annotationType: Type, argsPickle: Chunk[Byte]): Annotation =
+            new Annotation(annotationType, argsPickle, null)
+
+        /** Internal factory used by TypeUnpickler.ANNOTATEDtype to construct an annotation that knows how to decode itself. */
+        private[kyo] def apply(annotationType: Type, argsPickle: Chunk[Byte], decodeCtx: DecodeContext): Annotation =
+            new Annotation(annotationType, argsPickle, decodeCtx)
+
+        /** Pattern-match extractor: `case Tasty.Annotation(t, p) =>`. Internal decode context is hidden. */
+        def unapply(a: Annotation): Some[(Type, Chunk[Byte])] = Some((a.annotationType, a.argsPickle))
+
+        /** File-scoped decode context. Held only by annotations constructed during real TASTy reads. The `addrMap` reference is the live
+          * file-level map that gets fully populated during pass 1; reading it after `Classpath.open` returns is safe.
+          */
+        final private[kyo] class DecodeContext(
+            val names: Array[Name],
+            val addrMap: scala.collection.Map[Int, Symbol],
+            val home: kyo.internal.tasty.query.ClasspathRef,
+            val sectionBytes: Array[Byte],
+            val sectionOffset: Int
+        )
+    end Annotation
 
     final case class JavaMetadata(
         throwsTypes: Chunk[Type],

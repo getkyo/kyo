@@ -24,6 +24,30 @@ object TreeUnpickler:
     /** Thrown on malformed or unsupported TASTy body content. */
     final class DecodeException(msg: String) extends RuntimeException(msg)
 
+    /** Decode a single Term tree from raw annotation pickle bytes.
+      *
+      * Called by `Tasty.Annotation.args` on demand. The pickle is a self-contained slice of a TASTy AST section corresponding to one
+      * annotation term (typically a `New` or `Apply` expression).
+      *
+      * @param pickle
+      *   raw annotation term bytes (as captured by TypeUnpickler.ANNOTATEDtype into `Annotation.argsPickle`).
+      * @param ctx
+      *   the file-scoped decode context: names array, addrMap, home, full section bytes.
+      */
+    private[kyo] def decodeAnnotationTerm(
+        pickle: kyo.Chunk[Byte],
+        ctx: Tasty.Annotation.DecodeContext
+    ): Tasty.Tree =
+        val bytes      = pickle.toArray
+        val view       = ByteView(bytes, 0, bytes.length)
+        val dummyArena = TypeArena.canonical()
+        val typeSession =
+            new TypeUnpickler.TreeTypeSession(ctx.names, ctx.addrMap, dummyArena, ctx.home, ctx.sectionBytes, ctx.sectionOffset)
+        val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
+        val decodeCtx     = DecodeCtx(ctx.names, ctx.addrMap, ctx.home, typeSession, treeAddrCache)
+        readTree(view, decodeCtx)
+    end decodeAnnotationTerm
+
     /** Synchronously decode the body byte slice for `sym` (described by `origin`) into a Tree.
       *
       * Called from the OnceCell init lambda; must not use Kyo effects. Throws DecodeException or ArrayIndexOutOfBoundsException on error.
@@ -110,7 +134,7 @@ object TreeUnpickler:
 
     final private class DecodeCtx(
         val names: Array[Tasty.Name],
-        val addrMap: IntMap[Tasty.Symbol],
+        val addrMap: scala.collection.Map[Int, Tasty.Symbol],
         val home: ClasspathRef,
         val typeSession: TypeUnpickler.TreeTypeSession,
         val treeAddrCache: mutable.HashMap[Int, Tasty.Tree]

@@ -275,6 +275,51 @@ class TypeUnpicklerTest extends Test:
         }
     }
 
+    // Test 18b: Annotation.args decodes the annotation term into a Tree via TreeUnpickler.
+    // Use UNITconst (tag 2, category 1: single byte) as the annotation term — minimal valid Term.
+    "Annotation.args decodes argsPickle into a Tree" in run {
+        val sym        = makeSym("Int")
+        val symAddr    = 3
+        val addrMap    = IntMap(symAddr -> sym)
+        val names      = Array(Tasty.Name("scala"))
+        val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
+        val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
+        // Annotation term: UNITconst — TreeUnpickler decodes this as Literal(UnitConst).
+        val annTerm = Array(TastyFormat.UNITconst.toByte)
+        val bytes   = cat5(TastyFormat.ANNOTATEDtype, underlying ++ annTerm)
+        Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
+            case Result.Success((t, _)) =>
+                t match
+                    case Tasty.Type.Annotated(_, ann) =>
+                        Abort.run[TastyError](ann.args).map {
+                            case Result.Success(tree) =>
+                                tree match
+                                    case Tasty.Tree.Literal(c) =>
+                                        c match
+                                            case _: Tasty.Constant.UnitConst.type => succeed
+                                            case other                            => fail(s"Expected UnitConst but got $other")
+                                    case other => fail(s"Expected Literal but got $other")
+                            case Result.Failure(e) => fail(s"args() failed: $e")
+                            case Result.Panic(t)   => throw t
+                        }
+                    case other => fail(s"Expected Annotated but got $other")
+            case Result.Failure(e) => fail(s"Expected success but got $e")
+            case Result.Panic(t)   => throw t
+        }
+    }
+
+    // Test 18c: Annotation built via the public factory (no decode context) returns NotImplemented from args.
+    "Annotation.args returns NotImplemented when no decode context is attached" in run {
+        val ann = Tasty.Annotation(Tasty.Type.Named(makeSym("Foo")), Chunk(0x42.toByte))
+        Abort.run[TastyError](ann.args).map {
+            case Result.Success(t) =>
+                fail(s"Expected NotImplemented but got Tree $t")
+            case Result.Failure(TastyError.NotImplemented(_)) => succeed
+            case Result.Failure(other)                        => fail(s"Expected NotImplemented but got $other")
+            case Result.Panic(t)                              => throw t
+        }
+    }
+
     // Test 19: decoding ORtype returns OrType(left, right).
     "decoding ORtype returns OrType(left, right)" in run {
         val symA    = makeSym("A")

@@ -110,7 +110,7 @@ object TypeUnpickler:
       */
     final private[tasty] class TreeTypeSession(
         val names: Array[Tasty.Name],
-        val addrMap: IntMap[Tasty.Symbol],
+        val addrMap: scala.collection.Map[Int, Tasty.Symbol],
         val arena: TypeArena,
         val home: ClasspathRef,
         val sectionBytes: Array[Byte],
@@ -433,16 +433,23 @@ object TypeUnpickler:
                 // Capture the annotation term's byte slice (a full TASTy term tree) so downstream
                 // consumers can decode it into a Tree via TreeUnpickler. The term spans from the
                 // current cursor up to `end`. When sectionBytes is unavailable (the rare cached
-                // re-decode path), fall back to an empty slice; the rest of the type is still valid.
+                // re-decode path), fall back to an empty slice + no decode context.
                 val termStart = view.position
-                val argsPickle: Chunk[Byte] =
-                    if ctx.sectionBytes == null then Chunk.empty
-                    else Chunk.from(java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, end))
                 skipToEnd(view, end)
-                Tasty.Type.Annotated(
-                    underlying,
-                    Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home)), argsPickle)
-                )
+                val annotation =
+                    if ctx.sectionBytes == null then
+                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home)), Chunk.empty)
+                    else
+                        val pickle = Chunk.from(java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, end))
+                        val annCtx = new Tasty.Annotation.DecodeContext(
+                            ctx.names,
+                            ctx.addrMap,
+                            ctx.home,
+                            ctx.sectionBytes,
+                            ctx.sectionOffset
+                        )
+                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home)), pickle, annCtx)
+                Tasty.Type.Annotated(underlying, annotation)
 
             case TastyFormat.ANDtype =>
                 val end   = view.readEnd()
