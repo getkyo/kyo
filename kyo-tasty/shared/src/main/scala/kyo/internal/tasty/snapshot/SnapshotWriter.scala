@@ -93,7 +93,12 @@ object SnapshotWriter:
         // Collect body byte slices for TASTy-origin symbols.
         // Each entry is (relativeBodyStart: Int, relativeBodyEnd: Int) into the BODY_BYTES section.
         // Symbols without a valid body (Java, Package, zero-bodyStart) get (0, 0).
-        val bodyBytesBuffer = new java.io.ByteArrayOutputStream()
+        // Pre-size to 128 MB: profiling a 122-root / 5 949-TASTy-file classpath (kyo-bench full
+        // classpath, 250 MB uncompressed) showed body-byte output slightly above 64 MB per snapshot
+        // write. The default BAOS capacity is 32 bytes; growing from 32 B to that size by doubling
+        // generates ~319 MB of intermediate byte[] copies in a 3-iteration profile window. 128 MB
+        // fits the measured peak with no intermediate copies and only one lazy backing allocation.
+        val bodyBytesBuffer = new java.io.ByteArrayOutputStream(128 * 1024 * 1024)
         var runningOffset   = 0
         val symBodyStarts   = new Array[Int](symbolList.size)
         val symBodyEnds     = new Array[Int](symbolList.size)
@@ -213,7 +218,11 @@ object SnapshotWriter:
 
     /** Serialize the name pool as: [4-byte count] followed by [4-byte len, UTF-8 bytes] per string. */
     private def serializeNamePool(names: Seq[String]): Array[Byte] =
-        val baos = new ByteArrayOutputStream()
+        // Pre-size to 32 MB: profiling showed the name-pool output falls between 16 MB and 32 MB
+        // for a 5 949-symbol classpath (unique simple names + FQNs with 4-byte length prefix per
+        // entry). 32 MB fits the measured peak with no intermediate copies; default 32-byte
+        // capacity would double ~20 times to reach that size.
+        val baos = new ByteArrayOutputStream(32 * 1024 * 1024)
         val tmp  = new Array[Byte](4)
         SnapshotFormat.writeInt32LE(tmp, 0, names.length)
         baos.write(tmp)
@@ -270,7 +279,8 @@ object SnapshotWriter:
 
     /** Serialize errors as: [4-byte count] followed by [4-byte len, UTF-8 error message bytes] per error. */
     private def serializeErrors(errors: Chunk[TastyError]): Array[Byte] =
-        val baos = new ByteArrayOutputStream()
+        // Pre-size to 4 KB: errors are rare (decode failures, file-not-found, etc.) and messages are short.
+        val baos = new ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
         SnapshotFormat.writeInt32LE(tmp, 0, errors.size)
         baos.write(tmp)
