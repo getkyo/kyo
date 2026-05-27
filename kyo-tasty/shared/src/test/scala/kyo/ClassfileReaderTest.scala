@@ -36,11 +36,9 @@ class ClassfileReaderTest extends Test:
 
     /** Run TASTy pass 1 on raw TASTy bytes and return the first non-root class symbol. */
     private def firstClassSymbolFromTasty(bytes: Array[Byte])(using Frame): Tasty.Symbol < (Sync & Abort[TastyError]) =
-        val view                        = ByteView(bytes)
-        val home                        = new ClasspathRef
-        val arena                       = new TypeArena
-        val bytesRef                    = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](bytes)
-        val noReload: () => Array[Byte] = () => Array.empty[Byte]
+        val view  = ByteView(bytes)
+        val home  = new ClasspathRef
+        val arena = new TypeArena
         for
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
@@ -49,7 +47,7 @@ class ClassfileReaderTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena, bytesRef, noReload)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
         yield result.symbols.find(_.kind == Tasty.SymbolKind.Class).getOrElse(result.rootSymbol)

@@ -164,12 +164,10 @@ class SymbolResolutionTest extends Test:
 
     // Helper: decode a TASTy byte array using AstUnpickler.readPass1 and return Pass1Result.
     private def decodeBytes(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val view                        = ByteView(bytes)
-        val interner                    = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home                        = new kyo.internal.tasty.query.ClasspathRef
-        val arena                       = new TypeArena
-        val bytesRef                    = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](bytes)
-        val noReload: () => Array[Byte] = () => Array.empty[Byte]
+        val view     = ByteView(bytes)
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val home     = new kyo.internal.tasty.query.ClasspathRef
+        val arena    = new TypeArena
         for
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
@@ -178,7 +176,7 @@ class SymbolResolutionTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena, bytesRef, noReload)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
         yield result

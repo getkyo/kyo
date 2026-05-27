@@ -44,12 +44,10 @@ class UnifiedModelTest extends Test:
 
     /** Run TASTy pass 1 on fixture file bytes. Returns symbols from the result. */
     private def tastySymbols(fileName: String)(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val bytes                       = loadFixture(fileName)
-        val view                        = ByteView(bytes)
-        val home                        = new ClasspathRef
-        val arena                       = TypeArena.canonical()
-        val bytesRef                    = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](bytes)
-        val noReload: () => Array[Byte] = () => Array.empty[Byte]
+        val bytes = loadFixture(fileName)
+        val view  = ByteView(bytes)
+        val home  = new ClasspathRef
+        val arena = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
@@ -58,7 +56,7 @@ class UnifiedModelTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena, bytesRef, noReload)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
         yield result

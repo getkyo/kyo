@@ -44,11 +44,9 @@ class JavaSymbolTest extends Test:
         val bytes = resourceName match
             case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
             case other              => loadResourceBytes(s"/kyo/fixtures/$other")
-        val view                        = ByteView(bytes)
-        val home                        = new ClasspathRef
-        val arena                       = new TypeArena
-        val bytesRef                    = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](bytes)
-        val noReload: () => Array[Byte] = () => Array.empty[Byte]
+        val view  = ByteView(bytes)
+        val home  = new ClasspathRef
+        val arena = new TypeArena
         for
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
@@ -57,7 +55,7 @@ class JavaSymbolTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena, bytesRef, noReload)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
         yield result.symbols.find(_.kind == Tasty.SymbolKind.Class).getOrElse(result.rootSymbol)

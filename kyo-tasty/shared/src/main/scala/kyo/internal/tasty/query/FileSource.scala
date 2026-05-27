@@ -74,16 +74,6 @@ trait FileSource:
     def withReadBatch[A, S](body: A < S)(using Frame): A < (S & Sync & Scope) =
         body
 
-    /** Synchronously read all bytes from `path`, throwing exceptions on error.
-      *
-      * Called from TastyOrigin `reloadBytes` thunks during lazy body decode, where Kyo effects are not available. The caller catches all
-      * exceptions and maps them to TastyError values. Implementations must not use Kyo effects internally.
-      *
-      * Default implementation throws `UnsupportedOperationException`; overridden by each platform source (JVM, Native, JS).
-      */
-    def readSyncUnsafe(path: String): Array[Byte] =
-        throw new UnsupportedOperationException(s"readSyncUnsafe not supported on this platform for: $path")
-
 end FileSource
 
 object FileSource:

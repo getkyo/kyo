@@ -32,12 +32,10 @@ class AstUnpicklerTest extends Test:
 
     /** Parse a TASTy file and run pass 1. Returns the Pass1Result. */
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val view                        = ByteView(bytes)
-        val interner                    = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home                        = new ClasspathRef
-        val arena                       = TypeArena.canonical()
-        val bytesRef                    = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](bytes)
-        val noReload: () => Array[Byte] = () => Array.empty[Byte]
+        val view     = ByteView(bytes)
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val home     = new ClasspathRef
+        val arena    = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
@@ -46,7 +44,7 @@ class AstUnpicklerTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena, bytesRef, noReload)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
         yield result
@@ -58,11 +56,9 @@ class AstUnpicklerTest extends Test:
         Frame
     )
         : AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val view                        = ByteView(bytes)
-        val interner                    = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home                        = new ClasspathRef
-        val bytesRef                    = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](bytes)
-        val noReload: () => Array[Byte] = () => Array.empty[Byte]
+        val view     = ByteView(bytes)
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val home     = new ClasspathRef
         for
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
@@ -71,7 +67,7 @@ class AstUnpicklerTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena, bytesRef, noReload)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
         yield result
@@ -481,14 +477,12 @@ class AstUnpicklerTest extends Test:
         // PACKAGE = 128 (category 5: tag + Length + payload)
         // Length Nat = 127 (single byte in dotty Nat encoding: (127 | 0x80).toByte = 0xff)
         // Then 0 actual payload bytes. readByte() inside the payload will AIOOB.
-        val corruptAsts                 = Array(128.toByte, 0xff.toByte)
-        val home                        = new ClasspathRef
-        val arena                       = TypeArena.canonical()
-        val view                        = ByteView(corruptAsts)
-        val attrs                       = FileAttributes.default
-        val bytesRef                    = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](corruptAsts)
-        val noReload: () => Array[Byte] = () => Array.empty[Byte]
-        Abort.run[TastyError](AstUnpickler.readPass1(view, Array.empty, attrs, home, arena, bytesRef, noReload)).map { result =>
+        val corruptAsts = Array(128.toByte, 0xff.toByte)
+        val home        = new ClasspathRef
+        val arena       = TypeArena.canonical()
+        val view        = ByteView(corruptAsts)
+        val attrs       = FileAttributes.default
+        Abort.run[TastyError](AstUnpickler.readPass1(view, Array.empty, attrs, home, arena)).map { result =>
             result match
                 case Result.Failure(TastyError.MalformedSection("ASTs", _)) =>
                     // Exact error type: MalformedSection with section name "ASTs".

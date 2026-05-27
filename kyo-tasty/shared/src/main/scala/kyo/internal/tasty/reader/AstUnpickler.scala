@@ -82,12 +82,6 @@ object AstUnpickler:
       *   ClasspathRef stored in each symbol.
       * @param arena
       *   Per-file TypeArena used by TypeUnpickler to hash-cons decoded types.
-      * @param bytesRef
-      *   Shared AtomicReference holding the inflated section bytes for all TastyOrigins produced by this pass. Starts populated with the
-      *   live bytes; set to null after pass1 completes (and after snapshot writing, if applicable) by the caller so the GC can reclaim the
-      *   inflated byte array.
-      * @param reloadBytes
-      *   Thunk to re-inflate the source file bytes on demand. Called by TastyOrigin.sectionBytes when bytesRef is null.
       *
       * Note on effect row: the return type includes `Sync` because `Sync.defer` wraps the purely-computed `Pass1Result` value on the
       * success path. The actual body (`runPass1`) is synchronous. The `Sync` widening is intentional to keep the return type uniform with
@@ -98,12 +92,10 @@ object AstUnpickler:
         names: Array[Tasty.Name],
         attrs: FileAttributes,
         home: ClasspathRef,
-        arena: TypeArena,
-        bytesRef: java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null],
-        reloadBytes: () => Array[Byte]
+        arena: TypeArena
     )(using Frame): Pass1Result < (Sync & Abort[TastyError]) =
         val result =
-            try Right(runPass1(view, names, attrs, home, arena, bytesRef, reloadBytes))
+            try Right(runPass1(view, names, attrs, home, arena))
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
                     Left(TastyError.MalformedSection("ASTs", s"unexpected end: ${ex.getMessage}"))
@@ -122,9 +114,7 @@ object AstUnpickler:
         names: Array[Tasty.Name],
         attrs: FileAttributes,
         home: ClasspathRef,
-        arena: TypeArena,
-        bytesRef: java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null],
-        reloadBytes: () => Array[Byte]
+        arena: TypeArena
     ): Pass1Result =
         val addrMap         = new mutable.HashMap[Int, Tasty.Symbol]()
         val allSymbols      = new mutable.ArrayBuffer[Tasty.Symbol]()
@@ -141,6 +131,7 @@ object AstUnpickler:
 
         val sectionOffset = view.position
         val sectionEnd    = sectionOffset + view.remaining
+        val sectionBytes  = view.allBytes
         // Phase 1: collect symbols. The typeSession holds the live addrMap so type decode can find
         // locally-defined symbols as the walk progresses. Cross-file refs produce UnresolvedRef entries.
         val typeSession = new TypeUnpickler.DecodeSession(names, addrMap, arena, home)
@@ -148,8 +139,7 @@ object AstUnpickler:
             view,
             sectionEnd,
             names,
-            bytesRef,
-            reloadBytes,
+            sectionBytes,
             sectionOffset,
             attrs,
             home,
@@ -207,18 +197,14 @@ object AstUnpickler:
 
     /** Walk all stats (top-level definitions) until position reaches `end`. Mirrors dotty indexStats.
       *
-      * @param bytesRef
-      *   Shared AtomicReference holding the raw AST section bytes for all TastyOrigins in this file. Initially non-null; evicted by the
-      *   caller after pass1 and optional snapshot writing. On lazy body decode, TastyOrigin.sectionBytes calls reloadBytes() if null.
-      * @param reloadBytes
-      *   Thunk to re-inflate bytes from the source file on demand.
+      * @param sectionBytes
+      *   The raw AST section bytes (from view.allBytes) stored in each symbol's TastyOrigin for lazy body decode.
       */
     private def walkStats(
         view: ByteView,
         end: Int,
         names: Array[Tasty.Name],
-        bytesRef: java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null],
-        reloadBytes: () => Array[Byte],
+        sectionBytes: Array[Byte],
         sectionOffset: Int,
         attrs: FileAttributes,
         home: ClasspathRef,
@@ -241,7 +227,7 @@ object AstUnpickler:
                     // Decode the innermost simple name from the path.
                     val pkgName = extractPackageName(view, names)
                     val owner   = currentOwner(ownerStack)
-                    val origin  = new Tasty.Symbol.TastyOrigin(view.position, payloadEnd, bytesRef, reloadBytes, names, sectionOffset, null)
+                    val origin  = new Tasty.Symbol.TastyOrigin(view.position, payloadEnd, sectionBytes, names, sectionOffset, null)
                     val sym = InternalSymbol.makeSymbol(
                         Tasty.SymbolKind.Package,
                         Tasty.Flags.empty,
@@ -258,8 +244,7 @@ object AstUnpickler:
                         view,
                         payloadEnd,
                         names,
-                        bytesRef,
-                        reloadBytes,
+                        sectionBytes,
                         sectionOffset,
                         attrs,
                         home,
@@ -285,7 +270,7 @@ object AstUnpickler:
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val kind     = InternalSymbolKind.fromValdefFlags(flagBits)
                     val flags    = new Tasty.Flags(flagBits)
-                    val origin   = new Tasty.Symbol.TastyOrigin(payloadBody, payloadEnd, bytesRef, reloadBytes, names, sectionOffset, null)
+                    val origin   = new Tasty.Symbol.TastyOrigin(payloadBody, payloadEnd, sectionBytes, names, sectionOffset, null)
                     val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
@@ -302,8 +287,8 @@ object AstUnpickler:
                     val payloadBody = view.position
                     val flagBits    = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags       = new Tasty.Flags(flagBits)
-                    val origin = new Tasty.Symbol.TastyOrigin(payloadBody, payloadEnd, bytesRef, reloadBytes, names, sectionOffset, null)
-                    val sym    = InternalSymbol.makeSymbol(Tasty.SymbolKind.Method, flags, symName, owner, home, origin, Absent)
+                    val origin      = new Tasty.Symbol.TastyOrigin(payloadBody, payloadEnd, sectionBytes, names, sectionOffset, null)
+                    val sym         = InternalSymbol.makeSymbol(Tasty.SymbolKind.Method, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     // Recurse into DEFDEF body to discover type params and value params.
@@ -314,8 +299,7 @@ object AstUnpickler:
                         innerView,
                         payloadEnd,
                         names,
-                        bytesRef,
-                        reloadBytes,
+                        sectionBytes,
                         sectionOffset,
                         attrs,
                         home,
@@ -369,15 +353,7 @@ object AstUnpickler:
                         val kind     = InternalSymbolKind.fromTypedefTemplateFlags(flagBits)
                         val flags    = new Tasty.Flags(flagBits)
                         val origin =
-                            new Tasty.Symbol.TastyOrigin(
-                                templateBodyStart,
-                                templatePayloadEnd,
-                                bytesRef,
-                                reloadBytes,
-                                names,
-                                sectionOffset,
-                                null
-                            )
+                            new Tasty.Symbol.TastyOrigin(templateBodyStart, templatePayloadEnd, sectionBytes, names, sectionOffset, null)
                         val sym = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
@@ -391,8 +367,7 @@ object AstUnpickler:
                             templateFork,
                             templatePayloadEnd,
                             names,
-                            bytesRef,
-                            reloadBytes,
+                            sectionBytes,
                             sectionOffset,
                             attrs,
                             home,
@@ -422,7 +397,7 @@ object AstUnpickler:
                         val kind     = InternalSymbolKind.fromTypedefTypeFlagsAndBody(flagBits, nextTag)
                         val flags    = new Tasty.Flags(flagBits)
                         // Type-level TYPEDEF has no body to decode; bodyStart == bodyEnd == payloadEnd sentinel.
-                        val origin = new Tasty.Symbol.TastyOrigin(payloadEnd, payloadEnd, bytesRef, reloadBytes, names, sectionOffset, null)
+                        val origin = new Tasty.Symbol.TastyOrigin(payloadEnd, payloadEnd, sectionBytes, names, sectionOffset, null)
                         val sym    = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
@@ -441,7 +416,7 @@ object AstUnpickler:
                     val tpBounds = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
                     val flagBits = readModifiers(view, payloadEnd)
                     val flags    = new Tasty.Flags(flagBits)
-                    val origin   = new Tasty.Symbol.TastyOrigin(payloadEnd, payloadEnd, bytesRef, reloadBytes, names, sectionOffset, null)
+                    val origin   = new Tasty.Symbol.TastyOrigin(payloadEnd, payloadEnd, sectionBytes, names, sectionOffset, null)
                     val sym      = InternalSymbol.makeSymbol(Tasty.SymbolKind.TypeParam, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
@@ -459,7 +434,7 @@ object AstUnpickler:
                     val paramTpe = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags    = new Tasty.Flags(flagBits)
-                    val origin   = new Tasty.Symbol.TastyOrigin(payloadEnd, payloadEnd, bytesRef, reloadBytes, names, sectionOffset, null)
+                    val origin   = new Tasty.Symbol.TastyOrigin(payloadEnd, payloadEnd, sectionBytes, names, sectionOffset, null)
                     val sym      = InternalSymbol.makeSymbol(Tasty.SymbolKind.Parameter, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym

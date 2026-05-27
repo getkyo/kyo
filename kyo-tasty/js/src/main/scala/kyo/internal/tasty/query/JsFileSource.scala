@@ -80,24 +80,6 @@ object JsFileSource extends FileSource:
                     case ex: Throwable =>
                         Abort.fail(TastyError.SnapshotIoError(ex.getMessage))
 
-    override def readSyncUnsafe(path: String): Array[Byte] =
-        if !isNode then
-            throw new java.io.IOException(s"readSyncUnsafe not available in browser for: $path")
-        else
-            try
-                val fs  = jsGlobal.require("fs").asInstanceOf[js.Dynamic]
-                val buf = fs.readFileSync(path)
-                val len = buf.length.asInstanceOf[Int]
-                val arr = new Array[Byte](len)
-                var i   = 0
-                while i < len do
-                    arr(i) = buf.applyDynamic("readInt8")(i).asInstanceOf[Byte]
-                    i += 1
-                arr
-            catch
-                case ex: Throwable =>
-                    throw new java.io.IOException(s"$path: ${ex.getMessage}", ex)
-
     def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
         if suffixes.isEmpty then Sync.defer(Chunk.empty)
         else if !isNode then Abort.fail(browserError)

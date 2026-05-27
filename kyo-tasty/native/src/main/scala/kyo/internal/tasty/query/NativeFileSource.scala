@@ -58,9 +58,6 @@ object NativeFileSource extends FileSource:
                     case ex: Throwable =>
                         Abort.fail(TastyError.FileNotFound(s"$dir: ${ex.getMessage}"))
 
-    override def readSyncUnsafe(path: String): Array[Byte] =
-        readFileNative(path)
-
     def exists(path: String)(using Frame): Boolean < Sync =
         Sync.defer:
             try

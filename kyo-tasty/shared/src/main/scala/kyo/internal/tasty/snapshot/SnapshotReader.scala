@@ -342,8 +342,7 @@ object SnapshotReader:
                     new Tasty.Symbol.TastyOrigin(
                         raw.bodyStart,
                         raw.bodyEnd,
-                        new java.util.concurrent.atomic.AtomicReference(Array.empty[Byte]),
-                        Tasty.Symbol.TastyOrigin.noReload,
+                        Array.empty[Byte],
                         Array.empty[Tasty.Name],
                         0,
                         bodyViewOpt
@@ -498,15 +497,7 @@ object SnapshotReader:
                 then
                     // Restore body origin: offsets are relative to the start of BODY_BYTES section.
                     // sectionOffset is 0 because bodyStart is already absolute within bodyBytesArray.
-                    new Tasty.Symbol.TastyOrigin(
-                        raw.bodyStart,
-                        raw.bodyEnd,
-                        new java.util.concurrent.atomic.AtomicReference(bodyBytesArray),
-                        Tasty.Symbol.TastyOrigin.noReload,
-                        Array.empty[Tasty.Name],
-                        0,
-                        null
-                    )
+                    new Tasty.Symbol.TastyOrigin(raw.bodyStart, raw.bodyEnd, bodyBytesArray, Array.empty[Tasty.Name], 0, null)
                 else
                     Tasty.Symbol.JavaOrigin
             created(idx) = InternalSymbol.makeSymbol(kind, flags, name, owner, home, origin, Maybe.Absent)
