@@ -31,6 +31,7 @@ final class HttpWebSocket private[kyo] (
     private[kyo] val inbound: Channel[HttpWebSocket.Payload],
     private[kyo] val outbound: Channel[HttpWebSocket.Payload],
     private[kyo] val closeReasonRef: AtomicRef[Maybe[(Int, String)]],
+    private[kyo] val peerClosedPromise: Fiber.Promise[Unit, Any],
     private[kyo] val closeFn: (Int, String) => Unit < Async
 ):
 
@@ -61,6 +62,22 @@ final class HttpWebSocket private[kyo] (
     /** Returns the close code and reason if the connection has been closed. */
     def closeReason(using Frame): Maybe[(Int, String)] < Sync =
         closeReasonRef.get
+
+    /** Completes when the remote peer closes the WebSocket (graceful close frame or transport EOF).
+      *
+      * The backend does NOT automatically close the outbound channel on peer close. Applications that
+      * compose long-lived sender/receiver fibers (e.g. via `Async.race`) should include `onPeerClose`
+      * in the race to terminate promptly when the peer goes away:
+      *
+      * {{{
+      * Async.race(sender, receiver, ws.onPeerClose).unit
+      * }}}
+      *
+      * For graceful peer-initiated close, [[closeReason]] returns the code and reason after this
+      * completes. For abnormal close (transport EOF without a close frame), [[closeReason]] returns
+      * `Absent`.
+      */
+    def onPeerClose(using Frame): Unit < Async = peerClosedPromise.get.unit
 
 end HttpWebSocket
 
@@ -113,21 +130,27 @@ object HttpWebSocket:
             Channel.initWith[Payload](32) { ch2to1 =>
                 AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeRef1 =>
                     AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeRef2 =>
-                        val doClose: (Int, String) => Unit < Async = (code, reason) =>
-                            closeRef1.set(Present((code, reason)))
-                                .andThen(closeRef2.set(Present((code, reason))))
-                                .andThen(ch1to2.close.unit)
-                                .andThen(ch2to1.close.unit)
-                        val ws1 = new HttpWebSocket(ch2to1, ch1to2, closeRef1, doClose)
-                        val ws2 = new HttpWebSocket(ch1to2, ch2to1, closeRef2, doClose)
-                        Sync.ensure {
-                            ch1to2.close.unit.andThen(ch2to1.close.unit)
-                        } {
-                            // Race: when either party completes, close channels to unblock the other
-                            Async.raceFirst(
-                                Abort.run[Closed](p1(ws1)).unit,
-                                Abort.run[Closed](p2(ws2)).unit
-                            ).unit
+                        Fiber.Promise.init[Unit, Any].map { peerClosed1 =>
+                            Fiber.Promise.init[Unit, Any].map { peerClosed2 =>
+                                val doClose: (Int, String) => Unit < Async = (code, reason) =>
+                                    closeRef1.set(Present((code, reason)))
+                                        .andThen(closeRef2.set(Present((code, reason))))
+                                        .andThen(peerClosed1.completeUnit.unit)
+                                        .andThen(peerClosed2.completeUnit.unit)
+                                        .andThen(ch1to2.close.unit)
+                                        .andThen(ch2to1.close.unit)
+                                val ws1 = new HttpWebSocket(ch2to1, ch1to2, closeRef1, peerClosed1, doClose)
+                                val ws2 = new HttpWebSocket(ch1to2, ch2to1, closeRef2, peerClosed2, doClose)
+                                Sync.ensure {
+                                    ch1to2.close.unit.andThen(ch2to1.close.unit)
+                                } {
+                                    // Race: when either party completes, close channels to unblock the other
+                                    Async.raceFirst(
+                                        Abort.run[Closed](p1(ws1)).unit,
+                                        Abort.run[Closed](p2(ws2)).unit
+                                    ).unit
+                                }
+                            }
                         }
                     }
                 }

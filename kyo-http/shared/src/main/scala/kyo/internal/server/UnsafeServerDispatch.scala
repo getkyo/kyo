@@ -300,65 +300,71 @@ private[kyo] object UnsafeServerDispatch:
         Channel.initUnscopedWith[HttpWebSocket.Payload](wsHandler.wsConfig.bufferSize) { inbound =>
             Channel.initUnscopedWith[HttpWebSocket.Payload](wsHandler.wsConfig.bufferSize) { outbound =>
                 AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeReasonRef =>
-                    val closeFn: (Int, String) => Unit < Async = (code, reason) =>
-                        closeReasonRef.set(Present((code, reason))).andThen {
-                            WebSocketCodec.writeClose(conn, code, reason, mask = false)
-                        }
-                    val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, closeFn)
-                    val wsUrl = HttpUrl.parse(path) match
-                        case Result.Success(u) => u
-                        case _                 => HttpUrl.parse("/").getOrThrow
-                    val request = HttpRequest(HttpMethod.GET, wsUrl, headers, Record.empty)
+                    Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
+                        val closeFn: (Int, String) => Unit < Async = (code, reason) =>
+                            closeReasonRef.set(Present((code, reason))).andThen {
+                                WebSocketCodec.writeClose(conn, code, reason, mask = false)
+                            }
+                        val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
+                        val wsUrl = HttpUrl.parse(path) match
+                            case Result.Success(u) => u
+                            case _                 => HttpUrl.parse("/").getOrThrow
+                        val request = HttpRequest(HttpMethod.GET, wsUrl, headers, Record.empty)
 
-                    Fiber.initUnscoped {
-                        Loop(conn.read) { stream =>
-                            WebSocketCodec.readFrameWith(
-                                stream,
-                                conn,
-                                wsHandler.wsConfig.maxFrameSize,
-                                (cr: (Int, String)) => closeReasonRef.set(Present(cr))
-                            ) { (frame, remaining) =>
-                                inbound.put(frame).andThen(Loop.continue(remaining))
-                            }
-                        }
-                    }.map { readFiber =>
                         Fiber.initUnscoped {
-                            readFiber.getResult.map {
-                                case Result.Failure(e) =>
-                                    Log.warn(s"HttpWebSocket server reader failed: $e")
-                                        .andThen(inbound.close.unit)
-                                        .andThen(outbound.close.unit)
-                                case Result.Panic(t) =>
-                                    Log.warn("HttpWebSocket server reader panicked", t)
-                                        .andThen(inbound.close.unit)
-                                        .andThen(outbound.close.unit)
-                                case Result.Success(_) =>
-                                    inbound.close.unit.andThen(outbound.close.unit)
+                            Loop(conn.read) { stream =>
+                                WebSocketCodec.readFrameWith(
+                                    stream,
+                                    conn,
+                                    wsHandler.wsConfig.maxFrameSize,
+                                    (cr: (Int, String)) => closeReasonRef.set(Present(cr))
+                                ) { (frame, remaining) =>
+                                    inbound.put(frame).andThen(Loop.continue(remaining))
+                                }
                             }
-                        }.map { monitorFiber =>
+                        }.map { readFiber =>
                             Fiber.initUnscoped {
-                                Abort.run[Closed] {
-                                    Loop.foreach {
-                                        outbound.take.map { frame =>
-                                            WebSocketCodec.writeFrame(conn, frame, mask = false).andThen(Loop.continue)
+                                // Signal peer close and close inbound. Outbound lifecycle is owned by the write fiber.
+                                readFiber.getResult.map { result =>
+                                    val log = result match
+                                        case Result.Failure(e) => Log.warn(s"HttpWebSocket server reader failed: $e")
+                                        case Result.Panic(t)   => Log.warn("HttpWebSocket server reader panicked", t)
+                                        case Result.Success(_) => Kyo.unit
+                                    log.andThen(inbound.close.unit).andThen(peerClosedPromise.completeUnit.unit)
+                                }
+                            }.map { monitorFiber =>
+                                Fiber.initUnscoped {
+                                    // Write fiber: drains outbound; closes outbound on exit (Closed end OR wire failure).
+                                    Abort.run[Throwable] {
+                                        Loop.foreach {
+                                            outbound.take.map { frame =>
+                                                WebSocketCodec.writeFrame(conn, frame, mask = false).andThen(Loop.continue)
+                                            }
                                         }
+                                    }.map { result =>
+                                        val log = result match
+                                            case Result.Failure(_: Closed) => Kyo.unit
+                                            case Result.Failure(e)         => Log.warn(s"HttpWebSocket server writer failed: $e")
+                                            case Result.Panic(t)           => Log.warn("HttpWebSocket server writer panicked", t)
+                                            case Result.Success(_)         => Kyo.unit
+                                        log.andThen(outbound.close.unit)
                                     }
-                                }.andThen(outbound.close).unit
-                            }.map { writeFiber =>
-                                Sync.ensure(
-                                    readFiber.interrupt.unit
-                                        .andThen(writeFiber.interrupt.unit)
-                                        .andThen(monitorFiber.interrupt.unit)
-                                        .andThen(outbound.close.unit)
-                                ) {
-                                    Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
-                                        closeReasonRef.get.map {
-                                            case Absent =>
-                                                readFiber.done.map { isDone =>
-                                                    if isDone then Kyo.unit
-                                                    else Abort.run[Any](WebSocketCodec.writeClose(conn, 1000, "", mask = false)).unit
-                                                }
-                                            case _ => Kyo.unit
+                                }.map { writeFiber =>
+                                    Sync.ensure(
+                                        readFiber.interrupt.unit
+                                            .andThen(writeFiber.interrupt.unit)
+                                            .andThen(monitorFiber.interrupt.unit)
+                                            .andThen(outbound.close.unit)
+                                    ) {
+                                        Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
+                                            closeReasonRef.get.map {
+                                                case Absent =>
+                                                    readFiber.done.map { isDone =>
+                                                        if isDone then Kyo.unit
+                                                        else Abort.run[Any](WebSocketCodec.writeClose(conn, 1000, "", mask = false)).unit
+                                                    }
+                                                case _ => Kyo.unit
+                                            }
                                         }
                                     }
                                 }
