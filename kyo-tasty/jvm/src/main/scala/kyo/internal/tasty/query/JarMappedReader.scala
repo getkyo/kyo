@@ -66,19 +66,22 @@ final private[kyo] class JarMappedReader(
         val compSize   = entry.compSize.toInt
         val uncompSize = entry.uncompSize.toInt
 
-        val compBytes = new Array[Byte](compSize)
-        buf.position(dataOffset)
-        buf.get(compBytes)
-
         entry.method match
             case 0 =>
-                // STORED: data is verbatim
-                compBytes
+                // STORED: data is verbatim; copy directly from the mapped region into a heap array
+                val out = new Array[Byte](uncompSize)
+                buf.position(dataOffset)
+                buf.get(out)
+                out
             case 8 =>
-                // DEFLATED: nowrap=true because ZIP uses raw deflate (no zlib header/trailer)
-                val inflater = new Inflater(true)
+                // DEFLATED: nowrap=true because ZIP uses raw deflate (no zlib header/trailer).
+                // Use buf.slice(dataOffset, compSize) to get a ByteBuffer view that shares the
+                // mapped memory -- no heap copy of the compressed bytes.
+                // Inflater.setInput(ByteBuffer) (JDK 11+) feeds the mapped region directly.
+                val compSlice = buf.slice(dataOffset, compSize)
+                val inflater  = new Inflater(true)
                 try
-                    inflater.setInput(compBytes)
+                    inflater.setInput(compSlice)
                     val out   = new Array[Byte](uncompSize)
                     var total = 0
                     while total < uncompSize && !inflater.finished() do
