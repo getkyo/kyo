@@ -23,42 +23,6 @@ class PageDownloadTest extends kyo.BrowserTest:
         assert(PageDownload.Behavior.Default.wire == "default")
     }
 
-    // setDownloadBehavior with downloadPath=Absent: Chrome still emits
-    // Page.downloadWillBegin (eventsEnabled=true) when no explicit download path is given.
-    "setDownloadBehavior(Allow, Absent) emits Page.downloadWillBegin when a download is triggered" in run {
-        withBrowser {
-            Browser.use { tab =>
-                val session = tab.client.withSession(tab.sessionId)
-                val dataUrl = "data:text/plain,hello-absent"
-                for
-                    now <- Clock.nowMonotonic
-                    unique = s"kyo-dl-absent-${now.toNanos}.txt"
-                    html   = page(s"""<a id='dl' href='$dataUrl' download='$unique'>dl</a>""")
-                    _ <- session.sendUnit("Page.enable")
-                    // Pass Absent for downloadPath; no explicit download directory
-                    _            <- PageDownload.setDownloadBehavior(session, PageDownload.Behavior.Allow, Absent)
-                    _            <- Browser.goto(html)
-                    eventPromise <- Promise.init[CdpEvent, Any]
-                    collector <- Fiber.init {
-                        session.exchange.events.foreach { (e: CdpEvent) =>
-                            e match
-                                case g @ CdpEvent.Generic("Page.downloadWillBegin", p, _) if p.contains(unique) =>
-                                    eventPromise.complete(Result.succeed(g)).unit
-                                case _ => Kyo.unit
-                        }
-                    }
-                    _         <- Browser.click(Browser.Selector.id("dl"))
-                    willBegin <- eventPromise.get
-                    _         <- collector.interrupt
-                yield willBegin match
-                    case CdpEvent.Generic(method, paramsJson, _) =>
-                        assert(method == "Page.downloadWillBegin", s"expected method=Page.downloadWillBegin but got $method")
-                        assert(paramsJson.contains(unique), s"expected params to mention $unique but got $paramsJson")
-                end for
-            }
-        }
-    }
-
     // `PageDownload.setDownloadBehavior(client, Allow, Present(tempDir))` causes CDP to emit
     // `Page.downloadWillBegin` when a download is triggered.
     "setDownloadBehavior(Allow) causes CDP to emit Page.downloadWillBegin on a download" in run {

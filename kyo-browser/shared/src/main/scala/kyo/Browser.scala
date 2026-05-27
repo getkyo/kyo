@@ -2387,18 +2387,16 @@ object Browser:
 
     /** Allows downloads on the current tab.
       *
-      * When `toPath` is `Present(absolutePath)`, Chrome saves files there; when `Absent`, Chrome uses its default download location (which
-      * varies by platform; production code that needs a deterministic location should pass an explicit absolute path).
-      *
-      * Relative paths are rejected with [[BrowserInvalidArgumentException]] before any CDP call is issued.
+      * Chrome saves files to `toPath` (must be an absolute path). Relative paths are rejected with
+      * [[BrowserInvalidArgumentException]] before any CDP call is issued.
       *
       * **Per-tab state, does NOT cross tab boundaries.** The download policy is set via CDP `Browser.setDownloadBehavior` keyed to the
       * current tab's `browserContextId`. Children opened by [[withNewTab]] inherit the parent's context (so the policy IS inherited); but
       * children opened by [[withFork]], [[withPopup]], `isolate.fresh`, and `isolate.clone` live in fresh browser contexts and start with
       * Chrome's default policy. Re-call `allowDownloads` inside those blocks if downloads must be captured there too.
       */
-    private[kyo] def allowDownloads(toPath: Maybe[String] = Absent)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
-        setDownloadBehavior(Browser.DownloadBehavior.Allow, toPath)
+    private[kyo] def allowDownloads(toPath: String)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        setDownloadBehavior(Browser.DownloadBehavior.Allow, Present(toPath))
 
     /** Denies downloads on the current tab; Chrome drops download-triggering navigations and emits no events.
       *
@@ -2418,14 +2416,14 @@ object Browser:
       * entry, it is re-applied via `setDownloadBehavior`; otherwise the policy is reset to `Deny` (Chrome's launch-time default). This
       * lets nested `withDownloads` calls compose correctly.
       */
-    def withDownloads[A, S](toPath: Maybe[String] = Absent)(body: A < (Browser & S))(using
+    def withDownloads[A, S](toPath: String)(body: A < (Browser & S))(using
         Frame
     ): A < (Browser & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
             Scope.run {
                 tab.downloadPolicy.get.map { prior =>
                     Scope.acquireRelease(
-                        setDownloadBehavior(Browser.DownloadBehavior.Allow, toPath)
+                        setDownloadBehavior(Browser.DownloadBehavior.Allow, Present(toPath))
                     ) { _ =>
                         tab.downloadPolicy.set(prior).andThen(
                             prior match
@@ -2456,6 +2454,17 @@ object Browser:
             val validate: Unit < Abort[BrowserReadException] = toPath match
                 case Present(p) if !isAbsolutePath(p) =>
                     Abort.fail(BrowserInvalidArgumentException("setDownloadBehavior", s"toPath must be absolute, got '$p'"))
+                case Absent if behavior == Browser.DownloadBehavior.Allow =>
+                    // chrome-headless-shell silently no-ops `Page.setDownloadBehavior` when `behavior=allow` and no explicit
+                    // `downloadPath` is set, so the WillBegin event never fires and downloads silently disappear. Full Chrome
+                    // historically accepted Absent and fell back to the OS default download dir, but kyo-browser auto-downloads
+                    // chrome-headless-shell by default and we don't want a contract that silently breaks for that binary.
+                    // Reject the combination at the entry point so the failure is explicit and the API works the same on both
+                    // binaries.
+                    Abort.fail(BrowserInvalidArgumentException(
+                        "setDownloadBehavior",
+                        "behavior=Allow requires a Present toPath (absolute path)"
+                    ))
                 case _ => Kyo.unit
             // Cache write FIRST (post-validate), then issue the CDP call. Skip caching the "Deny + Absent" tear-down state because that
             // matches the implicit "no override active" semantics of Absent in the cache, keeping the restore-to-Absent path correct.

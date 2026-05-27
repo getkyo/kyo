@@ -24,14 +24,19 @@ class CdpClientTest extends Test:
     end withClient
 
     "Target.getTargets returns targets" in run {
+        // chrome-headless-shell launches with an empty target list (no auto-opened about:blank tab the way full Chrome
+        // does). Create a target explicitly first so the test verifies the `Target.getTargets` decode path against a
+        // known-non-empty response on every binary variant.
         withClient { client =>
-            client.send("Target.getTargets").map { result =>
-                val targets = decodeCdpResult[GetTargetsResult](result)
-                // Structural pin: a real target must carry a non-empty targetId.
-                assert(
-                    targets.targetInfos.nonEmpty && targets.targetInfos.head.targetId.nonEmpty,
-                    s"got $targets"
-                )
+            client.send("Target.createTarget", CreateTargetParams("about:blank")).map { _ =>
+                client.send("Target.getTargets").map { result =>
+                    val targets = decodeCdpResult[GetTargetsResult](result)
+                    // Structural pin: a real target must carry a non-empty targetId.
+                    assert(
+                        targets.targetInfos.nonEmpty && targets.targetInfos.head.targetId.nonEmpty,
+                        s"got $targets"
+                    )
+                }
             }
         }
     }

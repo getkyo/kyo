@@ -271,7 +271,7 @@ class SelectorTest extends Test:
         assert(Browser.Selector.toNode(selector) == node)
     }
 
-    // ── A4: new selector kinds ─────────────────────────────────────────
+    // ── Selector kinds ─────────────────────────────────────────
 
     "Selector.testId builds SelectorNode.TestId" in {
         assert(Browser.Selector.toNode(Browser.Selector.testId("login")) == SelectorNode.TestId("login"))

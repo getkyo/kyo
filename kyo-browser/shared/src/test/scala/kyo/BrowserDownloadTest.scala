@@ -47,7 +47,6 @@ class BrowserDownloadTest extends BrowserTest:
                     case _ => Kyo.unit
             }
 
-    // ── L1 - allowDownloads(Present(absoluteTmp)) lands the file on disk ──
     // data: URL + <a download> trigger. Wait for the terminal Progress event before reading the file
     // bytes, otherwise Chrome may not have finished flushing.
     "allowDownloads(toPath = Present(absoluteTmp)) lands a downloaded file at the requested path" in run {
@@ -60,7 +59,7 @@ class BrowserDownloadTest extends BrowserTest:
                 // data: URL encodes "Hello" as base64 - the <a download="..."> link triggers a download.
                 dataUrl = "data:application/octet-stream;base64,SGVsbG8="
                 html    = page(s"""<a id='dl' href='$dataUrl' download='$fileName'>dl</a>""")
-                _      <- Browser.allowDownloads(Present(tempDir))
+                _      <- Browser.allowDownloads(tempDir)
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 done   <- Promise.init[Unit, Any]
                 result <- Browser.onDownload(collectEvents(events, done)) {
@@ -74,33 +73,31 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── L2 - allowDownloads(Absent) still emits WillBegin ──
-    // No path supplied; Chrome uses its default location. We only assert that onDownload observes a
-    // WillBegin whose suggestedFilename matches the link's download attribute.
-    "allowDownloads(toPath = Absent) emits a WillBegin event matching the trigger's download attribute" in run {
+    // chrome-headless-shell silently no-ops `Page.setDownloadBehavior(allow)` when no `downloadPath` is given (the
+    // WillBegin event never fires, downloads vanish). The kyo-browser API rejects the combination up front via
+    // BrowserInvalidArgumentException so the failure is explicit and behaves the same on every supported binary.
+    "allowDownloads aborts with BrowserInvalidArgumentException when no toPath is supplied" in run {
         withBrowser {
-            for
-                now <- Clock.nowMonotonic
-                fileName = s"hello-absent-${now.toNanos}.txt"
-                dataUrl  = "data:text/plain,hello-absent"
-                html     = page(s"""<a id='dl' href='$dataUrl' download='$fileName'>dl</a>""")
-                _    <- Browser.allowDownloads()
-                seen <- Promise.init[String, Any]
-                _ <- Browser.onDownload { (ev: Browser.DownloadEvent) =>
-                    ev match
-                        case Browser.DownloadEvent.WillBegin(_, _, sf) =>
-                            seen.complete(Result.succeed(sf)).unit
-                        case _ => Kyo.unit
-                } {
-                    Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(seen.get.unit)
-                }
-                got <- seen.get
-            yield assert(got == fileName, s"expected suggestedFilename='$fileName' but got '$got'")
-            end for
+            // Calling the internal setDownloadBehavior directly is the only way to hit the Absent code path now that
+            // `allowDownloads` requires a `String` at the type level. The validation lives in setDownloadBehavior so a
+            // user reaching the private surface still hits the same explicit-failure contract.
+            Abort.run[BrowserReadException](
+                Browser.setDownloadBehavior(Browser.DownloadBehavior.Allow, Absent)
+            ).map {
+                case Result.Failure(ex: BrowserInvalidArgumentException) =>
+                    assert(
+                        ex.method == "setDownloadBehavior",
+                        s"expected method=setDownloadBehavior but got: ${ex.method}"
+                    )
+                    assert(
+                        ex.message.contains("Allow requires"),
+                        s"expected reason mentioning 'Allow requires' but got: ${ex.message}"
+                    )
+                case other => fail(s"expected BrowserInvalidArgumentException but got $other")
+            }
         }
     }
 
-    // ── L3 - denyDownloads drops the download (no file lands at the previously-set Allow path) ──
     // Empirical Chrome behavior (JVM Chrome-for-Testing, CDP eventsEnabled=true): under Deny, Chrome
     // still emits Page.downloadWillBegin (the policy fires AFTER the wire-side signal), so we cannot
     // assert "no WillBegin within 1s". The observable that distinguishes Deny from Allow is "file does
@@ -115,7 +112,7 @@ class BrowserDownloadTest extends BrowserTest:
                 dataUrl  = "data:application/octet-stream;base64,SGVsbG8="
                 html     = page(s"""<a id='dl' href='$dataUrl' download='$fileName'>dl</a>""")
                 // First Allow to set the path; then switch to Deny so Chrome drops downloads.
-                _ <- Browser.allowDownloads(Present(tempDir))
+                _ <- Browser.allowDownloads(tempDir)
                 _ <- Browser.denyDownloads
                 _ <- Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl")))
                 // Inverse poll: loop exits cleanly iff file never landed; Abort.fail = file landed.
@@ -125,7 +122,6 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── L4 - setDownloadBehavior(Default) round-trips after Allow ──
     // Allow → file lands at tmp; switch to Default → triggering a download no longer lands at tmp; switch
     // back to Allow → it lands again. Phase B uses eval-click (no Browser.click + no onDownload) because
     // click's mutation-settle would wait for DOM changes a download trigger doesn't produce. Phases A and C
@@ -136,9 +132,9 @@ class BrowserDownloadTest extends BrowserTest:
                 tempPath <- Path.tempDir("kyo-dl-default-")
                 tempDir = tempPath.toString
                 dataUrl = "data:application/octet-stream;base64,SGVsbG8="
-                // Phase A: Allow → file lands at tmp. Use onDownload+collectEvents (the proven L1 pattern)
-                // so Chrome drives the download to state="completed" before we move on.
-                _   <- Browser.allowDownloads(Present(tempDir))
+                // Phase A: Allow → file lands at tmp. Use onDownload+collectEvents so Chrome drives the
+                // download to state="completed" before we move on.
+                _   <- Browser.allowDownloads(tempDir)
                 now <- Clock.nowMonotonic
                 fileNameA = s"roundtrip-${now.toNanos}.txt"
                 htmlA     = page(s"""<a id='dl' href='$dataUrl' download='$fileNameA'>dl</a>""")
@@ -148,7 +144,7 @@ class BrowserDownloadTest extends BrowserTest:
                     Browser.goto(htmlA).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(doneA.get)
                 }
                 landedA <- (tempPath / fileNameA).exists
-                // Phase B: Default → file does NOT land at tmp. Mirror the L3 (denyDownloads) shape:
+                // Phase B: Default → file does NOT land at tmp. Mirror the denyDownloads shape:
                 // goto + click + short sleep + check file. Under Default with no toPath the file doesn't
                 // land at our tempDir; we don't observe a "completed" event so no onDownload here.
                 _    <- Browser.setDownloadBehavior(Browser.DownloadBehavior.Default, Absent)
@@ -159,7 +155,7 @@ class BrowserDownloadTest extends BrowserTest:
                 // Inverse poll (Phase B/Default): loop exits cleanly iff file never landed; Abort.fail = file landed.
                 _ <- assertNeverLands(tempPath / fileNameB, s"default-no-landing-at-$fileNameB", 10, 50.millis)
                 // Phase C: Allow again → file lands at tmp.
-                _    <- Browser.allowDownloads(Present(tempDir))
+                _    <- Browser.allowDownloads(tempDir)
                 nowC <- Clock.nowMonotonic
                 fileNameC = s"roundtrip-allow2-${nowC.toNanos}.txt"
                 htmlC     = page(s"""<a id='dl' href='$dataUrl' download='$fileNameC'>dl</a>""")
@@ -177,7 +173,6 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── L5 - onDownload fires WillBegin with guid, url, suggestedFilename ──
     "onDownload(f)(trigger) fires f with DownloadEvent.WillBegin(guid, url, suggestedFilename)" in run {
         withBrowser {
             for
@@ -187,7 +182,7 @@ class BrowserDownloadTest extends BrowserTest:
                 fileName = s"will-begin-${now.toNanos}.txt"
                 dataUrl  = "data:application/octet-stream;base64,SGVsbG8="
                 html     = page(s"""<a id='dl' href='$dataUrl' download='$fileName'>dl</a>""")
-                _      <- Browser.allowDownloads(Present(tempDir))
+                _      <- Browser.allowDownloads(tempDir)
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 seen   <- Promise.init[Browser.DownloadEvent.WillBegin, Any]
                 _ <- Browser.onDownload { (ev: Browser.DownloadEvent) =>
@@ -212,7 +207,6 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── L6 - onDownload emits at least one Progress before completed ──
     // Serve a 1 MB body via a localhost HTTP server and trigger a download via <a href="/big" download>.
     // Empirical Chrome behavior (CDP DownloadProgress on JVM Chrome-for-Testing) emits multiple
     // Progress events for a 1 MB body; usually one per ~32 KB-128 KB chunk; followed by a terminal
@@ -233,7 +227,7 @@ class BrowserDownloadTest extends BrowserTest:
                     fileName = s"big-${now.toNanos}.bin"
                     bigUrl   = s"http://$host:$port/big"
                     html     = page(s"""<a id='dl' href='$bigUrl' download='$fileName'>dl</a>""")
-                    _      <- Browser.allowDownloads(Present(tempDir))
+                    _      <- Browser.allowDownloads(tempDir)
                     events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                     done   <- Promise.init[Unit, Any]
                     _ <- Browser.onDownload(collectEvents(events, done)) {
@@ -263,7 +257,6 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── L7 - onDownload unsubscribes after the action completes ──
     // A trigger fired AFTER the onDownload scope exits must not call f.
     "onDownload(f)(action1).andThen(action2) - f is called for action1's downloads only" in run {
         withBrowser {
@@ -276,7 +269,7 @@ class BrowserDownloadTest extends BrowserTest:
                 dataUrl   = "data:application/octet-stream;base64,SGVsbG8="
                 html1     = page(s"""<a id='dl' href='$dataUrl' download='$fileName1'>dl</a>""")
                 html2     = page(s"""<a id='dl' href='$dataUrl' download='$fileName2'>dl</a>""")
-                _      <- Browser.allowDownloads(Present(tempDir))
+                _      <- Browser.allowDownloads(tempDir)
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 done1  <- Promise.init[Unit, Any]
                 _ <- Browser.onDownload(collectEvents(events, done1)) {
@@ -325,11 +318,10 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── L8 - relative-path toPath aborts before the CDP call ──
     // API misuse before any CDP call is issued surfaces as BrowserInvalidArgumentException.
-    "allowDownloads(toPath = Present('relative/path')) aborts with BrowserInvalidArgumentException" in run {
+    "allowDownloads('relative/path') aborts with BrowserInvalidArgumentException" in run {
         withBrowser {
-            Abort.run[BrowserReadException](Browser.allowDownloads(Present("relative/path"))).map {
+            Abort.run[BrowserReadException](Browser.allowDownloads("relative/path")).map {
                 case Result.Failure(ex: BrowserInvalidArgumentException) =>
                     assert(
                         ex.method == "setDownloadBehavior",
@@ -348,7 +340,6 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── L9 - Two concurrent tabs do not cross-talk on download events ──
     // tab1 sees only its own download's events; tab2 sees only its own.
     "Two concurrent tabs each running onDownload do not cross-talk" in run {
         withBrowser {
@@ -361,7 +352,7 @@ class BrowserDownloadTest extends BrowserTest:
                 dataUrl   = "data:application/octet-stream;base64,SGVsbG8="
                 html1     = page(s"""<a id='dl' href='$dataUrl' download='$fileName1'>dl</a>""")
                 html2     = page(s"""<a id='dl' href='$dataUrl' download='$fileName2'>dl</a>""")
-                _       <- Browser.allowDownloads(Present(tempDir))
+                _       <- Browser.allowDownloads(tempDir)
                 events1 <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 events2 <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 done1   <- Promise.init[Unit, Any]
@@ -373,7 +364,7 @@ class BrowserDownloadTest extends BrowserTest:
                     Browser.goto(html1).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(done1.get)
                 }
                 _ <- Browser.withNewTab {
-                    Browser.allowDownloads(Present(tempDir)).andThen {
+                    Browser.allowDownloads(tempDir).andThen {
                         // Explicit `[Unit, Sync]` ascription: Scala's effect-row inference within `withNewTab`'s body widens
                         // `S` to include `Browser & Abort[BrowserReadException]`, but `collectEvents` returns `Unit < Sync` so the
                         // narrower binding is correct. The ascription fixes the inference path; the implicit Isolate then resolves.
@@ -401,7 +392,6 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    // ── L10 - Pure boundary check (no Chrome) ──
     // The public DownloadBehavior maps to the right CDP wire string and the internal PageDownload.Behavior
     // case. This locks the public-to-internal boundary helper directly without any browser dependency.
     "Browser.DownloadBehavior.{Allow,Deny,Default}.wire and .toInternal pin the boundary helper" in run {
@@ -432,7 +422,7 @@ class BrowserDownloadTest extends BrowserTest:
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 done   <- Promise.init[Unit, Any]
                 _ <- Browser.onDownload(collectEvents(events, done)) {
-                    Browser.withDownloads(Present(tempDir)) {
+                    Browser.withDownloads(tempDir) {
                         Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl1"))).andThen(done.get)
                     }
                 }
@@ -471,7 +461,7 @@ class BrowserDownloadTest extends BrowserTest:
                        |<a id='b' href='$dataUrl' download='$fileB'>b</a>
                        |<a id='c' href='$dataUrl' download='$fileC'>c</a>""".stripMargin
                 )
-                _ <- Browser.allowDownloads(Present(tempDir))
+                _ <- Browser.allowDownloads(tempDir)
                 pair <- Browser.recordDownloads[Unit, Any] {
                     Browser.goto(html).andThen(
                         Browser.click(Browser.Selector.id("a")).andThen(

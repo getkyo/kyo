@@ -717,18 +717,16 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "sandboxed iframe with sandbox=\"allow-same-origin allow-scripts\" is fully scopable; sandbox=\"allow-scripts\" only (no allow-same-origin) aborts at iframe.of with BrowserIFrameInvalidException" in run {
+    "sandboxed iframe with sandbox=\"allow-same-origin allow-scripts\" is fully scopable" in run {
+        // The negative-half assertion (sandbox="allow-scripts" only must abort with BrowserIFrameInvalidException) was
+        // dropped: full Chrome denies an execution context to opaque-origin iframes, but chrome-headless-shell assigns
+        // one, so no real sandbox combination reliably produces a missing-execution-context across both binaries.
+        // BrowserIFrameInvalidException is still exercised elsewhere via the detached-frame and context-destroyed
+        // paths (e.g. the "withIFrame followed by withNewTab" test below).
         withBrowser {
-            // Permissive sandbox: same-origin + scripts. Should resolve and scope normally.
             val inner = """<body><span id="g">sandboxed</span></body>"""
             val parentOk = s"""<body>
                 <iframe id="frame" data-testid="frame" sandbox="allow-same-origin allow-scripts" srcdoc="${BrowserTest.htmlAttributeEscape(
-                    inner
-                )}"></iframe>
-            </body>"""
-            // Restrictive sandbox: scripts only, NO allow-same-origin → opaque origin → no execution context for our session.
-            val parentDenied = s"""<body>
-                <iframe id="frame" data-testid="frame" sandbox="allow-scripts" srcdoc="${BrowserTest.htmlAttributeEscape(
                     inner
                 )}"></iframe>
             </body>"""
@@ -737,22 +735,6 @@ class BrowserIFrameTest extends BrowserTest:
                     Browser.withIFrame(okHandle) {
                         Browser.text(Browser.Selector.css("#g")).map { t =>
                             assert(t == "sandboxed", s"expected 'sandboxed' but got '$t'")
-                        }
-                    }.andThen {
-                        // Now navigate to the denied variant and confirm iframe.of aborts with the typed exception.
-                        Browser.goto(page(parentDenied)).andThen {
-                            iframeRetry {
-                                Browser.assertExists(Browser.Selector.testId("frame"))
-                            }.andThen {
-                                tight {
-                                    Abort.run[BrowserIFrameException | BrowserElementException] {
-                                        Browser.iframe(Browser.Selector.testId("frame"))
-                                    }
-                                }.map {
-                                    case Result.Failure(_: BrowserIFrameInvalidException) => succeed
-                                    case other => fail(s"expected BrowserIFrameInvalidException but got $other")
-                                }
-                            }
                         }
                     }
                 }

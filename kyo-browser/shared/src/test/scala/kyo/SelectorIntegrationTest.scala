@@ -318,7 +318,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    // ── A1: implicit ARIA role matching ────────────────────────────────
+    // ── Implicit ARIA role matching ────────────────────────────────
 
     "Selector.role(button) matches <button> without explicit role attribute" in run {
         withBrowser {
@@ -564,7 +564,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    // ── Former Selector regressions (folded from SelectorBugTest) ──
+    // ── Selector regressions ──
 
     // Text selector should click the correct element.
     // selectorToCss maps Text to "*" which matches <html>, so click dispatches
