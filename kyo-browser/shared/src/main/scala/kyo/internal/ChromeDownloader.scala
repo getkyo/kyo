@@ -64,9 +64,12 @@ private[kyo] object ChromeDownloader:
         // Otherwise `latestVersion` issues an HTTPS request to the Chrome-for-Testing metadata endpoint, and slow CI
         // runners can take longer than a test's own timeout (~60s) to complete it, swallowing the
         // unsupported-platform signal that downstream test bases translate into a ScalaTest `cancel(...)`.
+        val resolveVersion: String < (Async & Abort[BrowserSetupException]) = version match
+            case Present(v) => v
+            case Absent     => latestVersion(cfg)
         for
             platform <- platformCode
-            v        <- version.fold(latestVersion(cfg))(v => v: String)
+            v        <- resolveVersion
             root     <- cacheRoot
             versionDir = root / s"chrome-headless-shell-$v-$platform"
             exec       = executablePath(versionDir, platform)
