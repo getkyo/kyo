@@ -154,12 +154,21 @@ private[internal] object MacroUtils:
         sym.companionModule.methodMember(defaultMethodName).nonEmpty
     end hasDefault
 
-    /** Gets the default value expression for a case class field at the given index, if any. */
-    private[internal] def getDefault(using Quotes)(sym: quotes.reflect.Symbol, idx: Int): Option[Expr[Any]] =
+    /** Gets the default value expression for a case class field at the given index, if any.
+      *
+      * For generic case classes, the generated default-value method is itself type-parameterized (`<init>$default$N[A, ...]`); we must
+      * apply the case class's type arguments to the method reference before treating it as an expression, otherwise `asExprOf` raises
+      * "Expected an expression. This is a partially applied Term" at macro expansion time.
+      */
+    private[internal] def getDefault(using Quotes)(tpe: quotes.reflect.TypeRepr, idx: Int): Option[Expr[Any]] =
         import quotes.reflect.*
+        val sym               = tpe.typeSymbol
         val defaultMethodName = s"$$lessinit$$greater$$default$$${idx + 1}"
         sym.companionModule.methodMember(defaultMethodName).headOption.map { method =>
-            Ref(sym.companionModule).select(method).asExprOf[Any]
+            val typeArgs = tpe.typeArgs
+            val ref      = Ref(sym.companionModule).select(method)
+            val applied  = if typeArgs.nonEmpty then ref.appliedToTypes(typeArgs) else ref
+            applied.asExprOf[Any]
         }
     end getDefault
 

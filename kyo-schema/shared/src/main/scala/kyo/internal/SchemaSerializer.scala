@@ -321,15 +321,22 @@ private[kyo] object SchemaSerializer:
             else
                 phase match
                     case 0 =>
-                        // Read entire flat object, extract discriminator, buffer other fields
+                        // Read entire flat object, extract discriminator, buffer other fields.
+                        // Use fieldParse + matchField to identify the discriminator in a wire-format-agnostic
+                        // way: JSON's matchField compares parsed UTF-8 bytes, Protobuf's compares the parsed
+                        // field tag's numeric ID against CodecMacro.fieldId(name). Without this routing the
+                        // Protobuf path would compare numeric tag-strings (e.g. "12345") against the literal
+                        // discriminator name ("type") and never find it.
                         val _                           = inner.objectStart()
                         val fields                      = scala.collection.mutable.ListBuffer[(String, Reader)]()
                         var foundVariant: Maybe[String] = Maybe.empty
+                        val discFieldBytes              = discField.getBytes(java.nio.charset.StandardCharsets.UTF_8)
                         while inner.hasNextField() do
-                            val fname = inner.field()
-                            if fname == discField then
+                            inner.fieldParse()
+                            if inner.matchField(discFieldBytes) then
                                 foundVariant = Maybe(inner.string())
                             else
+                                val fname    = inner.lastFieldName()
                                 val captured = inner.captureValue()
                                 fields += ((fname, captured))
                             end if
@@ -438,7 +445,16 @@ private[kyo] object SchemaSerializer:
             else if _parsedFieldName.isEmpty then false
             else
                 val expected = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
-                _parsedFieldName.get == expected
+                val parsed   = _parsedFieldName.get
+                if parsed == expected then true
+                else
+                    // Wire-format-agnostic fallback: when the underlying inner reader is wire-format-tagged
+                    // (e.g. Protobuf, which reports fields by their numeric tag id), the buffered "name" is a
+                    // numeric string. Match it against CodecMacro.fieldId(expected) to align with the way
+                    // the macro-generated case-class read body matches fields downstream.
+                    try parsed.toInt == CodecMacro.fieldId(expected)
+                    catch case _: NumberFormatException => false
+                end if
         end matchField
 
         override def lastFieldName(): String =
