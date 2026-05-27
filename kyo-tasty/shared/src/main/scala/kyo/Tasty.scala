@@ -445,6 +445,13 @@ object Tasty:
         private[kyo] val _position: kyo.internal.tasty.symbol.SingleAssign[Maybe[Position]] =
             new kyo.internal.tasty.symbol.SingleAssign
 
+        // Cached full name: computed once on first call to fullName, then returned from the cell.
+        // OnceCell's race-and-discard semantics are acceptable here: init() is a pure owner-chain walk
+        // that always returns the same Name; at most one redundant computation per symbol under contention.
+        // Unsafe: OnceCell is an unsafe-tier helper; AllowUnsafe is embraced at the fullName accessor boundary.
+        private[kyo] val _fullNameOnce: kyo.internal.tasty.symbol.OnceCell[Name] =
+            new kyo.internal.tasty.symbol.OnceCell[Name](() => Symbol.computeFullName(this))
+
         // Lazy body cell: populated on first call to Symbol.body. Not a write-once slot because the
         // computation is driven by the caller, not by classpath orchestration. OnceCell handles thread safety.
         // Unsafe: OnceCell is an unsafe-tier helper; AllowUnsafe is embraced at the body accessor boundary.
@@ -466,7 +473,11 @@ object Tasty:
             )
 
         // Pure accessors (no effect, always present even after classpath close).
-        def fullName: Name        = Symbol.computeFullName(this)
+        def fullName: Name =
+            // Unsafe: OnceCell.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
+            import AllowUnsafe.embrace.danger
+            _fullNameOnce.get()
+        end fullName
         def binaryName: String    = Symbol.computeBinaryName(this)
         def isInline: Boolean     = flags.contains(Flag.Inline)
         def isContextual: Boolean = flags.contains(Flag.Given)
