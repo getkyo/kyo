@@ -148,7 +148,7 @@ object KyoDoctestPlugin extends AutoPlugin {
             }
         }
 
-    override lazy val globalSettings: Seq[Setting[_]] = Seq(
+    override lazy val globalSettings: Seq[Setting[?]] = Seq(
         commands ++= Seq(
             aggregateCommand("doctest"),
             aggregateCommand("doctestFresh"),
@@ -163,23 +163,16 @@ object KyoDoctestPlugin extends AutoPlugin {
         concurrentRestrictions += Tags.limit(DoctestTag, 1)
     )
 
-    /** Version of the kyo-doctest library to inject.
-      *
-      * Reads from the system property `plugin.version` when set (the sbt scripted framework sets this to `version.value` at launch time).
-      * Falls back to the jar manifest implementation version for production use (when the jar is loaded from a published artifact). The
-      * plugin and kyo-doctest always share the same version since they live in the same repository.
-      */
-    private[sbt] val pluginVersion: String =
-        sys.props.getOrElse(
-            "plugin.version",
-            Option(getClass.getPackage.getImplementationVersion).getOrElse("0.0.0+SNAPSHOT")
-        )
-
-    override lazy val projectSettings: Seq[Setting[_]] = Seq(
-        // Inject kyo-doctest library into Test scope so Test/fullClasspath includes it.
-        // This ensures the forked JVM launched by Runner can find kyo.doctest.internal.cli.Main.
-        libraryDependencies += "io.getkyo" %% "kyo-doctest" % pluginVersion % Test,
-
+    override lazy val projectSettings: Seq[Setting[?]] = Seq(
+        // The kyo-doctest library must be on the doctest fork's classpath so the fork
+        // can find `kyo.doctest.internal.cli.Main`. The plugin does NOT add it via
+        // `libraryDependencies` because that creates a coursier bootstrap cycle: any
+        // project with the plugin enabled would need kyo-doctest in ivy before
+        // kyo-doctest itself can be published. The consumer build is expected to
+        // wire kyo-doctest's full Compile classpath onto each enabled project's
+        // `Test / unmanagedJars` via a project-graph dependency (in the kyo build
+        // this lives in `kyo-settings`). Project-graph deps are resolved by sbt's
+        // task engine, not coursier, so no cycle.
         doctestSources := {
             val base   = baseDirectory.value
             val direct = base / "README.md"
@@ -198,15 +191,14 @@ object KyoDoctestPlugin extends AutoPlugin {
         // compile). Cache lookups are fast enough that the IO concurrency from
         // a higher setting is not measurable. Default of 1 keeps the fiber
         // count equal to the actual compile concurrency.
-        doctestParallel      := 1,
-        doctestPredef        := Seq.empty[String],
-        doctestFreshDriver   := false,
+        doctestParallel    := 1,
+        doctestPredef      := Seq.empty[String],
+        doctestFreshDriver := false,
         // -XX:ActiveProcessorCount caps the JVM's view of available processors,
         // so dotty's internal worker pools (backend, parallel phases, JIT
         // compilation) size themselves to that number. Keeps a fork's CPU
         // contribution bounded to ~2 cores regardless of the host's core count.
         doctestForkJavaOptions := Seq("-Xmx8G", "-Xss10M", "-XX:ActiveProcessorCount=2"),
-
         doctest := Def.task {
             val log         = streams.value.log
             val sources     = doctestSources.value
@@ -218,19 +210,18 @@ object KyoDoctestPlugin extends AutoPlugin {
             val freshDriver = doctestFreshDriver.value
             val forkOpts    = doctestForkJavaOptions.value
             Runner.run(
-                sources         = sources,
-                classpath       = classpath,
-                scalacOpts      = scalacOpts,
-                cacheDir        = cacheDir,
-                parallel        = parallel,
-                predef          = predef,
-                freshDriver     = freshDriver,
+                sources = sources,
+                classpath = classpath,
+                scalacOpts = scalacOpts,
+                cacheDir = cacheDir,
+                parallel = parallel,
+                predef = predef,
+                freshDriver = freshDriver,
                 forkJavaOptions = forkOpts,
-                writeCache  = true,
-                log         = log
+                writeCache = true,
+                log = log
             )
         }.tag(DoctestTag).value,
-
         doctestFresh := Def.task {
             val log         = streams.value.log
             val sources     = doctestSources.value
@@ -242,19 +233,18 @@ object KyoDoctestPlugin extends AutoPlugin {
             val freshDriver = doctestFreshDriver.value
             val forkOpts    = doctestForkJavaOptions.value
             Runner.run(
-                sources         = sources,
-                classpath       = classpath,
-                scalacOpts      = scalacOpts,
-                cacheDir        = cacheDir,
-                parallel        = parallel,
-                predef          = predef,
-                freshDriver     = freshDriver,
+                sources = sources,
+                classpath = classpath,
+                scalacOpts = scalacOpts,
+                cacheDir = cacheDir,
+                parallel = parallel,
+                predef = predef,
+                freshDriver = freshDriver,
                 forkJavaOptions = forkOpts,
-                writeCache  = false,
-                log         = log
+                writeCache = false,
+                log = log
             )
         }.tag(DoctestTag).value,
-
         doctestClean := {
             val log      = streams.value.log
             val cacheDir = doctestCacheDir.value

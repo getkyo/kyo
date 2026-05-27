@@ -102,7 +102,17 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
-    doctestPredef := Seq("import kyo.*")
+    doctestPredef := Seq("import kyo.*"),
+    // Wire the in-tree kyo-doctest project's full Compile classpath onto every
+    // doctest-enabled project's Test classpath. The doctest fork needs the
+    // kyo-doctest library plus its transitive deps (kyo-core, kyo-schema,
+    // kyo-parse, dotty, scala-library, ...) to run the dotty driver.
+    // Declaring kyo-doctest as a Test libraryDependency would create a coursier
+    // bootstrap cycle (every plugin-enabled project's coursier resolve would
+    // need kyo-doctest in ivy before kyo-doctest itself can be published).
+    // A project-graph reference is resolved by sbt's task engine, not coursier,
+    // so the cycle disappears.
+    Test / unmanagedJars ++= (LocalProject("kyo-doctest") / Compile / fullClasspath).value
 )
 
 // Suppress sbt lintUnused warnings for `doctestPredef` set via kyo-settings on

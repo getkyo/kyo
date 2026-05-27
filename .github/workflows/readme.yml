@@ -21,4 +21,4 @@ jobs:
         with:
           jvm: corretto:24
           apps: sbt
-      - run: sbt 'publishLocal; doctest'
+      - run: sbt doctest

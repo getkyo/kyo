@@ -64,12 +64,12 @@ object Runner {
 
         try {
             val configJson = ConfigJson.encodeConfig(
-                sources     = sources,
-                classpath   = classpath,
-                scalacOpts  = scalacOpts,
-                cacheDir    = effectiveCacheDir,
-                parallel    = parallel,
-                predef      = predef,
+                sources = sources,
+                classpath = classpath,
+                scalacOpts = scalacOpts,
+                cacheDir = effectiveCacheDir,
+                parallel = parallel,
+                predef = predef,
                 freshDriver = freshDriver
             )
             NioFiles.writeString(configFile.toPath, configJson, StandardCharsets.UTF_8)
@@ -79,7 +79,8 @@ object Runner {
             val javaBin  = s"$javaHome${File.separator}bin${File.separator}java"
 
             val command = Seq(javaBin) ++ forkJavaOptions ++ Seq(
-                "-cp", cpString,
+                "-cp",
+                cpString,
                 "kyo.doctest.internal.cli.Main",
                 configFile.getAbsolutePath,
                 resultFile.getAbsolutePath
@@ -112,7 +113,7 @@ object Runner {
                 log.info(
                     s"doctest: total=${r.totalBlocks} compiled=${r.compiled} cacheHits=${r.cacheHits} failures=${r.failureCount}"
                 )
-                val summary = s"total=${r.totalBlocks} compiled=${r.compiled} cacheHits=${r.cacheHits} failures=${r.failureCount}"
+                val summary     = s"total=${r.totalBlocks} compiled=${r.compiled} cacheHits=${r.cacheHits} failures=${r.failureCount}"
                 val summaryFile = new File(effectiveCacheDir, "last-summary.txt")
                 NioFiles.writeString(summaryFile.toPath, summary, StandardCharsets.UTF_8)
             }
