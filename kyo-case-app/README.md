@@ -20,13 +20,13 @@ Works on JVM, Scala.js, and Scala Native.
 
 Add the dependency to your `build.sbt`:
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %%% "kyo-case-app" % "<latest version>"
 ```
 
 You also need a case-app dependency if you use its annotations or helpers directly:
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "com.github.alexarchambault" %%% "case-app" % "2.1.0"
 ```
 
@@ -52,7 +52,7 @@ object Greet extends KyoCaseApp[GreetOptions]:
 
 Point your build at that object as the main class, for example in sbt:
 
-```scala
+```scala doctest:expect=skipped
 Compile / mainClass := Some("Greet")
 ```
 
@@ -118,7 +118,7 @@ object TodoApp extends CommandsEntryPoint:
 
     private val store =
         import AllowUnsafe.embrace.danger
-        AtomicRef.Unsafe.init(Chunk.empty[Todo])
+        AtomicRef.Unsafe.init(Chunk.empty[Todo]).safe
 
     override def progName: String = "todo"
     def commands                  = Seq(Create, Complete, List, Delete, Start)

@@ -10,17 +10,48 @@ The engine coordinates multiple executors via time-limited claim leases, support
 
 Add the dependency to your `build.sbt`:
 
-```scala
+```
 libraryDependencies += "io.getkyo" %% "kyo-flow" % "<latest version>"
 ```
+
+<!-- doctest:setup
+```scala
+import kyo.*
+
+case class Order(item: String, qty: Int, price: Int = 10) derives Schema
+
+def sendEmail(to: String, msg: String): Unit < Sync       = ()
+def processOrder(id: String): Unit < Sync                 = ()
+def sendFollowUp(id: String): Unit < Sync                 = ()
+def notifyResult(decision: String): Unit < Sync           = ()
+def checkStatus(url: String): String < Sync               = "ready"
+def probe(endpoint: String): String < Sync                = "healthy"
+def fetch(url: String): String < Sync                     = ""
+def fetchData(url: String): String < Sync                 = ""
+def reserveInventory(order: Order): String < Sync         = "resv-1"
+def cancelReservation(id: String): Unit < (Async & Abort[FlowException]) = ()
+def chargeCard(order: Order): String < Sync               = "charge-1"
+def refundCard(id: String): Unit < (Async & Abort[FlowException]) = ()
+def ship(order: Order): Unit < Sync                       = ()
+def riskyOperation(input: String): String < Sync          = "ok"
+
+val validateFlow: Flow[Any, Any, Any]  = Flow.init("validate")
+val processFlow: Flow[Any, Any, Any]   = Flow.init("process")
+val pricingFlow: Flow[Any, Any, Any]   = Flow.init("pricing-base")
+val inventoryFlow: Flow[Any, Any, Any] = Flow.init("inventory")
+val shippingFlow: Flow[Any, Any, Any]  = Flow.init("shipping")
+val primaryFlow: Flow[Any, Any, Any]   = Flow.init("primary")
+val fallbackFlow: Flow[Any, Any, Any]  = Flow.init("fallback")
+val orderFlow: Flow[Any, Any, Any]     = Flow.init("order-flow")
+val paymentFlow: Flow[Any, Any, Any]   = Flow.init("payment")
+```
+-->
 
 ## Outputs
 
 The simplest workflow computes a value and stores it:
 
-```scala
-import kyo.*
-
+```scala doctest:scope=env:greet
 val flow = Flow.init("hello")
     .output("greeting")(_ => "Hello, World!")
 ```
@@ -51,31 +82,27 @@ The three type parameters on `Flow[In, Out, S]` track this automatically:
 
 Run a workflow locally for testing:
 
-```scala
-val result = Flow.runLocal(flow)
-// result.greeting == "Hello, World!"
+```scala doctest:scope=env:greet
+val result = Flow.runLocal(flow, Record.empty)
 ```
 
 ## Inputs
 
 An input declares a value the workflow needs from the outside world. The execution suspends at the input node until the value is delivered externally via a signal:
 
-```scala
-case class Order(item: String, qty: Int) derives Json
-
+```scala doctest:scope=env:orderflow
 val flow = Flow.init("order")
     .input[Order]("order")
     .output("total")(ctx => ctx.order.qty * 100)
     .output("receipt")(ctx => s"${ctx.order.item} x${ctx.order.qty} = ${ctx.total}")
 ```
 
-Input types must have a `Json` instance for serialization. Like outputs, each input adds a typed field to the context.
+Input types must have a `Schema` instance for serialization. Like outputs, each input adds a typed field to the context.
 
 For testing, pre-populate inputs with `runLocal`:
 
-```scala
+```scala doctest:scope=env:orderflow
 val result = Flow.runLocal(flow, "order" ~ Order("Widget", 3))
-// result.receipt == "Widget x3 = 300"
 ```
 
 The `~` operator creates a typed record field: `"order" ~ Order("Widget", 3)` is a `Record["order" ~ Order]`. Multiple fields combine with `&`: `"x" ~ 1 & "y" ~ "hello"`.
@@ -209,12 +236,16 @@ val fastest = Flow.race(primaryFlow, fallbackFlow)
 `subflow` embeds a child flow within a parent. The input mapper transforms the parent's context into the child's expected inputs:
 
 ```scala
+val childFlow = Flow.init("payment-child")
+    .input[Int]("amount")
+    .output("confirmation")(ctx => s"paid:${ctx.amount}")
+
 val parent = Flow.init("parent")
     .input[Order]("order")
-    .subflow("payment", paymentFlow)(ctx =>
+    .subflow("payment", childFlow)(ctx =>
         "amount" ~ (ctx.order.qty * ctx.order.price)
     )
-    .step("ship")(ctx => ship(ctx.payment))
+    .step("ship")(_ => ())
 ```
 
 ## Error Handling
@@ -228,7 +259,7 @@ val flow = Flow.init("resilient")
     .input[String]("url")
     .output("data",
         timeout = 10.seconds,
-        retry = Maybe(Schedule.exponential(1.second, maxBackoff = 1.minute))
+        retry = Maybe(Schedule.exponentialBackoff(1.second, 2.0, 1.minute))
     )(ctx => fetchData(ctx.url))
 ```
 
@@ -259,9 +290,11 @@ If `ship` fails, compensations run in reverse: first `refundCard`, then `cancelR
 For error recovery within a step body, use Kyo's `Abort.recover`:
 
 ```scala
-.output("result")(ctx =>
-    Abort.recover[Throwable](_ => "fallback")(riskyOperation(ctx.input))
-)
+Flow.init("recover")
+    .input[String]("input")
+    .output("result")(ctx =>
+        Abort.recover[Throwable](_ => "fallback")(riskyOperation(ctx.input))
+    )
 ```
 
 ### Exception Types
@@ -288,7 +321,8 @@ API methods use precise Abort union types, so you can handle exactly the errors 
 `Flow.runLocal` runs a flow in-memory, blocking until completion. Useful for tests:
 
 ```scala
-val result = Flow.runLocal(flow, "x" ~ 42)
+val simpleFlow = Flow.init("demo").input[Int]("x").output("doubled")(ctx => ctx.x * 2)
+val result = Flow.runLocal(simpleFlow, "x" ~ 42)
 ```
 
 ### Server
@@ -297,10 +331,11 @@ val result = Flow.runLocal(flow, "x" ~ 42)
 
 ```scala
 // In-memory store (development)
-Flow.runServer(orderFlow, shippingFlow)
+val serverDev: HttpServer < (Async & Scope) = Flow.runServer(orderFlow, shippingFlow)
 
 // Durable store (production)
-Flow.runServer(store, orderFlow, shippingFlow)
+val serverProd: HttpServer < (Async & Scope) =
+    FlowStore.initMemory.map(store => Flow.runServer(store, orderFlow, shippingFlow))
 ```
 
 The server exposes:
@@ -323,8 +358,10 @@ The server exposes:
 To compose with your own endpoints, use `Flow.runHandlers`:
 
 ```scala
-Flow.runHandlers(store, orderFlow).map { handlers =>
-    HttpServer.init((myHandlers ++ handlers.toSeq)*)
+FlowStore.initMemory.map { store =>
+    Flow.runHandlers(store, orderFlow).map { handlers =>
+        HttpServer.init(handlers.toSeq*)
+    }
 }
 ```
 
@@ -332,8 +369,13 @@ Flow.runHandlers(store, orderFlow).map { handlers =>
 
 `FlowEngine` provides the full programmatic API without HTTP:
 
-```scala
-FlowEngine.init(store, orderFlow, shippingFlow).map { engine =>
+```scala doctest:scope=env:engine
+val engineEffect: FlowEngine < (Async & Scope) =
+    FlowStore.initMemory.map(store => FlowEngine.init(store, orderFlow, shippingFlow))
+```
+
+```scala doctest:scope=env:engine
+engineEffect.map { engine =>
     for
         handle <- engine.workflows.start(Flow.Id.Workflow("order"))
         _      <- handle.signal("order", Order("Widget", 3))
@@ -345,15 +387,17 @@ FlowEngine.init(store, orderFlow, shippingFlow).map { engine =>
 The engine runs worker fibers that poll the store, claim executions via time-limited leases, and interpret the flow step by step. Configuration:
 
 ```scala
-FlowEngine.init(
-    store,
-    workerCount  = 4,
-    lease        = 30.seconds,
-    renewEvery   = 10.seconds,
-    batchSize    = 8,
-    pollTimeout  = 30.seconds,
-    flows        = Seq(orderFlow, shippingFlow)
-)
+FlowStore.initMemory.map { store =>
+    FlowEngine.init(
+        store,
+        workerCount  = 4,
+        lease        = 30.seconds,
+        renewEvery   = 10.seconds,
+        batchSize    = 8,
+        pollTimeout  = 30.seconds,
+        flows        = Seq(orderFlow, shippingFlow)
+    )
+}
 ```
 
 ## Monitoring
@@ -371,22 +415,32 @@ Running ──→ Compensating ──→ Failed
 Any non-terminal ──→ Cancelled
 ```
 
-```scala
-engine.executions.describe(eid).map { detail =>
-    detail.status      // Flow.Status
-    detail.progress    // step-by-step node progress
-    detail.inputs      // which inputs are delivered
-}
+```scala doctest:scope=env:monitor
+val eid: Flow.Id.Execution = Flow.Id.Execution("exec-123")
+val monitorEffect =
+    FlowStore.initMemory.map { store =>
+        FlowEngine.init(store, orderFlow).map { engine =>
+            engine.executions.describe(eid).map { detail =>
+                val _status   = detail.status    // Flow.Status
+                val _progress = detail.progress  // step-by-step node progress
+                val _inputs   = detail.inputs    // which inputs are delivered
+            }
+        }
+    }
 ```
 
 ### Events
 
 Every state change is recorded as a `Flow.Event`:
 
-```scala
-engine.executions.history(eid).map { page =>
-    page.events  // Chunk[Flow.Event]
-    page.hasMore // pagination
+```scala doctest:scope=env:monitor
+FlowStore.initMemory.map { store =>
+    FlowEngine.init(store, orderFlow).map { engine =>
+        engine.executions.history(eid).map { page =>
+            val _events   = page.events   // Chunk[Flow.Event]
+            val _hasMore  = page.hasMore  // pagination
+        }
+    }
 }
 ```
 
@@ -396,9 +450,14 @@ Event kinds: `Created`, `StepStarted`, `StepCompleted`, `StepRetried`, `StepTime
 
 Render workflow structure or execution progress:
 
-```scala
-engine.workflows.diagram(wfId, Flow.DiagramFormat.Mermaid)
-engine.executions.diagram(eid, Flow.DiagramFormat.Dot)
+```scala doctest:scope=env:monitor
+val wfId: Flow.Id.Workflow = Flow.Id.Workflow("order")
+FlowStore.initMemory.map { store =>
+    FlowEngine.init(store, orderFlow).map { engine =>
+        engine.workflows.diagram(wfId, Flow.DiagramFormat.Mermaid)
+        engine.executions.diagram(eid, Flow.DiagramFormat.Dot)
+    }
+}
 ```
 
 Supported formats: `Mermaid`, `Dot`, `Bpmn`, `Elk`, `Json`. Also available directly on a flow definition:
@@ -411,7 +470,7 @@ Flow.renderMermaid(orderFlow)
 
 The in-memory store (`FlowStore.initMemory`) is for development and testing. For production, implement `FlowStore` against a durable database:
 
-```scala
+```scala doctest:expect=skipped
 class PostgresFlowStore(pool: ConnectionPool) extends FlowStore:
     def claimReady(...) = // SELECT ... FOR UPDATE SKIP LOCKED
     def updateStatus(...) = // UPDATE + INSERT in one transaction
@@ -430,11 +489,12 @@ Key invariants:
 Multiple engine instances on the same store coordinate automatically via claim leases:
 
 ```scala
-// Instance A
-FlowEngine.init(store, workerCount = 2, lease = 30.seconds, flows = Seq(orderFlow))
-
-// Instance B (same store, separate process)
-FlowEngine.init(store, workerCount = 2, lease = 30.seconds, flows = Seq(orderFlow))
+FlowStore.initMemory.map { store =>
+    // Instance A
+    FlowEngine.init(store, workerCount = 2, lease = 30.seconds, flows = Seq(orderFlow))
+    // Instance B (same store, separate process)
+    FlowEngine.init(store, workerCount = 2, lease = 30.seconds, flows = Seq(orderFlow))
+}
 ```
 
 If an executor crashes, its lease expires and another executor picks up the work.

@@ -1,5 +1,18 @@
 # kyo-config
 
+<!-- doctest:setup
+```scala
+import kyo.*
+
+// Stub flag objects used in examples (stand-ins for objects declared in named packages)
+object poolSize   extends StaticFlag[Int](10)
+object maxRetries extends StaticFlag[Int](3)
+object jdbcUrl    extends StaticFlag[String]("jdbc:h2:mem:test")
+object newCheckout extends DynamicFlag[Boolean](false)
+object rateLimit   extends DynamicFlag[Int](100)
+```
+-->
+
 Type-safe, cross-platform configuration flags for Kyo applications. Flags are Scala objects whose fully-qualified name becomes the config key. Two kinds are provided:
 
 - **StaticFlag** resolves once at class load. Use for infrastructure settings that should not change at runtime -- pool sizes, timeouts, codec selections.
@@ -11,7 +24,7 @@ Both share the same declaration style, typed parsing, and validation. Flags can 
 
 Add the dependency to your `build.sbt`:
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %% "kyo-config" % "<latest version>"
 ```
 
@@ -21,7 +34,7 @@ libraryDependencies += "io.getkyo" %% "kyo-config" % "<latest version>"
 
 Flags are declared as Scala objects. The fully-qualified object name becomes the configuration key:
 
-```scala
+```scala doctest:expect=skipped
 package myapp.db
 
 import kyo.*
@@ -38,8 +51,8 @@ object jdbcUrl    extends StaticFlag[String]("jdbc:h2:mem:test")
 A static flag's value is available immediately -- it's just a field read:
 
 ```scala
-val size: Int = myapp.db.poolSize()
-val url: String = myapp.db.jdbcUrl()
+val size: Int = poolSize()
+val url: String = jdbcUrl()
 ```
 
 ### Configuration Sources
@@ -56,7 +69,7 @@ The first source found wins. When a flag resolves to its default, kyo-config sca
 
 An optional validation function transforms or constrains the resolved value:
 
-```scala
+```scala doctest:expect=skipped
 package myapp.db
 
 import kyo.*
@@ -100,7 +113,7 @@ The `kyo-data` module adds readers for Kyo's data types (available when `kyo-dat
 
 The `Record` reader is derived at compile time — it summons a `Flag.Reader` for each field's value type and validates that all required fields are present. This lets you define structured, multi-field configuration as a single flag:
 
-```scala
+```scala doctest:expect=skipped
 package myapp.db
 
 import kyo.*
@@ -131,9 +144,9 @@ import kyo.*
 case class Endpoint(host: String, port: Int)
 
 given Flag.Reader[Endpoint] = new Flag.Reader[Endpoint]:
-  def apply(s: String): Endpoint =
+  def apply(s: String): Either[Throwable, Endpoint] =
     val parts = s.split(":")
-    Endpoint(parts(0), parts(1).toInt)
+    Right(Endpoint(parts(0), parts(1).toInt))
   def typeName: String = "Endpoint"
 ```
 
@@ -145,7 +158,7 @@ Parse errors at class load time throw a `FlagValueParseException`, failing fast 
 
 Dynamic flags follow the same declaration pattern:
 
-```scala
+```scala doctest:expect=skipped
 package myapp.features
 
 import kyo.*
@@ -159,8 +172,8 @@ object rateLimit   extends DynamicFlag[Int](100)
 Dynamic flags evaluate against a key (typically a user ID or tenant ID) and optional attributes for path-based matching:
 
 ```scala
-val enabled: Boolean = myapp.features.newCheckout("user-123")
-val limit: Int = myapp.features.rateLimit("tenant-abc", "premium")
+val enabled: Boolean = newCheckout("user-123")
+val limit: Int = rateLimit("tenant-abc", "premium")
 ```
 
 The key identifies the entity being evaluated. Attributes provide additional context for matching (see the Rollout DSL section below for how keys and attributes are used in rollout expressions).
@@ -168,7 +181,7 @@ The key identifies the entity being evaluated. Attributes provide additional con
 Each call to `apply` also tracks evaluation counters (bounded at 100 distinct result values). For hot loops where counter overhead matters, use `evaluate` instead:
 
 ```scala
-val enabled: Boolean = myapp.features.newCheckout.evaluate("user-123")
+val enabled: Boolean = newCheckout.evaluate("user-123")
 ```
 
 ### Runtime Updates
@@ -176,8 +189,9 @@ val enabled: Boolean = myapp.features.newCheckout.evaluate("user-123")
 Dynamic flags can be updated at runtime. Since `update` and `reload` perform side effects, they require an `AllowUnsafe` evidence:
 
 ```scala
-myapp.features.newCheckout.update("true")
-myapp.features.rateLimit.update("200")
+import kyo.AllowUnsafe.embrace.danger
+newCheckout.update("true")
+rateLimit.update("200")
 ```
 
 The new value is parsed and validated atomically -- if anything fails, the old state is preserved.
@@ -185,7 +199,7 @@ The new value is parsed and validated atomically -- if anything fails, the old s
 The current expression is always available:
 
 ```scala
-val expr: String = myapp.features.newCheckout.expression
+val expr: String = newCheckout.expression
 ```
 
 ### Reloading from Config Source
@@ -193,9 +207,10 @@ val expr: String = myapp.features.newCheckout.expression
 `reload()` re-reads the expression from the original config source (system property or environment variable):
 
 ```scala
-myapp.features.newCheckout.reload() match
-  case Flag.ReloadResult.Updated(expr) =>
-    println(s"Updated to: $expr")
+import kyo.AllowUnsafe.embrace.danger
+newCheckout.reload() match
+  case Flag.ReloadResult.Updated(newExpr) =>
+    println(s"Updated to: $newExpr")
   case Flag.ReloadResult.Unchanged =>
     println("Expression unchanged")
   case Flag.ReloadResult.NoSource =>
@@ -255,9 +270,9 @@ For **DynamicFlag**, the path comes from the attributes passed by the caller:
 
 ```scala
 // -Dmyapp.features.rateLimit="200@premium;50@free;100"
-myapp.features.rateLimit("tenant-abc", "premium") // 200
-myapp.features.rateLimit("tenant-xyz", "free")    // 50
-myapp.features.rateLimit("tenant-def")            // 100 (terminal)
+rateLimit("tenant-abc", "premium") // 200
+rateLimit("tenant-xyz", "free")    // 50
+rateLimit("tenant-def")            // 100 (terminal)
 ```
 
 Multi-segment paths match as a prefix:
@@ -359,7 +374,7 @@ However, **decreasing** a percentage can remove entities -- going from 75% back 
 
 StaticFlag evaluates the rollout expression once at class load time. The path comes from `kyo.rollout.path` (or auto-detected cloud metadata), and the bucket is derived from hashing that path:
 
-```scala
+```scala doctest:expect=skipped
 package myapp.db
 
 import kyo.*
@@ -422,7 +437,7 @@ Missing segments are skipped. For example, if only `AWS_REGION=us-east-1` is set
 
 DynamicFlag evaluates the rollout expression on every call. The path comes from the caller's attributes, and the bucket is derived from hashing the caller's key:
 
-```scala
+```scala doctest:expect=skipped
 package myapp.features
 
 import kyo.*
@@ -439,7 +454,8 @@ The key `"user-123"` determines the bucket. The attribute `"premium"` is matched
 Dynamic flags also accept rollout expressions via `update()`:
 
 ```scala
-myapp.features.newCheckout.update("true@premium/75%;true@free/25%;false")
+import kyo.AllowUnsafe.embrace.danger
+newCheckout.update("true@premium/75%;true@free/25%;false")
 ```
 
 ### Validating Expressions
@@ -587,7 +603,7 @@ The `kyo-http` module provides `FlagAdmin` for managing flags over HTTP. Add kyo
 
 `FlagAdmin.routes` returns a sequence of HTTP handlers for flag management:
 
-```scala
+```scala doctest:expect=skipped
 import kyo.*
 
 val adminHandlers = FlagAdmin.routes(prefix = "flags")
@@ -615,7 +631,7 @@ Token-based authentication is configured via the `kyo.flag.admin.token` system p
 
 Read-only mode blocks all mutations:
 
-```scala
+```scala doctest:expect=skipped
 import kyo.*
 
 val adminHandlers = FlagAdmin.routes(prefix = "flags", readOnly = true)
@@ -629,7 +645,7 @@ val adminHandlers = FlagAdmin.routes(prefix = "flags", readOnly = true)
 
 `startReloader` polls system properties and environment variables on an interval:
 
-```scala
+```scala doctest:expect=skipped
 import kyo.*
 
 val reloader = FlagSync.startReloader(30.seconds)
@@ -641,7 +657,7 @@ Each cycle iterates over all registered dynamic flags and calls `reload()`. Stat
 
 `startSync` fetches expressions from a caller-supplied function, such as a database, Consul, or etcd:
 
-```scala
+```scala doctest:expect=skipped
 import kyo.*
 
 val sync = FlagSync.startSync(30.seconds, name =>
