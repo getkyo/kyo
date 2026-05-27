@@ -98,16 +98,13 @@ object JvmFileSource extends FileSource:
                     else
                         val results = mutable.ArrayBuffer.empty[String]
                         Files.walk(root).iterator().asScala.foreach: p =>
-                            val name = p.getFileName.toString
-                            val isMatch = Files.isRegularFile(p) && {
-                                var i     = 0
-                                var found = false
-                                while i < suffixes.length && !found do
-                                    if name.endsWith(suffixes(i)) then found = true
-                                    i += 1
-                                found
-                            }
-                            if isMatch then results += p.toString
+                            val name  = p.getFileName.toString
+                            var i     = 0
+                            var found = false
+                            while i < suffixes.length && !found do
+                                if name.endsWith(suffixes(i)) then found = true
+                                i += 1
+                            if found then results += p.toString
                         Chunk.from(results.toSeq)
                     end if
                 catch
@@ -225,17 +222,15 @@ object JvmFileSource extends FileSource:
             else
                 val results = mutable.ArrayBuffer.empty[String]
                 Files.walk(jrtPath).iterator().asScala.foreach: p =>
-                    val name = p.getFileName.toString
-                    if Files.isRegularFile(p) then
-                        var i     = 0
-                        var found = false
-                        while i < suffixes.length && !found do
-                            if name.endsWith(suffixes(i)) then
-                                results += "jrt:/" + p.toString
-                                found = true
-                            i += 1
-                        end while
-                    end if
+                    val name  = p.getFileName.toString
+                    var i     = 0
+                    var found = false
+                    while i < suffixes.length && !found do
+                        if name.endsWith(suffixes(i)) then
+                            results += "jrt:/" + p.toString
+                            found = true
+                        i += 1
+                    end while
                 Chunk.from(results.toSeq)
             end if
         end if
