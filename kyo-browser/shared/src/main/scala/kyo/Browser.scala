@@ -152,12 +152,19 @@ object Browser:
 
     // --- Lifecycle ---
 
-    /** Downloads Chrome-for-Testing (if not already cached) and returns a [[LaunchConfig]] pointing at the downloaded executable.
+    /** Downloads `chrome-headless-shell` (if not already cached) and returns a [[LaunchConfig]] pointing at the downloaded executable.
       * Equivalent to calling `LaunchConfig.default.copy(executable = <path>)` with the downloaded binary. The binary is cached under
       * `KYO_BROWSER_CACHE` (or the platform default) after the first download.
       *
+      * `chrome-headless-shell` is Google's standalone headless build of Chrome (the same code path as `chrome --headless=new`, packaged
+      * without the GUI compositor / GPU stack / extension loader). ~120 MB compressed, faster startup, smaller memory footprint, fully CDP-
+      * compatible. Use [[LaunchConfig.chrome]] if you need a full Chrome (e.g. for `headless = false`).
+      *
       * `version = Absent` (the default) resolves the latest known-good Stable Chrome-for-Testing version dynamically by querying Google's
       * metadata endpoint; `Present(v)` pins to a caller-supplied build.
+      *
+      * Aborts with [[BrowserSetupException]] on platforms Google does not publish for (notably linux-arm64); the error text points users at
+      * [[LaunchConfig.chromium]] for a system-installed Chromium.
       *
       * @see
       *   [[Browser.run(v)]], a convenience overload that calls this method and immediately runs a computation
@@ -3090,15 +3097,17 @@ object Browser:
         /** Returns [[LaunchConfig.default]] with `executable` set to `google-chrome` (or the provided path). */
         def chrome(executable: String = "google-chrome"): LaunchConfig = default.copy(executable = executable)
 
-        /** Nested launch-time configuration for the on-demand Chrome-for-Testing downloader used by [[Browser.chromeForTestingLaunchConfig]]
-          * and the zero-arg [[Browser.run]] overload.
+        /** Nested launch-time configuration for the on-demand `chrome-headless-shell` downloader used by
+          * [[Browser.chromeForTestingLaunchConfig]] and the zero-arg [[Browser.run]] overload. Downloads target the Chrome-for-Testing
+          * archive's `chrome-headless-shell-{platform}.zip` artifact.
           *
           * @param metadataUrl
-          *   URL of the Chrome-for-Testing last-known-good-versions metadata endpoint
+          *   URL of the Chrome-for-Testing last-known-good-versions metadata endpoint; used to resolve "latest" when no explicit version is
+          *   passed
           * @param fallbackVersion
           *   offline backstop version used when the metadata endpoint is unreachable
           * @param downloadTimeout
-          *   per-download time budget; sized for the ~170 MB Chrome-for-Testing zip on slow links and CI environments
+          *   per-download time budget; sized for the ~120 MB `chrome-headless-shell` zip on slow links and CI environments
           */
         final case class ChromeDownloaderConfig(
             metadataUrl: String,

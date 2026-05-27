@@ -85,9 +85,10 @@ sealed trait BrowserAssertionException extends BrowserException with BrowserMuta
   */
 sealed trait BrowserIFrameException extends BrowserException
 
-/** Marker for failures setting up the browser environment -- launching the executable, downloading or extracting the Chrome-for-Testing
-  * archive, creating user-data temp dirs, or detecting an unsupported platform. Distinct from [[BrowserConnectionException]]: a setup
-  * failure happens before any CDP session exists, while a connection failure means an established session has dropped.
+/** Marker for failures setting up the browser environment -- launching the executable, downloading or extracting the
+  * `chrome-headless-shell` archive, creating user-data temp dirs, or detecting an unsupported platform. Distinct from
+  * [[BrowserConnectionException]]: a setup failure happens before any CDP session exists, while a connection failure means an established
+  * session has dropped.
   *
   * @see
   *   [[BrowserSetupFailedException]].

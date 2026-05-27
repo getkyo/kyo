@@ -73,7 +73,7 @@ class ChromeDownloaderTest extends Test:
                     arch     <- System.architecture
                     platform <- ChromeDownloader.resolvePlatform(os, arch)
                     customVersion = "999.0.1234.567"
-                    versionDir    = tmp / s"chrome-$customVersion-$platform"
+                    versionDir    = tmp / s"chrome-headless-shell-$customVersion-$platform"
                     exec          = ChromeDownloader.executablePath(versionDir, platform)
                     _ <- exec.write("fake-exec") // createFolders=true creates the full ancestor chain
                     sys = systemWithCache(tmp)(os, arch)
@@ -82,7 +82,10 @@ class ChromeDownloaderTest extends Test:
                         Browser.LaunchConfig.default.chromeDownloaderConfig
                     ))
                 yield
-                    assert(resolved.contains(s"chrome-$customVersion-$platform"), s"resolved path '$resolved' missing version")
+                    assert(
+                        resolved.contains(s"chrome-headless-shell-$customVersion-$platform"),
+                        s"resolved path '$resolved' missing version"
+                    )
                     assert(resolved == exec.unsafe.show, s"resolved path '$resolved' != expected '${exec.unsafe.show}'")
                 end for
             }
@@ -138,36 +141,51 @@ class ChromeDownloaderTest extends Test:
 
     "resolvePlatform(Linux, Arm) → Abort.fail with BrowserSetupFailedException" in run {
         Abort.run[BrowserSetupException](ChromeDownloader.resolvePlatform(OS.Linux, Arch.Arm)).map {
-            case Result.Failure(_: BrowserSetupFailedException) => succeed
-            case other                                          => fail(s"expected Failure(BrowserSetupFailedException) but got $other")
+            case Result.Failure(ex: BrowserSetupFailedException) =>
+                val msg = ex.getMessage
+                // The error message must guide the user to the system-Chromium escape hatch; the test
+                // anchors this contract so the message can't regress to a bare "unsupported".
+                assert(msg.contains("cannot auto-download chrome-headless-shell"), s"missing auto-download marker: '$msg'")
+                assert(msg.contains("apt install chromium-browser"), s"missing apt install hint: '$msg'")
+                assert(msg.contains("LaunchConfig.chromium"), s"missing LaunchConfig.chromium pointer: '$msg'")
+            case other => fail(s"expected Failure(BrowserSetupFailedException) but got $other")
+        }
+    }
+
+    "resolvePlatform(Linux, Aarch64) → Abort.fail with the same linux-arm guidance" in run {
+        Abort.run[BrowserSetupException](ChromeDownloader.resolvePlatform(OS.Linux, Arch.Aarch64)).map {
+            case Result.Failure(ex: BrowserSetupFailedException) =>
+                val msg = ex.getMessage
+                assert(msg.contains("apt install chromium-browser"), s"missing apt install hint: '$msg'")
+            case other => fail(s"expected Failure(BrowserSetupFailedException) but got $other")
         }
     }
 
     // ---- executablePath per-platform ----
 
-    "executablePath for mac-arm64 ends with 'Google Chrome for Testing'" in {
+    "executablePath for mac-arm64 ends with 'chrome-headless-shell'" in {
         val ep = ChromeDownloader.executablePath(Path("v"), "mac-arm64")
-        assert(ep.name == Present("Google Chrome for Testing"), s"name=${ep.name}")
+        assert(ep.name == Present("chrome-headless-shell"), s"name=${ep.name}")
     }
 
-    "executablePath for mac-x64 ends with 'Google Chrome for Testing'" in {
+    "executablePath for mac-x64 ends with 'chrome-headless-shell'" in {
         val ep = ChromeDownloader.executablePath(Path("v"), "mac-x64")
-        assert(ep.name == Present("Google Chrome for Testing"), s"name=${ep.name}")
+        assert(ep.name == Present("chrome-headless-shell"), s"name=${ep.name}")
     }
 
-    "executablePath for linux64 ends with 'chrome'" in {
+    "executablePath for linux64 ends with 'chrome-headless-shell'" in {
         val ep = ChromeDownloader.executablePath(Path("v"), "linux64")
-        assert(ep.name == Present("chrome"), s"name=${ep.name}")
+        assert(ep.name == Present("chrome-headless-shell"), s"name=${ep.name}")
     }
 
-    "executablePath for win64 ends with 'chrome.exe'" in {
+    "executablePath for win64 ends with 'chrome-headless-shell.exe'" in {
         val ep = ChromeDownloader.executablePath(Path("v"), "win64")
-        assert(ep.name == Present("chrome.exe"), s"name=${ep.name}")
+        assert(ep.name == Present("chrome-headless-shell.exe"), s"name=${ep.name}")
     }
 
-    "executablePath for win32 ends with 'chrome.exe'" in {
+    "executablePath for win32 ends with 'chrome-headless-shell.exe'" in {
         val ep = ChromeDownloader.executablePath(Path("v"), "win32")
-        assert(ep.name == Present("chrome.exe"), s"name=${ep.name}")
+        assert(ep.name == Present("chrome-headless-shell.exe"), s"name=${ep.name}")
     }
 
     // ---- downloadZip network failure → BrowserSetupFailedException ----
@@ -211,7 +229,7 @@ class ChromeDownloaderTest extends Test:
                     arch     <- System.architecture
                     platform <- ChromeDownloader.resolvePlatform(os, arch)
                     version    = "1.2.3.4"
-                    versionDir = tmp / s"chrome-$version-$platform"
+                    versionDir = tmp / s"chrome-headless-shell-$version-$platform"
                     exec       = ChromeDownloader.executablePath(versionDir, platform)
                     counter <- AtomicRef.init(0)
                     sys = systemWithCache(tmp)(os, arch)

@@ -69,7 +69,9 @@ process    one Chrome process; launched by `Browser.run(launch)` or shared acros
 
 There are three entry points for materialising a browser:
 
-`Browser.run(launch, session)` is the everyday form. It launches a fresh Chrome, runs the body, and shuts the process down when the body completes (whether by success, failure, or interruption). The no-argument overload downloads the latest known-good Chrome-for-Testing on first use, caches the binary under the platform cache directory (override via `KYO_BROWSER_CACHE`), and launches it headless.
+`Browser.run(launch, session)` is the everyday form. It launches a fresh Chrome, runs the body, and shuts the process down when the body completes (whether by success, failure, or interruption). The no-argument overload downloads `chrome-headless-shell` (the lightweight headless build Google publishes alongside full Chrome for testing) on first use, caches the binary under the platform cache directory (override via `KYO_BROWSER_CACHE`), and launches it.
+
+Auto-download covers five platforms: macOS Intel, macOS Apple Silicon, Linux x86_64, Windows 64-bit, Windows 32-bit. Google does not publish a Linux ARM (or Windows ARM) build, so the zero-arg overload aborts on those platforms with a [`BrowserSetupException`](shared/src/main/scala/kyo/BrowserException.scala) whose message points you at a system-installed Chromium: install it via your package manager (e.g. `apt install chromium-browser`) and pass `Browser.LaunchConfig.chromium("chromium-browser")` (or another absolute path) to `Browser.run(config) { ... }` explicitly.
 
 ```scala
 Browser.run {
@@ -363,7 +365,7 @@ Browser.withViewport(width = 1440, height = 900) {
 
 | Field | Purpose |
 |---|---|
-| `executable` | Path to the Chrome binary; defaults to the downloaded Chrome-for-Testing |
+| `executable` | Path to the Chrome binary; defaults to the downloaded `chrome-headless-shell` |
 | `headless` | Headless mode toggle (default `true`) |
 | `extraArgs` | Extra Chromium command-line args |
 | `launchTimeout` | Upper bound on the launch handshake |
@@ -371,7 +373,7 @@ Browser.withViewport(width = 1440, height = 900) {
 | `closeGrace` | Grace period for clean Chrome shutdown |
 | `tmpDirRemovalSchedule` | Retry schedule for cleaning up the per-launch tmp dir |
 | `devToolsActivePortPollInterval` | Polling interval while waiting for `DevToolsActivePort` |
-| `chromeDownloaderConfig` | Config for the bundled Chrome-for-Testing downloader |
+| `chromeDownloaderConfig` | Config for the bundled `chrome-headless-shell` downloader |
 
 ## Isolation: sequential and concurrent
 

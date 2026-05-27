@@ -2,15 +2,20 @@ package kyo.internal
 
 import kyo.*
 
-/** Downloads and caches Chrome for Testing binaries on demand.
+/** Downloads and caches `chrome-headless-shell` (Google's lightweight headless build of Chrome) on demand.
   *
-  * The first call downloads the requested Chrome version to a user-local cache; subsequent calls reuse the cached executable. Downloads
-  * come from Google's official Chrome-for-Testing archive (`https://storage.googleapis.com/chrome-for-testing-public/`).
+  * The first call downloads the requested version to a user-local cache; subsequent calls reuse the cached executable. Downloads come from
+  * Google's official Chrome-for-Testing archive (`https://storage.googleapis.com/chrome-for-testing-public/`).
+  *
+  * `chrome-headless-shell` is the same headless code path full Chrome runs under `--headless=new`, packaged as a standalone binary without
+  * the GUI compositor, GPU stack, extension loader, or audio. ~120 MB compressed (vs ~190 MB for full Chrome), faster startup, smaller
+  * memory footprint, fully CDP-compatible. This is Puppeteer's default since v22.
   *
   * The cache directory defaults to `{Path.basePaths.cache}/kyo-browser/`. The `KYO_BROWSER_CACHE` environment variable overrides it.
   *
   * The platform code (`mac-arm64`, `mac-x64`, `linux64`, `win64`, `win32`) is derived from `kyo.System.operatingSystem` and
-  * `kyo.System.architecture`.
+  * `kyo.System.architecture`. Google publishes no `linux-arm64` artifact, so `resolvePlatform` aborts on that tuple with a message pointing
+  * users at `LaunchConfig.chromium(...)` for system-installed Chromium.
   *
   * Used internally by [[kyo.Browser.chromeForTestingLaunchConfig]] and the zero-arg [[kyo.Browser.run]] overload.
   */
@@ -61,7 +66,7 @@ private[kyo] object ChromeDownloader:
             for
                 platform <- platformCode
                 root     <- cacheRoot
-                versionDir = root / s"chrome-$v-$platform"
+                versionDir = root / s"chrome-headless-shell-$v-$platform"
                 exec       = executablePath(versionDir, platform)
                 cached <- exec.exists
                 _ <-
@@ -92,10 +97,29 @@ private[kyo] object ChromeDownloader:
             case (System.OS.Windows, System.Arch.X86)    => "win32"
             case other =>
                 Abort.fail[BrowserSetupException](
-                    BrowserSetupFailedException(s"Unsupported platform for Chrome-for-Testing: $other")
+                    BrowserSetupFailedException(unsupportedPlatformMessage(other))
                 )
         end match
     end resolvePlatform
+
+    /** Error text shown when [[resolvePlatform]] aborts. Includes install instructions so end users (and CI logs) can act without consulting
+      * the docs. The Linux ARM clause names the apt package because it is the most common encounter today (CI runners, Raspberry Pi);
+      * Windows ARM falls under the generic message.
+      */
+    private[internal] def unsupportedPlatformMessage(tuple: (System.OS, System.Arch)): String =
+        val osArch = tuple match
+            case (os, arch) => s"$os/$arch"
+        val hint = tuple match
+            case (System.OS.Linux, System.Arch.Aarch64) | (System.OS.Linux, System.Arch.Arm) =>
+                "Google publishes no chrome-headless-shell for linux-arm64. " +
+                    "Install Chromium via your package manager (e.g. `apt install chromium-browser` on Debian/Ubuntu) and " +
+                    "pass `Browser.LaunchConfig.chromium(\"chromium-browser\")` to `Browser.run(config) { ... }` instead of the zero-arg overload."
+            case _ =>
+                "Chrome-for-Testing does not publish a chrome-headless-shell binary for this platform. " +
+                    "Install Chrome (or a Chromium build) manually and pass `Browser.LaunchConfig.chrome(<path>)` " +
+                    "(or `Browser.LaunchConfig.chromium(<path>)`) to `Browser.run(config) { ... }` instead of the zero-arg overload."
+        s"kyo-browser cannot auto-download chrome-headless-shell for $osArch. $hint"
+    end unsupportedPlatformMessage
 
     private[kyo] def cacheRoot(using Frame): Path < Sync =
         System.env[String]("KYO_BROWSER_CACHE").map {
@@ -104,12 +128,10 @@ private[kyo] object ChromeDownloader:
         }
 
     private[kyo] def executablePath(versionDir: Path, platform: String)(using Frame): Path =
-        val inner = versionDir / s"chrome-$platform"
+        val inner = versionDir / s"chrome-headless-shell-$platform"
         platform match
-            case "mac-arm64" | "mac-x64" =>
-                inner / "Google Chrome for Testing.app" / "Contents" / "MacOS" / "Google Chrome for Testing"
-            case "win64" | "win32" => inner / "chrome.exe"
-            case _                 => inner / "chrome"
+            case "win64" | "win32" => inner / "chrome-headless-shell.exe"
+            case _                 => inner / "chrome-headless-shell"
         end match
     end executablePath
 
@@ -117,11 +139,11 @@ private[kyo] object ChromeDownloader:
         Frame
     )
         : Unit < (Async & Abort[BrowserSetupException]) =
-        val url = s"https://storage.googleapis.com/chrome-for-testing-public/$version/$platform/chrome-$platform.zip"
+        val url = s"https://storage.googleapis.com/chrome-for-testing-public/$version/$platform/chrome-headless-shell-$platform.zip"
         Scope.run {
             for
                 tmpDir <- createTempDir
-                zip = tmpDir / s"chrome-$platform.zip"
+                zip = tmpDir / s"chrome-headless-shell-$platform.zip"
                 _ <- downloadZip(url, zip, downloadTimeout)
                 _ <- extractZip(zip, versionDir)
                 _ <- makeExecutable(executablePath(versionDir, platform))

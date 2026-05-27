@@ -90,19 +90,42 @@ abstract class BrowserTest extends Test:
             else f
         }
 
+    /** Marker substring in [[kyo.internal.ChromeDownloader.unsupportedPlatformMessage]] used to route the failure to
+      * ScalaTest `cancel(...)` instead of test failure. Keep in sync with that source of truth.
+      */
+    private val unsupportedPlatformMarker = "cannot auto-download chrome-headless-shell"
+
+    /** Translates the "unsupported platform" abort from [[kyo.internal.ChromeDownloader.resolvePlatform]] into a clean ScalaTest
+      * `cancel(...)` so platforms with no auto-download (linux-arm64, win-arm64) report as canceled with install instructions rather than
+      * red failures. The instruction text comes from the abort itself, so the same guidance reaches end users hitting `Browser.run` outside
+      * a test context.
+      */
+    private def cancelOnUnsupportedPlatform[A, S](
+        f: A < (Async & Scope & Abort[BrowserSetupException] & S)
+    )(using Frame): A < (Async & Scope & Abort[BrowserSetupException] & S) =
+        Abort.recover[BrowserSetupException] { (ex: BrowserSetupException) =>
+            val msg = ex.getMessage
+            if msg != null && msg.contains(unsupportedPlatformMarker) then Sync.defer(cancel(msg))
+            else Abort.fail[BrowserSetupException](ex)
+        } { f }
+
     def withBrowser[A, S](f: A < (Browser & S))(using
         Frame
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException] & S) =
-        SharedChrome.init.map(url => Browser.run(url)(warmupGate(f)))
+        cancelOnUnsupportedPlatform {
+            SharedChrome.init.map(url => Browser.run(url)(warmupGate(f)))
+        }
 
     /** Boots a tab on the localhost DevTools JSON page (cookies / localStorage tests need a real http://localhost origin). */
     def withBrowserOnLocalhost[A, S](f: A < (Browser & S))(using
         Frame
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException] & S) =
-        SharedChrome.init.map { url =>
-            val port    = url.split(":")(2).split("/")(0)
-            val httpUrl = s"http://localhost:$port/json/version"
-            Browser.run(url)(warmupGate(Browser.goto(httpUrl).andThen(f)))
+        cancelOnUnsupportedPlatform {
+            SharedChrome.init.map { url =>
+                val port    = url.split(":")(2).split("/")(0)
+                val httpUrl = s"http://localhost:$port/json/version"
+                Browser.run(url)(warmupGate(Browser.goto(httpUrl).andThen(f)))
+            }
         }
 
     /** Boots a single-/multi-handler localhost HTTP server bound to an OS-assigned port at `127.0.0.1` and runs `f` with `(host, port)` so
