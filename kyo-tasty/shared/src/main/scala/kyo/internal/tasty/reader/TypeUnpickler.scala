@@ -89,8 +89,8 @@ object TypeUnpickler:
       * Created once per decodeSync call and threaded through all readType calls within the same body decode. Keeps a shared addrCache for
       * SHAREDtype back-references and inProgressRec for RECtype cycle-breaking.
       *
-      * `sectionBytes` is the full AST section byte array; used by readTypeForTree to re-decode SHAREDtype back-references at addresses not
-      * yet in addrCache (because Pass 1 decoded them from the section in a separate DecodeSession).
+      * `sectionView` is the full AST section ByteView; used by readTypeForTree to re-decode SHAREDtype back-references at addresses not yet
+      * in addrCache (because Pass 1 decoded them from the section in a separate DecodeSession).
       *
       * Private to the tasty package; TreeUnpickler is a sibling object in the same package.
       */
@@ -99,7 +99,7 @@ object TypeUnpickler:
         val addrMap: IntMap[Tasty.Symbol],
         val arena: TypeArena,
         val home: ClasspathRef,
-        val sectionBytes: Array[Byte],
+        val sectionView: ByteView | Null,
         val sectionOffset: Int
     ):
         val addrCache: mutable.HashMap[Int, Tasty.Type]              = new mutable.HashMap()
@@ -110,7 +110,7 @@ object TypeUnpickler:
 
     /** Read one type node using a shared TreeTypeSession (called by TreeUnpickler).
       *
-      * Handles SHAREDtype cache misses by re-decoding the referenced type from sectionBytes on demand.
+      * Handles SHAREDtype cache misses by re-decoding the referenced type from sectionView on demand.
       */
     private[tasty] def readTypeForTree(view: ByteView, session: TreeTypeSession): Tasty.Type =
         val peek = view.peekByte(view.position) & 0xff
@@ -120,9 +120,10 @@ object TypeUnpickler:
             val absAddr = session.sectionOffset + addr
             session.addrCache.getOrElseUpdate(
                 absAddr, {
-                    // Cache miss: re-decode the type at the section-relative addr from the full section bytes.
+                    // Cache miss: re-decode the type at the section-relative addr from the full section view.
                     // addr is section-relative; absAddr = sectionOffset + addr is the absolute position.
-                    val forkView = ByteView(session.sectionBytes, absAddr, session.sectionBytes.length)
+                    val sv       = session.sectionView
+                    val forkView = if sv ne null then sv.subView(absAddr, sv.totalEnd) else view.subView(absAddr, view.totalEnd)
                     val forkCtx = DecodeCtx(
                         session.names,
                         session.addrMap,
@@ -132,7 +133,7 @@ object TypeUnpickler:
                         session.inProgressRec,
                         session.binderAddrMap,
                         session.placeholders,
-                        session.sectionBytes,
+                        session.sectionView,
                         session.sectionOffset
                     )
                     readTypeNode(forkView, forkCtx)
@@ -148,7 +149,7 @@ object TypeUnpickler:
                 session.inProgressRec,
                 session.binderAddrMap,
                 session.placeholders,
-                session.sectionBytes,
+                session.sectionView,
                 session.sectionOffset
             )
             readTypeNode(view, ctx)
@@ -206,7 +207,7 @@ object TypeUnpickler:
     end DecodeSession
 
     // Internal decode context passed through all recursive calls.
-    // sectionBytes: full AST section bytes for on-demand SHAREDtype re-decode on cache miss.
+    // sectionView: full AST section ByteView for on-demand SHAREDtype re-decode on cache miss.
     // Pass null when decoding from a live DecodeSession (Pass 1) where addrCache is always pre-populated.
     // addrMap accepts any scala.collection.Map so pass1 can pass liveAddrMap (mutable.HashMap) directly
     // without snapshotting into an IntMap on every type-node decode call.
@@ -219,7 +220,7 @@ object TypeUnpickler:
         val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec],
         val binderAddrMap: mutable.HashMap[Int, Chunk[Tasty.Symbol]],
         val placeholders: mutable.ArrayBuffer[UnresolvedRef],
-        val sectionBytes: Array[Byte],
+        val sectionView: ByteView | Null,
         val sectionOffset: Int
     )
 
@@ -259,14 +260,15 @@ object TypeUnpickler:
             // ── Category 2 (tag + Nat) ────────────────────────────────────────────
 
             case TastyFormat.SHAREDtype =>
-                // astRef is a section-relative offset; absRef is the absolute position in sectionBytes.
+                // astRef is a section-relative offset; absRef is the absolute position in sectionView.
                 val astRef = view.readNat()
-                val absRef = if ctx.sectionBytes != null then ctx.sectionOffset + astRef else astRef
+                val sv     = ctx.sectionView
+                val absRef = if sv ne null then ctx.sectionOffset + astRef else astRef
                 ctx.addrCache.getOrElse(
                     absRef, {
-                        if ctx.sectionBytes != null then
-                            // Cache miss during body decode: re-decode the type at absRef from full section bytes.
-                            val forkView = ByteView(ctx.sectionBytes, absRef, ctx.sectionBytes.length)
+                        if sv ne null then
+                            // Cache miss during body decode: re-decode the type at absRef from full section view.
+                            val forkView = sv.subView(absRef, sv.totalEnd)
                             val forkCtx = DecodeCtx(
                                 ctx.names,
                                 ctx.addrMap,
@@ -276,7 +278,7 @@ object TypeUnpickler:
                                 ctx.inProgressRec,
                                 ctx.binderAddrMap,
                                 ctx.placeholders,
-                                ctx.sectionBytes,
+                                ctx.sectionView,
                                 ctx.sectionOffset
                             )
                             val t = readTypeNode(forkView, forkCtx)

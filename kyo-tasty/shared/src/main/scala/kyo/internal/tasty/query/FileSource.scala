@@ -1,6 +1,7 @@
 package kyo.internal.tasty.query
 
 import kyo.*
+import kyo.internal.tasty.binary.ByteView
 
 /** Platform abstraction for file I/O during classpath loading.
   *
@@ -17,6 +18,14 @@ trait FileSource:
       * On browser JS (no filesystem), returns `Abort.fail(TastyError.FileNotFound("browser: use fromPickles"))`.
       */
     def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError])
+
+    /** Read the file at the given path as a ByteView.
+      *
+      * Default implementation wraps `read(path)` in a heap-backed ByteView. Implementations (e.g. JvmFileSource) may override this to
+      * return a NioBacked view backed by a direct ByteBuffer for jar DEFLATED entries, eliminating the heap allocation.
+      */
+    def readView(path: String)(using Frame): ByteView < (Sync & Abort[TastyError]) =
+        read(path).map(ByteView.apply)
 
     /** Write bytes to the file at the given path, creating parent directories as needed.
       *

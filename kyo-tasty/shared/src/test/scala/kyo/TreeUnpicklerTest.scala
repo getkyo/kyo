@@ -355,7 +355,7 @@ class TreeUnpicklerTest extends Test:
                                 val truncated = new Tasty.Symbol.TastyOrigin(
                                     o.bodyStart,
                                     o.bodyStart + 1,
-                                    o.sectionBytes,
+                                    o.sectionView,
                                     o.names,
                                     o.sectionOffset,
                                     null

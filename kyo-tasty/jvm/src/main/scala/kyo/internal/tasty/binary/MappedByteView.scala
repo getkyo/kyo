@@ -57,4 +57,6 @@ final class MappedByteView(
 
     def position: Int = cursor.toInt
 
+    def totalEnd: Int = end.toInt
+
 end MappedByteView

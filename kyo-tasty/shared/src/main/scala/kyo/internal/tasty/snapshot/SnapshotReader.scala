@@ -338,11 +338,11 @@ object SnapshotReader:
             val origin: Tasty.Symbol.Origin =
                 if raw.bodyStart > 0 && raw.bodyEnd > raw.bodyStart && (bodyViewOpt ne null) then
                     // Mmap path: bodyView is a sub-view into the mapped BODY_BYTES region.
-                    // sectionBytes is empty; body decode reads via bodyView, which fails with IllegalStateException after arena close.
+                    // sectionView is null; body decode reads via bodyView, which fails with IllegalStateException after arena close.
                     new Tasty.Symbol.TastyOrigin(
                         raw.bodyStart,
                         raw.bodyEnd,
-                        Array.empty[Byte],
+                        null,
                         Array.empty[Tasty.Name],
                         0,
                         bodyViewOpt
@@ -497,7 +497,7 @@ object SnapshotReader:
                 then
                     // Restore body origin: offsets are relative to the start of BODY_BYTES section.
                     // sectionOffset is 0 because bodyStart is already absolute within bodyBytesArray.
-                    new Tasty.Symbol.TastyOrigin(raw.bodyStart, raw.bodyEnd, bodyBytesArray, Array.empty[Tasty.Name], 0, null)
+                    new Tasty.Symbol.TastyOrigin(raw.bodyStart, raw.bodyEnd, ByteView(bodyBytesArray), Array.empty[Tasty.Name], 0, null)
                 else
                     Tasty.Symbol.JavaOrigin
             created(idx) = InternalSymbol.makeSymbol(kind, flags, name, owner, home, origin, Maybe.Absent)

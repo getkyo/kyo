@@ -2,6 +2,7 @@ package kyo.internal.tasty.snapshot
 
 import java.io.ByteArrayOutputStream
 import kyo.*
+import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.query.Classpath
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
@@ -100,9 +101,12 @@ object SnapshotWriter:
         for (sym, idx) <- symbolList.zipWithIndex do
             sym.origin match
                 case o: Tasty.Symbol.TastyOrigin
-                    if o.bodyStart > 0 && o.bodyEnd > o.bodyStart && o.sectionBytes.nonEmpty =>
+                    if o.bodyStart > 0 && o.bodyEnd > o.bodyStart && (o.sectionView ne null) =>
+                    val sv       = o.sectionView
                     val sliceLen = o.bodyEnd - o.bodyStart
-                    bodyBytesBuffer.write(o.sectionBytes, o.bodyStart, sliceLen)
+                    // Copy the body slice [bodyStart, bodyEnd) from the section view into the snapshot buffer.
+                    val sliceBytes = sv.subView(o.bodyStart, o.bodyEnd).copyAllToArray()
+                    bodyBytesBuffer.write(sliceBytes, 0, sliceLen)
                     symBodyStarts(idx) = runningOffset
                     symBodyEnds(idx) = runningOffset + sliceLen
                     runningOffset += sliceLen

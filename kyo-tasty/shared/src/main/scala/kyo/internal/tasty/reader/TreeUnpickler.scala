@@ -29,7 +29,7 @@ object TreeUnpickler:
       * Called from the OnceCell init lambda; must not use Kyo effects. Throws DecodeException or ArrayIndexOutOfBoundsException on error.
       *
       * @param origin
-      *   the TastyOrigin carrying sectionBytes, bodyStart, bodyEnd, names, and addrMap.
+      *   the TastyOrigin carrying sectionView, bodyStart, bodyEnd, names, and addrMap.
       * @param sym
       *   the symbol whose body is being decoded; used to determine body-slice layout (VALDEF / DEFDEF / class / package).
       */
@@ -37,22 +37,22 @@ object TreeUnpickler:
         import AllowUnsafe.embrace.danger
         val addrMap = origin.addrMap
         val names   = origin.names
-        // Prefer the pre-constructed ByteView (mmap-backed) if present; otherwise build from sectionBytes.
+        // Prefer the pre-constructed ByteView (mmap-backed) if present; otherwise build a sub-view from sectionView.
         // Reading from a closed mmap arena throws IllegalStateException, which Symbol.body maps to ClasspathClosed.
-        val (view, bytes) = origin.bodyView match
+        val (view, sectionView) = origin.bodyView match
             case bv: kyo.internal.tasty.binary.ByteView =>
                 val sub = bv.subView(origin.bodyStart, origin.bodyEnd)
-                (sub, origin.sectionBytes)
+                (sub, origin.sectionView)
             case null =>
-                val b = origin.sectionBytes
-                if b == null || b.isEmpty then
+                val sv = origin.sectionView
+                if sv == null then
                     throw new DecodeException("body bytes not available (snapshot-loaded symbol)")
                 end if
-                (ByteView(b, origin.bodyStart, origin.bodyEnd), b)
+                (sv.subView(origin.bodyStart, origin.bodyEnd), sv)
         val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
         val dummyHome     = new ClasspathRef
         val dummyArena    = TypeArena.canonical()
-        val typeSession   = new TypeUnpickler.TreeTypeSession(names, addrMap, dummyArena, dummyHome, bytes, origin.sectionOffset)
+        val typeSession   = new TypeUnpickler.TreeTypeSession(names, addrMap, dummyArena, dummyHome, sectionView, origin.sectionOffset)
         val ctx = DecodeCtx(
             names,
             addrMap,
