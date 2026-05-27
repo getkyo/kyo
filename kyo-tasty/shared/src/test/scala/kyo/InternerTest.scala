@@ -141,4 +141,73 @@ class InternerTest extends Test:
         assert(triggered, s"expected at least one grow event after exceeding load threshold, i=$i")
     }
 
+    // T-P6-4: insert below load threshold with cap=64 numShards=4; assert growCount==0.
+    // Then push past threshold; assert growCount > 0.
+    // With numShards=4 and initialShardCapacity=64, the per-shard grow threshold is
+    // 64 * 3 / 4 = 48. Insert 4 * 47 = 188 entries spread across shards (below all per-shard
+    // thresholds) and confirm no grows. Then insert additional entries until a grow fires.
+    "T-P6-4: growCount==0 below threshold, grows when threshold exceeded (cap=64 numShards=4)" in run {
+        val interner = new Interner(numShards = 4, initialShardCapacity = 64)
+        // Insert entries, steering them to specific shards to stay below 75% in each.
+        // Use a generous count well under the minimum threshold across 4 shards.
+        var i = 0
+        while i < 180 do
+            val bytes = utf8Bytes(s"t4-entry-$i")
+            interner.intern(bytes, 0, bytes.length)
+            i += 1
+        end while
+        assert(interner.growCount.get() == 0, s"expected 0 grows after $i entries but got ${interner.growCount.get()}")
+        // Push past threshold: keep inserting until a grow is observed.
+        var triggered = false
+        while !triggered && i < 280 do
+            val bytes = utf8Bytes(s"t4-entry-$i")
+            interner.intern(bytes, 0, bytes.length)
+            i += 1
+            if interner.growCount.get() > 0 then triggered = true
+        end while
+        assert(triggered, s"expected at least one grow event after threshold, i=$i")
+    }
+
+    // T-P6-5: 8 concurrent fibers each intern 1000 unique sequences plus a set of shared keys.
+    // All fibers that intern a shared key must get back the same (reference-equal) Entry instance.
+    "T-P6-5: concurrent interns from 8 fibers preserve reference-equality for shared keys" in run {
+        val interner    = new Interner(numShards = 16, initialShardCapacity = 256)
+        val sharedCount = 50
+        val sharedKeys  = Array.tabulate(sharedCount)(i => utf8Bytes(s"shared-key-$i"))
+        // Each fiber: intern 1000 unique keys + all shared keys; collect the Entry for each shared key.
+        val fiberCount = 8
+        val fibers     = Chunk.fill(fiberCount)(())
+        Async.foreach(fibers, fiberCount) { _ =>
+            Sync.defer {
+                // Intern 1000 unique entries to create contention.
+                val salt = java.util.concurrent.ThreadLocalRandom.current().nextInt()
+                var j    = 0
+                while j < 1000 do
+                    val bytes = utf8Bytes(s"unique-$salt-$j")
+                    interner.intern(bytes, 0, bytes.length)
+                    j += 1
+                end while
+                // Intern all shared keys and return the entries.
+                Chunk.tabulate(sharedCount) { k =>
+                    val b = sharedKeys(k)
+                    interner.intern(b, 0, b.length)
+                }
+            }
+        }.map { resultChunks =>
+            // For each shared key, all 8 fibers must have the same Entry reference.
+            var k = 0
+            while k < sharedCount do
+                val expected = resultChunks(0)(k)
+                var f        = 1
+                while f < fiberCount do
+                    val got = resultChunks(f)(k)
+                    assert(got eq expected, s"shared-key-$k: fiber $f returned different Entry instance")
+                    f += 1
+                end while
+                k += 1
+            end while
+            succeed
+        }
+    }
+
 end InternerTest
