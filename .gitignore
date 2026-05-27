@@ -1,6 +1,7 @@
 .bloop
 .bsp
-.claude
+.claude/*
+!.claude/skills/
 .metals
 project/target
 project/project
