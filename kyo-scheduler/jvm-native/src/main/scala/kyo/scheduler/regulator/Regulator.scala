@@ -111,6 +111,27 @@ abstract class Regulator(
         discard(regulateTask.cancel())
     }
 
+    // Stats must be initialized BEFORE collectTask and regulateTask are scheduled.
+    // Otherwise the timer may fire `collect()` (or `adjust()`) on another thread
+    // before `statsScope` is assigned, observing it as null and tripping an NPE
+    // inside the lazy `stats` object's first field access. The race is narrow but
+    // real under load (high contention at JVM start, e.g. inside a dotty driver
+    // fork running its own kyo runtime).
+    protected val statsScope = kyo.scheduler.statsScope.scope("regulator", getClass.getSimpleName().toLowerCase())
+
+    private object stats {
+        val loadavg     = statsScope.histogram("loadavg")
+        val measurement = statsScope.histogram("measurement")
+        val update      = statsScope.histogram("update")
+        val jitter      = statsScope.histogram("jitter")
+        val gauges = List(
+            statsScope.gauge("probes_sent")(probesSent.sum().toDouble),
+            statsScope.gauge("probes_completed")(probesSent.sum().toDouble),
+            statsScope.gauge("adjustments")(adjustments.sum().toDouble),
+            statsScope.gauge("updates")(updates.sum.toDouble)
+        )
+    }
+
     private val collectTask =
         timer.schedule(collectInterval)(collect())
 
@@ -165,20 +186,6 @@ abstract class Regulator(
             case ex if NonFatal(ex) =>
                 kyo.scheduler.bug(s"${getClass.getSimpleName()} regulator's adjustment has failed.", ex)
         }
-    }
-    protected val statsScope = kyo.scheduler.statsScope.scope("regulator", getClass.getSimpleName().toLowerCase())
-
-    private object stats {
-        val loadavg     = statsScope.histogram("loadavg")
-        val measurement = statsScope.histogram("measurement")
-        val update      = statsScope.histogram("update")
-        val jitter      = statsScope.histogram("jitter")
-        val gauges = List(
-            statsScope.gauge("probes_sent")(probesSent.sum().toDouble),
-            statsScope.gauge("probes_completed")(probesSent.sum().toDouble),
-            statsScope.gauge("adjustments")(adjustments.sum().toDouble),
-            statsScope.gauge("updates")(updates.sum.toDouble)
-        )
     }
 
     protected def regulatorStatus(): RegulatorStatus =
