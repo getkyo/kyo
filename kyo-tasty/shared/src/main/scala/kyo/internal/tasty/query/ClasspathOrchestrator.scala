@@ -471,10 +471,10 @@ object ClasspathOrchestrator:
         strict: Boolean
     )(using Frame): FileResult < (Sync & Abort[TastyError]) =
         Abort.run[TastyError](
-            source.readView(file).flatMap: view =>
+            source.read(file).flatMap: bytes =>
                 PerfCounters.entryReadCount.incrementAndGet()
-                PerfCounters.bytesReadTotal.addAndGet(view.remaining.toLong)
-                decodeTastyBytesView(file, view, interner, cp)
+                PerfCounters.bytesReadTotal.addAndGet(bytes.length.toLong)
+                decodeTastyBytes(file, bytes, interner, cp)
         ).map:
             case Result.Success(fr) => fr
             case Result.Failure(err: TastyError) =>
@@ -508,7 +508,7 @@ object ClasspathOrchestrator:
       *
       * `t0` is captured when `timed` is invoked -- i.e., when this for-yield step starts. The `.map` fires after `v` returns, so the delta
       * covers exactly the unpickler's execution. Safe only for purely-Sync computations with no Async suspension (all unpicklers in
-      * decodeTastyBytesView satisfy this invariant).
+      * decodeTastyBytes satisfy this invariant).
       */
     private def timed[A, S](counter: java.util.concurrent.atomic.AtomicLong)(v: A < S)(using Frame): A < S =
         val t0 = java.lang.System.nanoTime()
@@ -517,13 +517,14 @@ object ClasspathOrchestrator:
             a
     end timed
 
-    /** Decode a TASTy ByteView into a FileResult (fqn-symbol pairs + arena). */
-    private def decodeTastyBytesView(
+    /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
+    private def decodeTastyBytes(
         file: String,
-        view: ByteView,
+        bytes: Array[Byte],
         interner: Interner,
         cp: Classpath
     )(using Frame): FileResult < (Sync & Abort[TastyError]) =
+        val view  = ByteView(bytes)
         val home  = new ClasspathRef
         val arena = new TypeArena
         for
@@ -570,7 +571,7 @@ object ClasspathOrchestrator:
                 positionsBySymbol
             )
         end for
-    end decodeTastyBytesView
+    end decodeTastyBytes
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
     private def nameToString(n: Tasty.Name): String =

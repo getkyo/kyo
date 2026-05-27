@@ -4,7 +4,6 @@ package kyo.internal.tasty.binary
   *
   * ByteView is a sealed trait with two concrete cases:
   *   - Heap: backed by an in-memory Array[Byte] with start/end bounds and a mutable cursor.
-  *   - NioBacked: backed by a java.nio.ByteBuffer (e.g. a direct / off-heap buffer from jar inflation).
   *   - Mapped: stub for memory-mapped file support (Phase 7).
   *
   * All cursor-advancing operations are performed on the concrete Heap instance; there is no effect wrapper here because ByteView is a
@@ -42,36 +41,8 @@ sealed trait ByteView:
     /** Current cursor position. */
     def position: Int
 
-    /** The absolute end boundary of this view (exclusive).
-      *
-      * For a Heap view this is the `end` field. For NioBacked this is the buffer limit. Used to construct fork sub-views from an absolute
-      * address to the end of the full section.
-      */
-    def totalEnd: Int
-
-    /** The underlying raw byte array. Used by TreeUnpickler to obtain the section bytes for lazy body decode.
-      *
-      * Deprecated: prefer passing ByteView directly to avoid materializing a heap Array[Byte] for NioBacked views. Returns an empty array
-      * for NioBacked and Mapped views.
-      */
+    /** The underlying raw byte array. Used by TreeUnpickler to obtain the section bytes for lazy body decode. */
     def allBytes: Array[Byte]
-
-    /** Copy all bytes from [position, totalEnd) into a fresh heap Array[Byte].
-      *
-      * Used by `read()` callers that need a raw byte array (e.g. ModuleInfoReader, SnapshotReader). Does not advance the cursor.
-      */
-    def copyAllToArray(): Array[Byte] =
-        val len = totalEnd - position
-        val arr = new Array[Byte](len)
-        var i   = position
-        var j   = 0
-        while j < len do
-            arr(j) = peekByte(i)
-            i += 1
-            j += 1
-        end while
-        arr
-    end copyAllToArray
 
 end ByteView
 
@@ -84,12 +55,6 @@ object ByteView:
     /** Create a Heap view over a slice of an array. */
     def apply(bytes: Array[Byte], start: Int, end: Int): Heap =
         new Heap(bytes, start, end)
-
-    /** Create a NioBacked view over a java.nio.ByteBuffer. The buffer's current position is treated as byte-address 0; limit is the
-      * exclusive end. The buffer must not be modified after this call.
-      */
-    def apply(buf: java.nio.ByteBuffer): NioBacked =
-        new NioBacked(buf, buf.position(), buf.limit(), buf.position())
 
     /** In-memory ByteView backed by an Array[Byte].
       *
@@ -136,75 +101,9 @@ object ByteView:
 
         def position: Int = cursor
 
-        def totalEnd: Int = end
-
         def allBytes: Array[Byte] = bytes
 
-        override def copyAllToArray(): Array[Byte] =
-            val len = end - start
-            val arr = new Array[Byte](len)
-            java.lang.System.arraycopy(bytes, start, arr, 0, len)
-            arr
-        end copyAllToArray
-
     end Heap
-
-    /** ByteView backed by a java.nio.ByteBuffer.
-      *
-      * Supports both heap-backed and direct (off-heap) ByteBuffers. Used to route jar entry inflation output into an off-heap direct
-      * buffer, eliminating the large heap Array[Byte] allocation on the DEFLATED read path.
-      *
-      * Invariants:
-      *   - `bufStart` is the base offset of this view within the underlying ByteBuffer (buffers may be slices).
-      *   - `bufEnd` is the exclusive end (buffer limit from construction time).
-      *   - `cursor` is the mutable read position, always in range [bufStart, bufEnd].
-      *   - Sub-views share the same underlying ByteBuffer; each has its own independent cursor.
-      *   - The ByteBuffer must not be modified after this view is constructed.
-      */
-    final class NioBacked(
-        private val buf: java.nio.ByteBuffer,
-        private val bufStart: Int,
-        private val bufEnd: Int,
-        private var cursor: Int
-    ) extends ByteView:
-
-        def peekByte(at: Int): Byte = buf.get(at)
-
-        def readByte(): Byte =
-            if cursor >= bufEnd then throw new ArrayIndexOutOfBoundsException(cursor)
-            val b = buf.get(cursor)
-            cursor += 1
-            b
-        end readByte
-
-        def readEnd(): Int =
-            val len = Varint.readNat(this)
-            cursor + len
-
-        def subView(from: Int, until: Int): ByteView.NioBacked =
-            new NioBacked(buf, from, until, from)
-
-        def goto(addr: Int): Unit =
-            cursor = addr
-
-        def remaining: Int = bufEnd - cursor
-
-        def position: Int = cursor
-
-        def totalEnd: Int = bufEnd
-
-        def allBytes: Array[Byte] = Array.empty[Byte]
-
-        override def copyAllToArray(): Array[Byte] =
-            val len = bufEnd - bufStart
-            val arr = new Array[Byte](len)
-            val dup = buf.duplicate()
-            dup.position(bufStart)
-            dup.get(arr, 0, len)
-            arr
-        end copyAllToArray
-
-    end NioBacked
 
     /** Base class for memory-mapped ByteView implementations.
       *

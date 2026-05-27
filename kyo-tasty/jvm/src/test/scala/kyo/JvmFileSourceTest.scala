@@ -197,9 +197,9 @@ class JvmFileSourceTest extends Test:
             )
         )
         val reader = JarMappedReader.open(jarPath)
-        val r1     = reader.readEntry("kyo/Alpha.tasty").copyAllToArray()
-        val r2     = reader.readEntry("kyo/Beta.tasty").copyAllToArray()
-        val r3     = reader.readEntry("kyo/Gamma.tasty").copyAllToArray()
+        val r1     = reader.readEntry("kyo/Alpha.tasty")
+        val r2     = reader.readEntry("kyo/Beta.tasty")
+        val r3     = reader.readEntry("kyo/Gamma.tasty")
         assert(java.util.Arrays.equals(r1, knownBytes1), "Alpha.tasty bytes mismatch")
         assert(java.util.Arrays.equals(r2, knownBytes2), "Beta.tasty bytes mismatch")
         assert(java.util.Arrays.equals(r3, knownBytes3), "Gamma.tasty bytes mismatch")
@@ -227,9 +227,9 @@ class JvmFileSourceTest extends Test:
         for tid <- 0 until threadCount do
             val task: Runnable = () =>
                 try
-                    val r1 = reader.readEntry("kyo/Alpha.tasty").copyAllToArray()
-                    val r2 = reader.readEntry("kyo/Beta.tasty").copyAllToArray()
-                    val r3 = reader.readEntry("kyo/Gamma.tasty").copyAllToArray()
+                    val r1 = reader.readEntry("kyo/Alpha.tasty")
+                    val r2 = reader.readEntry("kyo/Beta.tasty")
+                    val r3 = reader.readEntry("kyo/Gamma.tasty")
                     if !java.util.Arrays.equals(r1, knownBytes1) then
                         errors.add(s"Thread $tid: Alpha bytes mismatch"): Unit
                     if !java.util.Arrays.equals(r2, knownBytes2) then
@@ -268,7 +268,7 @@ class JvmFileSourceTest extends Test:
         Files.write(java.nio.file.Paths.get(jarPath), rawBytes)
 
         val reader = JarMappedReader.open(jarPath)
-        val result = reader.readEntry("kyo/DataDesc.tasty").copyAllToArray()
+        val result = reader.readEntry("kyo/DataDesc.tasty")
         assert(
             java.util.Arrays.equals(result, knownBytes1),
             s"Expected original bytes after bit-3 patch, got ${result.length} bytes"
@@ -301,7 +301,7 @@ class JvmFileSourceTest extends Test:
         end try
 
         val reader = JarMappedReader.open(jarPath)
-        val result = reader.readEntry("kyo/Stored.tasty").copyAllToArray()
+        val result = reader.readEntry("kyo/Stored.tasty")
         assert(
             java.util.Arrays.equals(result, storedBytes),
             s"STORED entry bytes mismatch: expected ${storedBytes.length} bytes, got ${result.length}"

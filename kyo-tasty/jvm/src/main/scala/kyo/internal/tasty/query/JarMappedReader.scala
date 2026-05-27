@@ -6,7 +6,6 @@ import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.util.zip.Inflater
-import kyo.internal.tasty.binary.ByteView
 
 /** Memory-mapped JAR reader. One MappedByteBuffer and a parsed CEN index per JAR file.
   *
@@ -28,16 +27,12 @@ final private[kyo] class JarMappedReader(
       *
       * Thread-safe: duplicates the buffer to obtain an independent position. Creates a fresh Inflater per call.
       *
-      * Returns a ByteView over the decompressed content. For STORED entries the view wraps the mapped region directly (no heap copy). For
-      * DEFLATED entries the inflated output is written into an off-heap direct ByteBuffer, eliminating the large heap Array[Byte]
-      * allocation.
-      *
       * @throws java.io.FileNotFoundException
       *   if the entry name is not found in the JAR's central directory
       * @throws java.io.IOException
       *   on bad local-file-header signature, unsupported compression method, or truncated deflate stream
       */
-    def readEntry(entryName: String): ByteView =
+    def readEntry(entryName: String): Array[Byte] =
         val entry = entries.get(entryName)
         if entry == null then
             // Unsafe: null is Java-interop result from HashMap.get; documented as such
@@ -73,24 +68,24 @@ final private[kyo] class JarMappedReader(
 
         entry.method match
             case 0 =>
-                // STORED: data is verbatim in the mapped region; wrap it in a NioBacked view with no heap copy.
-                val slice = buf.slice(dataOffset, uncompSize)
-                ByteView(slice)
+                // STORED: data is verbatim; copy directly from the mapped region into a heap array
+                val out = new Array[Byte](uncompSize)
+                buf.position(dataOffset)
+                buf.get(out)
+                out
             case 8 =>
                 // DEFLATED: nowrap=true because ZIP uses raw deflate (no zlib header/trailer).
                 // Use buf.slice(dataOffset, compSize) to get a ByteBuffer view that shares the
                 // mapped memory -- no heap copy of the compressed bytes.
                 // Inflater.setInput(ByteBuffer) (JDK 11+) feeds the mapped region directly.
-                // The inflated output is written to an off-heap direct ByteBuffer to avoid a large
-                // heap Array[Byte] allocation. The caller receives a NioBacked ByteView wrapping it.
                 val compSlice = buf.slice(dataOffset, compSize)
                 val inflater  = new Inflater(true)
                 try
                     inflater.setInput(compSlice)
-                    val out   = ByteBuffer.allocateDirect(uncompSize)
+                    val out   = new Array[Byte](uncompSize)
                     var total = 0
                     while total < uncompSize && !inflater.finished() do
-                        val n = inflater.inflate(out)
+                        val n = inflater.inflate(out, total, uncompSize - total)
                         if n == 0 then
                             if inflater.needsInput() || inflater.needsDictionary() then
                                 throw new java.io.IOException(
@@ -99,8 +94,7 @@ final private[kyo] class JarMappedReader(
                         end if
                         total += n
                     end while
-                    out.flip()
-                    ByteView(out)
+                    out
                 finally inflater.end()
                 end try
             case other =>

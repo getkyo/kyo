@@ -9,7 +9,6 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.util.concurrent.atomic.AtomicReference
 import kyo.*
-import kyo.internal.tasty.binary.ByteView
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.*
 
@@ -36,33 +35,13 @@ object JvmFileSource extends FileSource:
                 else
                     val jarSepIdx = path.indexOf("!/")
                     if jarSepIdx > 0 then
-                        readJarEntryBytes(path.substring(0, jarSepIdx), path.substring(jarSepIdx + 2))
-                    else if path.toLowerCase.endsWith(".jar") then
-                        Abort.fail(TastyError.FileNotFound(
-                            s"$path: reading individual paths inside JARs requires `jar!/entry` syntax; use list() first"
-                        ))
-                    else
-                        Files.readAllBytes(Paths.get(path))
-                    end if
-            catch
-                case ex: java.io.IOException =>
-                    Abort.fail(TastyError.FileNotFound(s"$path: ${ex.getMessage}"))
-
-    override def readView(path: String)(using Frame): ByteView < (Sync & Abort[TastyError]) =
-        Sync.defer:
-            try
-                if path.startsWith("jrt:/") then
-                    ByteView(readJrtPath(path))
-                else
-                    val jarSepIdx = path.indexOf("!/")
-                    if jarSepIdx > 0 then
                         readJarEntry(path.substring(0, jarSepIdx), path.substring(jarSepIdx + 2))
                     else if path.toLowerCase.endsWith(".jar") then
                         Abort.fail(TastyError.FileNotFound(
                             s"$path: reading individual paths inside JARs requires `jar!/entry` syntax; use list() first"
                         ))
                     else
-                        ByteView(Files.readAllBytes(Paths.get(path)))
+                        Files.readAllBytes(Paths.get(path))
                     end if
             catch
                 case ex: java.io.IOException =>
@@ -192,12 +171,7 @@ object JvmFileSource extends FileSource:
         Files.readAllBytes(jrtPath)
     end readJrtPath
 
-    /** Read a JAR entry and return the content as a ByteView.
-      *
-      * For DEFLATED entries this returns a NioBacked view backed by an off-heap direct ByteBuffer (no heap allocation). For STORED entries
-      * this wraps the mapped region. Called by readView.
-      */
-    private def readJarEntry(jarPath: String, entryName: String): ByteView =
+    private def readJarEntry(jarPath: String, entryName: String): Array[Byte] =
         PerfCounters.jarOpenCount.incrementAndGet()
         val t0 = java.lang.System.nanoTime()
         // Unsafe: activePool.get() may return null when no batch is active
@@ -206,30 +180,21 @@ object JvmFileSource extends FileSource:
             val reader = pool.get(jarPath)
             val t1     = java.lang.System.nanoTime()
             PerfCounters.jarConstructTimeNs.addAndGet(t1 - t0)
-            val view = reader.readEntry(entryName)
-            val t2   = java.lang.System.nanoTime()
+            val bytes = reader.readEntry(entryName)
+            val t2    = java.lang.System.nanoTime()
             PerfCounters.jarReadTimeNs.addAndGet(t2 - t1)
-            view
+            bytes
         else
             // Fallback: open-on-demand mmap reader (not pooled; GC handles cleanup)
             val reader = JarMappedReader.open(jarPath)
             val t1     = java.lang.System.nanoTime()
             PerfCounters.jarConstructTimeNs.addAndGet(t1 - t0)
-            val view = reader.readEntry(entryName)
-            val t2   = java.lang.System.nanoTime()
+            val bytes = reader.readEntry(entryName)
+            val t2    = java.lang.System.nanoTime()
             PerfCounters.jarReadTimeNs.addAndGet(t2 - t1)
-            view
+            bytes
         end if
     end readJarEntry
-
-    /** Read a JAR entry and return the content as a heap Array[Byte].
-      *
-      * Called by read() for callers that need raw bytes (e.g. ModuleInfoReader, DigestComputer). Materializes the ByteView from
-      * readJarEntry into a heap array.
-      */
-    private def readJarEntryBytes(jarPath: String, entryName: String): Array[Byte] =
-        readJarEntry(jarPath, entryName).copyAllToArray()
-    end readJarEntryBytes
 
     private def listJrtPathMulti(dir: String, suffixes: Chunk[String]): Chunk[String] =
         val fs = jrtFileSystem

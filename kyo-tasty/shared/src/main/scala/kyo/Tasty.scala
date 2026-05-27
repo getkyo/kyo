@@ -760,13 +760,12 @@ object Tasty:
         /** Origin for a symbol decoded from a TASTy file.
           *
           * @param bodyStart
-          *   Absolute byte offset into `sectionView` where this symbol's body payload begins. 0 for symbols without a body.
+          *   Absolute byte offset into `sectionBytes` where this symbol's body payload begins. 0 for symbols without a body.
           * @param bodyEnd
-          *   Absolute byte offset into `sectionView` where this symbol's body payload ends. 0 for symbols without a body.
-          * @param sectionView
-          *   The full AST section as a ByteView for this file. Shared (not copied) across all symbols from the same file. Null for
-          *   synthetic symbols. Used by TreeUnpickler to create sub-views for lazy body decode. May be heap-backed (Heap) or off-heap
-          *   (NioBacked) depending on how the file was loaded.
+          *   Absolute byte offset into `sectionBytes` where this symbol's body payload ends. 0 for symbols without a body.
+          * @param sectionBytes
+          *   The raw AST section bytes for this file. Shared (not copied) across all symbols from the same file. Empty array for synthetic
+          *   symbols. Used by TreeUnpickler to create a ByteView for lazy body decode.
           * @param names
           *   The name table for this file, as decoded by NameUnpickler. Shared across all symbols from the same file. Empty array for
           *   synthetic symbols.
@@ -778,11 +777,11 @@ object Tasty:
         final class TastyOrigin(
             val bodyStart: Int,
             val bodyEnd: Int,
-            val sectionView: kyo.internal.tasty.binary.ByteView | Null,
+            val sectionBytes: Array[Byte],
             val names: Array[Tasty.Name],
             val sectionOffset: Int,
             /** Non-null only for mmap-loaded snapshot origins. When set, TreeUnpickler reads from this view directly instead of
-              * constructing a ByteView from sectionView. After the backing arena is closed, reads from this view throw
+              * constructing a ByteView from sectionBytes. After the backing arena is closed, reads from this view throw
               * IllegalStateException which Symbol.body maps to TastyError.ClasspathClosed.
               */
             val bodyView: kyo.internal.tasty.binary.ByteView | Null
@@ -804,7 +803,7 @@ object Tasty:
 
         object TastyOrigin:
             /** Convenience factory for synthetic symbols that have no file bytes or body. */
-            def empty: TastyOrigin = new TastyOrigin(0, 0, null, Array.empty[Tasty.Name], 0, null)
+            def empty: TastyOrigin = new TastyOrigin(0, 0, Array.empty[Byte], Array.empty[Tasty.Name], 0, null)
 
             /** Pattern match extractor: `case TastyOrigin(bodyStart, bodyEnd)`. */
             def unapply(o: TastyOrigin): Some[(Int, Int)] =
