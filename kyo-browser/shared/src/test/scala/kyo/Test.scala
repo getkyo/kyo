@@ -1,10 +1,12 @@
 package kyo
 
 import kyo.internal.BaseKyoCoreTest
+import kyo.internal.ChromeDownloader
 import kyo.internal.Platform
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 // ── Test discoverability: the nested `freespec` `-` convention ────────────────
 //
@@ -41,6 +43,33 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     def assertionFailure(msg: String) = fail(msg)
 
     override given executionContext: ExecutionContext = Platform.executionContext
+
+    // Pre-flight: check whether the current (OS, arch) tuple has a chrome-headless-shell artifact
+    // (mac-arm64 / mac-x64 / linux64 / win64 / win32). Linux/Aarch64 and Windows/ARM have no published
+    // artifact, so any test that needs Chrome cannot run; cancel the test cleanly with the install
+    // instructions instead of letting the BrowserSetupException leak as a red failure for every test that
+    // is not wrapped by `BrowserTest.cancelOnUnsupportedPlatform`. Reuses `ChromeDownloader.resolvePlatform`
+    // as the single source of truth for which tuples are supported.
+    private lazy val chromeUnsupportedReason: Option[String] =
+        import AllowUnsafe.embrace.danger
+        // Unsafe: tests are off the main effect stack; evaluating the platform check synchronously is
+        // the cleanest way to make the verdict available to the `run` override below.
+        Sync.Unsafe.evalOrThrow {
+            for
+                os      <- System.operatingSystem
+                arch    <- System.architecture
+                outcome <- Abort.run[BrowserSetupException](ChromeDownloader.resolvePlatform(os, arch))
+            yield outcome match
+                case Result.Success(_)  => None
+                case Result.Failure(ex) => Option(ex.getMessage)
+                case Result.Panic(ex)   => Option(ex.getMessage)
+        }
+    end chromeUnsupportedReason
+
+    override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
+        chromeUnsupportedReason match
+            case Some(reason) => cancel(reason)
+            case None         => super.run(v)
 
     /** JSON decode helper used across CDP tests. */
     def decode[A: Schema](json: String)(using Frame): A =
