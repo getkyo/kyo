@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kyo.internal.reflect.query.JarMappedReader
 import kyo.internal.reflect.query.JvmFileSource
 
 /** Tests for JvmFileSource.read with jar!/entry paths.
@@ -180,6 +181,131 @@ class JvmFileSourceTest extends Test:
                         fail(s"Unexpected failure reading real-classpath jar entries: $e")
                     case Result.Panic(t) =>
                         throw t
+    }
+
+    // T-M1: Build a synthetic jar with 3 entries (DEFLATED by default via ZipOutputStream).
+    //        Open via JarMappedReader, read each entry, assert bytes match the originals.
+    "T-M1: JarMappedReader reads all entries from a synthetic jar and returns correct bytes" taggedAs jvmOnly in {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/mmap-basic.jar"
+        writeJar(
+            jarPath,
+            Seq(
+                ("kyo/Alpha.tasty", knownBytes1),
+                ("kyo/Beta.tasty", knownBytes2),
+                ("kyo/Gamma.tasty", knownBytes3)
+            )
+        )
+        val reader = JarMappedReader.open(jarPath)
+        val r1     = reader.readEntry("kyo/Alpha.tasty")
+        val r2     = reader.readEntry("kyo/Beta.tasty")
+        val r3     = reader.readEntry("kyo/Gamma.tasty")
+        assert(java.util.Arrays.equals(r1, knownBytes1), "Alpha.tasty bytes mismatch")
+        assert(java.util.Arrays.equals(r2, knownBytes2), "Beta.tasty bytes mismatch")
+        assert(java.util.Arrays.equals(r3, knownBytes3), "Gamma.tasty bytes mismatch")
+    }
+
+    // T-M2: Concurrent reads from a single JarMappedReader.
+    //        8 threads each read all 3 entries; assert correctness from every thread.
+    "T-M2: JarMappedReader concurrent reads from multiple threads return correct bytes" taggedAs jvmOnly in {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/mmap-concurrent.jar"
+        writeJar(
+            jarPath,
+            Seq(
+                ("kyo/Alpha.tasty", knownBytes1),
+                ("kyo/Beta.tasty", knownBytes2),
+                ("kyo/Gamma.tasty", knownBytes3)
+            )
+        )
+        val reader = JarMappedReader.open(jarPath)
+
+        val threadCount = 8
+        val errors      = new java.util.concurrent.CopyOnWriteArrayList[String]()
+        val latch       = new java.util.concurrent.CountDownLatch(threadCount)
+
+        for tid <- 0 until threadCount do
+            val task: Runnable = () =>
+                try
+                    val r1 = reader.readEntry("kyo/Alpha.tasty")
+                    val r2 = reader.readEntry("kyo/Beta.tasty")
+                    val r3 = reader.readEntry("kyo/Gamma.tasty")
+                    if !java.util.Arrays.equals(r1, knownBytes1) then
+                        errors.add(s"Thread $tid: Alpha bytes mismatch"): Unit
+                    if !java.util.Arrays.equals(r2, knownBytes2) then
+                        errors.add(s"Thread $tid: Beta bytes mismatch"): Unit
+                    if !java.util.Arrays.equals(r3, knownBytes3) then
+                        errors.add(s"Thread $tid: Gamma bytes mismatch"): Unit
+                catch
+                    case ex: Throwable => errors.add(s"Thread $tid threw: ${ex.getMessage}"): Unit
+                finally latch.countDown()
+            new Thread(task).start()
+        end for
+
+        latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
+        assert(errors.isEmpty, s"Concurrent read errors: ${errors.toArray.mkString(", ")}")
+    }
+
+    // T-M3: Jar with GPB bit-3 set (data-descriptor entries where LFH carries 0 sizes).
+    //        The CEN still has the true sizes. JarMappedReader uses CEN metadata so it must still
+    //        decompress correctly.
+    "T-M3: JarMappedReader reads entries with GPB bit-3 (data-descriptor flag) set in LFH" taggedAs jvmOnly in {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/mmap-bit3.jar"
+        // Write a normal jar first, then patch the LFH of the first entry to set GPB bit-3 and zero
+        // out the LFH compSize/uncompSize/crc fields (simulating a streaming writer).
+        writeJar(jarPath, Seq(("kyo/DataDesc.tasty", knownBytes1)))
+        val rawBytes = Files.readAllBytes(java.nio.file.Paths.get(jarPath))
+        // LFH starts at offset 0. Patch:
+        //   offset 6 = gpFlag low byte; set bit-3 (0x08)
+        //   offset 14-17 = crc (4 bytes): zero out
+        //   offset 18-21 = compSize (4 bytes): zero out
+        //   offset 22-25 = uncompSize (4 bytes): zero out
+        rawBytes(6) = (rawBytes(6) | 0x08).toByte
+        rawBytes(14) = 0; rawBytes(15) = 0; rawBytes(16) = 0; rawBytes(17) = 0
+        rawBytes(18) = 0; rawBytes(19) = 0; rawBytes(20) = 0; rawBytes(21) = 0
+        rawBytes(22) = 0; rawBytes(23) = 0; rawBytes(24) = 0; rawBytes(25) = 0
+        Files.write(java.nio.file.Paths.get(jarPath), rawBytes)
+
+        val reader = JarMappedReader.open(jarPath)
+        val result = reader.readEntry("kyo/DataDesc.tasty")
+        assert(
+            java.util.Arrays.equals(result, knownBytes1),
+            s"Expected original bytes after bit-3 patch, got ${result.length} bytes"
+        )
+    }
+
+    // T-M4: STORED entry (method=0). ZipOutputStream uses DEFLATE by default for non-zero-length entries;
+    //        we force STORED by setting the compression level to 0 (NO_COMPRESSION) via ZipEntry.setMethod.
+    "T-M4: JarMappedReader reads STORED (method=0) entry correctly" taggedAs jvmOnly in {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/mmap-stored.jar"
+        // Write a STORED entry by using STORED method with pre-computed CRC and size.
+        val storedBytes = "stored-content-12345".getBytes(StandardCharsets.UTF_8)
+        val fos         = new FileOutputStream(jarPath)
+        val zos         = new ZipOutputStream(fos)
+        try
+            val entry = new ZipEntry("kyo/Stored.tasty")
+            entry.setMethod(ZipEntry.STORED)
+            entry.setSize(storedBytes.length.toLong)
+            entry.setCompressedSize(storedBytes.length.toLong)
+            val crc = new java.util.zip.CRC32()
+            crc.update(storedBytes)
+            entry.setCrc(crc.getValue)
+            zos.putNextEntry(entry)
+            zos.write(storedBytes)
+            zos.closeEntry()
+        finally
+            zos.close()
+            fos.close()
+        end try
+
+        val reader = JarMappedReader.open(jarPath)
+        val result = reader.readEntry("kyo/Stored.tasty")
+        assert(
+            java.util.Arrays.equals(result, storedBytes),
+            s"STORED entry bytes mismatch: expected ${storedBytes.length} bytes, got ${result.length}"
+        )
     }
 
 end JvmFileSourceTest
