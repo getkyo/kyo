@@ -1,6 +1,8 @@
 package kyo.internal.reflect.query
 
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import kyo.*
@@ -23,6 +25,21 @@ import scala.collection.mutable
   * Multi-disk JARs are not supported (they are also unsupported by the standard JVM JarFile).
   */
 private[kyo] object JarCentralDirectory:
+
+    /** Full metadata for a single JAR entry, extracted from the central directory record.
+      *
+      * @param name
+      *   entry name as decoded from the CEN (UTF-8 or CP437 depending on bit-11 of gpFlag)
+      * @param lfhOffset
+      *   byte offset of the local file header (LFH) from the start of the JAR; used to skip to data
+      * @param compSize
+      *   compressed size in bytes; already resolved from Zip64 extra field if the CEN field was 0xFFFFFFFF
+      * @param uncompSize
+      *   uncompressed size in bytes; already resolved from Zip64 extra field if the CEN field was 0xFFFFFFFF
+      * @param method
+      *   compression method: 0 = STORED, 8 = DEFLATED
+      */
+    final case class JarEntry(name: String, lfhOffset: Long, compSize: Long, uncompSize: Long, method: Short)
 
     // ZIP signature constants
     private val SIG_EOCD: Int  = 0x06054b50
@@ -75,6 +92,58 @@ private[kyo] object JarCentralDirectory:
                         try raf.close()
                         catch case _: java.io.IOException => ()
                 end try
+
+    /** List all entries in a JAR file whose names end with any of the given suffixes, returning full entry metadata.
+      *
+      * Returns a Chunk of JarEntry values. The JarEntry carries the local-file-header offset, compressed/uncompressed sizes, and
+      * compression method, enabling direct mmap-based reading without opening a JarFile.
+      *
+      * Effect row: Sync (file I/O) and Abort[ReflectError] (format errors, multi-disk jars, non-JAR files).
+      */
+    def listFull(jarPath: String, suffixes: Chunk[String])(using Frame): Chunk[JarEntry] < (Sync & Abort[ReflectError]) =
+        if suffixes.isEmpty then Sync.defer(Chunk.empty)
+        else
+            Sync.defer:
+                var raf: RandomAccessFile = null
+                try
+                    raf = new RandomAccessFile(jarPath, "r")
+                    listEntriesFull(jarPath, raf, suffixes)
+                catch
+                    case err: ReflectErrorWrapper => Abort.fail(err.error)
+                    case ex: java.io.IOException =>
+                        Abort.fail(ReflectError.MalformedSection("jar", s"$jarPath: ${ex.getMessage}"))
+                finally
+                    if raf != null then
+                        try raf.close()
+                        catch case _: java.io.IOException => ()
+                end try
+
+    /** Parse all entries in a JAR (regardless of suffix) into a HashMap keyed by entry name.
+      *
+      * Called by JarMappedReader.open to build its internal entry index. The MappedByteBuffer is used for EOCD and CEN parsing; the channel
+      * must be seekable (which MappedByteBuffer is, via position()).
+      *
+      * Throws java.io.IOException (not ReflectError) since this is a private utility called from JarMappedReader where IOException is
+      * already the declared failure mode.
+      */
+    private[kyo] def parseAllEntries(jarPath: String, buf: ByteBuffer): java.util.HashMap[String, JarEntry] =
+        buf.order(ByteOrder.LITTLE_ENDIAN)
+        val fileLen = buf.limit().toLong
+        if fileLen == 0 then throw new java.io.IOException(s"$jarPath: empty file")
+
+        val (eocdOffset, stdEntries, stdCenOffset, isZip64) = findEocdBuf(jarPath, buf, fileLen)
+        val (totalEntries, cenOffset) = readCenLocationBuf(jarPath, buf, fileLen, eocdOffset, stdEntries, stdCenOffset)
+
+        if cenOffset < 0 || cenOffset >= fileLen then
+            throw new java.io.IOException(s"$jarPath: CEN offset $cenOffset out of range [0, $fileLen)")
+
+        val cenSize = (eocdOffset - cenOffset).toInt.max(0)
+        val cenBuf  = new Array[Byte](cenSize)
+        buf.position(cenOffset.toInt)
+        buf.get(cenBuf)
+
+        parseCenRecordsAll(jarPath, cenBuf, cenSize)
+    end parseAllEntries
 
     /** Thrown internally to propagate ReflectError through Java APIs that require checked exceptions. */
     final private class ReflectErrorWrapper(val error: ReflectError) extends Exception
@@ -254,6 +323,267 @@ private[kyo] object JarCentralDirectory:
 
         Chunk.from(results.toSeq)
     end parseCenRecords
+
+    /** Core full-metadata CEN parsing logic. Assumes raf is open and positioned at start. */
+    private def listEntriesFull(
+        jarPath: String,
+        raf: RandomAccessFile,
+        suffixes: Chunk[String]
+    ): Chunk[JarEntry] =
+        val fileLen = raf.length()
+        if fileLen == 0 then throw new ReflectErrorWrapper(ReflectError.MalformedSection("jar", s"$jarPath: empty file"))
+
+        val (eocdOffset, eocdBuf)     = findEocd(jarPath, raf, fileLen)
+        val (totalEntries, cenOffset) = readCenLocation(jarPath, raf, fileLen, eocdOffset, eocdBuf)
+
+        if cenOffset < 0 || cenOffset >= fileLen then
+            throw new ReflectErrorWrapper(
+                ReflectError.MalformedSection("jar", s"$jarPath: CEN offset $cenOffset out of range [0, $fileLen)")
+            )
+        end if
+
+        val cenSize = (eocdOffset - cenOffset).toInt.max(0)
+        val cenBuf  = new Array[Byte](cenSize)
+        raf.seek(cenOffset)
+        raf.readFully(cenBuf)
+
+        parseCenRecordsFull(jarPath, cenBuf, cenSize, suffixes)
+    end listEntriesFull
+
+    /** Parse central directory records from cenBuf, returning full JarEntry metadata for entries matching suffixes. */
+    private def parseCenRecordsFull(
+        jarPath: String,
+        cenBuf: Array[Byte],
+        cenSize: Int,
+        suffixes: Chunk[String]
+    ): Chunk[JarEntry] =
+        val results = mutable.ArrayBuffer.empty[JarEntry]
+        var pos     = 0
+
+        while pos + 46 <= cenSize do
+            val sig = readInt32LE(cenBuf, pos)
+            if sig != SIG_CEN then
+                pos = cenSize // break
+            else
+                val gpFlag     = readUInt16LE(cenBuf, pos + 8)
+                val method     = readUInt16LE(cenBuf, pos + 10).toShort
+                var compSize   = readUInt32LE(cenBuf, pos + 20)
+                var uncompSize = readUInt32LE(cenBuf, pos + 24)
+                val nameLen    = readUInt16LE(cenBuf, pos + 28)
+                val extraLen   = readUInt16LE(cenBuf, pos + 30)
+                val commentLen = readUInt16LE(cenBuf, pos + 32)
+                var lfhOffset  = readUInt32LE(cenBuf, pos + 42)
+                val recordSize = 46 + nameLen + extraLen + commentLen
+
+                if pos + recordSize > cenSize then
+                    pos = cenSize // truncated record, stop
+                else
+                    // Resolve Zip64 extra field if sentinel values are present
+                    val needsZip64 = compSize == 0xffffffffL || uncompSize == 0xffffffffL || lfhOffset == 0xffffffffL
+                    if needsZip64 && extraLen >= 4 then
+                        val extraStart = pos + 46 + nameLen
+                        var ep         = extraStart
+                        val extraEnd   = extraStart + extraLen
+                        var done       = false
+                        while ep + 4 <= extraEnd && !done do
+                            val hdrId    = readUInt16LE(cenBuf, ep)
+                            val dataSize = readUInt16LE(cenBuf, ep + 2)
+                            if hdrId == 0x0001 then
+                                // Zip64 extended information extra field
+                                var dp = ep + 4
+                                if uncompSize == 0xffffffffL && dp + 8 <= ep + 4 + dataSize then
+                                    uncompSize = readUInt64LE(cenBuf, dp)
+                                    dp += 8
+                                end if
+                                if compSize == 0xffffffffL && dp + 8 <= ep + 4 + dataSize then
+                                    compSize = readUInt64LE(cenBuf, dp)
+                                    dp += 8
+                                end if
+                                if lfhOffset == 0xffffffffL && dp + 8 <= ep + 4 + dataSize then
+                                    lfhOffset = readUInt64LE(cenBuf, dp)
+                                    dp += 8
+                                end if
+                                done = true
+                            else
+                                ep += 4 + dataSize
+                            end if
+                        end while
+                    end if
+
+                    // Decode entry name: bit 11 set means UTF-8, otherwise CP437
+                    val charset = if (gpFlag & GP_FLAG_UTF8) != 0 then StandardCharsets.UTF_8 else CP437
+                    val name    = new String(cenBuf, pos + 46, nameLen, charset)
+
+                    // Skip directories (names ending with '/')
+                    if !name.endsWith("/") then
+                        var i = 0
+                        while i < suffixes.length do
+                            if name.endsWith(suffixes(i)) then
+                                results += JarEntry(name, lfhOffset, compSize, uncompSize, method)
+                                i = suffixes.length // break
+                            else
+                                i += 1
+                        end while
+                    end if
+
+                    pos += recordSize
+                end if
+            end if
+        end while
+
+        Chunk.from(results.toSeq)
+    end parseCenRecordsFull
+
+    /** Parse ALL central directory records from cenBuf into a HashMap keyed by entry name.
+      *
+      * Used by JarMappedReader.open to build its entry index. Includes all entries (no suffix filter). Directories (names ending with '/')
+      * are skipped.
+      */
+    private[kyo] def parseCenRecordsAll(
+        jarPath: String,
+        cenBuf: Array[Byte],
+        cenSize: Int
+    ): java.util.HashMap[String, JarEntry] =
+        val results = new java.util.HashMap[String, JarEntry]()
+        var pos     = 0
+
+        while pos + 46 <= cenSize do
+            val sig = readInt32LE(cenBuf, pos)
+            if sig != SIG_CEN then
+                pos = cenSize // break
+            else
+                val gpFlag     = readUInt16LE(cenBuf, pos + 8)
+                val method     = readUInt16LE(cenBuf, pos + 10).toShort
+                var compSize   = readUInt32LE(cenBuf, pos + 20)
+                var uncompSize = readUInt32LE(cenBuf, pos + 24)
+                val nameLen    = readUInt16LE(cenBuf, pos + 28)
+                val extraLen   = readUInt16LE(cenBuf, pos + 30)
+                val commentLen = readUInt16LE(cenBuf, pos + 32)
+                var lfhOffset  = readUInt32LE(cenBuf, pos + 42)
+                val recordSize = 46 + nameLen + extraLen + commentLen
+
+                if pos + recordSize > cenSize then
+                    pos = cenSize // truncated record, stop
+                else
+                    // Resolve Zip64 extra field if sentinel values are present
+                    val needsZip64 = compSize == 0xffffffffL || uncompSize == 0xffffffffL || lfhOffset == 0xffffffffL
+                    if needsZip64 && extraLen >= 4 then
+                        val extraStart = pos + 46 + nameLen
+                        var ep         = extraStart
+                        val extraEnd   = extraStart + extraLen
+                        var done       = false
+                        while ep + 4 <= extraEnd && !done do
+                            val hdrId    = readUInt16LE(cenBuf, ep)
+                            val dataSize = readUInt16LE(cenBuf, ep + 2)
+                            if hdrId == 0x0001 then
+                                var dp = ep + 4
+                                if uncompSize == 0xffffffffL && dp + 8 <= ep + 4 + dataSize then
+                                    uncompSize = readUInt64LE(cenBuf, dp)
+                                    dp += 8
+                                end if
+                                if compSize == 0xffffffffL && dp + 8 <= ep + 4 + dataSize then
+                                    compSize = readUInt64LE(cenBuf, dp)
+                                    dp += 8
+                                end if
+                                if lfhOffset == 0xffffffffL && dp + 8 <= ep + 4 + dataSize then
+                                    lfhOffset = readUInt64LE(cenBuf, dp)
+                                    dp += 8
+                                end if
+                                done = true
+                            else
+                                ep += 4 + dataSize
+                            end if
+                        end while
+                    end if
+
+                    // Decode entry name: bit 11 set means UTF-8, otherwise CP437
+                    val charset = if (gpFlag & GP_FLAG_UTF8) != 0 then StandardCharsets.UTF_8 else CP437
+                    val name    = new String(cenBuf, pos + 46, nameLen, charset)
+
+                    // Skip directories
+                    if !name.endsWith("/") then
+                        results.put(name, JarEntry(name, lfhOffset, compSize, uncompSize, method)): Unit
+
+                    pos += recordSize
+                end if
+            end if
+        end while
+
+        results
+    end parseCenRecordsAll
+
+    /** EOCD scan variant using a ByteBuffer (for parseAllEntries / mmap path).
+      *
+      * Returns (eocdOffset, stdEntries, stdCenOffset, isZip64) where isZip64 is a placeholder; the caller may ignore it.
+      */
+    private def findEocdBuf(
+        jarPath: String,
+        buf: ByteBuffer,
+        fileLen: Long
+    ): (Long, Long, Long, Boolean) =
+        val scanLen = EOCD_MAX_SCAN.min(fileLen.toInt)
+        val scanBuf = new Array[Byte](scanLen)
+        buf.position((fileLen - scanLen).toInt)
+        buf.get(scanBuf)
+
+        var i = scanLen - EOCD_FIXED_SIZE
+        while i >= 0 do
+            if readInt32LE(scanBuf, i) == SIG_EOCD then
+                val eocdOffset = fileLen - scanLen + i
+                val eocdBuf    = new Array[Byte](EOCD_FIXED_SIZE)
+                java.lang.System.arraycopy(scanBuf, i, eocdBuf, 0, EOCD_FIXED_SIZE)
+                val stdEntries   = readUInt16LE(eocdBuf, 10).toLong
+                val stdCenOffset = readUInt32LE(eocdBuf, 16)
+                return (eocdOffset, stdEntries, stdCenOffset, false)
+            end if
+            i -= 1
+        end while
+
+        throw new java.io.IOException(s"$jarPath: EOCD record not found (not a valid ZIP/JAR file)")
+    end findEocdBuf
+
+    /** CEN location reader variant using a ByteBuffer (for parseAllEntries / mmap path).
+      *
+      * Checks for Zip64 EOCD locator; falls back to standard EOCD fields. Throws IOException on multi-disk jars.
+      */
+    private def readCenLocationBuf(
+        jarPath: String,
+        buf: ByteBuffer,
+        fileLen: Long,
+        eocdOffset: Long,
+        stdEntries: Long,
+        stdCenOffset: Long
+    ): (Long, Long) =
+        val locOffset = eocdOffset - ZIP64_LOC_SIZE
+        if locOffset >= 0 then
+            val locBuf = new Array[Byte](ZIP64_LOC_SIZE)
+            buf.position(locOffset.toInt)
+            buf.get(locBuf)
+            if readInt32LE(locBuf, 0) == SIG_ZIP64_LOC then
+                val locDiskCount = readUInt32LE(locBuf, 16)
+                if locDiskCount > 1 then
+                    throw new java.io.IOException(s"$jarPath: multi-disk jars unsupported")
+                end if
+                val zip64EocdOffset = readUInt64LE(locBuf, 8)
+                if zip64EocdOffset >= 0 && zip64EocdOffset < fileLen then
+                    val zip64Buf = new Array[Byte](ZIP64_EOCD_FIXED_SIZE)
+                    buf.position(zip64EocdOffset.toInt)
+                    buf.get(zip64Buf)
+                    if readInt32LE(zip64Buf, 0) == SIG_ZIP64_EOCD then
+                        val zip64DiskNum   = readUInt32LE(zip64Buf, 16)
+                        val zip64StartDisk = readUInt32LE(zip64Buf, 20)
+                        if zip64DiskNum != 0 || zip64StartDisk != 0 then
+                            throw new java.io.IOException(s"$jarPath: multi-disk jars unsupported")
+                        end if
+                        val totalEntries = readUInt64LE(zip64Buf, 32)
+                        val cenOffset    = readUInt64LE(zip64Buf, 48)
+                        return (totalEntries, cenOffset)
+                    end if
+                end if
+            end if
+        end if
+        (stdEntries, stdCenOffset)
+    end readCenLocationBuf
 
     // --- Byte-order reading helpers (little-endian, unsigned) ---
 
