@@ -1,2 +1,0 @@
-# Failure-mode case: when runner JAR is absent, task fails with useful message.
--> reflectSnapshot

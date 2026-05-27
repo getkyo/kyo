@@ -162,9 +162,9 @@ lazy val kyoJVM = project
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
         `kyo-actor`.jvm,
-        `kyo-reflect`.jvm,
-        `kyo-reflect-fixtures`.jvm,
-        `kyo-reflect-bench`.jvm,
+        `kyo-tasty`.jvm,
+        `kyo-tasty-fixtures`.jvm,
+        `kyo-tasty-bench`.jvm,
         `kyo-compat-future`.jvm,
         `kyo-compat-kyo`.jvm,
         `kyo-compat-zio`.jvm,
@@ -172,8 +172,8 @@ lazy val kyoJVM = project
         `kyo-compat-ox`.jvm,
         `kyo-compat-twitter-future`.jvm,
         `kyo-compat`,
-        `kyo-reflect-sbt-runner`,
-        `kyo-reflect-sbt-plugin`
+        `kyo-tasty-sbt-runner`,
+        `kyo-tasty-sbt-plugin`
     )
 
 lazy val kyoJS = project
@@ -202,8 +202,8 @@ lazy val kyoJS = project
         `kyo-combinators`.js,
         `kyo-case-app`.js,
         `kyo-actor`.js,
-        `kyo-reflect`.js,
-        `kyo-reflect-fixtures`.js,
+        `kyo-tasty`.js,
+        `kyo-tasty-fixtures`.js,
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
@@ -236,8 +236,8 @@ lazy val kyoNative = project
         `kyo-case-app`.native,
         `kyo-reactive-streams`.native,
         `kyo-actor`.native,
-        `kyo-reflect`.native,
-        `kyo-reflect-fixtures`.native,
+        `kyo-tasty`.native,
+        `kyo-tasty-fixtures`.native,
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -490,11 +490,11 @@ lazy val `kyo-actor` =
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
-lazy val `kyo-reflect` =
+lazy val `kyo-tasty` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-reflect"))
+        .in(file("kyo-tasty"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -503,25 +503,25 @@ lazy val `kyo-reflect` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .dependsOn(`kyo-reflect-fixtures` % Test)
+        .dependsOn(`kyo-tasty-fixtures` % Test)
 
-lazy val `kyo-reflect-fixtures` =
+lazy val `kyo-tasty-fixtures` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-reflect-fixtures"))
+        .in(file("kyo-tasty-fixtures"))
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
-lazy val `kyo-reflect-bench` =
+lazy val `kyo-tasty-bench` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-reflect-bench"))
-        .dependsOn(`kyo-reflect`)
-        .dependsOn(`kyo-reflect-fixtures`)
+        .in(file("kyo-tasty-bench"))
+        .dependsOn(`kyo-tasty`)
+        .dependsOn(`kyo-tasty-fixtures`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .disablePlugins(MimaPlugin)
@@ -1297,24 +1297,24 @@ lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
         scriptedBufferLog := false
     )
 
-// --- kyo-reflect-sbt (fork-JVM sbt plugin that generates kyo-reflect snapshots)
+// --- kyo-tasty-sbt (fork-JVM sbt plugin that generates kyo-tasty snapshots)
 //
 // Two subprojects:
-//   kyo-reflect-sbt-runner: Scala 3 JVM JAR that calls Reflect.Classpath.openCached.
+//   kyo-tasty-sbt-runner: Scala 3 JVM JAR that calls Tasty.Classpath.openCached.
 //                           Assembled into a fat JAR by sbt-assembly for the forked JVM.
-//   kyo-reflect-sbt-plugin: Scala 2.12 sbt AutoPlugin that forks the runner JVM.
+//   kyo-tasty-sbt-plugin: Scala 2.12 sbt AutoPlugin that forks the runner JVM.
 //
 // Both aggregated into kyoJVM only (sbt plugins run on JVM).
-// Scripted tests are run via `kyo-reflect-sbt-plugin/scripted`.
+// Scripted tests are run via `kyo-tasty-sbt-plugin/scripted`.
 
-lazy val `kyo-reflect-sbt-runner` = (project in file("kyo-reflect-sbt/runner"))
-    .dependsOn(`kyo-reflect`.jvm)
+lazy val `kyo-tasty-sbt-runner` = (project in file("kyo-tasty-sbt/runner"))
+    .dependsOn(`kyo-tasty`.jvm)
     .settings(
-        moduleName := "kyo-reflect-sbt-runner",
+        moduleName := "kyo-tasty-sbt-runner",
         `kyo-settings`,
         mimaCheck(false),
         // Produce a fat JAR so the plugin can fork a self-contained JVM.
-        assembly / assemblyJarName := s"kyo-reflect-sbt-runner-assembly-${version.value}.jar",
+        assembly / assemblyJarName := s"kyo-tasty-sbt-runner-assembly-${version.value}.jar",
         assembly / assemblyMergeStrategy := {
             case PathList("META-INF", "services", _ @ _*) => MergeStrategy.concat
             case PathList("META-INF", _ @ _*)             => MergeStrategy.discard
@@ -1325,10 +1325,10 @@ lazy val `kyo-reflect-sbt-runner` = (project in file("kyo-reflect-sbt/runner"))
         }
     )
 
-lazy val `kyo-reflect-sbt-plugin` = (project in file("kyo-reflect-sbt/plugin"))
+lazy val `kyo-tasty-sbt-plugin` = (project in file("kyo-tasty-sbt/plugin"))
     .enablePlugins(SbtPlugin)
     .settings(
-        moduleName         := "kyo-reflect-sbt",
+        moduleName         := "kyo-tasty-sbt",
         scalaVersion       := "2.12.20",
         crossScalaVersions := Seq("2.12.20"),
         sbtPlugin          := true,
@@ -1337,18 +1337,18 @@ lazy val `kyo-reflect-sbt-plugin` = (project in file("kyo-reflect-sbt/plugin"))
         // instead we construct the deterministic output path from pure settings.
         scriptedLaunchOpts := {
             // Construct the runner assembly JAR path from pure settings (no task deps).
-            // The jar name mirrors the assemblyJarName setting in kyo-reflect-sbt-runner.
-            val runnerScalaVer = (`kyo-reflect-sbt-runner` / scalaVersion).value
+            // The jar name mirrors the assemblyJarName setting in kyo-tasty-sbt-runner.
+            val runnerScalaVer = (`kyo-tasty-sbt-runner` / scalaVersion).value
             val runnerVersion  = version.value
-            val runnerJar = (`kyo-reflect-sbt-runner` / target).value /
+            val runnerJar = (`kyo-tasty-sbt-runner` / target).value /
                 s"scala-$runnerScalaVer" /
-                s"kyo-reflect-sbt-runner-assembly-$runnerVersion.jar"
+                s"kyo-tasty-sbt-runner-assembly-$runnerVersion.jar"
             Seq(
                 "-Xmx1024M",
                 "-Dplugin.version=" + version.value,
                 "-Drunner.jar=" + runnerJar.getAbsolutePath
             )
         },
-        scripted := scripted.dependsOn(`kyo-reflect-sbt-runner` / assembly).evaluated,
+        scripted := scripted.dependsOn(`kyo-tasty-sbt-runner` / assembly).evaluated,
         scriptedBufferLog := false
     )

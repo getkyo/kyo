@@ -1,4 +1,0 @@
-# Positive case: plugin produces a snapshot file and the file exists with size > 0.
-> compile
-> reflectSnapshot
-> checkSnapshot

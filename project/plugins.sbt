@@ -2,7 +2,7 @@ addSbtPlugin("pl.project13.scala" % "sbt-jmh"        % "0.4.8")
 addSbtPlugin("org.scalameta"      % "sbt-scalafmt"   % "2.5.6")
 addSbtPlugin("com.github.sbt"     % "sbt-ci-release" % "1.11.2")
 
-// sbt-assembly: used by kyo-reflect-sbt-runner to produce a fat JAR for the forked JVM.
+// sbt-assembly: used by kyo-tasty-sbt-runner to produce a fat JAR for the forked JVM.
 addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "2.3.1")
 
 // kyo-compat (in-tree plugin, wired in via project/build.sbt) needs

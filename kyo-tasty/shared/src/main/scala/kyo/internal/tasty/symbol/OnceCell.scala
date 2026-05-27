@@ -1,0 +1,53 @@
+package kyo.internal.tasty.symbol
+
+import java.util.concurrent.atomic.AtomicReference
+import kyo.AllowUnsafe
+
+/** A lazy one-time computation cell.
+  *
+  * On first access via `get()`, the supplied `init` function runs and the result is CAS-published. Subsequent reads return the cached
+  * value.
+  *
+  * Concurrent first-access semantics: if two threads race on `get()` before either has CAS-published, BOTH run `init()` redundantly. One
+  * CAS wins; the other's computed value is discarded. Both threads then return the same cached value.
+  *
+  * This is distinct from `kyo.Cache.memo`, which uses a Promise to dedup concurrent first-callers (only one runs `init()`; others await the
+  * Promise). `kyo.Cache.memo`'s dedup costs Async on the accessor's effect row. OnceCell's race-and-discard costs occasional redundant
+  * init() calls but never blocks and never adds Async.
+  *
+  * For kyo-tasty's body decode and Name interning workloads, OnceCell is correct: the init() call is small and synchronous, redundant
+  * first-access work is bounded to microseconds, and keeping the accessor effect row Sync-only is more valuable than dedup precision.
+  *
+  * WARNING: This is an unsafe-tier helper. `get()` reads and potentially writes an AtomicReference as a side effect. Callers must hold an
+  * `AllowUnsafe` proof.
+  */
+final class OnceCell[A](init: () => A):
+    // Store as AnyRef to avoid strict-null comparison issues.
+    private val ref = new AtomicReference[AnyRef](OnceCell.Unset)
+
+    /** Return the cached value, computing it on first call.
+      *
+      * Requires AllowUnsafe: this method reads and potentially writes an AtomicReference as a side effect.
+      */
+    def get()(using AllowUnsafe): A =
+        val cached = ref.get()
+        if cached ne OnceCell.Unset then
+            // AsInstanceOf justified: AnyRef sentinel pattern; ref holds either OnceCell.Unset or an A stored as AnyRef;
+            // the ne-Unset guard guarantees the value is the A we stored.
+            cached.asInstanceOf[A]
+        else
+            // AsInstanceOf justified: we store A as AnyRef to use AtomicReference with the Unset sentinel;
+            // the union type A | Unset.type cannot be expressed without boxing in Scala 3 on AtomicReference[AnyRef].
+            val v = init().asInstanceOf[AnyRef]
+            ref.compareAndSet(OnceCell.Unset, v)
+            // AsInstanceOf justified: same as above; ref now holds either OnceCell.Unset (CAS lost, another thread won)
+            // or the v we stored; in both cases the stored value is an A.
+            ref.get().asInstanceOf[A]
+        end if
+    end get
+
+end OnceCell
+
+object OnceCell:
+    private val Unset: AnyRef = new AnyRef
+end OnceCell
