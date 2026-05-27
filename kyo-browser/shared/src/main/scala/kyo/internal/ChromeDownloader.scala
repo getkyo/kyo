@@ -60,20 +60,22 @@ private[kyo] object ChromeDownloader:
         cfg: Browser.LaunchConfig.ChromeDownloaderConfig,
         download: (String, String, Path) => Unit < (Async & Abort[BrowserSetupException])
     )(using Frame): String < (Async & Abort[BrowserSetupException]) =
-        val resolved: String < (Async & Abort[BrowserSetupException]) =
-            version.fold(latestVersion(cfg))(v => v: String)
-        resolved.map { v =>
-            for
-                platform <- platformCode
-                root     <- cacheRoot
-                versionDir = root / s"chrome-headless-shell-$v-$platform"
-                exec       = executablePath(versionDir, platform)
-                cached <- exec.exists
-                _ <-
-                    if cached then Kyo.unit
-                    else download(v, platform, versionDir)
-            yield exec.toString
-        }
+        // `platformCode` is evaluated first so unsupported tuples (e.g. linux-arm64) abort BEFORE any network I/O.
+        // Otherwise `latestVersion` issues an HTTPS request to the Chrome-for-Testing metadata endpoint, and slow CI
+        // runners can take longer than a test's own timeout (~60s) to complete it, swallowing the
+        // unsupported-platform signal that downstream test bases translate into a ScalaTest `cancel(...)`.
+        for
+            platform <- platformCode
+            v        <- version.fold(latestVersion(cfg))(v => v: String)
+            root     <- cacheRoot
+            versionDir = root / s"chrome-headless-shell-$v-$platform"
+            exec       = executablePath(versionDir, platform)
+            cached <- exec.exists
+            _ <-
+                if cached then Kyo.unit
+                else download(v, platform, versionDir)
+        yield exec.toString
+        end for
     end ensureWith
 
     // --- Internal ---
