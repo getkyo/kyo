@@ -1412,19 +1412,19 @@ class ResultTest extends Test:
         "nested Success" in {
             val nested = Result.succeed(Result.succeed(Result.succeed(23)))
             assert(nested.show == "Success(Success(Success(23)))")
-            assert(t"$nested".show == "Success(Success(Success(23)))")
+            assert(t"$nested" == "Success(Success(Success(23)))")
             val widened: Result[Nothing, Result[Nothing, Result[Nothing, Int]]] = nested
             assert(widened.show == "Success(Success(Success(23)))")
-            assert(t"$widened".show == "Success(Success(Success(23)))")
+            assert(t"$widened" == "Success(Success(Success(23)))")
         }
 
         "nested Success with failure" in {
             val nested = Result.succeed(Result.succeed(Result.fail("error")))
             assert(nested.show == "Success(Success(Failure(error)))")
-            assert(t"$nested".show == "Success(Success(Failure(error)))")
+            assert(t"$nested" == "Success(Success(Failure(error)))")
             val widened: Result[Nothing, Result[Nothing, Result[String, Nothing]]] = nested
             assert(widened.show == "Success(Success(Failure(error)))")
-            assert(t"$widened".show == "Success(Success(Failure(error)))")
+            assert(t"$widened" == "Success(Success(Failure(error)))")
         }
     }
 

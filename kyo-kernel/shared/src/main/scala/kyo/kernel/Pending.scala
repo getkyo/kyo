@@ -473,9 +473,9 @@ object `<`:
         (a1, a2, a3, a4, a5, a6) => lift(f(a1, a2, a3, a4, a5, a6))
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
-        def asText(value: APendingS): Text = value match
+        def asString(value: APendingS): String = value match
             case sus: Kyo[?, ?]  => sus.toString
-            case a: A @unchecked => s"Kyo(${ra.asText(a)})"
+            case a: A @unchecked => s"Kyo(${ra.asString(a)})"
     end given
 
 end `<`

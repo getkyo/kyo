@@ -190,7 +190,7 @@ object Record:
             value.dict.foreach: (name, v) =>
                 if renders.contains(name) then
                     if !first then discard(sb.append(" & "))
-                    discard(sb.append(name).append(" ~ ").append(renders.get(name).asText(v)))
+                    discard(sb.append(name).append(" ~ ").append(renders.get(name).asString(v)))
                     first = false
             sb.toString
 

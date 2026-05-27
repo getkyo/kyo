@@ -6,33 +6,6 @@ import scala.util.control.NonFatal
   */
 object Ansi:
 
-    private def applyText(text: Text, code: String): Text =
-        Text("\u001b[") + code + "m" + text + "\u001b[0m"
-
-    private def stripAnsiText(text: Text): Text =
-        val len     = text.length
-        val builder = new StringBuilder(len)
-        var i       = 0
-        while i < len do
-            if text.charAt(i) == '\u001b' && i + 1 < len && text.charAt(i + 1) == '[' then
-                val start = i
-                i += 2
-                while i < len && (text.charAt(i).isDigit || text.charAt(i) == ';') do
-                    i += 1
-                if i < len && text.charAt(i).isLetter then
-                    i += 1
-                else
-                    i = start
-                    builder.append(text.charAt(i))
-                    i += 1
-                end if
-            else
-                builder.append(text.charAt(i))
-                i += 1
-        end while
-        Text(builder.toString)
-    end stripAnsiText
-
     extension (str: String)
         /** Applies black color to the string. */
         def black: String = s"\u001b[30m$str\u001b[0m"
@@ -75,50 +48,6 @@ object Ansi:
 
         /** Removes all ANSI escape sequences from the string. */
         def stripAnsi: String = str.replaceAll("\u001b\\[[0-9;]*[a-zA-Z]", "")
-    end extension
-
-    extension (text: Text)
-        /** Applies black color to the text. */
-        def black: Text = applyText(text, "30")
-
-        /** Applies red color to the text. */
-        def red: Text = applyText(text, "31")
-
-        /** Applies green color to the text. */
-        def green: Text = applyText(text, "32")
-
-        /** Applies yellow color to the text. */
-        def yellow: Text = applyText(text, "33")
-
-        /** Applies blue color to the text. */
-        def blue: Text = applyText(text, "34")
-
-        /** Applies magenta color to the text. */
-        def magenta: Text = applyText(text, "35")
-
-        /** Applies cyan color to the text. */
-        def cyan: Text = applyText(text, "36")
-
-        /** Applies white color to the text. */
-        def white: Text = applyText(text, "37")
-
-        /** Applies grey color to the text. */
-        def grey: Text = applyText(text, "90")
-
-        /** Applies bold formatting to the text. */
-        def bold: Text = applyText(text, "1")
-
-        /** Applies dim formatting to the text. */
-        def dim: Text = applyText(text, "2")
-
-        /** Applies italic formatting to the text. */
-        def italic: Text = applyText(text, "3")
-
-        /** Applies underline formatting to the text. */
-        def underline: Text = applyText(text, "4")
-
-        /** Removes all ANSI escape sequences from the text. */
-        def stripAnsi: Text = stripAnsiText(text)
     end extension
 
     object highlight:

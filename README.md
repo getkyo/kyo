@@ -593,15 +593,15 @@ import kyo.*
 
 val a: Int < Any = 23
 
-val aStr: Text = Render.asText(a)
+val aStr: String = Render.asString(a)
 
 Console.printLine(s"Kyo effect: $aStr")
 // Output: Kyo effect: Kyo(23)
 ```
 
-We can still see the pure value (23) in the output, but now we can also see that it is a `Kyo`. This will work similarly for other unboxed types like `Maybe` and `Result` (see below). 
+We can still see the pure value (23) in the output, but now we can also see that it is a `Kyo`. This will work similarly for other unboxed types like `Maybe` and `Result` (see below).
 
-Note that `Render` does not convert to string but to `Text`--an enriched `String` alternative provided and used internally by Kyo. Kyo methods for displaying strings all accept `Text` values (see `Console` and `Log`, below). Converting values using `Render` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted `Text`s automatically. To use this interpolator, prefix your interpolated strings with `t` instead of `s`.
+Calling `Render.asString` directly can be cumbersome, however, so Kyo also provides a string interpolator that applies `Render` to each interpolated value automatically. To use this interpolator, prefix your interpolated strings with `t` instead of `s`.
 
 ```scala
 import kyo.*
@@ -1839,7 +1839,7 @@ val f: Unit < (Sync & Abort[IOException]) =
     Console.let(Console.live)(e)
 ```
 
-Note that `Console.printX` methods accept `Text` values. `Text` is a super-type of `String`, however, so you can just pass regular strings. You can also pass `Text` instances generated from the `t` string interpolator ([see above](#displaying-kyo-types)).
+`Console.printX` methods accept any `String`, including the output of the `t` string interpolator ([see above](#displaying-kyo-types)).
 
 ### Clock: Time Management and Scheduled Tasks
 
@@ -2025,7 +2025,7 @@ val d: Unit < Sync =
     Log.error("example", new Exception)
 ```
 
-Note that like `Console`, `Log` methods accept `Text` values. This means they can also accept regular strings as well as outputs of `t`-interpolation ([see above](#displaying-kyo-types)).
+Like `Console`, `Log` methods accept any `String`, including the output of the `t` string interpolator ([see above](#displaying-kyo-types)).
 
 ### Stat: Observability
 

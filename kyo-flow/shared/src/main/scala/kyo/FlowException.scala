@@ -19,13 +19,13 @@ package kyo
   * @see
   *   [[kyo.Flow]] The workflow definition DSL
   */
-sealed abstract class FlowException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class FlowException(message: String, cause: String | Throwable = "")(using Frame)
     extends KyoException(message, cause)
 
 // --- Workflow errors ---
 
 /** Workflow lookup or registration failures. */
-sealed abstract class FlowWorkflowException(message: Text)(using Frame)
+sealed abstract class FlowWorkflowException(message: String)(using Frame)
     extends FlowException(message)
 
 /** Thrown when looking up a workflow by ID in the store and it doesn't exist. */
@@ -39,7 +39,7 @@ case class FlowWorkflowNotRegisteredException(workflowId: String)(using Frame)
 // --- Execution state errors ---
 
 /** Execution state or lifecycle failures. */
-sealed abstract class FlowExecutionStateException(message: Text)(using Frame)
+sealed abstract class FlowExecutionStateException(message: String)(using Frame)
     extends FlowException(message)
 
 /** Thrown when creating an execution with an ID that already exists. */
@@ -57,7 +57,7 @@ case class FlowExecutionTerminalException(executionId: String, status: Flow.Stat
 // --- Signal errors ---
 
 /** Input signal delivery failures. */
-sealed abstract class FlowSignalException(message: Text)(using Frame)
+sealed abstract class FlowSignalException(message: String)(using Frame)
     extends FlowException(message)
 
 /** Thrown when signaling an input name that doesn't exist in the workflow definition. */
