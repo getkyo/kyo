@@ -52,6 +52,15 @@ object Tasty:
         /** Wrap an already-interned `Entry` as a `Name`. For use by kyo-internal unpicklers only. */
         private[kyo] def wrap(entry: Interner.Entry): Name = entry
 
+        /** Intern a UTF-8 byte slice directly, bypassing String construction.
+          *
+          * Called by SnapshotReader.readNamePool to avoid allocating an intermediate String for each name. The interner hashes and compares
+          * the bytes in-place against its table; only a canonical copy is stored. If the entry is already present the existing Entry is
+          * returned with no allocation.
+          */
+        private[kyo] def fromBytes(bytes: Array[Byte], offset: Int, length: Int): Name =
+            globalInterner.intern(bytes, offset, length)
+
         /** Reference equality is correct because the interner guarantees unique Entry per unique byte sequence. */
         given CanEqual[Name, Name] = CanEqual.canEqualAny
 
