@@ -63,7 +63,9 @@ object TypeUnpickler:
         names: Array[Tasty.Name],
         addrMap: IntMap[Tasty.Symbol],
         arena: TypeArena,
-        home: ClasspathRef
+        home: ClasspathRef,
+        sectionBytes: Array[Byte],
+        sectionOffset: Int
     )(using Frame): (Tasty.Type, Chunk[UnresolvedRef]) < (Sync & Abort[TastyError]) =
         val result =
             try
@@ -71,8 +73,20 @@ object TypeUnpickler:
                 val inProgressRec = new mutable.HashMap[Int, Tasty.Type.Rec]()
                 val binderAddrMap = new mutable.HashMap[Int, Chunk[Tasty.Symbol]]()
                 val placeholders  = new mutable.ArrayBuffer[UnresolvedRef]()
-                val ctx           = DecodeCtx(names, addrMap, arena, home, addrCache, inProgressRec, binderAddrMap, placeholders, null, 0)
-                val t             = readTypeNode(view, ctx)
+                val ctx =
+                    DecodeCtx(
+                        names,
+                        addrMap,
+                        arena,
+                        home,
+                        addrCache,
+                        inProgressRec,
+                        binderAddrMap,
+                        placeholders,
+                        sectionBytes,
+                        sectionOffset
+                    )
+                val t = readTypeNode(view, ctx)
                 Right((t, Chunk.from(placeholders)))
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
@@ -416,12 +430,18 @@ object TypeUnpickler:
             case TastyFormat.ANNOTATEDtype =>
                 val end        = view.readEnd()
                 val underlying = readTypeNode(view, ctx)
-                // Skip the annotation term (a full TASTy term tree).
-                // Full annotation decode is deferred; store empty argsPickle for now.
+                // Capture the annotation term's byte slice (a full TASTy term tree) so downstream
+                // consumers can decode it into a Tree via TreeUnpickler. The term spans from the
+                // current cursor up to `end`. When sectionBytes is unavailable (the rare cached
+                // re-decode path), fall back to an empty slice; the rest of the type is still valid.
+                val termStart = view.position
+                val argsPickle: Chunk[Byte] =
+                    if ctx.sectionBytes == null then Chunk.empty
+                    else Chunk.from(java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, end))
                 skipToEnd(view, end)
                 Tasty.Type.Annotated(
                     underlying,
-                    Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home)), Chunk.empty)
+                    Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home)), argsPickle)
                 )
 
             case TastyFormat.ANDtype =>

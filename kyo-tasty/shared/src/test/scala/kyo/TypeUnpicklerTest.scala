@@ -89,7 +89,7 @@ class TypeUnpicklerTest extends Test:
         val view  = ByteView(bytes)
         val arena = makeArena()
         val home  = makeHome()
-        TypeUnpickler.readType(view, names, addrMap, arena, home)
+        TypeUnpickler.readType(view, names, addrMap, arena, home, bytes, 0)
     end decodeType
 
     // Test 12: decoding a TYPEREFsymbol node for a known symbol returns Named(sym).
@@ -246,8 +246,9 @@ class TypeUnpicklerTest extends Test:
         }
     }
 
-    // Test 18: decoding ANNOTATEDtype returns Annotated(underlying, annotation).
-    "decoding ANNOTATEDtype returns Annotated(underlying, annotation)" in run {
+    // Test 18: decoding ANNOTATEDtype returns Annotated(underlying, annotation) with the annotation
+    // term's raw bytes captured in argsPickle for downstream TreeUnpickler decode.
+    "decoding ANNOTATEDtype returns Annotated(underlying, annotation) with argsPickle captured" in run {
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
@@ -261,8 +262,14 @@ class TypeUnpicklerTest extends Test:
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success((t, _)) =>
                 t match
-                    case Tasty.Type.Annotated(_, _) => succeed
-                    case other                      => fail(s"Expected Annotated but got $other")
+                    case Tasty.Type.Annotated(_, ann) =>
+                        assert(
+                            ann.argsPickle.toArray.sameElements(annTerm),
+                            s"argsPickle should be the annotation term bytes; got ${ann.argsPickle.toArray.toSeq}, expected ${annTerm.toSeq}"
+                        )
+                        succeed
+                    case other =>
+                        fail(s"Expected Annotated but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
