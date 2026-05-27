@@ -179,11 +179,11 @@ object Classpath:
             val allSymbols: Chunk[Tasty.Symbol],
             val topLevelClasses: Chunk[Tasty.Symbol],
             val packages: Chunk[Tasty.Symbol],
-            val fqnIndex: Map[String, Tasty.Symbol],
-            val packageIndex: Map[String, Tasty.Symbol],
+            val fqnIndex: scala.collection.Map[String, Tasty.Symbol],
+            val packageIndex: scala.collection.Map[String, Tasty.Symbol],
             val canonical: TypeArena,
             val errors: Chunk[TastyError],
-            val moduleIndex: Map[String, Tasty.ModuleDescriptor]
+            val moduleIndex: scala.collection.Map[String, Tasty.ModuleDescriptor]
         ) extends State
 
         /** Terminal state: scope has exited, all resolving accessors fail. */
@@ -204,11 +204,11 @@ object Classpath:
         allSymbols: Chunk[Tasty.Symbol],
         topLevelClasses: Chunk[Tasty.Symbol],
         packages: Chunk[Tasty.Symbol],
-        fqnIndex: Map[String, Tasty.Symbol],
-        packageIndex: Map[String, Tasty.Symbol],
+        fqnIndex: scala.collection.Map[String, Tasty.Symbol],
+        packageIndex: scala.collection.Map[String, Tasty.Symbol],
         canonical: TypeArena,
         errors: Chunk[TastyError],
-        moduleIndex: Map[String, Tasty.ModuleDescriptor]
+        moduleIndex: scala.collection.Map[String, Tasty.ModuleDescriptor]
     ): Unit =
         // Unsafe: atomic state write, called from single-threaded Phase C
         import AllowUnsafe.embrace.danger

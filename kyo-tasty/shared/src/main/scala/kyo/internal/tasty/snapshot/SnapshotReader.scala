@@ -280,7 +280,13 @@ object SnapshotReader:
         length: Int,
         namePool: Array[String],
         bodyViewOpt: ByteView | Null
-    ): (Chunk[Tasty.Symbol], Map[String, Tasty.Symbol], Map[String, Tasty.Symbol], Chunk[Tasty.Symbol], Chunk[Tasty.Symbol]) =
+    ): (
+        Chunk[Tasty.Symbol],
+        scala.collection.Map[String, Tasty.Symbol],
+        scala.collection.Map[String, Tasty.Symbol],
+        Chunk[Tasty.Symbol],
+        Chunk[Tasty.Symbol]
+    ) =
         val count      = SnapshotFormat.readInt32LE(bytes, offset)
         val recordSize = 40
 
@@ -376,11 +382,11 @@ object SnapshotReader:
         end while
 
         (
-            Chunk.from(allSymbols.toSeq),
-            fqnIndex.toMap,
-            packageIndex.toMap,
-            Chunk.from(topLevelCls.toSeq),
-            Chunk.from(packages.toSeq)
+            Chunk.from(allSymbols),
+            fqnIndex,
+            packageIndex,
+            Chunk.from(topLevelCls),
+            Chunk.from(packages)
         )
     end readSymbolsMapped
 
@@ -423,7 +429,13 @@ object SnapshotReader:
         length: Int,
         namePool: Array[String],
         bodyBytesArray: Array[Byte]
-    ): (Chunk[Tasty.Symbol], Map[String, Tasty.Symbol], Map[String, Tasty.Symbol], Chunk[Tasty.Symbol], Chunk[Tasty.Symbol]) =
+    ): (
+        Chunk[Tasty.Symbol],
+        scala.collection.Map[String, Tasty.Symbol],
+        scala.collection.Map[String, Tasty.Symbol],
+        Chunk[Tasty.Symbol],
+        Chunk[Tasty.Symbol]
+    ) =
         val count      = SnapshotFormat.readInt32LE(bytes, offset)
         val recordSize = 40
 
@@ -522,11 +534,11 @@ object SnapshotReader:
         end while
 
         (
-            Chunk.from(allSymbols.toSeq),
-            fqnIndex.toMap,
-            packageIndex.toMap,
-            Chunk.from(topLevelCls.toSeq),
-            Chunk.from(packages.toSeq)
+            Chunk.from(allSymbols),
+            fqnIndex,
+            packageIndex,
+            Chunk.from(topLevelCls),
+            Chunk.from(packages)
         )
     end readSymbols
 

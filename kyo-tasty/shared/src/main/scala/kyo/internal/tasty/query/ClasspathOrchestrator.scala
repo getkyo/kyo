@@ -454,13 +454,13 @@ object ClasspathOrchestrator:
 
                         Classpath.transitionToReady(
                             cp,
-                            Chunk.from(allSyms.toSeq),
-                            Chunk.from(topLevelCls.toSeq),
-                            Chunk.from(packages.toSeq),
-                            fqnIndex.toMap,
-                            packageIndex.toMap,
+                            Chunk.from(allSyms),
+                            Chunk.from(topLevelCls),
+                            Chunk.from(packages),
+                            fqnIndex,
+                            packageIndex,
                             canonical,
-                            Chunk.from(accErrors.toSeq),
+                            Chunk.from(accErrors),
                             moduleIndex
                         )
                 }
