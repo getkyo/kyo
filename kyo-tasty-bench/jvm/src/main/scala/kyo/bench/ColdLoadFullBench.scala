@@ -168,6 +168,16 @@ object ColdLoadFullBench:
             f"W11b-full median=${snapshotTimes(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${snapshotTimes((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
         )
         java.lang.System.out.println("=== done ===")
+
+        // If OTLP export is active, sleep briefly before exit to allow the background batch-flush
+        // fiber one full export cycle. OTLPTraceExporter.shutdown is private[otlp] so the accessible
+        // fallback is Thread.sleep. The default bspScheduleDelay is 5 s so 6 s here is sufficient
+        // to capture the final batch.
+        if java.lang.System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != null then
+            java.lang.System.out.println("[OTLP] waiting for background span flush...")
+            Thread.sleep(6000)
+            java.lang.System.out.println("[OTLP] flush wait complete")
+        end if
     end main
 
 end ColdLoadFullBench

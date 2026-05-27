@@ -522,6 +522,7 @@ lazy val `kyo-tasty-bench` =
         .in(file("kyo-tasty-bench"))
         .dependsOn(`kyo-tasty`)
         .dependsOn(`kyo-tasty-fixtures`)
+        .dependsOn(`kyo-stats-otlp`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .disablePlugins(MimaPlugin)

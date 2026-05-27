@@ -4,11 +4,13 @@ import kyo.internal.tasty.binary.Utf8
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.query.PlatformFileSource
+import kyo.internal.tasty.query.TastyStat
 import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
+import kyo.stats.Attributes
 import scala.collection.immutable.IntMap
 
 /** kyo-tasty public entry object.
@@ -858,9 +860,14 @@ object Tasty:
         )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
             val source      = PlatformFileSource.get
             val concurrency = Runtime.getRuntime.availableProcessors().max(1)
-            ClasspathOrchestrator.open(roots, strict, source, concurrency).map: cp =>
-                assignHomes(cp, cp)
-                cp
+            TastyStat.scope.traceSpan(
+                "coldLoad",
+                Attributes.empty.add("roots", roots.size.toString)
+            ) {
+                ClasspathOrchestrator.open(roots, strict, source, concurrency).map: cp =>
+                    assignHomes(cp, cp)
+                    cp
+            }
         end openImpl
 
         private def openCachedImpl(
