@@ -45,18 +45,31 @@ private[kyo] object SharedChrome:
                     // Fork a detached fiber that holds Chrome's scope open for the whole run. When the kyo
                     // scheduler shuts down, the fiber is interrupted and the scope's finalizers tear down
                     // Chrome and its temp user-data directory.
+                    //
+                    // Setup is wrapped in Abort.run so a BrowserSetupException (e.g. unsupported platform on
+                    // linux-arm64) lands on the cachedUrl Promise as a Failure rather than vanishing into the
+                    // detached fiber. Without this, callers awaiting cachedUrl.safe.get hang until the
+                    // surrounding test/op timeout fires instead of seeing the actual cause.
                     Fiber.initUnscoped {
                         Scope.run {
-                            for
-                                cfg <- chromeConfig
-                                url <- BrowserLauncher.launch(cfg)
-                                // Idempotent: cachedUrl.complete returns false on a second completion; we discard the
-                                // boolean because the cachedUrl is consumed via .safe.get downstream which awaits whichever
-                                // completion landed first.
-                                _ <- Sync.Unsafe.defer(discard(cachedUrl.complete(Result.Success(url))))
-                                // Holds the scope open until the fiber is interrupted on runtime shutdown.
-                                _ <- Async.never
-                            yield ()
+                            Abort.run[BrowserSetupException] {
+                                for
+                                    cfg <- chromeConfig
+                                    url <- BrowserLauncher.launch(cfg)
+                                    // Idempotent: cachedUrl.complete returns false on a second completion; we discard the
+                                    // boolean because the cachedUrl is consumed via .safe.get downstream which awaits whichever
+                                    // completion landed first.
+                                    _ <- Sync.Unsafe.defer(discard(cachedUrl.complete(Result.Success(url))))
+                                    // Holds the scope open until the fiber is interrupted on runtime shutdown.
+                                    _ <- Async.never
+                                yield ()
+                            }.map {
+                                case Result.Success(_) => Kyo.unit
+                                case Result.Failure(ex) =>
+                                    Sync.Unsafe.defer(discard(cachedUrl.complete(Result.Failure(ex))))
+                                case Result.Panic(t) =>
+                                    Sync.Unsafe.defer(discard(cachedUrl.complete(Result.Panic(t))))
+                            }
                         }
                     }.unit
                 }
