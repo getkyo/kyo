@@ -196,6 +196,26 @@ object JvmFileSource extends FileSource:
         end if
     end readJarEntry
 
+    /** Synchronously read all bytes from `path`, throwing exceptions on error.
+      *
+      * Used by TastyOrigin reloadBytes thunks during lazy body decode. The pool is closed by the time body decode runs, so JAR entries are
+      * re-inflated via a fresh open-on-demand JarMappedReader (same fallback path as readJarEntry without an active pool).
+      */
+    override def readSyncUnsafe(path: String): Array[Byte] =
+        if path.startsWith("jrt:/") then
+            readJrtPath(path)
+        else
+            val jarSepIdx = path.indexOf("!/")
+            if jarSepIdx > 0 then
+                val jarPath   = path.substring(0, jarSepIdx)
+                val entryName = path.substring(jarSepIdx + 2)
+                val reader    = JarMappedReader.open(jarPath)
+                reader.readEntry(entryName)
+            else
+                java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path))
+            end if
+    end readSyncUnsafe
+
     private def listJrtPathMulti(dir: String, suffixes: Chunk[String]): Chunk[String] =
         val fs = jrtFileSystem
         if fs == null then Chunk.empty

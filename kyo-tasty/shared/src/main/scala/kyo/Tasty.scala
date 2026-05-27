@@ -763,9 +763,13 @@ object Tasty:
           *   Absolute byte offset into `sectionBytes` where this symbol's body payload begins. 0 for symbols without a body.
           * @param bodyEnd
           *   Absolute byte offset into `sectionBytes` where this symbol's body payload ends. 0 for symbols without a body.
-          * @param sectionBytes
-          *   The raw AST section bytes for this file. Shared (not copied) across all symbols from the same file. Empty array for synthetic
-          *   symbols. Used by TreeUnpickler to create a ByteView for lazy body decode.
+          * @param _sectionBytesRef
+          *   Atomic reference holding the raw AST section bytes for this file (or null when evicted). Shared (same AtomicReference
+          *   instance) across all symbols from the same file. On eviction, set to null; lazy body decode re-inflates via `reloadBytes`.
+          *   Empty-array sentinel used for snapshot-loaded origins that use a mmap-backed bodyView instead.
+          * @param reloadBytes
+          *   Thunk invoked when `_sectionBytesRef` is null to re-read and re-inflate the source file. Cached with race-and-discard
+          *   semantics after the first successful invocation.
           * @param names
           *   The name table for this file, as decoded by NameUnpickler. Shared across all symbols from the same file. Empty array for
           *   synthetic symbols.
@@ -777,7 +781,8 @@ object Tasty:
         final class TastyOrigin(
             val bodyStart: Int,
             val bodyEnd: Int,
-            val sectionBytes: Array[Byte],
+            private[kyo] val _sectionBytesRef: java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null],
+            private[kyo] val reloadBytes: () => Array[Byte],
             val names: Array[Tasty.Name],
             val sectionOffset: Int,
             /** Non-null only for mmap-loaded snapshot origins. When set, TreeUnpickler reads from this view directly instead of
@@ -786,6 +791,26 @@ object Tasty:
               */
             val bodyView: kyo.internal.tasty.binary.ByteView | Null
         ) extends Origin:
+
+            /** Return the section bytes, re-inflating from source if previously evicted.
+              *
+              * Race-and-discard semantics: if two threads race on a null ref, both call reloadBytes(). The CAS winner's result is stored;
+              * both threads return the same cached bytes from that point on.
+              */
+            def sectionBytes: Array[Byte] =
+                val b = _sectionBytesRef.get()
+                if b != null then b
+                else
+                    val fresh = reloadBytes()
+                    _sectionBytesRef.compareAndSet(null, fresh)
+                    val after = _sectionBytesRef.get()
+                    if after != null then after else fresh
+                end if
+            end sectionBytes
+
+            /** Clear the cached section bytes so they can be GC'd. On next `sectionBytes` access, `reloadBytes` is called. */
+            private[kyo] def evictSectionBytes(): Unit =
+                _sectionBytesRef.set(null)
             // Write-once: populated by AstUnpickler after pass1 completes. Unsafe: SingleAssign is unsafe-tier.
             private[kyo] val _addrMap: kyo.internal.tasty.symbol.SingleAssign[IntMap[Tasty.Symbol]] =
                 new kyo.internal.tasty.symbol.SingleAssign
@@ -802,8 +827,19 @@ object Tasty:
         end TastyOrigin
 
         object TastyOrigin:
+            /** Shared no-op reload thunk used by synthetic and snapshot origins that have no re-readable source. */
+            private[kyo] val noReload: () => Array[Byte] = () => Array.empty[Byte]
+
             /** Convenience factory for synthetic symbols that have no file bytes or body. */
-            def empty: TastyOrigin = new TastyOrigin(0, 0, Array.empty[Byte], Array.empty[Tasty.Name], 0, null)
+            def empty: TastyOrigin = new TastyOrigin(
+                0,
+                0,
+                new java.util.concurrent.atomic.AtomicReference(Array.empty[Byte]),
+                noReload,
+                Array.empty[Tasty.Name],
+                0,
+                null
+            )
 
             /** Pattern match extractor: `case TastyOrigin(bodyStart, bodyEnd)`. */
             def unapply(o: TastyOrigin): Some[(Int, Int)] =
@@ -828,11 +864,11 @@ object Tasty:
           * Registers a finalizer on the enclosing `Scope` to close the classpath.
           */
         def open(roots: Seq[String])(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-            openImpl(roots, strict = false)
+            openImplAndEvict(roots, strict = false)
 
         /** Open a classpath from directory/file roots. Strict mode: any file error aborts immediately. */
         def open(roots: Seq[String], strict: Boolean)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-            openImpl(roots, strict)
+            openImplAndEvict(roots, strict)
 
         /** Open a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
           *
@@ -864,7 +900,11 @@ object Tasty:
                 assignHomes(cp, cp)
                 cp
 
-        /** Internal: open implementation, delegates to ClasspathOrchestrator. */
+        /** Internal: open implementation, delegates to ClasspathOrchestrator.
+          *
+          * Does NOT evict section bytes; callers are responsible for calling `evictSectionBytes` when it is safe to do so (i.e., after any
+          * snapshot writing has completed). Use `openImplAndEvict` for the common case where no snapshot writing follows.
+          */
         private def openImpl(
             roots: Seq[String],
             strict: Boolean
@@ -881,6 +921,18 @@ object Tasty:
             }
         end openImpl
 
+        /** Open and evict section bytes immediately. Used when no snapshot writing follows `open`. */
+        private def openImplAndEvict(
+            roots: Seq[String],
+            strict: Boolean
+        )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+            openImpl(roots, strict).map: cp =>
+                // Evict inflated section bytes now that the classpath is fully ready and no snapshot writing follows.
+                // TastyOrigin.sectionBytes will re-inflate on demand for lazy body decode.
+                ClasspathOrchestrator.evictSectionBytes(cp)
+                cp
+        end openImplAndEvict
+
         private def openCachedImpl(
             roots: Seq[String],
             cacheDir: String
@@ -891,9 +943,9 @@ object Tasty:
             Abort.run[TastyError](SnapshotDigest.compute(roots, source)).flatMap:
                 case Result.Failure(_) =>
                     // Digest computation failed (e.g., browser): fall through to normal open
-                    openImpl(roots, strict = false)
+                    openImplAndEvict(roots, strict = false)
                 case Result.Panic(_) =>
-                    openImpl(roots, strict = false)
+                    openImplAndEvict(roots, strict = false)
                 case Result.Success(digest) =>
                     val hexDigest    = SnapshotDigest.toHexString(digest)
                     val snapshotPath = s"$cacheDir/$hexDigest.krfl"
@@ -905,14 +957,20 @@ object Tasty:
                                     Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source, cp)).flatMap:
                                         case Result.Success(_) =>
                                             assignHomes(cp, cp)
+                                            // Snapshot-loaded origins use Array.empty for sectionBytes; eviction is a no-op but
+                                            // called here for consistency so the code path is uniform.
+                                            ClasspathOrchestrator.evictSectionBytes(cp)
                                             cp
                                         case Result.Failure(_) | Result.Panic(_) =>
-                                            // Snapshot unreadable; fall through to normal open
-                                            openImpl(roots, strict = false)
+                                            // Snapshot unreadable; fall through to normal open and evict
+                                            openImplAndEvict(roots, strict = false)
                         else
-                            // No snapshot; open normally then write snapshot
+                            // No snapshot; open normally, write snapshot, then evict bytes (SnapshotWriter needs bytes).
                             openImpl(roots, strict = false).flatMap: cp =>
-                                Abort.run[TastyError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen(cp)
+                                Abort.run[TastyError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen:
+                                    // Evict after SnapshotWriter has finished reading sectionBytes.
+                                    ClasspathOrchestrator.evictSectionBytes(cp)
+                                    cp
         end openCachedImpl
 
         /** Assign each symbol's `ClasspathRef` to this classpath. Called once, after the classpath transitions to Ready.

@@ -36,11 +36,13 @@ class ClasspathRefDedupTest extends Test:
       * (IdentityHashMap regression), the second symbol with the same ref would trigger the "already set" exception.
       */
     "assignHomesForTest does not throw when multiple symbols share a single ClasspathRef" in run {
-        val bytes    = kyo.fixtures.Embedded.plainClassTasty
-        val view     = ByteView(bytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home     = new ClasspathRef
-        val arena    = TypeArena.canonical()
+        val bytes                       = kyo.fixtures.Embedded.plainClassTasty
+        val view                        = ByteView(bytes)
+        val interner                    = new Interner(numShards = 32, initialShardCapacity = 16)
+        val home                        = new ClasspathRef
+        val arena                       = TypeArena.canonical()
+        val bytesRef                    = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](bytes)
+        val noReload: () => Array[Byte] = () => Array.empty[Byte]
         Abort.run[TastyError]:
             for
                 _        <- TastyHeader.read(view)
@@ -49,7 +51,7 @@ class ClasspathRefDedupTest extends Test:
                 result <- sections.get(TastyFormat.ASTsSection) match
                     case Present((offset, length)) =>
                         val astView = view.subView(offset, offset + length)
-                        AstUnpickler.readPass1(astView, names, FileAttributes.default, home, arena)
+                        AstUnpickler.readPass1(astView, names, FileAttributes.default, home, arena, bytesRef, noReload)
                     case Absent =>
                         Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
             yield result

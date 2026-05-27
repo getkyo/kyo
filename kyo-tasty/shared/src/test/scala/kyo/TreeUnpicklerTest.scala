@@ -66,10 +66,12 @@ class TreeUnpicklerTest extends Test:
     // ── Pass-1 helper ─────────────────────────────────────────────────────────
 
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val view     = ByteView(bytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home     = new ClasspathRef
-        val arena    = TypeArena.canonical()
+        val view                        = ByteView(bytes)
+        val interner                    = new Interner(numShards = 32, initialShardCapacity = 16)
+        val home                        = new ClasspathRef
+        val arena                       = TypeArena.canonical()
+        val bytesRef                    = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](bytes)
+        val noReload: () => Array[Byte] = () => Array.empty[Byte]
         for
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
@@ -78,7 +80,7 @@ class TreeUnpicklerTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena, bytesRef, noReload)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
         yield result
@@ -355,7 +357,8 @@ class TreeUnpicklerTest extends Test:
                                 val truncated = new Tasty.Symbol.TastyOrigin(
                                     o.bodyStart,
                                     o.bodyStart + 1,
-                                    o.sectionBytes,
+                                    new java.util.concurrent.atomic.AtomicReference(o.sectionBytes),
+                                    Tasty.Symbol.TastyOrigin.noReload,
                                     o.names,
                                     o.sectionOffset,
                                     null

@@ -474,7 +474,7 @@ object ClasspathOrchestrator:
             source.read(file).flatMap: bytes =>
                 PerfCounters.entryReadCount.incrementAndGet()
                 PerfCounters.bytesReadTotal.addAndGet(bytes.length.toLong)
-                decodeTastyBytes(file, bytes, interner, cp)
+                decodeTastyBytes(file, bytes, interner, source, cp)
         ).map:
             case Result.Success(fr) => fr
             case Result.Failure(err: TastyError) =>
@@ -517,16 +517,30 @@ object ClasspathOrchestrator:
             a
     end timed
 
-    /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
+    /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena).
+      *
+      * Creates a shared `bytesRef` AtomicReference pre-populated with the inflated bytes and a `reloadBytes` thunk that re-inflates from
+      * source on demand. Both are threaded into AstUnpickler.readPass1 so every TastyOrigin produced by pass1 shares the same ref and
+      * thunk. After pass1 completes, the bytesRef still holds the live bytes (SnapshotWriter needs them if a snapshot is being written).
+      * The caller is responsible for calling `evictSectionBytes` at the right time.
+      */
     private def decodeTastyBytes(
         file: String,
         bytes: Array[Byte],
         interner: Interner,
+        source: FileSource,
         cp: Classpath
     )(using Frame): FileResult < (Sync & Abort[TastyError]) =
-        val view  = ByteView(bytes)
-        val home  = new ClasspathRef
-        val arena = new TypeArena
+        // Shared AtomicReference for all TastyOrigins produced from this file.
+        // Initially holds the live inflated bytes; evicted by the caller after SnapshotWriter (if any) runs.
+        val bytesRef = new java.util.concurrent.atomic.AtomicReference[Array[Byte] | Null](bytes)
+        // Reload thunk: re-reads and re-inflates the source file synchronously.
+        // Called from TastyOrigin.sectionBytes when bytesRef is null (after eviction).
+        // Exceptions propagate to the caller (Symbol.body maps them to TastyError values).
+        val reloadBytes: () => Array[Byte] = () => source.readSyncUnsafe(file)
+        val view                           = ByteView(bytes)
+        val home                           = new ClasspathRef
+        val arena                          = new TypeArena
         for
             _        <- timed(PerfCounters.tastyHeaderTimeNs)(TastyHeader.read(view))
             names    <- timed(PerfCounters.nameUnpicklerTimeNs)(NameUnpickler.read(view, interner))
@@ -540,7 +554,7 @@ object ClasspathOrchestrator:
             pass1Result <- timed(PerfCounters.astPass1TimeNs)(sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
+                    AstUnpickler.readPass1(astView, names, attrs, home, arena, bytesRef, reloadBytes)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", s"$file: ASTs section not found")))
             commentsBySymbol <- timed(PerfCounters.commentsUnpicklerTimeNs)(sections.get(TastyFormat.CommentsSection) match
@@ -592,5 +606,29 @@ object ClasspathOrchestrator:
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
+
+    /** Evict the cached section bytes from all TASTy-origin symbols in `cp`.
+      *
+      * Walks all symbols in the classpath and calls `evictSectionBytes()` on every TastyOrigin. This drops the reference from each origin's
+      * AtomicReference to null, allowing the GC to reclaim the inflated byte arrays. On next lazy body decode, the origin's `reloadBytes`
+      * thunk re-inflates from the source file.
+      *
+      * Called from Tasty.scala after the classpath is fully ready (and after SnapshotWriter.write, if applicable).
+      *
+      * Snapshot-loaded origins that use a mmap-backed bodyView already have `sectionBytes = Array.empty`; calling evictSectionBytes on them
+      * is a harmless no-op.
+      */
+    private[kyo] def evictSectionBytes(cp: Classpath): Unit =
+        // Unsafe: reading immutable Ready-state allSymbols; no Kyo effect context needed here.
+        import AllowUnsafe.embrace.danger
+        val syms = cp.allSymbols
+        var i    = 0
+        while i < syms.length do
+            syms(i).origin match
+                case o: Tasty.Symbol.TastyOrigin => o.evictSectionBytes()
+                case _                           => ()
+            i += 1
+        end while
+    end evictSectionBytes
 
 end ClasspathOrchestrator
