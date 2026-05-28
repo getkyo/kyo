@@ -64,7 +64,8 @@ object JsonRpcEndpoint:
         gate: Maybe[MessageGate] = Absent,
         maxInFlight: Maybe[Int] = Absent,
         requestTimeout: Duration = Duration.Infinity,
-        idStrategy: IdStrategy = IdStrategy.SequentialLong
+        idStrategy: IdStrategy = IdStrategy.SequentialLong,
+        progressResetsTimeout: Boolean = false
     )
 
     def init(
