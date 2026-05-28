@@ -1,4 +1,12 @@
 package kyo
 
-/** Phase 4 skeleton. Phase 7 adds the body (beforeDispatch, Decision). */
-sealed trait MessageGate private[kyo]
+trait MessageGate:
+    def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync
+
+object MessageGate:
+    enum Decision derives CanEqual:
+        case Allow
+        case Reject(error: JsonRpcError)
+        case Drop
+    end Decision
+end MessageGate

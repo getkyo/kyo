@@ -18,4 +18,16 @@ object UnknownMethodPolicy:
         onUnknownNotification = UnknownAction.Drop,
         dollarPrefixOverride = false
     )
+
+    val lsp: UnknownMethodPolicy = UnknownMethodPolicy(
+        onUnknownRequest = UnknownAction.ReplyMethodNotFound,
+        onUnknownNotification = UnknownAction.Drop,
+        dollarPrefixOverride = true
+    )
+
+    val strict: UnknownMethodPolicy = UnknownMethodPolicy(
+        onUnknownRequest = UnknownAction.ReplyMethodNotFound,
+        onUnknownNotification = UnknownAction.Reject,
+        dollarPrefixOverride = false
+    )
 end UnknownMethodPolicy

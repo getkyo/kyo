@@ -548,6 +548,9 @@ object JsonRpcEndpointImpl:
                 initPromise.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
                 val drainSigUnsafe = AtomicRef.Unsafe.init[Fiber.Promise[Unit, Any]](initPromise.safe)(using AllowUnsafe.embrace.danger)
                 val drainSignal    = drainSigUnsafe.safe
+                // Unsafe: implRef populated after construction; used by decodeCallback for Reject-close
+                val implRefUnsafe = AtomicRef.Unsafe.init[Maybe[JsonRpcEndpointImpl]](Absent)(using AllowUnsafe.embrace.danger)
+                val implRef       = implRefUnsafe.safe
 
                 // Encode callback: runs in Sync-only context inside Exchange.apply.
                 // Uses Kyo effect chaining (returns < Sync).
@@ -650,120 +653,221 @@ object JsonRpcEndpointImpl:
                                                                         }.andThen(Exchange.Message.Skip)
                                                             }
                                                         case _ =>
-                                                            methodMap.get(method) match
-                                                                case Some(m) =>
-                                                                    // Unsafe: Promise.Unsafe.init for cancelled signal on notification handlers
-                                                                    val cancelledUnsafe =
-                                                                        Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
-                                                                    val ctx =
-                                                                        new HandlerCtx(cancelledUnsafe.safe, Absent, env.extras, Absent)
-                                                                    val handlerEffect =
-                                                                        m.handle(env.params.getOrElse(Structure.Value.Null), ctx)(using
-                                                                            frame
-                                                                        )
-                                                                    Fiber.initUnscoped(handlerEffect).map { _ =>
-                                                                        Exchange.Message.Skip
+                                                            // Step 2: gate intercept (before method dispatch)
+                                                            def dispatchNotification
+                                                                : Exchange.Message[JsonRpcId, Structure.Value, Nothing] < Sync =
+                                                                methodMap.get(method) match
+                                                                    case Some(m) =>
+                                                                        // Unsafe: Promise.Unsafe.init for cancelled signal on notification handlers
+                                                                        val cancelledUnsafe =
+                                                                            Promise.Unsafe.init[Unit, Sync]()(using
+                                                                                AllowUnsafe.embrace.danger
+                                                                            )
+                                                                        val ctx =
+                                                                            new HandlerCtx(cancelledUnsafe.safe, Absent, env.extras, Absent)
+                                                                        val handlerEffect =
+                                                                            m.handle(env.params.getOrElse(Structure.Value.Null), ctx)(using
+                                                                                frame
+                                                                            )
+                                                                        Fiber.initUnscoped(handlerEffect).map { _ =>
+                                                                            Exchange.Message.Skip
+                                                                        }
+                                                                    case None =>
+                                                                        // Step 3: unknown-method dispatch for notifications
+                                                                        val isDollarPrefix = method.startsWith("$/")
+                                                                        if config.unknownMethod.dollarPrefixOverride && isDollarPrefix then
+                                                                            Exchange.Message.Skip
+                                                                        else
+                                                                            config.unknownMethod.onUnknownNotification match
+                                                                                case UnknownMethodPolicy.UnknownAction.Drop =>
+                                                                                    Exchange.Message.Skip
+                                                                                case UnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
+                                                                                    Exchange.Message.Skip
+                                                                                case UnknownMethodPolicy.UnknownAction.Reject =>
+                                                                                    Log.warn(
+                                                                                        s"kyo-jsonrpc: unknown notification method '$method' rejected"
+                                                                                    ).andThen {
+                                                                                        // Unsafe: read implRef to trigger close; implRef set before any messages arrive
+                                                                                        Sync.Unsafe.defer {
+                                                                                            implRefUnsafe.get()(using
+                                                                                                AllowUnsafe.embrace.danger
+                                                                                            ) match
+                                                                                                case Present(i) =>
+                                                                                                    Fiber.initUnscoped(i.close(using frame))
+                                                                                                case Absent => ()
+                                                                                        }.andThen(Exchange.Message.Skip)
+                                                                                    }
+                                                                        end if
+                                                            end dispatchNotification
+                                                            config.gate match
+                                                                case Absent =>
+                                                                    dispatchNotification
+                                                                case Present(g) =>
+                                                                    g.beforeDispatch(env)(using frame).map {
+                                                                        case MessageGate.Decision.Allow =>
+                                                                            dispatchNotification
+                                                                        case MessageGate.Decision.Reject(_) =>
+                                                                            // Notifications have no id: log WARN, drop silently (no wire response)
+                                                                            Log.warn(
+                                                                                s"kyo-jsonrpc: gate rejected notification method '$method'"
+                                                                            ).andThen(
+                                                                                Exchange.Message.Skip
+                                                                            )
+                                                                        case MessageGate.Decision.Drop =>
+                                                                            Exchange.Message.Skip
                                                                     }
-                                                                case None =>
-                                                                    Exchange.Message.Skip
+                                                            end match
 
-                                        case JsonRpcEnvelope.Request(id, method, params, extras) =>
-                                            methodMap.get(method) match
-                                                case Some(m) =>
-                                                    // Unsafe: Promise.Unsafe.init and buildProgressSink require AllowUnsafe
-                                                    val cancelledUnsafe =
-                                                        Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
-                                                    // Unsafe: build progressSink using AllowUnsafe.embrace.danger directly
-                                                    val progressSinkOpt: Maybe[Structure.Value => Unit < (Async & Abort[Closed])] =
-                                                        ProgressEngine.buildProgressSink(
-                                                            id,
-                                                            params,
-                                                            extras,
-                                                            config.progress,
-                                                            pendingInbound,
-                                                            writerChannel
-                                                        )(using frame, AllowUnsafe.embrace.danger)
-                                                    val ctx = new HandlerCtx(cancelledUnsafe.safe, Present(id), extras, progressSinkOpt)
-                                                    val handlerEffect =
-                                                        m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
-                                                    Fiber.initUnscoped(handlerEffect).map { fiber =>
-                                                        // Unsafe: register pendingInbound entry and attach onComplete hook inside Exchange decode callback
-                                                        Sync.Unsafe.defer {
-                                                            val entry = InboundEntry.Running(method, fiber, cancelledUnsafe.safe)
-                                                            pendingInbound.put(id, entry)
-                                                            // Attach completion hook AFTER putting in pendingInbound
-                                                            fiber.unsafe.onComplete { result =>
-                                                                val responseEnvelope = result match
-                                                                    case Result.Success(sv) =>
-                                                                        JsonRpcEnvelope.Response(
-                                                                            id,
-                                                                            Present(sv.eval(using frame)),
-                                                                            Absent,
-                                                                            extras
-                                                                        )
-                                                                    case Result.Failure(e) =>
-                                                                        JsonRpcEnvelope.Response(id, Absent, Present(e), extras)
-                                                                    case Result.Panic(t) =>
-                                                                        JsonRpcEnvelope.Response(
-                                                                            id,
-                                                                            Absent,
-                                                                            Present(
-                                                                                JsonRpcError.internalError(
-                                                                                    "Internal error",
-                                                                                    Present(Structure.Value.Str(t.getMessage))
-                                                                                )
-                                                                            ),
-                                                                            extras
-                                                                        )
-                                                                // CAS: Running -> Replying (fails if cancel moved it to Cancelled)
-                                                                pendingInbound.get(id) match
-                                                                    case running: InboundEntry.Running =>
-                                                                        // Unsafe: AtomicBoolean.Unsafe.init for suppress flag
-                                                                        val suppressUnsafe = AtomicBoolean.Unsafe.init(false)(using
-                                                                            AllowUnsafe.embrace.danger
-                                                                        )
-                                                                        val replying =
-                                                                            InboundEntry.Replying(method, suppressUnsafe.safe)
-                                                                        if pendingInbound.replace(id, running, replying) then
-                                                                            // Unsafe: writer-channel offer from Sync-only onComplete callback
-                                                                            discard(writerChannel.unsafe.offer(
-                                                                                WriterMsg.SuppressIfCancelled(id, responseEnvelope)
-                                                                            )(using AllowUnsafe.embrace.danger, frame))
-                                                                        end if
-                                                                    case _: InboundEntry.Cancelled =>
-                                                                        // Cancel won CAS; for LSP (expectReplyForCancelledRequest=true)
-                                                                        // the handler still produces a reply, so we send it.
-                                                                        // For MCP the handler was interrupted and should not reply.
-                                                                        val mustReply = config.cancellation match
-                                                                            case Present(p) => p.expectReplyForCancelledRequest
-                                                                            case Absent     => false
-                                                                        if mustReply then
-                                                                            // Unsafe: SendEnvelope bypasses suppress check (LSP always replies)
-                                                                            discard(writerChannel.unsafe.offer(
-                                                                                WriterMsg.SendEnvelope(responseEnvelope)
-                                                                            )(using AllowUnsafe.embrace.danger, frame))
-                                                                            discard(pendingInbound.remove(id))
-                                                                        end if
-                                                                    case _ => ()
-                                                                end match
-                                                            }(using AllowUnsafe.embrace.danger)
-                                                        }.andThen(Exchange.Message.Skip)
+                                        case env2 @ JsonRpcEnvelope.Request(id, method, params, extras) =>
+                                            // Step 2: gate intercept (before method dispatch)
+                                            def dispatchRequest: Exchange.Message[JsonRpcId, Structure.Value, Nothing] < Sync =
+                                                methodMap.get(method) match
+                                                    case Some(m) =>
+                                                        // Unsafe: Promise.Unsafe.init and buildProgressSink require AllowUnsafe
+                                                        val cancelledUnsafe =
+                                                            Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
+                                                        // Unsafe: build progressSink using AllowUnsafe.embrace.danger directly
+                                                        val progressSinkOpt: Maybe[Structure.Value => Unit < (Async & Abort[Closed])] =
+                                                            ProgressEngine.buildProgressSink(
+                                                                id,
+                                                                params,
+                                                                extras,
+                                                                config.progress,
+                                                                pendingInbound,
+                                                                writerChannel
+                                                            )(using frame, AllowUnsafe.embrace.danger)
+                                                        val ctx = new HandlerCtx(cancelledUnsafe.safe, Present(id), extras, progressSinkOpt)
+                                                        val handlerEffect =
+                                                            m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
+                                                        Fiber.initUnscoped(handlerEffect).map { fiber =>
+                                                            // Unsafe: register pendingInbound entry and attach onComplete hook inside Exchange decode callback
+                                                            Sync.Unsafe.defer {
+                                                                val entry = InboundEntry.Running(method, fiber, cancelledUnsafe.safe)
+                                                                pendingInbound.put(id, entry)
+                                                                // Attach completion hook AFTER putting in pendingInbound
+                                                                fiber.unsafe.onComplete { result =>
+                                                                    val responseEnvelope = result match
+                                                                        case Result.Success(sv) =>
+                                                                            JsonRpcEnvelope.Response(
+                                                                                id,
+                                                                                Present(sv.eval(using frame)),
+                                                                                Absent,
+                                                                                extras
+                                                                            )
+                                                                        case Result.Failure(e) =>
+                                                                            JsonRpcEnvelope.Response(id, Absent, Present(e), extras)
+                                                                        case Result.Panic(t) =>
+                                                                            JsonRpcEnvelope.Response(
+                                                                                id,
+                                                                                Absent,
+                                                                                Present(
+                                                                                    JsonRpcError.internalError(
+                                                                                        "Internal error",
+                                                                                        Present(Structure.Value.Str(t.getMessage))
+                                                                                    )
+                                                                                ),
+                                                                                extras
+                                                                            )
+                                                                    // CAS: Running -> Replying (fails if cancel moved it to Cancelled)
+                                                                    pendingInbound.get(id) match
+                                                                        case running: InboundEntry.Running =>
+                                                                            // Unsafe: AtomicBoolean.Unsafe.init for suppress flag
+                                                                            val suppressUnsafe = AtomicBoolean.Unsafe.init(false)(using
+                                                                                AllowUnsafe.embrace.danger
+                                                                            )
+                                                                            val replying =
+                                                                                InboundEntry.Replying(method, suppressUnsafe.safe)
+                                                                            if pendingInbound.replace(id, running, replying) then
+                                                                                // Unsafe: writer-channel offer from Sync-only onComplete callback
+                                                                                discard(writerChannel.unsafe.offer(
+                                                                                    WriterMsg.SuppressIfCancelled(id, responseEnvelope)
+                                                                                )(using AllowUnsafe.embrace.danger, frame))
+                                                                            end if
+                                                                        case _: InboundEntry.Cancelled =>
+                                                                            // Cancel won CAS; for LSP (expectReplyForCancelledRequest=true)
+                                                                            // the handler still produces a reply, so we send it.
+                                                                            // For MCP the handler was interrupted and should not reply.
+                                                                            val mustReply = config.cancellation match
+                                                                                case Present(p) => p.expectReplyForCancelledRequest
+                                                                                case Absent     => false
+                                                                            if mustReply then
+                                                                                // Unsafe: SendEnvelope bypasses suppress check (LSP always replies)
+                                                                                discard(writerChannel.unsafe.offer(
+                                                                                    WriterMsg.SendEnvelope(responseEnvelope)
+                                                                                )(using AllowUnsafe.embrace.danger, frame))
+                                                                                discard(pendingInbound.remove(id))
+                                                                            end if
+                                                                        case _ => ()
+                                                                    end match
+                                                                }(using AllowUnsafe.embrace.danger)
+                                                            }.andThen(Exchange.Message.Skip)
+                                                        }
+
+                                                    case None =>
+                                                        // Step 3: unknown-method dispatch for requests
+                                                        config.unknownMethod.onUnknownRequest match
+                                                            case UnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
+                                                                val response = JsonRpcEnvelope.Response(
+                                                                    id,
+                                                                    Absent,
+                                                                    Present(JsonRpcError.methodNotFound(method)(using frame)),
+                                                                    Absent
+                                                                )
+                                                                // Unsafe: offer to writerChannel inside Exchange decode callback
+                                                                Sync.Unsafe.defer {
+                                                                    discard(writerChannel.unsafe.offer(WriterMsg.SendEnvelope(response))(
+                                                                        using
+                                                                        AllowUnsafe.embrace.danger,
+                                                                        frame
+                                                                    ))
+                                                                }.andThen(Exchange.Message.Skip)
+                                                            case UnknownMethodPolicy.UnknownAction.Drop =>
+                                                                Exchange.Message.Skip
+                                                            case UnknownMethodPolicy.UnknownAction.Reject =>
+                                                                // Reject for a Request: send MethodNotFound first (so caller is unblocked), then close.
+                                                                val response = JsonRpcEnvelope.Response(
+                                                                    id,
+                                                                    Absent,
+                                                                    Present(JsonRpcError.methodNotFound(method)(using frame)),
+                                                                    Absent
+                                                                )
+                                                                // Unsafe: offer to writerChannel inside Exchange decode callback
+                                                                Sync.Unsafe.defer {
+                                                                    discard(writerChannel.unsafe.offer(WriterMsg.SendEnvelope(response))(
+                                                                        using
+                                                                        AllowUnsafe.embrace.danger,
+                                                                        frame
+                                                                    ))
+                                                                }.andThen {
+                                                                    // Unsafe: read implRef to trigger close; implRef set before any messages arrive
+                                                                    Sync.Unsafe.defer {
+                                                                        implRefUnsafe.get()(using AllowUnsafe.embrace.danger) match
+                                                                            case Present(i) => Fiber.initUnscoped(i.close(using frame))
+                                                                            case Absent     => ()
+                                                                    }.andThen(Exchange.Message.Skip)
+                                                                }
+                                            end dispatchRequest
+                                            config.gate match
+                                                case Absent =>
+                                                    dispatchRequest
+                                                case Present(g) =>
+                                                    g.beforeDispatch(env2)(using frame).map {
+                                                        case MessageGate.Decision.Allow =>
+                                                            dispatchRequest
+                                                        case MessageGate.Decision.Reject(err) =>
+                                                            // Request has an id: send error response so caller is not left hanging
+                                                            val response = JsonRpcEnvelope.Response(id, Absent, Present(err), Absent)
+                                                            // Unsafe: offer to writerChannel inside gate decision handler
+                                                            Sync.Unsafe.defer {
+                                                                discard(writerChannel.unsafe.offer(WriterMsg.SendEnvelope(response))(using
+                                                                    AllowUnsafe.embrace.danger,
+                                                                    frame
+                                                                ))
+                                                            }.andThen(Exchange.Message.Skip)
+                                                        case MessageGate.Decision.Drop =>
+                                                            Exchange.Message.Skip
                                                     }
-
-                                                case None =>
-                                                    val response = JsonRpcEnvelope.Response(
-                                                        id,
-                                                        Absent,
-                                                        Present(JsonRpcError.methodNotFound(method)(using frame)),
-                                                        Absent
-                                                    )
-                                                    // Unsafe: offer to writerChannel inside Exchange decode callback; channel.unsafe used here
-                                                    Sync.Unsafe.defer {
-                                                        discard(writerChannel.unsafe.offer(WriterMsg.SendEnvelope(response))(using
-                                                            AllowUnsafe.embrace.danger,
-                                                            frame
-                                                        ))
-                                                    }.andThen(Exchange.Message.Skip)
+                                            end match
 
                                         case JsonRpcEnvelope.Response(id, result, error, _) =>
                                             error match
@@ -848,7 +952,7 @@ object JsonRpcEndpointImpl:
                         }.unit
 
                     Fiber.initUnscoped(writerLoop).map { writerFib =>
-                        new JsonRpcEndpointImpl(
+                        val impl = new JsonRpcEndpointImpl(
                             callerRegistry = callerRegistry,
                             pendingInbound = pendingInbound,
                             writerChannel = writerChannel,
@@ -866,6 +970,9 @@ object JsonRpcEndpointImpl:
                             progressStreams = progressStreams,
                             outboundIdToToken = outboundIdToToken
                         )
+                        // Unsafe: populate implRef so decodeCallback Reject-close branches can trigger engine close
+                        implRefUnsafe.set(Present(impl))(using AllowUnsafe.embrace.danger)
+                        impl
                     }
                 }
             }
