@@ -25,14 +25,14 @@ final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.JsonRp
     )(using Frame): JsonRpcEndpoint.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
         impl.callWithProgress[In, Out](method, params, extras)
 
-    def callPartialResults[In: Schema, T: Schema](
+    def callPartialResults[In: Schema, T: Schema: Tag](
         method: String,
         params: In,
         extras: ExtrasEncoder = ExtrasEncoder.empty
-    )(using Frame): Stream[T, Async & Abort[JsonRpcError | Closed]] =
+    )(using Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
         impl.callPartialResults[In, T](method, params, extras)
 
-    def subscribeProgress(token: Structure.Value)(using Frame): Stream[Structure.Value, Async & Abort[Closed]] =
+    def subscribeProgress(token: Structure.Value)(using Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync =
         impl.subscribeProgress(token)
 
     def unsubscribeProgress(token: Structure.Value)(using Frame): Unit < Async =

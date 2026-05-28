@@ -48,7 +48,7 @@ This is functional Kyo code. Every violation will be reverted.
 
 ## Forbidden actions
 
-- Do NOT run `git add` or `git commit`. The supervisor commits.
+- Do NOT run `git add` or `git commit`. The supervisor commits. **Violation precedent: Phase 5 agent committed against rule; do not repeat. Leave the tree dirty and report.**
 - Do NOT modify the build.sbt for other modules.
 - Do NOT touch CLAUDE.md or any file outside `kyo-jsonrpc/` plus the single `build.sbt` line for adding the module.
 - Do NOT introduce dependencies beyond `kyo-prelude`, `kyo-core`, `kyo-schema`.
@@ -84,6 +84,89 @@ The crossProject uses `.withoutSuffixFor(JVMPlatform)`, so the sbt project key f
 - Native: `sbt 'kyo-jsonrpcNative/Test/compile'`
 
 IMPLEMENTATION.md and earlier prompts use `kyo-jsonrpcJVM` in verification commands; substitute the unsuffixed name for JVM. JS / Native suffixes work as written.
+
+### Phase 6 IMMEDIATE STEER (in-flight pulse 3 — 11 test failures)
+
+Three distinct bugs identified. Fix all three:
+
+**Bug A — `pendingInbound` registration race (7 tests)**
+
+In `internal/JsonRpcEndpointImpl.scala` `decodeCallback` Request branch, the current sequence is:
+1. `Fiber.initUnscoped(handlerEffect)` ← creates handler fiber.
+2. (Inside `.map { fiber => Sync.Unsafe.defer { ... } }`): `pendingInbound.put(id, Running(...))`.
+
+The scheduler may run the handler fiber BEFORE the defer block fires; when the handler calls `ctx.progress`, the guard `pendingInbound.get(id) == Running` finds `null` and the notification drops.
+
+**Fix**: move `pendingInbound.put(id, Running(method, fiber, cancelledPromise))` to BEFORE `Fiber.initUnscoped`. Create the cancelledPromise + register a dummy fiber-promise first, then start the handler fiber, then update the entry's fiber slot if needed. Simpler: use `Fiber.initUnscoped` with a small wrapper that awaits on a `started: Promise[Unit]` before running the handler body; outer code completes `started` after the put. OR: put the entry FIRST with a `Fiber.unit` placeholder, then init the fiber and immediately atomically replace the entry to include the real fiber handle.
+
+The simplest fix: do `pendingInbound.put` INSIDE the `Sync.defer` block that ALSO contains `Fiber.initUnscoped`, BEFORE the fiber init line. The `Sync.defer { ... }` is sequential; the put runs before the fiber starts.
+
+**Bug B — wrong value offered to progress channel (2 tests: `callPartialResults`)**
+
+In `decodeCallback` step 1b (progress intercept), the code currently offers the full progress notification params (`{token: ..., value: ...}` or `{progressToken: ..., progress: ..., total: ..., message: ...}`) to `progressStreams[token]`. For `callPartialResults[T]`, callers expect the channel to carry just the `value` payload (for LSP) or the merged-without-progressToken payload (for MCP).
+
+**Fix**: add a new field to `ProgressPolicy`:
+```scala
+extractProgressValue: Structure.Value => (Structure.Value < Sync)
+```
+- LSP: `(p) => Sync.defer(field(p, "value").getOrElse(p))`
+- MCP: `(p) => Sync.defer(merge(p, ...) without progressToken)` — actually for MCP, the value IS the whole params minus progressToken. Use a helper that strips `progressToken` from a Record.
+
+Then in step 1b, after `extractInboundToken(params)` succeeds, call `policy.extractProgressValue(params)` and offer THAT to the channel.
+
+This is a 7th field on ProgressPolicy. Per IMPLEMENTATION.md line 370 the policy has 6 fields. Add the 7th and document the deviation in the commit message; or reuse `extractInboundToken` to also return the value (returning Maybe[(token, value)] pair). Pick the cleaner: add the 7th field `extractProgressValue` and document as a Phase 6 deviation; the alternative `(token, value)` pair return type would force changing both call sites.
+
+**Bug C — `subscribeProgress` lazy channel registration (2 tests: timeout)**
+
+In `ProgressEngine.subscribeProgress`, the `Channel.initUnscoped` happens inside the returned Stream's body. The channel is only created when `stream.run` is invoked, but progress notifications may arrive BEFORE the caller invokes `stream.run`.
+
+**Fix**: do channel creation EAGERLY in a `Sync.defer` outside the Stream, register in `progressStreams[token]`, then return the stream as `Stream` (not `Stream < Sync`). The return type signature is `Stream[Structure.Value, Async & Abort[Closed]]`. If you need `Sync` for the init, change the public signature to `Stream[Structure.Value, Async & Abort[Closed]] < Sync` OR (cleaner) construct the channel inside a `for-yield` block inside the method that returns `Stream[...] < Sync`. Spec the return:
+```scala
+def subscribeProgress(token: Structure.Value)(using Frame):
+    Stream[Structure.Value, Async & Abort[Closed]] < Sync = ...
+```
+Update `JsonRpcEndpoint.subscribeProgress` signature in JsonRpcEndpoint.scala to match.
+
+After all three fixes:
+- `sbt 'kyo-jsonrpc/Test/compile' 2>&1 | tail -5` green.
+- `sbt 'kyo-jsonrpc/testOnly *ProgressPolicyTest' 2>&1 | tail -5` 14/14.
+- `sbt 'kyo-jsonrpc/test' 2>&1 | tail -5` ALL passing.
+
+### Phase 6 IMMEDIATE STEER (in-flight pulse 2)
+
+The 3 compile errors at lines 294/346/666 are fixed (good). One remaining error at `internal/JsonRpcEndpointImpl.scala:329`:
+
+**Root cause**: `Emit.value(Chunk(v))` at line 329 requires `Tag[T]` directly. The `T: Schema` bound doesn't surface a `Tag[T]` resolvable for `Emit.value`.
+
+**Fix**: change the signature of `callPartialResults[In: Schema, T: Schema]` to `callPartialResults[In: Schema, T: Schema: Tag]` in BOTH:
+- `kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEndpoint.scala` (the public-method signature, ~line 28)
+- `kyo-jsonrpc/shared/src/main/scala/kyo/internal/JsonRpcEndpointImpl.scala` (the impl-method signature, ~line 282)
+
+Import `kyo.Tag` at the top of each if missing.
+
+After this fix:
+- `sbt 'kyo-jsonrpc/Test/compile' 2>&1 | tail -5` MUST be green.
+- Write the 14 tests in `ProgressPolicyTest.scala`.
+- Run `sbt 'kyo-jsonrpc/testOnly *ProgressPolicyTest' 2>&1 | tail -5` until 14/14.
+- DO NOT commit.
+
+### Phase 6 IMMEDIATE STEER (in-flight pulse 1)
+
+Pulse 1 found Phase 6 in good shape architecturally (ProgressPolicy has 6 fields, ProgressEngine.scala present, 4 stubs replaced, step-1b intercept wired, monotonicity AtomicRef in place, convention sweep clean) BUT:
+
+1. **Build does not compile.** Three type errors in `internal/JsonRpcEndpointImpl.scala`:
+   - Line 294 (callPartialResults body): wrapped in `Sync.Unsafe.defer { ... }`, returns `Stream[...] < Sync` instead of `Stream[...]`. Unwrap so the body just returns the Stream directly. The stream's effect row already includes Sync via the channel ops.
+   - Line 346 (subscribeProgress body): same issue. Unwrap.
+   - Line 666: passing `Structure.Value < Any` where `Structure.Value` is required. Likely missing a `.map { v => ... }` or an erroneous `.andThen(_)` — read the line and fix the effect threading.
+
+2. **ProgressPolicyTest.scala does not exist (0/14 tests).** Write it with all 14 leaves (Tests 65-78) per IMPLEMENTATION.md lines 384-397. Use ProgressEngine + JsonRpcEndpoint via inMemory transport pair.
+
+3. **Config.progress default**: KEEP `Absent`, matching Phase 5's pattern. Do NOT change to `Present(ProgressPolicy.lsp)` (IMPLEMENTATION.md line 375 suggests changing, but Phase 5 deferred similar Config-default tightening for the same reason: stability of prior phases' tests). Pulse-1 reviewer flagged this as a "missing fix" but it's intentional.
+
+After Fix 1 + 2:
+- `sbt 'kyo-jsonrpc/Test/compile' 2>&1 | tail -5` green.
+- `sbt 'kyo-jsonrpc/testOnly *ProgressPolicyTest' 2>&1 | tail -5` shows 14/14 passing.
+- `sbt 'kyo-jsonrpc/test' 2>&1 | tail -5` shows ALL passing (77+).
 
 ### Phase 5 IMMEDIATE STEER (in-flight pulse 3 follow-up — 3 test failures)
 

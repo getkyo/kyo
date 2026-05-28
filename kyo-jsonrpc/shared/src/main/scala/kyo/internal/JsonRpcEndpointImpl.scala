@@ -54,7 +54,10 @@ final class JsonRpcEndpointImpl private[kyo] (
     private val methodMap: Map[String, JsonRpcMethod[Async & Abort[JsonRpcError]]],
     private val unknownPolicy: UnknownMethodPolicy,
     private[kyo] val config: JsonRpcEndpoint.Config,
-    private[kyo] val initFrame: Frame
+    private[kyo] val initFrame: Frame,
+    private val progressPolicy: Maybe[ProgressPolicy],
+    private[kyo] val progressStreams: ConcurrentHashMap[Structure.Value, Channel[Structure.Value]],
+    private[kyo] val outboundIdToToken: ConcurrentHashMap[JsonRpcId, Structure.Value]
 ):
 
     def call[In: Schema, Out: Schema](
@@ -134,6 +137,84 @@ final class JsonRpcEndpointImpl private[kyo] (
             }
         }
 
+    // Private helper: issues a call with pre-encoded params.
+    // Returns a Kyo effect that produces (idPromise, resultEffect) once the idSignal is initialized.
+    private def callEncoded[Out: Schema](
+        method: String,
+        encodedParams: Maybe[Structure.Value],
+        extras: ExtrasEncoder
+    )(using frame: Frame): (Fiber.Promise[JsonRpcId, Any], Out < (Async & Abort[JsonRpcError | Closed])) =
+        // Unsafe: Promise.Unsafe.init so idSignal is accessible before the call runs
+        val idSignalUnsafe = Promise.Unsafe.init[JsonRpcId, Any]()(using AllowUnsafe.embrace.danger)
+        val idSignal       = idSignalUnsafe
+        val idPromise      = idSignalUnsafe.safe
+        val callEffect: Out < (Async & Abort[JsonRpcError | Closed]) =
+            Fiber.Promise.init[JsonRpcError, Any].map { abortSignal =>
+                inFlight.getAndIncrement.map { prev =>
+                    val refresh: Unit < Async =
+                        if prev == 0 then Fiber.Promise.init[Unit, Any].map(drainSignal.set)
+                        else Kyo.unit
+                    refresh.andThen {
+                        drainSignal.get.map { snapshot =>
+                            Sync.ensure(
+                                inFlight.decrementAndGet.map { newCount =>
+                                    (if newCount == 0 then snapshot.completeUnitDiscard else Kyo.unit).andThen {
+                                        // Unsafe: poll idSignal to clean callerRegistry on request completion
+                                        Sync.Unsafe.defer {
+                                            idSignal.poll() match
+                                                case Maybe.Present(Result.Success(id)) =>
+                                                    callerRegistry.remove(id)
+                                                case _ => ()
+                                        }
+                                    }
+                                }
+                            ) {
+                                val req = OutboundReq(method, encodedParams, idSignal, abortSignal, extras)
+                                val raceResult: Out < (Async & Abort[JsonRpcError | Closed]) =
+                                    Async.raceFirst[JsonRpcError | Closed, Out, Any](
+                                        abortSignal.get.map(e => Abort.fail[JsonRpcError](e)),
+                                        exchange(req).map { sv =>
+                                            Structure.decode[Out](sv) match
+                                                case Result.Success(v) => v
+                                                case Result.Failure(e) => Abort.fail(JsonRpcError.invalidParams(e.getMessage))
+                                                case Result.Panic(t)   => Abort.panic(t)
+                                        }
+                                    )
+                                if config.requestTimeout == Duration.Infinity then
+                                    raceResult
+                                else
+                                    Abort.run[Timeout](Async.timeout(config.requestTimeout)(raceResult)).map {
+                                        case Result.Success(v) => v
+                                        case Result.Failure(_) =>
+                                            val abortError: JsonRpcError = config.cancellation match
+                                                case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(Absent))
+                                                case Absent     => JsonRpcError.cancelled(Absent)
+                                            // Unsafe: read idSignal to find the id for cancel notification
+                                            Sync.Unsafe.defer {
+                                                idSignal.poll() match
+                                                    case Maybe.Present(Result.Success(rawId)) =>
+                                                        val id: JsonRpcId = rawId.eval
+                                                        CancellationEngine.handleTimeout(
+                                                            id,
+                                                            Absent,
+                                                            config.cancellation,
+                                                            callerRegistry,
+                                                            writerChannel
+                                                        ).andThen(Abort.fail[JsonRpcError](abortError))
+                                                    case _ =>
+                                                        Abort.fail[JsonRpcError](abortError)
+                                            }
+                                        case Result.Panic(t) => Abort.panic(t)
+                                    }
+                                end if
+                            }
+                        }
+                    }
+                }
+            }
+        (idPromise, callEffect)
+    end callEncoded
+
     def notify[In: Schema](
         method: String,
         params: In,
@@ -151,25 +232,169 @@ final class JsonRpcEndpointImpl private[kyo] (
         method: String,
         params: In,
         extras: ExtrasEncoder
-    )(using Frame): JsonRpcEndpoint.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
-        Abort.fail(JsonRpcError.internalError(
-            "progress not configured: pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
-        ))
+    )(using frame: Frame): JsonRpcEndpoint.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
+        progressPolicy match
+            case Absent =>
+                Abort.fail(JsonRpcError.internalError(
+                    "progress not configured: pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
+                ))
+            case Present(policy) =>
+                // Unsafe: channel init and ConcurrentHashMap put for progress side-channel
+                Sync.Unsafe.defer {
+                    val tokenStr = java.util.UUID.randomUUID().toString
+                    val tokenVal = Structure.Value.Str(tokenStr)
+                    // Unsafe: Channel.Unsafe.init for progress channel
+                    val progChan = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe
+                    (tokenVal, progChan)
+                }.map { (tokenVal, progChan) =>
+                    val encodedParams = Structure.encode[In](params)
+                    policy.stampOutboundToken(encodedParams, tokenVal).map { stampedParams =>
+                        // Unsafe: register in progressStreams before issuing call
+                        Sync.Unsafe.defer(discard(progressStreams.put(tokenVal, progChan))).andThen {
+                            val (idPromise, callEffect) = callEncoded[Out](method, Present(stampedParams), extras)
+                            // Fork the call so progress stream can be consumed concurrently.
+                            // callEffect fires the encode callback (populating idPromise) before suspending,
+                            // so idPromise.get below won't starve.
+                            Fiber.initUnscoped(callEffect).map { fiber =>
+                                // Register cleanup callback: gracefully closes progChan when fiber finishes.
+                                // closeAwaitEmpty() transitions to HalfOpen so pending items are still drained by the consumer
+                                // before the channel fully closes; this avoids dropping progress items that arrived
+                                // just before the response.
+                                // Unsafe: onComplete from outside the fiber
+                                Sync.Unsafe.defer {
+                                    fiber.unsafe.onComplete { _ =>
+                                        progressStreams.remove(tokenVal)
+                                        discard(progChan.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
+                                    }(using AllowUnsafe.embrace.danger)
+                                }.andThen {
+                                    // Await the id (populated in encode callback, which fires as the fiber starts)
+                                    idPromise.get.map { id =>
+                                        new JsonRpcEndpoint.Pending[Out](
+                                            id = id,
+                                            result = fiber.get,
+                                            progress = progChan.streamUntilClosed(),
+                                            cancel = cancel(id, Absent)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
-    def callPartialResults[In: Schema, T: Schema](
+    def callPartialResults[In: Schema, T: Schema: Tag](
         method: String,
         params: In,
         extras: ExtrasEncoder
-    )(using Frame): Stream[T, Async & Abort[JsonRpcError | Closed]] =
-        Stream(Abort.fail[JsonRpcError](JsonRpcError.internalError(
-            "progress not configured: pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
-        )))
+    )(using frame: Frame, tagEmitChunkT: Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
+        progressPolicy match
+            case Absent =>
+                Stream(Abort.fail[JsonRpcError](JsonRpcError.internalError(
+                    "progress not configured: pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
+                )))
+            case Present(policy) =>
+                // All setup runs inside the Stream body so the return type is Stream (not Stream < Sync).
+                Stream[T, Async & Abort[JsonRpcError | Closed]] {
+                    // Unsafe: channel init and token/stamp inside Stream emit body
+                    Sync.Unsafe.defer {
+                        val tokenStr = java.util.UUID.randomUUID().toString
+                        val tokenVal = Structure.Value.Str(tokenStr)
+                        // Unsafe: Channel.Unsafe.init for partial-results channel
+                        val progChan = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe
+                        // Unsafe: AtomicRef.Unsafe.init for the final response result (non-progress chunks)
+                        val finalRef = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger).safe
+                        (tokenVal, progChan, finalRef)
+                    }.map { (tokenVal, progChan, finalRef) =>
+                        val encodedParams = Structure.encode[In](params)
+                        policy.stampOutboundToken(encodedParams, tokenVal).map { stampedParams =>
+                            Sync.Unsafe.defer(discard(progressStreams.put(tokenVal, progChan))).andThen {
+                                val (_, callEffect) =
+                                    callEncoded[Structure.Value](method, Present(stampedParams), extras)
+                                Fiber.initUnscoped(
+                                    Abort.run[JsonRpcError | Closed](callEffect).map { res =>
+                                        res match
+                                            case Result.Success(sv) if sv != Structure.Value.Null =>
+                                                // Non-null final result: store it in finalRef, then gracefully close channel.
+                                                // closeAwaitEmpty() drains remaining progress items before fully closing,
+                                                // so the drain loop below sees all items before Closed propagates.
+                                                // Unsafe: store final result and close channel from call fiber
+                                                Sync.Unsafe.defer {
+                                                    finalRef.unsafe.set(Present(sv))(using AllowUnsafe.embrace.danger)
+                                                    progressStreams.remove(tokenVal)
+                                                    discard(progChan.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
+                                                }
+                                            case _ =>
+                                                // Null result, failure, or closed: gracefully close channel with no final chunk.
+                                                // Structure.Value.Null signals "partial-result pattern: all chunks were via progress".
+                                                Sync.Unsafe.defer {
+                                                    progressStreams.remove(tokenVal)
+                                                    discard(progChan.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
+                                                }
+                                    }
+                                ).andThen {
+                                    // Drain channel: take each Structure.Value (progress notification params),
+                                    // extract the raw value via policy.extractProgressValue, decode to T, emit.
+                                    // Abort[Closed] from progChan.take terminates the forever loop.
+                                    Abort.run[Closed](
+                                        Loop.forever {
+                                            progChan.take.map { sv =>
+                                                policy.extractProgressValue(sv).map {
+                                                    case Absent => Kyo.unit
+                                                    case Present(rawValue) =>
+                                                        Structure.decode[T](rawValue) match
+                                                            case Result.Success(v) => Emit.value(Chunk(v))(using tagEmitChunkT, frame)
+                                                            case Result.Failure(e) => Abort.fail(JsonRpcError.invalidParams(e.getMessage))
+                                                            case Result.Panic(t)   => Abort.panic(t)
+                                                }
+                                            }
+                                        }
+                                    ).map {
+                                        case Result.Success(_) => ()
+                                        case Result.Failure(_) =>
+                                            // Channel closed: check for a non-null final result and emit it as last chunk.
+                                            finalRef.get.map {
+                                                case Absent => Kyo.unit
+                                                case Present(sv) =>
+                                                    Structure.decode[T](sv) match
+                                                        case Result.Success(v) => Emit.value(Chunk(v))(using tagEmitChunkT, frame)
+                                                        case Result.Failure(e) => Abort.fail(JsonRpcError.invalidParams(e.getMessage))
+                                                        case Result.Panic(t)   => Abort.panic(t)
+                                            }
+                                        case Result.Panic(t) => Abort.panic(t)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
-    def subscribeProgress(token: Structure.Value)(using Frame): Stream[Structure.Value, Async & Abort[Closed]] =
-        Stream(Abort.fail[Closed](Closed("progress not configured", initFrame)))
+    def subscribeProgress(token: Structure.Value)(using frame: Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync =
+        progressPolicy match
+            case Absent =>
+                Stream(Abort.fail[Closed](Closed("progress not configured", initFrame)))
+            case Present(_) =>
+                // Eagerly create and register the channel so notifications can be routed before the stream is consumed.
+                // Unsafe: channel init and ConcurrentHashMap putIfAbsent must happen at subscribe time.
+                Sync.Unsafe.defer {
+                    val ch = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe
+                    discard(progressStreams.putIfAbsent(token, ch))
+                    Maybe(progressStreams.get(token))
+                }.map {
+                    // streamUntilClosed handles Closed gracefully so the consumer sees all buffered items
+                    // before the stream terminates, even when unsubscribeProgress races with the consumer.
+                    case Present(ch) => ch.streamUntilClosed()
+                    case Absent      => Stream[Structure.Value, Async](Kyo.unit)
+                }
 
-    def unsubscribeProgress(token: Structure.Value)(using Frame): Unit < Async =
-        Kyo.unit
+    def unsubscribeProgress(token: Structure.Value)(using frame: Frame): Unit < Async =
+        Sync.Unsafe.defer {
+            Maybe(progressStreams.remove(token)) match
+                case Absent      => ()
+                case Present(ch) =>
+                    // Unsafe: closeAwaitEmpty lets the consumer drain any items already in the channel
+                    // before the channel transitions to FullyClosed; prevents item loss on unsubscribe.
+                    discard(ch.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
+        }
 
     def cancel(id: JsonRpcId, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer(Maybe(callerRegistry.get(id))).map {
@@ -262,17 +487,25 @@ final class JsonRpcEndpointImpl private[kyo] (
                     }.andThen {
                         // Step 6: close Exchange; sets donePromise to Closed for future calls; pending map is now empty
                         exchange.close.andThen {
-                            // Step 7: no progressStreams in Phase 4 (no-op)
-                            // Step 8: interrupt all pendingInbound handler fibers
-                            // Unsafe: bulk-interrupt inbound handlers from outside their originating fibers
+                            // Step 7: close all progress channels so stream consumers see Closed
+                            // Unsafe: bulk-close from outside the originating fibers
                             Sync.Unsafe.defer {
-                                pendingInbound.forEach { (_, entry) =>
-                                    entry match
-                                        case InboundEntry.Running(_, handler, _) =>
-                                            handler.unsafe.interruptDiscard(Result.Panic(Interrupted(initFrame)))
-                                        case _ => ()
+                                progressStreams.forEach { (_, ch) =>
+                                    discard(ch.unsafe.close()(using initFrame, AllowUnsafe.embrace.danger))
                                 }
-                                pendingInbound.clear()
+                                progressStreams.clear()
+                            }.andThen {
+                                // Step 8: interrupt all pendingInbound handler fibers
+                                // Unsafe: bulk-interrupt inbound handlers from outside their originating fibers
+                                Sync.Unsafe.defer {
+                                    pendingInbound.forEach { (_, entry) =>
+                                        entry match
+                                            case InboundEntry.Running(_, handler, _) =>
+                                                handler.unsafe.interruptDiscard(Result.Panic(Interrupted(initFrame)))
+                                            case _ => ()
+                                    }
+                                    pendingInbound.clear()
+                                }
                             }
                         }
                     }
@@ -299,8 +532,11 @@ object JsonRpcEndpointImpl:
         // Unsafe: ConcurrentHashMap mirrors Exchange's own internal pattern
         val callerRegistry = new ConcurrentHashMap[JsonRpcId, CallerInfo]()
         val pendingInbound = new ConcurrentHashMap[JsonRpcId, InboundEntry]()
-        val methodMap      = methods.map(m => m.name -> m).toMap
-        val nextIdFn       = IdStrategy.mkNextId(config.idStrategy)
+        // Unsafe: ConcurrentHashMap for progress streams and reverse id-to-token map
+        val progressStreams   = new ConcurrentHashMap[Structure.Value, Channel[Structure.Value]]()
+        val outboundIdToToken = new ConcurrentHashMap[JsonRpcId, Structure.Value]()
+        val methodMap         = methods.map(m => m.name -> m).toMap
+        val nextIdFn          = IdStrategy.mkNextId(config.idStrategy)
 
         Channel.initUnscoped[WriterMsg](64).map { writerChannel =>
             // Unsafe: init AtomicInt/AtomicRef/Promise.Unsafe for inFlight and drainSignal counters
@@ -382,7 +618,7 @@ object JsonRpcEndpointImpl:
                                 config.codec.decode(sv)(using frame).map { parsedEnvelope =>
                                     parsedEnvelope match
 
-                                        case env @ JsonRpcEnvelope.Notification(method, _, _) =>
+                                        case env @ JsonRpcEnvelope.Notification(method, params, _) =>
                                             // Step 1a: cancellation policy intercept
                                             config.cancellation match
                                                 case Present(policy) if method == policy.cancelMethod =>
@@ -392,28 +628,64 @@ object JsonRpcEndpointImpl:
                                                         pendingInbound
                                                     ).andThen(Exchange.Message.Skip)
                                                 case _ =>
-                                                    methodMap.get(method) match
-                                                        case Some(m) =>
-                                                            // Unsafe: Promise.Unsafe.init for cancelled signal on notification handlers
-                                                            val cancelledUnsafe =
-                                                                Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
-                                                            val ctx = new HandlerCtx(cancelledUnsafe.safe, Absent, env.extras, Absent)
-                                                            val handlerEffect =
-                                                                m.handle(env.params.getOrElse(Structure.Value.Null), ctx)(using frame)
-                                                            Fiber.initUnscoped(handlerEffect).map { _ =>
-                                                                Exchange.Message.Skip
+                                                    // Step 1b: progress notification intercept
+                                                    config.progress match
+                                                        case Present(ppolicy) if method == ppolicy.progressMethod =>
+                                                            val paramsVal = params.getOrElse(Structure.Value.Null)
+                                                            ppolicy.extractInboundToken(paramsVal).map { tokenOpt =>
+                                                                tokenOpt match
+                                                                    case Absent =>
+                                                                        Exchange.Message.Skip
+                                                                    case Present(token) =>
+                                                                        // Unsafe: offer to progress channel inside Exchange decode callback
+                                                                        Sync.Unsafe.defer {
+                                                                            Maybe(progressStreams.get(token)) match
+                                                                                case Absent      => ()
+                                                                                case Present(ch) =>
+                                                                                    // Unsafe: non-blocking offer; backpressure not applied here
+                                                                                    discard(ch.unsafe.offer(paramsVal)(using
+                                                                                        AllowUnsafe.embrace.danger,
+                                                                                        frame
+                                                                                    ))
+                                                                        }.andThen(Exchange.Message.Skip)
                                                             }
-                                                        case None =>
-                                                            Exchange.Message.Skip
+                                                        case _ =>
+                                                            methodMap.get(method) match
+                                                                case Some(m) =>
+                                                                    // Unsafe: Promise.Unsafe.init for cancelled signal on notification handlers
+                                                                    val cancelledUnsafe =
+                                                                        Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
+                                                                    val ctx =
+                                                                        new HandlerCtx(cancelledUnsafe.safe, Absent, env.extras, Absent)
+                                                                    val handlerEffect =
+                                                                        m.handle(env.params.getOrElse(Structure.Value.Null), ctx)(using
+                                                                            frame
+                                                                        )
+                                                                    Fiber.initUnscoped(handlerEffect).map { _ =>
+                                                                        Exchange.Message.Skip
+                                                                    }
+                                                                case None =>
+                                                                    Exchange.Message.Skip
 
                                         case JsonRpcEnvelope.Request(id, method, params, extras) =>
                                             methodMap.get(method) match
                                                 case Some(m) =>
-                                                    // Unsafe: Promise.Unsafe.init mirrors Exchange's internal pattern
+                                                    // Unsafe: Promise.Unsafe.init and buildProgressSink require AllowUnsafe
                                                     val cancelledUnsafe =
                                                         Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
-                                                    val ctx           = new HandlerCtx(cancelledUnsafe.safe, Present(id), extras, Absent)
-                                                    val handlerEffect = m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
+                                                    // Unsafe: build progressSink using AllowUnsafe.embrace.danger directly
+                                                    val progressSinkOpt: Maybe[Structure.Value => Unit < (Async & Abort[Closed])] =
+                                                        ProgressEngine.buildProgressSink(
+                                                            id,
+                                                            params,
+                                                            extras,
+                                                            config.progress,
+                                                            pendingInbound,
+                                                            writerChannel
+                                                        )(using frame, AllowUnsafe.embrace.danger)
+                                                    val ctx = new HandlerCtx(cancelledUnsafe.safe, Present(id), extras, progressSinkOpt)
+                                                    val handlerEffect =
+                                                        m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
                                                     Fiber.initUnscoped(handlerEffect).map { fiber =>
                                                         // Unsafe: register pendingInbound entry and attach onComplete hook inside Exchange decode callback
                                                         Sync.Unsafe.defer {
@@ -450,7 +722,8 @@ object JsonRpcEndpointImpl:
                                                                         val suppressUnsafe = AtomicBoolean.Unsafe.init(false)(using
                                                                             AllowUnsafe.embrace.danger
                                                                         )
-                                                                        val replying = InboundEntry.Replying(method, suppressUnsafe.safe)
+                                                                        val replying =
+                                                                            InboundEntry.Replying(method, suppressUnsafe.safe)
                                                                         if pendingInbound.replace(id, running, replying) then
                                                                             // Unsafe: writer-channel offer from Sync-only onComplete callback
                                                                             discard(writerChannel.unsafe.offer(
@@ -588,7 +861,10 @@ object JsonRpcEndpointImpl:
                             methodMap = methodMap,
                             unknownPolicy = config.unknownMethod,
                             config = config,
-                            initFrame = frame
+                            initFrame = frame,
+                            progressPolicy = config.progress,
+                            progressStreams = progressStreams,
+                            outboundIdToToken = outboundIdToToken
                         )
                     }
                 }
