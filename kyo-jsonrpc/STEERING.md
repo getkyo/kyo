@@ -85,6 +85,65 @@ The crossProject uses `.withoutSuffixFor(JVMPlatform)`, so the sbt project key f
 
 IMPLEMENTATION.md and earlier prompts use `kyo-jsonrpcJVM` in verification commands; substitute the unsuffixed name for JVM. JS / Native suffixes work as written.
 
+### Phase 4 IMMEDIATE STEER (in-flight pulse 3 follow-up)
+
+Pulse 3 found four remaining items. ALL must be resolved before completion.
+
+1. **Test 44 (late reply for cancelled outbound call dropped) is missing.** Per IMPLEMENTATION.md line 282: "Late reply for an already-cancelled (interrupted) outbound call is silently dropped by Exchange; pendingInbound is not consulted for outbound drops." Write this test: cancel an in-flight call (via abortSignal.completeDiscard or endpoint.cancel), then have the peer eventually send a Response for that id, assert the receiver does NOT throw and the cancelled caller is unaffected.
+
+2. **Tests 38 and 39: tighten assertions.** Currently `Result.Failure(_)` accepts ANY error. The spec requires:
+   - Test 38 (Exchange pending map drained): `Result.Failure(c: Closed)` (note: Exchange's pending map fails with Closed, not JsonRpcError, on close).
+   - Test 39 (callerRegistry drain via abortSignal): `Result.Failure(JsonRpcError)` where the error code is some "transport closed" / internalError code per DESIGN §6.4 step 6.
+
+3. **Test 49 (I9 exit-after-shutdown drain) must use a counting transport.** Per IMPLEMENTATION.md line 287: "verify with a counting test transport that the write count does not increase after close." The test as currently written doesn't have a counting transport. Add one (a private[kyo] InMemoryTransport variant or a wrapper around it that counts `send` invocations).
+
+4. **`// Unsafe:` comment missing at line 342** (`writerChannel.unsafe.offer` inside `onComplete` lambda). Add `// Unsafe: writer-channel offer from Sync-only onComplete callback` immediately before that line.
+
+5. **Sanity-check the writer fiber loop is complete.** Pulse 3 noted the impl file is 459 LOC, below the 600-1000 expected. Read JsonRpcEndpointImpl.scala's writer-fiber section. Verify all of:
+   - It consumes from `outbound: Channel[WriterMsg]`.
+   - For `SendEnvelope(env)`: codec-encode + transport.send.
+   - For `SuppressIfCancelled(id, env)`: snapshot suppress flag (via `r.suppress.get.map`), if true AND policy says no-reply, drop; else send. THEN remove `pendingInbound` entry via `Sync.ensure`.
+   - On Closed during transport.send, propagate to endpoint.close path (don't crash the writer fiber).
+
+If the writer fiber is incomplete, complete it before claiming the phase done.
+
+### Phase 4 IMMEDIATE STEER (in-flight pulse 2 follow-up)
+
+Pulse 2 confirmed steer 1 (asInstanceOf), steer 2 (suppress.get typing), and steer 4 (nextId wiring) are GREEN. Steer 3 and 5 still need work:
+
+**STILL OPEN — STEER 3: add `// Unsafe:` comments at these 7 lines in `JsonRpcEndpointImpl.scala`:**
+- line 172 (callerRegistry finalizer loop)
+- line 222 (initPromise.completeUnitDiscard)
+- line 236 (idSignal.completeDiscard)
+- line 342 (writerChannel.unsafe.offer inside onComplete)
+- line 346 (onComplete closing brace)
+- line 359 (writerChannel.unsafe.offer MethodNotFound path)
+- line 386 (abortSignal.unsafe.completeDiscard error path)
+
+The existing comments at lines 220 and 234 are explanatory prose, NOT `// Unsafe:` tags. Each `AllowUnsafe`-using line needs its OWN `// Unsafe: <justification>` comment on the immediately preceding line.
+
+**STILL OPEN — STEER 5: write `JsonRpcEndpointTest.scala` with all 18 test leaves (Tests 33-50 per IMPLEMENTATION.md lines 270-289).** No completion claim until 18/18 pass on JVM. This is the LAST critical item; the rest of Phase 4 looks solid.
+
+### Phase 4 IMMEDIATE STEER (in-flight pulse 1 findings)
+
+The Phase 4 impl agent MUST fix the following before claiming the phase done. Each violates a STEERING rule:
+
+1. **Remove `asInstanceOf` at impl:316.** STEERING rule 13: no `asInstanceOf` anywhere. The fallback for `Sync.Unsafe.run(Fiber.initUnscoped(...))` failing must use proper typing. If the type signature is wrong, fix the call chain so the result already has the right type.
+
+2. **Fix `r.suppress.get` typing at impl:424.** `AtomicBoolean.get` returns `Boolean < Sync`, NOT raw `Boolean`. Using it as a `Boolean` in a match arm will fail to compile (or misbehave if forced). Use `.unsafe.get()` inside the `Sync.Unsafe.defer` block (which gives a raw `Boolean` because we're already inside an unsafe context with `AllowUnsafe.embrace.danger` in scope).
+
+3. **Add `// Unsafe:` comment on every `AllowUnsafe` site.** Currently 7 sites at lines 225, 231, 244, 302, 318, 362, 383 lack the mandatory comment. STEERING rule 1: each AllowUnsafe-using line must have `// Unsafe: <justification>` immediately above or on the same line.
+
+4. **Verify `nextId = nextIdFn()` in Exchange.initUnscoped at impl:405.** Exchange's `nextId` is a BY-NAME parameter (`nextId: => Id < Sync`), so passing `nextIdFn()` works only if `nextIdFn` is a `() => JsonRpcId < Sync` thunk that Exchange will re-evaluate. If `nextIdFn` is a `JsonRpcId < Sync` value, the same id will be reused for every request. Confirm the type by looking at `IdStrategy.mkNextId`'s return type. If it returns `() => JsonRpcId < Sync` (a thunk), pass it as `nextId = nextIdFn()`. If it returns `JsonRpcId < Sync` directly (already a kyo effect), pass it as `nextId = nextIdFn` (no parens; Exchange will re-evaluate by-name).
+
+5. **All 18 test leaves MUST land before completion.** `kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointTest.scala` is missing. Tests 33-50 per IMPLEMENTATION.md lines 270-289 are mandatory. Do not claim phase complete without 18/18 passing on JVM.
+
+Re-verify the convention sweep AFTER fixing items 1-3:
+```
+grep -rn 'asInstanceOf' kyo-jsonrpc/shared/src        # MUST be 0
+grep -rn 'AllowUnsafe' kyo-jsonrpc/shared/src         # each line MUST be within a `// Unsafe:` block
+```
+
 ### Phase 2 variance-driven adjustment to JsonRpcMethod (informational)
 
 The trait `JsonRpcMethod[+S]` cannot declare `handle(...): Structure.Value < S` because `< [+A, -S]` makes `S` contravariant in `<`'s effect-row slot; combined with `[+S]` on the trait this produces a variance error. The kyo-ai-plugin source resolves this by having `handle` return a FIXED effect row `< (Async & Abort[JsonRpcError])`; the impl-classes accept handlers of `Out < S` and use `ev.liftContra` to bridge.
