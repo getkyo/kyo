@@ -1,6 +1,5 @@
 package kyo
 
-import java.util.concurrent.ConcurrentHashMap
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
@@ -22,11 +21,11 @@ class JsonRpcEndpointTest extends Test:
             }
         }
 
-    private class CountingTransport(inner: JsonRpcTransport, val counter: java.util.concurrent.atomic.AtomicInteger)
+    private class CountingTransport(inner: JsonRpcTransport, val counter: AtomicInt.Unsafe)
         extends JsonRpcTransport:
 
         def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
-            Sync.defer(discard(counter.incrementAndGet())).andThen(inner.send(env))
+            Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
             inner.incoming
@@ -47,13 +46,14 @@ class JsonRpcEndpointTest extends Test:
     }
 
     "notify sends notification and handler runs without reply" in run {
-        val seen = new java.util.concurrent.atomic.AtomicInteger(0)
+        // Unsafe: AtomicInt.Unsafe.init for concurrent counter in synchronous handler scope
+        val seen = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val logMethod = JsonRpcMethod[LogMsg, Unit, Async & Abort[JsonRpcError]]("log") {
-            (_, _) => Sync.defer(discard(seen.incrementAndGet()))
+            (_, _) => Sync.defer(discard(seen.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         mkEndpoints(Seq.empty, Seq(logMethod)).map { (a, _) =>
             a.notify[LogMsg]("log", LogMsg("hello")).andThen {
-                untilTrue(Sync.defer(seen.get() == 1)).andThen(succeed)
+                untilTrue(Sync.defer(seen.get()(using AllowUnsafe.embrace.danger) == 1)).andThen(succeed)
             }
         }
     }
@@ -106,19 +106,21 @@ class JsonRpcEndpointTest extends Test:
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
                 // Outer fiber lives beyond the scope; captures the call result
-                val resultRef = new java.util.concurrent.atomic.AtomicReference[Maybe[Result[JsonRpcError | Closed, AddResp]]](Absent)
+                // Unsafe: AtomicRef.Unsafe.init for result capture across fibers
+                val resultRef =
+                    AtomicRef.Unsafe.init[Maybe[Result[JsonRpcError | Closed, AddResp]]](Absent)(using AllowUnsafe.embrace.danger)
                 Scope.run {
                     JsonRpcEndpoint.init(ta, Seq.empty).map { endpointA =>
                         Fiber.initUnscoped(
                             Abort.run[JsonRpcError | Closed](
                                 endpointA.call[AddReq, AddResp]("add", AddReq(1, 2))
-                            ).map(r => Sync.defer(resultRef.set(Present(r))))
+                            ).map(r => Sync.defer(resultRef.set(Present(r))(using AllowUnsafe.embrace.danger)))
                         ).unit
                     }
                 }.andThen {
-                    untilTrue(Sync.defer(resultRef.get().isDefined)).andThen {
+                    untilTrue(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                         Sync.defer {
-                            resultRef.get() match
+                            resultRef.get()(using AllowUnsafe.embrace.danger) match
                                 case Present(Result.Failure(_: Closed)) => succeed
                                 case Present(Result.Success(v))         => fail(s"expected Closed failure after scope close, got $v")
                                 case Present(Result.Failure(e))         => fail(s"expected Closed but got: $e")
@@ -137,19 +139,21 @@ class JsonRpcEndpointTest extends Test:
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
-                val resultRef = new java.util.concurrent.atomic.AtomicReference[Maybe[Result[JsonRpcError | Closed, AddResp]]](Absent)
+                // Unsafe: AtomicRef.Unsafe.init for result capture across fibers
+                val resultRef =
+                    AtomicRef.Unsafe.init[Maybe[Result[JsonRpcError | Closed, AddResp]]](Absent)(using AllowUnsafe.embrace.danger)
                 Scope.run {
                     JsonRpcEndpoint.init(ta, Seq.empty).map { endpointA =>
                         Fiber.initUnscoped(
                             Abort.run[JsonRpcError | Closed](
                                 endpointA.call[AddReq, AddResp]("add", AddReq(1, 2))
-                            ).map(r => Sync.defer(resultRef.set(Present(r))))
+                            ).map(r => Sync.defer(resultRef.set(Present(r))(using AllowUnsafe.embrace.danger)))
                         ).andThen(Async.sleep(50.millis))
                     }
                 }.andThen {
-                    untilTrue(Sync.defer(resultRef.get().isDefined)).andThen {
+                    untilTrue(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                         Sync.defer {
-                            resultRef.get() match
+                            resultRef.get()(using AllowUnsafe.embrace.danger) match
                                 case Present(Result.Failure(e: JsonRpcError)) =>
                                     assert(e.code == -32603, s"expected internalError code -32603, got ${e.code}")
                                 case Present(Result.Success(v)) =>
@@ -239,10 +243,11 @@ class JsonRpcEndpointTest extends Test:
         val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => Async.sleep(3.seconds).andThen(AddResp(req.a + req.b))
         }
-        val capturedId = new java.util.concurrent.atomic.AtomicReference[Maybe[JsonRpcId]](Absent)
+        // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
+        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val captureEncoder = ExtrasEncoder(id =>
             Sync.defer {
-                capturedId.set(Present(id))
+                capturedId.set(Present(id))(using AllowUnsafe.embrace.danger)
                 Absent
             }
         )
@@ -255,8 +260,8 @@ class JsonRpcEndpointTest extends Test:
                             a.call[AddReq, AddResp]("add", AddReq(1, 2), captureEncoder)
                         )
                     ).map { callFib =>
-                        untilTrue(Sync.defer(capturedId.get().isDefined)).andThen {
-                            Sync.defer(capturedId.get()).map {
+                        untilTrue(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                            Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(id) =>
                                     a.cancel(id, Absent).andThen {
                                         callFib.get.map {
@@ -274,10 +279,11 @@ class JsonRpcEndpointTest extends Test:
     }
 
     "late reply for cancelled outbound call is silently dropped" in run {
-        val capturedId = new java.util.concurrent.atomic.AtomicReference[Maybe[JsonRpcId]](Absent)
+        // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
+        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val captureEncoder = ExtrasEncoder(id =>
             Sync.defer {
-                capturedId.set(Present(id))
+                capturedId.set(Present(id))(using AllowUnsafe.embrace.danger)
                 Absent
             }
         )
@@ -296,8 +302,8 @@ class JsonRpcEndpointTest extends Test:
                             a.call[AddReq, AddResp]("add", AddReq(1, 2), captureEncoder)
                         )
                     ).map { callFib =>
-                        untilTrue(Sync.defer(capturedId.get().isDefined)).andThen {
-                            Sync.defer(capturedId.get()).map {
+                        untilTrue(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                            Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(id) =>
                                     a.cancel(id, Absent).andThen {
                                         callFib.get.map {
@@ -331,11 +337,12 @@ class JsonRpcEndpointTest extends Test:
 
     "ExtrasEncoder.const causes extras value to appear in handler ctx" in run {
         val extrasValue = Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("my-token")))
-        val seen        = new java.util.concurrent.atomic.AtomicReference[Maybe[Structure.Value]](Absent)
+        // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
+        val seen = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
         val echoMethod = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, ctx) =>
                 Sync.defer {
-                    seen.set(ctx.extras)
+                    seen.set(ctx.extras)(using AllowUnsafe.embrace.danger)
                     AddResp(req.a + req.b)
                 }
         }
@@ -344,7 +351,7 @@ class JsonRpcEndpointTest extends Test:
             JsonRpcEndpoint.init(ta, Seq.empty, cdpConfig).map { a =>
                 JsonRpcEndpoint.init(tb, Seq(echoMethod), cdpConfig).map { _ =>
                     a.call[AddReq, AddResp]("add", AddReq(1, 1), ExtrasEncoder.const(extrasValue)).map { _ =>
-                        Sync.defer(assert(seen.get() == Present(extrasValue)))
+                        Sync.defer(assert(seen.get()(using AllowUnsafe.embrace.danger) == Present(extrasValue)))
                     }
                 }
             }
@@ -352,8 +359,9 @@ class JsonRpcEndpointTest extends Test:
     }
 
     "IdStrategy.SequentialLong produces ids Num(1), Num(2), Num(3)" in run {
-        val ids     = new java.util.concurrent.ConcurrentLinkedQueue[JsonRpcId]()
-        val capture = ExtrasEncoder(id => Sync.defer { ids.add(id); Absent })
+        // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
+        val ids     = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
+        val capture = ExtrasEncoder(id => Sync.defer { ids.getAndUpdate(id :: _)(using AllowUnsafe.embrace.danger); Absent })
         val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -361,7 +369,7 @@ class JsonRpcEndpointTest extends Test:
             a.call[AddReq, AddResp]("add", AddReq(1, 0), capture).andThen {
                 a.call[AddReq, AddResp]("add", AddReq(2, 0), capture).andThen {
                     a.call[AddReq, AddResp]("add", AddReq(3, 0), capture).map { _ =>
-                        val collected = Chunk.from(ids.toArray(Array.empty[JsonRpcId]))
+                        val collected = Chunk.from(ids.get()(using AllowUnsafe.embrace.danger).reverse)
                         assert(collected == Chunk(JsonRpcId.Num(1L), JsonRpcId.Num(2L), JsonRpcId.Num(3L)))
                     }
                 }
@@ -370,8 +378,9 @@ class JsonRpcEndpointTest extends Test:
     }
 
     "IdStrategy.SequentialInt produces ids Num(1), Num(2), Num(3)" in run {
-        val ids     = new java.util.concurrent.ConcurrentLinkedQueue[JsonRpcId]()
-        val capture = ExtrasEncoder(id => Sync.defer { ids.add(id); Absent })
+        // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
+        val ids     = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
+        val capture = ExtrasEncoder(id => Sync.defer { ids.getAndUpdate(id :: _)(using AllowUnsafe.embrace.danger); Absent })
         val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -381,7 +390,7 @@ class JsonRpcEndpointTest extends Test:
                     a.call[AddReq, AddResp]("add", AddReq(1, 0), capture).andThen {
                         a.call[AddReq, AddResp]("add", AddReq(2, 0), capture).andThen {
                             a.call[AddReq, AddResp]("add", AddReq(3, 0), capture).map { _ =>
-                                val collected = Chunk.from(ids.toArray(Array.empty[JsonRpcId]))
+                                val collected = Chunk.from(ids.get()(using AllowUnsafe.embrace.danger).reverse)
                                 assert(
                                     collected == Chunk(JsonRpcId.Num(1L), JsonRpcId.Num(2L), JsonRpcId.Num(3L))
                                 )
@@ -398,16 +407,17 @@ class JsonRpcEndpointTest extends Test:
             (req, _) => AddResp(req.a + req.b)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            val sendCounter = new java.util.concurrent.atomic.AtomicInteger(0)
+            // Unsafe: AtomicInt.Unsafe.init for send counter
+            val sendCounter = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
             val countingTa  = new CountingTransport(ta, sendCounter)
             JsonRpcEndpoint.init(countingTa, Seq.empty).map { a =>
                 JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
-                    val countBefore = sendCounter.get()
+                    val countBefore = sendCounter.get()(using AllowUnsafe.embrace.danger)
                     a.close.andThen {
-                        val countAfterClose = sendCounter.get()
+                        val countAfterClose = sendCounter.get()(using AllowUnsafe.embrace.danger)
                         Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("add", AddReq(1, 2))).map {
                             case Result.Failure(_) =>
-                                val countAfterCall = sendCounter.get()
+                                val countAfterCall = sendCounter.get()(using AllowUnsafe.embrace.danger)
                                 assert(
                                     countAfterCall == countAfterClose,
                                     s"write count increased after close: before=$countBefore, afterClose=$countAfterClose, afterCall=$countAfterCall"
@@ -422,20 +432,24 @@ class JsonRpcEndpointTest extends Test:
     }
 
     "IdStrategy.Custom with 100 concurrent calls produces 100 distinct ids" in run {
-        val counter = new java.util.concurrent.atomic.AtomicLong(0L)
+        // Unsafe: AtomicLong.Unsafe.init for id generation
+        val counter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
         val customStrategy = IdStrategy.Custom(() =>
-            Sync.defer(JsonRpcId.Num(counter.incrementAndGet()))
+            Sync.defer(JsonRpcId.Num(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         )
-        val collectedIds = new ConcurrentHashMap[JsonRpcId, Boolean]()
+        // Unsafe: AtomicRef.Unsafe.init for concurrent id collection (replaces ConcurrentHashMap)
+        val collectedIds = AtomicRef.Unsafe.init(Map.empty[JsonRpcId, Boolean])(using AllowUnsafe.embrace.danger)
         val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(ta, Seq.empty, JsonRpcEndpoint.Config(idStrategy = customStrategy)).map { a =>
                 JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
-                    val capture = ExtrasEncoder(id => Sync.defer { collectedIds.put(id, true); Absent })
+                    val capture = ExtrasEncoder(id =>
+                        Sync.defer { collectedIds.getAndUpdate(_ + (id -> true))(using AllowUnsafe.embrace.danger); Absent }
+                    )
                     Kyo.fill(100)(a.call[AddReq, AddResp]("add", AddReq(1, 0), capture)).map { _ =>
-                        assert(collectedIds.size() == 100)
+                        assert(collectedIds.get()(using AllowUnsafe.embrace.danger).size == 100)
                     }
                 }
             }

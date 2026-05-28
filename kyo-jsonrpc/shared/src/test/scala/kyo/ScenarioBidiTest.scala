@@ -1,8 +1,5 @@
 package kyo
 
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
@@ -16,16 +13,19 @@ class ScenarioBidiTest extends Test:
     case class WorkResp(done: Boolean) derives Schema, CanEqual
 
     private class CapturingTransport(inner: JsonRpcTransport) extends JsonRpcTransport:
-        val sent = new ConcurrentLinkedQueue[JsonRpcEnvelope]()
+        // Unsafe: AtomicRef.Unsafe.init for thread-safe envelope accumulation outside effect context
+        val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
 
         def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
-            Sync.defer(discard(sent.add(env))).andThen(inner.send(env))
+            Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
             inner.incoming
 
         def close(using Frame): Unit < Async =
             inner.close
+
+        def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
     "both endpoints register methods; simultaneous A.call(B) and B.call(A) resolve without id collision" in run {
@@ -52,7 +52,8 @@ class ScenarioBidiTest extends Test:
     }
 
     "LSP bidi cancel: A cancels call to B; B handler observes cancelled; reply carries -32800; response IS on transport" in run {
-        val capturedId = new AtomicReference[Maybe[JsonRpcId]](Absent)
+        // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
+        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
 
         val echoOnB = JsonRpcMethod[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
             (req, ctx) =>
@@ -65,22 +66,22 @@ class ScenarioBidiTest extends Test:
             val capB = new CapturingTransport(tb)
             JsonRpcEndpoint.init(ta, Seq.empty, lspConfig).map { endpointA =>
                 JsonRpcEndpoint.init(capB, Seq(echoOnB), lspConfig).map { _ =>
-                    val idEncoder = ExtrasEncoder(id => Sync.defer { capturedId.set(Present(id)); Absent })
+                    val idEncoder =
+                        ExtrasEncoder(id => Sync.defer { capturedId.set(Present(id))(using AllowUnsafe.embrace.danger); Absent })
                     Fiber.initUnscoped(
                         Abort.run[JsonRpcError | Closed](
                             endpointA.call[EchoReq, EchoResp]("echo", EchoReq("test"), idEncoder)
                         )
                     ).map { callFib =>
-                        untilTrue(Sync.defer(capturedId.get().isDefined)).andThen {
-                            Sync.defer(capturedId.get()).map {
+                        untilTrue(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                            Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(id) =>
                                     endpointA.cancel(id, Absent).andThen {
                                         callFib.get.map {
                                             case Result.Failure(e: JsonRpcError) =>
                                                 assert(e.code == -32800, s"expected -32800, got ${e.code}")
                                                 untilTrue(Sync.defer {
-                                                    import scala.jdk.CollectionConverters.*
-                                                    capB.sent.asScala.exists {
+                                                    capB.sentList.exists {
                                                         case JsonRpcEnvelope.Response(rid, _, _, _) => rid == id
                                                         case _                                      => false
                                                     }
@@ -98,17 +99,18 @@ class ScenarioBidiTest extends Test:
     }
 
     "MCP bidi cancel: A cancels call to B; B handler is interrupted; NO response frame on transport" in run {
-        val capturedId   = new AtomicReference[Maybe[JsonRpcId]](Absent)
-        val handlerReady = new AtomicReference[Maybe[Fiber.Promise[Unit, Any]]](Absent)
-        val handlerDone  = new AtomicReference[Maybe[Fiber.Promise[Unit, Any]]](Absent)
+        // Unsafe: AtomicRef.Unsafe.init for id and promise capture across fibers
+        val capturedId   = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
+        val handlerReady = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
+        val handlerDone  = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
 
         val echoOnB = JsonRpcMethod[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
             (req, _) =>
                 Fiber.Promise.init[Unit, Any].map { holdP =>
                     Fiber.Promise.init[Unit, Any].map { doneP =>
                         Sync.defer {
-                            handlerReady.set(Present(holdP))
-                            handlerDone.set(Present(doneP))
+                            handlerReady.set(Present(holdP))(using AllowUnsafe.embrace.danger)
+                            handlerDone.set(Present(doneP))(using AllowUnsafe.embrace.danger)
                         }.andThen(
                             Sync.ensure(
                                 Sync.defer {
@@ -127,24 +129,26 @@ class ScenarioBidiTest extends Test:
             val capB = new CapturingTransport(tb)
             JsonRpcEndpoint.init(ta, Seq.empty, mcpConfig).map { endpointA =>
                 JsonRpcEndpoint.init(capB, Seq(echoOnB), mcpConfig).map { _ =>
-                    val idEncoder = ExtrasEncoder(id => Sync.defer { capturedId.set(Present(id)); Absent })
+                    val idEncoder =
+                        ExtrasEncoder(id => Sync.defer { capturedId.set(Present(id))(using AllowUnsafe.embrace.danger); Absent })
                     Fiber.initUnscoped(
                         Abort.run[JsonRpcError | Closed](
                             endpointA.call[EchoReq, EchoResp]("echo", EchoReq("mcp-test"), idEncoder)
                         )
                     ).map { callFib =>
-                        untilTrue(Sync.defer(capturedId.get().isDefined && handlerReady.get().isDefined)).andThen {
-                            Sync.defer(capturedId.get()).map {
+                        untilTrue(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined && handlerReady.get()(using
+                            AllowUnsafe.embrace.danger
+                        ).isDefined)).andThen {
+                            Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(id) =>
                                     endpointA.cancel(id, Absent).andThen {
                                         callFib.get.andThen {
-                                            untilTrue(Sync.defer(handlerDone.get().isDefined)).andThen {
-                                                Sync.defer(handlerDone.get()).map {
+                                            untilTrue(Sync.defer(handlerDone.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                                                Sync.defer(handlerDone.get()(using AllowUnsafe.embrace.danger)).map {
                                                     case Present(doneP) =>
                                                         untilTrue(doneP.done).andThen {
                                                             Sync.defer {
-                                                                import scala.jdk.CollectionConverters.*
-                                                                val noReply = capB.sent.asScala.forall {
+                                                                val noReply = capB.sentList.forall {
                                                                     case JsonRpcEnvelope.Response(rid, _, _, _) => rid != id
                                                                     case _                                      => true
                                                                 }
@@ -166,7 +170,8 @@ class ScenarioBidiTest extends Test:
     }
 
     "LSP progress round-trip via callWithProgress: handler emits 3 values; caller observes them; result arrives" in run {
-        val progressValues = new ConcurrentLinkedQueue[Structure.Value]()
+        // Unsafe: AtomicRef.Unsafe.init for progress value accumulation across fibers
+        val progressValues = AtomicRef.Unsafe.init(List.empty[Structure.Value])(using AllowUnsafe.embrace.danger)
 
         val workOnB = JsonRpcMethod[WorkReq, WorkResp, Async & Abort[JsonRpcError]]("work") {
             (_, ctx) =>

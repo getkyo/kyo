@@ -1,8 +1,5 @@
 package kyo
 
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
@@ -51,16 +48,19 @@ class ProgressPolicyTest extends Test:
         Structure.Value.Record(Chunk("kind" -> Structure.Value.Str("end")))
 
     private class CapturingTransport(inner: JsonRpcTransport) extends JsonRpcTransport:
-        val sent = new ConcurrentLinkedQueue[JsonRpcEnvelope]()
+        // Unsafe: AtomicRef.Unsafe.init for thread-safe envelope accumulation outside effect context
+        val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
 
         def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
-            Sync.defer(discard(sent.add(env))).andThen(inner.send(env))
+            Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
             inner.incoming
 
         def close(using Frame): Unit < Async =
             inner.close
+
+        def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
     "callWithProgress with LSP: handler calls ctx.progress three times, caller observes three progress values" in run {
@@ -90,17 +90,18 @@ class ProgressPolicyTest extends Test:
     }
 
     "callWithProgress with LSP: stampOutboundToken attaches workDoneToken to params, handler reads token" in run {
-        val capturedToken = new AtomicReference[Maybe[String]](Absent)
+        // Unsafe: AtomicRef.Unsafe.init for token capture across fibers
+        val capturedToken = AtomicRef.Unsafe.init[Maybe[String]](Absent)(using AllowUnsafe.embrace.danger)
         val taskMethod = JsonRpcMethod[TaskReqWithToken, TaskResp, Async & Abort[JsonRpcError]]("task") {
             (params, _) =>
-                Sync.defer(capturedToken.set(params.workDoneToken)).andThen(TaskResp(true))
+                Sync.defer(capturedToken.set(params.workDoneToken)(using AllowUnsafe.embrace.danger)).andThen(TaskResp(true))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(ta, Seq.empty, lspConfig).map { endpointA =>
                 JsonRpcEndpoint.init(tb, Seq(taskMethod), lspConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
-                            Sync.defer(capturedToken.get()).map {
+                            Sync.defer(capturedToken.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(_) => succeed
                                 case Absent     => fail("workDoneToken not found in inbound params")
                             }
@@ -134,17 +135,18 @@ class ProgressPolicyTest extends Test:
     }
 
     "callWithProgress with MCP: outbound params carry _meta.progressToken, handler receives it" in run {
-        val capturedMeta = new AtomicReference[Maybe[ProgressMeta]](Absent)
+        // Unsafe: AtomicRef.Unsafe.init for meta capture across fibers
+        val capturedMeta = AtomicRef.Unsafe.init[Maybe[ProgressMeta]](Absent)(using AllowUnsafe.embrace.danger)
         val taskMethod = JsonRpcMethod[TaskReqWithMeta, TaskResp, Async & Abort[JsonRpcError]]("run") {
             (params, _) =>
-                Sync.defer(capturedMeta.set(params.`_meta`)).andThen(TaskResp(true))
+                Sync.defer(capturedMeta.set(params.`_meta`)(using AllowUnsafe.embrace.danger)).andThen(TaskResp(true))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(ta, Seq.empty, mcpConfig).map { endpointA =>
                 JsonRpcEndpoint.init(tb, Seq(taskMethod), mcpConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("run", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
-                            Sync.defer(capturedMeta.get()).map {
+                            Sync.defer(capturedMeta.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(ProgressMeta(Present(_))) => succeed
                                 case other                             => fail(s"_meta.progressToken not found: $other")
                             }
@@ -158,14 +160,15 @@ class ProgressPolicyTest extends Test:
     "subscribeProgress returns a stream; subsequent progress notification with that token delivers a value" in run {
         val tokenStr = "oob-token-1"
         val token    = Structure.Value.Str(tokenStr)
-        val received = new java.util.concurrent.atomic.AtomicBoolean(false)
+        // Unsafe: AtomicBoolean.Unsafe.init for received flag across fibers
+        val received = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(ta, Seq.empty, lspConfig).map { endpointA =>
                 JsonRpcEndpoint.init(tb, Seq.empty, lspConfig).map { endpointB =>
                     endpointA.subscribeProgress(token).map { progressStream =>
                         // Wrap the stream to set the flag when at least one value is delivered.
                         val watched = progressStream.map { v =>
-                            discard(received.set(true))
+                            discard(received.set(true)(using AllowUnsafe.embrace.danger))
                             v
                         }
                         // Fork the stream consumer so it runs concurrently while we send the notification.
@@ -178,7 +181,7 @@ class ProgressPolicyTest extends Test:
                                 LspProgressParams(tokenStr, "ping")
                             ).andThen {
                                 // Wait until A's reader has delivered the value to the stream consumer.
-                                untilTrue(Sync.defer(received.get())).andThen {
+                                untilTrue(Sync.defer(received.get()(using AllowUnsafe.embrace.danger))).andThen {
                                     endpointA.unsubscribeProgress(token).andThen {
                                         streamFiber.get.map { chunks =>
                                             assert(chunks.nonEmpty, "expected at least one progress value on stream")
@@ -227,7 +230,7 @@ class ProgressPolicyTest extends Test:
                 JsonRpcEndpoint.init(tb, Seq(taskMethod), noProgress).map { _ =>
                     endpointA.call[TaskReq, TaskResp]("task", TaskReq("t")).map { resp =>
                         assert(resp == TaskResp(true))
-                        val notifs = capA.sent.toArray.collect {
+                        val notifs = capA.sentList.collect {
                             case n: JsonRpcEnvelope.Notification => n
                         }
                         assert(notifs.isEmpty, s"expected no progress notifications, got $notifs")
@@ -299,12 +302,15 @@ class ProgressPolicyTest extends Test:
     }
 
     "ctx.progress called after handler has returned is a no-op: no extra wire notification sent" in run {
-        val sinkRef     = new AtomicReference[Maybe[Structure.Value => Unit < (Async & Abort[Closed])]](Absent)
-        val handlerDone = new AtomicReference[Boolean](false)
+        // Unsafe: AtomicRef.Unsafe.init for sink capture across fibers
+        val sinkRef =
+            AtomicRef.Unsafe.init[Maybe[Structure.Value => Unit < (Async & Abort[Closed])]](Absent)(using AllowUnsafe.embrace.danger)
+        // Unsafe: AtomicBoolean.Unsafe.init for handler-done flag across fibers
+        val handlerDone = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
         val taskMethod = JsonRpcMethod[TaskReq, TaskResp, Async & Abort[JsonRpcError]]("task") {
             (_, ctx) =>
-                Sync.defer(sinkRef.set(ctx.progressSink)).andThen {
-                    Sync.defer(handlerDone.set(true)).andThen {
+                Sync.defer(sinkRef.set(ctx.progressSink)(using AllowUnsafe.embrace.danger)).andThen {
+                    Sync.defer(handlerDone.set(true)(using AllowUnsafe.embrace.danger)).andThen {
                         TaskResp(true)
                     }
                 }
@@ -315,16 +321,18 @@ class ProgressPolicyTest extends Test:
                 JsonRpcEndpoint.init(tb, Seq(taskMethod), lspConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
-                            untilTrue(Sync.defer(handlerDone.get())).andThen {
-                                val notifsBefore = capA.sent.toArray.collect {
-                                    case n: JsonRpcEnvelope.Notification if n.method == "$/progress" => n
-                                }.length
-                                sinkRef.get() match
+                            untilTrue(Sync.defer(handlerDone.get()(using AllowUnsafe.embrace.danger))).andThen {
+                                val notifsBefore = capA.sentList.count {
+                                    case n: JsonRpcEnvelope.Notification if n.method == "$/progress" => true
+                                    case _                                                           => false
+                                }
+                                sinkRef.get()(using AllowUnsafe.embrace.danger) match
                                     case Present(sink) =>
                                         Abort.run[Closed](sink(mkReport("late"))).map { _ =>
-                                            val notifsAfter = capA.sent.toArray.collect {
-                                                case n: JsonRpcEnvelope.Notification if n.method == "$/progress" => n
-                                            }.length
+                                            val notifsAfter = capA.sentList.count {
+                                                case n: JsonRpcEnvelope.Notification if n.method == "$/progress" => true
+                                                case _                                                           => false
+                                            }
                                             assert(
                                                 notifsAfter == notifsBefore,
                                                 s"expected no new notifications after handler returned; before=$notifsBefore after=$notifsAfter"
@@ -385,7 +393,7 @@ class ProgressPolicyTest extends Test:
                 JsonRpcEndpoint.init(capB, Seq(taskMethod), lspConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
-                            val progressNotifs = capB.sent.toArray.collect {
+                            val progressNotifs = capB.sentList.collect {
                                 case n: JsonRpcEnvelope.Notification if n.method == "$/progress" => n
                             }
                             assert(progressNotifs.nonEmpty, "expected at least one progress notification on the wire")
@@ -411,9 +419,10 @@ class ProgressPolicyTest extends Test:
                 JsonRpcEndpoint.init(capB, Seq(taskMethod), mcpConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
-                            val notifCount = capB.sent.toArray.collect {
-                                case n: JsonRpcEnvelope.Notification if n.method == "notifications/progress" => n
-                            }.length
+                            val notifCount = capB.sentList.count {
+                                case n: JsonRpcEnvelope.Notification if n.method == "notifications/progress" => true
+                                case _                                                                       => false
+                            }
                             assert(notifCount == 1, s"MCP monotonicity: expected 1 notification, got $notifCount")
                         }
                     }

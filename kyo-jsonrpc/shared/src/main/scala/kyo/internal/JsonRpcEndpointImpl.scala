@@ -344,7 +344,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                 RateLimitEngine.maxInFlightGuard(meter) {
                     // Unsafe: channel init and ConcurrentHashMap put for progress side-channel
                     Sync.Unsafe.defer {
-                        val tokenStr = java.util.UUID.randomUUID().toString
+                        val tokenStr = Random.live.unsafe.nextStringAlphanumeric(32)(using AllowUnsafe.embrace.danger)
                         val tokenVal = Structure.Value.Str(tokenStr)
                         // Unsafe: Channel.Unsafe.init for progress channel
                         val progChan = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe
@@ -415,7 +415,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                     RateLimitEngine.maxInFlightGuard(meter) {
                         // Unsafe: channel init and token/stamp inside Stream emit body
                         Sync.Unsafe.defer {
-                            val tokenStr = java.util.UUID.randomUUID().toString
+                            val tokenStr = Random.live.unsafe.nextStringAlphanumeric(32)(using AllowUnsafe.embrace.danger)
                             val tokenVal = Structure.Value.Str(tokenStr)
                             // Unsafe: Channel.Unsafe.init for partial-results channel
                             val progChan = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe

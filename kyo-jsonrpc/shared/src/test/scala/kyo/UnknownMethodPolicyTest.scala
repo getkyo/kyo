@@ -1,6 +1,5 @@
 package kyo
 
-import java.util.concurrent.atomic.AtomicInteger
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
@@ -35,9 +34,10 @@ class UnknownMethodPolicyTest extends Test:
     }
 
     "lsp policy: unknown notification starting with dollar-slash is silently dropped" in run {
-        val handlerInvoked = new AtomicInteger(0)
+        // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
+        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val dollarMethod = JsonRpcMethod[Empty, Unit, Async & Abort[JsonRpcError]]("$/setTrace") {
-            (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()))
+            (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         val lspConfig = JsonRpcEndpoint.Config(unknownMethod = UnknownMethodPolicy.lsp)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -45,7 +45,7 @@ class UnknownMethodPolicyTest extends Test:
                 JsonRpcEndpoint.init(tb, Seq.empty, lspConfig).map { _ =>
                     a.notify[Empty]("$/setTrace", Empty()).andThen {
                         Async.sleep(80.millis).andThen {
-                            Sync.defer(assert(handlerInvoked.get() == 0))
+                            Sync.defer(assert(handlerInvoked.get()(using AllowUnsafe.embrace.danger) == 0))
                         }
                     }
                 }
@@ -54,14 +54,15 @@ class UnknownMethodPolicyTest extends Test:
     }
 
     "lsp policy: unknown notification not starting with dollar-slash is silently dropped" in run {
-        val handlerInvoked = new AtomicInteger(0)
+        // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
+        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val lspConfig      = JsonRpcEndpoint.Config(unknownMethod = UnknownMethodPolicy.lsp)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(ta, Seq.empty, lspConfig).map { a =>
                 JsonRpcEndpoint.init(tb, Seq.empty, lspConfig).map { _ =>
                     a.notify[Empty]("unknown/event", Empty()).andThen {
                         Async.sleep(80.millis).andThen {
-                            Sync.defer(assert(handlerInvoked.get() == 0))
+                            Sync.defer(assert(handlerInvoked.get()(using AllowUnsafe.embrace.danger) == 0))
                         }
                     }
                 }
@@ -112,16 +113,17 @@ class UnknownMethodPolicyTest extends Test:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync =
                 MessageGate.Decision.Reject(gateError)
 
-        val handlerInvoked = new AtomicInteger(0)
+        // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
+        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val pingMethod = JsonRpcMethod[Ping, Pong, Async & Abort[JsonRpcError]]("ping") {
             (req, _) =>
-                Sync.defer(discard(handlerInvoked.incrementAndGet())).andThen(Pong("pong"))
+                Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen(Pong("pong"))
         }
         val gatedConfig = JsonRpcEndpoint.Config(gate = Present(rejectGate))
         mkEndpoints(Seq.empty, Seq(pingMethod), configB = gatedConfig).map { (a, _) =>
             Abort.run[JsonRpcError | Closed](a.call[Ping, Pong]("ping", Ping("x"))).map {
                 case Result.Failure(e: JsonRpcError) =>
-                    assert(e.code == -32099 && handlerInvoked.get() == 0)
+                    assert(e.code == -32099 && handlerInvoked.get()(using AllowUnsafe.embrace.danger) == 0)
                 case other => fail(s"expected gate error, got $other")
             }
         }
@@ -132,15 +134,16 @@ class UnknownMethodPolicyTest extends Test:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync =
                 MessageGate.Decision.Reject(JsonRpcError(-32000, "rejected", Absent))
 
-        val handlerInvoked = new AtomicInteger(0)
+        // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
+        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val eventMethod = JsonRpcMethod[Empty, Unit, Async & Abort[JsonRpcError]]("event") {
-            (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()))
+            (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         val gatedConfig = JsonRpcEndpoint.Config(gate = Present(rejectGate))
         mkEndpoints(Seq.empty, Seq(eventMethod), configB = gatedConfig).map { (a, _) =>
             a.notify[Empty]("event", Empty()).andThen {
                 Async.sleep(80.millis).andThen {
-                    Sync.defer(assert(handlerInvoked.get() == 0)).andThen {
+                    Sync.defer(assert(handlerInvoked.get()(using AllowUnsafe.embrace.danger) == 0)).andThen {
                         a.call[Empty, Pong]("event", Empty()).andThen {
                             fail("expected gate-reject error but got success")
                         }.handle(

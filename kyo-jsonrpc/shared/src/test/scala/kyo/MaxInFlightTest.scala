@@ -1,8 +1,5 @@
 package kyo
 
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
@@ -13,26 +10,31 @@ class MaxInFlightTest extends Test:
     case class LogMsg(text: String) derives Schema, CanEqual
 
     private class CapturingTransport(inner: JsonRpcTransport) extends JsonRpcTransport:
-        val sent = new ConcurrentLinkedQueue[JsonRpcEnvelope]()
+        // Unsafe: AtomicRef.Unsafe.init used for thread-safe envelope accumulation outside effect context
+        val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
 
         def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
-            Sync.defer(discard(sent.add(env))).andThen(inner.send(env))
+            Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
             inner.incoming
 
         def close(using Frame): Unit < Async =
             inner.close
+
+        def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
     "maxInFlight = 2 parks the third concurrent call until a slot is freed" in run {
-        val handlerEntered  = new AtomicInteger(0)
-        val handlerPromises = new ConcurrentLinkedQueue[Fiber.Promise[Unit, Any]]()
+        // Unsafe: AtomicInt.Unsafe.init used for concurrent counter in synchronous handler scope
+        val handlerEntered = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        // Unsafe: AtomicRef.Unsafe.init used for concurrent promise accumulation outside effect context
+        val handlerPromises = AtomicRef.Unsafe.init(List.empty[Fiber.Promise[Unit, Any]])(using AllowUnsafe.embrace.danger)
 
         val pingOnB = JsonRpcMethod[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (req, _) =>
             Fiber.Promise.init[Unit, Any].map { p =>
-                Sync.defer(discard(handlerPromises.add(p))).andThen {
-                    Sync.defer(discard(handlerEntered.incrementAndGet())).andThen {
+                Sync.defer(discard(handlerPromises.getAndUpdate(p :: _)(using AllowUnsafe.embrace.danger))).andThen {
+                    Sync.defer(discard(handlerEntered.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen {
                         p.get.andThen(PingResp(req.n))
                     }
                 }
@@ -57,22 +59,24 @@ class MaxInFlightTest extends Test:
                                 Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(3)))
                             ).map { fib3 =>
                                 // Wait until exactly 2 handlers have entered (two slots acquired)
-                                untilTrue(Sync.defer(handlerEntered.get() == 2)).andThen {
-                                    Sync.defer(assert(handlerEntered.get() == 2, "third call should be parked")).andThen {
+                                untilTrue(Sync.defer(handlerEntered.get()(using AllowUnsafe.embrace.danger) == 2)).andThen {
+                                    Sync.defer(assert(
+                                        handlerEntered.get()(using AllowUnsafe.embrace.danger) == 2,
+                                        "third call should be parked"
+                                    )).andThen {
                                         // Release one slot (whichever handler got it first) so the third call can proceed
                                         Sync.defer {
-                                            import scala.jdk.CollectionConverters.*
-                                            handlerPromises.asScala.headOption.foreach { first =>
-                                                discard(handlerPromises.remove(first))
+                                            val all = handlerPromises.get()(using AllowUnsafe.embrace.danger)
+                                            all.headOption.foreach { first =>
+                                                handlerPromises.set(all.tail)(using AllowUnsafe.embrace.danger)
                                                 first.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
                                             }
                                         }.andThen {
                                             // Wait for all three handlers to have entered
-                                            untilTrue(Sync.defer(handlerEntered.get() == 3)).andThen {
+                                            untilTrue(Sync.defer(handlerEntered.get()(using AllowUnsafe.embrace.danger) == 3)).andThen {
                                                 // Release remaining slots
                                                 Sync.defer {
-                                                    import scala.jdk.CollectionConverters.*
-                                                    handlerPromises.asScala.foreach { p =>
+                                                    handlerPromises.get()(using AllowUnsafe.embrace.danger).foreach { p =>
                                                         p.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
                                                     }
                                                 }.andThen {
@@ -93,16 +97,18 @@ class MaxInFlightTest extends Test:
     }
 
     "notify is NOT rate-limited by maxInFlight" in run {
-        val notifyReceived = new AtomicInteger(0)
-        val handlerBlocked = new AtomicReference[Maybe[Fiber.Promise[Unit, Any]]](Absent)
+        // Unsafe: AtomicInt.Unsafe.init for concurrent counter in handler scope
+        val notifyReceived = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        // Unsafe: AtomicRef.Unsafe.init for handler promise capture across fibers
+        val handlerBlocked = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
 
         val pingOnB = JsonRpcMethod[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (_, _) =>
             Fiber.Promise.init[Unit, Any].map { p =>
-                Sync.defer(handlerBlocked.set(Present(p))).andThen(p.get.andThen(PingResp(0)))
+                Sync.defer(handlerBlocked.set(Present(p))(using AllowUnsafe.embrace.danger)).andThen(p.get.andThen(PingResp(0)))
             }
         }
         val logOnB = JsonRpcMethod[LogMsg, Unit, Async & Abort[JsonRpcError]]("log") { (_, _) =>
-            Sync.defer(discard(notifyReceived.incrementAndGet()))
+            Sync.defer(discard(notifyReceived.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
 
         val cfg = JsonRpcEndpoint.Config(
@@ -118,13 +124,13 @@ class MaxInFlightTest extends Test:
                         Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(0)))
                     ).andThen {
                         // Wait for the handler to have acquired the slot and blocked
-                        untilTrue(Sync.defer(handlerBlocked.get().isDefined)).andThen {
+                        untilTrue(Sync.defer(handlerBlocked.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                             // Send a notification while the slot is full; notify should go through immediately
                             endpointA.notify[LogMsg]("log", LogMsg("hi")).andThen {
                                 // Verify notification was received on the server
-                                untilTrue(Sync.defer(notifyReceived.get() == 1)).andThen {
+                                untilTrue(Sync.defer(notifyReceived.get()(using AllowUnsafe.embrace.danger) == 1)).andThen {
                                     // Release the blocked call
-                                    Sync.defer(handlerBlocked.get()).map {
+                                    Sync.defer(handlerBlocked.get()(using AllowUnsafe.embrace.danger)).map {
                                         case Present(p) =>
                                             p.completeUnitDiscard.andThen(succeed)
                                         case Absent => fail("handler not blocked")
@@ -139,11 +145,12 @@ class MaxInFlightTest extends Test:
     }
 
     "requestTimeout fires and caller receives JsonRpcError.cancelled" in run {
-        val blocked = new AtomicReference[Maybe[Fiber.Promise[Unit, Any]]](Absent)
+        // Unsafe: AtomicRef.Unsafe.init for handler promise capture across fibers
+        val blocked = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
 
         val pingOnB = JsonRpcMethod[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (_, _) =>
             Fiber.Promise.init[Unit, Any].map { p =>
-                Sync.defer(blocked.set(Present(p))).andThen(p.get.andThen(PingResp(0)))
+                Sync.defer(blocked.set(Present(p))(using AllowUnsafe.embrace.danger)).andThen(p.get.andThen(PingResp(0)))
             }
         }
 
@@ -179,8 +186,7 @@ class MaxInFlightTest extends Test:
         )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            val capA        = new CapturingTransport(ta)
-            val countBefore = capA.sent.size()
+            val capA = new CapturingTransport(ta)
             JsonRpcEndpoint.init(capA, Seq.empty, cfg).map { endpointA =>
                 JsonRpcEndpoint.init(tb, Seq(pingOnB), cfg).map { _ =>
                     Abort.run[JsonRpcError | Closed](
@@ -194,8 +200,7 @@ class MaxInFlightTest extends Test:
                         // The cancel notification is enqueued before the call fails, but the writer fiber
                         // delivers it asynchronously; wait until it appears in the capturing transport.
                         untilTrue(Sync.defer {
-                            import scala.jdk.CollectionConverters.*
-                            capA.sent.iterator().asScala.exists {
+                            capA.sentList.exists {
                                 case JsonRpcEnvelope.Notification("$/cancelRequest", _, _) => true
                                 case _                                                     => false
                             }
@@ -225,12 +230,10 @@ class MaxInFlightTest extends Test:
                         endpointA.call[PingReq, PingResp]("ping", PingReq(0))
                     ).map { result =>
                         val cancelNotifications =
-                            import scala.jdk.CollectionConverters.*
-                            capA.sent.iterator().asScala.filter {
+                            capA.sentList.count {
                                 case _: JsonRpcEnvelope.Notification => true
                                 case _                               => false
-                            }.size
-                        end cancelNotifications
+                            }
                         result match
                             case Result.Failure(e: JsonRpcError) =>
                                 assert(
@@ -246,11 +249,12 @@ class MaxInFlightTest extends Test:
     }
 
     "semaphore slot released after call failure: next call proceeds" in run {
-        val callCount = new AtomicInteger(0)
+        // Unsafe: AtomicInt.Unsafe.init for call counter in handler scope
+        val callCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
         // First call: handler always fails with MethodNotFound
         val failOnB = JsonRpcMethod[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (req, _) =>
-            val n = callCount.incrementAndGet()
+            val n = callCount.incrementAndGet()(using AllowUnsafe.embrace.danger)
             if n == 1 then Abort.fail(JsonRpcError.methodNotFound("ping"))
             else PingResp(req.n)
         }

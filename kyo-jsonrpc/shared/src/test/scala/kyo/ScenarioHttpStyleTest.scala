@@ -1,7 +1,5 @@
 package kyo
 
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicInteger
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
@@ -18,16 +16,19 @@ class ScenarioHttpStyleTest extends Test:
     case class HoverResp(text: String) derives Schema, CanEqual
 
     private class CapturingTransport(inner: JsonRpcTransport) extends JsonRpcTransport:
-        val sent = new ConcurrentLinkedQueue[JsonRpcEnvelope]()
+        // Unsafe: AtomicRef.Unsafe.init for thread-safe envelope accumulation outside effect context
+        val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
 
         def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
-            Sync.defer(discard(sent.add(env))).andThen(inner.send(env))
+            Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
             inner.incoming
 
         def close(using Frame): Unit < Async =
             inner.close
+
+        def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
     "single server endpoint with add and greet: two sequential calls return correct typed results" in run {
@@ -52,25 +53,25 @@ class ScenarioHttpStyleTest extends Test:
     }
 
     "notification triggers handler and no reply frame arrives on wire" in run {
-        val handlerRan = new AtomicInteger(0)
+        // Unsafe: AtomicInt.Unsafe.init for handler run counter
+        val handlerRan = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val logMethod = JsonRpcMethod[LogMsg, Unit, Async & Abort[JsonRpcError]]("log") {
-            (_, _) => Sync.defer(discard(handlerRan.incrementAndGet()))
+            (_, _) => Sync.defer(discard(handlerRan.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val capA = new CapturingTransport(ta)
             JsonRpcEndpoint.init(capA, Seq.empty).map { client =>
                 JsonRpcEndpoint.init(tb, Seq(logMethod)).map { _ =>
-                    val framesBefore = Sync.defer(capA.sent.size())
+                    val framesBefore = Sync.defer(capA.sentList.size)
                     framesBefore.map { before =>
                         client.notify[LogMsg]("log", LogMsg("event occurred")).andThen {
-                            untilTrue(Sync.defer(handlerRan.get() == 1)).andThen {
+                            untilTrue(Sync.defer(handlerRan.get()(using AllowUnsafe.embrace.danger) == 1)).andThen {
                                 Sync.defer {
-                                    import scala.jdk.CollectionConverters.*
-                                    val responses = capA.sent.asScala.collect {
+                                    val responses = capA.sentList.collect {
                                         case r: JsonRpcEnvelope.Response => r
                                     }
                                     assert(responses.isEmpty, s"expected zero response frames from server, got ${responses.size}")
-                                    assert(handlerRan.get() == 1, "handler should have run exactly once")
+                                    assert(handlerRan.get()(using AllowUnsafe.embrace.danger) == 1, "handler should have run exactly once")
                                 }
                             }
                         }
