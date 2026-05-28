@@ -201,11 +201,15 @@ class AsyncTest extends Test:
                         p2  <- d2.pending
                         p3  <- d3.pending
                         _ <- Sync.defer {
+                            // Fiber.toString delegates to IOTask.toString — prints id, state,
+                            // preempt bit, finalizer count, and the current continuation,
+                            // invaluable for distinguishing "interrupt CAS landed, eval still
+                            // running" from "eval exited, finalizers stuck".
                             java.lang.System.err.println(
-                                s"[DIAGNOSE iter ${iter + 1}] " +
-                                    s"f1{done=$fd1 finRan=${p1 == 0}} " +
-                                    s"f2{done=$fd2 finRan=${p2 == 0}} " +
-                                    s"f3{done=$fd3 finRan=${p3 == 0}}"
+                                s"[DIAGNOSE iter ${iter + 1}]\n" +
+                                    s"  f1{done=$fd1 finRan=${p1 == 0}} $f1\n" +
+                                    s"  f2{done=$fd2 finRan=${p2 == 0}} $f2\n" +
+                                    s"  f3{done=$fd3 finRan=${p3 == 0}} $f3"
                             )
                         }
                     yield ()
