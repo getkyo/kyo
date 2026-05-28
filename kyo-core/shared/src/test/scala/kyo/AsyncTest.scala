@@ -161,6 +161,61 @@ class AsyncTest extends Test:
                 else once.map(i => if i then repeat(n - 1) else fail("interrupt returned false"))
             repeat(50)
         }
+        "DIAGNOSE — multi-fiber interrupt per-fiber state on hang" in runNotJS {
+            // Diagnostic harness for the multi-fiber interrupt hang seen on
+            // linux-x64 / build (JVM). Mirrors "multiple fibers" (3 fibers, 2s warmup,
+            // 3 sequential interrupts) but uses one done latch per fiber and snapshots
+            // state after a 5s settle instead of awaiting. A failing iteration prints
+            // per-fiber interrupt/done/finalizerRan, so the failure mode is attributed:
+            //
+            //   interrupt=false                          → IOPromise CAS rejected
+            //   interrupt=true, done=false               → CAS landed, eval never observed it
+            //   interrupt=true, done=true, finRan=false  → fiber complete but Scope.ensure
+            //                                              finalizer's spawned close-fiber
+            //                                              never ran done.release
+            val warmup    = 2.seconds
+            val settleCap = 5.seconds
+            val iters     = 8
+            def once(i: Int): Result[String, Unit] < (Abort[Any] & Async & Scope) =
+                for
+                    started <- Latch.init(3)
+                    done1   <- Latch.init(1)
+                    done2   <- Latch.init(1)
+                    done3   <- Latch.init(1)
+                    f1      <- Fiber.initUnscoped(runLoop(started, done1))
+                    f2      <- Fiber.initUnscoped(runLoop(started, done2))
+                    f3      <- Fiber.initUnscoped(runLoop(started, done3))
+                    _       <- started.await
+                    _       <- Async.sleep(warmup)
+                    i1      <- f1.interrupt(panic)
+                    i2      <- f2.interrupt(panic)
+                    i3      <- f3.interrupt(panic)
+                    _       <- Async.sleep(settleCap)
+                    d1      <- f1.done
+                    d2      <- f2.done
+                    d3      <- f3.done
+                    p1      <- done1.pending
+                    p2      <- done2.pending
+                    p3      <- done3.pending
+                yield
+                    if p1 == 0 && p2 == 0 && p3 == 0 then Result.Success(())
+                    else
+                        Result.Failure(
+                            s"iter ${i + 1}: " +
+                                s"f1{interrupt=$i1 done=$d1 finRan=${p1 == 0}} " +
+                                s"f2{interrupt=$i2 done=$d2 finRan=${p2 == 0}} " +
+                                s"f3{interrupt=$i3 done=$d3 finRan=${p3 == 0}}"
+                        )
+            def repeat(i: Int): Assertion < (Abort[Any] & Async & Scope) =
+                if i >= iters then succeed
+                else
+                    once(i).map {
+                        case Result.Success(_)       => repeat(i + 1)
+                        case Result.Failure(msg)     => fail(msg)
+                        case Result.Panic(throwable) => fail(throwable)
+                    }
+            repeat(0)
+        }
     }
 
     "race" - {
