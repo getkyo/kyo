@@ -173,9 +173,43 @@ class AsyncTest extends Test:
             //   interrupt=true, done=true, finRan=false  → fiber complete but Scope.ensure
             //                                              finalizer's spawned close-fiber
             //                                              never ran done.release
+            //
+            // An observer fiber launched before the interrupts prints per-latch pending
+            // state to stderr every second. When the bug hangs the scheduler hard enough
+            // that the test framework's Async.timeout wrapper can't fire (cf. GHA 90-min
+            // job cancel pattern), the observer's running prints are still captured by
+            // CI log streaming — giving us a timeline of the hang shape even when the
+            // test never reaches the assertion.
             val warmup    = 2.seconds
             val settleCap = 5.seconds
             val iters     = 8
+            def observeLoop[A1, E1, A2, E2, A3, E3](
+                iter: Int,
+                f1: Fiber[A1, E1],
+                f2: Fiber[A2, E2],
+                f3: Fiber[A3, E3],
+                d1: Latch,
+                d2: Latch,
+                d3: Latch
+            ): Unit < (Sync & Async) =
+                Async.sleep(1.second).andThen(
+                    for
+                        fd1 <- f1.done
+                        fd2 <- f2.done
+                        fd3 <- f3.done
+                        p1  <- d1.pending
+                        p2  <- d2.pending
+                        p3  <- d3.pending
+                        _ <- Sync.defer {
+                            java.lang.System.err.println(
+                                s"[DIAGNOSE iter ${iter + 1}] " +
+                                    s"f1{done=$fd1 finRan=${p1 == 0}} " +
+                                    s"f2{done=$fd2 finRan=${p2 == 0}} " +
+                                    s"f3{done=$fd3 finRan=${p3 == 0}}"
+                            )
+                        }
+                    yield ()
+                ).andThen(observeLoop(iter, f1, f2, f3, d1, d2, d3))
             def once(i: Int): Result[String, Unit] < (Abort[Any] & Async & Scope) =
                 for
                     started <- Latch.init(3)
@@ -185,12 +219,14 @@ class AsyncTest extends Test:
                     f1      <- Fiber.initUnscoped(runLoop(started, done1))
                     f2      <- Fiber.initUnscoped(runLoop(started, done2))
                     f3      <- Fiber.initUnscoped(runLoop(started, done3))
+                    obs     <- Fiber.initUnscoped(observeLoop(i, f1, f2, f3, done1, done2, done3))
                     _       <- started.await
                     _       <- Async.sleep(warmup)
                     i1      <- f1.interrupt(panic)
                     i2      <- f2.interrupt(panic)
                     i3      <- f3.interrupt(panic)
                     _       <- Async.sleep(settleCap)
+                    _       <- obs.interrupt
                     d1      <- f1.done
                     d2      <- f2.done
                     d3      <- f3.done
