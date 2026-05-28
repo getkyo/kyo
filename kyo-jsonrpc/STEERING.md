@@ -85,6 +85,12 @@ The crossProject uses `.withoutSuffixFor(JVMPlatform)`, so the sbt project key f
 
 IMPLEMENTATION.md and earlier prompts use `kyo-jsonrpcJVM` in verification commands; substitute the unsuffixed name for JVM. JS / Native suffixes work as written.
 
+### Phase 2 variance-driven adjustment to JsonRpcMethod (informational)
+
+The trait `JsonRpcMethod[+S]` cannot declare `handle(...): Structure.Value < S` because `< [+A, -S]` makes `S` contravariant in `<`'s effect-row slot; combined with `[+S]` on the trait this produces a variance error. The kyo-ai-plugin source resolves this by having `handle` return a FIXED effect row `< (Async & Abort[JsonRpcError])`; the impl-classes accept handlers of `Out < S` and use `ev.liftContra` to bridge.
+
+Phase 2 follows that exact pattern. DESIGN.md §5 prose still says `< S`; treat the Phase-2 implementation as the canonical resolution. If future phases need the broader effect row from the trait API, the impl row stays fixed.
+
 ### Phase 1 post-commit fixes (apply BEFORE Phase 2 launches)
 
 Two issues found by supervisor verification of Phase 1:
