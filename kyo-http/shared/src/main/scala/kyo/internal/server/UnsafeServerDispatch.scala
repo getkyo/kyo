@@ -302,7 +302,7 @@ private[kyo] object UnsafeServerDispatch:
                 AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeReasonRef =>
                     val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                         closeReasonRef.set(Present((code, reason))).andThen {
-                            WebSocketCodec.writeClose(conn, code, reason, mask = false)
+                            outbound.close.unit
                         }
                     val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, closeFn)
                     val wsUrl = HttpUrl.parse(path) match
@@ -343,6 +343,12 @@ private[kyo] object UnsafeServerDispatch:
                                             WebSocketCodec.writeFrame(conn, frame, mask = false).andThen(Loop.continue)
                                         }
                                     }
+                                }.map { _ =>
+                                    closeReasonRef.get.map {
+                                        case Present((code, reason)) =>
+                                            Abort.run[Any](WebSocketCodec.writeClose(conn, code, reason, mask = false)).unit
+                                        case Absent => Kyo.unit
+                                    }
                                 }.andThen(outbound.close).unit
                             }.map { writeFiber =>
                                 Sync.ensure(
@@ -356,10 +362,10 @@ private[kyo] object UnsafeServerDispatch:
                                             case Absent =>
                                                 readFiber.done.map { isDone =>
                                                     if isDone then Kyo.unit
-                                                    else Abort.run[Any](WebSocketCodec.writeClose(conn, 1000, "", mask = false)).unit
+                                                    else closeReasonRef.set(Present((1000, ""))).andThen(outbound.close.unit)
                                                 }
-                                            case _ => Kyo.unit
-                                        }
+                                            case _ => outbound.close.unit
+                                        }.andThen(writeFiber.get.unit)
                                     }
                                 }
                             }
