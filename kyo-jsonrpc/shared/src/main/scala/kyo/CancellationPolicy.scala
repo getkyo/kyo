@@ -1,4 +1,48 @@
 package kyo
 
-/** Phase 4 skeleton. Phase 5 adds the body (fields, .lsp, .mcp constants). */
-sealed trait CancellationPolicy private[kyo]
+import kyo.Maybe
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
+import kyo.Structure
+import kyo.Sync
+
+final case class CancellationPolicy(
+    cancelMethod: String,
+    encodeParams: CancellationPolicy.ParamsEncoder,
+    expectReplyForCancelledRequest: Boolean,
+    cancelledError: Maybe[JsonRpcError],
+    protectedMethods: Set[String]
+) derives CanEqual
+
+object CancellationPolicy:
+    type ParamsEncoder = (JsonRpcId, Maybe[String]) => Frame ?=> Structure.Value < Sync
+
+    private case class LspCancelParams(id: JsonRpcId) derives Schema, CanEqual
+    private case class McpCancelParams(requestId: JsonRpcId, reason: Maybe[String]) derives Schema, CanEqual
+
+    private val lspEncoder: ParamsEncoder =
+        (id, _) =>
+            f ?=>
+                Sync.defer(Structure.encode(LspCancelParams(id)))(using f)
+
+    private val mcpEncoder: ParamsEncoder =
+        (id, reason) =>
+            f ?=>
+                Sync.defer(Structure.encode(McpCancelParams(id, reason)))(using f)
+
+    val lsp: CancellationPolicy = CancellationPolicy(
+        cancelMethod = "$/cancelRequest",
+        encodeParams = lspEncoder,
+        expectReplyForCancelledRequest = true,
+        cancelledError = Present(JsonRpcError.RequestCancelled),
+        protectedMethods = Set.empty
+    )
+
+    val mcp: CancellationPolicy = CancellationPolicy(
+        cancelMethod = "notifications/cancelled",
+        encodeParams = mcpEncoder,
+        expectReplyForCancelledRequest = false,
+        cancelledError = Absent,
+        protectedMethods = Set("initialize")
+    )
+end CancellationPolicy

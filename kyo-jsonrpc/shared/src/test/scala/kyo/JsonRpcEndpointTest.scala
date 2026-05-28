@@ -246,22 +246,27 @@ class JsonRpcEndpointTest extends Test:
                 Absent
             }
         )
-        mkEndpoints(Seq.empty, Seq(addOnB)).map { (a, _) =>
-            Fiber.initUnscoped(
-                Abort.run[JsonRpcError | Closed](
-                    a.call[AddReq, AddResp]("add", AddReq(1, 2), captureEncoder)
-                )
-            ).map { callFib =>
-                untilTrue(Sync.defer(capturedId.get().isDefined)).andThen {
-                    Sync.defer(capturedId.get()).map {
-                        case Present(id) =>
-                            a.cancel(id, Absent).andThen {
-                                callFib.get.map {
-                                    case Result.Failure(e: JsonRpcError) => assert(e.code == -32800)
-                                    case other                           => fail(s"expected cancelled JsonRpcError, got $other")
-                                }
+        val noPolicyConfig = JsonRpcEndpoint.Config(cancellation = Absent)
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcEndpoint.init(ta, Seq.empty, noPolicyConfig).map { a =>
+                JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
+                    Fiber.initUnscoped(
+                        Abort.run[JsonRpcError | Closed](
+                            a.call[AddReq, AddResp]("add", AddReq(1, 2), captureEncoder)
+                        )
+                    ).map { callFib =>
+                        untilTrue(Sync.defer(capturedId.get().isDefined)).andThen {
+                            Sync.defer(capturedId.get()).map {
+                                case Present(id) =>
+                                    a.cancel(id, Absent).andThen {
+                                        callFib.get.map {
+                                            case Result.Failure(e: JsonRpcError) => assert(e.code == -32800)
+                                            case other                           => fail(s"expected cancelled JsonRpcError, got $other")
+                                        }
+                                    }
+                                case Absent => fail("id not captured")
                             }
-                        case Absent => fail("id not captured")
+                        }
                     }
                 }
             }

@@ -85,6 +85,89 @@ The crossProject uses `.withoutSuffixFor(JVMPlatform)`, so the sbt project key f
 
 IMPLEMENTATION.md and earlier prompts use `kyo-jsonrpcJVM` in verification commands; substitute the unsuffixed name for JVM. JS / Native suffixes work as written.
 
+### Phase 5 IMMEDIATE STEER (in-flight pulse 3 follow-up — 3 test failures)
+
+Pulse 3 diagnosed two real engine bugs.
+
+**Fix A — Tests 60 + 61 (timeout)**:
+
+1. **Add a 2-arg `JsonRpcEndpoint.init` overload** that defaults the Config:
+   ```scala
+   def init(transport: JsonRpcTransport, methods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]])(
+       using Frame
+   ): JsonRpcEndpoint < (Sync & Async & Scope) =
+       init(transport, methods, Config())
+   ```
+   This makes Test 61's `JsonRpcEndpoint.init(tb, Seq(neverReturns))` compile.
+
+2. **Fix the Timeout branch sequencing** in `JsonRpcEndpointImpl.scala` lines ~99-122. The outer `Sync.Unsafe.defer` wraps the entire `handleTimeout(...).andThen(abortSignal.get)` chain, double-nesting with `handleTimeout`'s inner `Sync.Unsafe.defer`. Remove the outer wrap; let `handleTimeout` return its `< Async` effect and chain `abortSignal.get` directly at the same level. Specifically, the Result.Failure(_: Timeout) branch should look like:
+   ```scala
+   case Result.Failure(_: Timeout) =>
+       handleTimeout(id, config.cancellation, callerRegistry, writerChannel, frame).andThen(
+           abortSignal.safe.get.map(err => Abort.fail(err))
+       )
+   ```
+   (without an extra Sync.Unsafe.defer wrapper).
+
+**Fix B — Test 62 (LSP ContentModified verbatim)**:
+
+In `endpoint.cancel(id, reason)`, when `Config.cancellation = Present(policy)`:
+- If `policy.expectReplyForCancelledRequest = true` (LSP): DO NOT complete `abortSignal` locally. Only send the cancel notification on the wire. The server MUST reply per LSP §3, so the caller will be unblocked by the wire response coming back through Exchange's pending map. The wire response's error code (e.g. `-32801 ContentModified` from a handler that aborted with that specific error) reaches the caller verbatim.
+- If `policy.expectReplyForCancelledRequest = false` (MCP): keep the existing behavior — complete `abortSignal` locally with `policy.cancelledError.getOrElse(JsonRpcError.cancelled(reason))` (no wire reply expected from server).
+- If `Config.cancellation = Absent` (CDP): complete `abortSignal` locally with `JsonRpcError.cancelled(reason)`.
+
+After Fix A + Fix B:
+- `sbt 'kyo-jsonrpc/test' 2>&1 | tail -5` must show ALL passing (49 from Phase 0-4 plus 14 from Phase 5 = 63 total).
+- No regressions in Phase 0-4 tests.
+
+### Phase 5 IMMEDIATE STEER (in-flight pulse 2 follow-up)
+
+Pulse 2 confirmed:
+- Steer 1 (Frame.internal): different now, NEW build break at `JsonRpcEndpointImpl.scala:447` — `pendingInbound.remove(id)` discards a non-Unit return (`InboundEntry`). E175 fires.
+- Steer 2 (extractId): NOT REMOVED. Still 6 fields on CancellationPolicy.
+- Steer 3 (14 tests): landed.
+
+**Fix 1**: at `JsonRpcEndpointImpl.scala:447`, change:
+```scala
+pendingInbound.remove(id)
+```
+to:
+```scala
+discard(pendingInbound.remove(id))
+```
+(or use `val _ = pendingInbound.remove(id)` if `discard` is not in scope; check imports). This is a one-line fix.
+
+**Fix 2**: REMOVE the `extractId` field from `CancellationPolicy`. The case class MUST have exactly 5 fields per IMPLEMENTATION.md line 316:
+```scala
+final case class CancellationPolicy(
+    cancelMethod:                   String,
+    encodeParams:                   CancellationPolicy.ParamsEncoder,
+    expectReplyForCancelledRequest: Boolean,
+    cancelledError:                 Maybe[JsonRpcError],
+    protectedMethods:               Set[String]
+) derives CanEqual
+```
+Move the id-extraction logic into `internal/CancellationEngine.scala` as a private helper keyed on `policy.cancelMethod`. The helper takes the inbound notification's params and the policy, and returns `Maybe[JsonRpcId]`. It is private to CancellationEngine.
+
+After both fixes:
+- `sbt 'kyo-jsonrpc/Test/compile' 2>&1 | tail -10` must be green.
+- `sbt 'kyo-jsonrpc/testOnly *CancellationPolicyTest' 2>&1 | tail -10` must show 14/14 passing.
+- `sbt 'kyo-jsonrpc/test' 2>&1 | tail -10` must show ALL prior tests still passing (no Phase 0-4 regressions).
+
+### Phase 5 IMMEDIATE STEER (in-flight pulse 1 findings)
+
+1. **BUILD IS BROKEN** at `CancellationPolicy.scala` lines 26 and 29: `Frame.internal` is used inside `package kyo`, which kyo lints as "Frame cannot be derived within the kyo package". The lspEncoder / mcpEncoder lambdas must use a captured `Frame` rather than `Frame.internal`. Two ways:
+   - (a) Change `ParamsEncoder` to take an implicit Frame: `type ParamsEncoder = (JsonRpcId, Maybe[String]) => Frame ?=> Structure.Value < Sync`. Then the lspEncoder body becomes `(id, _) => f ?=> Sync.defer(Structure.encode(LspCancelParams(id)))(using f)`.
+   - (b) Pass a closure that captures the encode site's Frame: in JsonRpcEndpointImpl where `policy.encodeParams(id, reason)` is called, pass a Frame in via `given` ambient. CancellationPolicy's ParamsEncoder type stays `(JsonRpcId, Maybe[String]) => Structure.Value < Sync` with `using Frame` parameter at the call site.
+   
+   Pick (a) or (b). Option (a) is cleaner. Update lspEncoder / mcpEncoder accordingly and the call site in JsonRpcEndpointImpl + CancellationEngine.
+
+2. **`extractId: IdExtractor` field is scope expansion.** IMPLEMENTATION.md line 316 specifies 5 fields on `CancellationPolicy`: `cancelMethod`, `encodeParams`, `expectReplyForCancelledRequest`, `cancelledError`, `protectedMethods`. The agent added a 6th: `extractId` (and a new companion type `IdExtractor`). 
+   
+   Remove this 6th field. The inbound-cancel id extraction belongs in `CancellationEngine.handleInboundCancel` as a private match that uses `Structure.decode[LspCancelParams]` first (try-pattern), falling back to `Structure.decode[McpCancelParams]` if that fails. Or even better: each policy provides a single `extractCancelId: Structure.Value => Maybe[JsonRpcId]` derived from the cancelMethod (LSP looks for "id" field, MCP looks for "requestId" field). Move this entirely into `CancellationEngine` as private helpers keyed on `policy.cancelMethod`.
+
+3. **All 14 tests still missing.** Write `CancellationPolicyTest.scala` with all 14 leaves (Tests 51-64) per IMPLEMENTATION.md lines 331-344. No completion claim without 14/14 passing.
+
 ### Phase 4 IMMEDIATE STEER (in-flight pulse 3 follow-up)
 
 Pulse 3 found four remaining items. ALL must be resolved before completion.

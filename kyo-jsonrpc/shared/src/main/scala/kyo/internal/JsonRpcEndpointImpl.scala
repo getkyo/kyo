@@ -15,7 +15,8 @@ private[kyo] case class OutboundReq(
 private[kyo] case class CallerInfo(
     method: String,
     extras: Maybe[Structure.Value],
-    abortSignal: Fiber.Promise[JsonRpcError, Any]
+    abortSignal: Fiber.Promise[JsonRpcError, Any],
+    pendingCancelError: java.util.concurrent.atomic.AtomicReference[Maybe[JsonRpcError]]
 )
 
 sealed private[kyo] trait InboundEntry
@@ -52,6 +53,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     private val codec: JsonRpcCodec,
     private val methodMap: Map[String, JsonRpcMethod[Async & Abort[JsonRpcError]]],
     private val unknownPolicy: UnknownMethodPolicy,
+    private[kyo] val config: JsonRpcEndpoint.Config,
     private[kyo] val initFrame: Frame
 ):
 
@@ -85,15 +87,46 @@ final class JsonRpcEndpointImpl private[kyo] (
                                     }
                                 }
                             ) {
-                                Async.raceFirst[JsonRpcError | Closed, Out, Any](
-                                    abortSignal.get.map(e => Abort.fail[JsonRpcError](e)),
-                                    exchange(req).map { sv =>
-                                        Structure.decode[Out](sv) match
-                                            case Result.Success(v) => v
-                                            case Result.Failure(e) => Abort.fail(JsonRpcError.invalidParams(e.getMessage))
-                                            case Result.Panic(t)   => Abort.panic(t)
+                                val raceResult: Out < (Async & Abort[JsonRpcError | Closed]) =
+                                    Async.raceFirst[JsonRpcError | Closed, Out, Any](
+                                        abortSignal.get.map(e => Abort.fail[JsonRpcError](e)),
+                                        exchange(req).map { sv =>
+                                            Structure.decode[Out](sv) match
+                                                case Result.Success(v) => v
+                                                case Result.Failure(e) => Abort.fail(JsonRpcError.invalidParams(e.getMessage))
+                                                case Result.Panic(t)   => Abort.panic(t)
+                                        }
+                                    )
+                                if config.requestTimeout == Duration.Infinity then
+                                    raceResult
+                                else
+                                    Abort.run[Timeout](Async.timeout(config.requestTimeout)(raceResult)).map {
+                                        case Result.Success(v) => v
+                                        case Result.Failure(_) =>
+                                            // Timeout fired: enqueue cancel notification, then fail with the policy-determined error.
+                                            // Do NOT await abortSignal here: raceFirst's cleanup has already interrupted
+                                            // the abortSignal promise with Panic(Interrupted), so awaiting it would panic.
+                                            val abortError: JsonRpcError = config.cancellation match
+                                                case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(Absent))
+                                                case Absent     => JsonRpcError.cancelled(Absent)
+                                            // Unsafe: read idSignal to find the id for cancel notification
+                                            Sync.Unsafe.defer {
+                                                idSignal.poll() match
+                                                    case Maybe.Present(Result.Success(rawId)) =>
+                                                        val id: JsonRpcId = rawId.eval
+                                                        CancellationEngine.handleTimeout(
+                                                            id,
+                                                            Absent,
+                                                            config.cancellation,
+                                                            callerRegistry,
+                                                            writerChannel
+                                                        ).andThen(Abort.fail[JsonRpcError](abortError))
+                                                    case _ =>
+                                                        Abort.fail[JsonRpcError](abortError)
+                                            }
+                                        case Result.Panic(t) => Abort.panic(t)
                                     }
-                                )
+                                end if
                             }
                         }
                     }
@@ -139,15 +172,58 @@ final class JsonRpcEndpointImpl private[kyo] (
         Kyo.unit
 
     def cancel(id: JsonRpcId, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed]) =
-        // Unsafe: complete abortSignal outside the originating fiber; uses unsafe path for immediate completion
-        Sync.Unsafe.defer {
-            Maybe(callerRegistry.get(id)) match
-                case Absent        => ()
-                case Present(info) =>
-                    // Unsafe: direct unsafe.completeDiscard so the promise is completed synchronously inside this defer block
-                    info.abortSignal.unsafe.completeDiscard(Result.succeed(JsonRpcError.cancelled(reason)))(using
-                        AllowUnsafe.embrace.danger
-                    )
+        Sync.defer(Maybe(callerRegistry.get(id))).map {
+            case Absent =>
+                Log.warn(s"kyo-jsonrpc: cancel for unknown or already-completed id $id, no-op")
+            case Present(info) =>
+                config.cancellation match
+                    case Absent =>
+                        // No policy: abort locally only, no wire notification
+                        // Unsafe: complete abortSignal from cancel call
+                        Sync.Unsafe.defer {
+                            info.abortSignal.unsafe.completeDiscard(
+                                Result.succeed(JsonRpcError.cancelled(reason))
+                            )(using AllowUnsafe.embrace.danger)
+                        }
+                    case Present(policy) =>
+                        if policy.protectedMethods.contains(info.method) then
+                            Log.warn(
+                                s"kyo-jsonrpc: cancel refused for protected method ${info.method}, no-op"
+                            )
+                        else
+                            val abortError = policy.cancelledError.getOrElse(JsonRpcError.cancelled(reason))
+                            if policy.expectReplyForCancelledRequest then
+                                // LSP: server will still reply; set pendingCancelError so decodeCallback
+                                // completes abortSignal when the reply arrives.
+                                // Unsafe: set pendingCancelError from cancel call
+                                Sync.Unsafe.defer {
+                                    info.pendingCancelError.set(Present(abortError))
+                                }.andThen {
+                                    CancellationEngine.buildAndEnqueueOutboundCancel(
+                                        id,
+                                        reason,
+                                        info,
+                                        policy,
+                                        writerChannel
+                                    )
+                                }
+                            else
+                                // MCP/no-reply: complete abortSignal immediately, no reply expected
+                                CancellationEngine.buildAndEnqueueOutboundCancel(
+                                    id,
+                                    reason,
+                                    info,
+                                    policy,
+                                    writerChannel
+                                ).andThen {
+                                    // Unsafe: complete abortSignal after enqueuing the cancel notification
+                                    Sync.Unsafe.defer {
+                                        info.abortSignal.unsafe.completeDiscard(
+                                            Result.succeed(abortError)
+                                        )(using AllowUnsafe.embrace.danger)
+                                    }
+                                }
+                            end if
         }
 
     def awaitDrain(using Frame): Unit < Async =
@@ -231,7 +307,8 @@ object JsonRpcEndpointImpl:
             Sync.Unsafe.defer {
                 val inFlightUnsafe = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
                 val inFlight       = inFlightUnsafe.safe
-                val initPromise    = Promise.Unsafe.init[Unit, Any]()
+                // Unsafe: Promise.Unsafe.init for drainSignal initial placeholder
+                val initPromise = Promise.Unsafe.init[Unit, Any]()
                 initPromise.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
                 val drainSigUnsafe = AtomicRef.Unsafe.init[Fiber.Promise[Unit, Any]](initPromise.safe)(using AllowUnsafe.embrace.danger)
                 val drainSignal    = drainSigUnsafe.safe
@@ -244,7 +321,8 @@ object JsonRpcEndpointImpl:
                         req.extras.resolve(id)(using frame).map { extrasVal =>
                             // Unsafe: register in callerRegistry and complete idSignal inside Exchange encode callback
                             Sync.Unsafe.defer {
-                                callerRegistry.put(id, CallerInfo(req.method, extrasVal, req.abortSignal))
+                                val pendingCancel = new java.util.concurrent.atomic.AtomicReference[Maybe[JsonRpcError]](Absent)
+                                callerRegistry.put(id, CallerInfo(req.method, extrasVal, req.abortSignal, pendingCancel))
                                 req.idSignal.completeDiscard(Result.succeed(id))(using AllowUnsafe.embrace.danger)
                             }.andThen {
                                 // Build envelope and encode to JSON
@@ -304,6 +382,30 @@ object JsonRpcEndpointImpl:
                                 config.codec.decode(sv)(using frame).map { parsedEnvelope =>
                                     parsedEnvelope match
 
+                                        case env @ JsonRpcEnvelope.Notification(method, _, _) =>
+                                            // Step 1a: cancellation policy intercept
+                                            config.cancellation match
+                                                case Present(policy) if method == policy.cancelMethod =>
+                                                    CancellationEngine.handleInboundCancel(
+                                                        env,
+                                                        policy,
+                                                        pendingInbound
+                                                    ).andThen(Exchange.Message.Skip)
+                                                case _ =>
+                                                    methodMap.get(method) match
+                                                        case Some(m) =>
+                                                            // Unsafe: Promise.Unsafe.init for cancelled signal on notification handlers
+                                                            val cancelledUnsafe =
+                                                                Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
+                                                            val ctx = new HandlerCtx(cancelledUnsafe.safe, Absent, env.extras, Absent)
+                                                            val handlerEffect =
+                                                                m.handle(env.params.getOrElse(Structure.Value.Null), ctx)(using frame)
+                                                            Fiber.initUnscoped(handlerEffect).map { _ =>
+                                                                Exchange.Message.Skip
+                                                            }
+                                                        case None =>
+                                                            Exchange.Message.Skip
+
                                         case JsonRpcEnvelope.Request(id, method, params, extras) =>
                                             methodMap.get(method) match
                                                 case Some(m) =>
@@ -355,6 +457,20 @@ object JsonRpcEndpointImpl:
                                                                                 WriterMsg.SuppressIfCancelled(id, responseEnvelope)
                                                                             )(using AllowUnsafe.embrace.danger, frame))
                                                                         end if
+                                                                    case _: InboundEntry.Cancelled =>
+                                                                        // Cancel won CAS; for LSP (expectReplyForCancelledRequest=true)
+                                                                        // the handler still produces a reply, so we send it.
+                                                                        // For MCP the handler was interrupted and should not reply.
+                                                                        val mustReply = config.cancellation match
+                                                                            case Present(p) => p.expectReplyForCancelledRequest
+                                                                            case Absent     => false
+                                                                        if mustReply then
+                                                                            // Unsafe: SendEnvelope bypasses suppress check (LSP always replies)
+                                                                            discard(writerChannel.unsafe.offer(
+                                                                                WriterMsg.SendEnvelope(responseEnvelope)
+                                                                            )(using AllowUnsafe.embrace.danger, frame))
+                                                                            discard(pendingInbound.remove(id))
+                                                                        end if
                                                                     case _ => ()
                                                                 end match
                                                             }(using AllowUnsafe.embrace.danger)
@@ -376,20 +492,6 @@ object JsonRpcEndpointImpl:
                                                         ))
                                                     }.andThen(Exchange.Message.Skip)
 
-                                        case JsonRpcEnvelope.Notification(method, params, extras) =>
-                                            methodMap.get(method) match
-                                                case Some(m) =>
-                                                    // Unsafe: Promise.Unsafe.init for cancelled signal on notification handlers
-                                                    val cancelledUnsafe =
-                                                        Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
-                                                    val ctx           = new HandlerCtx(cancelledUnsafe.safe, Absent, extras, Absent)
-                                                    val handlerEffect = m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
-                                                    Fiber.initUnscoped(handlerEffect).map { _ =>
-                                                        Exchange.Message.Skip
-                                                    }
-                                                case None =>
-                                                    Exchange.Message.Skip
-
                                         case JsonRpcEnvelope.Response(id, result, error, _) =>
                                             error match
                                                 case Present(e) =>
@@ -404,7 +506,29 @@ object JsonRpcEndpointImpl:
                                                     }.andThen(Exchange.Message.Skip)
 
                                                 case Absent =>
-                                                    Exchange.Message.Response(id, result.getOrElse(Structure.Value.Null))
+                                                    // Unsafe: check pendingCancelError inside Exchange decode callback
+                                                    Sync.Unsafe.defer {
+                                                        Maybe(callerRegistry.get(id)) match
+                                                            case Present(info) =>
+                                                                info.pendingCancelError.get() match
+                                                                    case Present(cancelErr) =>
+                                                                        // LSP cancel was issued; reply arrived but caller should see cancel error.
+                                                                        // Complete abortSignal with cancel error and Skip the response.
+                                                                        info.abortSignal.unsafe.completeDiscard(
+                                                                            Result.succeed(cancelErr)
+                                                                        )(using AllowUnsafe.embrace.danger)
+                                                                        Exchange.Message.Skip
+                                                                    case Absent =>
+                                                                        Exchange.Message.Response(
+                                                                            id,
+                                                                            result.getOrElse(Structure.Value.Null)
+                                                                        )
+                                                            case Absent =>
+                                                                Exchange.Message.Response(
+                                                                    id,
+                                                                    result.getOrElse(Structure.Value.Null)
+                                                                )
+                                                    }
 
                                         case JsonRpcEnvelope.Malformed(_, _) =>
                                             Exchange.Message.Skip
@@ -432,18 +556,20 @@ object JsonRpcEndpointImpl:
                                             Abort.run[Closed](transport.send(env)(using frame)).unit
 
                                         case WriterMsg.SuppressIfCancelled(id, env) =>
-                                            pendingInbound.get(id) match
-                                                case r: InboundEntry.Replying =>
-                                                    r.suppress.get.map { shouldSuppress =>
-                                                        // Unsafe: remove from pendingInbound in writer loop (outside fiber)
-                                                        Sync.Unsafe.defer(pendingInbound.remove(id)).andThen {
-                                                            if shouldSuppress then Kyo.unit
-                                                            else Abort.run[Closed](transport.send(env)(using frame)).unit
-                                                        }
-                                                    }
-                                                case _ =>
-                                                    // Unsafe: remove from pendingInbound in writer loop (outside fiber)
-                                                    Sync.Unsafe.defer(pendingInbound.remove(id)).unit
+                                            val shouldDrop: Boolean =
+                                                config.cancellation match
+                                                    case Present(p) if !p.expectReplyForCancelledRequest =>
+                                                        pendingInbound.get(id) match
+                                                            case r: InboundEntry.Replying =>
+                                                                // Unsafe: read suppress flag in writer loop
+                                                                r.suppress.unsafe.get()(using AllowUnsafe.embrace.danger)
+                                                            case _ => false
+                                                    case _ => false
+                                            // Unsafe: remove from pendingInbound in writer loop (outside fiber)
+                                            Sync.Unsafe.defer(pendingInbound.remove(id)).andThen {
+                                                if shouldDrop then Kyo.unit
+                                                else Abort.run[Closed](transport.send(env)(using frame)).unit
+                                            }
                                 }
                             }
                         }.unit
@@ -461,6 +587,7 @@ object JsonRpcEndpointImpl:
                             codec = config.codec,
                             methodMap = methodMap,
                             unknownPolicy = config.unknownMethod,
+                            config = config,
                             initFrame = frame
                         )
                     }

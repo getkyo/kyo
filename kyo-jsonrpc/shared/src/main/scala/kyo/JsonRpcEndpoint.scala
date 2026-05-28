@@ -58,7 +58,7 @@ object JsonRpcEndpoint:
 
     final case class Config(
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
-        cancellation: Maybe[CancellationPolicy] = Absent,
+        cancellation: Maybe[CancellationPolicy] = Present(CancellationPolicy.lsp),
         progress: Maybe[ProgressPolicy] = Absent,
         unknownMethod: UnknownMethodPolicy = UnknownMethodPolicy.minimal,
         gate: Maybe[MessageGate] = Absent,
