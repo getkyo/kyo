@@ -39,6 +39,114 @@ class NavigationWatcherTest extends kyo.BrowserTest:
         }
     }
 
+    // Pure-decision-matrix tests for the deadline-exhaustion handler. The flake on the JS BrowserSettlementTest
+    // "expectNavigation aborts ... when the trigger does not navigate within the budget" was caused by the
+    // NetworkIdle degradation path returning success at deadline even when the URL had not changed (i.e. the
+    // trigger never committed a navigation). Once the deadline poll happened to land on a `Pending` probe
+    // (e.g. an open network-idle window) the watcher would degrade to Settle.Load and silently succeed.
+    //
+    // The fix routes the (expectedDifferentFrom, settle, loadProbe) tuple through `decidePending` and only
+    // returns `DegradeToLoad` when the live URL differs from the snapshot's URL. The bug case here pins the
+    // "snapshot URL == live URL → AbortNavigationNeverCommitted" decision so a regression cannot reintroduce
+    // the silent success.
+    private val snap = NavigationWatcher.NavSnapshot(url = "https://example.com/start", pushStateCount = 0, beforeUnload = false)
+
+    "NavigationWatcher.decidePending: NetworkIdle + Ready(sameUrlAsSnapshot, 200) → AbortNavigationNeverCommitted (regression pin for the expectNavigation no-op-trigger flake)" in {
+        val decision = NavigationWatcher.decidePending(
+            expectedDifferentFrom = Present(snap),
+            settle = Browser.Settle.NetworkIdle,
+            urlHint = snap.url,
+            loadProbe = Present(NavigationWatcher.SettleStatus.Ready(snap.url, 200)),
+            throwOnFailure = true
+        )
+        decision match
+            case NavigationWatcher.PendingDecision.AbortNavigationNeverCommitted(`snap`.url, Browser.Settle.NetworkIdle) => succeed
+            case other =>
+                fail(
+                    s"expected AbortNavigationNeverCommitted(${snap.url}, NetworkIdle) but got $other " +
+                        "(if this returned DegradeToLoad the no-url-changed guard regressed and Browser.expectNavigation will silently succeed on no-op triggers)"
+                )
+        end match
+    }
+
+    "NavigationWatcher.decidePending: NetworkIdle + Ready(differentUrl, 200) → DegradeToLoad (page loaded, network never quiesced)" in {
+        val decision = NavigationWatcher.decidePending(
+            expectedDifferentFrom = Present(snap),
+            settle = Browser.Settle.NetworkIdle,
+            urlHint = "https://example.com/landed",
+            loadProbe = Present(NavigationWatcher.SettleStatus.Ready("https://example.com/landed", 200)),
+            throwOnFailure = true
+        )
+        decision match
+            case NavigationWatcher.PendingDecision.DegradeToLoad => succeed
+            case other                                           => fail(s"expected DegradeToLoad but got $other")
+    }
+
+    "NavigationWatcher.decidePending: NetworkIdle + Ready(differentUrl, 500, throwOnFailure=true) → AbortHttpError" in {
+        val decision = NavigationWatcher.decidePending(
+            expectedDifferentFrom = Present(snap),
+            settle = Browser.Settle.NetworkIdle,
+            urlHint = "https://example.com/landed",
+            loadProbe = Present(NavigationWatcher.SettleStatus.Ready("https://example.com/landed", 500)),
+            throwOnFailure = true
+        )
+        decision match
+            case NavigationWatcher.PendingDecision.AbortHttpError("https://example.com/landed", 500) => succeed
+            case other => fail(s"expected AbortHttpError but got $other")
+    }
+
+    "NavigationWatcher.decidePending: NetworkIdle + Ready(differentUrl, 500, throwOnFailure=false) → DegradeToLoad (HTTP-status check is gated)" in {
+        val decision = NavigationWatcher.decidePending(
+            expectedDifferentFrom = Present(snap),
+            settle = Browser.Settle.NetworkIdle,
+            urlHint = "https://example.com/landed",
+            loadProbe = Present(NavigationWatcher.SettleStatus.Ready("https://example.com/landed", 500)),
+            throwOnFailure = false
+        )
+        decision match
+            case NavigationWatcher.PendingDecision.DegradeToLoad => succeed
+            case other                                           => fail(s"expected DegradeToLoad but got $other")
+    }
+
+    "NavigationWatcher.decidePending: NetworkIdle + Pending → AbortLoadEventNeverFired" in {
+        val decision = NavigationWatcher.decidePending(
+            expectedDifferentFrom = Present(snap),
+            settle = Browser.Settle.NetworkIdle,
+            urlHint = "https://example.com/loading",
+            loadProbe = Present(NavigationWatcher.SettleStatus.Pending("https://example.com/loading")),
+            throwOnFailure = true
+        )
+        decision match
+            case NavigationWatcher.PendingDecision.AbortLoadEventNeverFired("https://example.com/loading") => succeed
+            case other => fail(s"expected AbortLoadEventNeverFired but got $other")
+    }
+
+    "NavigationWatcher.decidePending: Settle.Load + Absent loadProbe → AbortSettleTimeout (non-NetworkIdle modes skip the degrade path)" in {
+        val decision = NavigationWatcher.decidePending(
+            expectedDifferentFrom = Present(snap),
+            settle = Browser.Settle.Load,
+            urlHint = "https://example.com/loading",
+            loadProbe = Absent,
+            throwOnFailure = true
+        )
+        decision match
+            case NavigationWatcher.PendingDecision.AbortSettleTimeout("https://example.com/loading", Browser.Settle.Load) => succeed
+            case other => fail(s"expected AbortSettleTimeout but got $other")
+    }
+
+    "NavigationWatcher.decidePending: Absent expectedDifferentFrom + NetworkIdle + Ready(any, 200) → DegradeToLoad (no expected-URL constraint)" in {
+        val decision = NavigationWatcher.decidePending(
+            expectedDifferentFrom = Absent,
+            settle = Browser.Settle.NetworkIdle,
+            urlHint = "https://example.com/landed",
+            loadProbe = Present(NavigationWatcher.SettleStatus.Ready("https://example.com/landed", 200)),
+            throwOnFailure = true
+        )
+        decision match
+            case NavigationWatcher.PendingDecision.DegradeToLoad => succeed
+            case other                                           => fail(s"expected DegradeToLoad but got $other")
+    }
+
     "NavigationWatcher.loadScheduleTimeout returns 5.seconds for a non-MaxDuration schedule" in run {
         // `Schedule.fixed(...)` (without `.maxDuration(...)`) is NOT a MaxDuration; the helper hits the
         // default branch and returns 5 seconds.

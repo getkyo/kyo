@@ -321,7 +321,8 @@ private[kyo] object NavigationWatcher:
                             end if
                         case SettleStatus.Pending(urlHint) =>
                             Clock.nowMonotonic.map { now =>
-                                if now >= deadline then onPendingDeadline(settle, urlHint, throwOnFailure, postSettleWindow)
+                                if now >= deadline then
+                                    onPendingDeadline(expectedDifferentFrom, settle, urlHint, throwOnFailure, postSettleWindow)
                                 else Async.sleep(pollInterval).andThen(Loop.continue(()))
                             }
                     }
@@ -329,42 +330,126 @@ private[kyo] object NavigationWatcher:
             }
         }
 
-    /** Deadline-exhaustion handler for [[awaitSettle]]. Two paths:
+    /** Deadline-exhaustion handler for [[awaitSettle]]. Splits into a pure decision function ([[decidePending]]) and an effectful
+      * interpreter so the decision matrix can be unit-tested without a live Browser.
       *
-      *   - For [[Browser.Settle.NetworkIdle]], re-probe with [[Browser.Settle.Load]] semantics: if the `load` event has fired the
-      *     navigation is functionally complete, just chronically chatty (analytics heartbeats, RUM telemetry). Log a warning and return
-      *     success, degrading to `Settle.Load`. This handles real-world pages like `crates.io/search` where the network never opens a quiet
-      *     window inside `loadSchedule` but the page is fully usable.
-      *   - For [[Browser.Settle.Load]] / [[Browser.Settle.DomContentLoaded]] (and any other future variant), raise the failure unchanged.
-      *     Those modes already have the loosest possible contract; if they timed out the page genuinely never reached
-      *     `readyState == complete`.
-      *
-      * Callers that need a hard NetworkIdle assertion post-navigation should use [[Browser.waitForNetworkIdle]] explicitly; that primitive
-      * surfaces a typed timeout instead of degrading.
+      * For `NetworkIdle` the handler re-probes with `Settle.Load` semantics, hands the probe + the original `expectedDifferentFrom` to
+      * [[decidePending]], then interprets the returned [[PendingDecision]]. For non-NetworkIdle modes there is no re-probe and the
+      * decision is taken from the `urlHint` and `settle` alone.
       */
-    private def onPendingDeadline(settle: Browser.Settle, urlHint: String, throwOnFailure: Boolean, postSettleWindow: Duration)(using
-        Frame
-    ): Loop.Outcome[Unit, Unit] < (Browser & Async & Abort[BrowserReadException]) =
+    private def onPendingDeadline(
+        expectedDifferentFrom: Maybe[NavSnapshot],
+        settle: Browser.Settle,
+        urlHint: String,
+        throwOnFailure: Boolean,
+        postSettleWindow: Duration
+    )(using Frame): Loop.Outcome[Unit, Unit] < (Browser & Async & Abort[BrowserReadException]) =
         settle match
             case Browser.Settle.NetworkIdle =>
                 val loadJs = buildSettleStateJs(Browser.Settle.Load, 0L)
-                readSettleStateWith(loadJs).map {
-                    case SettleStatus.Ready(navUrl, status) =>
-                        Log.warn(
-                            s"Settle.NetworkIdle: network never quiesced within budget for $navUrl; degrading to Settle.Load"
-                        ).andThen {
-                            if throwOnFailure && status >= 400 && status < 600 then
-                                Abort.fail(BrowserNavigationFailedException(navUrl, s"HTTP $status"))
-                            else postSettleBarrier(postSettleWindow).andThen(Loop.done(()))
-                        }
-                    case SettleStatus.Pending(_) =>
-                        Abort.fail(BrowserNavigationFailedException(
-                            urlHint,
-                            "settle timeout after NetworkIdle (load event also never fired)"
-                        ))
+                readSettleStateWith(loadJs).map { probe =>
+                    interpretPendingDecision(
+                        decidePending(expectedDifferentFrom, settle, urlHint, Present(probe), throwOnFailure),
+                        postSettleWindow
+                    )
                 }
             case _ =>
+                interpretPendingDecision(
+                    decidePending(expectedDifferentFrom, settle, urlHint, Absent, throwOnFailure),
+                    postSettleWindow
+                )
+
+    /** Sealed decision space for the deadline-exhaustion path. Returned by [[decidePending]] so callers (and tests) can match exactly
+      * one outcome per (settle mode, expected-different-from, load-probe) tuple.
+      */
+    sealed private[internal] trait PendingDecision derives CanEqual
+    private[internal] object PendingDecision:
+        /** NetworkIdle degraded to Load — `load` event fired, URL changed, response is OK. Caller logs a warning and returns success. */
+        case object DegradeToLoad extends PendingDecision
+
+        /** A navigation was expected (`Present(snap)`) but the live URL still matches the snapshot. The trigger never committed a
+          * navigation; the watcher must abort regardless of whether the load probe came back Ready.
+          */
+        final case class AbortNavigationNeverCommitted(snapshotUrl: String, settle: Browser.Settle) extends PendingDecision
+
+        /** `Settle.Load` reprobe came back Ready with a 4xx/5xx response and the caller asked for HTTP-status enforcement. */
+        final case class AbortHttpError(navUrl: String, status: Int) extends PendingDecision
+
+        /** `NetworkIdle` reprobe with `Settle.Load` semantics still says Pending — neither network idle nor `load` ever fired. */
+        final case class AbortLoadEventNeverFired(urlHint: String) extends PendingDecision
+
+        /** Non-NetworkIdle settle modes (`Load`, `DomContentLoaded`, future variants): the deadline hit and there is no fallback
+          * loosening to try. The mode itself timed out.
+          */
+        final case class AbortSettleTimeout(urlHint: String, settle: Browser.Settle) extends PendingDecision
+    end PendingDecision
+
+    /** Pure decision function for the [[onPendingDeadline]] handler. Given the (`expectedDifferentFrom`, `settle`, `urlHint`,
+      * `loadProbe`, `throwOnFailure`) tuple, returns exactly one [[PendingDecision]] describing what the watcher should do next.
+      *
+      * `loadProbe` is `Present(_)` only for `NetworkIdle` (the only mode that does a Settle.Load reprobe at deadline); for the other
+      * modes it must be `Absent`.
+      *
+      * Splitting the decision out of [[onPendingDeadline]] lets the matrix be exercised by unit tests that don't need a live Browser /
+      * Chrome / network. The interpreter [[interpretPendingDecision]] turns a `PendingDecision` back into the right effect.
+      */
+    private[internal] def decidePending(
+        expectedDifferentFrom: Maybe[NavSnapshot],
+        settle: Browser.Settle,
+        urlHint: String,
+        loadProbe: Maybe[SettleStatus],
+        throwOnFailure: Boolean
+    ): PendingDecision =
+        settle match
+            case Browser.Settle.NetworkIdle =>
+                loadProbe match
+                    case Present(SettleStatus.Ready(navUrl, status)) =>
+                        val urlChanged = expectedDifferentFrom match
+                            case Present(snap) => snap.url != navUrl
+                            case Absent        => true
+                        if !urlChanged then
+                            PendingDecision.AbortNavigationNeverCommitted(expectedDifferentFrom.fold(navUrl)(_.url), settle)
+                        else if throwOnFailure && status >= 400 && status < 600 then
+                            PendingDecision.AbortHttpError(navUrl, status)
+                        else
+                            PendingDecision.DegradeToLoad
+                        end if
+                    case Present(SettleStatus.Pending(_)) =>
+                        PendingDecision.AbortLoadEventNeverFired(urlHint)
+                    case Absent =>
+                        // Caller violated the contract: NetworkIdle must come with a Present load probe. Fail closed.
+                        PendingDecision.AbortLoadEventNeverFired(urlHint)
+            case _ =>
+                PendingDecision.AbortSettleTimeout(urlHint, settle)
+    end decidePending
+
+    /** Effect interpreter for a [[PendingDecision]]. Maps each decision to the same effect [[onPendingDeadline]] previously emitted
+      * inline. Kept private so the public surface stays the same as before.
+      */
+    private def interpretPendingDecision(decision: PendingDecision, postSettleWindow: Duration)(using
+        Frame
+    ): Loop.Outcome[Unit, Unit] < (Async & Abort[BrowserReadException]) =
+        decision match
+            case PendingDecision.DegradeToLoad =>
+                Log.warn(
+                    "Settle.NetworkIdle: network never quiesced within budget; degrading to Settle.Load"
+                ).andThen(postSettleBarrier(postSettleWindow)).andThen(Loop.done(()))
+            case PendingDecision.AbortNavigationNeverCommitted(snapshotUrl, settle) =>
+                Abort.fail(BrowserNavigationFailedException(
+                    snapshotUrl,
+                    s"navigation never committed (still at original URL); settle mode ${settle}"
+                ))
+            case PendingDecision.AbortHttpError(navUrl, status) =>
+                Abort.fail(BrowserNavigationFailedException(navUrl, s"HTTP $status"))
+            case PendingDecision.AbortLoadEventNeverFired(urlHint) =>
+                Abort.fail(BrowserNavigationFailedException(
+                    urlHint,
+                    "settle timeout after NetworkIdle (load event also never fired)"
+                ))
+            case PendingDecision.AbortSettleTimeout(urlHint, settle) =>
                 Abort.fail(BrowserNavigationFailedException(urlHint, s"settle timeout after ${settle}"))
+        end match
+    end interpretPendingDecision
 
     /** Settlement barrier before the nav-wait returns: yields the fiber for a short tick so Chrome can finish post-commit layout and
       * resource decoding before the next CDP command arrives. `postSettleWindow` is read from `SessionConfig.navigationPostSettleWindow`
