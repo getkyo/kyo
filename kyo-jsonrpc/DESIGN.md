@@ -50,7 +50,7 @@ The table is the load-bearing constraint set. Every design choice below traces b
 │  │   • inbound Request -> fork handler -> reply                       │  │
 │  │   • pendingInbound  (id -> handler fiber + suppress flag)          │  │
 │  │   • writer serialization (single fiber, no interleaved frames)     │  │
-│  │   • callerRegistry  (id -> method + caller fiber, for cancel)      │  │
+│  │   • callerRegistry  (id -> method + extras + abortSignal)          │  │
 │  │   • cancellation policy + progress policy + unknown-method policy  │  │
 │  │   • ExtrasEncoder closure plumbed per call                         │  │
 │  │   • optional Meter (maxInFlight), optional per-call timeout        │  │
@@ -102,11 +102,14 @@ Layer 0 (Exchange) is unchanged. Layer 1 is the smallest possible transport inte
 
 This is where CDP forces our hand. CDP messages are not JSON-RPC 2.0. If kyo-browser is to migrate to this module without wrapping, the envelope decoder must be a parameter, not a hardcoded `Json.decode[JsonRpcRequest]`.
 
-**Value type used throughout:** the design uses `Structure.Value` (an enum from `kyo-schema/Structure.scala`: `Str | Bool | Integer | Decimal | BigNum | Null | Record(fields: Chunk[(String, Value)]) | Sequence(elements: Chunk[Value])`). It is the universal JSON-shaped value type in kyo.
+**Value type used throughout:** the design uses `Structure.Value` (an enum from `kyo-schema/Structure.scala` with ten cases: `Str | Bool | Integer | Decimal | BigNum | Null | Record(fields: Chunk[(String, Value)]) | Sequence(elements: Chunk[Value]) | VariantCase(name: String, value: Value) | MapEntries(entries: Chunk[(Value, Value)])`). It is the universal JSON-shaped value type in kyo.
+
+`VariantCase` and `MapEntries` arise from in-process `Structure.encode` calls on sealed traits or `Map`-typed fields; they do NOT appear in JSON parsed from the wire. Both codecs (Strict2_0 and Cdp) REJECT `VariantCase` and `MapEntries` in caller-supplied `extras` or params with `JsonRpcError.invalidRequest`. Handlers receiving such values via `Structure.decode` should treat them the same way.
 
 The policy lambdas (§7 / §8) inspect and build `Structure.Value` directly using:
 
-- `summon[Schema[T]].toStructureValue(t)` (kyo-schema, `private[kyo]`, accessible since we're in package `kyo`) to project a typed case class to `Structure.Value`.
+- `Structure.encode(t)` (kyo-schema public API, `Structure.scala:44`) to project a typed case class to `Structure.Value`. Equivalent to the private `summon[Schema[T]].toStructureValue(t)` but uses the public surface.
+- `Structure.decode[T](v)` (kyo-schema public API, `Structure.scala:57`) for the reverse.
 - Pattern matching on `Structure.Value.Record(fields)` to read field values.
 - `Record(a ++ b)` to merge two records inline.
 
@@ -115,8 +118,23 @@ No new helpers, no kyo-schema changes.
 ```scala
 package kyo
 
+// Id type for JSON-RPC messages. Null id (spec-legal for error responses to unparseable
+// requests) is represented as Maybe[JsonRpcId] = Absent on the envelope. JsonRpcId has no Null variant.
+enum JsonRpcId derives CanEqual:
+    case Num(value: Long)   // wire: bare integer  e.g. 1
+    case Str(value: String) // wire: bare string   e.g. "req-1"
+object JsonRpcId:
+    // Hand-written flat Schema: Num -> Integer; Str -> Str. NOT a wrapper object shape.
+    given Schema[JsonRpcId] = ???  // implementation produces Integer for Num, Str for Str
+
+// Error type. Wire-level case class; derives Schema for codec use.
+case class JsonRpcError(code: Int, message: String, data: Maybe[Structure.Value]) derives Schema, CanEqual
+
 // Logical envelope after codec, regardless of wire shape.
-enum JsonRpcEnvelope derives Schema, CanEqual:
+// Does NOT derive Schema: the Malformed case can't round-trip and Structure.Value is
+// not trivially schemable as part of a sum. Codecs encode/decode each case manually.
+// Wire-level case classes (JsonRpcRequest, JsonRpcResponse, JsonRpcError, JsonRpcId) DO derive Schema.
+enum JsonRpcEnvelope derives CanEqual:
     case Request (id: JsonRpcId, method: String, params: Maybe[Structure.Value], extras: Maybe[Structure.Value])
     case Notification(method: String, params: Maybe[Structure.Value], extras: Maybe[Structure.Value])
     case Response(id: JsonRpcId, result: Maybe[Structure.Value], error: Maybe[JsonRpcError], extras: Maybe[Structure.Value])
@@ -132,7 +150,7 @@ enum JsonRpcEnvelope derives Schema, CanEqual:
 
 ```scala
 trait JsonRpcCodec:
-    def encode(env: JsonRpcEnvelope)(using Frame): Structure.Value < Sync
+    def encode(env: JsonRpcEnvelope)(using Frame): Structure.Value < (Sync & Abort[JsonRpcError])
     def decode(raw: Structure.Value)(using Frame): JsonRpcEnvelope < Sync
 
 object JsonRpcCodec:
@@ -225,9 +243,9 @@ object JsonRpcMethod:
 
 ```scala
 final class HandlerCtx private (
-    val cancelled: Fiber.Promise[Unit, Any],     // completed when peer requests cancel
+    val cancelled: Fiber.Promise[Unit, Sync],    // completed when peer requests cancel; handler may park on .get or poll via .done
     val requestId: Maybe[JsonRpcId],             // Absent for notifications
-    val extras:    Maybe[Structure.Value],            // CDP sessionId, anything else from envelope.extras
+    val extras:    Maybe[Structure.Value],        // CDP sessionId, anything else from envelope.extras
     progressSink:  Maybe[Structure.Value => Unit < (Async & Abort[Closed])]
 ):
     // Emits a progress notification keyed by this request's token, if any.
@@ -235,7 +253,7 @@ final class HandlerCtx private (
     def progress(value: Structure.Value)(using Frame): Unit < (Async & Abort[Closed])
 ```
 
-The policy (§8) extracts the progress token from inbound params and installs the `progressSink` closure into `HandlerCtx`. CDP installs `progress = Absent`; `ctx.progress(...)` becomes a no-op without the handler having to know.
+The policy (§8) extracts the progress token from inbound params and installs the `progressSink` closure into `HandlerCtx`. CDP installs `progressSink = Absent`; `ctx.progress(...)` becomes a no-op without the handler having to know.
 
 **Why no `Outcome` ADT:** the engine knows whether a method is `Request` or `Notification` from `method.kind`. For notifications it discards the handler's `Unit` return. For requests it encodes the typed return via `Schema[Out]` to `Structure.Value` and sends as a `Response`. If the request was cancelled and the policy says "no reply" (MCP-style), the engine interrupts the handler fiber and drops any reply it might have produced. The handler never has to express "send nothing"; it just produces a value or aborts. Cleaner than the earlier `Outcome.Reply | NoReply` ADT.
 
@@ -338,47 +356,72 @@ object JsonRpcEndpoint:
         transport: JsonRpcTransport,
         methods:   Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]],
         config:    Config = Config()
-    )(using Frame): JsonRpcEndpoint < (Async & Scope)
+    )(using Frame): JsonRpcEndpoint < (Sync & Async & Scope)
 ```
 
 Key shape decisions:
-- **`extras: ExtrasEncoder`** on every outbound. The encoder is a closure `JsonRpcId => Maybe[Structure.Value]` that receives the engine-assigned id. This preserves the `Req = Id => Wire` pattern that CDP's existing Exchange usage requires (per research/CDP.md design implication #3). Default `ExtrasEncoder.empty` so LSP/MCP pay no cost. CDP's `withSession(sid)` becomes a facade that returns `ExtrasEncoder.const(summon[Schema[SessionExtras]].toStructureValue(SessionExtras(sid)))`.
+- **`extras: ExtrasEncoder`** on every outbound. The encoder is a closure `JsonRpcId => Maybe[Structure.Value]` that receives the engine-assigned id. This preserves the `Req = Id => Wire` pattern that CDP's existing Exchange usage requires (per research/CDP.md design implication #3). Default `ExtrasEncoder.empty` so LSP/MCP pay no cost. CDP's `withSession(sid)` becomes a facade that returns `ExtrasEncoder.const(Structure.encode(SessionExtras(sid)))`.
 - **Policies are `Maybe`d**, not `.none` sentinel objects. `Config(cancellation = Absent)` gives the CDP shape with no cancellation method baked in.
 - **Notifications return `Unit`.** `JsonRpcMethod.notification(name)(handler: In => Unit < S)` returns `Unit`; the engine never sends a reply for it. Cancellation reply semantics are entirely an engine concern (see §7), not handler-visible.
 - **No `Outcome` ADT.** Request handlers return `Out < S` (typed); the engine encodes to `Structure.Value` via the captured `Schema[Out]`. Cancellation-no-reply is enforced by the engine interrupting the handler fiber and suppressing any in-flight reply via the writer-side filter described in §6.5.
 
 ### 6.1 Internals
 
-The engine sits on top of an `Exchange[Structure.Value, Structure.Value, JsonRpcEnvelope, Closed]` (or similar; exact `Req/Resp/Event/E` parameterization is pinned by the codec). **Exchange owns the outbound id-to-promise map, the id allocator, and the reader fiber that routes responses by id.** This is the same pattern kyo-browser's `CdpClient` already uses. The engine does NOT maintain a parallel `Exchange's pending map`.
+The engine sits on top of `Exchange[JsonRpcId, OutboundReq, Structure.Value, String, Nothing, JsonRpcError]` where the type parameters are:
+- `Id = JsonRpcId`: outbound id type; allocated by `Config.idStrategy` translated to Exchange's `nextId`.
+- `Req = OutboundReq`: engine-internal request descriptor that includes method, encoded params, idSignal, extras, and abortSignal.
+- `Resp = Structure.Value`: decoded wire body (result field) routed back to the caller.
+- `Wire = String`: raw JSON string; the codec operates inside Exchange's encode/decode callbacks.
+- `Event = Nothing`: engine does not use Exchange's Push path; all inbound notifications dispatch through the handler registry.
+- `E = JsonRpcError`: transport-level error type propagated to callers.
+
+**Exchange owns the outbound id-to-promise map, the id allocator, and the reader fiber that routes responses by id.** This is the same pattern kyo-browser's `CdpClient` already uses. The engine does NOT maintain a parallel Exchange pending map.
 
 What the engine adds on top of Exchange:
 
 - `outbound: Channel[OutboundMsg]`: single mpmc channel feeding the writer fiber. Exchange's `send` parameter is wired to `outbound.put`. Serializes writes so frames don't interleave on transports that aren't atomic (stdio, HTTP/2 streams). This mirrors CDP's `outbound: Channel[String]` exactly.
-- `callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo]`: side-table consulted by `endpoint.cancel(id)` to (a) look up the method name for `protectedMethods` check, (b) get the caller fiber to interrupt. NOT a duplicate of Exchange's pending map; this is just a lookup index. Populated when an outbound call enters Exchange; removed via `Sync.ensure` on exit (response, timeout, scope close, cancel).
+- `callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo]`: side-table consulted by `endpoint.cancel(id)` to (a) look up the method name for `protectedMethods` check, (b) complete `abortSignal` to abort the caller. NOT a duplicate of Exchange's pending map; this is just a lookup index. Populated via an `idSignal` pattern inside the Exchange encode callback (where the id is first known); removed via `Sync.ensure` on exit (response, timeout, scope close, cancel).
 
 ```scala
-private[kyo] case class CallerInfo(method: String, callerFiber: Fiber[Any, Any])
+private[kyo] case class CallerInfo(
+    method:      String,
+    extras:      Maybe[Structure.Value],
+    abortSignal: Promise[Nothing, JsonRpcError]
+)
 ```
+
+**callerRegistry insert timing: idSignal pattern.** Exchange assigns the outbound id INSIDE its `apply` call, inside the encode callback, BEFORE the pending promise is registered. The id is not known to the outer call site until that callback runs. To avoid a race window where a cancel arrives before the registry is populated, `endpoint.call` uses this sequence:
+1. Create `idSignal: Fiber.Promise.Unsafe[JsonRpcId]` and `abortSignal: Fiber.Promise[Nothing, JsonRpcError]`.
+2. Compute `extras` once via `ExtrasEncoder(placeholder)` (id is not used in extras for callerRegistry purposes; the real id from the encode callback is used for the wire envelope).
+3. Wrap `exchange(req)` with `Sync.ensure(callerRegistry.remove(id))` on the OUTSIDE.
+4. Inside Exchange's encode callback: receive the engine-assigned `id`; complete `idSignal` with `id`; insert `callerRegistry[id] = CallerInfo(method, extras, abortSignal)` atomically. At this point any concurrent `endpoint.cancel(id)` for this id will find the entry.
+5. The actual call is `Async.race(abortSignal.safe.get, exchange(req).map(decode[Out]))`.
+6. On `Sync.ensure` exit (any path), `callerRegistry.remove(id)`.
+
+Additionally, `§6.4` finalizer order gets a step: after step 5 (Close Exchange), drain `callerRegistry` by completing every remaining `abortSignal` with `Result.fail(Closed)` so callers awaiting `Async.race` see `Closed` immediately.
 
 - `pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry]`: the genuinely new piece. Tracks inbound requests we're SERVING (not ones we issued) so `$/cancelRequest` (LSP) / `notifications/cancelled` (MCP) can find the handler fiber to interrupt and, for MCP no-reply, suppress the queued response. Exchange does NOT cover this; Exchange's inbound side handles only `Response` (matched by id) and `Push` (unsolicited events).
 
 ```scala
 private[kyo] sealed trait InboundEntry
 private[kyo] object InboundEntry:
-    // Handler is still running. Cancellation completes `cancelled` (the AtomicBoolean
-    // backing HandlerCtx.cancelled).
+    // Handler is still running. Cancellation must CAS this entry to Cancelled first,
+    // then complete `cancelled` (a Fiber.Promise[Unit, Sync]) for the handler to observe.
     case class Running(method: String, handler: Fiber[Structure.Value, Any],
-                       cancelled: AtomicBoolean) extends InboundEntry
+                       cancelled: Fiber.Promise[Unit, Sync]) extends InboundEntry
     // Handler finished; response is in the writer queue. Cancellation flips
     // `suppress` to true; writer checks it before sending and drops if set.
     case class Replying(method: String, suppress: AtomicBoolean) extends InboundEntry
+    // Cancel arrived while handler was still Running (or before enqueue). Signals
+    // the post-handler engine code to discard the response rather than enqueue it.
+    case class Cancelled(method: String) extends InboundEntry
 ```
 
 - `progressStreams: ConcurrentHashMap[Structure.Value, Channel[Structure.Value]]`: token → progress channel for outbound calls and out-of-band subscriptions.
 - `partialResults: ConcurrentHashMap[Structure.Value, Channel[Structure.Value]]`: the stream returned by `callPartialResults` IS this channel's stream; closes when the peer's final empty response arrives.
 - `meter: Maybe[Meter]`: semaphore for `maxInFlight`; CDP knob, mirroring `cdpMeter`.
 
-**Late-reply drop after cancel is Exchange's job, not ours.** When `endpoint.cancel(id)` interrupts the caller fiber, `Sync.ensure` in Exchange's `apply` removes the pending entry. A late reply arrives, Exchange's reader finds nothing in its pending map, drops silently. No separate `cancelledOutboundIds` set is needed at the engine. (Earlier drafts of this design had one; removed as over-engineering once we confirmed Exchange covers it.)
+**Late-reply drop after cancel is Exchange's job, not ours.** When `endpoint.cancel(id)` completes `abortSignal`, `Async.race` inside `endpoint.call` selects the abort path and interrupts the exchange call; `Sync.ensure` in Exchange's `apply` removes the pending entry. A late reply arrives, Exchange's reader finds nothing in its pending map, drops silently. No separate `cancelledOutboundIds` set is needed at the engine.
 
 **Outbound id allocation is Exchange's job, not ours.** The engine translates its `Config.idStrategy` to Exchange's `nextId: => Id < Sync` parameter at init time. No `AtomicLong` at the engine level.
 
@@ -388,8 +431,8 @@ private[kyo] object InboundEntry:
 - Inbound routing → engine-supplied `decode` callback. For `Response` envelopes it returns `Exchange.Message.Response(id, _)` (Exchange routes to the right pending promise). For `Request` and `Notification` envelopes it does the engine-side dispatch (fork handler / fire policy intercept) inside `decode` and returns `Exchange.Message.Skip` (Exchange doesn't need to do anything more).
 
 Two subtleties about doing inbound dispatch inside `decode`:
-- `decode` is `Sync`-only (Exchange contract). The engine forks handlers via `Fiber.initUnscoped`, which is `Sync`. The handler runs on its own fiber, off the reader.
-- Inbound `Notification` for events that the consumer cares about (CDP `Page.frameNavigated`, etc) can either be dispatched as a registered `JsonRpcMethod.notification`-handler (forked) OR routed as an `Exchange.Message.Push` for `endpoint.events` consumption. The engine picks: if a handler is registered for that method, use it; else `Push` to the events channel.
+- `decode` is `Sync`-only (Exchange contract). The engine forks handlers via `Fiber.initUnscoped` using the standard `Isolate` for `Async & Abort[JsonRpcError]` (resolved implicitly at the use site by kyo-core's `Isolate.derive`). The handler runs on its own fiber, off the reader.
+- Inbound `Notification` for events that the consumer cares about (CDP `Page.frameNavigated`, etc) is dispatched to a registered `JsonRpcMethod.notification`-handler (forked). If no handler is registered for that method, the `UnknownMethodPolicy` governs (typically drop). There is no `endpoint.events` push-stream; all notification routing goes through the handler registry.
 
 ### 6.2 Reader fiber
 
@@ -438,15 +481,16 @@ One fiber drains `writer` and calls `transport.send` per envelope. Serializing t
 
 ### 6.4 Scope integration
 
-`Endpoint.init` returns under `Async & Scope`. Scope cleanup runs finalizers in this order:
+`Endpoint.init` returns under `Sync & Async & Scope`. Scope cleanup uses `Exchange.initUnscoped` so the engine controls teardown order via a single composite `Scope.acquireRelease` finalizer:
 
 1. Stop accepting new outbound calls (poison the writer channel).
 2. Cancel the reader fiber.
 3. Cancel the writer fiber.
 4. `transport.close`.
 5. Close Exchange (fails every entry in Exchange's pending map with `Closed`).
-6. Close every `progressStreams` channel.
-7. Interrupt every `pendingInbound` handler fiber.
+6. Drain `callerRegistry`: for each remaining entry, complete `abortSignal` with `Result.fail(Closed)` so callers awaiting `Async.race` observe `Closed` immediately.
+7. Close every `progressStreams` channel.
+8. Interrupt every `pendingInbound` handler fiber (forcibly clears both `Running` and `Replying` entries regardless of state).
 
 The MCP report's R6 ("a proper engine pre-supposes a persistent connection") and the LSP report's "bidirectional, no client/server asymmetry" are both satisfied.
 
@@ -455,18 +499,19 @@ The MCP report's R6 ("a proper engine pre-supposes a persistent connection") and
 The Exchange primitive handles the common race (registered pending then send fails). The engine inherits this. Additionally:
 
 - **Caller fiber interrupted (timeout, scope close, explicit cancel)**: `Sync.ensure` around the pending-entry registration removes it on interrupt. Mirrors `Exchange.apply`'s pattern.
-- **Late response after caller cancellation**: handled by Exchange. Cancellation interrupts the caller fiber; `Sync.ensure` in Exchange removes the pending entry; the late response finds no entry and Exchange drops it silently.
+- **Late response after caller cancellation**: handled by Exchange. Cancellation completes `abortSignal`, which causes `Async.race` to interrupt the exchange call; `Sync.ensure` in Exchange removes the pending entry; the late response finds no entry and Exchange drops it silently.
 - **Handler panic**: `JsonRpcMethod.handle` maps panic to `JsonRpcError.internalError`; engine sends that as the reply. Panic stack trace goes into `error.data` (not `error.message`) to avoid leaking impl details in normal logs.
 
-**Inbound cancellation race (the writer-channel window).** When an inbound handler completes and the engine enqueues the response to the writer channel, there is a window between dequeue-from-handler and send-on-transport. If `notifications/cancelled` arrives during that window AND the policy says "no reply for cancelled" (MCP), naively the response leaks. The fix has three parts:
+**Inbound cancellation race (the writer-channel window).** When an inbound handler completes and the engine enqueues the response to the writer channel, there is a window between dequeue-from-handler and send-on-transport. If `notifications/cancelled` arrives during that window AND the policy says "no reply for cancelled" (MCP), naively the response leaks. The fix uses atomic CAS on the `pendingInbound` map slot:
 
-1. **`pendingInbound[id]` lifetime extends through the writer.** Handler completion does NOT remove the entry. Instead, the entry transitions from `Running(handler, cancelled)` to `Replying(method, suppress)`, and the response is enqueued as `WriterMsg.SuppressIfCancelled(id, env)`.
-2. **Cancellation finds the queued reply.** When the reader's policy intercept (§6.2 step 1) sees `notifications/cancelled` for an id whose `pendingInbound[id]` is in `Replying` state, it sets `suppress.set(true)`.
-3. **Writer fiber checks `suppress` before sending.** For `WriterMsg.SuppressIfCancelled(id, env)`: if `pendingInbound[id].suppress.get()` is true AND policy is no-reply, drop the envelope; else send. Either way, remove the entry after.
+1. **Post-handler transition via CAS.** When the handler completes, the engine builds the response and does `pendingInbound.replace(id, runningEntry, Replying(method, AtomicBoolean(false)))` (atomic CAS). If the CAS succeeds, the engine then enqueues `WriterMsg.SuppressIfCancelled(id, env)`. If the CAS fails (cancel already transitioned the entry to `Cancelled`), the engine drops the response and exits without writing to the writer channel.
+2. **Cancel intercept (Running state): CAS to Cancelled.** When the reader's policy intercept (§6.2 step 1) sees a cancel notification and `pendingInbound[id]` is `Running`, it does `pendingInbound.replace(id, runningEntry, Cancelled(method))`. If CAS succeeds, it also completes `runningEntry.cancelled` via `promise.completeDiscard(Result.unit)` for the handler to observe. If CAS fails (handler already transitioned to Replying), fall through to the Replying case below.
+3. **Cancel intercept (Replying state): set suppress.** If the cancel sees `pendingInbound[id]` is `Replying(_, suppress)`, it calls `suppress.set(true)`. The writer fiber will check `suppress` and drop if true.
+4. **Writer fiber checks suppress.** For `WriterMsg.SuppressIfCancelled(id, env)`: snapshot `suppress` from the `Replying` entry at dequeue time; if true AND policy is no-reply, drop; else send. Either way, `Sync.ensure { send(env) }(_ => pendingInbound.remove(id))` removes the entry.
 
-For LSP-style (`expectReplyForCancelledRequest=true`), the writer never suppresses; the reply (whatever the handler produced) always flows. The handler simply observed `ctx.cancelled` and chose its response.
+For LSP-style (`expectReplyForCancelledRequest=true`), the writer never suppresses; the reply always flows. The handler observed `ctx.cancelled` and chose its response.
 
-This is the fix called out by the correctness audit's race-condition #3.
+The three-state machine (`Running | Replying | Cancelled`) is the minimal set to close every ordering of handler-completion vs cancel-arrival.
 
 ### 6.6 Reader fiber discipline (Sync-only)
 
@@ -503,12 +548,12 @@ object CancellationPolicy:
     // LSP $/cancelRequest params: { "id": <id> }
     private case class LspCancelParams(id: JsonRpcId) derives Schema
     private val lspEncoder: ParamsEncoder = (id, _) =>
-        Sync.defer(summon[Schema[LspCancelParams]].toStructureValue(LspCancelParams(id)))
+        Sync.defer(Structure.encode(LspCancelParams(id)))
 
     // MCP notifications/cancelled params: { "requestId": <id>, "reason"?: <string> }
     private case class McpCancelParams(requestId: JsonRpcId, reason: Maybe[String]) derives Schema
     private val mcpEncoder: ParamsEncoder = (id, reason) =>
-        Sync.defer(summon[Schema[McpCancelParams]].toStructureValue(McpCancelParams(id, reason)))
+        Sync.defer(Structure.encode(McpCancelParams(id, reason)))
 
     val lsp: CancellationPolicy = CancellationPolicy(
         cancelMethod                   = "$/cancelRequest",
@@ -532,30 +577,30 @@ object CancellationPolicy:
 
 `Config.cancellation: Maybe[CancellationPolicy]`. When `Absent` (CDP), `endpoint.cancel(id)` aborts the local pending entry only; no wire notification fires.
 
-**Encoder pattern**: each policy declares the typed params shape as a private case class with `derives Schema` and uses `Schema[T].toStructureValue` to project to a `Structure.Value`. Avoids the `Json.encode` (returns String) trap and needs nothing beyond what kyo-schema already provides.
+**Encoder pattern**: each policy declares the typed params shape as a private case class with `derives Schema` and uses `Structure.encode(t)` (public API) to project to a `Structure.Value`. Avoids the string-encoding trap and needs nothing beyond what kyo-schema already provides.
 
 **`protectedMethods`** is the MCP carve-out for `initialize`. When `endpoint.cancel(id)` is called for an id whose `callerRegistry[id].method` is in this set, the engine logs and returns Unit without firing the cancel notification or interrupting the caller. The pending call continues normally.
 
 ### Engine-enforced semantics (not handler-leaked)
 
-The handler's only job is to observe `ctx.cancelled.get` (a `Fiber.Promise[Unit, Any]`) and react appropriately (clean up, abort, return a partial result, or ignore). The handler never has to know whether to "send a reply"; the engine enforces that based on policy.
+The handler's only job is to observe `ctx.cancelled.get` (a `Fiber.Promise[Unit, Sync]`) and react appropriately (clean up, abort, return a partial result, or ignore). The handler never has to know whether to "send a reply"; the engine enforces that based on policy.
 
 **Inbound: we receive a cancel for a request we're serving:**
 
 1. Reader fiber sees a notification with method matching `policy.cancelMethod`.
 2. Decode params → extract id.
 3. Look up `pendingInbound[id]`. If absent (already-completed or never-existed), drop silently.
-4. If present, complete `HandlerCtx.cancelled`.
+4. If present (and in `Running` state after a successful CAS, see §6.5), complete `HandlerCtx.cancelled` via `promise.completeDiscard(Result.unit)`.
 5. If `expectReplyForCancelledRequest = true` (LSP): wait for the handler fiber to finish naturally. Send whatever it produces (result, error, or `policy.cancelledError` if the handler aborted with `RequestCancelled`).
 6. If `expectReplyForCancelledRequest = false` (MCP): interrupt the handler fiber. Drop any reply it might have already produced. Send nothing for that id.
 
 **Outbound: we cancel a call we issued:**
 
 1. User calls `endpoint.cancel(id, reason)`.
-2. Look up `callerRegistry[id]`. If absent, no-op (already completed). If `method` is in `policy.protectedMethods`, log and no-op (MCP `initialize`).
-3. If `Config.cancellation = Present(policy)`: engine emits a notification envelope with `method = policy.cancelMethod`, `params = policy.encodeParams.encode(id, reason)`.
-4. Engine interrupts `callerRegistry[id].callerFiber` with `JsonRpcError.cancelled(reason)` (or `policy.cancelledError` if set). The fiber's `Sync.ensure` removes the Exchange pending entry.
-5. If a late reply arrives for that id: Exchange's reader finds no pending entry, drops silently. Late-drop is structurally guaranteed by Exchange's pending-map cleanup, not by an engine-side bookkeeping set.
+2. Look up `callerRegistry[id]`. If absent, no-op (already completed or log-and-discard). If `method` is in `policy.protectedMethods`, log and no-op (MCP `initialize`).
+3. If `Config.cancellation = Present(policy)`: engine emits a cancel notification with `method = policy.cancelMethod`, `params = policy.encodeParams(id, reason)`, and `extras` taken from `callerRegistry[id].extras` so MCP transport can route to the originating SSE channel.
+4. Engine completes `callerRegistry[id].abortSignal` with `Result.fail(policy.cancelledError.getOrElse(JsonRpcError.cancelled(reason)))`. The caller's `Async.race(abortSignal.safe.get, exchange(req).map(decode[Out]))` then sees the failure; `Sync.ensure` removes the Exchange pending entry.
+5. `endpoint.call` internally wraps the exchange call as `Async.race(abortSignal.safe.get, exchange(req).map(decode[Out]))`. When the abort signal fires first, `Async.race` interrupts the loser (the exchange call) and the race result propagates as `Abort[JsonRpcError]`. If a late reply arrives for that id after Exchange's pending entry is gone, Exchange's reader drops it silently.
 
 ### Timeout → cancellation auto-fire
 
@@ -638,7 +683,7 @@ object ProgressPolicy:
 
 1. **`call(method, params)`**: plain, no progress.
 2. **`callWithProgress(method, params)`**: returns `Pending[Out]` with `result` (typed final reply) and `progress: Stream[Structure.Value, Async]` (live values as they arrive). Useful for LSP work-done progress (3-phase begin/report/end) and MCP progress.
-3. **`callPartialResults[T](method, params)`**: returns `Stream[T, ...]`. Each chunk delivered via `$/progress` is decoded as `T` and emitted. The final empty response from the peer closes the stream. LSP-only pattern; works whenever `progressMethod` is set.
+3. **`callPartialResults[T](method, params)`**: returns `Stream[T, ...]`. Each chunk delivered via `$/progress` is decoded as `T` and emitted. The stream closes when the peer sends the final response with `result = Absent` (the LSP spec: result field omitted on a partial-result terminator). Any other final response (including `result = Present(Structure.Value.Null)`) is decoded as the last `T` chunk before closing. LSP-only pattern; works whenever `progressMethod` is set.
 
 For (2) and (3) the engine:
 - Allocates a fresh token (string UUID or counter).
@@ -646,7 +691,7 @@ For (2) and (3) the engine:
 - Registers a `Channel[Structure.Value]` in `progressStreams[token]`.
 - Sends the request.
 - For `callWithProgress`: progress channel is exposed; on final response, channel closes and `result` completes.
-- For `callPartialResults`: chunks streamed through; on final response (empty `result`), stream closes naturally.
+- For `callPartialResults`: chunks streamed through; on final response with `result = Absent`, stream closes naturally. On any non-absent final `result`, it is decoded as a last chunk then the stream closes.
 
 ### Inbound progress
 
@@ -667,9 +712,9 @@ Implementation: same `progressStreams[token]` map; just a registration entry-poi
 `policy.extractRequestToken(inboundParams)` extracts the requester's token (`workDoneToken` or `_meta.progressToken`). If present, the engine installs in `HandlerCtx.progressSink` a closure that:
 
 - Checks the handler is still in `Running` state (not `Replying`). If the handler has already returned a value and the engine has moved its inbound entry to `Replying`, `progressSink` REFUSES with no wire effect (returns Unit). This enforces MCP's "MUST NOT emit progress after the response has been sent" rule.
-- If `policy.enforceMonotonic` is true, looks up the `progress` field in `value` (pattern match on `Structure.Value.Record`) and compares against the last emitted value's `progress`. If non-monotonic, logs and drops without sending. MCP requires monotonic `progress`.
+- If `policy.enforceMonotonic` is true: the `progressSink` closure captures a per-invocation `AtomicRef[Maybe[Double]]` initialized to `Absent`. On each `ctx.progress(value)` call, extract `value.field("progress")` as `Double`; CAS-compare against the ref. If `newValue > lastValue` (or `lastValue = Absent`), CAS updates the ref and the emission proceeds. If non-monotonic or CAS fails (concurrent call won), log and drop without sending. This per-invocation ref lives in `HandlerCtx.progressSink`'s closure; it is not shared across calls and requires no global map. MCP requires monotonic `progress`.
 - Wraps `value` via `policy.encodeProgressParams(token, value)`.
-- Sends a notification with `method = policy.progressMethod` and those params.
+- Sends a notification with `method = policy.progressMethod`, those params, and `extras = ctx.extras` (snapshot of the inbound envelope's extras) so MCP transport can route to the originating SSE channel.
 
 If no token is present, `progressSink = Absent` and `ctx.progress(...)` is a no-op. CDP: same, with no `ProgressPolicy` at all.
 
@@ -838,7 +883,7 @@ object JsonRpcError:
     def invalidParams(reason: String): JsonRpcError
     def internalError(cause: String, data: Maybe[Structure.Value] = Absent): JsonRpcError
     // Produces RequestCancelled (-32800) with `reason` (if present) attached as `data`.
-    // Used by the engine when interrupting the caller fiber on local cancel / timeout.
+    // Used by the engine to complete the caller's abortSignal on local cancel / timeout.
     def cancelled(reason: Maybe[String] = Absent): JsonRpcError
 ```
 
@@ -862,7 +907,7 @@ How each consumer's full requirement set maps to the engine. This is the section
 | `Content-Length:` framed stdio | `JsonRpcTransport` impl in kyo-lsp (§14) |
 | `$/cancelRequest` (must reply) | `CancellationPolicy.lsp` with `expectReplyForCancelledRequest=true`, error `-32800` |
 | Receiver MAY interrupt handler, MUST reply | Engine completes `ctx.cancelled`; waits for handler; sends reply |
-| Originator MUST tolerate late reply | Exchange's pending-map cleanup on caller interrupt + Exchange drops responses with no matching pending entry |
+| Originator MUST tolerate late reply | abortSignal completion causes `Async.race` to interrupt the exchange call; `Sync.ensure` removes pending entry; Exchange drops responses with no matching pending entry |
 | Cancel for unknown id → silent drop | Engine looks up `pendingInbound`, finds nothing, drops |
 | `$/progress` workDone (3-phase) | `endpoint.callWithProgress` returns live `progress: Stream` |
 | `$/progress` partialResult (streamed) | `endpoint.callPartialResults[T]` returns `Stream[T]` |
@@ -873,11 +918,11 @@ How each consumer's full requirement set maps to the engine. This is the section
 | Initialize gate (pre-init → -32002) | `Config.gate = Present(LspInitGate)` in kyo-lsp |
 | ServerCancelled (-32802) dual | `JsonRpcError.ServerCancelled`; emitted by handler via `Abort.fail` |
 
-### 16.2 MCP (R1–R26 from research/MCP.md §10)
+### 16.2 MCP (R1 to R26 from research/MCP.md §10)
 
 | MCP need | Engine surface |
 |---|---|
-| R1–R5 (envelope, Maybe optionals, notif=no-id, error codes, typed method builder) | §3, §5, §15 |
+| R1 to R5 (envelope, Maybe optionals, notif=no-id, error codes, typed method builder) | §3, §5, §15 |
 | R6 bidirectional engine | §6 |
 | R7 pluggable framing | §4 transport |
 | R8 pending-request correlation | §6.1 |
@@ -894,7 +939,7 @@ How each consumer's full requirement set maps to the engine. This is the section
 | R19 capability + lifecycle layer | `MessageGate` in kyo-mcp |
 | R20 all standard MCP methods | registered as `JsonRpcMethod` in kyo-mcp |
 | R21 no batching | engine never batches |
-| R22–R26 (do-not-do list) | all respected |
+| R22 to R26 (do-not-do list) | all respected |
 | MCP timeout SHOULD emit notifications/cancelled | §7 timeout auto-fires cancellation policy |
 | `notifications/cancelled` → NO reply ever | `expectReplyForCancelledRequest=false`; engine interrupts handler AND writer suppresses queued reply (§6.5 race fix) |
 | initialize MUST NOT be cancelled (MCP §5.1) | `CancellationPolicy.mcp.protectedMethods = Set("initialize")`; `endpoint.cancel` refuses |
@@ -953,10 +998,10 @@ Each phase commits independently per CLAUDE.md.
 
 0. **Module scaffold** (all inside kyo-jsonrpc):
    - Build.sbt: add `kyo-jsonrpc` as a crossProject (JVM + JS + Native), depending on `kyo-prelude`, `kyo-core`, `kyo-schema`. Plain `dependsOn`. Cross-platform settings matching `kyo-schema`.
-   - No new helpers anywhere. Policy lambdas use `Schema[T].toStructureValue` (kyo-schema, `private[kyo]`, accessible in package `kyo`) plus direct pattern matching on `Structure.Value.Record(fields: Chunk[(String, Value)])`. The two trivial inline helpers (`field`, `merge`) referenced in §8 are `private inline def` inside `ProgressPolicy`'s companion, not new public surface.
+   - No new helpers anywhere. Policy lambdas use `Structure.encode(t)` / `Structure.decode[T](v)` (kyo-schema public API) plus direct pattern matching on `Structure.Value.Record(fields: Chunk[(String, Value)])`. The two trivial inline helpers (`field`, `merge`) referenced in §8 are `private inline def` inside `ProgressPolicy`'s companion, not new public surface.
    - No changes to kyo-schema, kyo-http, kyo-lsp, kyo-mcp, kyo-browser, or any other module.
 
-1. **Wire types + codec.** `JsonRpcRequest/Response/Error/Id` with hand-written `JsonRpcId` Schema; `JsonRpcEnvelope` ADT with `derives Schema, CanEqual`; `JsonRpcCodec` trait with `Strict2_0` and `Cdp` implementations; reserved-keys reject in `Cdp.encode`. Tests:
+1. **Wire types + codec.** `JsonRpcId` (enum, hand-written flat Schema), `JsonRpcError` (case class, derives Schema), `JsonRpcRequest/Response` (derives Schema); `JsonRpcEnvelope` ADT with `derives CanEqual` only (no Schema; codecs encode/decode manually per case); `JsonRpcCodec` trait with `Strict2_0` and `Cdp` implementations; reserved-keys reject in `Cdp.encode` via `Abort[JsonRpcError]`. Tests:
    - round-trip every envelope shape under both codecs
    - `JsonRpcId.Num(1L)` ↔ `1`; `JsonRpcId.Str("a")` ↔ `"a"` (NOT `{"Num":1}`)
    - `extras = Absent` ↔ no extras keys on the wire
@@ -972,7 +1017,7 @@ Each phase commits independently per CLAUDE.md.
 
 4. **JsonRpcEndpoint core** wrapping Exchange: routing through Exchange's `encode`/`decode` callbacks per §6.2, writer fiber with `SuppressIfCancelled` filter, `pendingInbound: ConcurrentHashMap[Id, InboundEntry]` with `Running`/`Replying` state machine, `callerRegistry: ConcurrentHashMap[Id, CallerInfo]` side-table, `Config.idStrategy` translated to Exchange's `nextId`, `Sync.ensure`-based callerRegistry cleanup, scope cleanup with §6.4 finalizer order. NO policies yet (cancellation/progress both `Absent`). Tests: A.call(B) round-trip, A.notify(B), unknown methods, concurrent bidirectional, Scope cleanup, callerRegistry cleanup on caller interrupt, `awaitDrain` returns when writer + Exchange's pending + pendingInbound all quiescent, **late reply for cancelled outbound is dropped by Exchange** (verify directly, not via engine bookkeeping).
 
-5. **CancellationPolicy** with `.lsp` and `.mcp`. Engine-enforced semantics: writer-side suppress for MCP no-reply, handler-fiber interrupt on inbound cancel, caller-fiber interrupt on outbound cancel (Exchange handles late-reply drop). `protectedMethods` gate. Tests: each policy's inbound + outbound flow, late-reply drop is verified end-to-end (no engine bookkeeping involved), no-reply variant (verify reply does NOT appear on transport even though handler produced a value), cancel-for-unknown-id silent drop, timeout-fires-cancel, **cancel on initialize is refused (MCP protectedMethods)**, **cancellation race: cancel arrives while reply is queued in writer channel → MCP drops the reply**.
+5. **CancellationPolicy** with `.lsp` and `.mcp`. Engine-enforced semantics: writer-side suppress for MCP no-reply, handler-fiber interrupt on inbound cancel, outbound cancel via abortSignal completion (Exchange handles late-reply drop). `protectedMethods` gate. Tests: each policy's inbound + outbound flow, late-reply drop is verified end-to-end (no engine bookkeeping involved), no-reply variant (verify reply does NOT appear on transport even though handler produced a value), cancel-for-unknown-id silent drop, timeout-fires-cancel, **cancel on initialize is refused (MCP protectedMethods)**, **cancellation race: cancel arrives while reply is queued in writer channel → MCP drops the reply**.
 
 6. **ProgressPolicy** with `.lsp` and `.mcp`. `callWithProgress`, `callPartialResults[T]`, `subscribeProgress`/`unsubscribeProgress`, `HandlerCtx.progress`. Tests: workDone 3-phase, partial-result chunk streaming, MCP `_meta.progressToken`, LSP `workDoneToken`, out-of-band token subscription, no-progress when policy Absent, **monotonicity enforced when policy.enforceMonotonic = true (non-monotonic progress dropped)**, **`ctx.progress` after handler returned is suppressed (MCP MUST NOT)**.
 
@@ -995,15 +1040,15 @@ After the audit cycle (initial design → 3-consumer audit → 4-C audit):
 
 1. **`JsonRpcEnvelope.extras: Maybe[Structure.Value]`** on every envelope variant (Request, Notification, Response). `Absent` ≠ `Present(Structure.Value.Null)`. Codec.Cdp stamps fields from `extras` to the top level on encode; harvests unknown top-level fields on decode. Reserved keys (`id`, `method`, `params`, `result`, `error`, `jsonrpc`) rejected with `JsonRpcError.invalidRequest`.
 2. **Policies are `Maybe`d**, not `.none` sentinels. `Config.cancellation: Maybe[CancellationPolicy]`, `Config.progress: Maybe[ProgressPolicy]`. CDP uses `Absent`. `endpoint.cancel(id)` is always callable; only fires wire notification when policy is `Present`.
-3. **No `Outcome` ADT.** Handler returns `Structure.Value < S` (or `Unit < S` for notifications). Engine decides whether to send a reply based on `(method.kind, cancellation state, was-cancelled)`. Removes policy-leak into handler code. `pendingInbound` is a state machine (`Running | Replying`), not `Fiber[Outcome, Any]`.
+3. **No `Outcome` ADT.** Handler returns `Structure.Value < S` (or `Unit < S` for notifications). Engine decides whether to send a reply based on `(method.kind, cancellation state, was-cancelled)`. Removes policy-leak into handler code. `pendingInbound` is a three-state machine (`Running | Replying | Cancelled`), not a fiber carrying an outcome type.
 4. **All six LSP error codes promoted** into `JsonRpcError` constants (§15). They cost nothing as constants and several are useful outside LSP (`RequestCancelled`, `RequestFailed`, `ServerNotInitialized` for the gate).
 5. **Per-call `extras` is a closure `ExtrasEncoder = JsonRpcId => Maybe[Structure.Value]`**, not a static `Maybe[Structure.Value]`. Preserves CDP's `Req = Id => Wire` pattern (the encoder closes over external state AND receives the engine-assigned id). `ExtrasEncoder.empty` and `ExtrasEncoder.const(v)` cover the trivial cases.
 6. **Out-of-band progress via `endpoint.subscribeProgress(token)` + `unsubscribeProgress(token)`**. Covers LSP `window/workDoneProgress/create`.
 7. **`callPartialResults[T]`** is a separate API from `callWithProgress`. The former returns a `Stream[T]` whose chunks come from `$/progress` and which closes on the final empty response. The latter returns a typed `Out` plus a live progress side-stream.
 8. **Timeout auto-fires cancellation policy.** When `Config.requestTimeout` fires AND `Config.cancellation = Present`, the engine fires the cancel notification then aborts the pending. When policy is `Absent`, just abort locally. No new config knob.
 9. **Engine-enforced cancellation semantics, race-safe.** Handler observes `ctx.cancelled` and reacts. For `expectReplyForCancelledRequest=false` (MCP), engine (a) interrupts the handler fiber and (b) suppresses any reply already queued in the writer channel via the `InboundEntry.Replying.suppress` flag (§6.5).
-10. **`CancellationPolicy.protectedMethods: Set[String]`** carves out method names that cannot be cancelled. `MCP.lsp.protectedMethods = Set.empty`; `MCP.mcp.protectedMethods = Set("initialize")`.
-11. **Policy lambdas use kyo-schema's existing API directly.** `Schema[T].toStructureValue(t)` projects a typed case class to `Structure.Value`. Field lookup and merge are pattern matches on `Structure.Value.Record(fields)`. No new helpers in kyo-schema, no new helpers in kyo-jsonrpc public surface. The two trivial inline `field` / `merge` helpers in §8 are private to `ProgressPolicy`'s companion.
+10. **`CancellationPolicy.protectedMethods: Set[String]`** carves out method names that cannot be cancelled. `CancellationPolicy.lsp.protectedMethods = Set.empty`; `CancellationPolicy.mcp.protectedMethods = Set("initialize")`.
+11. **Policy lambdas use kyo-schema's public API directly.** `Structure.encode(t)` projects a typed case class to `Structure.Value`; `Structure.decode[T](v)` reverses. Field lookup and merge are pattern matches on `Structure.Value.Record(fields)`. No new helpers in kyo-schema, no new helpers in kyo-jsonrpc public surface. The two trivial inline `field` / `merge` helpers in §8 are private to `ProgressPolicy`'s companion.
 12. **`HandlerCtx.progressSink` invalidates on handler completion.** A captured closure that outlives the handler returns silently rather than sending wire traffic (MCP MUST NOT).
 13. **`ProgressPolicy.enforceMonotonic`** drops non-monotonic progress values when true (MCP). LSP/CDP false.
 14. **No pre-allocated id parameter on `call`.** `notify` covers all fire-and-forget cases.
@@ -1019,13 +1064,13 @@ Distilled from the three reports + the audit cycle. These are non-obvious rules 
 3. **Pending entries are removed on EVERY exit path.** Caller interrupted, timeout fires, scope closes, send fails, cancellation fires: all paths use `Sync.ensure` or finalizer order in §6.4. Late replies must always find an empty slot, not stale state.
 4. **Notifications never enter Exchange's pending map.** `endpoint.notify` writes to the engine's writer channel directly (bypassing `Exchange.apply` which would register a pending entry). No outbound id allocated.
 5. **Codec decode failures don't kill the reader.** `Malformed` envelopes are recovered: if they had a parseable id, reader sends `Response(id, error = ParseError)`; otherwise log and continue.
-6. **Two distinct id-keyed maps, with clear ownership.** Exchange's pending map (id → outbound promise; owned by Exchange) for calls we made. `pendingInbound` (id → handler fiber + suppress flag; owned by the engine) for calls we received and are still serving. The engine also keeps a thin `callerRegistry` (id → method + caller fiber) for cancel lookup, but that's just an index over Exchange's map, not a duplicate. (LSP report §2.)
+6. **Two distinct id-keyed maps, with clear ownership.** Exchange's pending map (id → outbound promise; owned by Exchange) for calls we made. `pendingInbound` (id → Running/Replying/Cancelled state machine; owned by the engine) for calls we received and are still serving. The engine also keeps a thin `callerRegistry` (id → method + extras + abortSignal) for cancel lookup; it is an index, not a duplicate of Exchange's map. (LSP report §2.)
 7. **Per-direction id allocation.** Each endpoint owns ONE outbound counter (Exchange's `nextId`); the receiver's id space is independent. The receiver looks up incoming Response ids in its OWN Exchange's pending map; an incoming Request id is namespaced separately and lives in `pendingInbound`. Cross-direction collisions are impossible because the maps are different.
 8. **Progress token allocation is engine-side.** Tokens are opaque to the user. Engine generates them (UUID or counter), maps to channels in `progressStreams`, cleans up on response or cancel.
 9. **Handler panic → `InternalError` reply.** Panic message in `error.data`, generic message in `error.message`. Don't leak stack traces into the visible message field.
-10. **No `params._meta.progressToken` parsing in the engine.** That's `ProgressPolicy.mcp.extractRequestToken`. Engine just calls the policy.
+10. **No `params._meta.progressToken` parsing in the engine.** That's `ProgressPolicy.mcp.extractRequestToken`. Engine delegates to the policy.
 11. **`extras` is `Maybe[Structure.Value]`, not `Structure.Value`.** `Absent` means "no extras"; `Present(Structure.Value.Null)` means "extras slot exists, is JSON null". The two are observably different on the wire.
-12. **Scope finalizer order (§6.4) is critical.** Closing the transport before letting Exchange drain its pending map would deadlock the writer fiber. Order is: poison writer channel → cancel fibers → close transport → close Exchange (fails all its pending with Closed) → drain pendingInbound.
+12. **Scope finalizer order (§6.4) is critical.** Closing the transport before letting Exchange drain its pending map would deadlock the writer fiber. Order is: poison writer channel → cancel fibers → close transport → close Exchange (fails all its pending with Closed) → drain callerRegistry (complete all abortSignals with Closed) → drain pendingInbound (interrupt all handler fibers).
 
 ## 21. What this design does NOT do
 
