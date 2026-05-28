@@ -902,6 +902,24 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
+    // End-to-end: the Chrome build's downloader actually fetches a different artifact (`chrome-{platform}.zip`,
+    // ~190 MB, full UI-capable binary) and points the LaunchConfig at the correct executable, including the
+    // macOS `.app` bundle's nested binary path. Boots Chrome via CDP to prove the resolved binary actually runs.
+    // First call downloads (~tens of seconds on cold CI); subsequent calls reuse the per-platform cache.
+    "chromeForTestingLaunchConfig(Chrome) downloads + launches the full chrome binary" in run {
+        Scope.run {
+            Browser.chromeForTestingLaunchConfig(Browser.ChromeForTestingBuild.Chrome).map { cfg =>
+                assert(
+                    !cfg.executable.contains("chrome-headless-shell"),
+                    s"expected full chrome path but got headless-shell-derived: ${cfg.executable}"
+                )
+                Browser.run(cfg) {
+                    Browser.url.map(u => assert(u == "about:blank", s"unexpected initial URL: $u"))
+                }
+            }
+        }
+    }
+
     "run(wsUrl) connects to existing browser" in run {
         SharedChrome.init.map { url =>
             Scope.run {

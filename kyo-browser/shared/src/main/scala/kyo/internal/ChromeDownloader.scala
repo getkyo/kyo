@@ -46,19 +46,23 @@ private[kyo] object ChromeDownloader:
     /** Ensures a Chrome-for-Testing binary is available and returns the absolute path to its executable.
       *
       * `version = Absent` resolves the latest known-good Stable version dynamically via [[latestVersion]] using the
-      * supplied `cfg.metadataUrl`; `Present(v)` pins to a caller-supplied version. Safe to call repeatedly; the
-      * cached binary is reused once downloaded.
+      * supplied `cfg.metadataUrl`; `Present(v)` pins to a caller-supplied version. `build` selects which artifact
+      * to download (`chrome-headless-shell` or full `chrome`); each `build` caches independently so the two can
+      * coexist. Safe to call repeatedly; the cached binary is reused once downloaded.
       */
-    def ensure(version: Maybe[String], cfg: Browser.LaunchConfig.ChromeDownloaderConfig)(using
-        Frame
-    ): String < (Async & Abort[BrowserSetupException]) =
-        ensureWith(version, cfg, downloadAndExtract(_, _, _, cfg.downloadTimeout))
+    def ensure(
+        version: Maybe[String],
+        cfg: Browser.LaunchConfig.ChromeDownloaderConfig,
+        build: Browser.ChromeForTestingBuild
+    )(using Frame): String < (Async & Abort[BrowserSetupException]) =
+        ensureWith(version, cfg, build, downloadAndExtract(_, _, _, _, cfg.downloadTimeout))
 
     /** Test seam: same as [[ensure]] but allows the download function to be substituted. */
     def ensureWith(
         version: Maybe[String],
         cfg: Browser.LaunchConfig.ChromeDownloaderConfig,
-        download: (String, String, Path) => Unit < (Async & Abort[BrowserSetupException])
+        build: Browser.ChromeForTestingBuild,
+        download: (Browser.ChromeForTestingBuild, String, String, Path) => Unit < (Async & Abort[BrowserSetupException])
     )(using Frame): String < (Async & Abort[BrowserSetupException]) =
         // `platformCode` is evaluated first so unsupported tuples (e.g. linux-arm64) abort BEFORE any network I/O.
         // Otherwise `latestVersion` issues an HTTPS request to the Chrome-for-Testing metadata endpoint, and slow CI
@@ -71,12 +75,12 @@ private[kyo] object ChromeDownloader:
             platform <- platformCode
             v        <- resolveVersion
             root     <- cacheRoot
-            versionDir = root / s"chrome-headless-shell-$v-$platform"
-            exec       = executablePath(versionDir, platform)
+            versionDir = root / s"${artifactName(build)}-$v-$platform"
+            exec       = executablePath(versionDir, platform, build)
             cached <- exec.exists
             _ <-
                 if cached then Kyo.unit
-                else download(v, platform, versionDir)
+                else download(build, v, platform, versionDir)
         yield exec.toString
         end for
     end ensureWith
@@ -132,26 +136,47 @@ private[kyo] object ChromeDownloader:
             case Absent     => Path.basePaths.cache / "kyo-browser"
         }
 
-    private[kyo] def executablePath(versionDir: Path, platform: String)(using Frame): Path =
-        val inner = versionDir / s"chrome-headless-shell-$platform"
-        platform match
-            case "win64" | "win32" => inner / "chrome-headless-shell.exe"
-            case _                 => inner / "chrome-headless-shell"
+    /** Wire-level artifact name as published by Chrome-for-Testing (`chrome-headless-shell` or `chrome`). Used in the cache directory
+      * prefix, the download URL, and the extracted inner directory name (all three follow the same `{artifact}-{platform}` convention).
+      */
+    private[kyo] def artifactName(build: Browser.ChromeForTestingBuild): String = build match
+        case Browser.ChromeForTestingBuild.HeadlessShell => "chrome-headless-shell"
+        case Browser.ChromeForTestingBuild.Chrome        => "chrome"
+
+    private[kyo] def executablePath(versionDir: Path, platform: String, build: Browser.ChromeForTestingBuild)(using Frame): Path =
+        val inner = versionDir / s"${artifactName(build)}-$platform"
+        build match
+            case Browser.ChromeForTestingBuild.HeadlessShell =>
+                platform match
+                    case "win64" | "win32" => inner / "chrome-headless-shell.exe"
+                    case _                 => inner / "chrome-headless-shell"
+            case Browser.ChromeForTestingBuild.Chrome =>
+                platform match
+                    case "mac-arm64" | "mac-x64" =>
+                        // The macOS full-chrome zip extracts to `chrome-{platform}/Google Chrome for Testing.app/...` with the actual
+                        // executable nested inside the `.app` bundle. Linux/Windows extract a flat layout.
+                        inner / "Google Chrome for Testing.app" / "Contents" / "MacOS" / "Google Chrome for Testing"
+                    case "win64" | "win32" => inner / "chrome.exe"
+                    case _                 => inner / "chrome"
         end match
     end executablePath
 
-    private def downloadAndExtract(version: String, platform: String, versionDir: Path, downloadTimeout: Duration)(using
-        Frame
-    )
-        : Unit < (Async & Abort[BrowserSetupException]) =
-        val url = s"https://storage.googleapis.com/chrome-for-testing-public/$version/$platform/chrome-headless-shell-$platform.zip"
+    private def downloadAndExtract(
+        build: Browser.ChromeForTestingBuild,
+        version: String,
+        platform: String,
+        versionDir: Path,
+        downloadTimeout: Duration
+    )(using Frame): Unit < (Async & Abort[BrowserSetupException]) =
+        val artifact = artifactName(build)
+        val url      = s"https://storage.googleapis.com/chrome-for-testing-public/$version/$platform/$artifact-$platform.zip"
         Scope.run {
             for
                 tmpDir <- createTempDir
-                zip = tmpDir / s"chrome-headless-shell-$platform.zip"
+                zip = tmpDir / s"$artifact-$platform.zip"
                 _ <- downloadZip(url, zip, downloadTimeout)
                 _ <- extractZip(zip, versionDir)
-                _ <- makeExecutable(executablePath(versionDir, platform))
+                _ <- makeExecutable(executablePath(versionDir, platform, build))
             yield ()
         }
     end downloadAndExtract

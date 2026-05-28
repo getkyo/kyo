@@ -152,13 +152,27 @@ object Browser:
 
     // --- Lifecycle ---
 
-    /** Downloads `chrome-headless-shell` (if not already cached) and returns a [[LaunchConfig]] pointing at the downloaded executable.
-      * Equivalent to calling `LaunchConfig.default.copy(executable = <path>)` with the downloaded binary. The binary is cached under
-      * `KYO_BROWSER_CACHE` (or the platform default) after the first download.
+    /** Selects which Chrome-for-Testing artifact [[chromeForTestingLaunchConfig]] downloads.
       *
-      * `chrome-headless-shell` is Google's standalone headless build of Chrome (the same code path as `chrome --headless=new`, packaged
-      * without the GUI compositor / GPU stack / extension loader). ~120 MB compressed, faster startup, smaller memory footprint, fully CDP-
-      * compatible. Use [[LaunchConfig.chrome]] if you need a full Chrome (e.g. for `headless = false`).
+      *   - [[HeadlessShell]] (default): `chrome-headless-shell`, Google's standalone headless build of Chrome (the same code path as
+      *     `chrome --headless=new`, packaged without the GUI compositor / GPU stack / extension loader). ~120 MB compressed, faster
+      *     startup, smaller memory footprint, fully CDP-compatible. This is Puppeteer's default since v22.
+      *   - [[Chrome]]: the full `chrome` binary, ~190 MB compressed, with the GUI compositor included. Required for headed mode
+      *     (`headless = false`) and for any feature that needs the UI surface (e.g. visible-window debugging). Behaves identically to
+      *     [[HeadlessShell]] when launched with `headless = true`.
+      */
+    enum ChromeForTestingBuild derives CanEqual:
+        case HeadlessShell
+        case Chrome
+
+    /** Downloads a Chrome-for-Testing binary (if not already cached) and returns a [[LaunchConfig]] pointing at the downloaded executable.
+      * Equivalent to calling `LaunchConfig.default.copy(executable = <path>)` with the downloaded binary. The binary is cached under
+      * `KYO_BROWSER_CACHE` (or the platform default) after the first download; each [[ChromeForTestingBuild]] caches independently, so
+      * the two variants can coexist on disk.
+      *
+      * `build = ChromeForTestingBuild.HeadlessShell` (the default) fetches `chrome-headless-shell` (~120 MB, headless-only). Use
+      * `build = ChromeForTestingBuild.Chrome` for the full `chrome` binary (~190 MB) when you need headed mode — call `.headless(false)`
+      * on the returned config to launch with a visible window.
       *
       * `version = Absent` (the default) resolves the latest known-good Stable Chrome-for-Testing version dynamically by querying Google's
       * metadata endpoint; `Present(v)` pins to a caller-supplied build.
@@ -167,10 +181,13 @@ object Browser:
       * [[LaunchConfig.chromium]] for a system-installed Chromium.
       *
       * @see
-      *   [[Browser.run(v)]], a convenience overload that calls this method and immediately runs a computation
+      *   [[Browser.run(v)]], a convenience overload that calls this method (with default `build`) and immediately runs a computation
       */
-    def chromeForTestingLaunchConfig(version: Maybe[String] = Absent)(using Frame): LaunchConfig < (Async & Abort[BrowserSetupException]) =
-        ChromeDownloader.ensure(version, LaunchConfig.default.chromeDownloaderConfig)
+    def chromeForTestingLaunchConfig(
+        build: ChromeForTestingBuild = ChromeForTestingBuild.HeadlessShell,
+        version: Maybe[String] = Absent
+    )(using Frame): LaunchConfig < (Async & Abort[BrowserSetupException]) =
+        ChromeDownloader.ensure(version, LaunchConfig.default.chromeDownloaderConfig, build)
             .map(exec => LaunchConfig.default.copy(executable = exec))
 
     /** Installs `session` as the active [[Browser.SessionConfig]] for the duration of `v`, then restores the previous config on body exit.

@@ -73,18 +73,55 @@ class ChromeDownloaderTest extends Test:
                     arch     <- System.architecture
                     platform <- ChromeDownloader.resolvePlatform(os, arch)
                     customVersion = "999.0.1234.567"
+                    build         = Browser.ChromeForTestingBuild.HeadlessShell
                     versionDir    = tmp / s"chrome-headless-shell-$customVersion-$platform"
-                    exec          = ChromeDownloader.executablePath(versionDir, platform)
+                    exec          = ChromeDownloader.executablePath(versionDir, platform, build)
                     _ <- exec.write("fake-exec") // createFolders=true creates the full ancestor chain
                     sys = systemWithCache(tmp)(os, arch)
                     resolved <- System.let(sys)(ChromeDownloader.ensure(
                         Present(customVersion),
-                        Browser.LaunchConfig.default.chromeDownloaderConfig
+                        Browser.LaunchConfig.default.chromeDownloaderConfig,
+                        build
                     ))
                 yield
                     assert(
                         resolved.contains(s"chrome-headless-shell-$customVersion-$platform"),
                         s"resolved path '$resolved' missing version"
+                    )
+                    assert(resolved == exec.unsafe.show, s"resolved path '$resolved' != expected '${exec.unsafe.show}'")
+                end for
+            }
+        }
+    }
+
+    "ensure(Chrome build) resolves a cacheDir under 'chrome-{v}-{platform}' (separate from chrome-headless-shell)" in run {
+        Scope.run {
+            tempDirScoped("kyo-cd-fullchrome-").map { tmp =>
+                for
+                    os       <- System.operatingSystem
+                    arch     <- System.architecture
+                    platform <- ChromeDownloader.resolvePlatform(os, arch)
+                    customVersion = "888.0.4444.222"
+                    build         = Browser.ChromeForTestingBuild.Chrome
+                    versionDir    = tmp / s"chrome-$customVersion-$platform"
+                    exec          = ChromeDownloader.executablePath(versionDir, platform, build)
+                    _ <- exec.write("fake-full-chrome")
+                    sys = systemWithCache(tmp)(os, arch)
+                    resolved <- System.let(sys)(ChromeDownloader.ensure(
+                        Present(customVersion),
+                        Browser.LaunchConfig.default.chromeDownloaderConfig,
+                        build
+                    ))
+                yield
+                    // The Chrome build's cache dir is `chrome-{v}-{platform}` and does NOT include the
+                    // `headless-shell` segment, so two builds at the same version coexist on disk without collision.
+                    assert(
+                        resolved.contains(s"chrome-$customVersion-$platform"),
+                        s"resolved path '$resolved' missing version"
+                    )
+                    assert(
+                        !resolved.contains("chrome-headless-shell"),
+                        s"resolved path must not point at the headless-shell variant: '$resolved'"
                     )
                     assert(resolved == exec.unsafe.show, s"resolved path '$resolved' != expected '${exec.unsafe.show}'")
                 end for
@@ -161,31 +198,78 @@ class ChromeDownloaderTest extends Test:
         }
     }
 
-    // ---- executablePath per-platform ----
+    // ---- executablePath per-platform: HeadlessShell ----
 
-    "executablePath for mac-arm64 ends with 'chrome-headless-shell'" in {
-        val ep = ChromeDownloader.executablePath(Path("v"), "mac-arm64")
+    private val headlessShell = Browser.ChromeForTestingBuild.HeadlessShell
+    private val fullChrome    = Browser.ChromeForTestingBuild.Chrome
+
+    "executablePath HeadlessShell mac-arm64 ends with 'chrome-headless-shell'" in {
+        val ep = ChromeDownloader.executablePath(Path("v"), "mac-arm64", headlessShell)
         assert(ep.name == Present("chrome-headless-shell"), s"name=${ep.name}")
     }
 
-    "executablePath for mac-x64 ends with 'chrome-headless-shell'" in {
-        val ep = ChromeDownloader.executablePath(Path("v"), "mac-x64")
+    "executablePath HeadlessShell mac-x64 ends with 'chrome-headless-shell'" in {
+        val ep = ChromeDownloader.executablePath(Path("v"), "mac-x64", headlessShell)
         assert(ep.name == Present("chrome-headless-shell"), s"name=${ep.name}")
     }
 
-    "executablePath for linux64 ends with 'chrome-headless-shell'" in {
-        val ep = ChromeDownloader.executablePath(Path("v"), "linux64")
+    "executablePath HeadlessShell linux64 ends with 'chrome-headless-shell'" in {
+        val ep = ChromeDownloader.executablePath(Path("v"), "linux64", headlessShell)
         assert(ep.name == Present("chrome-headless-shell"), s"name=${ep.name}")
     }
 
-    "executablePath for win64 ends with 'chrome-headless-shell.exe'" in {
-        val ep = ChromeDownloader.executablePath(Path("v"), "win64")
+    "executablePath HeadlessShell win64 ends with 'chrome-headless-shell.exe'" in {
+        val ep = ChromeDownloader.executablePath(Path("v"), "win64", headlessShell)
         assert(ep.name == Present("chrome-headless-shell.exe"), s"name=${ep.name}")
     }
 
-    "executablePath for win32 ends with 'chrome-headless-shell.exe'" in {
-        val ep = ChromeDownloader.executablePath(Path("v"), "win32")
+    "executablePath HeadlessShell win32 ends with 'chrome-headless-shell.exe'" in {
+        val ep = ChromeDownloader.executablePath(Path("v"), "win32", headlessShell)
         assert(ep.name == Present("chrome-headless-shell.exe"), s"name=${ep.name}")
+    }
+
+    // ---- executablePath per-platform: Chrome (full UI-capable build) ----
+
+    "executablePath Chrome mac-arm64 points at the .app bundle's nested binary" in {
+        // macOS chrome-for-testing chrome zip extracts to `chrome-{platform}/Google Chrome for Testing.app/...`.
+        // The actual executable lives inside the .app bundle.
+        val ep    = ChromeDownloader.executablePath(Path("v"), "mac-arm64", fullChrome)
+        val shown = ep.unsafe.show
+        assert(shown.endsWith("/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"), s"path=$shown")
+        assert(shown.contains("/chrome-mac-arm64/"), s"inner dir must be chrome-mac-arm64: $shown")
+    }
+
+    "executablePath Chrome mac-x64 points at the .app bundle's nested binary" in {
+        val ep    = ChromeDownloader.executablePath(Path("v"), "mac-x64", fullChrome)
+        val shown = ep.unsafe.show
+        assert(shown.endsWith("/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"), s"path=$shown")
+        assert(shown.contains("/chrome-mac-x64/"), s"inner dir must be chrome-mac-x64: $shown")
+    }
+
+    "executablePath Chrome linux64 ends with 'chrome'" in {
+        val ep = ChromeDownloader.executablePath(Path("v"), "linux64", fullChrome)
+        assert(ep.name == Present("chrome"), s"name=${ep.name}")
+        assert(ep.unsafe.show.contains("/chrome-linux64/"), s"inner dir must be chrome-linux64: ${ep.unsafe.show}")
+    }
+
+    "executablePath Chrome win64 ends with 'chrome.exe'" in {
+        val ep = ChromeDownloader.executablePath(Path("v"), "win64", fullChrome)
+        assert(ep.name == Present("chrome.exe"), s"name=${ep.name}")
+    }
+
+    "executablePath Chrome win32 ends with 'chrome.exe'" in {
+        val ep = ChromeDownloader.executablePath(Path("v"), "win32", fullChrome)
+        assert(ep.name == Present("chrome.exe"), s"name=${ep.name}")
+    }
+
+    // ---- artifactName: wire-level mapping ----
+
+    "artifactName(HeadlessShell) is 'chrome-headless-shell'" in {
+        assert(ChromeDownloader.artifactName(headlessShell) == "chrome-headless-shell")
+    }
+
+    "artifactName(Chrome) is 'chrome'" in {
+        assert(ChromeDownloader.artifactName(fullChrome) == "chrome")
     }
 
     // ---- downloadZip network failure → BrowserSetupFailedException ----
@@ -229,15 +313,16 @@ class ChromeDownloaderTest extends Test:
                     arch     <- System.architecture
                     platform <- ChromeDownloader.resolvePlatform(os, arch)
                     version    = "1.2.3.4"
+                    build      = Browser.ChromeForTestingBuild.HeadlessShell
                     versionDir = tmp / s"chrome-headless-shell-$version-$platform"
-                    exec       = ChromeDownloader.executablePath(versionDir, platform)
+                    exec       = ChromeDownloader.executablePath(versionDir, platform, build)
                     counter <- AtomicRef.init(0)
                     sys = systemWithCache(tmp)(os, arch)
                     // Counter-tracking downloader: increments on every invocation, then materialises the
                     // executable so subsequent calls find it cached.
-                    fakeDownload: ((String, String, Path) => Unit < (Async & Abort[BrowserSetupException])) =
-                        (_v, _p, vDir) =>
-                            val target = ChromeDownloader.executablePath(vDir, _p)
+                    fakeDownload: ((Browser.ChromeForTestingBuild, String, String, Path) => Unit < (Async & Abort[BrowserSetupException])) =
+                        (_b, _v, _p, vDir) =>
+                            val target = ChromeDownloader.executablePath(vDir, _p, _b)
                             for
                                 _ <- counter.updateAndGet(_ + 1)
                                 _ <- Abort.run[FileFsException](target.parent match
@@ -249,12 +334,14 @@ class ChromeDownloaderTest extends Test:
                     first <- System.let(sys)(ChromeDownloader.ensureWith(
                         Present(version),
                         Browser.LaunchConfig.default.chromeDownloaderConfig,
+                        build,
                         fakeDownload
                     ))
                     after1 <- counter.get
                     second <- System.let(sys)(ChromeDownloader.ensureWith(
                         Present(version),
                         Browser.LaunchConfig.default.chromeDownloaderConfig,
+                        build,
                         fakeDownload
                     ))
                     after2 <- counter.get
