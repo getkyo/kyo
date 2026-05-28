@@ -85,6 +85,14 @@ The crossProject uses `.withoutSuffixFor(JVMPlatform)`, so the sbt project key f
 
 IMPLEMENTATION.md and earlier prompts use `kyo-jsonrpcJVM` in verification commands; substitute the unsuffixed name for JVM. JS / Native suffixes work as written.
 
+### Phase 1 post-commit fixes (apply BEFORE Phase 2 launches)
+
+Two issues found by supervisor verification of Phase 1:
+
+1. **`JsonRpcResponse.success` signature is too loose.** Currently `def success(id: JsonRpcId, result: Maybe[Structure.Value])` allows `success(id, Absent)` which produces `JsonRpcResponse(Present(id), Absent, Absent)`: invalid per JSON-RPC 2.0 (success requires `result`). Tighten to `def success(id: JsonRpcId, result: Structure.Value)(using Frame): JsonRpcResponse = JsonRpcResponse(Present(id), Present(result), Absent)`. For success-with-null-result, callers pass `Structure.Value.Null`. Update Test 16 call site accordingly.
+
+2. **Test 9 assertion is too weak.** Accepts BOTH `Notification` and `Malformed`. Per DESIGN §3 the `Response` case takes `id: JsonRpcId` (not `Maybe`), so null-id Responses cannot be represented as Response; they go to Malformed. Test 9 must assert exactly `JsonRpcEnvelope.Malformed`. Remove the Notification branch from the pattern match.
+
 ### Phase 1 prep concern (C1 from PHASE-1-PREP.md)
 
 The kyo-ai-plugin branch's `Schema[JsonRpcId]` uses `reader.peekType()` to dispatch by token type; **this method does NOT exist** on the `crispy-swinging-lemur` worktree. The PHASE-1-PREP.md suggests a workaround using `Result.catching { reader.long() }` to attempt parse, then `reader.string()` on failure. The impl agent for Phase 1 must use that workaround pattern; copying the kyo-ai-plugin source verbatim will fail to compile.

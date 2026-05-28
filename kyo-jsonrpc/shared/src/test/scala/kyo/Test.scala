@@ -1,14 +1,16 @@
 package kyo
 
-import kyo.internal.BaseKyoDataTest
+import kyo.internal.BaseKyoCoreTest
+import kyo.internal.Platform
 import org.scalatest.NonImplicitAssertions
-import org.scalatest.Succeeded
 import org.scalatest.freespec.AsyncFreeSpec
+import scala.concurrent.ExecutionContext
 
-abstract class Test extends AsyncFreeSpec, NonImplicitAssertions, BaseKyoDataTest:
-    override type Assertion = org.scalatest.Assertion
-    override val assertionSuccess: Assertion              = Succeeded
-    override def assertionFailure(msg: String): Assertion = fail(msg)
+abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
 
-    given Frame = Frame.derive
+    type Assertion = org.scalatest.Assertion
+    def assertionSuccess              = succeed
+    def assertionFailure(msg: String) = fail(msg)
+
+    override given executionContext: ExecutionContext = Platform.executionContext
 end Test
