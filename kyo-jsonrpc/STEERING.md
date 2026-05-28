@@ -74,4 +74,17 @@ These are non-negotiable rules the supervisor follows. Agents inherit them trans
 4. **No work in flight at commit time.** All subtasks for the phase are `completed` (not `pending`). If a subtask had to be marked `pending` mid-flight, it is resolved (impl finished and tested) before the phase commits.
 
 ## Findings from impl
-(none yet)
+
+### sbt project names (from Phase 0)
+
+The crossProject uses `.withoutSuffixFor(JVMPlatform)`, so the sbt project key for JVM is unsuffixed:
+
+- JVM:    `sbt 'kyo-jsonrpc/Test/compile'` (NOT `kyo-jsonrpcJVM/...`)
+- JS:     `sbt 'kyo-jsonrpcJS/Test/compile'`
+- Native: `sbt 'kyo-jsonrpcNative/Test/compile'`
+
+IMPLEMENTATION.md and earlier prompts use `kyo-jsonrpcJVM` in verification commands; substitute the unsuffixed name for JVM. JS / Native suffixes work as written.
+
+### Phase 1 prep concern (C1 from PHASE-1-PREP.md)
+
+The kyo-ai-plugin branch's `Schema[JsonRpcId]` uses `reader.peekType()` to dispatch by token type; **this method does NOT exist** on the `crispy-swinging-lemur` worktree. The PHASE-1-PREP.md suggests a workaround using `Result.catching { reader.long() }` to attempt parse, then `reader.string()` on failure. The impl agent for Phase 1 must use that workaround pattern; copying the kyo-ai-plugin source verbatim will fail to compile.
