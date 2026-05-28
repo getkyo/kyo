@@ -132,6 +132,21 @@ After all three fixes:
 - `sbt 'kyo-jsonrpc/testOnly *ProgressPolicyTest' 2>&1 | tail -5` 14/14.
 - `sbt 'kyo-jsonrpc/test' 2>&1 | tail -5` ALL passing.
 
+### Phase 9 IMMEDIATE STEER (in-flight pulse 1 — flake risk)
+
+10/10 tests pass on first run but 2 use wallclock-based parking witnesses, contradicting the plan's explicit Latch-handoff requirement (IMPLEMENTATION.md line 538). These will flake on slow CI / JS / Native.
+
+**Fix 1 — ScenarioWsStyleTest.scala line 105 (Test 99 CDP maxInFlight)**: replace `Async.sleep(30.millis)` parking-witness with Latch handoff. Pattern: each handler completes a `Promise[Unit]` on entry; the test awaits `Promise.get` for the 8 entry-promises to fire (proves 8 handlers are inside the semaphore); then the 9th call's fiber is `Fiber.initUnscoped`'d; assert via `fiber.done.map(d => !d)` that the 9th is NOT done. NO sleep. Then complete one of the first 8's holding-promises and assert the 9th's done flag flips.
+
+**Fix 2 — ScenarioBidiTest.scala line 130 (Test 103 MCP no-reply)**: replace `Async.sleep(100.millis)` drain-delay with a deterministic signal. Pattern: the handler holds a `Promise[Unit]`; the test completes the holding-promise; after the handler exits, the engine's writer suppresses the queued response (per Phase 5 §6.5 CAS); the test asserts frame count == 1 (the original request only). To detect "handler finished", the test can either (a) use the engine's `pendingInbound` private accessor (if exposed), or (b) wire a side-channel `Channel[Unit]` the handler sends to before returning. Pick (b).
+
+**Fix 3 — ScenarioWsStyleTest.scala lines 110, 117**: add `// Unsafe: <justification>` comments above both `AllowUnsafe` sites. The comment text should explain why unsafe is necessary (e.g., "Promise.Unsafe.init mirrors Phase 4 idiom").
+
+After fixes:
+- `sbt 'kyo-jsonrpc/testOnly *Scenario*Test' 2>&1 | tail -5` must show 10/10 still passing.
+- `grep -rn 'AllowUnsafe' kyo-jsonrpc/shared/src/test/scala/kyo/Scenario*.scala` — every hit immediately preceded by a `// Unsafe:` line.
+- `grep -rnE 'Async\.sleep|Thread\.sleep' kyo-jsonrpc/shared/src/test/scala/kyo/Scenario*.scala` — 0 hits in parking-witness contexts (sleeps inside `Async.race` arms with explicit deadline-like roles are OK, but parking-witness sleeps must be replaced).
+
 ### Phase 6 IMMEDIATE STEER (in-flight pulse 2)
 
 The 3 compile errors at lines 294/346/666 are fixed (good). One remaining error at `internal/JsonRpcEndpointImpl.scala:329`:

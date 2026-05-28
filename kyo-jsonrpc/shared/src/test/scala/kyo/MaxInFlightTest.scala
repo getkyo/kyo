@@ -26,21 +26,15 @@ class MaxInFlightTest extends Test:
     end CapturingTransport
 
     "maxInFlight = 2 parks the third concurrent call until a slot is freed" in run {
-        val handlerEntered = new AtomicInteger(0)
-        // doneSignals: handlers wait for their slot to be released
-        val done1 = new AtomicReference[Maybe[Fiber.Promise[Unit, Any]]](Absent)
-        val done2 = new AtomicReference[Maybe[Fiber.Promise[Unit, Any]]](Absent)
-        val done3 = new AtomicReference[Maybe[Fiber.Promise[Unit, Any]]](Absent)
+        val handlerEntered  = new AtomicInteger(0)
+        val handlerPromises = new ConcurrentLinkedQueue[Fiber.Promise[Unit, Any]]()
 
         val pingOnB = JsonRpcMethod[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (req, _) =>
             Fiber.Promise.init[Unit, Any].map { p =>
-                val slot = req.n match
-                    case 1 => done1
-                    case 2 => done2
-                    case _ => done3
-                Sync.defer(slot.set(Present(p))).andThen {
-                    discard(handlerEntered.incrementAndGet())
-                    p.get.andThen(PingResp(req.n))
+                Sync.defer(discard(handlerPromises.add(p))).andThen {
+                    Sync.defer(discard(handlerEntered.incrementAndGet())).andThen {
+                        p.get.andThen(PingResp(req.n))
+                    }
                 }
             }
         }
@@ -53,7 +47,6 @@ class MaxInFlightTest extends Test:
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(ta, Seq.empty, cfg).map { endpointA =>
                 JsonRpcEndpoint.init(tb, Seq(pingOnB), cfg).map { _ =>
-                    // Spawn all three calls concurrently
                     Fiber.initUnscoped(
                         Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(1)))
                     ).map { fib1 =>
@@ -63,25 +56,25 @@ class MaxInFlightTest extends Test:
                             Fiber.initUnscoped(
                                 Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(3)))
                             ).map { fib3 =>
-                                // Wait until exactly 2 handlers have entered (slots 1 and 2 acquired)
+                                // Wait until exactly 2 handlers have entered (two slots acquired)
                                 untilTrue(Sync.defer(handlerEntered.get() == 2)).andThen {
-                                    // The third call is parked; its handler has NOT entered yet
                                     Sync.defer(assert(handlerEntered.get() == 2, "third call should be parked")).andThen {
-                                        // Release slot 1 so the third call can proceed
-                                        Sync.defer(done1.get()).map {
-                                            case Present(p) => p.completeUnitDiscard
-                                            case Absent     => fail("done1 not set")
+                                        // Release one slot (whichever handler got it first) so the third call can proceed
+                                        Sync.defer {
+                                            import scala.jdk.CollectionConverters.*
+                                            handlerPromises.asScala.headOption.foreach { first =>
+                                                discard(handlerPromises.remove(first))
+                                                first.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
+                                            }
                                         }.andThen {
                                             // Wait for all three handlers to have entered
                                             untilTrue(Sync.defer(handlerEntered.get() == 3)).andThen {
                                                 // Release remaining slots
                                                 Sync.defer {
-                                                    done2.get() match
-                                                        case Present(p) => p.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
-                                                        case Absent     => ()
-                                                    done3.get() match
-                                                        case Present(p) => p.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
-                                                        case Absent     => ()
+                                                    import scala.jdk.CollectionConverters.*
+                                                    handlerPromises.asScala.foreach { p =>
+                                                        p.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
+                                                    }
                                                 }.andThen {
                                                     fib1.get.andThen(fib2.get).andThen(fib3.get).map { _ =>
                                                         succeed
