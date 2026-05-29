@@ -35,25 +35,36 @@ object SectionIndex:
       * `names` is the 0-based array produced by `NameUnpickler.read`. Section NameRefs are 0-based indices into this array.
       */
     def read(view: ByteView, names: Array[Tasty.Name])(using Frame): SectionIndex < (Sync & Abort[TastyError]) =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         val result =
             try Right(readSync(view, names))
             catch
-                case _: ArrayIndexOutOfBoundsException =>
-                    Left(TastyError.MalformedSection("SectionIndex", "unexpected end while reading section headers"))
+                case ex: ArrayIndexOutOfBoundsException =>
+                    val reason = if ex.getMessage != null then ex.getMessage else "unexpected end while reading section headers"
+                    Left(TastyError.MalformedSection("SectionIndex", reason))
         result match
             case Right(idx) => Sync.defer(idx)
             case Left(err)  => Abort.fail(err)
     end read
 
-    private def readSync(view: ByteView, names: Array[Tasty.Name]): SectionIndex =
-        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    private def readSync(view: ByteView, names: Array[Tasty.Name])(using AllowUnsafe): SectionIndex =
         val builder = Map.newBuilder[String, (Int, Int)]
         while view.remaining > 0 do
             val nameRef    = view.readNat() // 0-based index into names
             val sectionLen = view.readNat() // byte count of payload
             val offset     = view.position  // payload starts here
-            val name       = names(nameRef).asString
+            if nameRef < 0 || nameRef >= names.length then
+                throw new ArrayIndexOutOfBoundsException(
+                    s"SectionIndex: nameRef=$nameRef out of range (names.length=${names.length}) at byte ${view.position}"
+                )
+            end if
+            if sectionLen < 0 then
+                throw new ArrayIndexOutOfBoundsException(
+                    s"SectionIndex: negative section length $sectionLen at byte ${view.position}"
+                )
+            end if
+            val name = names(nameRef).asString
             builder += (name -> (offset, sectionLen))
             view.goto(offset + sectionLen) // skip payload
         end while

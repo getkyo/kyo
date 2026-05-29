@@ -1,5 +1,8 @@
 package kyo.internal.tasty.binary
 
+/** Thrown when a varint continuation run exceeds the allowed byte count for the target type. */
+class MalformedVarintException(val byteOffset: Long, msg: String) extends RuntimeException(msg)
+
 /** TASTy LEB128 varint decoding.
   *
   * TASTy uses big-endian base-128 encoding, which is the OPPOSITE of standard little-endian LEB128:
@@ -15,19 +18,25 @@ package kyo.internal.tasty.binary
   *
   * See: dotty/tools/tasty/TastyReader.scala, readLongNat (lines ~68-77), readLongInt (lines ~81-89).
   */
+
 object Varint:
 
     /** Read an unsigned big-endian base-128 Nat from `view` as Int.
       *
       * Verbatim semantics from TastyReader.readLongNat, narrowed to Int. The loop continues while the continuation bit (0x80) is CLEAR,
-      * stopping at the byte where 0x80 is SET (the terminating byte).
+      * stopping at the byte where 0x80 is SET (the terminating byte). Throws MalformedVarintException if more than 5 continuation bytes are
+      * consumed (Int overflow guard).
       */
     def readNat(view: ByteView): Int =
-        var b = 0
-        var x = 0
+        var b     = 0
+        var x     = 0
+        var bytes = 0
         while
+            if bytes >= 5 then
+                throw new MalformedVarintException(view.position.toLong, "varint: continuation runs past 5 bytes (Int overflow)")
             b = view.readByte() & 0xff
             x = (x << 7) | (b & 0x7f)
+            bytes += 1
             (b & 0x80) == 0
         do ()
         end while
@@ -37,14 +46,18 @@ object Varint:
     /** Read an unsigned big-endian base-128 Nat from `view` as Long.
       *
       * Verbatim from TastyReader.readLongNat: var b = 0L; var x = 0L while { b = bytes(bp); x = (x << 7) | (b & 0x7f); bp += 1; (b & 0x80) ==
-      * 0 } () x
+      * 0 } () x. Throws MalformedVarintException if more than 10 continuation bytes are consumed (Long overflow guard).
       */
     def readLongNat(view: ByteView): Long =
-        var b = 0L
-        var x = 0L
+        var b     = 0L
+        var x     = 0L
+        var bytes = 0
         while
+            if bytes >= 10 then
+                throw new MalformedVarintException(view.position.toLong, "varint: continuation runs past 10 bytes (Long overflow)")
             b = view.readByte() & 0xffL
             x = (x << 7) | (b & 0x7fL)
+            bytes += 1
             (b & 0x80L) == 0L
         do ()
         end while

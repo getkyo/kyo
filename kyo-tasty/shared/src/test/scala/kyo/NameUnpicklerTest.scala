@@ -196,4 +196,62 @@ class NameUnpicklerTest extends Test:
         }
     }
 
+    // Test (Phase 03a B1): QUALIFIED entry with out-of-range prefix yields MalformedSection
+    "QUALIFIED entry with out-of-range prefix yields MalformedSection" in run {
+        // Build a name table with:
+        //   1 UTF8 entry: "hello" (5 bytes, tag=1)
+        //   1 QUALIFIED entry: prefix=99 (out of range since tableSize=1), selector=0 (valid)
+        //
+        // Name table byte count covers both entries.
+        // UTF8 entry: tag(1 byte) + length-nat(1 byte) + 5 bytes = 7 bytes
+        // QUALIFIED entry: tag(1 byte) + readEnd-length-nat(1 byte) + prefix-nat(2 bytes for 99) + selector-nat(1 byte) = 5 bytes
+        // Total = 12 bytes. Encoded as Nat: 12 | 0x80 = 0x8c
+        //
+        // Encoding 99 as a Nat (big-endian base-128):
+        //   99 = 0x63, fits in 7 bits, so needs 2 bytes: continuation byte 0x00 | high bits, then final.
+        //   Actually 99 < 128 so it fits in 1 byte: 0x63 | 0x80 = 0xe3 (terminating).
+        //   Wait: 99 in big-endian base-128: single byte is 99 | 0x80 = 0xe3 (bit 7 set = terminating).
+        //   But readEnd reads a length first; the QUALIFIED payload has 2 name-refs.
+        //   Encoding: tag=QUALIFIED=2, readEnd returns cursor+payloadLen.
+        //   QUALIFIED payload: prefix-nat(1 byte) + selector-nat(1 byte) = 2 bytes.
+        //   Length Nat for payload = 2 bytes, encoded as: 2 | 0x80 = 0x82.
+        //   prefix=99: 99 | 0x80 = 0xe3 (single terminating byte).
+        //   selector=0: 0 | 0x80 = 0x80 (single terminating byte).
+        //
+        // Full name table (12 bytes):
+        //   UTF8 entry: 0x01 (tag), 0x85 (len=5), 0x68, 0x65, 0x6c, 0x6c, 0x6f  => "hello" (7 bytes)
+        //   QUALIFIED: 0x02 (tag=2), 0x82 (len=2), 0xe3 (prefix=99), 0x80 (selector=0) (4 bytes)
+        //   Total payload = 7 + 4 = 11 bytes. Encoded as Nat: 11 | 0x80 = 0x8b.
+        val nameTableBytes: Array[Byte] = Array(
+            0x8b.toByte, // NAT 11 (name table byte count)
+            // Entry 0: UTF8 "hello"
+            0x01.toByte, // UTF8 tag
+            0x85.toByte, // length = 5
+            0x68.toByte, // 'h'
+            0x65.toByte, // 'e'
+            0x6c.toByte, // 'l'
+            0x6c.toByte, // 'l'
+            0x6f.toByte, // 'o'
+            // Entry 1: QUALIFIED prefix=99, selector=0
+            0x02.toByte, // QUALIFIED tag
+            0x82.toByte, // payload length = 2
+            0xe3.toByte, // prefix NAT = 99 (99 | 0x80)
+            0x80.toByte  // selector NAT = 0 (0 | 0x80)
+        )
+        val view     = ByteView(nameTableBytes)
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        Abort.run[TastyError] {
+            NameUnpickler.read(view, interner)
+        }.map { result =>
+            result match
+                case Result.Failure(TastyError.MalformedSection("Names", reason)) =>
+                    assert(
+                        reason.contains("prefix=99") || reason.contains("ref=99"),
+                        s"Expected reason to mention prefix=99 but was: $reason"
+                    )
+                case other =>
+                    fail(s"Expected MalformedSection but got: $other")
+        }
+    }
+
 end NameUnpicklerTest

@@ -46,8 +46,9 @@ object NameUnpickler:
         val result =
             try Right(readUnsafe(view, interner))
             catch
-                case _: ArrayIndexOutOfBoundsException =>
-                    Left(TastyError.MalformedSection("Names", "unexpected end of name table"))
+                case ex: ArrayIndexOutOfBoundsException =>
+                    val reason = if ex.getMessage != null then ex.getMessage else "unexpected end of name table"
+                    Left(TastyError.MalformedSection("Names", reason))
                 case ex: java.lang.Error
                     if ex.getCause != null && ex.getCause.isInstanceOf[ArrayIndexOutOfBoundsException] =>
                     Left(TastyError.MalformedSection("Names", "unexpected end of name table"))
@@ -76,6 +77,8 @@ object NameUnpickler:
                     val prefix   = view.readNat()
                     val selector = view.readNat()
                     view.goto(end)
+                    checkRef(prefix, buf, "QUALIFIED prefix")
+                    checkRef(selector, buf, "QUALIFIED selector")
                     val s = buf(prefix).asString + "." + buf(selector).asString
                     buf += internString(interner, s)
                 case TastyFormat.NameTags.EXPANDED =>
@@ -83,6 +86,8 @@ object NameUnpickler:
                     val prefix   = view.readNat()
                     val selector = view.readNat()
                     view.goto(end)
+                    checkRef(prefix, buf, "EXPANDED prefix")
+                    checkRef(selector, buf, "EXPANDED selector")
                     val s = buf(prefix).asString + "$$" + buf(selector).asString
                     buf += internString(interner, s)
                 case TastyFormat.NameTags.EXPANDPREFIX =>
@@ -90,6 +95,8 @@ object NameUnpickler:
                     val prefix   = view.readNat()
                     val selector = view.readNat()
                     view.goto(end)
+                    checkRef(prefix, buf, "EXPANDPREFIX prefix")
+                    checkRef(selector, buf, "EXPANDPREFIX selector")
                     val s = buf(prefix).asString + "$" + buf(selector).asString
                     buf += internString(interner, s)
                 case TastyFormat.NameTags.UNIQUE =>
@@ -99,6 +106,8 @@ object NameUnpickler:
                     val underlying =
                         if view.position < end then Some(view.readNat()) else None
                     view.goto(end)
+                    checkRef(separator, buf, "UNIQUE separator")
+                    underlying.foreach(ref => checkRef(ref, buf, "UNIQUE underlying"))
                     val sep = buf(separator).asString
                     val s = underlying match
                         case Some(ref) => buf(ref).asString + sep + uniqid.toString
@@ -109,30 +118,35 @@ object NameUnpickler:
                     val underlying = view.readNat()
                     val index      = view.readNat()
                     view.goto(end)
+                    checkRef(underlying, buf, "DEFAULTGETTER underlying")
                     val s = buf(underlying).asString + "$default$" + index.toString
                     buf += internString(interner, s)
                 case TastyFormat.NameTags.SUPERACCESSOR =>
                     val end        = view.readEnd()
                     val underlying = view.readNat()
                     view.goto(end)
+                    checkRef(underlying, buf, "SUPERACCESSOR underlying")
                     val s = "super$" + buf(underlying).asString
                     buf += internString(interner, s)
                 case TastyFormat.NameTags.INLINEACCESSOR =>
                     val end        = view.readEnd()
                     val underlying = view.readNat()
                     view.goto(end)
+                    checkRef(underlying, buf, "INLINEACCESSOR underlying")
                     val s = "inline$" + buf(underlying).asString
                     buf += internString(interner, s)
                 case TastyFormat.NameTags.OBJECTCLASS =>
                     val end        = view.readEnd()
                     val underlying = view.readNat()
                     view.goto(end)
+                    checkRef(underlying, buf, "OBJECTCLASS underlying")
                     val s = buf(underlying).asString + "$"
                     buf += internString(interner, s)
                 case TastyFormat.NameTags.BODYRETAINER =>
                     val end        = view.readEnd()
                     val underlying = view.readNat()
                     view.goto(end)
+                    checkRef(underlying, buf, "BODYRETAINER underlying")
                     val s = buf(underlying).asString + "$retainedBody"
                     buf += internString(interner, s)
                 case TastyFormat.NameTags.SIGNED =>
@@ -143,13 +157,17 @@ object NameUnpickler:
                     while view.position < end do
                         val ps = view.readInt()
                         if ps < 0 then paramSigs += ("-" + (-ps).toString)
-                        else if ps > 0 then paramSigs += buf(ps).asString
+                        else if ps > 0 then
+                            checkRef(ps, buf, "SIGNED paramSig")
+                            paramSigs += buf(ps).asString
                         else
                             view.goto(end)
                             throw new ArrayIndexOutOfBoundsException("SIGNED paramSig == 0: invalid")
                         end if
                     end while
                     view.goto(end)
+                    checkRef(original, buf, "SIGNED original")
+                    checkRef(resultSig, buf, "SIGNED resultSig")
                     val s = buf(original).asString + ":" + buf(resultSig).asString + "(" + paramSigs.mkString(",") + ")"
                     buf += internString(interner, s)
                 case TastyFormat.NameTags.TARGETSIGNED =>
@@ -161,13 +179,18 @@ object NameUnpickler:
                     while view.position < end do
                         val ps = view.readInt()
                         if ps < 0 then paramSigs += ("-" + (-ps).toString)
-                        else if ps > 0 then paramSigs += buf(ps).asString
+                        else if ps > 0 then
+                            checkRef(ps, buf, "TARGETSIGNED paramSig")
+                            paramSigs += buf(ps).asString
                         else
                             view.goto(end)
                             throw new ArrayIndexOutOfBoundsException("TARGETSIGNED paramSig == 0: invalid")
                         end if
                     end while
                     view.goto(end)
+                    checkRef(original, buf, "TARGETSIGNED original")
+                    checkRef(target, buf, "TARGETSIGNED target")
+                    checkRef(resultSig, buf, "TARGETSIGNED resultSig")
                     val s = buf(original).asString + "[" + buf(target).asString + "]:" + buf(resultSig).asString + "(" + paramSigs.mkString(
                         ","
                     ) + ")"
@@ -180,6 +203,14 @@ object NameUnpickler:
         end while
         buf.toArray
     end readUnsafe
+
+    /** Check that `ref` is a valid index into `buf` and throw ArrayIndexOutOfBoundsException if not. */
+    private def checkRef(ref: Int, buf: scala.collection.mutable.ArrayBuffer[Tasty.Name], role: String): Unit =
+        if ref < 0 || ref >= buf.length then
+            throw new ArrayIndexOutOfBoundsException(
+                s"$role nameRef out of range: ref=$ref tableSize=${buf.length}"
+            )
+    end checkRef
 
     /** Read `length` bytes from `view` into a fresh `Array[Byte]`. */
     private def readBytes(view: ByteView, length: Int): Array[Byte] =

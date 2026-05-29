@@ -92,7 +92,13 @@ object ByteView:
             cursor + len
 
         override def subView(from: Int, until: Int): ByteView.Heap =
+            if from < 0 || until < from || until > bytes.length then
+                throw new ArrayIndexOutOfBoundsException(
+                    s"ByteView.subView: from=$from until=$until length=${bytes.length}"
+                )
+            end if
             new Heap(bytes, from, until)
+        end subView
 
         def goto(addr: Int): Unit =
             cursor = addr
