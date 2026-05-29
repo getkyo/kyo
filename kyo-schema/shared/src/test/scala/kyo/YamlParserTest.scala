@@ -56,6 +56,15 @@ final case class YamlCoreScalars(
     falseValue: Boolean,
     nullValue: Option[String]
 ) derives CanEqual
+final case class YamlCoreNumbers(
+    octal: Int,
+    hex: Int,
+    leadingDot: Double,
+    positiveExponent: Double,
+    positiveInfinity: Double,
+    negativeInfinity: Double,
+    nan: Double
+) derives CanEqual
 final case class YamlPlayer(name: String, hr: Int, avg: Double) derives CanEqual
 final case class YamlLeagues(american: List[String], national: List[String]) derives CanEqual
 final case class YamlEscapes(unicode: String, control: String, hex: String) derives CanEqual
@@ -775,6 +784,28 @@ class YamlParserTest extends Test:
 
         "parses YAML 1.2 decimal integers with leading zeroes as decimal" in {
             assert(Yaml.decode[Map[String, Int]]("value: 010\n") == Result.succeed(Map("value" -> 10)))
+        }
+
+        "resolves YAML 1.2 Core schema numeric scalars" in {
+            val yaml =
+                """octal: 0o7
+                  |hex: 0x3A
+                  |leadingDot: .5
+                  |positiveExponent: +12e03
+                  |positiveInfinity: .inf
+                  |negativeInfinity: -.Inf
+                  |nan: .NAN
+                  |""".stripMargin
+
+            val decoded = Yaml.decode[YamlCoreNumbers](yaml).getOrThrow
+
+            assert(decoded.octal == 7)
+            assert(decoded.hex == 58)
+            assert(decoded.leadingDot == 0.5)
+            assert(decoded.positiveExponent == 12000.0)
+            assert(decoded.positiveInfinity.isPosInfinity)
+            assert(decoded.negativeInfinity.isNegInfinity)
+            assert(decoded.nan.isNaN)
         }
     }
 

@@ -1078,25 +1078,51 @@ object YamlParser:
         private def appendResolvedScalar(value: String, style: Yaml.ScalarStyle): Unit =
             if style != Yaml.ScalarStyle.Plain then appendQuoted(value)
             else
-                value match
-                    case "" | "~" | "null" | "Null" | "NULL" => out.append("null")
-                    case "true" | "True" | "TRUE"            => out.append("true")
-                    case "false" | "False" | "FALSE"         => out.append("false")
-                    case s if isJsonNumber(s)                => out.append(s)
-                    case other                               => appendQuoted(other)
+                resolveCoreScalar(value) match
+                    case CoreScalar.Null          => out.append("null")
+                    case CoreScalar.Bool(value)   => out.append(if value then "true" else "false")
+                    case CoreScalar.Number(value) => out.append(value)
+                    case CoreScalar.Special(value) =>
+                        appendQuoted(value)
+                    case CoreScalar.Str(value) =>
+                        appendQuoted(value)
                 end match
             end if
         end appendResolvedScalar
 
-        private def isJsonNumber(s: String): Boolean =
-            if s.isEmpty then false
-            else
-                try
-                    val _ = BigDecimal(s)
-                    true
-                catch
-                    case _: NumberFormatException => false
-        end isJsonNumber
+        private enum CoreScalar derives CanEqual:
+            case Null
+            case Bool(value: Boolean)
+            case Number(value: String)
+            case Special(value: String)
+            case Str(value: String)
+        end CoreScalar
+
+        private def resolveCoreScalar(value: String): CoreScalar =
+            value match
+                case "" | "~" | "null" | "Null" | "NULL" => CoreScalar.Null
+                case "true" | "True" | "TRUE"            => CoreScalar.Bool(true)
+                case "false" | "False" | "FALSE"         => CoreScalar.Bool(false)
+                case octal if matches(octal, "0o[0-7]+") =>
+                    CoreScalar.Number(BigInt(octal.drop(2), 8).toString)
+                case hex if matches(hex, "0x[0-9a-fA-F]+") =>
+                    CoreScalar.Number(BigInt(hex.drop(2), 16).toString)
+                case number if matches(number, "[-+]?[0-9]+") =>
+                    CoreScalar.Number(BigInt(number).toString)
+                case number if matches(number, "[-+]?(\\.[0-9]+|[0-9]+(\\.[0-9]*)?)([eE][-+]?[0-9]+)?") =>
+                    CoreScalar.Number(BigDecimal(number).toString)
+                case inf if matches(inf, "[-+]?(\\.inf|\\.Inf|\\.INF)") =>
+                    if inf.startsWith("-") then CoreScalar.Special("-Infinity")
+                    else CoreScalar.Special("Infinity")
+                case nan if matches(nan, "\\.nan|\\.NaN|\\.NAN") =>
+                    CoreScalar.Special("NaN")
+                case other =>
+                    CoreScalar.Str(other)
+            end match
+        end resolveCoreScalar
+
+        private def matches(value: String, regex: String): Boolean =
+            value.matches(regex)
 
         private def appendQuoted(value: String): Unit =
             out.append('"')
