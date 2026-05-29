@@ -168,7 +168,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                 val (anchor, tag, valueText) = readProperties(trimmed)
                 blockScalarHeader(valueText) match
                     case Present((style, chomp, explicitIndent)) =>
-                        parseBlockScalar(c1, indent + explicitIndent.getOrElse(2), style, chomp, anchor, tag, visitor)
+                        parseBlockScalar(c1, indent, explicitIndent, style, chomp, anchor, tag, visitor)
                     case Absent if valueText.isEmpty && (anchor.nonEmpty || tag.nonEmpty) =>
                         withPending(anchor, tag) {
                             parseEmptyBlockMappingValue(c1, indent, visitor)
@@ -498,13 +498,17 @@ final class YamlParser private (private val input: String)(using frame: Frame):
 
     private def parseBlockScalar[Ctx, Err, A](
         context: Ctx,
-        indent: Int,
+        parentIndent: Int,
+        explicitIndent: Maybe[Int],
         style: ScalarStyle,
         chomp: Char,
         anchor: Maybe[String],
         tag: Maybe[String],
         visitor: Visitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
+        val indent = explicitIndent match
+            case Present(n) => parentIndent + n
+            case Absent     => inferredBlockScalarIndent(parentIndent)
         val lines = scala.collection.mutable.ListBuffer.empty[BlockScalarLine]
         var done  = false
         while !done && pos < input.length do
@@ -516,6 +520,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
             else if n >= indent then
                 consumeIndent(indent)
                 lines += BlockScalarLine(readRestOfLine(), n > indent)
+            else if n > parentIndent then
+                return Result.fail(error(s"Expected block scalar indentation of at least $indent spaces"))
             else done = true
             end if
         end while
@@ -530,6 +536,23 @@ final class YamlParser private (private val input: String)(using frame: Frame):
             else base + "\n"
         visitor.scalar(context, value, ScalarMeta(anchor, tag, style, mark()))
     end parseBlockScalar
+
+    private def inferredBlockScalarIndent(parentIndent: Int): Int =
+        var i = pos
+        while i < input.length do
+            var indent = 0
+            while i < input.length && input.charAt(i) == ' ' do
+                indent += 1
+                i += 1
+            end while
+            val lineStart = i
+            while i < input.length && input.charAt(i) != '\n' do i += 1
+            val line = input.substring(lineStart, i)
+            if line.trim.nonEmpty then return indent
+            if i < input.length && input.charAt(i) == '\n' then i += 1
+        end while
+        parentIndent + 1
+    end inferredBlockScalarIndent
 
     private case class BlockScalarLine(text: String, moreIndented: Boolean):
         def isBlank: Boolean = text.isEmpty

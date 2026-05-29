@@ -658,6 +658,40 @@ class YamlParserTest extends Test:
             )))
         }
 
+        "infers block scalar indentation from the first non-empty content line" in {
+            val yaml =
+                """wide: |
+                  |    text
+                  |      deeper
+                  |leadingBlank: |-
+                  |
+                  |    text
+                  |explicit: |2
+                  |  text
+                  |""".stripMargin
+
+            assert(Yaml.decode[Map[String, String]](yaml) == Result.succeed(Map(
+                "wide"         -> "text\n  deeper\n",
+                "leadingBlank" -> "\ntext",
+                "explicit"     -> "text\n"
+            )))
+        }
+
+        "reports less-indented non-empty block scalar content" in {
+            val yaml =
+                """text: |
+                  |    first
+                  |  second
+                  |""".stripMargin
+
+            Yaml.decode[Map[String, String]](yaml) match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("Expected block scalar indentation"))
+                    assert(e.getMessage.contains("line 3"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
+        }
+
         "keeps the yaml document from hell gotchas predictable" in {
             val yaml =
                 """server_config:
