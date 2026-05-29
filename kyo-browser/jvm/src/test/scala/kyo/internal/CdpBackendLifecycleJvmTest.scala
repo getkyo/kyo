@@ -115,7 +115,12 @@ private[kyo] object CdpBackendFixtureServer:
                 ws.close(1006, "fixture-drop")
         }
 
-    /** Decode the request, extract `id` via the typed [[FallbackIdEnvelope]] (permissive Maybe[Int]), send a proper reply.
+    /** Local envelope used only by this fixture to extract `id` from an inbound CDP request wire frame.
+      * Permissive: `id` is Maybe[Int] so partial / missing frames do not fail the fixture server.
+      */
+    final private case class FixtureIdEnvelope(id: Maybe[Int] = Absent) derives Schema
+
+    /** Decode the request, extract `id` via [[FixtureIdEnvelope]] (permissive Maybe[Int]), send a proper reply.
       *
       * For `Browser.getVersion` requests, returns a valid [[BrowserVersionResult]] JSON so the Q-002 probe in [[CdpBackend.initUnscoped]]
       * succeeds. For all other requests, returns `{"id":id,"result":{}}`.
@@ -126,7 +131,7 @@ private[kyo] object CdpBackendFixtureServer:
     private def replyOk(ws: HttpWebSocket, requestWire: String)(using
         Frame
     ): Unit < (Async & Abort[Closed]) =
-        Json.decode[FallbackIdEnvelope](requestWire) match
+        Json.decode[FixtureIdEnvelope](requestWire) match
             case Result.Success(env) =>
                 env.id match
                     case Present(id) =>
