@@ -329,13 +329,30 @@ final class YamlReader private (
     end clearFields
 
     override def captureValue(): Reader =
-        withDelegate(_.captureValue()) {
-            prepare()
-            val start = pos
-            val stop  = subtreeEnd(pos)
-            pos = stop
-            child(start, stop)
-        }
+        delegate match
+            case Present(reader) if delegateDepth == 0 =>
+                delegate = Absent
+                reader
+            case _ =>
+                sourceFrames match
+                    case (f: SourceSequenceFrame) :: _ if allowSourcePull && !prepared =>
+                        sourceCaptureSequenceElement(f)
+                        delegate match
+                            case Present(reader) =>
+                                delegate = Absent
+                                reader
+                            case Absent => error("Expected captured YAML value")
+                        end match
+                    case _ =>
+                        withDelegate(_.captureValue()) {
+                            prepare()
+                            val start = pos
+                            val stop  = subtreeEnd(pos)
+                            pos = stop
+                            child(start, stop)
+                        }
+                end match
+        end match
     end captureValue
 
     private def scalarValue(): ScalarValue =

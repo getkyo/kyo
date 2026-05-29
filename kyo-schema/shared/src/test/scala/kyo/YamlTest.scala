@@ -456,6 +456,24 @@ class YamlTest extends Test:
             assert(count == 7)
         }
 
+        "captureValue pulls the current sequence element without parsing later malformed content" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """- count: 7
+                      |- [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.arrayStart())
+            val captured = reader.captureValue()
+
+            discard(captured.objectStart())
+            captured.fieldParse()
+            val count = captured.int()
+            captured.objectEnd()
+            assert(count == 7)
+        }
+
         "matches UTF-8 field names without lossy byte comparisons" in {
             assert(Yaml.decode[YamlUnicodeField]("café: 7\n") == Result.succeed(YamlUnicodeField(7)))
         }
