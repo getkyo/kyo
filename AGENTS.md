@@ -65,6 +65,10 @@ kyo-<module>/
   native/src/main/scala/kyo/       # Native-specific source
 ```
 
+## Writing Module READMEs
+
+To create or rewrite a module's README, invoke the `/readme <module-path>` skill (defined at `.claude/skills/readme/SKILL.md`). The skill carries the conventions and runs the full source-analysis, draft, critique, and doctest-verification pipeline. `sbt <module>/doctest` validates every fenced Scala block.
+
 ## Pre-Change Checklist
 
 - [ ] Read the file first — understand existing patterns before editing

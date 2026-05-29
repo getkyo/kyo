@@ -1,0 +1,2 @@
+# Sources: kyoDoctestSources points at GUIDE.md only; doctest succeeds ignoring README.md.
+> doctest

@@ -81,7 +81,7 @@ class DebugTest extends Test:
     inline def testOutput(fragments: String*)(code: => Any): Assertion =
         import kyo.Ansi.*
         val outContent = new ByteArrayOutputStream()
-        Console.withOut(outContent)(code)
+        scala.Console.withOut(outContent)(code)
         val out = outContent.toString.trim.stripAnsi
         fragments.foldLeft(out) { (out, fragment) =>
             val idx = out.indexOf(fragment)

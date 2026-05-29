@@ -20,13 +20,13 @@ Works on JVM, Scala.js, and Scala Native.
 
 Add the dependency to your `build.sbt`:
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %%% "kyo-case-app" % "<latest version>"
 ```
 
 You also need a case-app dependency if you use its annotations or helpers directly:
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "com.github.alexarchambault" %%% "case-app" % "2.1.0"
 ```
 
@@ -52,7 +52,7 @@ object Greet extends KyoCaseApp[GreetOptions]:
 
 Point your build at that object as the main class, for example in sbt:
 
-```scala
+```scala doctest:expect=skipped
 Compile / mainClass := Some("Greet")
 ```
 
@@ -118,7 +118,7 @@ object TodoApp extends CommandsEntryPoint:
 
     private val store =
         import AllowUnsafe.embrace.danger
-        AtomicRef.Unsafe.init(Chunk.empty[Todo])
+        AtomicRef.Unsafe.init(Chunk.empty[Todo]).safe
 
     override def progName: String = "todo"
     def commands                  = Seq(Create, Complete, List, Delete, Start)
@@ -252,10 +252,9 @@ Both provide three `run` overloads (same names, resolved by the shape of the blo
 
 All delegate to a single `registerRun` queue so mixed overloads keep registration order.
 
-Non-throwable failures call `exitHook(1)` (defaults to `Platform.exit`; case-app reserves `exit` for its own API). Interrupt handling is shared with `KyoApp` via [`KyoAppRunner`](../../kyo-core/shared/src/main/scala/kyo/KyoAppRunner.scala) (SIGINT/SIGTERM on non-Windows platforms).
+Non-throwable failures call `exitHook(1)` (defaults to `Platform.exit`; case-app reserves `exit` for its own API). Interrupt handling is shared with `KyoApp` via [`KyoAppRunner`](../kyo-core/shared/src/main/scala/kyo/internal/KyoAppRunner.scala) (SIGINT/SIGTERM on non-Windows platforms).
 
 ## Related
 
 - [case-app](https://alexarchambault.github.io/case-app/) — option definitions, help, completions
 - [KyoApp](https://github.com/getkyo/kyo) — raw `args` without a CLI parser
-- [ADR 0001: KyoAppRunner integration entrypoints](docs/adr/0001-kyo-app-runner-integration-entrypoints.md) — design for deduplicating runner logic with `KyoApp`
