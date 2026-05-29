@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.Reader
 
-final class YamlReader(input: Span[Byte])(using _frame: Frame) extends Reader:
+final class YamlReader(input: Span[Byte], yamlVersion: Yaml.SpecVersion = Yaml.SpecVersion.Yaml12)(using _frame: Frame) extends Reader:
     private var prepared: Maybe[JsonReader] = Absent
 
     def frame: Frame = _frame
@@ -53,7 +53,7 @@ final class YamlReader(input: Span[Byte])(using _frame: Frame) extends Reader:
         prepared match
             case Present(reader) => reader
             case Absent =>
-                val json   = YamlParser.toJson(input, maxDepth, maxCollectionSize)(using _frame)
+                val json   = YamlParser.toJson(input, maxDepth, maxCollectionSize, yamlVersion)(using _frame)
                 val reader = JsonReader(json)
                 reader.resetLimits(maxDepth, maxCollectionSize)
                 prepared = Maybe(reader)
@@ -63,7 +63,10 @@ final class YamlReader(input: Span[Byte])(using _frame: Frame) extends Reader:
 end YamlReader
 
 object YamlReader:
-    def apply(input: Span[Byte])(using Frame): YamlReader = new YamlReader(input)
+    def apply(input: Span[Byte])(using Frame): YamlReader                                = new YamlReader(input)
+    def apply(input: Span[Byte], yamlVersion: Yaml.SpecVersion)(using Frame): YamlReader = new YamlReader(input, yamlVersion)
     def apply(input: String)(using Frame): YamlReader =
         apply(Span.from(input.getBytes(StandardCharsets.UTF_8)))
+    def apply(input: String, yamlVersion: Yaml.SpecVersion)(using Frame): YamlReader =
+        apply(Span.from(input.getBytes(StandardCharsets.UTF_8)), yamlVersion)
 end YamlReader

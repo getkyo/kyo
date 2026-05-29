@@ -1011,8 +1011,11 @@ object YamlParser:
         toJson(input, Yaml.DefaultMaxDepth, Yaml.DefaultMaxCollectionSize)
 
     def toJson(input: Span[Byte], maxDepth: Int, maxCollectionSize: Int)(using Frame): Span[Byte] =
+        toJson(input, maxDepth, maxCollectionSize, Yaml.SpecVersion.Yaml12)
+
+    def toJson(input: Span[Byte], maxDepth: Int, maxCollectionSize: Int, yamlVersion: Yaml.SpecVersion)(using Frame): Span[Byte] =
         val s       = new String(input.toArrayUnsafe, StandardCharsets.UTF_8)
-        val visitor = JsonBuildingVisitor(maxDepth, maxCollectionSize)
+        val visitor = JsonBuildingVisitor(maxDepth, maxCollectionSize, yamlVersion)
         apply(s).visit(())(visitor) match
             case Result.Success(json: String)       => Span.from(json.getBytes(StandardCharsets.UTF_8))
             case Result.Failure(e: DecodeException) => throw e
@@ -1020,7 +1023,7 @@ object YamlParser:
         end match
     end toJson
 
-    final private class JsonBuildingVisitor(maxDepth: Int, maxCollectionSize: Int)(using Frame)
+    final private class JsonBuildingVisitor(maxDepth: Int, maxCollectionSize: Int, yamlVersion: Yaml.SpecVersion)(using Frame)
         extends Yaml.Visitor[Unit, DecodeException, String]:
         final private class JsonFrame(val isMapping: Boolean, var first: Boolean, var expectingKey: Boolean, var count: Int)
         final private class Capture(val name: String, val start: Int, val depth: Int, var values: Int, var maxDepth: Int)
@@ -1189,7 +1192,7 @@ object YamlParser:
         end appendResolvedScalar
 
         private def appendCoreScalar(value: String): Unit =
-            YamlScalars.resolveCore(value) match
+            YamlScalars.resolve(value, yamlVersion) match
                 case YamlScalars.Core.Null          => out.append("null")
                 case YamlScalars.Core.Bool(value)   => out.append(if value then "true" else "false")
                 case YamlScalars.Core.Number(value) => out.append(value)
@@ -1218,21 +1221,20 @@ object YamlParser:
         end standardScalarTag
 
         private def appendTaggedInt(value: String): Unit =
-            YamlScalars.parseCoreInt(value) match
+            YamlScalars.parseInt(value, yamlVersion) match
                 case Present(number) => out.append(number)
                 case Absent          => appendQuoted(value)
         end appendTaggedInt
 
         private def appendTaggedBool(value: String): Unit =
-            value match
-                case "true" | "True" | "TRUE"    => out.append("true")
-                case "false" | "False" | "FALSE" => out.append("false")
-                case other                       => appendQuoted(other)
+            YamlScalars.parseBool(value, yamlVersion) match
+                case Present(value) => out.append(if value then "true" else "false")
+                case Absent         => appendQuoted(value)
             end match
         end appendTaggedBool
 
         private def appendTaggedFloat(value: String): Unit =
-            YamlScalars.parseCoreFloat(value) match
+            YamlScalars.parseFloat(value, yamlVersion) match
                 case Present(YamlScalars.Core.Number(number))   => out.append(number)
                 case Present(YamlScalars.Core.Special(special)) => appendQuoted(special)
                 case _                                          => appendQuoted(value)

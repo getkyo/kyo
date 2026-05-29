@@ -65,6 +65,24 @@ final case class YamlCoreNumbers(
     negativeInfinity: Double,
     nan: Double
 ) derives CanEqual
+final case class YamlLegacyBooleans(
+    norway: Boolean,
+    on: Boolean,
+    off: Boolean,
+    yes: Boolean,
+    no: Boolean,
+    y: Boolean,
+    n: Boolean
+) derives CanEqual
+final case class YamlLegacyNumbers(
+    octal: Int,
+    binary: Int,
+    sexagesimal: Int,
+    underscored: Int,
+    fixed: Double,
+    sexagesimalFloat: Double
+) derives CanEqual
+final case class YamlLegacyTaggedScalars(intValue: Int, boolValue: Boolean, floatValue: Double) derives CanEqual
 final case class YamlTaggedScalars(
     stringValue: String,
     intValue: Int,
@@ -884,6 +902,59 @@ class YamlParserTest extends Test:
             assert(decoded.floatValue.isPosInfinity)
             assert(decoded.nullValue == None)
             assert(decoded.disabled == "12")
+        }
+
+        "uses YAML 1.1 scalar resolution when configured" in {
+            val yaml =
+                """norway: NO
+                  |on: on
+                  |off: off
+                  |yes: yes
+                  |no: no
+                  |y: Y
+                  |n: n
+                  |""".stripMargin
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+
+            assert(Yaml.decode[YamlLegacyBooleans](yaml, config) == Result.succeed(
+                YamlLegacyBooleans(false, true, false, true, false, true, false)
+            ))
+        }
+
+        "decodes YAML 1.1 numeric scalar forms when configured" in {
+            val yaml =
+                """octal: 010
+                  |binary: 0b1010
+                  |sexagesimal: 1:20:30
+                  |underscored: +685_230
+                  |fixed: 685_230.15
+                  |sexagesimalFloat: 190:20:30.15
+                  |""".stripMargin
+            val config  = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            val decoded = Yaml.decode[YamlLegacyNumbers](yaml, config).getOrThrow
+
+            assert(decoded.octal == 8)
+            assert(decoded.binary == 10)
+            assert(decoded.sexagesimal == 4830)
+            assert(decoded.underscored == 685230)
+            assert(decoded.fixed == 685230.15)
+            assert(decoded.sexagesimalFloat == 685230.15)
+        }
+
+        "honors YAML 1.1 explicit scalar tags when configured" in {
+            val yaml =
+                """intValue: !!int "010"
+                  |boolValue: !!bool "NO"
+                  |floatValue: !!float "190:20:30.15"
+                  |""".stripMargin
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+
+            val decoded = Yaml.decode[Map[String, String]]("value: NO\n").getOrThrow
+
+            assert(decoded == Map("value" -> "NO"))
+            assert(Yaml.decode[YamlLegacyTaggedScalars](yaml, config) == Result.succeed(
+                YamlLegacyTaggedScalars(8, false, 685230.15)
+            ))
         }
     }
 

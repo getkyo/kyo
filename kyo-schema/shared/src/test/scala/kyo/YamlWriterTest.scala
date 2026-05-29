@@ -195,5 +195,13 @@ class YamlWriterTest extends Test:
             assert(Yaml.encode("true", Yaml.WriterConfig.Readable) == "\"true\"\n")
             assert(Yaml.encode("Alice #1", singleQuoted) == "'Alice #1'\n")
         }
+
+        "quotes YAML 1.1 ambiguous strings when configured for legacy consumers" in {
+            val legacy = Yaml.WriterConfig.Readable.copy(yamlVersion = Yaml.SpecVersion.Yaml11)
+
+            assert(Yaml.encode("NO") == "NO\n")
+            assert(Yaml.encode("NO", legacy) == "\"NO\"\n")
+            assert(Yaml.encode("010", legacy) == "\"010\"\n")
+        }
     }
 end YamlWriterTest

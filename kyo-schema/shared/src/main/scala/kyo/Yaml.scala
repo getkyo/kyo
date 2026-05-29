@@ -24,6 +24,20 @@ object Yaml:
 
     given Yaml = Yaml()
 
+    /** YAML language version used for schema-level scalar resolution.
+      *
+      * The parser accepts the YAML syntax supported by this module independently of this setting. `SpecVersion` controls how plain scalars
+      * and standard scalar tags are interpreted while adapting YAML events into kyo-schema readers, and how the writer decides which
+      * strings are ambiguous enough to quote.
+      *
+      * `Yaml12` is the default because YAML 1.2 Core schema avoids legacy implicit booleans such as `NO`, `yes`, `on`, and `off`. `Yaml11`
+      * is available for systems that still use YAML 1.1 resolution, including legacy booleans, leading-zero octal integers, binary
+      * integers, sexagesimal numbers, and underscores inside numeric scalars.
+      */
+    enum SpecVersion derives CanEqual:
+        case Yaml12, Yaml11
+    end SpecVersion
+
     /** Zero-based selector for one YAML document within a stream.
       *
       * YAML streams can contain multiple documents separated by `---` or `...`. `DocumentIndex` lets callers select one of those
@@ -41,14 +55,16 @@ object Yaml:
     /** Decoding settings for YAML input.
       *
       * `ReaderConfig` keeps parser limits and stream selection in one value so callers can choose a document from a multi-document stream
-      * without losing access to safety limits. `maxDepth` limits nested codec reads, and `maxCollectionSize` limits collection entries in
-      * the same way as [[Json]] decoding. `documentIndex` is empty for single-document decoding and set to `DocumentIndex(n)` to decode
-      * the zero-based nth document from a stream. The default configuration decodes exactly one document with the standard limits.
+      * without losing access to safety limits. `yamlVersion` selects scalar resolution rules for schema decoding. `maxDepth` limits nested
+      * codec reads, and `maxCollectionSize` limits collection entries in the same way as [[Json]] decoding. `documentIndex` is empty for
+      * single-document decoding and set to `DocumentIndex(n)` to decode the zero-based nth document from a stream. The default
+      * configuration decodes exactly one YAML 1.2 document with the standard limits.
       */
     case class ReaderConfig(
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize,
-        documentIndex: Maybe[DocumentIndex] = Absent
+        documentIndex: Maybe[DocumentIndex] = Absent,
+        yamlVersion: SpecVersion = SpecVersion.Yaml12
     ) derives CanEqual
 
     object ReaderConfig:
@@ -63,9 +79,9 @@ object Yaml:
       * strings use block scalars.
       *
       * The config can also select flow output for compact documents, JSON-compatible flow output for speed-oriented processing, quote and
-      * multiline scalar styles, document markers, indentation width, trailing newline behavior, and special floating-point rendering.
-      * Profiles in the companion provide named starting points for common tradeoffs: readability, compactness, smaller payloads, and fast
-      * downstream processing.
+      * multiline scalar styles, document markers, indentation width, trailing newline behavior, special floating-point rendering, and the
+      * YAML version used when deciding which strings are ambiguous. Profiles in the companion provide named starting points for common
+      * tradeoffs: readability, compactness, smaller payloads, and fast downstream processing.
       *
       * IMPORTANT: `ScalarQuoting.WhenNeeded` can emit plain strings such as `true` or `0x3A` without quotes. Use the default
       * `QuoteAmbiguous` behavior when encoded YAML should decode back to strings under the YAML Core schema.
@@ -80,7 +96,8 @@ object Yaml:
         chomping: WriterConfig.Chomping = WriterConfig.Chomping.Preserve,
         documentMarkers: WriterConfig.DocumentMarkers = WriterConfig.DocumentMarkers.None,
         trailingNewline: Boolean = true,
-        specialFloatStyle: WriterConfig.SpecialFloatStyle = WriterConfig.SpecialFloatStyle.YamlCore
+        specialFloatStyle: WriterConfig.SpecialFloatStyle = WriterConfig.SpecialFloatStyle.YamlCore,
+        yamlVersion: SpecVersion = SpecVersion.Yaml12
     ) derives CanEqual
 
     object WriterConfig:
@@ -290,17 +307,18 @@ object Yaml:
             case Present(index) =>
                 decode[A](String(input.toArray, StandardCharsets.UTF_8), config.copy(documentIndex = Maybe(index)))
             case Absent =>
-                decodePreparedBytes(input, config.maxDepth, config.maxCollectionSize)
+                decodePreparedBytes(input, config.maxDepth, config.maxCollectionSize, config.yamlVersion)
         end match
     end decodeBytes
 
     private def decodePreparedBytes[A](
         input: Span[Byte],
         maxDepth: Int,
-        maxCollectionSize: Int
-    )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        maxCollectionSize: Int,
+        yamlVersion: SpecVersion
+    )(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         Result.catching[DecodeException] {
-            val reader = yaml.newReader(input)
+            val reader = internal.YamlReader(input, yamlVersion)
             reader.resetLimits(maxDepth, maxCollectionSize)
             schema.readFrom(reader)
         }

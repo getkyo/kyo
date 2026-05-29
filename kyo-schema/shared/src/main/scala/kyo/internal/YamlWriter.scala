@@ -362,7 +362,7 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
     end isPlainSyntaxSafe
 
     private def resolvesAsCoreScalar(value: String): Boolean =
-        YamlScalars.resolvesAsCore(value)
+        YamlScalars.resolvesAsCore(value, config.yamlVersion)
 
     private def flowCollections: Boolean =
         config.collectionStyle != CollectionStyle.Block
