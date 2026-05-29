@@ -25,13 +25,14 @@ private[kyo] object CssStyleRenderer:
         val sb      = new StringBuilder
         val filters = new StringBuilder
         style.props.foreach { prop =>
-            prop match
-                case _: BrightnessProp | _: ContrastProp | _: GrayscaleProp | _: SepiaProp |
-                    _: InvertProp | _: SaturateProp | _: HueRotateProp | _: BlurProp =>
+            // renderFilterFragment is the single source of truth for which props are CSS filters: a
+            // Present fragment goes into the `filter:` declaration, Absent means it is a normal property.
+            renderFilterFragment(prop) match
+                case Present(fragment) =>
                     if filters.isEmpty then filters.append("filter:")
                     filters.append(' ')
-                    filters.append(renderFilterFragment(prop))
-                case _ =>
+                    filters.append(fragment)
+                case Absent =>
                     val css = renderProp(prop)
                     if css.nonEmpty then
                         if sb.nonEmpty then sb.append(' ')
@@ -45,16 +46,17 @@ private[kyo] object CssStyleRenderer:
         sb.toString
     end render
 
-    private def renderFilterFragment(prop: Prop): String = prop match
-        case BrightnessProp(v) => s"brightness(${fmt(v)})"
-        case ContrastProp(v)   => s"contrast(${fmt(v)})"
-        case GrayscaleProp(v)  => s"grayscale(${fmt(v)})"
-        case SepiaProp(v)      => s"sepia(${fmt(v)})"
-        case InvertProp(v)     => s"invert(${fmt(v)})"
-        case SaturateProp(v)   => s"saturate(${fmt(v)})"
-        case HueRotateProp(v)  => s"hue-rotate(${fmt(v)}deg)"
-        case BlurProp(v)       => s"blur(${size(v)})"
-        case _                 => ""
+    /** Present(fragment) for a CSS filter prop, Absent for any non-filter prop. */
+    private def renderFilterFragment(prop: Prop): Maybe[String] = prop match
+        case BrightnessProp(v) => Present(s"brightness(${fmt(v)})")
+        case ContrastProp(v)   => Present(s"contrast(${fmt(v)})")
+        case GrayscaleProp(v)  => Present(s"grayscale(${fmt(v)})")
+        case SepiaProp(v)      => Present(s"sepia(${fmt(v)})")
+        case InvertProp(v)     => Present(s"invert(${fmt(v)})")
+        case SaturateProp(v)   => Present(s"saturate(${fmt(v)})")
+        case HueRotateProp(v)  => Present(s"hue-rotate(${fmt(v)}deg)")
+        case BlurProp(v)       => Present(s"blur(${size(v)})")
+        case _                 => Absent
 
     private def alignment(v: Alignment): String = v match
         case Alignment.start    => "flex-start"

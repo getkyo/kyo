@@ -15,7 +15,7 @@ private[kyo] object DomBackend:
     def mount(ui: UI, selector: String)(using Frame): Unit < (Async & Scope) =
         Sync.defer {
             val target = document.querySelector(selector)
-            if target == null then Abort.panic(KyoException(s"Element not found: $selector"))
+            if target == null then Abort.panic(UIException(s"Element not found: $selector"))
             else mountInto(ui, target.asInstanceOf[dom.Element])
         }
     end mount
@@ -100,8 +100,7 @@ private[kyo] object DomBackend:
     /** Set up capture-phase event delegation on document.body. */
     private def setupEventDelegation(dispatch: (Seq[String], UIEvent) => Boolean < Async)(using Frame): Unit < Sync = Sync.defer {
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
-            val target = findPathElement(e.target.asInstanceOf[dom.Element])
-            if target != null then
+            findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
                 val path    = parsePath(target.getAttribute("data-kyo-path"))
                 val evAttr  = target.getAttribute("data-kyo-ev")
                 val evTypes = if evAttr != null then evAttr.split(",").toSet else Set.empty[String]
@@ -187,7 +186,7 @@ private[kyo] object DomBackend:
                 event.foreach { ev =>
                     fireFromJs(dispatch(path, ev).unit)
                 }
-            end if
+            }
         end handler
 
         Seq("click", "input", "change", "submit", "keydown", "keyup", "focus", "blur").foreach { t =>
@@ -196,14 +195,13 @@ private[kyo] object DomBackend:
     }
     end setupEventDelegation
 
-    private def findPathElement(el: dom.Element): dom.Element =
-        if el == null || (el eq document.body) then null
-        else if el.hasAttribute("data-kyo-path") then el
+    private def findPathElement(el: dom.Element): Maybe[dom.Element] =
+        if el == null || (el eq document.body) then Absent
+        else if el.hasAttribute("data-kyo-path") then Present(el)
         else
-            val parent = el.parentNode
-            parent match
+            el.parentNode match
                 case p: dom.Element => findPathElement(p)
-                case _              => null
+                case _              => Absent
 
     private def parsePath(p: String): Seq[String] =
         if p == null || p.isEmpty then Seq.empty

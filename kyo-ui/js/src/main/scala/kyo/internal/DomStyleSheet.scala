@@ -17,8 +17,7 @@ private[kyo] object DomStyleSheet:
         el
     end styleElement
 
-    // Class-loading side effect: base CSS reset injected once when DomStyleSheet is first referenced.
-    inject(
+    private val baseCss =
         """*, *::before, *::after { box-sizing: border-box; }
           |body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
           |div, section, main, header, footer, form, article, aside, p, ul, ol, pre, code, h1, h2, h3, h4, h5, h6, label { display: flex; flex-direction: column; }
@@ -29,10 +28,17 @@ private[kyo] object DomStyleSheet:
           |a { color: inherit; text-decoration: none; }
           |table { border-collapse: collapse; width: 100%; }
           |""".stripMargin
-    )
 
-    /** Forces class loading so the base CSS reset is injected. No-op after the first invocation. */
-    def injectBase()(using Frame): Unit < Sync = Sync.defer(())
+    private var baseInjected = false
+
+    /** Injects the base CSS reset once. Idempotent: the first call appends the reset rules; later calls are no-ops.
+      * (kyo-ui is JS-only and the browser is single-threaded, so a plain flag is sufficient.)
+      */
+    def injectBase()(using Frame): Unit < Sync = Sync.defer {
+        if !baseInjected then
+            baseInjected = true
+            inject(baseCss)
+    }
 
     /** Applies a Style to a DOM element.
       *
