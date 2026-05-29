@@ -11,20 +11,22 @@ final class YamlReader private (
     private var events: Array[YamlReader.Event],
     private var pos: Int,
     private var end: Int,
-    private val anchors: scala.collection.mutable.Map[String, YamlReader.Anchor]
+    private val anchors: scala.collection.mutable.Map[String, YamlReader.Anchor],
+    private val expansion: YamlReader.Expansion,
+    private val allowSourcePull: Boolean
 )(using _frame: Frame) extends Reader:
     import YamlReader.*
 
-    private var prepared: Boolean            = events ne null
-    private var stack: List[ContainerFrame]  = Nil
-    private var delegate: Maybe[YamlReader]  = Absent
-    private var delegateDepth: Int           = 0
-    private var expandedAliasValues: Int     = 0
-    private var expandedAliasDepth: Int      = 0
-    private var _lastFieldName: String       = ""
-    private var _lastFieldBytes: Array[Byte] = Array.emptyByteArray
-    private var fieldValues: Array[AnyRef]   = new Array[AnyRef](16)
-    private var fieldDepth: Int              = 0
+    private var prepared: Boolean               = events ne null
+    private var stack: List[ContainerFrame]     = Nil
+    private var delegate: Maybe[YamlReader]     = Absent
+    private var delegateDepth: Int              = 0
+    private var sourcePos: Int                  = 0
+    private var sourceFrames: List[SourceFrame] = Nil
+    private var _lastFieldName: String          = ""
+    private var _lastFieldBytes: Array[Byte]    = Array.emptyByteArray
+    private var fieldValues: Array[AnyRef]      = new Array[AnyRef](16)
+    private var fieldDepth: Int                 = 0
 
     override def frame: Frame = _frame
 
@@ -35,57 +37,73 @@ final class YamlReader private (
 
     def objectStart(): Int =
         withDelegateCollection(_.objectStart(), _ + 1) {
-            currentAliasOr { reader =>
-                val out = reader.objectStart()
-                delegateDepth = 1
-                out
-            } {
-                peek match
-                    case e: MappingStart =>
-                        checkDepth()
-                        pos += 1
-                        stack = MappingFrame :: stack
-                        if atNodeEnd then 0 else -1
-                    case other => expected("mapping", other)
-            }
+            if trySourceObjectStart() then if sourceMappingEmpty then 0 else -1
+            else
+                currentAliasOr { reader =>
+                    val out = reader.objectStart()
+                    delegateDepth = 1
+                    out
+                } {
+                    peek match
+                        case e: MappingStart =>
+                            checkDepth()
+                            pos += 1
+                            stack = MappingFrame :: stack
+                            if atNodeEnd then 0 else -1
+                        case other => expected("mapping", other)
+                }
         }
     end objectStart
 
     def objectEnd(): Unit =
         withDelegateEnd(_.objectEnd()) {
-            expectNodeEnd("mapping")
-            stack = stack match
-                case (_: MappingFrame.type) :: rest => rest
-                case _                              => error("Unexpected mapping end")
-            decrementDepth()
+            sourceFrames match
+                case (_: SourceMappingFrame) :: rest =>
+                    sourceFrames = rest
+                    decrementDepth()
+                case _ =>
+                    expectNodeEnd("mapping")
+                    stack = stack match
+                        case (_: MappingFrame.type) :: rest => rest
+                        case _                              => error("Unexpected mapping end")
+                    decrementDepth()
+            end match
         }
     end objectEnd
 
     def arrayStart(): Int =
         withDelegateCollection(_.arrayStart(), _ + 1) {
-            currentAliasOr { reader =>
-                val out = reader.arrayStart()
-                delegateDepth = 1
-                out
-            } {
-                peek match
-                    case e: SequenceStart =>
-                        checkDepth()
-                        pos += 1
-                        stack = SequenceFrame :: stack
-                        if atNodeEnd then 0 else -1
-                    case other => expected("sequence", other)
-            }
+            if trySourceArrayStart() then if sourceSequenceEmpty then 0 else -1
+            else
+                currentAliasOr { reader =>
+                    val out = reader.arrayStart()
+                    delegateDepth = 1
+                    out
+                } {
+                    peek match
+                        case e: SequenceStart =>
+                            checkDepth()
+                            pos += 1
+                            stack = SequenceFrame :: stack
+                            if atNodeEnd then 0 else -1
+                        case other => expected("sequence", other)
+                }
         }
     end arrayStart
 
     def arrayEnd(): Unit =
         withDelegateEnd(_.arrayEnd()) {
-            expectNodeEnd("sequence")
-            stack = stack match
-                case (_: SequenceFrame.type) :: rest => rest
-                case _                               => error("Unexpected sequence end")
-            decrementDepth()
+            sourceFrames match
+                case (_: SourceSequenceFrame) :: rest =>
+                    sourceFrames = rest
+                    decrementDepth()
+                case _ =>
+                    expectNodeEnd("sequence")
+                    stack = stack match
+                        case (_: SequenceFrame.type) :: rest => rest
+                        case _                               => error("Unexpected sequence end")
+                    decrementDepth()
+            end match
         }
     end arrayEnd
 
@@ -101,6 +119,8 @@ final class YamlReader private (
                 _lastFieldName = reader.lastFieldName()
                 _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
                 clearFinishedDelegate()
+            case Absent if sourceFrames.headOption.exists(_.isInstanceOf[SourceMappingFrame]) =>
+                sourceFieldParse()
             case Absent =>
                 currentAliasOr { reader =>
                     reader.fieldParse()
@@ -131,15 +151,23 @@ final class YamlReader private (
 
     def hasNextField(): Boolean =
         withDelegate(_.hasNextField()) {
-            prepare()
-            !atNodeEnd
+            sourceFrames match
+                case (_: SourceMappingFrame) :: _ => sourceHasNextField()
+                case _ =>
+                    prepare()
+                    !atNodeEnd
+            end match
         }
     end hasNextField
 
     def hasNextElement(): Boolean =
         withDelegate(_.hasNextElement()) {
-            prepare()
-            !atNodeEnd
+            sourceFrames match
+                case (_: SourceSequenceFrame) :: _ => sourceHasNextElement()
+                case _ =>
+                    prepare()
+                    !atNodeEnd
+            end match
         }
     end hasNextElement
 
@@ -220,13 +248,15 @@ final class YamlReader private (
 
     def isNil(): Boolean =
         withDelegate(_.isNil()) {
-            currentAliasOr(_.isNil()) {
-                peek match
-                    case Scalar(value, meta, _) if resolveScalar(value, meta) == ScalarValue.Null =>
-                        pos += 1
-                        true
-                    case _ => false
-            }
+            if allowSourcePull && !prepared && sourceFrames.nonEmpty then false
+            else
+                currentAliasOr(_.isNil()) {
+                    peek match
+                        case Scalar(value, meta, _) if resolveScalar(value, meta) == ScalarValue.Null =>
+                            pos += 1
+                            true
+                        case _ => false
+                }
         }
     end isNil
 
@@ -310,20 +340,28 @@ final class YamlReader private (
 
     private def scalarValue(): ScalarValue =
         withDelegate(_.scalarValue()) {
-            currentAliasOr(_.scalarValue()) {
-                peek match
-                    case Scalar(value, meta, _) =>
-                        pos += 1
-                        checkPotentialNumericScalar(value)
-                        val resolved = resolveScalar(value, meta)
-                        resolved match
-                            case ScalarValue.Number(number) => checkNumericScalar(number)
-                            case _                          => ()
-                        resolved
-                    case other => expected("scalar", other)
-            }
+            trySourceScalarValue() match
+                case Present(value) => value
+                case Absent =>
+                    currentAliasOr(_.scalarValue()) {
+                        peek match
+                            case Scalar(value, meta, _) =>
+                                pos += 1
+                                resolveScalarValue(value, meta)
+                            case other => expected("scalar", other)
+                    }
+            end match
         }
     end scalarValue
+
+    private def resolveScalarValue(value: String, meta: Yaml.ScalarMeta): ScalarValue =
+        checkPotentialNumericScalar(value)
+        val resolved = resolveScalar(value, meta)
+        resolved match
+            case ScalarValue.Number(number) => checkNumericScalar(number)
+            case _                          => ()
+        resolved
+    end resolveScalarValue
 
     private def numberString(expected: String): String =
         scalarValue() match
@@ -469,12 +507,14 @@ final class YamlReader private (
     private def startAlias(name: String, mark: Yaml.Mark): Unit =
         anchors.get(name) match
             case Some(anchor) =>
-                expandedAliasValues += anchor.values
-                expandedAliasDepth = math.max(expandedAliasDepth, anchor.maxDepth)
-                checkCollectionSize(expandedAliasValues)
-                if expandedAliasDepth > maxDepth then throw LimitExceededException("Nesting depth", expandedAliasDepth, maxDepth)
+                expansion.values += anchor.values
+                expansion.depth = math.max(expansion.depth, anchor.maxDepth)
+                checkCollectionSize(expansion.values)
+                if expansion.depth > maxDepth then throw LimitExceededException("Nesting depth", expansion.depth, maxDepth)
                 pos += 1
-                val reader = child(anchor.start, anchor.end)
+                val reader = anchor.source match
+                    case Present(source) => sourceChild(source)
+                    case Absent          => child(anchor.start, anchor.end)
                 reader.resetLimits(maxDepth, maxCollectionSize)
                 delegate = Maybe(reader)
                 delegateDepth = 0
@@ -484,10 +524,468 @@ final class YamlReader private (
     end startAlias
 
     private def child(start: Int, stop: Int): YamlReader =
-        val reader = new YamlReader("", yamlVersion, events, start, stop, anchors)
+        val reader = new YamlReader("", yamlVersion, events, start, stop, anchors, expansion, allowSourcePull = false)
         reader.resetLimits(maxDepth, maxCollectionSize)
         reader
     end child
+
+    private def sourceChild(input: String): YamlReader =
+        val reader = new YamlReader(input, yamlVersion, null, 0, 0, anchors, expansion, allowSourcePull)
+        reader.resetLimits(math.max(0, maxDepth - sourceFrames.size), maxCollectionSize)
+        reader
+    end sourceChild
+
+    private def trySourceObjectStart(): Boolean =
+        if !allowSourcePull || prepared || source.isEmpty then false
+        else
+            initSourcePosition()
+            if sourcePos >= source.length then false
+            else
+                val lineText = currentSourceLine()
+                if sourceStartsFlowCollection then false
+                else if isSourceBlockMappingLine(lineText) then
+                    checkDepth()
+                    sourceFrames = SourceMappingFrame(currentSourceIndent()) :: sourceFrames
+                    true
+                else false
+                end if
+            end if
+        end if
+    end trySourceObjectStart
+
+    private def trySourceArrayStart(): Boolean =
+        if !allowSourcePull || prepared || source.isEmpty then false
+        else
+            initSourcePosition()
+            if sourcePos >= source.length || sourceStartsFlowCollection then false
+            else if sourceStartsSequenceEntryAtIndent() then
+                checkDepth()
+                sourceFrames = SourceSequenceFrame(currentSourceIndent()) :: sourceFrames
+                true
+            else false
+            end if
+        end if
+    end trySourceArrayStart
+
+    private def initSourcePosition(): Unit =
+        if sourcePos == 0 then
+            skipSourceIgnorable()
+            if sourceIsDocumentMarker("---") then
+                val _ = readSourceRestOfLine()
+                skipSourceIgnorable()
+    end initSourcePosition
+
+    private def sourceMappingEmpty: Boolean =
+        sourceFrames match
+            case (f: SourceMappingFrame) :: _ =>
+                skipSourceBlankAndCommentLines()
+                sourcePos >= source.length || currentSourceIndent() < f.indent || !isSourceBlockMappingLine(currentSourceLine())
+            case _ => false
+    end sourceMappingEmpty
+
+    private def sourceSequenceEmpty: Boolean =
+        sourceFrames match
+            case (f: SourceSequenceFrame) :: _ =>
+                skipSourceBlankAndCommentLines()
+                sourcePos >= source.length || currentSourceIndent() < f.indent || !sourceStartsSequenceEntryAtIndent()
+            case _ => false
+    end sourceSequenceEmpty
+
+    private def sourceHasNextField(): Boolean =
+        sourceFrames match
+            case (f: SourceMappingFrame) :: _ =>
+                skipSourceBlankAndCommentLines()
+                sourcePos < source.length && currentSourceIndent() >= f.indent && isSourceBlockMappingLine(currentSourceLine())
+            case _ => false
+    end sourceHasNextField
+
+    private def sourceHasNextElement(): Boolean =
+        sourceFrames match
+            case (f: SourceSequenceFrame) :: _ =>
+                if delegate.nonEmpty then true
+                else
+                    skipSourceBlankAndCommentLines()
+                    if sourcePos < source.length && currentSourceIndent() >= f.indent && sourceStartsSequenceEntryAtIndent() then
+                        sourceCaptureSequenceElement(f)
+                        true
+                    else false
+                    end if
+            case _ => false
+    end sourceHasNextElement
+
+    private def sourceFieldParse(): Unit =
+        sourceFrames match
+            case (f: SourceMappingFrame) :: _ =>
+                skipSourceBlankAndCommentLines()
+                val lineStart = sourcePos
+                consumeSourceIndent(f.indent)
+                val keyStart = sourcePos
+                val line     = currentSourceLine()
+                val colon    = findSourceTopLevel(line, ':')
+                if colon < 0 then error("Expected YAML mapping field")
+                val keyText = source.substring(keyStart, keyStart + colon).trim
+                _lastFieldName = unquoteSourceKey(keyText)
+                _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
+                sourcePos = keyStart + colon + 1
+                val restStart = sourcePos
+                val rest      = readSourceRestOfLineFrom(restStart)
+                val value     = sourceCaptureMappingValue(f, rest, lineNumberAt(lineStart))
+                delegate = Maybe(sourceChild(value))
+                delegateDepth = 0
+            case _ => error("Expected YAML mapping field")
+    end sourceFieldParse
+
+    private def sourceCaptureMappingValue(frame: SourceMappingFrame, rest: String, lineNumber: Int): String =
+        val trimmed = stripSourceComment(rest).trim
+        if trimmed.nonEmpty then
+            val (anchor, _, valueText) = sourceProperties(trimmed)
+            val tailStart              = sourcePos
+            val tailEnd                = captureFollowingIndentedBlock(frame.indent)
+            if valueText.isEmpty && tailEnd > tailStart then
+                val value = preserveSourceLine(normalizeBlock(tailStart, tailEnd, frame.indent + 2), lineNumberAt(tailStart))
+                anchor.foreach(registerSourceAnchor(_, value))
+                value
+            else if tailEnd > tailStart then
+                preserveSourceLine(trimmed + "\n" + normalizeBlock(tailStart, tailEnd, frame.indent), lineNumber)
+            else preserveSourceLine(trimmed + "\n", lineNumber)
+            end if
+        else
+            val start = sourcePos
+            val end   = captureNestedBlock(frame.indent, includeIndentlessSequence = true)
+            if end > start then preserveSourceLine(normalizeBlock(start, end, frame.indent + 2), lineNumberAt(start))
+            else "\n"
+        end if
+    end sourceCaptureMappingValue
+
+    private def sourceCaptureSequenceElement(frame: SourceSequenceFrame): Unit =
+        val lineNumber = currentSourceLineNumber()
+        consumeSourceIndent(frame.indent)
+        sourcePos += 1
+        if sourcePos < source.length && source.charAt(sourcePos) == ' ' then sourcePos += 1
+        val restStart = sourcePos
+        val rest      = readSourceRestOfLineFrom(restStart)
+        val trimmed   = stripSourceComment(rest).trim
+        val value =
+            if trimmed.nonEmpty then
+                val tailStart = sourcePos
+                val tailEnd   = captureFollowingIndentedBlock(frame.indent)
+                val captured =
+                    if tailEnd > tailStart then trimmed + "\n" + normalizeBlock(tailStart, tailEnd, frame.indent + 2)
+                    else trimmed + "\n"
+                preserveSourceLine(captured, lineNumber)
+            else
+                val start = sourcePos
+                val end   = captureNestedBlock(frame.indent, includeIndentlessSequence = false)
+                val captured =
+                    if end > start then normalizeBlock(start, end, frame.indent + 2)
+                    else "\n"
+                preserveSourceLine(captured, lineNumber)
+        delegate = Maybe(sourceChild(value))
+        delegateDepth = 0
+    end sourceCaptureSequenceElement
+
+    private def trySourceScalarValue(): Maybe[ScalarValue] =
+        if !allowSourcePull || prepared || sourceFrames.nonEmpty || source.isEmpty then Absent
+        else
+            initSourcePosition()
+            if sourcePos >= source.length then Absent
+            else
+                val line    = currentSourceLine()
+                val text    = source.substring(sourcePos)
+                val trimmed = line.trim
+                if trimmed.startsWith("*") ||
+                    sourceStartsFlowCollection ||
+                    sourceStartsSequenceEntryAtIndent() ||
+                    isSourceBlockMappingLine(line)
+                then Absent
+                else
+                    val built = EventBuilder.build("value: " + text, maxDepth, maxCollectionSize)
+                    if built.events.length >= 3 then
+                        built.events(2) match
+                            case Scalar(value, meta, _) =>
+                                sourcePos = source.length
+                                Maybe(resolveScalarValue(value, meta))
+                            case _ => Absent
+                    else Absent
+                    end if
+                end if
+            end if
+        end if
+    end trySourceScalarValue
+
+    private def captureNestedBlock(parentIndent: Int, includeIndentlessSequence: Boolean): Int =
+        val start = sourcePos
+        var end   = sourcePos
+        var done  = false
+        while !done && sourcePos < source.length do
+            val lineStart = sourcePos
+            val line      = currentSourceLine()
+            val trimmed   = line.trim
+            val indent    = currentSourceIndent()
+            if trimmed.isEmpty || trimmed.startsWith("#") then
+                val _ = readSourceRestOfLine()
+                end = sourcePos
+            else if indent > parentIndent || (includeIndentlessSequence && indent == parentIndent && sourceStartsSequenceEntryAtIndent())
+            then
+                skipSourceNodeLine(parentIndent)
+                end = sourcePos
+            else done = true
+            end if
+        end while
+        end
+    end captureNestedBlock
+
+    private def captureFollowingIndentedBlock(parentIndent: Int): Int =
+        val start = sourcePos
+        var end   = sourcePos
+        var done  = false
+        while !done && sourcePos < source.length do
+            val line    = currentSourceLine()
+            val trimmed = line.trim
+            val indent  = currentSourceIndent()
+            if trimmed.isEmpty || trimmed.startsWith("#") then
+                val _ = readSourceRestOfLine()
+                end = sourcePos
+            else if indent > parentIndent then
+                skipSourceNodeLine(parentIndent)
+                end = sourcePos
+            else done = true
+            end if
+        end while
+        end
+    end captureFollowingIndentedBlock
+
+    private def skipSourceNodeLine(parentIndent: Int): Unit =
+        val line    = currentSourceLine()
+        val trimmed = line.trim
+        if trimmed.startsWith("|") || trimmed.startsWith(">") || line.contains(": |") || line.contains(": >") then
+            val _ = readSourceRestOfLine()
+            while sourcePos < source.length && (currentSourceLine().trim.isEmpty || currentSourceIndent() > parentIndent) do
+                val _ = readSourceRestOfLine()
+        else
+            val _ = readSourceRestOfLine()
+        end if
+    end skipSourceNodeLine
+
+    private def normalizeBlock(start: Int, stop: Int, stripIndent: Int): String =
+        val out = new StringBuilder
+        var i   = start
+        while i < stop do
+            var removed = 0
+            while removed < stripIndent && i < stop && source.charAt(i) == ' ' do
+                i += 1
+                removed += 1
+            end while
+            while i < stop && source.charAt(i) != '\n' do
+                out.append(source.charAt(i))
+                i += 1
+            end while
+            if i < stop && source.charAt(i) == '\n' then
+                out.append('\n')
+                i += 1
+        end while
+        out.toString
+    end normalizeBlock
+
+    private def skipSourceIgnorable(): Unit =
+        var done = false
+        while !done && sourcePos < source.length do
+            skipSourceBlankAndCommentLines()
+            val line = if sourcePos < source.length then currentSourceLine().trim else ""
+            if line.startsWith("%") then
+                val _ = readSourceRestOfLine()
+            else done = true
+        end while
+    end skipSourceIgnorable
+
+    private def skipSourceBlankAndCommentLines(): Unit =
+        var done = false
+        while !done && sourcePos < source.length do
+            val trimmed = currentSourceLine().trim
+            if trimmed.isEmpty || trimmed.startsWith("#") then
+                val _ = readSourceRestOfLine()
+            else done = true
+        end while
+    end skipSourceBlankAndCommentLines
+
+    private def currentSourceIndent(): Int =
+        var i = sourcePos
+        var n = 0
+        while i < source.length && source.charAt(i) == ' ' do
+            n += 1
+            i += 1
+        n
+    end currentSourceIndent
+
+    private def consumeSourceIndent(n: Int): Unit =
+        var i = 0
+        while i < n && sourcePos < source.length && source.charAt(sourcePos) == ' ' do
+            sourcePos += 1
+            i += 1
+    end consumeSourceIndent
+
+    private def currentSourceLine(): String =
+        val end = source.indexOf('\n', sourcePos) match
+            case -1 => source.length
+            case n  => n
+        source.substring(sourcePos, end)
+    end currentSourceLine
+
+    private def currentSourceLineNumber(): Int =
+        lineNumberAt(sourcePos)
+    end currentSourceLineNumber
+
+    private def lineNumberAt(position: Int): Int =
+        var line = 1
+        var i    = 0
+        while i < position do
+            if source.charAt(i) == '\n' then line += 1
+            i += 1
+        line
+    end lineNumberAt
+
+    private def preserveSourceLine(value: String, lineNumber: Int): String =
+        if lineNumber <= 1 then value
+        else
+            val out = new StringBuilder(value.length + lineNumber)
+            var i   = 1
+            while i < lineNumber do
+                out.append('\n')
+                i += 1
+            out.append(value)
+            out.toString
+        end if
+    end preserveSourceLine
+
+    private def readSourceRestOfLine(): String =
+        val start = sourcePos
+        readSourceRestOfLineFrom(start)
+    end readSourceRestOfLine
+
+    private def readSourceRestOfLineFrom(start: Int): String =
+        while sourcePos < source.length && source.charAt(sourcePos) != '\n' do sourcePos += 1
+        val out = source.substring(start, sourcePos)
+        if sourcePos < source.length && source.charAt(sourcePos) == '\n' then sourcePos += 1
+        out
+    end readSourceRestOfLineFrom
+
+    private def isSourceBlockMappingLine(lineText: String): Boolean =
+        val stripped = lineText.dropWhile(_ == ' ')
+        val colon    = findSourceTopLevel(stripped, ':')
+        colon >= 0 && (colon == stripped.length - 1 || stripped.charAt(colon + 1).isWhitespace)
+    end isSourceBlockMappingLine
+
+    private def sourceStartsSequenceEntryAtIndent(): Boolean =
+        val indent = currentSourceIndent()
+        val idx    = sourcePos + indent
+        idx < source.length && source.charAt(idx) == '-' && (
+            idx + 1 >= source.length ||
+                source.charAt(idx + 1) == ' ' ||
+                source.charAt(idx + 1) == '\n' ||
+                source.charAt(idx + 1) == '\r'
+        )
+    end sourceStartsSequenceEntryAtIndent
+
+    private def sourceStartsFlowCollection: Boolean =
+        val indent = currentSourceIndent()
+        val idx    = sourcePos + indent
+        idx < source.length && (source.charAt(idx) == '[' || source.charAt(idx) == '{')
+    end sourceStartsFlowCollection
+
+    private def sourceIsDocumentMarker(marker: String): Boolean =
+        val lineText = currentSourceLine()
+        currentSourceIndent() == 0 && lineText.startsWith(marker) && (
+            lineText.length == marker.length ||
+                lineText.charAt(marker.length).isWhitespace ||
+                lineText.charAt(marker.length) == '#'
+        )
+    end sourceIsDocumentMarker
+
+    private def stripSourceComment(s: String): String =
+        var i      = 0
+        var single = false
+        var double = false
+        var escape = false
+        while i < s.length do
+            val ch = s.charAt(i)
+            if escape then escape = false
+            else if double && ch == '\\' then escape = true
+            else if !double && ch == '\'' then single = !single
+            else if !single && ch == '"' then double = !double
+            else if !single && !double && ch == '#' && (i == 0 || s.charAt(i - 1).isWhitespace) then
+                return s.substring(0, i)
+            end if
+            i += 1
+        end while
+        s
+    end stripSourceComment
+
+    private def unquoteSourceKey(text: String): String =
+        if text.length >= 2 && text.charAt(0) == '\'' && text.charAt(text.length - 1) == '\'' then
+            text.substring(1, text.length - 1).replace("''", "'")
+        else if text.length >= 2 && text.charAt(0) == '"' && text.charAt(text.length - 1) == '"' then
+            text.substring(1, text.length - 1)
+        else text
+    end unquoteSourceKey
+
+    private def sourceProperties(text: String): (Maybe[String], Maybe[String], String) =
+        var anchor: Maybe[String] = Absent
+        var tag: Maybe[String]    = Absent
+        var rest                  = text.trim
+        var changed               = true
+        while changed do
+            changed = false
+            if rest.startsWith("&") then
+                val (token, next) = sourcePropertyToken(rest)
+                anchor = Maybe(token.drop(1))
+                rest = next
+                changed = true
+            else if rest.startsWith("!") then
+                val (token, next) = sourcePropertyToken(rest)
+                tag = Maybe(token)
+                rest = next
+                changed = true
+            end if
+        end while
+        (anchor, tag, rest)
+    end sourceProperties
+
+    private def sourcePropertyToken(text: String): (String, String) =
+        val end = text.indexWhere(_.isWhitespace) match
+            case -1 => text.length
+            case n  => n
+        (text.substring(0, end), text.substring(end).trim)
+    end sourcePropertyToken
+
+    private def registerSourceAnchor(name: String, value: String): Unit =
+        val built = EventBuilder.build(value, maxDepth, maxCollectionSize)
+        anchors(name) =
+            Anchor(0, 0, valueCount(built.events, 0, built.events.length), depth(built.events, 0, built.events.length), Maybe(value))
+    end registerSourceAnchor
+
+    private def findSourceTopLevel(s: String, target: Char): Int =
+        var i      = 0
+        var depth  = 0
+        var single = false
+        var double = false
+        var escape = false
+        while i < s.length do
+            val ch = s.charAt(i)
+            if escape then escape = false
+            else if double && ch == '\\' then escape = true
+            else if !double && ch == '\'' then single = !single
+            else if !single && ch == '"' then double = !double
+            else if !single && !double then
+                ch match
+                    case '[' | '{'                      => depth += 1
+                    case ']' | '}'                      => depth -= 1
+                    case c if c == target && depth == 0 => return i
+                    case _                              => ()
+            end if
+            i += 1
+        end while
+        -1
+    end findSourceTopLevel
 
     private def prepare(): Unit =
         if !prepared then
@@ -538,8 +1036,17 @@ final class YamlReader private (
     end subtreeEnd
 
     private def finished: Boolean =
-        prepare()
-        pos >= end
+        delegate match
+            case Present(reader) if !reader.finished => false
+            case _ =>
+                if allowSourcePull && !prepared then
+                    skipSourceBlankAndCommentLines()
+                    sourceFrames.isEmpty && (sourcePos >= source.length || sourceIsDocumentMarker("..."))
+                else
+                    prepare()
+                    pos >= end
+                end if
+        end match
     end finished
 
     private def expected[A](expected: String, event: Event): A =
@@ -586,11 +1093,21 @@ object YamlReader:
     end NodeEnd
 
     final private case class Built(events: Array[Event], anchors: scala.collection.mutable.Map[String, Anchor])
-    final private case class Anchor(start: Int, end: Int, values: Int, maxDepth: Int)
+    final private case class Anchor(start: Int, end: Int, values: Int, maxDepth: Int, source: Maybe[String])
+    final private class Expansion:
+        var values: Int = 0
+        var depth: Int  = 0
+    end Expansion
 
     sealed private trait ContainerFrame
     private case object MappingFrame  extends ContainerFrame
     private case object SequenceFrame extends ContainerFrame
+
+    sealed private trait SourceFrame:
+        def indent: Int
+    end SourceFrame
+    final private case class SourceMappingFrame(indent: Int)  extends SourceFrame
+    final private case class SourceSequenceFrame(indent: Int) extends SourceFrame
 
     private enum ScalarValue derives CanEqual:
         case Null
@@ -694,7 +1211,7 @@ object YamlReader:
             events(i).anchor match
                 case Present(name) =>
                     val stop = subtreeEnd(events, i)
-                    out(name) = Anchor(i, stop, valueCount(events, i, stop), depth(events, i, stop))
+                    out(name) = Anchor(i, stop, valueCount(events, i, stop), depth(events, i, stop), Absent)
                 case Absent => ()
             end match
             i += 1
@@ -773,11 +1290,20 @@ object YamlReader:
         apply(input, Yaml.SpecVersion.Yaml12)
 
     def apply(input: Span[Byte], yamlVersion: Yaml.SpecVersion)(using Frame): YamlReader =
-        new YamlReader(String(input.toArray, StandardCharsets.UTF_8), yamlVersion, null, 0, 0, scala.collection.mutable.Map.empty)
+        new YamlReader(
+            String(input.toArray, StandardCharsets.UTF_8),
+            yamlVersion,
+            null,
+            0,
+            0,
+            scala.collection.mutable.Map.empty,
+            Expansion(),
+            allowSourcePull = true
+        )
 
     def apply(input: String)(using Frame): YamlReader =
         apply(input, Yaml.SpecVersion.Yaml12)
 
     def apply(input: String, yamlVersion: Yaml.SpecVersion)(using Frame): YamlReader =
-        new YamlReader(input, yamlVersion, null, 0, 0, scala.collection.mutable.Map.empty)
+        new YamlReader(input, yamlVersion, null, 0, 0, scala.collection.mutable.Map.empty, Expansion(), allowSourcePull = true)
 end YamlReader

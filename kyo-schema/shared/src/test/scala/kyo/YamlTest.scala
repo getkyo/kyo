@@ -421,6 +421,41 @@ class YamlTest extends Test:
             assert(captured.int() == 42)
         }
 
+        "reader can pull a requested prefix without parsing later malformed content" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """value: 42
+                      |later: [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.objectStart())
+            reader.fieldParse()
+
+            assert(reader.matchField("value".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            assert(reader.int() == 42)
+        }
+
+        "captureValue buffers only the requested subtree" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """value:
+                      |  count: 7
+                      |later: [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.objectStart())
+            reader.fieldParse()
+            val captured = reader.captureValue()
+
+            discard(captured.objectStart())
+            captured.fieldParse()
+            val count = captured.int()
+            captured.objectEnd()
+            assert(count == 7)
+        }
+
         "matches UTF-8 field names without lossy byte comparisons" in {
             assert(Yaml.decode[YamlUnicodeField]("café: 7\n") == Result.succeed(YamlUnicodeField(7)))
         }

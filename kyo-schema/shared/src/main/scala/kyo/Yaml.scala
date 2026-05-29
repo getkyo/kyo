@@ -278,7 +278,18 @@ object Yaml:
             case Present(index) =>
                 selectDocument(input, index).flatMap(doc => decode[A](doc, config.copy(documentIndex = Absent)))
             case Absent =>
-                decodeBytes(Span.from(input.getBytes(StandardCharsets.UTF_8)), config)
+                val docs = splitDocuments(input)
+                if docs.size == 1 then decodeBytes(Span.from(docs(0).getBytes(StandardCharsets.UTF_8)), config)
+                else if docs.isEmpty && input.trim.isEmpty then decodeBytes(Span.from(input.getBytes(StandardCharsets.UTF_8)), config)
+                else
+                    Result.fail(ParseException(
+                        Yaml(),
+                        "",
+                        "Unexpected content after YAML document end",
+                        Nil,
+                        0
+                    ))
+                end if
         end match
     end decode
 
