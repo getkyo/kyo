@@ -8,7 +8,7 @@ import zio.stream.ZStream
   * already a `ZStream`. Method names mirror `kyo.Stream` (`mapPure`/`filterPure`/`takeWhilePure`/`collectPure`/`foldPure`/`discard`); the
   * pure/effectful split tracks the kyo convention.
   */
-opaque type CStream[+A] = ZStream[Any, Throwable, A]
+opaque type CStream[A] = ZStream[Any, Throwable, A]
 
 object CStream:
 

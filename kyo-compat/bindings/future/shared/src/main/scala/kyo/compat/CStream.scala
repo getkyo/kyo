@@ -16,7 +16,7 @@ import scala.util.Success
   * sync-completed streams don't blow the stack. `lift` and `lower` are identity on the opaque `CStream[A]` since the binding's "native"
   * stream type is the carrier itself.
   */
-opaque type CStream[+A] = LocalCtx => Future[CStream.Repr[A]]
+opaque type CStream[A] = LocalCtx => Future[CStream.Repr[A]]
 
 object CStream:
 

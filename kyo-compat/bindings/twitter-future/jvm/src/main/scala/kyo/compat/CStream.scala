@@ -10,7 +10,7 @@ import com.twitter.concurrent.AsyncStream
   * `foreach` / `discard` lower to `AsyncStream.toSeq()` / `foldLeft` / `foreachF` / `force` respectively, wrapped via `CIO.deferLift` so
   * each materialization re-runs the stream.
   */
-opaque type CStream[+A] = AsyncStream[A]
+opaque type CStream[A] = AsyncStream[A]
 
 object CStream:
 
