@@ -212,6 +212,11 @@ private[kyo] object JsonRpcCodecImpl:
                         val hasResult = resultOpt.isDefined
                         val hasError  = errorOpt.isDefined
 
+                        val errorIsRecord = errorOpt.forall {
+                            case Structure.Value.Record(_) => true
+                            case _                         => false
+                        }
+
                         if hasMethod && hasId && idMaybe.isDefined then
                             val params = getVal("params")
                             JsonRpcEnvelope.Request(idMaybe.get, methodOpt.get, params, extras)
@@ -221,6 +226,8 @@ private[kyo] object JsonRpcCodecImpl:
                         else if !hasMethod && hasId && idMaybe.isDefined && (hasResult || hasError) then
                             if hasResult && hasError then
                                 JsonRpcEnvelope.Malformed(idMaybe, "response has both result and error", raw)
+                            else if hasError && !errorIsRecord then
+                                JsonRpcEnvelope.Malformed(idMaybe, "error field is not a Record", raw)
                             else
                                 val decodedError = errorOpt.map: ev =>
                                     Structure.decode[JsonRpcError](ev).getOrElse(JsonRpcError.InvalidRequest)

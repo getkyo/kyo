@@ -53,10 +53,25 @@ final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.JsonRp
 
     def awaitDrain(using Frame): Unit < Async = impl.awaitDrain
 
+    /** Closes the endpoint immediately without draining in-flight requests.
+      *
+      * Note: when chaining with `.andThen`, use `closeNow.andThen(...)` to avoid Scala 3
+      * overload-resolution ambiguity between this no-arg form and `close(gracePeriod: Duration)`.
+      */
     def close(using Frame): Unit < Async = impl.close(Duration.Zero)
 
+    /** Closes the endpoint, waiting up to `gracePeriod` for in-flight requests to drain before forcing.
+      *
+      * Note: when chaining with `.andThen`, prefer `close(Duration.Zero).andThen(...)` or
+      * `closeNow.andThen(...)` to avoid Scala 3 overload-resolution ambiguity on the no-arg `close`.
+      */
     def close(gracePeriod: Duration)(using Frame): Unit < Async = impl.close(gracePeriod)
 
+    /** Closes the endpoint immediately without draining in-flight requests.
+      *
+      * Identical to `close(Duration.Zero)`. Use this form when chaining with `.andThen` to avoid
+      * Scala 3 overload-resolution ambiguity on the no-arg `close` overload.
+      */
     def closeNow(using Frame): Unit < Async = impl.close(Duration.Zero)
 
 end JsonRpcEndpoint

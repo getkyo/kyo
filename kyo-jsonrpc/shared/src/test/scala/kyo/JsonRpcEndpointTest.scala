@@ -494,18 +494,49 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "malformed response with id fails caller fast" in run {
+        // Use a custom codec that encodes Response(Present(result), Present(error)) with both fields
+        // on the wire. Strict2_0.decode then classifies that wire JSON as Malformed-with-id, routing
+        // through the Malformed(Present(id), reason, _) branch in JsonRpcEndpointImpl.
+        val bothFieldsCodec = new JsonRpcCodec:
+            def encode(env: JsonRpcEnvelope)(using Frame): Structure.Value < (Sync & Abort[JsonRpcError]) =
+                env match
+                    case JsonRpcEnvelope.Response(id, Present(r), Present(e), _) =>
+                        Sync.defer(Structure.Value.Record(Chunk(
+                            "jsonrpc" -> Structure.Value.Str("2.0"),
+                            "id"      -> Structure.encode(id),
+                            "result"  -> r,
+                            "error"   -> Structure.encode(e)
+                        )))
+                    case other => JsonRpcCodec.Strict2_0.encode(other)
+            def decode(raw: Structure.Value)(using Frame): JsonRpcEnvelope < Sync =
+                JsonRpcCodec.Strict2_0.decode(raw)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
-                Fiber.initUnscoped(Abort.run[Closed](tb.send(JsonRpcEnvelope.Response(
-                    JsonRpcId.Num(1),
-                    Absent,
-                    Present(JsonRpcError.invalidRequest("x")),
-                    Absent
-                )))).andThen {
-                    Abort.run[Timeout](Async.timeout(1.second)(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("noop", ())))).map {
-                        case Result.Success(Result.Failure(err: JsonRpcError)) =>
-                            assert(err.message.contains("malformed response") || err.code == JsonRpcError.InvalidRequest.code)
-                        case other => fail(s"unexpected $other")
+            val cfg = JsonRpcEndpoint.Config(codec = bothFieldsCodec)
+            JsonRpcEndpoint.init(ta, Seq.empty, cfg).map { a =>
+                // Start the call in a fiber so we can inject the malformed response after it registers.
+                // Wait until callerRegistry is non-empty (id registered) before sending the malformed wire.
+                // This ensures the Malformed-with-id branch finds the caller on all schedulers (JVM, JS, Native).
+                Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("noop", ()))).map { callFiber =>
+                    untilTrue(Sync.defer(!a.impl.callerRegistry.isEmpty)).andThen {
+                        // tb.send triggers ta.incoming; bothFieldsCodec encodes both result+error on the wire;
+                        // Strict2_0.decode sees both fields and emits Malformed(Present(Num(1)), ...).
+                        // The Malformed-with-id branch completes abortSignal with invalidRequest("malformed response: ...").
+                        Abort.run[Closed](tb.send(JsonRpcEnvelope.Response(
+                            JsonRpcId.Num(1),
+                            Present(Structure.Value.Record(Chunk.empty)),
+                            Present(JsonRpcError.invalidRequest("x")),
+                            Absent
+                        ))).andThen {
+                            callFiber.get.map {
+                                case Result.Failure(err: JsonRpcError) =>
+                                    assert(err.code == -32600)
+                                    assert(err.data.exists {
+                                        case Structure.Value.Str(s) => s.contains("malformed response")
+                                        case _                      => false
+                                    })
+                                case other => fail(s"unexpected $other")
+                            }
+                        }
                     }
                 }
             }
@@ -539,11 +570,16 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
             JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
                 JsonRpcEndpoint.init(tb, Seq(q)).map { _ =>
                     Fiber.initUnscoped(a.call[Unit, Unit]("q", ())).andThen {
-                        val start = java.lang.System.currentTimeMillis
-                        a.close(1.second).map { _ =>
-                            val elapsed = java.lang.System.currentTimeMillis - start
-                            assert(elapsed < 900)
-                            done.get.map(_ => succeed)
+                        // Yield until the call fiber has registered in inFlight. On Native's single-threaded
+                        // scheduler, Fiber.initUnscoped does not transfer control immediately, so close()
+                        // can observe inFlight == 0 and skip draining without this guard.
+                        untilTrue(a.impl.inFlight.get.map(_ > 0)).andThen {
+                            val start = java.lang.System.currentTimeMillis
+                            a.close(1.second).map { _ =>
+                                val elapsed = java.lang.System.currentTimeMillis - start
+                                assert(elapsed < 900)
+                                done.get.map(_ => succeed)
+                            }
                         }
                     }
                 }

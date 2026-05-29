@@ -221,6 +221,18 @@ class JsonRpcCodecTest extends JsonRpcTestBase:
         }
     }
 
+    "Cdp decoder emits Malformed for non-Record error field" in run {
+        val raw = Structure.Value.Record(Chunk(
+            "id"    -> Structure.Value.Integer(7),
+            "error" -> Structure.Value.Str("stringy error")
+        ))
+        JsonRpcCodec.Cdp.decode(raw).map {
+            case JsonRpcEnvelope.Malformed(Present(JsonRpcId.Num(7)), reason, _) =>
+                assert(reason.nonEmpty)
+            case other => fail(s"expected Malformed-with-id for non-Record error, got $other")
+        }
+    }
+
     "Malformed for non-Record carries Absent id" in run {
         JsonRpcCodec.Strict2_0.decode(Structure.Value.Str("not a record")).map {
             case JsonRpcEnvelope.Malformed(Absent, reason, _) =>
