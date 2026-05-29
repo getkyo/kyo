@@ -44,7 +44,7 @@ Every entry point below lives on the `Browser` companion object (so `run` means 
 
 ## Installation
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %% "kyo-browser" % "<latest version>"
 ```
 
@@ -160,6 +160,8 @@ Strings with an unrecognised prefix (for example `"abc=def"`) fall back to CSS v
 `or` chains fallbacks (the first alternative that matches wins). `find` scopes a child selector to the elements matched by the parent:
 
 ```scala
+import Browser.Selector.*
+
 // Try a semantic role first; fall back to the legacy CSS id if the role isn't set.
 val signIn = Browser.Selector.button("Sign in") or Browser.Selector.id("legacy-signin")
 
@@ -331,7 +333,7 @@ Browser.withTimeout(5.seconds) {
 }
 
 // Single-field override that preserves the rest of the enclosing config.
-Browser.withConfig(_.retrySchedule(Schedule.exponential(100.millis).take(8))) {
+Browser.withConfig(_.retrySchedule(Schedule.exponential(100.millis, 2.0).take(8))) {
     Browser.assertCount(Browser.Selector.css("tr"), 10)
 }
 
@@ -407,6 +409,10 @@ yield draft
 Either choice isolates the cookie / storage jar at the browser-context boundary, so writes inside a fork never leak back to the parent and forks cannot observe each other. Either choice also tears the forked context down when the surrounding scope completes (by success, failure, or interruption).
 
 ```scala
+val urlA = "https://example.com/a"
+val urlB = "https://example.com/b"
+val urlC = "https://example.com/c"
+
 Browser.isolate.fresh.use {
     Async.zip(
         Browser.goto(urlA).andThen(Browser.title),
@@ -433,7 +439,7 @@ for
 yield ()
 
 // Capture downloads triggered by the page (e.g. clicking an anchor with `download`).
-Browser.withDownloads(toPath = Present("/tmp/dl")) {
+Browser.withDownloads(toPath = "/tmp/dl") {
     Browser.click(Browser.Selector.link("Export CSV"))
 }
 ```
