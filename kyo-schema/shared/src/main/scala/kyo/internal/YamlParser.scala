@@ -492,7 +492,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end stripComment
 
     private def isInlineMappingText(s: String): Boolean =
-        findTopLevel(s, ':') >= 0
+        val colon = findTopLevel(s, ':')
+        colon >= 0 && (colon == s.length - 1 || s.charAt(colon + 1).isWhitespace)
 
     private def unquoteKey(s: String, keyMark: Mark): Result[DecodeException, String] =
         if s.startsWith("'") && s.endsWith("'") && s.length >= 2 then Result.succeed(s.substring(1, s.length - 1).replace("''", "'"))

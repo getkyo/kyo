@@ -59,6 +59,14 @@ final case class YamlCoreScalars(
 final case class YamlPlayer(name: String, hr: Int, avg: Double) derives CanEqual
 final case class YamlLeagues(american: List[String], national: List[String]) derives CanEqual
 final case class YamlEscapes(unicode: String, control: String, hex: String) derives CanEqual
+final case class YamlHellConfig(server_config: YamlHellServerConfig) derives CanEqual
+final case class YamlHellServerConfig(
+    port_mapping: List[String],
+    serve: List[String],
+    geoblock_regions: List[String],
+    flush_cache: YamlHellFlushCache
+) derives CanEqual
+final case class YamlHellFlushCache(on: List[String], priority: String) derives CanEqual
 
 class YamlParserTest extends Test:
 
@@ -516,6 +524,101 @@ class YamlParserTest extends Test:
                 "text" -> "folded line\nnext line\n  code\n  block\n\nlast line"
             )))
         }
+
+        "keeps the yaml document from hell gotchas predictable" in {
+            val yaml =
+                """server_config:
+                  |  port_mapping:
+                  |    - 22:22
+                  |    - 80:80
+                  |    - 443:443
+                  |  serve:
+                  |    - /robots.txt
+                  |    - /favicon.ico
+                  |    - "*.html"
+                  |    - "*.png"
+                  |    - "!.git"
+                  |  geoblock_regions:
+                  |    - dk
+                  |    - fi
+                  |    - is
+                  |    - no
+                  |    - se
+                  |  flush_cache:
+                  |    on: [push, memory_pressure]
+                  |    priority: background
+                  |  allow_postgres_versions:
+                  |    - 9.5.25
+                  |    - 9.6.24
+                  |    - 10.23
+                  |    - 12.13
+                  |""".stripMargin
+
+            val parsed = Yaml.parse(yaml).getOrThrow
+            val server = field(parsed, "server_config")
+            val versions = field(server, "allow_postgres_versions").asInstanceOf[Yaml.Node.Sequence].elements.map {
+                case Yaml.Node.Scalar(value, _) => value
+                case other                      => fail(s"Expected scalar version, got $other")
+            }
+
+            assert(versions == Chunk("9.5.25", "9.6.24", "10.23", "12.13"))
+            assert(Yaml.decode[YamlHellConfig](yaml) == Result.succeed(YamlHellConfig(
+                YamlHellServerConfig(
+                    List("22:22", "80:80", "443:443"),
+                    List("/robots.txt", "/favicon.ico", "*.html", "*.png", "!.git"),
+                    List("dk", "fi", "is", "no", "se"),
+                    YamlHellFlushCache(List("push", "memory_pressure"), "background")
+                )
+            )))
+        }
+
+        "reports unquoted aliases from the yaml document from hell as unknown aliases" in {
+            val result = Yaml.decode[Map[String, List[String]]](
+                """serve:
+                  |  - /robots.txt
+                  |  - *.html
+                  |""".stripMargin
+            )
+
+            result match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("Unknown alias '.html'"))
+                    assert(e.getMessage.contains("line 3"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
+        }
+
+        "treats local tags from the yaml document from hell as metadata only" in {
+            val visitor = new Yaml.Visitor[List[String], String, List[String]]:
+                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]         = Result.succeed(context)
+                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]       = Result.succeed(context)
+                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]]        = Result.succeed(context)
+                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]]       = Result.succeed(context)
+                def alias(context: List[String], name: String, mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context)
+                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]             = Result.succeed(context)
+                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]         = Result.succeed(context)
+                def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context.reverse)
+
+                def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
+                    Result.succeed(s"$value:${meta.tag.getOrElse("")}" :: context)
+            end visitor
+
+            assert(Yaml.visit("serve:\n  - !.git\n", Nil)(visitor) == Result.succeed(List("serve:", ":!.git")))
+        }
+
+        "parses YAML 1.2 decimal integers with leading zeroes as decimal" in {
+            assert(Yaml.decode[Map[String, Int]]("value: 010\n") == Result.succeed(Map("value" -> 10)))
+        }
     }
+
+    private def field(node: Yaml.Node, name: String): Yaml.Node =
+        node match
+            case Yaml.Node.Mapping(entries, _) =>
+                entries.collectFirst {
+                    case (Yaml.Node.Scalar(`name`, _), value) => value
+                }.getOrElse(fail(s"Missing field $name"))
+            case other => fail(s"Expected mapping for field $name, got $other")
+        end match
+    end field
 
 end YamlParserTest
