@@ -935,6 +935,8 @@ object Tasty:
         /** Create a classpath from pre-parsed in-memory pickles. */
         def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < Sync =
             kyo.internal.tasty.query.Classpath.allocate.map: cp =>
+                // Unsafe: atomic state write; single-threaded in Sync.map lambda, no concurrent access.
+                import AllowUnsafe.embrace.danger
                 kyo.internal.tasty.query.Classpath.transitionToReady(
                     cp,
                     allSymbols = Chunk.empty,
@@ -986,7 +988,11 @@ object Tasty:
                         if exists then
                             // Try to load from snapshot using mmap on JVM/Native, heap on JS.
                             kyo.internal.tasty.query.Classpath.allocate.flatMap: cp =>
-                                Scope.ensure(Sync.defer(kyo.internal.tasty.query.Classpath.close(cp))).andThen:
+                                Scope.ensure(Sync.defer {
+                                    // Unsafe: atomic state write; called from Scope finalizer.
+                                    import AllowUnsafe.embrace.danger
+                                    kyo.internal.tasty.query.Classpath.close(cp)
+                                }).andThen:
                                     Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source, cp)).flatMap:
                                         case Result.Success(_) =>
                                             assignHomes(cp, cp)
@@ -1027,31 +1033,31 @@ object Tasty:
           * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns. After close, returns
           * whatever heap state is there (closed-state enforcement is Symbol.body only).
           */
-        def findClass(fqn: String): Maybe[Symbol] = cp.pureClass(fqn)
+        def findClass(fqn: String)(using AllowUnsafe): Maybe[Symbol] = cp.pureClass(fqn)
 
         /** Look up a package symbol by fully-qualified dotted name.
           *
           * Pure accessor: reads from the immutable packageIndex HashMap in Ready state. Valid after `open` returns.
           */
-        def findPackage(fqn: String): Maybe[Symbol] = cp.purePackage(fqn)
+        def findPackage(fqn: String)(using AllowUnsafe): Maybe[Symbol] = cp.purePackage(fqn)
 
         /** All package symbols in this classpath.
           *
           * Pure accessor: reads from the immutable packages Chunk in Ready state. Valid after `open` returns.
           */
-        def packages: Chunk[Symbol] = cp.purePackages
+        def packages(using AllowUnsafe): Chunk[Symbol] = cp.purePackages
 
         /** All top-level class symbols (not packages) in this classpath.
           *
           * Pure accessor: reads from the immutable topLevelClasses Chunk in Ready state. Valid after `open` returns.
           */
-        def topLevelClasses: Chunk[Symbol] = cp.pureTopLevelClasses
+        def topLevelClasses(using AllowUnsafe): Chunk[Symbol] = cp.pureTopLevelClasses
 
         /** Errors accumulated during loading (soft-fail mode).
           *
           * Pure accessor: reads from immutable error state populated during classpath open. Empty for clean classpaths.
           */
-        def errors: Chunk[TastyError] = cp.accumulatedErrors
+        def errors(using AllowUnsafe): Chunk[TastyError] = cp.accumulatedErrors
 
         /** Look up a JPMS module descriptor by module name (e.g., "java.base").
           *
@@ -1060,7 +1066,7 @@ object Tasty:
           *
           * Pure accessor: reads from the immutable moduleIndex HashMap in Ready state. Valid after `open` returns.
           */
-        def findModule(name: String): Maybe[ModuleDescriptor] = cp.pureModule(name)
+        def findModule(name: String)(using AllowUnsafe): Maybe[ModuleDescriptor] = cp.pureModule(name)
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
           *
@@ -1068,7 +1074,7 @@ object Tasty:
           *
           * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns.
           */
-        def findClassByBinary(binaryName: String): Maybe[Symbol] =
+        def findClassByBinary(binaryName: String)(using AllowUnsafe): Maybe[Symbol] =
             val fqn = binaryName.replace('/', '.').replace('$', '.')
             cp.pureClass(fqn)
 

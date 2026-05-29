@@ -133,7 +133,8 @@ object TastyBench:
         src: FileSource
     )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
+            // Unsafe: §839 case 2 bench-harness boundary; close is unsafe-tier, embraced at Sync.defer site
+            Scope.ensure(Sync.defer { import AllowUnsafe.embrace.danger; InternalClasspath.close(rawCp) }).andThen:
                 ClasspathOrchestrator.openInto(Seq("fixtures"), strict = false, src, concurrency = 1, rawCp).map: _ =>
                     val cp = Tasty.Classpath.wrap(rawCp)
                     ClasspathTestHelpers.assignHomesForTest(rawCp)
@@ -191,6 +192,9 @@ object TastyBench:
 
     /** Recursively count the number of tree nodes that reference `targetName` via Ident, Select, or Apply. */
     private def countTreeRefs(tree: Tasty.Tree, targetName: String): Int =
+        // Unsafe: §839 case 2 bench-harness boundary; Name.asString is unsafe-tier, embraced inside bench-only helper
+        import AllowUnsafe.embrace.danger
+        import Tasty.Name.asString
         tree match
             case Tasty.Tree.Ident(name, _) =>
                 if name.asString == targetName then 1 else 0
@@ -241,6 +245,7 @@ object TastyBench:
                 stats.map(countTreeRefs(_, targetName)).sum
             case _ =>
                 0
+        end match
     end countTreeRefs
 
     def main(args: Array[String]): Unit =

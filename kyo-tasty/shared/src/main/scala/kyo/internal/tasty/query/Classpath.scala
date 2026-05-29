@@ -65,9 +65,7 @@ final class Classpath private[tasty] (
       * Valid only after `open` returns (Ready state). After close, returns whatever the heap state happens to be (closed-state enforcement
       * is Body-only, Phase 4).
       */
-    private[kyo] def pureClass(fqn: String): Maybe[Tasty.Symbol] =
-        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
-        import AllowUnsafe.embrace.danger
+    private[kyo] def pureClass(fqn: String)(using AllowUnsafe): Maybe[Tasty.Symbol] =
         stateRef.unsafe.get() match
             case s: Classpath.State.Ready => Maybe(s.fqnIndex.get(fqn).orNull)
             case _                        => Maybe.Absent
@@ -75,9 +73,7 @@ final class Classpath private[tasty] (
     end pureClass
 
     /** Pure package lookup: reads the packageIndex directly via AllowUnsafe. */
-    private[kyo] def purePackage(fqn: String): Maybe[Tasty.Symbol] =
-        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
-        import AllowUnsafe.embrace.danger
+    private[kyo] def purePackage(fqn: String)(using AllowUnsafe): Maybe[Tasty.Symbol] =
         stateRef.unsafe.get() match
             case s: Classpath.State.Ready => Maybe(s.packageIndex.get(fqn).orNull)
             case _                        => Maybe.Absent
@@ -85,9 +81,7 @@ final class Classpath private[tasty] (
     end purePackage
 
     /** Pure module lookup: reads the moduleIndex directly via AllowUnsafe. */
-    private[kyo] def pureModule(name: String): Maybe[Tasty.ModuleDescriptor] =
-        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
-        import AllowUnsafe.embrace.danger
+    private[kyo] def pureModule(name: String)(using AllowUnsafe): Maybe[Tasty.ModuleDescriptor] =
         stateRef.unsafe.get() match
             case s: Classpath.State.Ready => Maybe(s.moduleIndex.get(name).orNull)
             case _                        => Maybe.Absent
@@ -95,9 +89,7 @@ final class Classpath private[tasty] (
     end pureModule
 
     /** Pure top-level classes: reads the topLevelClasses Chunk directly via AllowUnsafe. */
-    private[kyo] def pureTopLevelClasses: Chunk[Tasty.Symbol] =
-        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
-        import AllowUnsafe.embrace.danger
+    private[kyo] def pureTopLevelClasses(using AllowUnsafe): Chunk[Tasty.Symbol] =
         stateRef.unsafe.get() match
             case s: Classpath.State.Ready => s.topLevelClasses
             case _                        => Chunk.empty
@@ -105,9 +97,7 @@ final class Classpath private[tasty] (
     end pureTopLevelClasses
 
     /** Pure packages: reads the packages Chunk directly via AllowUnsafe. */
-    private[kyo] def purePackages: Chunk[Tasty.Symbol] =
-        // Unsafe: reading immutable Ready-state data after open returns; see class-level scaladoc.
-        import AllowUnsafe.embrace.danger
+    private[kyo] def purePackages(using AllowUnsafe): Chunk[Tasty.Symbol] =
         stateRef.unsafe.get() match
             case s: Classpath.State.Ready => s.packages
             case _                        => Chunk.empty
@@ -133,9 +123,7 @@ final class Classpath private[tasty] (
                 case Classpath.State.Closed      => Chunk.empty
 
     /** Errors accumulated during loading (soft-fail mode). Empty for clean classpaths or strict-mode (strict throws before returning). */
-    private[kyo] def accumulatedErrors: Chunk[TastyError] =
-        // Unsafe: state.get() - safe non-effectful read since errors are immutable after Phase C
-        import AllowUnsafe.embrace.danger
+    private[kyo] def accumulatedErrors(using AllowUnsafe): Chunk[TastyError] =
         stateRef.unsafe.get() match
             case s: Classpath.State.Ready    => s.errors
             case b: Classpath.State.Building => Chunk.from(b.errors)
@@ -151,9 +139,7 @@ final class Classpath private[tasty] (
                 case _                        => Maybe.Absent
 
     /** All symbols in the classpath (classes + packages). */
-    private[kyo] def allSymbols: Chunk[Tasty.Symbol] =
-        // Unsafe: allSymbols non-effectful read of immutable Ready state
-        import AllowUnsafe.embrace.danger
+    private[kyo] def allSymbols(using AllowUnsafe): Chunk[Tasty.Symbol] =
         stateRef.unsafe.get() match
             case s: Classpath.State.Ready    => s.allSymbols
             case _: Classpath.State.Building => Chunk.empty
@@ -209,17 +195,13 @@ object Classpath:
         canonical: TypeArena,
         errors: Chunk[TastyError],
         moduleIndex: scala.collection.Map[String, Tasty.ModuleDescriptor]
-    ): Unit =
-        // Unsafe: atomic state write, called from single-threaded Phase C
-        import AllowUnsafe.embrace.danger
+    )(using AllowUnsafe): Unit =
         val ready = new State.Ready(allSymbols, topLevelClasses, packages, fqnIndex, packageIndex, canonical, errors, moduleIndex)
         cp.stateRef.unsafe.set(ready)
     end transitionToReady
 
     /** Transition to Closed. Called by Scope.ensure finalizer. */
-    private[kyo] def close(cp: Classpath): Unit =
-        // Unsafe: atomic CAS Classpath state -> Closed, called from Scope finalizer
-        import AllowUnsafe.embrace.danger
+    private[kyo] def close(cp: Classpath)(using AllowUnsafe): Unit =
         cp.stateRef.unsafe.set(State.Closed)
     end close
 

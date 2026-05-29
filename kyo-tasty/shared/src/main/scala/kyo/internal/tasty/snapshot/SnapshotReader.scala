@@ -165,12 +165,12 @@ object SnapshotReader:
             case None                   => Chunk.empty[TastyError]
 
         val canonical = TypeArena.canonical()
+        // Unsafe: atomic state write + SingleAssign.set(); called from single-threaded deserialize.
+        import AllowUnsafe.embrace.danger
         Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
         // Populate _parents, _typeParams, _declarations with empty chunks for snapshot-restored symbols.
         // The snapshot format does not yet serialize parent/member data; symbols restored here return
         // empty chunks for these accessors. A future snapshot format version will add this data.
-        // Unsafe: SingleAssign.set() is an unsafe-tier helper; called here from single-threaded deserialize.
-        import AllowUnsafe.embrace.danger
         for sym <- allSymbols do
             if !sym._parents.isSet then sym._parents.set(Chunk.empty)
             if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
@@ -240,9 +240,9 @@ object SnapshotReader:
         val errors = if errorsBytes.nonEmpty then readErrors(errorsBytes, 0, errorsBytes.length) else Chunk.empty[TastyError]
 
         val canonical = TypeArena.canonical()
-        Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
-        // Unsafe: SingleAssign.set() is an unsafe-tier helper; called here from single-threaded deserializeMapped.
+        // Unsafe: atomic state write + SingleAssign.set(); called from single-threaded deserializeMapped.
         import AllowUnsafe.embrace.danger
+        Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
         for sym <- allSymbols do
             if !sym._parents.isSet then sym._parents.set(Chunk.empty)
             if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)

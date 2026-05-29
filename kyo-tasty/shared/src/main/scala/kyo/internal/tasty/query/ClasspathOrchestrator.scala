@@ -103,7 +103,11 @@ object ClasspathOrchestrator:
         concurrency: Int
     )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         Classpath.allocate.flatMap: cp =>
-            Scope.ensure(Sync.defer(Classpath.close(cp))).andThen:
+            Scope.ensure(Sync.defer {
+                // Unsafe: atomic state write; called from Scope finalizer.
+                import AllowUnsafe.embrace.danger
+                Classpath.close(cp)
+            }).andThen:
                 openInto(roots, strict, source, concurrency, cp).andThen:
                     cp
 

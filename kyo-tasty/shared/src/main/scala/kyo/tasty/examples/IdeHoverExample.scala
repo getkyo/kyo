@@ -80,8 +80,11 @@ object IdeHoverExample:
 
     /** "Find all sealed classes in this classpath" composed query. Pure filter over topLevelClasses. */
     def findSealed(using Frame): Chunk[Tasty.Symbol] < (Sync & Async & Abort[TastyError] & Scope) =
+        // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         for
             cp <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
         yield cp.topLevelClasses.filter(_.flags.contains(Tasty.Flag.Sealed))
+    end findSealed
 
 end IdeHoverExample

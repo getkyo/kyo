@@ -27,12 +27,16 @@ object CodegenExample:
 
     /** Discover all top-level classes in a classpath, project each into FacadeType, render. */
     def run(roots: Seq[String])(using Frame): Unit < (Sync & Async & Abort[TastyError] & Scope) =
+        // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         for
             cp <- Tasty.Classpath.openCached(roots, cacheDir = ".kyo-tasty-cache")
             given Classpath = cp
             facades         = cp.topLevelClasses.map(buildFacadeType)
             _ <- Kyo.foreach(facades)(f => Sync.defer(println(renderFacade(f))))
         yield ()
+        end for
+    end run
 
     private def buildFacadeType(sym: Tasty.Symbol): FacadeType =
         // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
