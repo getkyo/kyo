@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC kyo-http-backed WebSocket transport adapter lifting HttpWebSocket text frames to JsonRpcTransport
+// PUBLIC kyo-http-backed WebSocket transport adapter lifting HttpWebSocket text frames to JsonRpcTransport
 package kyo
 
 object JsonRpcHttpTransport:
@@ -9,7 +9,7 @@ object JsonRpcHttpTransport:
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[HttpException]) =
         for
-            // flow-allow: initUnscoped because lifetime is managed by the transport close() and Scope.ensure.
+            // initUnscoped because lifetime is managed by the transport close() and Scope.ensure.
             inbound  <- Channel.initUnscoped[JsonRpcEnvelope](64)
             outbound <- Channel.initUnscoped[HttpWebSocket.Payload](64)
             doneRef  <- Fiber.Promise.init[Unit, Async]
@@ -22,7 +22,7 @@ object JsonRpcHttpTransport:
                 def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
                     Abort.run[JsonRpcError](codec.encode(env)).map {
                         case Result.Success(structure) =>
-                            // flow-allow: RawJsonParser.encode converts Structure.Value to standard JSON-RPC wire text;
+                            // RawJsonParser.encode converts Structure.Value to standard JSON-RPC wire text;
                             // Json.encode[Structure.Value] uses kyo-schema format, not standard JSON.
                             val jsonStr = internal.RawJsonParser.encode(structure)
                             outbound.put(HttpWebSocket.Payload.Text(jsonStr))
@@ -56,7 +56,7 @@ object JsonRpcHttpTransport:
                             Async.race(
                                 ws.stream.foreach {
                                     case HttpWebSocket.Payload.Text(text) =>
-                                        // flow-allow: RawJsonParser.parse converts standard JSON-RPC wire text
+                                        // RawJsonParser.parse converts standard JSON-RPC wire text
                                         internal.RawJsonParser.parse(text) match
                                             case Result.Success(sv) =>
                                                 Abort.run[JsonRpcError](codec.decode(sv)).map {

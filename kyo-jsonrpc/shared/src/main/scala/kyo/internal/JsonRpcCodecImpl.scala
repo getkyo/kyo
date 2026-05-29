@@ -60,13 +60,13 @@ private[kyo] object JsonRpcCodecImpl:
                             Maybe.fromOption(fieldMap.get(key).collect { case Structure.Value.Str(s) => s })
 
                         def getValue(key: String): Maybe[Structure.Value] =
-                            // flow-allow: stdlib Map.get() returns scala.Option; match arms are interop, not kyo code
+                            // stdlib Map.get() returns scala.Option; match arms are interop, not kyo code
                             fieldMap.get(key) match
-                                // flow-allow: scala.Option arm; interop with stdlib Map.get (covered by line above)
+                                // scala.Option arm; interop with stdlib Map.get (covered by line above)
                                 case Some(Structure.Value.Null) => Absent
-                                // flow-allow: scala.Option arm; interop with stdlib Map.get (covered by comment above match)
+                                // scala.Option arm; interop with stdlib Map.get (covered by comment above match)
                                 case Some(v) => Present(v)
-                                // flow-allow: scala.Option arm; interop with stdlib Map.get (covered by comment above match)
+                                // scala.Option arm; interop with stdlib Map.get (covered by comment above match)
                                 case None => Absent
 
                         def decodeId(v: Structure.Value): Maybe[JsonRpcId] =
@@ -159,12 +159,12 @@ private[kyo] object JsonRpcCodecImpl:
                     Sync.defer(Structure.Value.Record(base))
                 case Present(Structure.Value.Record(extraFields)) =>
                     val badKey = extraFields.iterator.map(_._1).find(cdpReservedKeys.contains)
-                    // flow-allow: Iterator.find() returns scala.Option; match arms are interop, not kyo code
+                    // Iterator.find() returns scala.Option; match arms are interop, not kyo code
                     badKey match
-                        // flow-allow: scala.Option arm; interop with Iterator.find (covered by comment above match)
+                        // scala.Option arm; interop with Iterator.find (covered by comment above match)
                         case Some(key) =>
                             Abort.fail(JsonRpcError.invalidRequest(s"extras key '$key' is reserved"))
-                        // flow-allow: scala.Option arm; interop with Iterator.find (covered by comment above match)
+                        // scala.Option arm; interop with Iterator.find (covered by comment above match)
                         case None =>
                             Sync.defer(Structure.Value.Record(base ++ extraFields))
                     end match

@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC JVM-only UDS transport extension on the shared JsonRpcTransport companion
+// PUBLIC JVM-only UDS transport extension on the shared JsonRpcTransport companion
 package kyo
 
 import java.net.StandardProtocolFamily

@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC config-strategy sum type referenced by JsonRpcEndpoint.Config.idStrategy field
+// PUBLIC config-strategy sum type referenced by JsonRpcEndpoint.Config.idStrategy field
 package kyo
 
 enum IdStrategy derives CanEqual:

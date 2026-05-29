@@ -1,7 +1,7 @@
-// flow-allow: PUBLIC config-policy type referenced by JsonRpcEndpoint.Config.unknownMethod field with three documented presets
+// PUBLIC config-policy type referenced by JsonRpcEndpoint.Config.unknownMethod field with three documented presets
 package kyo
 
-// flow-allow: Hub.scala:22 smart-constructor pattern; users select .minimal / .lsp / .strict
+// Hub.scala:22 smart-constructor pattern; users select .minimal / .lsp / .strict
 final case class UnknownMethodPolicy private[kyo] (
     onUnknownRequest: UnknownMethodPolicy.UnknownAction,
     onUnknownNotification: UnknownMethodPolicy.UnknownAction,

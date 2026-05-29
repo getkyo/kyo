@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC config-policy type referenced by JsonRpcEndpoint.Config.progress field
+// PUBLIC config-policy type referenced by JsonRpcEndpoint.Config.progress field
 package kyo
 
 import kyo.Maybe

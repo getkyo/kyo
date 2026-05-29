@@ -23,7 +23,7 @@ import kyo.*
 private[kyo] object RawJsonParser:
 
     def parse(jsonStr: String)(using Frame): Result[ParseException, Structure.Value] =
-        // flow-allow: Result.catching converts JSON parse errors to typed ParseException
+        // Result.catching converts JSON parse errors to typed ParseException
         Result.catching[ParseException] {
             val p = new Parser(jsonStr)
             val v = p.readValue()

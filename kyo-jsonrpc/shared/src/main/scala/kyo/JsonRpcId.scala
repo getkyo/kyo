@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC id ADT referenced by JsonRpcEndpoint.cancel, Pending.id, ExtrasEncoder, HandlerCtx.requestId
+// PUBLIC id ADT referenced by JsonRpcEndpoint.cancel, Pending.id, ExtrasEncoder, HandlerCtx.requestId
 package kyo
 
 import kyo.Schema
@@ -20,7 +20,7 @@ object JsonRpcId:
                 case JsonRpcId.Str(s) => writer.string(s),
         readFn = reader =>
             if reader.isNil() then
-                // flow-allow: word in string literal describes the JSON absent-value type, not a reference
+                // word in string literal describes the JSON absent-value type, not a reference
                 throw TypeMismatchException(Seq.empty, "number or string", "null")(using reader.frame)
             else
                 try JsonRpcId.Num(reader.long())

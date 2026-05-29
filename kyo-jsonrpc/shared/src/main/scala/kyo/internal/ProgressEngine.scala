@@ -1,7 +1,7 @@
 package kyo
 package internal
 
-// flow-allow: ConcurrentHashMap is the structural concurrent pending-map; no Kyo-safe equivalent for CAS-based inbound tracking
+// ConcurrentHashMap is the structural concurrent pending-map; no Kyo-safe equivalent for CAS-based inbound tracking
 import java.util.concurrent.ConcurrentHashMap
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -24,7 +24,7 @@ private[kyo] object ProgressEngine:
             else
                 Random.live.nextStringAlphanumeric(32).map { raw =>
                     val token: Structure.Value = Structure.Value.Str(raw)
-                    // flow-allow: putIfAbsent returns Java reference; Absent means null (insert succeeded), Present means collision
+                    // putIfAbsent returns Java reference; Absent means null (insert succeeded), Present means collision
                     Sync.defer(Maybe(progressStreams.putIfAbsent(token, channel))).map {
                         case Absent     => (token: Structure.Value)
                         case Present(_) => loop(attemptsLeft - 1)

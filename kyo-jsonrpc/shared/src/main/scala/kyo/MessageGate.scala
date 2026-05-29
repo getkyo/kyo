@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC gate trait implemented by users and consumed via JsonRpcEndpoint.Config.gate
+// PUBLIC gate trait implemented by users and consumed via JsonRpcEndpoint.Config.gate
 package kyo
 
 trait MessageGate:

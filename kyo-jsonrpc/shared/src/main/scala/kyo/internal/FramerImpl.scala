@@ -7,12 +7,12 @@ private[kyo] object FramerImpl:
     def parseLineDelimited(
         stream: Stream[Chunk[Byte], Async & Abort[Closed]]
     )(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
-        // flow-allow: AtomicRef for stateful leftover buffer across mapChunk calls; Sync effect threaded via mapChunk S2
+        // AtomicRef for stateful leftover buffer across mapChunk calls; Sync effect threaded via mapChunk S2
         Stream.unwrap {
             AtomicRef.init[Chunk[Byte]](Chunk.empty).map { bufRef =>
                 stream.mapChunk[Chunk[Byte], Chunk[Byte], Sync] { chunks =>
                     Sync.defer {
-                        // flow-allow: AtomicRef.Unsafe.get/set inside Sync.defer for leftover buffer; single-fiber stream consumption
+                        // AtomicRef.Unsafe.get/set inside Sync.defer for leftover buffer; single-fiber stream consumption
                         val current        = bufRef.unsafe.get()(using AllowUnsafe.embrace.danger)
                         val combined       = current ++ chunks.foldLeft(Chunk.empty[Byte])(_ ++ _)
                         val (frames, left) = splitOnLf(combined)
@@ -26,12 +26,12 @@ private[kyo] object FramerImpl:
     def parseContentLength(
         stream: Stream[Chunk[Byte], Async & Abort[Closed]]
     )(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
-        // flow-allow: AtomicRef for stateful leftover buffer across mapChunk calls; Sync effect threaded via mapChunk S2
+        // AtomicRef for stateful leftover buffer across mapChunk calls; Sync effect threaded via mapChunk S2
         Stream.unwrap {
             AtomicRef.init[Chunk[Byte]](Chunk.empty).map { bufRef =>
                 stream.mapChunk[Chunk[Byte], Chunk[Byte], Sync] { chunks =>
                     Sync.defer {
-                        // flow-allow: AtomicRef.Unsafe.get/set inside Sync.defer for leftover buffer; single-fiber stream consumption
+                        // AtomicRef.Unsafe.get/set inside Sync.defer for leftover buffer; single-fiber stream consumption
                         val current        = bufRef.unsafe.get()(using AllowUnsafe.embrace.danger)
                         val combined       = current ++ chunks.foldLeft(Chunk.empty[Byte])(_ ++ _)
                         val (frames, left) = splitContentLength(combined)
@@ -113,9 +113,9 @@ private[kyo] object FramerImpl:
                 val value = line.substring(colon + 1).trim
                 if key.equalsIgnoreCase("Content-Length") then
                     scala.util.Try(value.toInt).toOption match
-                        // flow-allow: scala.Option arm; interop with stdlib Try.toOption
+                        // scala.Option arm; interop with stdlib Try.toOption
                         case Some(n) if n >= 0 => found = Maybe.Present(n)
-                        // flow-allow: scala.Option arm; interop with stdlib Try.toOption
+                        // scala.Option arm; interop with stdlib Try.toOption
                         case _ => ()
                 end if
             end if

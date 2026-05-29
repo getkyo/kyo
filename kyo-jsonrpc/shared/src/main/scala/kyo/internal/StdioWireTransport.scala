@@ -13,7 +13,7 @@ final private[kyo] class StdioWireTransport extends WireTransport:
 
     def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
         Stream.unfold[Unit, Chunk[Byte], Async & Abort[Closed]](()) { _ =>
-            // flow-allow: EOFException from Console.readLine signals stream end; absorbed into Absent to close the stream
+            // EOFException from Console.readLine signals stream end; absorbed into Absent to close the stream
             Abort.run[java.io.IOException](Console.readLine).map {
                 case Result.Failure(_) => Maybe.Absent
                 case Result.Panic(_)   => Maybe.Absent

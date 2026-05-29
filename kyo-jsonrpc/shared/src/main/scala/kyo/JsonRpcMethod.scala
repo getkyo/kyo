@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC method-binding surface built by user and passed to JsonRpcEndpoint.init
+// PUBLIC method-binding surface built by user and passed to JsonRpcEndpoint.init
 package kyo
 
 import kyo.Abort
@@ -14,11 +14,11 @@ import kyo.Structure
 sealed trait JsonRpcMethod[+S]:
     def name: String
     def kind: JsonRpcMethod.Kind
-    // flow-allow: Stream.scala:48 sealed-protocol with framework-only abstract members
+    // Stream.scala:48 sealed-protocol with framework-only abstract members
     private[kyo] def schemaIn: Schema[?]
-    // flow-allow: Stream.scala:48 sealed-protocol with framework-only abstract members
+    // Stream.scala:48 sealed-protocol with framework-only abstract members
     private[kyo] def schemaOut: Schema[?]
-    // flow-allow: Stream.scala:48 sealed-protocol with framework-only abstract members
+    // Stream.scala:48 sealed-protocol with framework-only abstract members
     private[kyo] def handle(params: Structure.Value, ctx: HandlerCtx)(using Frame): Structure.Value < (Async & Abort[JsonRpcError])
 end JsonRpcMethod
 
@@ -69,11 +69,11 @@ object JsonRpcMethod:
     )(using Frame, (Async & Abort[JsonRpcError]) <:< S): Maybe[Structure.Value < (Async & Abort[JsonRpcError])] =
         val methodMap: Map[String, JsonRpcMethod[S]] =
             methods.iterator.map(m => (m.name, m)).toMap
-        // flow-allow: Map.get returns scala.Option; match arms are interop, not kyo code
+        // Map.get returns scala.Option; match arms are interop, not kyo code
         methodMap.get(name) match
-            // flow-allow: scala.Option arm; interop with Map.get
+            // scala.Option arm; interop with Map.get
             case Some(method) => Present(method.handle(params, ctx))
-            // flow-allow: scala.Option arm; interop with Map.get
+            // scala.Option arm; interop with Map.get
             case None => Absent
         end match
     end dispatch

@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC codec interface referenced by JsonRpcEndpoint.Config.codec field
+// PUBLIC codec interface referenced by JsonRpcEndpoint.Config.codec field
 package kyo
 
 import kyo.Abort

@@ -11,7 +11,7 @@ final private[kyo] class WireTransportAdapter(
     def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
         Abort.run[JsonRpcError](codec.encode(env)).map {
             case Result.Success(structure) =>
-                // flow-allow: RawJsonParser.encode converts Structure.Value to standard JSON-RPC wire bytes;
+                // RawJsonParser.encode converts Structure.Value to standard JSON-RPC wire bytes;
                 // Json.encode[Structure.Value] uses kyo-schema format ({"Record":...}), not standard JSON.
                 val jsonStr = RawJsonParser.encode(structure)
                 val bytes   = Chunk.from(jsonStr.getBytes("UTF-8"))
@@ -25,7 +25,7 @@ final private[kyo] class WireTransportAdapter(
     def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
         framer.parse(wire.incoming).map { bytes =>
             val jsonStr = new String(bytes.toArray, "UTF-8")
-            // flow-allow: RawJsonParser.parse converts arbitrary JSON-RPC wire bytes into Structure.Value;
+            // RawJsonParser.parse converts arbitrary JSON-RPC wire bytes into Structure.Value;
             // Json.decode[Structure.Value] uses the kyo-schema format and fails on standard JSON objects.
             RawJsonParser.parse(jsonStr) match
                 case Result.Success(structureValue) => codec.decode(structureValue)

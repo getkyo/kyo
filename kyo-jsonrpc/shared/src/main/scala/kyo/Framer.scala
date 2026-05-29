@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC framer preset library for byte-stream transports (line-delimited stdio, Content-Length envelopes)
+// PUBLIC framer preset library for byte-stream transports (line-delimited stdio, Content-Length envelopes)
 package kyo
 
 import kyo.Stream

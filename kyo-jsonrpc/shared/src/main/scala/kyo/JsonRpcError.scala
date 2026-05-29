@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC error-channel ADT appearing in JsonRpcEndpoint Abort rows and user error matching
+// PUBLIC error-channel ADT appearing in JsonRpcEndpoint Abort rows and user error matching
 package kyo
 
 import kyo.Frame

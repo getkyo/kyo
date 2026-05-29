@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC wire-shape ADT exposed through JsonRpcTransport and MessageGate user implementations
+// PUBLIC wire-shape ADT exposed through JsonRpcTransport and MessageGate user implementations
 package kyo
 
 import kyo.Maybe

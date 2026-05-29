@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC config-policy type referenced by JsonRpcEndpoint.Config.cancellation field
+// PUBLIC config-policy type referenced by JsonRpcEndpoint.Config.cancellation field
 package kyo
 
 import kyo.Maybe
@@ -23,19 +23,19 @@ object CancellationPolicy:
     private case class LspCancelParams(id: JsonRpcId) derives Schema, CanEqual
     private case class McpCancelParams(requestId: JsonRpcId, reason: Maybe[String]) derives Schema, CanEqual
 
-    // flow-allow: annotation pins the public ParamsEncoder type alias so the lambda matches the case-class constructor field type
+    // annotation pins the public ParamsEncoder type alias so the lambda matches the case-class constructor field type
     private val lspEncoder: ParamsEncoder =
         (id, _) =>
             f ?=>
                 Sync.defer(Structure.encode(LspCancelParams(id)))(using f)
 
-    // flow-allow: annotation pins the public ParamsEncoder type alias so the lambda matches the case-class constructor field type
+    // annotation pins the public ParamsEncoder type alias so the lambda matches the case-class constructor field type
     private val mcpEncoder: ParamsEncoder =
         (id, reason) =>
             f ?=>
                 Sync.defer(Structure.encode(McpCancelParams(id, reason)))(using f)
 
-    // flow-allow: annotation pins the public ParamsDecoder type alias so the lambda matches the case-class constructor field type
+    // annotation pins the public ParamsDecoder type alias so the lambda matches the case-class constructor field type
     private val lspDecoder: ParamsDecoder =
         sv =>
             f ?=>
@@ -45,7 +45,7 @@ object CancellationPolicy:
                         case _                 => Absent
                 }(using f)
 
-    // flow-allow: annotation pins the public ParamsDecoder type alias so the lambda matches the case-class constructor field type
+    // annotation pins the public ParamsDecoder type alias so the lambda matches the case-class constructor field type
     private val mcpDecoder: ParamsDecoder =
         sv =>
             f ?=>

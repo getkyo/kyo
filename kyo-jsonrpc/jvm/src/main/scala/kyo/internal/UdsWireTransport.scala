@@ -10,14 +10,14 @@ final private[kyo] class UdsWireTransport(server: ServerSocketChannel) extends W
     // Single client-at-a-time MVP: the first accepted connection wires send/incoming;
     // subsequent accepts are dropped. Multi-client requires a per-conn map, deferred to
     // the consumer-module roadmap.
-    // flow-allow: class construction is always wrapped in Sync.defer at the call site
+    // class construction is always wrapped in Sync.defer at the call site
     // (JsonRpcTransportJvm.unixDomain), so Unsafe.init runs inside a deferred block.
     private val activeChannelRef: AtomicRef.Unsafe[Maybe[SocketChannel]] =
         AtomicRef.Unsafe.init[Maybe[SocketChannel]](Absent)(using AllowUnsafe.embrace.danger)
 
     def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer {
-            // flow-allow: AtomicRef.Unsafe.get inside Sync.defer for SocketChannel handoff
+            // AtomicRef.Unsafe.get inside Sync.defer for SocketChannel handoff
             activeChannelRef.get()(using AllowUnsafe.embrace.danger) match
                 case Present(socket) =>
                     val buffer = ByteBuffer.wrap(bytes.toArray)
@@ -29,7 +29,7 @@ final private[kyo] class UdsWireTransport(server: ServerSocketChannel) extends W
     def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
         Stream.unfold[Unit, Chunk[Byte], Async & Abort[Closed]](()) { _ =>
             Sync.defer {
-                // flow-allow: AtomicRef.Unsafe access for accept-then-read MVP
+                // AtomicRef.Unsafe access for accept-then-read MVP
                 val socket = activeChannelRef.get()(using AllowUnsafe.embrace.danger) match
                     case Present(s) => s
                     case Absent =>
@@ -50,7 +50,7 @@ final private[kyo] class UdsWireTransport(server: ServerSocketChannel) extends W
 
     def close(using Frame): Unit < Async =
         Sync.defer {
-            // flow-allow: AtomicRef.Unsafe.get inside Sync.defer for SocketChannel handoff
+            // AtomicRef.Unsafe.get inside Sync.defer for SocketChannel handoff
             activeChannelRef.get()(using AllowUnsafe.embrace.danger).foreach(_.close())
             server.close()
         }

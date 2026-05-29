@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC byte-level user-facing transport seam consumed by JsonRpcTransport.fromWire and the byte-stream adapter set
+// PUBLIC byte-level user-facing transport seam consumed by JsonRpcTransport.fromWire and the byte-stream adapter set
 package kyo
 
 import kyo.Stream
