@@ -695,6 +695,9 @@ object Tasty:
                 case Symbol.JavaOrigin =>
                     Abort.fail(TastyError.NotImplemented("body not available for Java symbols"))
                 case o: Symbol.TastyOrigin =>
+                    // Unsafe: ClasspathRef.isAssigned and ClasspathRef.get() are unsafe-tier helpers; embraced
+                    // here at the body accessor boundary (§839 case 3: body is a Sync-returning accessor).
+                    import AllowUnsafe.embrace.danger
                     if !home.isAssigned then stub("Symbol.body")
                     else
                         home.get().checkOpen.andThen:
@@ -704,8 +707,7 @@ object Tasty:
                                 // Decode via OnceCell to cache; the OnceCell init lambda runs synchronously on first call.
                                 // If the decode threw (corrupt bytes), convert to Abort.fail(MalformedSection).
                                 // The try/catch runs before entering any kyo effect so exceptions become Either.
-                                // Unsafe: OnceCell.get() is an unsafe-tier helper; AllowUnsafe is embraced here.
-                                import AllowUnsafe.embrace.danger
+                                // Unsafe: OnceCell.get() is an unsafe-tier helper; covered by the import above.
                                 // Unsafe: Reading classpath state under AllowUnsafe to detect closed classpath
                                 // before body decode; state transitions are monotonic (Closed is terminal) so
                                 // a stale read returns a conservative result.
@@ -732,6 +734,7 @@ object Tasty:
                                         case Right(t) => Sync.defer(t)
                                         case Left(e)  => Abort.fail(e)
                                 end if
+                    end if
             end match
         end body
     end Symbol

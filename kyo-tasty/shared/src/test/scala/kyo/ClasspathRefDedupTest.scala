@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.AllowUnsafe
+import kyo.AllowUnsafe.embrace.danger
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.query.ClasspathTestHelpers

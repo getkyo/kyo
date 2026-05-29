@@ -22,17 +22,14 @@ final class ClasspathRef:
         slot.set(cp)
     end assign
 
-    /** Retrieve the assigned Classpath. Throws if not yet assigned. */
-    def get(): Tasty.Classpath =
-        // Unsafe: SingleAssign.get() is an unsafe-tier helper called inside Phase 7 orchestration.
-        import AllowUnsafe.embrace.danger
+    /** Retrieve the assigned Classpath. Throws if not yet assigned. Requires proof that the caller holds AllowUnsafe. */
+    def get()(using AllowUnsafe): Tasty.Classpath =
         slot.get()
     end get
 
-    /** Returns true if the Classpath has been assigned, false if the slot is still unset. */
-    def isAssigned: Boolean =
-        // Unsafe: SingleAssign.isSet reads an AtomicReference.
-        import AllowUnsafe.embrace.danger
+    /** Returns true if the Classpath has been assigned, false if the slot is still unset. Requires proof that the caller holds AllowUnsafe.
+      */
+    def isAssigned(using AllowUnsafe): Boolean =
         slot.isSet
     end isAssigned
 

@@ -28,7 +28,9 @@ object ClasspathTestHelpers:
 
     /** Assign the given extra symbols' ClasspathRef slots to `cp`. For internal test helpers only. */
     private[kyo] def assignExtraHomes(cp: Tasty.Classpath, extra: Seq[Tasty.Symbol]): Unit =
+        import AllowUnsafe.embrace.danger
         for sym <- extra do
             if !sym.home.isAssigned then sym.home.assign(cp)
+    end assignExtraHomes
 
 end ClasspathTestHelpers
