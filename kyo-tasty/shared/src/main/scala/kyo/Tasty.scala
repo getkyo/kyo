@@ -549,7 +549,7 @@ object Tasty:
             new kyo.internal.tasty.symbol.OnceCell[Tree](() =>
                 // This init lambda is called at most once per symbol. TreeUnpickler.decodeSync throws
                 // TreeUnpickler.DecodeException on corrupt/truncated slices; body() catches and wraps it.
-                // Unsafe: AllowUnsafe is needed for TastyOrigin.addrMap SingleAssign read.
+                // Unsafe: OnceCell init runs via TreeUnpickler.decodeSync, which reads unsafe-tier helpers.
                 import AllowUnsafe.embrace.danger
                 origin match
                     case Tasty.Symbol.JavaOrigin =>
@@ -856,9 +856,12 @@ object Tasty:
             private[kyo] val _addrMap: kyo.internal.tasty.symbol.SingleAssign[IntMap[Tasty.Symbol]] =
                 new kyo.internal.tasty.symbol.SingleAssign
 
-            def addrMap(using AllowUnsafe): IntMap[Tasty.Symbol] =
+            private[kyo] def addrMap: IntMap[Tasty.Symbol] =
+                // Unsafe: SingleAssign.get() is unsafe-tier; private[kyo] limits callers to kyo.internal.tasty.* §839 case 3 contexts.
+                import AllowUnsafe.embrace.danger
                 if _addrMap.isSet then _addrMap.get()
                 else IntMap.empty
+            end addrMap
 
             override def equals(other: Any): Boolean = other match
                 case o: TastyOrigin =>
