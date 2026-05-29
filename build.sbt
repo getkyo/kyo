@@ -1358,62 +1358,6 @@ def mimaCheck(failOnProblem: Boolean) =
         mimaFailOnProblem := failOnProblem
     )
 
-// --- Scalafix
-
-lazy val V = _root_.scalafix.sbt.BuildInfo
-
-lazy val scalaFixScalaVersion = V.scala213
-
-lazy val `kyo-scalafix` = (project in file("scalafix"))
-    .aggregate(`kyo-rules`, `kyo-scalafix-input`, `kyo-scalafix-output`, `kyo-scalafix-test`)
-    .disablePlugins(KyoDoctestPlugin)
-    .settings(publish / skip := true)
-
-lazy val `kyo-rules` = (project in file("scalafix/rules"))
-    .disablePlugins(KyoDoctestPlugin)
-    .settings(
-        moduleName                             := "kyo-rules",
-        libraryDependencies += "ch.epfl.scala" %% "scalafix-core" % V.scalafixVersion,
-        scalaVersion                           := scalaFixScalaVersion
-    )
-
-lazy val `kyo-scalafix-input` = (project in file("scalafix/input"))
-    .disablePlugins(KyoDoctestPlugin)
-    .settings(
-        publish / skip                     := true,
-        scalaVersion                       := scala3Version,
-        semanticdbEnabled                  := true,
-        semanticdbVersion                  := scalafixSemanticdb.revision,
-        libraryDependencies += "io.getkyo" %% "kyo-direct"      % "0.19.0",
-        libraryDependencies += "io.getkyo" %% "kyo-combinators" % "0.19.0"
-    )
-
-lazy val `kyo-scalafix-output` = (project in file("scalafix/output"))
-    .disablePlugins(KyoDoctestPlugin)
-    .settings(
-        publish / skip    := true,
-        scalaVersion      := scala3Version,
-        semanticdbEnabled := true,
-        semanticdbVersion := scalafixSemanticdb.revision
-    ).dependsOn(
-        `kyo-direct`.projects(JVMPlatform),
-        `kyo-combinators`.projects(JVMPlatform)
-    )
-
-lazy val `kyo-scalafix-test` = (project in file("scalafix/tests"))
-    .disablePlugins(KyoDoctestPlugin)
-    .settings(
-        scalaVersion                           := scalaFixScalaVersion,
-        publish / skip                         := true,
-        scalafixTestkitOutputSourceDirectories := (`kyo-scalafix-output` / Compile / unmanagedSourceDirectories).value,
-        scalafixTestkitInputSourceDirectories  := (`kyo-scalafix-input` / Compile / unmanagedSourceDirectories).value,
-        scalafixTestkitInputClasspath          := (`kyo-scalafix-input` / Compile / fullClasspath).value,
-        scalafixTestkitInputScalacOptions      := (`kyo-scalafix-input` / Compile / scalacOptions).value,
-        scalafixTestkitInputScalaVersion       := (`kyo-scalafix-input` / Compile / scalaVersion).value
-    )
-    .dependsOn(`kyo-rules`)
-    .enablePlugins(ScalafixTestkitPlugin)
-
 // --- sbt-kyo-doctest (sbt plugin; pairs with kyo-doctest library)
 //
 // Scala 2.12 sbt plugin that forks the kyo-doctest library CLI to validate Markdown fences.
