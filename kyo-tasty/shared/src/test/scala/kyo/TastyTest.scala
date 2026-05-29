@@ -195,6 +195,51 @@ class TastyTest extends Test:
         Future.successful(succeed)
     }
 
+    // ── Phase 02d source-text invariant tests (INV-002 / A4 Symbol.body bridge) ──
+
+    "Symbol.body TastyOrigin branch has no import AllowUnsafe.embrace.danger" in {
+        // INV-002 / A4: Symbol.body uses Sync.Unsafe.defer as the AllowUnsafe bridge; the freestanding
+        // import danger must be absent from the body method body.
+        // Scope: lines between 'def body(using Frame)' and the next top-level 'def ' or 'end body',
+        // so the _bodyOnce init lambda (which retains its own import at line ~553) is excluded.
+        // Given: source Tasty.scala read as String, lines split.
+        // When: extract lines in Symbol.body (from 'def body(using Frame)' through 'end body').
+        // Then: count of 'import AllowUnsafe.embrace.danger' in those lines is 0.
+        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
+        val lines     = Files.readString(tastyPath).split("\n")
+        val startIdx  = lines.indexWhere(_.contains("def body(using Frame): Tree < (Sync & Abort[TastyError])"))
+        assert(startIdx >= 0, "Could not find 'def body(using Frame)' in Tasty.scala")
+        val endIdx = lines.indexWhere(l => l.trim == "end body", startIdx + 1)
+        assert(endIdx > startIdx, "Could not find 'end body' after def body in Tasty.scala")
+        val bodyLines   = lines.slice(startIdx, endIdx + 1)
+        val dangerCount = bodyLines.count(_.contains("import AllowUnsafe.embrace.danger"))
+        assert(
+            dangerCount == 0,
+            s"A4 violated: found $dangerCount 'import AllowUnsafe.embrace.danger' in Symbol.body (lines ${startIdx + 1}-${endIdx + 1})"
+        )
+        Future.successful(succeed)
+    }
+
+    "Symbol.body TastyOrigin branch uses Sync.Unsafe.defer" in {
+        // A4: Symbol.body bridges the unsafe OnceCell/ClasspathRef reads through Sync.Unsafe.defer.
+        // Given: source Tasty.scala read as String, lines split.
+        // When: extract lines in Symbol.body (from 'def body(using Frame)' through 'end body').
+        // Then: count of 'Sync.Unsafe.defer' is at least 1.
+        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
+        val lines     = Files.readString(tastyPath).split("\n")
+        val startIdx  = lines.indexWhere(_.contains("def body(using Frame): Tree < (Sync & Abort[TastyError])"))
+        assert(startIdx >= 0, "Could not find 'def body(using Frame)' in Tasty.scala")
+        val endIdx = lines.indexWhere(l => l.trim == "end body", startIdx + 1)
+        assert(endIdx > startIdx, "Could not find 'end body' after def body in Tasty.scala")
+        val bodyLines  = lines.slice(startIdx, endIdx + 1)
+        val deferCount = bodyLines.count(_.contains("Sync.Unsafe.defer"))
+        assert(
+            deferCount >= 1,
+            s"A4 violated: found $deferCount 'Sync.Unsafe.defer' in Symbol.body; expected at least 1"
+        )
+        Future.successful(succeed)
+    }
+
     /** Count non-overlapping occurrences of `needle` in `haystack`. */
     private def countOccurrences(haystack: String, needle: String): Int =
         var count = 0
