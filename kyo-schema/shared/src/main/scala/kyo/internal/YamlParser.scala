@@ -42,7 +42,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
             Result.fail(error(s"Expected indentation of at least $indent spaces"))
         else if currentLineText().dropWhile(_ == ' ').startsWith("[") || currentLineText().dropWhile(_ == ' ').startsWith("{") then
             parseScalarValue(context, visitor)
-        else if startsWithAtIndent("- ") then parseBlockSequence(context, currentIndent(), visitor)
+        else if startsWithSequenceEntryAtIndent() then parseBlockSequence(context, currentIndent(), visitor)
         else if isBlockMappingLine(currentLineText()) then parseBlockMapping(context, currentIndent(), visitor)
         else parseScalarValue(context, visitor)
         end if
@@ -76,7 +76,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         run(context, visitor.sequenceStart(_, Meta(anchor, tag, mark()))) { c0 =>
             def loop(context: Ctx): Result[Err | DecodeException, Ctx] =
                 skipBlankAndCommentLines()
-                if pos >= input.length || currentIndent() < indent || !startsWithAtIndent("- ") then
+                if pos >= input.length || currentIndent() < indent || !startsWithSequenceEntryAtIndent() then
                     visitor.nodeEnd(context, mark())
                 else
                     consumeIndent(indent)
@@ -139,27 +139,52 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         val key           = readUntilMappingColon()
         val valueMarkBase = mark()
         val afterColon    = readRestOfLine()
-        visitor.scalar(context, key.trim, ScalarMeta(Absent, Absent, ScalarStyle.Plain, keyMark)).flatMap { c1 =>
+        visitor.scalar(context, unquoteKey(key.trim), ScalarMeta(Absent, Absent, ScalarStyle.Plain, keyMark)).flatMap { c1 =>
             val trimmed        = stripComment(afterColon).trim
             val firstValueChar = afterColon.indexWhere(ch => !ch.isWhitespace)
             val valueOffset    = if firstValueChar < 0 then 0 else firstValueChar
             val valueMark      = valueMarkBase.copy(index = valueMarkBase.index + valueOffset, column = valueMarkBase.column + valueOffset)
             val (anchor, tag, valueText) = readProperties(trimmed)
-            if valueText == "|" || valueText == ">" then
-                parseBlockScalar(c1, indent + 2, if valueText == "|" then ScalarStyle.Literal else ScalarStyle.Folded, anchor, tag, visitor)
-            else if valueText.isEmpty && (anchor.nonEmpty || tag.nonEmpty) then
-                withPending(anchor, tag) {
-                    skipBlankAndCommentLines()
-                    parseNode(c1, indent + 2, visitor)
-                }
-            else if valueText.isEmpty then
-                skipBlankAndCommentLines()
-                parseNode(c1, indent + 2, visitor)
-            else
-                parseInlineScalar(trimmed, c1, visitor, valueMark)
-            end if
+            blockScalarHeader(valueText) match
+                case Present((style, chomp)) =>
+                    parseBlockScalar(c1, indent + 2, style, chomp, anchor, tag, visitor)
+                case Absent if valueText.isEmpty && (anchor.nonEmpty || tag.nonEmpty) =>
+                    withPending(anchor, tag) {
+                        parseEmptyBlockMappingValue(c1, indent, visitor)
+                    }
+                case Absent if valueText.isEmpty =>
+                    parseEmptyBlockMappingValue(c1, indent, visitor)
+                case Absent =>
+                    parseInlineScalar(trimmed, c1, visitor, valueMark)
+            end match
         }
     end parseBlockMappingEntry
+
+    private def parseEmptyBlockMappingValue[Ctx, Err, A](
+        context: Ctx,
+        indent: Int,
+        visitor: Visitor[Ctx, Err, A]
+    ): Result[Err | DecodeException, Ctx] =
+        skipBlankAndCommentLines()
+        if pos >= input.length || (currentIndent() <= indent && !startsWithSequenceEntryAtIndent()) then
+            visitor.scalar(context, "", ScalarMeta(Absent, Absent, ScalarStyle.Plain, mark()))
+        else if currentIndent() == indent && startsWithSequenceEntryAtIndent() then
+            parseNode(context, indent, visitor)
+        else
+            parseNode(context, indent + 2, visitor)
+        end if
+    end parseEmptyBlockMappingValue
+
+    private def blockScalarHeader(valueText: String): Maybe[(ScalarStyle, Char)] =
+        if valueText.nonEmpty && (valueText.charAt(0) == '|' || valueText.charAt(0) == '>') then
+            val style = if valueText.charAt(0) == '|' then ScalarStyle.Literal else ScalarStyle.Folded
+            val chomp =
+                if valueText.contains("-") then '-'
+                else if valueText.contains("+") then '+'
+                else ' '
+            Maybe(style -> chomp)
+        else Absent
+    end blockScalarHeader
 
     private def parseCompactSequenceMapping[Ctx, Err, A](
         firstEntry: String,
@@ -239,6 +264,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         context: Ctx,
         indent: Int,
         style: ScalarStyle,
+        chomp: Char,
         anchor: Maybe[String],
         tag: Maybe[String],
         visitor: Visitor[Ctx, Err, A]
@@ -257,9 +283,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
             else done = true
             end if
         end while
+        val base =
+            if style == ScalarStyle.Literal then lines.mkString("\n")
+            else lines.mkString(" ")
         val value =
-            if style == ScalarStyle.Literal then lines.mkString("\n") + "\n"
-            else lines.mkString(" ") + "\n"
+            if chomp == '-' then base
+            else base + "\n"
         visitor.scalar(context, value, ScalarMeta(anchor, tag, style, mark()))
     end parseBlockScalar
 
@@ -364,6 +393,17 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         val n = currentIndent()
         input.startsWith(s, pos + n)
     end startsWithAtIndent
+
+    private def startsWithSequenceEntryAtIndent(): Boolean =
+        val n   = currentIndent()
+        val idx = pos + n
+        idx < input.length && input.charAt(idx) == '-' && (
+            idx + 1 >= input.length ||
+                input.charAt(idx + 1) == ' ' ||
+                input.charAt(idx + 1) == '\n' ||
+                input.charAt(idx + 1) == '\r'
+        )
+    end startsWithSequenceEntryAtIndent
 
     private def readUntilMappingColon(): String =
         val start = pos
@@ -515,11 +555,33 @@ final class YamlParser private (private val input: String)(using frame: Frame):
             if ch == '\\' && i + 1 < s.length then
                 i += 1
                 s.charAt(i) match
-                    case 'n'   => b.append('\n')
-                    case 'r'   => b.append('\r')
-                    case 't'   => b.append('\t')
-                    case '"'   => b.append('"')
-                    case '\\'  => b.append('\\')
+                    case '0'  => b.append('\u0000')
+                    case 'a'  => b.append('\u0007')
+                    case 'b'  => b.append('\b')
+                    case 't'  => b.append('\t')
+                    case '\t' => b.append('\t')
+                    case 'n'  => b.append('\n')
+                    case 'v'  => b.append('\u000b')
+                    case 'f'  => b.append('\f')
+                    case 'r'  => b.append('\r')
+                    case 'e'  => b.append('\u001b')
+                    case ' '  => b.append(' ')
+                    case '"'  => b.append('"')
+                    case '/'  => b.append('/')
+                    case '\\' => b.append('\\')
+                    case 'N'  => b.append('\u0085')
+                    case '_'  => b.append('\u00a0')
+                    case 'L'  => b.append('\u2028')
+                    case 'P'  => b.append('\u2029')
+                    case 'x' if i + 2 < s.length =>
+                        b.append(Integer.parseInt(s.substring(i + 1, i + 3), 16).toChar)
+                        i += 2
+                    case 'u' if i + 4 < s.length =>
+                        b.append(Integer.parseInt(s.substring(i + 1, i + 5), 16).toChar)
+                        i += 4
+                    case 'U' if i + 8 < s.length =>
+                        b.appendAll(Character.toChars(java.lang.Long.parseLong(s.substring(i + 1, i + 9), 16).toInt))
+                        i += 8
                     case other => b.append(other)
                 end match
             else b.append(ch)

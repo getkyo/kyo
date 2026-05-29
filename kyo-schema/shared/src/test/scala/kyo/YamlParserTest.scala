@@ -1,0 +1,475 @@
+package kyo
+
+final case class YamlGithubWorkflow(name: String, `on`: YamlGithubOn, jobs: Map[String, YamlGithubJob]) derives CanEqual
+final case class YamlGithubOn(push: YamlGithubPush, pull_request: Option[String]) derives CanEqual
+final case class YamlGithubPush(branches: List[String]) derives CanEqual
+final case class YamlGithubJob(`runs-on`: String, steps: List[YamlGithubStep]) derives CanEqual
+final case class YamlGithubStep(name: Option[String], uses: Option[String], run: Option[String], `with`: Option[Map[String, String]])
+    derives CanEqual
+final case class YamlOpenApiSpec(
+    openapi: String,
+    info: YamlOpenApiInfo,
+    paths: Map[String, YamlOpenApiPathItem],
+    components: YamlOpenApiComponents
+) derives CanEqual
+final case class YamlOpenApiInfo(title: String, version: String, description: String) derives CanEqual
+final case class YamlOpenApiPathItem(get: YamlOpenApiOperation) derives CanEqual
+final case class YamlOpenApiOperation(
+    summary: String,
+    operationId: String,
+    parameters: List[YamlOpenApiParameter],
+    responses: Map[String, YamlOpenApiResponse]
+) derives CanEqual
+final case class YamlOpenApiParameter(name: String, `in`: String, required: Boolean, schema: YamlOpenApiSchema) derives CanEqual
+final case class YamlOpenApiSchema(`type`: String, format: Option[String]) derives CanEqual
+final case class YamlOpenApiResponse(description: String) derives CanEqual
+final case class YamlOpenApiComponents(schemas: Map[String, YamlOpenApiSchema]) derives CanEqual
+final case class YamlDockerCompose(
+    version: String,
+    `x-logging`: YamlComposeLogging,
+    services: Map[String, YamlComposeService],
+    volumes: Map[String, YamlComposeVolume],
+    networks: Map[String, YamlComposeNetwork]
+) derives CanEqual
+final case class YamlComposeService(
+    image: String,
+    ports: Option[List[String]],
+    environment: Option[Map[String, String]],
+    depends_on: Option[List[String]],
+    volumes: Option[List[String]],
+    networks: Option[List[String]],
+    healthcheck: Option[YamlComposeHealthcheck],
+    logging: Option[YamlComposeLogging],
+    restart: Option[String]
+) derives CanEqual
+final case class YamlComposeHealthcheck(test: List[String], interval: String, timeout: String, retries: Int) derives CanEqual
+final case class YamlComposeLogging(driver: String, options: Map[String, String]) derives CanEqual
+final case class YamlComposeVolume(driver: Option[String]) derives CanEqual
+final case class YamlComposeNetwork(driver: Option[String]) derives CanEqual
+final case class YamlCoreScalars(
+    norway: String,
+    on: String,
+    off: String,
+    yes: String,
+    no: String,
+    trueValue: Boolean,
+    falseValue: Boolean,
+    nullValue: Option[String]
+) derives CanEqual
+final case class YamlPlayer(name: String, hr: Int, avg: Double) derives CanEqual
+final case class YamlLeagues(american: List[String], national: List[String]) derives CanEqual
+final case class YamlEscapes(unicode: String, control: String, hex: String) derives CanEqual
+
+class YamlParserTest extends Test:
+
+    given CanEqual[Any, Any] = CanEqual.derived
+
+    "parse" - {
+
+        "builds a YAML node tree only when requested" in {
+            val parsed = Yaml.parse("name: Alice\nage: 30\n").getOrThrow
+
+            parsed match
+                case Yaml.Node.Mapping(entries, _) =>
+                    assert(entries.map(_._1.asInstanceOf[Yaml.Node.Scalar].value) == Chunk("name", "age"))
+                    assert(entries.map(_._2.asInstanceOf[Yaml.Node.Scalar].value) == Chunk("Alice", "30"))
+                case other => fail(s"Expected mapping, got $other")
+            end match
+        }
+
+        "targets a document by zero-based index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            val parsed = Yaml.parse(yaml, Yaml.DocumentIndex(1)).getOrThrow
+
+            parsed match
+                case Yaml.Node.Mapping(entries, _) =>
+                    val fields = entries.map {
+                        case (Yaml.Node.Scalar(key, _), Yaml.Node.Scalar(value, _)) => key -> value
+                        case other                                                  => fail(s"Expected scalar entry, got $other")
+                    }.toMap
+                    assert(fields("name") == "Bob")
+                    assert(fields("age") == "25")
+                case other => fail(s"Expected mapping, got $other")
+            end match
+        }
+    }
+
+    "visit" - {
+
+        "streams block mapping events without requiring a YAML node tree" in {
+            val visitor = new Yaml.Visitor[List[String], String, List[String]]:
+                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed("streamStart" :: context)
+
+                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed("documentStart" :: context)
+
+                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
+                    Result.succeed(s"mappingStart:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
+
+                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
+                    Result.succeed(s"sequenceStart:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
+
+                def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
+                    Result.succeed(s"scalar:$value:${meta.style}" :: context)
+
+                def alias(context: List[String], name: String, mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(s"alias:$name" :: context)
+
+                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed("nodeEnd" :: context)
+
+                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed("documentEnd" :: context)
+
+                def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(("streamEnd" :: context).reverse)
+            end visitor
+
+            val visited = Yaml.visit("name: Alice\nage: 30\n", Nil)(visitor)
+
+            assert(
+                visited == Result.succeed(List(
+                    "streamStart",
+                    "documentStart",
+                    "mappingStart::",
+                    "scalar:name:Plain",
+                    "scalar:Alice:Plain",
+                    "scalar:age:Plain",
+                    "scalar:30:Plain",
+                    "nodeEnd",
+                    "documentEnd",
+                    "streamEnd"
+                ))
+            )
+        }
+
+        "exposes anchors and tags as visitor metadata" in {
+            val visitor = new Yaml.Visitor[List[String], String, List[String]]:
+                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]   = Result.succeed(context)
+                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context)
+
+                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
+                    Result.succeed(s"map:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
+
+                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
+                    Result.succeed(s"seq:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
+
+                def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
+                    Result.succeed(s"scalar:$value:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
+
+                def alias(context: List[String], name: String, mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(s"alias:$name" :: context)
+
+                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]     = Result.succeed(context)
+                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context)
+                def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]   = Result.succeed(context.reverse)
+            end visitor
+
+            val yaml =
+                """value: !custom &id Alice
+                  |again: *id
+                  |""".stripMargin
+
+            assert(
+                Yaml.visit(yaml, Nil)(visitor) == Result.succeed(List(
+                    "map::",
+                    "scalar:value::",
+                    "scalar:Alice:id:!custom",
+                    "scalar:again::",
+                    "alias:id"
+                ))
+            )
+        }
+
+        "targets a document by zero-based index" in {
+            val visitor = new Yaml.Visitor[List[String], String, List[String]]:
+                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
+                    Result.succeed(value :: context)
+
+                def alias(context: List[String], name: String, mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context.reverse)
+            end visitor
+
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            assert(Yaml.visit(yaml, Yaml.DocumentIndex(1), Nil)(visitor) == Result.succeed(List("name", "Bob", "age", "25")))
+        }
+    }
+
+    "real-world YAML" - {
+
+        "decodes GitHub Actions workflow shapes" in {
+            val yaml =
+                """name: CI
+                  |on:
+                  |  push:
+                  |    branches: [main, release]
+                  |  pull_request:
+                  |jobs:
+                  |  build:
+                  |    runs-on: ubuntu-latest
+                  |    steps:
+                  |      - name: Checkout
+                  |        uses: actions/checkout@v4
+                  |      - name: Test
+                  |        run: |-
+                  |          sbt 'kyo-schema/test'
+                  |          echo done
+                  |        with:
+                  |          cache: sbt
+                  |""".stripMargin
+
+            val expected = YamlGithubWorkflow(
+                "CI",
+                YamlGithubOn(YamlGithubPush(List("main", "release")), None),
+                Map(
+                    "build" -> YamlGithubJob(
+                        "ubuntu-latest",
+                        List(
+                            YamlGithubStep(Some("Checkout"), Some("actions/checkout@v4"), None, None),
+                            YamlGithubStep(Some("Test"), None, Some("sbt 'kyo-schema/test'\necho done"), Some(Map("cache" -> "sbt")))
+                        )
+                    )
+                )
+            )
+
+            assert(Yaml.decode[YamlGithubWorkflow](yaml) == Result.succeed(expected))
+        }
+
+        "decodes OpenAPI spec shapes" in {
+            val yaml =
+                """openapi: 3.1.0
+                  |info:
+                  |  title: Users API
+                  |  version: 1.0.0
+                  |  description: >-
+                  |    Users API for
+                  |    client apps.
+                  |paths:
+                  |  /users/{id}:
+                  |    get:
+                  |      summary: Get a user
+                  |      operationId: getUser
+                  |      parameters:
+                  |        - name: id
+                  |          in: path
+                  |          required: true
+                  |          schema: {type: string, format: uuid}
+                  |      responses:
+                  |        "200":
+                  |          description: ok
+                  |components:
+                  |  schemas:
+                  |    UserId: {type: string, format: uuid}
+                  |""".stripMargin
+
+            val expected = YamlOpenApiSpec(
+                "3.1.0",
+                YamlOpenApiInfo("Users API", "1.0.0", "Users API for client apps."),
+                Map(
+                    "/users/{id}" -> YamlOpenApiPathItem(
+                        YamlOpenApiOperation(
+                            "Get a user",
+                            "getUser",
+                            List(YamlOpenApiParameter("id", "path", true, YamlOpenApiSchema("string", Some("uuid")))),
+                            Map("200" -> YamlOpenApiResponse("ok"))
+                        )
+                    )
+                ),
+                YamlOpenApiComponents(Map("UserId" -> YamlOpenApiSchema("string", Some("uuid"))))
+            )
+
+            assert(Yaml.decode[YamlOpenApiSpec](yaml) == Result.succeed(expected))
+        }
+
+        "decodes Docker Compose files" in {
+            val yaml =
+                """version: "3.9"
+                  |x-logging: &default-logging
+                  |  driver: json-file
+                  |  options:
+                  |    max-size: 10m
+                  |    max-file: "3"
+                  |services:
+                  |  api:
+                  |    image: ghcr.io/acme/api:1.2.3
+                  |    ports:
+                  |      - "8080:80"
+                  |    environment:
+                  |      APP_ENV: production
+                  |      FEATURE_FLAG: "true"
+                  |      REGION: NO
+                  |    depends_on: [db, redis]
+                  |    volumes:
+                  |      - "app-data:/var/lib/app"
+                  |      - "./config:/app/config:ro"
+                  |    networks:
+                  |      - backend
+                  |    healthcheck:
+                  |      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+                  |      interval: 30s
+                  |      timeout: 10s
+                  |      retries: 3
+                  |    logging: *default-logging
+                  |    restart: unless-stopped
+                  |  db:
+                  |    image: postgres:16
+                  |    environment:
+                  |      POSTGRES_DB: app
+                  |      POSTGRES_PASSWORD: secret
+                  |    volumes:
+                  |      - "db-data:/var/lib/postgresql/data"
+                  |    networks: [backend]
+                  |volumes:
+                  |  app-data:
+                  |    driver: local
+                  |  db-data:
+                  |    driver: local
+                  |networks:
+                  |  backend:
+                  |    driver: bridge
+                  |""".stripMargin
+
+            val logging = YamlComposeLogging("json-file", Map("max-size" -> "10m", "max-file" -> "3"))
+            val expected = YamlDockerCompose(
+                "3.9",
+                logging,
+                Map(
+                    "api" -> YamlComposeService(
+                        "ghcr.io/acme/api:1.2.3",
+                        Some(List("8080:80")),
+                        Some(Map("APP_ENV" -> "production", "FEATURE_FLAG" -> "true", "REGION" -> "NO")),
+                        Some(List("db", "redis")),
+                        Some(List("app-data:/var/lib/app", "./config:/app/config:ro")),
+                        Some(List("backend")),
+                        Some(YamlComposeHealthcheck(
+                            List("CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"),
+                            "30s",
+                            "10s",
+                            3
+                        )),
+                        Some(logging),
+                        Some("unless-stopped")
+                    ),
+                    "db" -> YamlComposeService(
+                        "postgres:16",
+                        None,
+                        Some(Map("POSTGRES_DB" -> "app", "POSTGRES_PASSWORD" -> "secret")),
+                        None,
+                        Some(List("db-data:/var/lib/postgresql/data")),
+                        Some(List("backend")),
+                        None,
+                        None,
+                        None
+                    )
+                ),
+                Map("app-data" -> YamlComposeVolume(Some("local")), "db-data" -> YamlComposeVolume(Some("local"))),
+                Map("backend"  -> YamlComposeNetwork(Some("bridge")))
+            )
+
+            assert(Yaml.decode[YamlDockerCompose](yaml) == Result.succeed(expected))
+        }
+    }
+
+    "YAML 1.2 scenarios" - {
+
+        "uses Core schema scalar resolution and avoids the Norway problem" in {
+            val yaml =
+                """norway: NO
+                  |on: on
+                  |off: off
+                  |yes: yes
+                  |no: no
+                  |trueValue: true
+                  |falseValue: FALSE
+                  |nullValue: ~
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlCoreScalars](yaml) == Result.succeed(
+                YamlCoreScalars("NO", "on", "off", "yes", "no", true, false, None)
+            ))
+        }
+
+        "decodes dash-only sequence entries with nested mappings" in {
+            val yaml =
+                """-
+                  |  name: Mark McGwire
+                  |  hr: 65
+                  |  avg: 0.278
+                  |-
+                  |  name: Sammy Sosa
+                  |  hr: 63
+                  |  avg: 0.288
+                  |""".stripMargin
+
+            assert(Yaml.decode[List[YamlPlayer]](yaml) == Result.succeed(
+                List(YamlPlayer("Mark McGwire", 65, 0.278), YamlPlayer("Sammy Sosa", 63, 0.288))
+            ))
+        }
+
+        "decodes indentless block sequences as mapping values" in {
+            val yaml =
+                """american:
+                  |- Boston Red Sox
+                  |- Detroit Tigers
+                  |national:
+                  |- New York Mets
+                  |- Chicago Cubs
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlLeagues](yaml) == Result.succeed(
+                YamlLeagues(List("Boston Red Sox", "Detroit Tigers"), List("New York Mets", "Chicago Cubs"))
+            ))
+        }
+
+        "decodes double quoted escape sequences" in {
+            val yaml =
+                """unicode: "Sosa did fine.\u263A"
+                  |control: "\b1998\t1999\t2000\n"
+                  |hex: "\x0d\x0a is \r\n"
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlEscapes](yaml) == Result.succeed(
+                YamlEscapes("Sosa did fine.\u263A", "\b1998\t1999\t2000\n", "\r\n is \r\n")
+            ))
+        }
+    }
+
+end YamlParserTest
