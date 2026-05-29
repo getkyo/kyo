@@ -47,7 +47,7 @@ private[kyo] object JsonRpcCodecImpl:
                                 base :+ ("result" -> result.getOrElse(Structure.Value.Null))
                         Structure.Value.Record(withPayload)
 
-                case JsonRpcEnvelope.Malformed(_, _) =>
+                case JsonRpcEnvelope.Malformed(_, _, _) =>
                     Abort.fail(JsonRpcError.internalError("cannot encode Malformed", Absent))
 
         def decode(raw: Structure.Value)(using Frame): JsonRpcEnvelope < Sync =
@@ -87,6 +87,11 @@ private[kyo] object JsonRpcCodecImpl:
                         val hasResult = resultOpt.isDefined
                         val hasError  = errorOpt.isDefined
 
+                        val errorIsRecord = errorOpt.forall {
+                            case Structure.Value.Record(_) => true
+                            case _                         => false
+                        }
+
                         if hasMethod && hasId && idMaybe.isDefined then
                             val params = getValue("params")
                             JsonRpcEnvelope.Request(idMaybe.get, methodOpt.get, params, Absent)
@@ -95,17 +100,19 @@ private[kyo] object JsonRpcCodecImpl:
                             JsonRpcEnvelope.Notification(methodOpt.get, params, Absent)
                         else if !hasMethod && hasId && idMaybe.isDefined && (hasResult || hasError) then
                             if hasResult && hasError then
-                                JsonRpcEnvelope.Malformed("response has both result and error", raw)
+                                JsonRpcEnvelope.Malformed(idMaybe, "response has both result and error", raw)
+                            else if hasError && !errorIsRecord then
+                                JsonRpcEnvelope.Malformed(idMaybe, "error field is not a Record", raw)
                             else
                                 val decodedError = errorOpt.map: ev =>
                                     Structure.decode[JsonRpcError](ev).getOrElse(JsonRpcError.InvalidRequest)
                                 JsonRpcEnvelope.Response(idMaybe.get, resultOpt, decodedError, Absent)
                         else
-                            JsonRpcEnvelope.Malformed("unclassifiable envelope", raw)
+                            JsonRpcEnvelope.Malformed(idMaybe, "unclassifiable envelope", raw)
                         end if
 
                     case other =>
-                        JsonRpcEnvelope.Malformed("expected a Record", other)
+                        JsonRpcEnvelope.Malformed(Absent, "expected a Record", other)
         end decode
 
     end Strict2_0
@@ -140,7 +147,7 @@ private[kyo] object JsonRpcCodecImpl:
                             base :+ ("result" -> result.getOrElse(Structure.Value.Null))
                     buildWithExtras(withPayload, extras)
 
-                case JsonRpcEnvelope.Malformed(_, _) =>
+                case JsonRpcEnvelope.Malformed(_, _, _) =>
                     Abort.fail(JsonRpcError.internalError("cannot encode Malformed", Absent))
 
         private def buildWithExtras(
@@ -212,15 +219,18 @@ private[kyo] object JsonRpcCodecImpl:
                             val params = getVal("params")
                             JsonRpcEnvelope.Notification(methodOpt.get, params, extras)
                         else if !hasMethod && hasId && idMaybe.isDefined && (hasResult || hasError) then
-                            val decodedError = errorOpt.map: ev =>
-                                Structure.decode[JsonRpcError](ev).getOrElse(JsonRpcError.InvalidRequest)
-                            JsonRpcEnvelope.Response(idMaybe.get, resultOpt, decodedError, extras)
+                            if hasResult && hasError then
+                                JsonRpcEnvelope.Malformed(idMaybe, "response has both result and error", raw)
+                            else
+                                val decodedError = errorOpt.map: ev =>
+                                    Structure.decode[JsonRpcError](ev).getOrElse(JsonRpcError.InvalidRequest)
+                                JsonRpcEnvelope.Response(idMaybe.get, resultOpt, decodedError, extras)
                         else
-                            JsonRpcEnvelope.Malformed("unclassifiable envelope", raw)
+                            JsonRpcEnvelope.Malformed(idMaybe, "unclassifiable envelope", raw)
                         end if
 
                     case other =>
-                        JsonRpcEnvelope.Malformed("expected a Record", other)
+                        JsonRpcEnvelope.Malformed(Absent, "expected a Record", other)
         end decode
 
     end Cdp

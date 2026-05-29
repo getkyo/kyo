@@ -22,5 +22,5 @@ enum JsonRpcEnvelope derives CanEqual:
         error: Maybe[JsonRpcError],
         extras: Maybe[Structure.Value]
     )
-    case Malformed(reason: String, raw: Structure.Value)
+    case Malformed(id: Maybe[JsonRpcId], reason: String, raw: Structure.Value)
 end JsonRpcEnvelope

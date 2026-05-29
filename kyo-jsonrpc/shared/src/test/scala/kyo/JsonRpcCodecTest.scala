@@ -108,7 +108,7 @@ class JsonRpcCodecTest extends JsonRpcTestBase:
         ))
         JsonRpcCodec.Strict2_0.decode(raw).map: decoded =>
             decoded match
-                case JsonRpcEnvelope.Malformed(_, _) => succeed
+                case JsonRpcEnvelope.Malformed(_, _, _) => succeed
                 case other => fail(
                         s"expected Malformed (null-id Response cannot be represented as Response, JsonRpcEnvelope.Response.id has type JsonRpcId not Maybe), got: $other"
                     )
@@ -194,6 +194,39 @@ class JsonRpcCodecTest extends JsonRpcTestBase:
                 vCdp match
                     case Record(cf) => assert(!cf.exists(_._1 == "jsonrpc"))
                     case _          => fail("expected Record")
+    }
+
+    "Strict2_0 decoder recovers id from malformed response" in run {
+        val raw = Structure.Value.Record(Chunk(
+            "jsonrpc" -> Structure.Value.Str("2.0"),
+            "id"      -> Structure.Value.Integer(42),
+            "error"   -> Structure.Value.Str("stringy")
+        ))
+        JsonRpcCodec.Strict2_0.decode(raw).map {
+            case JsonRpcEnvelope.Malformed(Present(JsonRpcId.Num(42)), reason, _) =>
+                assert(reason.nonEmpty)
+            case other => fail(s"expected Malformed-with-id, got $other")
+        }
+    }
+
+    "Cdp decoder recovers id from malformed response" in run {
+        val raw = Structure.Value.Record(Chunk(
+            "id"     -> Structure.Value.Integer(99),
+            "result" -> Structure.Value.Record(Chunk("x" -> Structure.Value.Integer(1))),
+            "error"  -> Structure.Value.Str("boom")
+        ))
+        JsonRpcCodec.Cdp.decode(raw).map {
+            case JsonRpcEnvelope.Malformed(Present(JsonRpcId.Num(99)), _, _) => succeed
+            case other                                                       => fail(s"expected Malformed-with-id, got $other")
+        }
+    }
+
+    "Malformed for non-Record carries Absent id" in run {
+        JsonRpcCodec.Strict2_0.decode(Structure.Value.Str("not a record")).map {
+            case JsonRpcEnvelope.Malformed(Absent, reason, _) =>
+                assert(reason == "expected a Record")
+            case other => fail(s"expected Malformed(Absent, ...), got $other")
+        }
     }
 
 end JsonRpcCodecTest

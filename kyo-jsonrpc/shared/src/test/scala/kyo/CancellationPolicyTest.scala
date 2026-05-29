@@ -630,4 +630,24 @@ class CancellationPolicyTest extends JsonRpcTestBase:
         }
     }
 
+    "custom policy decoder routes through decodeParams" in run {
+        val decoder: CancellationPolicy.ParamsDecoder = sv =>
+            f ?=>
+                Sync.defer {
+                    sv match
+                        case Structure.Value.Record(fields) =>
+                            fields.iterator.collectFirst {
+                                case ("target", Structure.Value.Str(s)) => JsonRpcId.Str(s)
+                            } match
+                                case Some(id) => Present(id)
+                                case None     => Absent
+                        case _ => Absent
+                }(using f)
+        val policy = CancellationPolicy("x.cancel", CancellationPolicy.lsp.encodeParams, decoder, false, Absent, Set.empty)
+        val params = Present(Structure.Value.Record(Chunk("target" -> Structure.Value.Str("abc"))))
+        internal.CancellationEngine.extractCancelIdForTest(policy, params).map { result =>
+            assert(result == Present(JsonRpcId.Str("abc")))
+        }
+    }
+
 end CancellationPolicyTest

@@ -11,7 +11,7 @@ class JsonRpcEnvelopeTest extends JsonRpcTestBase:
         val req: JsonRpcEnvelope = JsonRpcEnvelope.Request(JsonRpcId.Num(1L), "m", Absent, Absent)
         val ntf: JsonRpcEnvelope = JsonRpcEnvelope.Notification("m", Absent, Absent)
         val rsp: JsonRpcEnvelope = JsonRpcEnvelope.Response(JsonRpcId.Num(1L), Absent, Absent, Absent)
-        val mal: JsonRpcEnvelope = JsonRpcEnvelope.Malformed("bad", Structure.Value.Null)
+        val mal: JsonRpcEnvelope = JsonRpcEnvelope.Malformed(Absent, "bad", Structure.Value.Null)
         assert(req != ntf)
         assert(req != rsp)
         assert(req != mal)
@@ -46,9 +46,16 @@ class JsonRpcEnvelopeTest extends JsonRpcTestBase:
 
     "Malformed retains both reason and raw payload" in run {
         val raw                            = Structure.Value.Str("garbage")
-        val mal: JsonRpcEnvelope.Malformed = JsonRpcEnvelope.Malformed("bad-shape", raw)
+        val mal: JsonRpcEnvelope.Malformed = JsonRpcEnvelope.Malformed(Absent, "bad-shape", raw)
         assert(mal.reason == "bad-shape")
         assert(mal.raw == raw)
+    }
+
+    "Malformed carries Maybe id slot" in run {
+        val env = JsonRpcEnvelope.Malformed(Present(JsonRpcId.Num(7)), "stringy error", Structure.Value.Str("raw"))
+        env match
+            case JsonRpcEnvelope.Malformed(id, _, _) => assert(id == Present(JsonRpcId.Num(7)))
+            case _                                   => fail("expected Malformed")
     }
 
 end JsonRpcEnvelopeTest

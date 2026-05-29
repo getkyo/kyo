@@ -8,23 +8,20 @@ import kyo.Maybe.Present
 
 private[kyo] object CancellationEngine:
 
-    private case class LspCancelParams(id: JsonRpcId) derives Schema, CanEqual
-    private case class McpCancelParams(requestId: JsonRpcId, reason: Maybe[String]) derives Schema, CanEqual
-
     private def extractCancelId(
         policy: CancellationPolicy,
         params: Maybe[Structure.Value]
-    )(using Frame): Maybe[JsonRpcId] =
-        params.flatMap { sv =>
-            if policy.cancelMethod == "$/cancelRequest" then
-                Structure.decode[LspCancelParams](sv) match
-                    case Result.Success(p) => Present(p.id)
-                    case _                 => Absent
-            else
-                Structure.decode[McpCancelParams](sv) match
-                    case Result.Success(p) => Present(p.requestId)
-                    case _                 => Absent
-        }
+    )(using Frame): Maybe[JsonRpcId] < Sync =
+        params match
+            case Absent      => Absent
+            case Present(sv) => policy.decodeParams(sv)
+
+    /** Test-accessible alias for extractCancelId. */
+    private[kyo] def extractCancelIdForTest(
+        policy: CancellationPolicy,
+        params: Maybe[Structure.Value]
+    )(using Frame): Maybe[JsonRpcId] < Sync =
+        extractCancelId(policy, params)
 
     /** Handles an incoming cancel notification from the remote peer.
       * Called from the reader fiber's decode callback (Sync-only context).
@@ -35,7 +32,7 @@ private[kyo] object CancellationEngine:
         policy: CancellationPolicy,
         pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry]
     )(using Frame): Unit < Sync =
-        extractCancelId(policy, env.params) match
+        extractCancelId(policy, env.params).map {
             case Absent =>
                 Log.warn(s"kyo-jsonrpc: inbound cancel notification missing id, dropping")
             case Present(id) =>
@@ -74,6 +71,7 @@ private[kyo] object CancellationEngine:
                             // Idempotent: already cancelled
                             ()
                 }
+        }
 
     /** Builds and enqueues the outbound cancel notification for a call we issued.
       * Steps 3-4 of DESIGN §7 outbound flow.

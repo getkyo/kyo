@@ -635,8 +635,12 @@ final class JsonRpcEndpointImpl private[kyo] (
             else drainSignal.get.map(_.get.unit)
         }
 
-    def close(using Frame): Unit < Async =
-        finalizer
+    def close(gracePeriod: Duration)(using Frame): Unit < Async =
+        if gracePeriod == Duration.Zero then finalizer
+        else
+            Abort.run[Timeout](Async.timeout(gracePeriod)(awaitDrain)).map { _ =>
+                finalizer
+            }
 
     private[kyo] def finalizer(using Frame): Unit < Async =
         // Step 1: poison writer channel so writer fiber unblocks and exits
@@ -936,9 +940,11 @@ object JsonRpcEndpointImpl:
                                                                                                     AllowUnsafe.embrace.danger
                                                                                                 ) match
                                                                                                     case Present(i) =>
-                                                                                                        Fiber.initUnscoped(i.close(using
-                                                                                                            frame
-                                                                                                        ))
+                                                                                                        Fiber.initUnscoped(
+                                                                                                            i.close(Duration.Zero)(using
+                                                                                                                frame
+                                                                                                            )
+                                                                                                        )
                                                                                                     case Absent => ()
                                                                                             }.andThen(Exchange.Message.Skip)
                                                                                         }
@@ -1105,8 +1111,9 @@ object JsonRpcEndpointImpl:
                                                                         Sync.Unsafe.defer {
                                                                             // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                             implRefUnsafe.get()(using AllowUnsafe.embrace.danger) match
-                                                                                case Present(i) => Fiber.initUnscoped(i.close(using frame))
-                                                                                case Absent     => ()
+                                                                                case Present(i) =>
+                                                                                    Fiber.initUnscoped(i.close(Duration.Zero)(using frame))
+                                                                                case Absent => ()
                                                                         }.andThen(Exchange.Message.Skip)
                                                                     }
                                                 end dispatchRequest
@@ -1178,7 +1185,20 @@ object JsonRpcEndpointImpl:
                                                                     )
                                                         }
 
-                                            case JsonRpcEnvelope.Malformed(_, _) =>
+                                            case JsonRpcEnvelope.Malformed(Present(id), reason, _) =>
+                                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
+                                                Sync.Unsafe.defer {
+                                                    Maybe(callerRegistry.get(id)) match
+                                                        case Present(info) =>
+                                                            // flow-allow: CAS-won path completes pending caller promise from outside originating fiber
+                                                            info.abortSignal.unsafe.completeDiscard(
+                                                                Result.succeed(JsonRpcError.invalidRequest(s"malformed response: $reason"))
+                                                                // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
+                                                            )(using AllowUnsafe.embrace.danger)
+                                                        case Absent =>
+                                                            ()
+                                                }.andThen(Exchange.Message.Skip)
+                                            case JsonRpcEnvelope.Malformed(Absent, _, _) =>
                                                 Exchange.Message.Skip
                                     }
                                 case Result.Failure(_) =>

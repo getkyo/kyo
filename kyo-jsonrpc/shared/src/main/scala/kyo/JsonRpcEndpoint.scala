@@ -45,7 +45,11 @@ final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.JsonRp
 
     def awaitDrain(using Frame): Unit < Async = impl.awaitDrain
 
-    def close(using Frame): Unit < Async = impl.close
+    def close(using Frame): Unit < Async = impl.close(Duration.Zero)
+
+    def close(gracePeriod: Duration)(using Frame): Unit < Async = impl.close(gracePeriod)
+
+    def closeNow(using Frame): Unit < Async = impl.close(Duration.Zero)
 
 end JsonRpcEndpoint
 
@@ -61,7 +65,7 @@ object JsonRpcEndpoint:
 
     final case class Config(
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
-        cancellation: Maybe[CancellationPolicy] = Present(CancellationPolicy.lsp),
+        cancellation: Maybe[CancellationPolicy] = Absent,
         progress: Maybe[ProgressPolicy] = Absent,
         unknownMethod: UnknownMethodPolicy = UnknownMethodPolicy.minimal,
         gate: Maybe[MessageGate] = Absent,

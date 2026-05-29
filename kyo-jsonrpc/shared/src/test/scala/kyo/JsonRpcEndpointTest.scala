@@ -210,7 +210,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
                 Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("add", AddReq(1, 2)))
             ).map { callFib =>
                 Async.sleep(30.millis).andThen {
-                    a.close.andThen {
+                    a.closeNow.andThen {
                         callFib.get.map {
                             case Result.Failure(_) => succeed
                             case Result.Success(v) => fail(s"expected failure, got $v")
@@ -413,7 +413,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
             JsonRpcEndpoint.init(countingTa, Seq.empty).map { a =>
                 JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
                     val countBefore = sendCounter.get()(using AllowUnsafe.embrace.danger)
-                    a.close.andThen {
+                    a.closeNow.andThen {
                         val countAfterClose = sendCounter.get()(using AllowUnsafe.embrace.danger)
                         Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("add", AddReq(1, 2))).map {
                             case Result.Failure(_) =>
@@ -450,6 +450,100 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
                     )
                     Kyo.fill(100)(a.call[AddReq, AddResp]("add", AddReq(1, 0), capture)).map { _ =>
                         assert(collectedIds.get()(using AllowUnsafe.embrace.danger).size == 100)
+                    }
+                }
+            }
+        }
+    }
+
+    "default Config() has cancellation Absent" in run {
+        val cfg = JsonRpcEndpoint.Config()
+        assert(cfg.cancellation == Absent)
+        assert(cfg.codec eq JsonRpcCodec.Strict2_0)
+        assert(cfg.progress == Absent)
+        assert(cfg.unknownMethod == UnknownMethodPolicy.minimal)
+    }
+
+    "Config() default plus LSP-shaped timeout emits no cancel" in run {
+        val seen = AtomicRef.Unsafe.init[Chunk[JsonRpcEnvelope]](Chunk.empty)(using AllowUnsafe.embrace.danger)
+        val slow = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("slow") { (_, _) => Async.sleep(2.seconds) }
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            val tbWrap = new JsonRpcTransport:
+                def send(env: JsonRpcEnvelope)(using Frame) = tb.send(env)
+                def incoming(using Frame) = tb.incoming.mapPure { env =>
+                    discard(seen.updateAndGet(_ :+ env)(using AllowUnsafe.embrace.danger))
+                    env
+                }
+                def close(using Frame) = tb.close
+            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                JsonRpcEndpoint.init(tbWrap, Seq(slow)).map { _ =>
+                    Abort.run[Timeout](Async.timeout(100.millis)(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit](
+                        "slow",
+                        ()
+                    )))).andThen {
+                        Async.sleep(500.millis).andThen {
+                            val envs = seen.get()(using AllowUnsafe.embrace.danger)
+                            assert(envs.exists { case JsonRpcEnvelope.Request(_, "slow", _, _) => true; case _ => false })
+                            assert(!envs.exists { case JsonRpcEnvelope.Notification("$/cancelRequest", _, _) => true; case _ => false })
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "malformed response with id fails caller fast" in run {
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                Fiber.initUnscoped(Abort.run[Closed](tb.send(JsonRpcEnvelope.Response(
+                    JsonRpcId.Num(1),
+                    Absent,
+                    Present(JsonRpcError.invalidRequest("x")),
+                    Absent
+                )))).andThen {
+                    Abort.run[Timeout](Async.timeout(1.second)(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("noop", ())))).map {
+                        case Result.Success(Result.Failure(err: JsonRpcError)) =>
+                            assert(err.message.contains("malformed response") || err.code == JsonRpcError.InvalidRequest.code)
+                        case other => fail(s"unexpected $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "close(0) is equivalent to closeNow" in run {
+        val slow = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("slow") { (_, _) => Async.sleep(5.seconds) }
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                JsonRpcEndpoint.init(tb, Seq(slow)).map { _ =>
+                    Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ()))).map { _ =>
+                        a.close(Duration.Zero).andThen {
+                            Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ())).map {
+                                case Result.Failure(_: Closed) => succeed
+                                case other                     => fail(s"expected Closed, got $other")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "close(gracePeriod) drains before forcing" in run {
+        val done = Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe
+        val q = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("q") { (_, _) =>
+            Async.sleep(200.millis).andThen(done.completeUnit.unit)
+        }
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                JsonRpcEndpoint.init(tb, Seq(q)).map { _ =>
+                    Fiber.initUnscoped(a.call[Unit, Unit]("q", ())).andThen {
+                        val start = java.lang.System.currentTimeMillis
+                        a.close(1.second).map { _ =>
+                            val elapsed = java.lang.System.currentTimeMillis - start
+                            assert(elapsed < 900)
+                            done.get.map(_ => succeed)
+                        }
                     }
                 }
             }
