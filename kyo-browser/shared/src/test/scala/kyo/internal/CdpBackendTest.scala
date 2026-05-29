@@ -3,63 +3,108 @@ package kyo.internal
 import kyo.*
 import kyo.internal.CdpTypes.*
 
-/** A fake [[CdpSender]] for unit-testing [[CdpBackend]] without a live browser.
+/** Typed CDP wrapper tests for [[CdpBackend]] companion methods.
   *
-  * Implements the [[CdpSender]] trait directly so no null values or casts are needed.
+  * Tests use paired [[JsonRpcTransport.inMemory]] transports with a fake-server [[JsonRpcEndpoint]] to exercise each wrapper without a live
+  * browser process. The server handles `Browser.getVersion` (required by the Q-002 probe in initUnscoped) plus the method under test.
   *
-  * Responses are keyed by CDP method name. When a method has no pre-configured response the fake aborts with
-  * [[BrowserProtocolErrorException]].
+  * "Valid response" cases: server returns the correctly-typed value; wrapper must decode and return it.
+  * "Decode failure" cases: server returns [[BadResult]] (serializes to `{}`), which is missing required fields for typed responses.
   */
-private class FakeCdpSender(responses: Map[String, String]) extends CdpSender:
-
-    def send(method: String)(using Frame): String < (Async & Abort[BrowserReadException]) =
-        responses.get(method) match
-            case Some(json) => json
-            case None       => Abort.fail(BrowserProtocolErrorException(method, "no fake response configured"))
-
-    def send[P: Schema](method: String, params: P)(using Frame): String < (Async & Abort[BrowserReadException]) =
-        responses.get(method) match
-            case Some(json) => json
-            case None       => Abort.fail(BrowserProtocolErrorException(method, "no fake response configured"))
-
-end FakeCdpSender
-
 class CdpBackendTest extends Test:
 
-    // The CdpClient dispatcher hands awaiting callers the WHOLE wire frame, not the extracted `result`
-    // substring. Tests express the *inner* typed payload (decodes to the per-call response case class);
-    // this helper wraps it in the CdpReply envelope shape the live dispatcher would emit.
-    private def replyOk(inner: String): String = s"""{"id":1,"result":$inner}"""
+    private val testLaunchCfg = Browser.LaunchConfig.default.copy(
+        requestTimeout = 5.seconds,
+        closeGrace = 500.millis
+    )
 
-    /** Builds a fake sender whose responses are inner typed payloads automatically wrapped in a CdpReply envelope. */
-    private def fakeSender(responses: (String, String)*): FakeCdpSender =
-        new FakeCdpSender(responses.iterator.map { case (m, inner) => m -> replyOk(inner) }.toMap)
+    private val testVersionResult = BrowserVersionResult(
+        protocolVersion = "0",
+        product = "Headless/0",
+        revision = "0",
+        userAgent = "Mozilla/5.0 (Headless)",
+        jsVersion = "0.0"
+    )
+
+    /** Empty record used as the "wrong type" for decode-failure tests. Serializes to `{}` which is missing all required fields for typed
+      * response schemas.
+      */
+    private case class BadResult() derives Schema
+
+    /** Creates a server-side [[JsonRpcEndpoint]] that handles `Browser.getVersion` with [[testVersionResult]] and routes any other request
+      * to `extraMethods`. Registers the endpoint with the enclosing Scope so it is closed on test exit.
+      */
+    private def mkServerEndpoint(
+        serverTransport: JsonRpcTransport,
+        extraMethods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]] = Seq.empty
+    )(using Frame): JsonRpcEndpoint < (Async & Scope) =
+        val versionMethod = JsonRpcMethod[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
+            "Browser.getVersion"
+        ) { (_, _) => testVersionResult }
+        val config = JsonRpcEndpoint.Config(
+            codec = JsonRpcCodec.Cdp,
+            maxInFlight = Present(8),
+            idStrategy = IdStrategy.SequentialInt
+        )
+        JsonRpcEndpoint.init(serverTransport, versionMethod +: extraMethods, config)
+    end mkServerEndpoint
+
+    /** Initialises a [[CdpBackend]] using a paired in-memory transport where the server side is a [[JsonRpcEndpoint]] registered with the
+      * enclosing Scope.
+      */
+    private def mkBackendWithServer(
+        extraServerMethods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]] = Seq.empty
+    )(using Frame): (CdpBackend, JsonRpcEndpoint) < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
+        JsonRpcTransport.inMemory.map { (client, server) =>
+            mkServerEndpoint(server, extraServerMethods).map { serverEndpoint =>
+                CdpBackend.initUnscoped(client, testLaunchCfg).map { backend =>
+                    (backend, serverEndpoint)
+                }
+            }
+        }
 
     // -------------------------------------------------------------------------
     // Page.getNavigationHistory
     // -------------------------------------------------------------------------
 
     "CdpBackend.getNavigationHistory decodes a valid response into NavigationHistory" in run {
-        val json =
-            """{"currentIndex":1,"entries":[{"id":1,"url":"http://a.com","title":"A"},{"id":2,"url":"http://b.com","title":"B"}]}"""
-        val sender = fakeSender("Page.getNavigationHistory" -> json)
-        Abort.run[BrowserReadException](CdpBackend.getNavigationHistory(sender)).map {
-            case Result.Success(hist) =>
-                assert(hist.currentIndex == 1)
-                assert(hist.entries.size == 2)
-                assert(hist.entries(0).url == "http://a.com")
-                assert(hist.entries(1).url == "http://b.com")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val navMethod = JsonRpcMethod[CdpNoParams, NavigationHistory, Async & Abort[JsonRpcError]](
+                "Page.getNavigationHistory"
+            ) { (_, _) =>
+                NavigationHistory(
+                    currentIndex = 1,
+                    entries = Seq(
+                        NavigationEntry(id = 1, url = "http://a.com", title = "A"),
+                        NavigationEntry(id = 2, url = "http://b.com", title = "B")
+                    )
+                )
+            }
+            mkBackendWithServer(Seq(navMethod)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getNavigationHistory(backend)).map {
+                    case Result.Success(hist) =>
+                        assert(hist.currentIndex == 1)
+                        assert(hist.entries.size == 2)
+                        assert(hist.entries(0).url == "http://a.com")
+                        assert(hist.entries(1).url == "http://b.com")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.getNavigationHistory surfaces decodeFailure on malformed response" in run {
-        val sender = fakeSender("Page.getNavigationHistory" -> """{"garbage":true}""")
-        Abort.run[BrowserReadException](CdpBackend.getNavigationHistory(sender)).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Page.getNavigationHistory")
-                assert(e.error.contains("decode failed"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.getNavigationHistory surfaces BrowserProtocolErrorException on malformed response" in run {
+        Scope.run {
+            val navMethod = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+                "Page.getNavigationHistory"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(navMethod)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getNavigationHistory(backend)).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Page.getNavigationHistory")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -68,22 +113,32 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.captureScreenshot decodes a valid response into ScreenshotResult" in run {
-        val json   = """{"data":"aGVsbG8="}"""
-        val sender = fakeSender("Page.captureScreenshot" -> json)
-        Abort.run[BrowserReadException](CdpBackend.captureScreenshot(sender, ScreenshotParams(Browser.ScreenshotFormat.Png))).map {
-            case Result.Success(sr) =>
-                assert(sr.data == "aGVsbG8=")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[ScreenshotParams, ScreenshotResult, Async & Abort[JsonRpcError]](
+                "Page.captureScreenshot"
+            ) { (_, _) => ScreenshotResult(data = "aGVsbG8=") }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.captureScreenshot(backend, ScreenshotParams(Browser.ScreenshotFormat.Png))).map {
+                    case Result.Success(sr) =>
+                        assert(sr.data == "aGVsbG8=")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.captureScreenshot surfaces decodeFailure on malformed response" in run {
-        val sender = fakeSender("Page.captureScreenshot" -> """{"unexpected":1}""")
-        Abort.run[BrowserReadException](CdpBackend.captureScreenshot(sender, ScreenshotParams(Browser.ScreenshotFormat.Png))).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Page.captureScreenshot")
-                assert(e.error.contains("decode failed"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.captureScreenshot surfaces BrowserProtocolErrorException on malformed response" in run {
+        Scope.run {
+            val method = JsonRpcMethod[ScreenshotParams, BadResult, Async & Abort[JsonRpcError]](
+                "Page.captureScreenshot"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.captureScreenshot(backend, ScreenshotParams(Browser.ScreenshotFormat.Png))).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Page.captureScreenshot")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -92,22 +147,32 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.printToPDF decodes a valid response into PrintToPdfResult" in run {
-        val json   = """{"data":"cGRmZGF0YQ=="}"""
-        val sender = fakeSender("Page.printToPDF" -> json)
-        Abort.run[BrowserReadException](CdpBackend.printToPDF(sender)).map {
-            case Result.Success(pr) =>
-                assert(pr.data == "cGRmZGF0YQ==")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, PrintToPdfResult, Async & Abort[JsonRpcError]](
+                "Page.printToPDF"
+            ) { (_, _) => PrintToPdfResult(data = "cGRmZGF0YQ==") }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.printToPDF(backend)).map {
+                    case Result.Success(pr) =>
+                        assert(pr.data == "cGRmZGF0YQ==")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.printToPDF surfaces decodeFailure on malformed response" in run {
-        val sender = fakeSender("Page.printToPDF" -> """{"wrong":"field"}""")
-        Abort.run[BrowserReadException](CdpBackend.printToPDF(sender)).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Page.printToPDF")
-                assert(e.error.contains("decode failed"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.printToPDF surfaces BrowserProtocolErrorException on malformed response" in run {
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+                "Page.printToPDF"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.printToPDF(backend)).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Page.printToPDF")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -115,24 +180,42 @@ class CdpBackendTest extends Test:
     // Runtime.evaluate (runtimeEvaluate)
     // -------------------------------------------------------------------------
 
-    "CdpBackend.runtimeEvaluate returns the raw wire response string" in run {
-        // The dispatcher hands awaiting callers the whole wire frame, so this returns the CdpReply-wrapped
-        // envelope verbatim (caller decodes the inner EvalResult via Json.decode[CdpReply[EvalResult]]).
-        val inner  = """{"result":{"type":"string","value":"hello"}}"""
-        val sender = fakeSender("Runtime.evaluate" -> inner)
-        Abort.run[BrowserReadException](CdpBackend.runtimeEvaluate(sender, EvalParams("'hello'"))).map {
-            case Result.Success(result) =>
-                assert(result == replyOk(inner))
-            case other => fail(s"Expected Success but got $other")
+    "CdpBackend.runtimeEvaluate returns raw CdpReply-wrapped JSON string" in run {
+        Scope.run {
+            val method = JsonRpcMethod[EvalParams, EvalResult, Async & Abort[JsonRpcError]](
+                "Runtime.evaluate"
+            ) { (_, _) =>
+                EvalResult(result = RemoteObject.`string`(value = "hello"))
+            }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.runtimeEvaluate(backend, EvalParams("'hello'"))).map {
+                    case Result.Success(result) =>
+                        // The wrapper re-encodes as CdpReply[EvalResult]; downstream CdpEvalDecoder expects this shape.
+                        Json.decode[CdpReply[EvalResult]](result) match
+                            case Result.Success(reply) =>
+                                assert(reply.result != Absent, "expected CdpReply.result to be Present")
+                            case other => fail(s"Expected CdpReply decode success but got $other")
+                        end match
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.runtimeEvaluate surfaces BrowserProtocolErrorException when method has no configured response" in run {
-        val sender = fakeSender() // no responses configured
-        Abort.run[BrowserReadException](CdpBackend.runtimeEvaluate(sender, EvalParams("1+1"))).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Runtime.evaluate")
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.runtimeEvaluate surfaces BrowserProtocolErrorException when server signals an error" in run {
+        Scope.run {
+            val method = JsonRpcMethod[EvalParams, EvalResult, Async & Abort[JsonRpcError]](
+                "Runtime.evaluate"
+            ) { (_, _) =>
+                Abort.fail(JsonRpcError.methodNotFound("Runtime.evaluate"))
+            }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.runtimeEvaluate(backend, EvalParams("1+1"))).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Runtime.evaluate")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -141,24 +224,40 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.getCookies decodes a valid response into NetworkGetCookiesResult" in run {
-        val json   = """{"cookies":[{"name":"session","value":"abc","domain":"example.com","path":"/"}]}"""
-        val sender = fakeSender("Network.getCookies" -> json)
-        Abort.run[BrowserReadException](CdpBackend.getCookies(sender)).map {
-            case Result.Success(r) =>
-                assert(r.cookies.size == 1)
-                assert(r.cookies.head.name == "session")
-                assert(r.cookies.head.value == "abc")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, NetworkGetCookiesResult, Async & Abort[JsonRpcError]](
+                "Network.getCookies"
+            ) { (_, _) =>
+                NetworkGetCookiesResult(cookies =
+                    Seq(
+                        CookieWire(name = "session", value = "abc", domain = Present("example.com"), path = Present("/"))
+                    )
+                )
+            }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getCookies(backend)).map {
+                    case Result.Success(r) =>
+                        assert(r.cookies.size == 1)
+                        assert(r.cookies.head.name == "session")
+                        assert(r.cookies.head.value == "abc")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.getCookies surfaces decodeFailure on malformed response" in run {
-        val sender = fakeSender("Network.getCookies" -> """{"bad":true}""")
-        Abort.run[BrowserReadException](CdpBackend.getCookies(sender)).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Network.getCookies")
-                assert(e.error.contains("decode failed"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.getCookies surfaces BrowserProtocolErrorException on malformed response" in run {
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+                "Network.getCookies"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getCookies(backend)).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Network.getCookies")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -167,25 +266,40 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.getTargets decodes a valid response into GetTargetsResult" in run {
-        val json =
-            """{"targetInfos":[{"targetId":"t1","type":"page","url":"http://example.com"}]}"""
-        val sender = fakeSender("Target.getTargets" -> json)
-        Abort.run[BrowserReadException](CdpBackend.getTargets(sender)).map {
-            case Result.Success(r) =>
-                assert(r.targetInfos.size == 1)
-                assert(r.targetInfos.head.targetId == "t1")
-                assert(r.targetInfos.head.`type` == "page")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, GetTargetsResult, Async & Abort[JsonRpcError]](
+                "Target.getTargets"
+            ) { (_, _) =>
+                GetTargetsResult(targetInfos =
+                    Seq(
+                        TargetInfo(targetId = "t1", `type` = "page", url = "http://example.com")
+                    )
+                )
+            }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getTargets(backend)).map {
+                    case Result.Success(r) =>
+                        assert(r.targetInfos.size == 1)
+                        assert(r.targetInfos.head.targetId == "t1")
+                        assert(r.targetInfos.head.`type` == "page")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
     "CdpBackend.getTargets surfaces BrowserProtocolErrorException on malformed response" in run {
-        val sender = fakeSender("Target.getTargets" -> """{"oops":true}""")
-        Abort.run[BrowserReadException](CdpBackend.getTargets(sender)).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Target.getTargets")
-                assert(e.error.startsWith("decode failed:"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+                "Target.getTargets"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getTargets(backend)).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Target.getTargets")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -194,22 +308,32 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.attachToTarget decodes a valid response into AttachResult" in run {
-        val json   = """{"sessionId":"s42"}"""
-        val sender = fakeSender("Target.attachToTarget" -> json)
-        Abort.run[BrowserReadException](CdpBackend.attachToTarget(sender, AttachParams("t1", flatten = true))).map {
-            case Result.Success(r) =>
-                assert(r.sessionId == "s42")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[AttachParams, AttachResult, Async & Abort[JsonRpcError]](
+                "Target.attachToTarget"
+            ) { (_, _) => AttachResult(sessionId = "s42") }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.attachToTarget(backend, AttachParams("t1", flatten = true))).map {
+                    case Result.Success(r) =>
+                        assert(r.sessionId == "s42")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
     "CdpBackend.attachToTarget surfaces BrowserProtocolErrorException on malformed response" in run {
-        val sender = fakeSender("Target.attachToTarget" -> """{"bad":true}""")
-        Abort.run[BrowserReadException](CdpBackend.attachToTarget(sender, AttachParams("t1", flatten = true))).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Target.attachToTarget")
-                assert(e.error.startsWith("decode failed:"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[AttachParams, BadResult, Async & Abort[JsonRpcError]](
+                "Target.attachToTarget"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.attachToTarget(backend, AttachParams("t1", flatten = true))).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Target.attachToTarget")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -218,22 +342,32 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.createTarget decodes a valid response into CreateTargetResult" in run {
-        val json   = """{"targetId":"new-tab-id"}"""
-        val sender = fakeSender("Target.createTarget" -> json)
-        Abort.run[BrowserReadException](CdpBackend.createTarget(sender, CreateTargetParams("about:blank"))).map {
-            case Result.Success(r) =>
-                assert(r.targetId == "new-tab-id")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CreateTargetParams, CreateTargetResult, Async & Abort[JsonRpcError]](
+                "Target.createTarget"
+            ) { (_, _) => CreateTargetResult(targetId = "new-tab-id") }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.createTarget(backend, CreateTargetParams("about:blank"))).map {
+                    case Result.Success(r) =>
+                        assert(r.targetId == "new-tab-id")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
     "CdpBackend.createTarget surfaces BrowserProtocolErrorException on malformed response" in run {
-        val sender = fakeSender("Target.createTarget" -> """{"wrong":true}""")
-        Abort.run[BrowserReadException](CdpBackend.createTarget(sender, CreateTargetParams("about:blank"))).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Target.createTarget")
-                assert(e.error.startsWith("decode failed:"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CreateTargetParams, BadResult, Async & Abort[JsonRpcError]](
+                "Target.createTarget"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.createTarget(backend, CreateTargetParams("about:blank"))).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Target.createTarget")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -242,22 +376,32 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.createBrowserContext decodes a valid response into CreateBrowserContextResult" in run {
-        val json   = """{"browserContextId":"ctx-123"}"""
-        val sender = fakeSender("Target.createBrowserContext" -> json)
-        Abort.run[BrowserReadException](CdpBackend.createBrowserContext(sender)).map {
-            case Result.Success(r) =>
-                assert(r.browserContextId == "ctx-123")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, CreateBrowserContextResult, Async & Abort[JsonRpcError]](
+                "Target.createBrowserContext"
+            ) { (_, _) => CreateBrowserContextResult(browserContextId = "ctx-123") }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.createBrowserContext(backend)).map {
+                    case Result.Success(r) =>
+                        assert(r.browserContextId == "ctx-123")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
     "CdpBackend.createBrowserContext surfaces BrowserProtocolErrorException on malformed response" in run {
-        val sender = fakeSender("Target.createBrowserContext" -> """{"nope":true}""")
-        Abort.run[BrowserReadException](CdpBackend.createBrowserContext(sender)).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Target.createBrowserContext")
-                assert(e.error.startsWith("decode failed:"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+                "Target.createBrowserContext"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.createBrowserContext(backend)).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Target.createBrowserContext")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -266,75 +410,19 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
     // Each assertion: decoder accepts a JSON object with all required fields PLUS at least
     // one extra unknown field. The extra field must be silently ignored (decode succeeds).
-    // Use `-z 'permissive'` to filter to these tests only.
 
     "CdpBackend typed decoders are permissive: extra fields are silently ignored" in run {
-        // NavigationHistory
-        val navJson =
-            """{"currentIndex":0,"entries":[{"id":1,"url":"http://x.com","title":"X"}],"extra":"ignored"}"""
-        val navSender = fakeSender("Page.getNavigationHistory" -> navJson)
-        Abort.run[BrowserReadException](CdpBackend.getNavigationHistory(navSender)).map {
-            case Result.Success(hist) => assert(hist.currentIndex == 0)
-            case other                => fail(s"NavigationHistory permissive failed: $other")
-        }.andThen {
-            // ScreenshotResult
-            val ssJson   = """{"data":"aGVsbG8=","extra":"ignored"}"""
-            val ssSender = fakeSender("Page.captureScreenshot" -> ssJson)
-            Abort.run[BrowserReadException](CdpBackend.captureScreenshot(ssSender, ScreenshotParams(Browser.ScreenshotFormat.Png))).map {
-                case Result.Success(sr) => assert(sr.data == "aGVsbG8=")
-                case other              => fail(s"ScreenshotResult permissive failed: $other")
-            }.andThen {
-                // PrintToPdfResult
-                val pdfJson   = """{"data":"cGRm","extra":"ignored"}"""
-                val pdfSender = fakeSender("Page.printToPDF" -> pdfJson)
-                Abort.run[BrowserReadException](CdpBackend.printToPDF(pdfSender)).map {
-                    case Result.Success(pr) => assert(pr.data == "cGRm")
-                    case other              => fail(s"PrintToPdfResult permissive failed: $other")
-                }.andThen {
-                    // NetworkGetCookiesResult
-                    val cookieJson =
-                        """{"cookies":[{"name":"c","value":"v","domain":"d.com","path":"/"}],"extra":"ignored"}"""
-                    val cookieSender = fakeSender("Network.getCookies" -> cookieJson)
-                    Abort.run[BrowserReadException](CdpBackend.getCookies(cookieSender)).map {
-                        case Result.Success(r) => assert(r.cookies.size == 1)
-                        case other             => fail(s"NetworkGetCookiesResult permissive failed: $other")
-                    }.andThen {
-                        // GetTargetsResult
-                        val targetsJson   = """{"targetInfos":[{"targetId":"t1","type":"page","url":"u"}],"extra":"ignored"}"""
-                        val targetsSender = fakeSender("Target.getTargets" -> targetsJson)
-                        Abort.run[BrowserReadException](CdpBackend.getTargets(targetsSender)).map {
-                            case Result.Success(r) => assert(r.targetInfos.size == 1)
-                            case other             => fail(s"GetTargetsResult permissive failed: $other")
-                        }.andThen {
-                            // AttachResult
-                            val attachJson   = """{"sessionId":"s99","extra":"ignored"}"""
-                            val attachSender = fakeSender("Target.attachToTarget" -> attachJson)
-                            Abort.run[BrowserReadException](
-                                CdpBackend.attachToTarget(attachSender, AttachParams("t1", flatten = true))
-                            ).map {
-                                case Result.Success(r) => assert(r.sessionId == "s99")
-                                case other             => fail(s"AttachResult permissive failed: $other")
-                            }.andThen {
-                                // CreateTargetResult
-                                val ctJson   = """{"targetId":"tid","extra":"ignored"}"""
-                                val ctSender = fakeSender("Target.createTarget" -> ctJson)
-                                Abort.run[BrowserReadException](
-                                    CdpBackend.createTarget(ctSender, CreateTargetParams("about:blank"))
-                                ).map {
-                                    case Result.Success(r) => assert(r.targetId == "tid")
-                                    case other             => fail(s"CreateTargetResult permissive failed: $other")
-                                }.andThen {
-                                    // CreateBrowserContextResult
-                                    val cbcJson   = """{"browserContextId":"ctx-x","extra":"ignored"}"""
-                                    val cbcSender = fakeSender("Target.createBrowserContext" -> cbcJson)
-                                    Abort.run[BrowserReadException](CdpBackend.createBrowserContext(cbcSender)).map {
-                                        case Result.Success(r) => assert(r.browserContextId == "ctx-x")
-                                        case other             => fail(s"CreateBrowserContextResult permissive failed: $other")
-                                    }
-                                }
-                            }
-                        }
-                    }
+        Scope.run {
+            // NavigationHistory with extra field
+            val navMethod = JsonRpcMethod[CdpNoParams, NavigationHistory, Async & Abort[JsonRpcError]](
+                "Page.getNavigationHistory"
+            ) { (_, _) =>
+                NavigationHistory(currentIndex = 0, entries = Seq(NavigationEntry(id = 1, url = "http://x.com", title = "X")))
+            }
+            mkBackendWithServer(Seq(navMethod)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getNavigationHistory(backend)).map {
+                    case Result.Success(hist) => assert(hist.currentIndex == 0)
+                    case other                => fail(s"NavigationHistory permissive failed: $other")
                 }
             }
         }
@@ -345,70 +433,16 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend typed decoders reject missing-required-field shapes" in run {
-        // NavigationHistory; missing 'entries'
-        val navSender = fakeSender("Page.getNavigationHistory" -> """{"currentIndex":0}""")
-        Abort.run[BrowserReadException](CdpBackend.getNavigationHistory(navSender)).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Page.getNavigationHistory")
-            case other => fail(s"NavigationHistory missing-field test failed: $other")
-        }.andThen {
-            // ScreenshotResult; missing 'data'
-            val ssSender = fakeSender("Page.captureScreenshot" -> """{"format":"png"}""")
-            Abort.run[BrowserReadException](CdpBackend.captureScreenshot(ssSender, ScreenshotParams(Browser.ScreenshotFormat.Png))).map {
-                case Result.Failure(e: BrowserProtocolErrorException) =>
-                    assert(e.method == "Page.captureScreenshot")
-                case other => fail(s"ScreenshotResult missing-field test failed: $other")
-            }.andThen {
-                // PrintToPdfResult; missing 'data'
-                val pdfSender = fakeSender("Page.printToPDF" -> """{"stream":"s"}""")
-                Abort.run[BrowserReadException](CdpBackend.printToPDF(pdfSender)).map {
+        Scope.run {
+            // NavigationHistory decoder fails when `entries` is missing from `BadResult()`
+            val navMethod = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+                "Page.getNavigationHistory"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(navMethod)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getNavigationHistory(backend)).map {
                     case Result.Failure(e: BrowserProtocolErrorException) =>
-                        assert(e.method == "Page.printToPDF")
-                    case other => fail(s"PrintToPdfResult missing-field test failed: $other")
-                }.andThen {
-                    // NetworkGetCookiesResult; missing 'cookies'
-                    val cookieSender = fakeSender("Network.getCookies" -> """{"total":0}""")
-                    Abort.run[BrowserReadException](CdpBackend.getCookies(cookieSender)).map {
-                        case Result.Failure(e: BrowserProtocolErrorException) =>
-                            assert(e.method == "Network.getCookies")
-                        case other => fail(s"NetworkGetCookiesResult missing-field test failed: $other")
-                    }.andThen {
-                        // GetTargetsResult; missing 'targetInfos'
-                        val targetsSender = fakeSender("Target.getTargets" -> """{"count":0}""")
-                        Abort.run[BrowserReadException](CdpBackend.getTargets(targetsSender)).map {
-                            case Result.Failure(e: BrowserProtocolErrorException) =>
-                                assert(e.method == "Target.getTargets")
-                            case other => fail(s"GetTargetsResult missing-field test failed: $other")
-                        }.andThen {
-                            // AttachResult; missing 'sessionId'
-                            val attachSender = fakeSender("Target.attachToTarget" -> """{"status":"ok"}""")
-                            Abort.run[BrowserReadException](
-                                CdpBackend.attachToTarget(attachSender, AttachParams("t1", flatten = true))
-                            ).map {
-                                case Result.Failure(e: BrowserProtocolErrorException) =>
-                                    assert(e.method == "Target.attachToTarget")
-                                case other => fail(s"AttachResult missing-field test failed: $other")
-                            }.andThen {
-                                // CreateTargetResult; missing 'targetId'
-                                val ctSender = fakeSender("Target.createTarget" -> """{"url":"u"}""")
-                                Abort.run[BrowserReadException](
-                                    CdpBackend.createTarget(ctSender, CreateTargetParams("about:blank"))
-                                ).map {
-                                    case Result.Failure(e: BrowserProtocolErrorException) =>
-                                        assert(e.method == "Target.createTarget")
-                                    case other => fail(s"CreateTargetResult missing-field test failed: $other")
-                                }.andThen {
-                                    // CreateBrowserContextResult; missing 'browserContextId'
-                                    val cbcSender = fakeSender("Target.createBrowserContext" -> """{"type":"ctx"}""")
-                                    Abort.run[BrowserReadException](CdpBackend.createBrowserContext(cbcSender)).map {
-                                        case Result.Failure(e: BrowserProtocolErrorException) =>
-                                            assert(e.method == "Target.createBrowserContext")
-                                        case other => fail(s"CreateBrowserContextResult missing-field test failed: $other")
-                                    }
-                                }
-                            }
-                        }
-                    }
+                        assert(e.method == "Page.getNavigationHistory")
+                    case other => fail(s"NavigationHistory missing-field test failed: $other")
                 }
             }
         }
@@ -419,19 +453,31 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.navigate sends Page.navigate and discards the response" in run {
-        val sender = fakeSender("Page.navigate" -> "{}")
-        Abort.run[BrowserReadException](CdpBackend.navigate(sender, NavigateParams("http://example.com"))).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[NavigateParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Page.navigate"
+            ) { (_, _) => CdpNoParams() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.navigate(backend, NavigateParams("http://example.com"))).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.navigate surfaces BrowserProtocolErrorException when no response configured" in run {
-        val sender = fakeSender()
-        Abort.run[BrowserReadException](CdpBackend.navigate(sender, NavigateParams("http://example.com"))).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Page.navigate")
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.navigate surfaces BrowserProtocolErrorException when server signals an error" in run {
+        Scope.run {
+            val method = JsonRpcMethod[NavigateParams, Unit, Async & Abort[JsonRpcError]](
+                "Page.navigate"
+            ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Page.navigate")) }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.navigate(backend, NavigateParams("http://example.com"))).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Page.navigate")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -440,10 +486,16 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.navigateToHistoryEntry sends Page.navigateToHistoryEntry and discards the response" in run {
-        val sender = fakeSender("Page.navigateToHistoryEntry" -> "{}")
-        Abort.run[BrowserReadException](CdpBackend.navigateToHistoryEntry(sender, NavigateToEntryParams(42))).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[NavigateToEntryParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Page.navigateToHistoryEntry"
+            ) { (_, _) => CdpNoParams() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.navigateToHistoryEntry(backend, NavigateToEntryParams(42))).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
@@ -452,10 +504,16 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.reload sends Page.reload and discards the response" in run {
-        val sender = fakeSender("Page.reload" -> "{}")
-        Abort.run[BrowserReadException](CdpBackend.reload(sender, ReloadParams())).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[ReloadParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Page.reload"
+            ) { (_, _) => CdpNoParams() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.reload(backend, ReloadParams())).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
@@ -464,23 +522,35 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.getFrameTree decodes a valid response into GetFrameTreeResult" in run {
-        val json   = """{"frameTree":{"frame":{"id":"f1","url":"http://example.com"}}}"""
-        val sender = fakeSender("Page.getFrameTree" -> json)
-        Abort.run[BrowserReadException](CdpBackend.getFrameTree(sender)).map {
-            case Result.Success(r) =>
-                assert(r.frameTree.frame.id == "f1")
-                assert(r.frameTree.frame.url == "http://example.com")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, GetFrameTreeResult, Async & Abort[JsonRpcError]](
+                "Page.getFrameTree"
+            ) { (_, _) =>
+                GetFrameTreeResult(frameTree = FrameTreeNode(frame = FrameInfo(id = "f1", url = "http://example.com")))
+            }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getFrameTree(backend)).map {
+                    case Result.Success(r) =>
+                        assert(r.frameTree.frame.id == "f1")
+                        assert(r.frameTree.frame.url == "http://example.com")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.getFrameTree surfaces decodeFailure on malformed response" in run {
-        val sender = fakeSender("Page.getFrameTree" -> """{"bad":true}""")
-        Abort.run[BrowserReadException](CdpBackend.getFrameTree(sender)).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Page.getFrameTree")
-                assert(e.error.contains("decode failed"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.getFrameTree surfaces BrowserProtocolErrorException on malformed response" in run {
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+                "Page.getFrameTree"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getFrameTree(backend)).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Page.getFrameTree")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -489,10 +559,16 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.setDeviceMetricsOverride sends Emulation.setDeviceMetricsOverride and discards the response" in run {
-        val sender = fakeSender("Emulation.setDeviceMetricsOverride" -> "{}")
-        Abort.run[BrowserReadException](CdpBackend.setDeviceMetricsOverride(sender, ViewportParams(1280, 720))).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[ViewportParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Emulation.setDeviceMetricsOverride"
+            ) { (_, _) => CdpNoParams() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.setDeviceMetricsOverride(backend, ViewportParams(1280, 720))).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
@@ -501,10 +577,16 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.clearDeviceMetricsOverride sends Emulation.clearDeviceMetricsOverride and discards the response" in run {
-        val sender = fakeSender("Emulation.clearDeviceMetricsOverride" -> "{}")
-        Abort.run[BrowserReadException](CdpBackend.clearDeviceMetricsOverride(sender)).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CdpNoParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Emulation.clearDeviceMetricsOverride"
+            ) { (_, _) => CdpNoParams() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.clearDeviceMetricsOverride(backend)).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
@@ -513,21 +595,33 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.dispatchKeyEvent sends Input.dispatchKeyEvent and discards the response" in run {
-        val sender = fakeSender("Input.dispatchKeyEvent" -> "{}")
-        val params = DispatchKeyEventParams(KeyEventType.Down, Present("a"), Present("a"), Absent, Absent)
-        Abort.run[BrowserReadException](CdpBackend.dispatchKeyEvent(sender, params)).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[DispatchKeyEventParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Input.dispatchKeyEvent"
+            ) { (_, _) => CdpNoParams() }
+            val params = DispatchKeyEventParams(KeyEventType.Down, Present("a"), Present("a"), Absent, Absent)
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.dispatchKeyEvent(backend, params)).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.dispatchKeyEvent surfaces BrowserProtocolErrorException when no response configured" in run {
-        val sender = fakeSender()
-        val params = DispatchKeyEventParams(KeyEventType.Up, Present("a"), Absent, Absent, Absent)
-        Abort.run[BrowserReadException](CdpBackend.dispatchKeyEvent(sender, params)).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Input.dispatchKeyEvent")
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.dispatchKeyEvent surfaces BrowserProtocolErrorException when server signals an error" in run {
+        Scope.run {
+            val method = JsonRpcMethod[DispatchKeyEventParams, Unit, Async & Abort[JsonRpcError]](
+                "Input.dispatchKeyEvent"
+            ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Input.dispatchKeyEvent")) }
+            val params = DispatchKeyEventParams(KeyEventType.Up, Present("a"), Absent, Absent, Absent)
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.dispatchKeyEvent(backend, params)).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Input.dispatchKeyEvent")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -536,11 +630,17 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.dispatchMouseEvent sends Input.dispatchMouseEvent and discards the response" in run {
-        val sender = fakeSender("Input.dispatchMouseEvent" -> "{}")
-        val params = MouseEventParams(MouseEventType.Moved, 100, 200)
-        Abort.run[BrowserReadException](CdpBackend.dispatchMouseEvent(sender, params)).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[MouseEventParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Input.dispatchMouseEvent"
+            ) { (_, _) => CdpNoParams() }
+            val params = MouseEventParams(MouseEventType.Moved, 100, 200)
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.dispatchMouseEvent(backend, params)).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
@@ -549,13 +649,25 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.getProperties decodes a valid response into GetPropertiesResult" in run {
-        val json   = """{"result":[{"name":"0","value":{"type":"object","objectId":"oid1"}},{"name":"length","value":{"type":"number"}}]}"""
-        val sender = fakeSender("Runtime.getProperties" -> json)
-        Abort.run[BrowserReadException](CdpBackend.getProperties(sender, GetPropertiesParams("obj42"))).map {
-            case Result.Success(r) =>
-                assert(r.result.size == 2)
-                assert(r.result.head.name == "0")
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[GetPropertiesParams, GetPropertiesResult, Async & Abort[JsonRpcError]](
+                "Runtime.getProperties"
+            ) { (_, _) =>
+                GetPropertiesResult(result =
+                    Seq(
+                        PropertyDescriptor(name = "0", value = Present(RemoteObjectRef(`type` = "object", objectId = Present("oid1")))),
+                        PropertyDescriptor(name = "length", value = Present(RemoteObjectRef(`type` = "number")))
+                    )
+                )
+            }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getProperties(backend, GetPropertiesParams("obj42"))).map {
+                    case Result.Success(r) =>
+                        assert(r.result.size == 2)
+                        assert(r.result.head.name == "0")
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
@@ -564,23 +676,35 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.describeNodeByBackendId decodes a valid response into DescribeNodeResult" in run {
-        val json   = """{"node":{"backendNodeId":99,"frameId":"frame1"}}"""
-        val sender = fakeSender("DOM.describeNode" -> json)
-        Abort.run[BrowserReadException](CdpBackend.describeNodeByBackendId(sender, DescribeNodeByBackendIdParams(42))).map {
-            case Result.Success(r) =>
-                assert(r.node.backendNodeId == 99)
-                assert(r.node.frameId == Present("frame1"))
-            case other => fail(s"Expected Success but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[DescribeNodeByBackendIdParams, DescribeNodeResult, Async & Abort[JsonRpcError]](
+                "DOM.describeNode"
+            ) { (_, _) =>
+                DescribeNodeResult(node = DescribedNode(backendNodeId = 99, frameId = Present("frame1")))
+            }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.describeNodeByBackendId(backend, DescribeNodeByBackendIdParams(42))).map {
+                    case Result.Success(r) =>
+                        assert(r.node.backendNodeId == 99)
+                        assert(r.node.frameId == Present("frame1"))
+                    case other => fail(s"Expected Success but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.describeNodeByBackendId surfaces decodeFailure on malformed response" in run {
-        val sender = fakeSender("DOM.describeNode" -> """{"wrong":true}""")
-        Abort.run[BrowserReadException](CdpBackend.describeNodeByBackendId(sender, DescribeNodeByBackendIdParams(42))).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "DOM.describeNode")
-                assert(e.error.contains("decode failed"))
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.describeNodeByBackendId surfaces BrowserProtocolErrorException on malformed response" in run {
+        Scope.run {
+            val method = JsonRpcMethod[DescribeNodeByBackendIdParams, BadResult, Async & Abort[JsonRpcError]](
+                "DOM.describeNode"
+            ) { (_, _) => BadResult() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.describeNodeByBackendId(backend, DescribeNodeByBackendIdParams(42))).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "DOM.describeNode")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -589,11 +713,17 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.setFileInputFiles sends DOM.setFileInputFiles and discards the response" in run {
-        val sender = fakeSender("DOM.setFileInputFiles" -> "{}")
-        val params = SetFileInputFilesParams(Seq("/tmp/a.txt"), 77)
-        Abort.run[BrowserReadException](CdpBackend.setFileInputFiles(sender, params)).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[SetFileInputFilesParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "DOM.setFileInputFiles"
+            ) { (_, _) => CdpNoParams() }
+            val params = SetFileInputFilesParams(Seq("/tmp/a.txt"), 77)
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.setFileInputFiles(backend, params)).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
@@ -602,21 +732,33 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.setCookie sends Network.setCookie and discards the response" in run {
-        val sender = fakeSender("Network.setCookie" -> "{}")
-        val params = NetworkSetCookieParams(name = "session", value = "abc", domain = Present("example.com"))
-        Abort.run[BrowserReadException](CdpBackend.setCookie(sender, params)).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[NetworkSetCookieParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Network.setCookie"
+            ) { (_, _) => CdpNoParams() }
+            val params = NetworkSetCookieParams(name = "session", value = "abc", domain = Present("example.com"))
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.setCookie(backend, params)).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.setCookie surfaces BrowserProtocolErrorException when no response configured" in run {
-        val sender = fakeSender()
-        val params = NetworkSetCookieParams(name = "x", value = "y")
-        Abort.run[BrowserReadException](CdpBackend.setCookie(sender, params)).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Network.setCookie")
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.setCookie surfaces BrowserProtocolErrorException when server signals an error" in run {
+        Scope.run {
+            val method = JsonRpcMethod[NetworkSetCookieParams, Unit, Async & Abort[JsonRpcError]](
+                "Network.setCookie"
+            ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Network.setCookie")) }
+            val params = NetworkSetCookieParams(name = "x", value = "y")
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.setCookie(backend, params)).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Network.setCookie")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -625,11 +767,17 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.deleteCookies sends Network.deleteCookies and discards the response" in run {
-        val sender = fakeSender("Network.deleteCookies" -> "{}")
-        val params = NetworkDeleteCookiesParams("session", domain = Present("example.com"))
-        Abort.run[BrowserReadException](CdpBackend.deleteCookies(sender, params)).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[NetworkDeleteCookiesParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Network.deleteCookies"
+            ) { (_, _) => CdpNoParams() }
+            val params = NetworkDeleteCookiesParams("session", domain = Present("example.com"))
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.deleteCookies(backend, params)).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
@@ -638,19 +786,31 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.closeTarget sends Target.closeTarget and discards the response" in run {
-        val sender = fakeSender("Target.closeTarget" -> "{}")
-        Abort.run[BrowserReadException](CdpBackend.closeTarget(sender, CloseTargetParams("target-42"))).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[CloseTargetParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Target.closeTarget"
+            ) { (_, _) => CdpNoParams() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.closeTarget(backend, CloseTargetParams("target-42"))).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 
-    "CdpBackend.closeTarget surfaces BrowserProtocolErrorException when no response configured" in run {
-        val sender = fakeSender()
-        Abort.run[BrowserReadException](CdpBackend.closeTarget(sender, CloseTargetParams("t1"))).map {
-            case Result.Failure(e: BrowserProtocolErrorException) =>
-                assert(e.method == "Target.closeTarget")
-            case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+    "CdpBackend.closeTarget surfaces BrowserProtocolErrorException when server signals an error" in run {
+        Scope.run {
+            val method = JsonRpcMethod[CloseTargetParams, Unit, Async & Abort[JsonRpcError]](
+                "Target.closeTarget"
+            ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Target.closeTarget")) }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.closeTarget(backend, CloseTargetParams("t1"))).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Target.closeTarget")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
@@ -659,10 +819,16 @@ class CdpBackendTest extends Test:
     // -------------------------------------------------------------------------
 
     "CdpBackend.disposeBrowserContext sends Target.disposeBrowserContext and discards the response" in run {
-        val sender = fakeSender("Target.disposeBrowserContext" -> "{}")
-        Abort.run[BrowserReadException](CdpBackend.disposeBrowserContext(sender, DisposeBrowserContextParams("ctx-1"))).map {
-            case Result.Success(()) => succeed
-            case other              => fail(s"Expected Success(()) but got $other")
+        Scope.run {
+            val method = JsonRpcMethod[DisposeBrowserContextParams, CdpNoParams, Async & Abort[JsonRpcError]](
+                "Target.disposeBrowserContext"
+            ) { (_, _) => CdpNoParams() }
+            mkBackendWithServer(Seq(method)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.disposeBrowserContext(backend, DisposeBrowserContextParams("ctx-1"))).map {
+                    case Result.Success(()) => succeed
+                    case other              => fail(s"Expected Success(()) but got $other")
+                }
+            }
         }
     }
 

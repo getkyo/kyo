@@ -301,7 +301,7 @@ class CdpBackendSmokeTest extends Test:
                     Abort.run[Closed](
                         backend.dialogQueue.put((true, "answer", Present(sid)))
                     ).andThen {
-                        Async.sleep(300.millis).andThen {
+                        untilTrue(capturedIdRef.get.map(_.isDefined)).andThen {
                             capturedIdRef.get.map {
                                 case Present(n) =>
                                     assert(n < 0)

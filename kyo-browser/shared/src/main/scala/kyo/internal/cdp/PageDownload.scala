@@ -1,7 +1,7 @@
 package kyo.internal.cdp
 
 import kyo.*
-import kyo.internal.CdpClient
+import kyo.internal.CdpBackend
 
 /** Typed wrapper around CDP `Page.setDownloadBehavior`.
   *
@@ -55,7 +55,7 @@ private[kyo] object PageDownload:
       * events. The caller is responsible for subscribing to those events to observe completion.
       */
     def setDownloadBehavior(
-        client: CdpClient,
+        client: CdpBackend,
         behavior: Behavior,
         downloadPath: Maybe[String]
     )(using Frame): Unit < (Async & Abort[BrowserReadException]) =
@@ -64,7 +64,7 @@ private[kyo] object PageDownload:
             downloadPath = downloadPath,
             eventsEnabled = Present(true)
         )
-        client.sendUnit("Page.setDownloadBehavior", params)
+        client.sendUnit[SetDownloadBehaviorParams]("Page.setDownloadBehavior", params)
     end setDownloadBehavior
 
     /** CDP wire shape for `Page.downloadWillBegin`. Used by `Browser.parseDownloadEvent` to decode the event's `paramsJson` into a typed

@@ -464,3 +464,63 @@ final private[kyo] case class BrowserVersionResult(
     userAgent: String,
     jsVersion: String
 ) derives Schema
+
+// --- Types relocated from CdpClient.scala for Phase 02 (Phase 02 deletes CdpClient.scala) ---
+
+/** Outgoing CDP request envelope. Schema-encoded directly to the wire string at send time: no AST hop, no pre-serialized params field.
+  * `params` carries the typed payload; the caller's `Schema[P]` drives encoding.
+  */
+final private[kyo] case class CdpEnvelope[P](
+    id: Int,
+    method: String,
+    params: P,
+    sessionId: Maybe[String]
+) derives Schema
+
+/** Empty params object: encodes as `{}` on the wire. Used by CDP methods that take no params. */
+final private[kyo] case class CdpNoParams() derives Schema
+
+/** Header of an incoming CDP wire frame. The dispatcher decodes this to route by id and detect events; the polymorphic `result` / `params`
+  * payloads are dropped here (Schema is permissive about unknown fields) and re-decoded at the caller via [[CdpReply]] /
+  * [[CdpEventParams]].
+  */
+final private[kyo] case class CdpWireMessage(
+    id: Maybe[Int] = Absent,
+    method: Maybe[String] = Absent,
+    sessionId: Maybe[String] = Absent,
+    error: Maybe[CdpError] = Absent
+) derives Schema
+
+/** Typed envelope for decoding a CDP response. Decoding either yields `result` (success) or `error` (CDP
+  * rejection); a payload with neither is wire-shape drift.
+  */
+final private[kyo] case class CdpReply[A](
+    result: Maybe[A] = Absent,
+    error: Maybe[CdpError] = Absent
+) derives Schema
+
+/** Typed envelope used by event consumers to decode a CDP event's params from the wire. */
+final private[kyo] case class CdpEventParams[P](params: P) derives Schema
+
+/** Wire shape for the `Page.javascriptDialogOpening` event's `params` field. Only the fields the dialog recorder and auto-handler need are
+  * declared; CDP-emitted fields outside this set are tolerated by the permissive decoder.
+  */
+final private[kyo] case class JavascriptDialogOpeningParams(
+    url: String = "",
+    message: String = "",
+    `type`: String = "",
+    defaultPrompt: Maybe[String] = Absent
+) derives Schema
+
+/** Minimal envelope used by the dispatcher's fallback path to recover an `id` from a frame whose `error` field failed the strict
+  * [[CdpError]] schema. Only `id` is interpreted; other fields are ignored.
+  */
+final private[kyo] case class FallbackIdEnvelope(id: Maybe[Int] = Absent) derives Schema
+
+sealed private[kyo] trait CdpEvent
+private[kyo] object CdpEvent:
+    final case class Generic(method: String, paramsJson: String, sessionId: Maybe[CdpTypes.SessionId] = Absent) extends CdpEvent
+end CdpEvent
+
+/** CDP error from error responses. */
+final private[kyo] case class CdpError(code: Int, message: String) derives Schema, CanEqual

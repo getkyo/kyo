@@ -115,11 +115,9 @@ end CdpBackend
 
 /** Static helpers + named constants + `init` / `initUnscoped` for [[CdpBackend]].
   *
-  * Keeps the `CdpBackendOld` object (the 228-LoC legacy method-namespace +
-  * decodeOrFail helper + 28 typed wrappers + CdpSender trait) alive in the
-  * SAME file for Phase 01 byte-equivalent coexistence; Phase 02 deletes
-  * `CdpBackendOld` and inlines the typed wrappers as two-line bodies on the
-  * runtime `CdpBackend`.
+  * Hosts the 28 typed CDP method wrappers (each a two-line body delegating to
+  * `backend.send[P, R]` or `backend.sendUnit[P]`), plus the 5 notification handler
+  * builders, dialog drainer, and the Q-002 `Browser.getVersion` connect-probe.
   */
 private[kyo] object CdpBackend:
 
@@ -218,139 +216,194 @@ private[kyo] object CdpBackend:
             }
         yield backend
 
-    // --- Forwarding methods for Phase 01 byte-equivalent coexistence ---
-    // These delegate to CdpBackendOld so that all existing call sites in Browser.scala,
-    // Resolver.scala, etc. continue to compile unchanged in Phase 01.
-    // Phase 02 deletes CdpBackendOld and rewrites each call site inline.
-    // flow-allow: phase-01 byte-equivalent coexistence; deleted in Phase 02
+    // --- Phase 02: Typed companion wrappers (replace CdpBackendOld + forwarders) ---
+    // Each wrapper calls backend.send[P, R] or backend.sendUnit[P] directly. No CdpSender, no decodeOrFail.
 
-    private[kyo] def decodeOrFail[A: Schema](wire: String, method: String)(using Frame): A < Abort[BrowserReadException] =
-        CdpBackendOld.decodeOrFail[A](wire, method)
+    private[kyo] def getNavigationHistory(backend: CdpBackend)(using Frame): NavigationHistory < (Async & Abort[BrowserReadException]) =
+        backend.send[CdpNoParams, NavigationHistory]("Page.getNavigationHistory", CdpNoParams())
 
-    private[kyo] def getNavigationHistory(sender: CdpSender)(using Frame): NavigationHistory < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.getNavigationHistory(sender)
+    private[kyo] def navigate(backend: CdpBackend, params: NavigateParams)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
+        backend.sendUnit[NavigateParams]("Page.navigate", params)
 
-    private[kyo] def navigate(sender: CdpSender, params: NavigateParams)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.navigate(sender, params)
-
-    private[kyo] def navigateToHistoryEntry(sender: CdpSender, params: NavigateToEntryParams)(using
+    private[kyo] def navigateToHistoryEntry(backend: CdpBackend, params: NavigateToEntryParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.navigateToHistoryEntry(sender, params)
+        backend.sendUnit[NavigateToEntryParams]("Page.navigateToHistoryEntry", params)
 
-    private[kyo] def reload(sender: CdpSender, params: ReloadParams)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.reload(sender, params)
+    private[kyo] def reload(backend: CdpBackend, params: ReloadParams)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
+        backend.sendUnit[ReloadParams]("Page.reload", params)
 
-    private[kyo] def getFrameTree(sender: CdpSender)(using Frame): GetFrameTreeResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.getFrameTree(sender)
+    private[kyo] def getFrameTree(backend: CdpBackend)(using Frame): GetFrameTreeResult < (Async & Abort[BrowserReadException]) =
+        backend.send[CdpNoParams, GetFrameTreeResult]("Page.getFrameTree", CdpNoParams())
 
-    private[kyo] def captureScreenshot(sender: CdpSender, params: ScreenshotParams)(using
+    private[kyo] def captureScreenshot(backend: CdpBackend, params: ScreenshotParams)(using
         Frame
     ): ScreenshotResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.captureScreenshot(sender, params)
+        backend.send[ScreenshotParams, ScreenshotResult]("Page.captureScreenshot", params)
 
-    private[kyo] def printToPDF(sender: CdpSender)(using Frame): PrintToPdfResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.printToPDF(sender)
+    private[kyo] def printToPDF(backend: CdpBackend)(using Frame): PrintToPdfResult < (Async & Abort[BrowserReadException]) =
+        backend.send[CdpNoParams, PrintToPdfResult]("Page.printToPDF", CdpNoParams())
 
-    private[kyo] def runtimeEvaluate(sender: CdpSender, params: EvalParams)(using Frame): String < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.runtimeEvaluate(sender, params)
+    /** Identity [[Schema]] for [[Structure.Value]]: passes the raw value tree through
+      * [[Structure.decode]] without any kyo-schema tagged-union re-encoding.
+      *
+      * The derived `Schema[Structure.Value]` (from `enum Value derives Schema`) encodes each
+      * case in kyo-schema's tagged-union format (`{"Record":{...}}`, `{"VariantCase":{...}}`).
+      * When Chrome's standard-JSON response is decoded to `Structure.Value` by the JsonRpc
+      * layer the result is a plain `Record(...)`, NOT a tagged variant. Passing that through
+      * the derived Schema fails with "Unknown variant: result".
+      *
+      * This identity Schema overrides `fromStructureValue` to short-circuit the
+      * `StructureValueReader` path and return the raw tree unchanged, so
+      * `send[EvalParams, Structure.Value]` correctly captures Chrome's wire shape for
+      * `runtimeEvaluate`.
+      */
+    private given identityStructureValueSchema: Schema[Structure.Value] =
+        new Schema[Structure.Value](Seq.empty):
+            import scala.annotation.publicInBinary
+            @publicInBinary private[kyo] def serializeWrite(value: Structure.Value, writer: Codec.Writer): Unit =
+                Schema.writeStructureValue(writer, value)
+            @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Structure.Value =
+                Structure.Value.Null // never reached; fromStructureValue short-circuits
+            @publicInBinary private[kyo] def getter(value: Structure.Value): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def setter(value: Structure.Value, next: Any): Structure.Value =
+                next match
+                    case sv: Structure.Value => sv
+                    case _                   => value
+            override private[kyo] def fromStructureValue(sv: Structure.Value)(using Frame): Result[DecodeException, Structure.Value] =
+                Result.Success(sv)
 
-    private[kyo] def setDeviceMetricsOverride(sender: CdpSender, params: ViewportParams)(using
+    /** Evaluates a JavaScript expression. Returns the raw CDP response JSON string so that
+      * existing consumers (BrowserEval, BrowserSnapshot, CookieWire, etc.) can continue to
+      * use CdpEvalDecoder.parseAndExtractEvalValue unchanged. Phase 03 / 04 will switch
+      * consumers to the typed EvalResult path.
+      *
+      * Uses `send[EvalParams, Structure.Value]` with the [[identityStructureValueSchema]] so
+      * that Chrome's raw wire shape (including the `value` field on object-type RemoteObjects)
+      * is preserved. The raw result `Structure.Value` is wrapped in a standard JSON-RPC
+      * envelope (`{"id":0,"result":<raw>,"error":null}`) via [[RawJsonParser.encode]] so that
+      * all downstream decoders (`CdpEvalEnvelope.decodeEvalEnvelope`, `Actionability.parseResult`,
+      * `MutationSettlement`, `NavigationWatcher`, etc.) can continue to call
+      * `Json.decode[CdpReply[XxxResponse]]` against the standard wire shape.
+      *
+      * A [[BrowserProtocolErrorException]] whose message contains [[CdpErrorStrings.ContextDestroyedErrorMessage]]
+      * is translated to [[BrowserIFrameInvalidException]] here so that all callers receive
+      * the typed iframe error without per-caller translation logic.
+      */
+    private[kyo] def runtimeEvaluate(backend: CdpBackend, params: EvalParams)(using Frame): String < (Async & Abort[BrowserReadException]) =
+        Abort.recover[BrowserProtocolErrorException] { e =>
+            if e.error.contains(CdpErrorStrings.ContextDestroyedErrorMessage) then
+                Abort.fail(BrowserIFrameInvalidException(BrowserIFrameInvalidException.Reason.ContextDestroyed))
+            else Abort.fail(e)
+        } {
+            backend.send[EvalParams, Structure.Value](RuntimeEvaluateMethod, params)
+                .map { v =>
+                    val wrapped = Structure.Value.Record(Chunk(
+                        "id"     -> Structure.Value.Integer(0),
+                        "result" -> v
+                    ))
+                    RawJsonParser.encode(wrapped)
+                }
+        }
+
+    private[kyo] def setDeviceMetricsOverride(backend: CdpBackend, params: ViewportParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.setDeviceMetricsOverride(sender, params)
+        backend.sendUnit[ViewportParams]("Emulation.setDeviceMetricsOverride", params)
 
-    private[kyo] def clearDeviceMetricsOverride(sender: CdpSender)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.clearDeviceMetricsOverride(sender)
+    private[kyo] def clearDeviceMetricsOverride(backend: CdpBackend)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
+        backend.send[CdpNoParams, Unit]("Emulation.clearDeviceMetricsOverride", CdpNoParams())
 
-    private[kyo] def dispatchKeyEvent(sender: CdpSender, params: DispatchKeyEventParams)(using
+    private[kyo] def dispatchKeyEvent(backend: CdpBackend, params: DispatchKeyEventParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.dispatchKeyEvent(sender, params)
+        backend.sendUnit[DispatchKeyEventParams]("Input.dispatchKeyEvent", params)
 
-    private[kyo] def dispatchMouseEvent(sender: CdpSender, params: MouseEventParams)(using
+    private[kyo] def dispatchMouseEvent(backend: CdpBackend, params: MouseEventParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.dispatchMouseEvent(sender, params)
+        backend.sendUnit[MouseEventParams]("Input.dispatchMouseEvent", params)
 
-    private[kyo] def getProperties(sender: CdpSender, params: GetPropertiesParams)(using
+    private[kyo] def getProperties(backend: CdpBackend, params: GetPropertiesParams)(using
         Frame
     ): GetPropertiesResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.getProperties(sender, params)
+        backend.send[GetPropertiesParams, GetPropertiesResult]("Runtime.getProperties", params)
 
-    private[kyo] def getDocument(sender: CdpSender, params: GetDocumentParams)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.getDocument(sender, params)
+    private[kyo] def getDocument(backend: CdpBackend, params: GetDocumentParams)(using
+        Frame
+    ): Unit < (Async & Abort[BrowserReadException]) =
+        backend.send[GetDocumentParams, Unit]("DOM.getDocument", params)
 
-    private[kyo] def requestNode(sender: CdpSender, params: RequestNodeParams)(using
+    private[kyo] def requestNode(backend: CdpBackend, params: RequestNodeParams)(using
         Frame
     ): RequestNodeResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.requestNode(sender, params)
+        backend.send[RequestNodeParams, RequestNodeResult]("DOM.requestNode", params)
 
-    private[kyo] def describeNodeByNodeId(sender: CdpSender, params: DescribeNodeParams)(using
+    private[kyo] def describeNodeByNodeId(backend: CdpBackend, params: DescribeNodeParams)(using
         Frame
     ): DescribeNodeResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.describeNodeByNodeId(sender, params)
+        backend.send[DescribeNodeParams, DescribeNodeResult]("DOM.describeNode", params)
 
-    private[kyo] def describeNodeByBackendId(sender: CdpSender, params: DescribeNodeByBackendIdParams)(using
+    private[kyo] def describeNodeByBackendId(backend: CdpBackend, params: DescribeNodeByBackendIdParams)(using
         Frame
     ): DescribeNodeResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.describeNodeByBackendId(sender, params)
+        backend.send[DescribeNodeByBackendIdParams, DescribeNodeResult]("DOM.describeNode", params)
 
-    private[kyo] def getBoxModel(sender: CdpSender, params: GetBoxModelParams)(using
+    private[kyo] def getBoxModel(backend: CdpBackend, params: GetBoxModelParams)(using
         Frame
     ): BoxModel < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.getBoxModel(sender, params)
+        backend.send[GetBoxModelParams, BoxModel]("DOM.getBoxModel", params)
 
-    private[kyo] def setFileInputFiles(sender: CdpSender, params: SetFileInputFilesParams)(using
+    private[kyo] def setFileInputFiles(backend: CdpBackend, params: SetFileInputFilesParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.setFileInputFiles(sender, params)
+        backend.sendUnit[SetFileInputFilesParams]("DOM.setFileInputFiles", params)
 
-    private[kyo] def getCookies(sender: CdpSender)(using Frame): NetworkGetCookiesResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.getCookies(sender)
+    private[kyo] def getCookies(backend: CdpBackend)(using Frame): NetworkGetCookiesResult < (Async & Abort[BrowserReadException]) =
+        backend.send[CdpNoParams, NetworkGetCookiesResult]("Network.getCookies", CdpNoParams())
 
-    private[kyo] def getCookies(sender: CdpSender, params: NetworkGetCookiesParams)(using
+    private[kyo] def getCookies(backend: CdpBackend, params: NetworkGetCookiesParams)(using
         Frame
     ): NetworkGetCookiesResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.getCookies(sender, params)
+        backend.send[NetworkGetCookiesParams, NetworkGetCookiesResult]("Network.getCookies", params)
 
-    private[kyo] def setCookie(sender: CdpSender, params: NetworkSetCookieParams)(using
+    private[kyo] def setCookie(backend: CdpBackend, params: NetworkSetCookieParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.setCookie(sender, params)
+        backend.sendUnit[NetworkSetCookieParams]("Network.setCookie", params)
 
-    private[kyo] def deleteCookies(sender: CdpSender, params: NetworkDeleteCookiesParams)(using
+    private[kyo] def deleteCookies(backend: CdpBackend, params: NetworkDeleteCookiesParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.deleteCookies(sender, params)
+        backend.sendUnit[NetworkDeleteCookiesParams]("Network.deleteCookies", params)
 
-    private[kyo] def getTargets(sender: CdpSender)(using Frame): GetTargetsResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.getTargets(sender)
+    private[kyo] def getTargets(backend: CdpBackend)(using Frame): GetTargetsResult < (Async & Abort[BrowserReadException]) =
+        backend.send[CdpNoParams, GetTargetsResult]("Target.getTargets", CdpNoParams())
 
-    private[kyo] def attachToTarget(sender: CdpSender, params: AttachParams)(using
+    private[kyo] def attachToTarget(backend: CdpBackend, params: AttachParams)(using
         Frame
     ): AttachResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.attachToTarget(sender, params)
+        backend.send[AttachParams, AttachResult]("Target.attachToTarget", params)
 
-    private[kyo] def createTarget(sender: CdpSender, params: CreateTargetParams)(using
+    private[kyo] def createTarget(backend: CdpBackend, params: CreateTargetParams)(using
         Frame
     ): CreateTargetResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.createTarget(sender, params)
+        backend.send[CreateTargetParams, CreateTargetResult]("Target.createTarget", params)
 
-    private[kyo] def createBrowserContext(sender: CdpSender)(using
+    private[kyo] def createBrowserContext(backend: CdpBackend)(using
         Frame
     ): CreateBrowserContextResult < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.createBrowserContext(sender)
+        backend.send[CdpNoParams, CreateBrowserContextResult]("Target.createBrowserContext", CdpNoParams())
 
-    private[kyo] def closeTarget(sender: CdpSender, params: CloseTargetParams)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.closeTarget(sender, params)
-
-    private[kyo] def disposeBrowserContext(sender: CdpSender, params: DisposeBrowserContextParams)(using
+    private[kyo] def closeTarget(backend: CdpBackend, params: CloseTargetParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
-        CdpBackendOld.disposeBrowserContext(sender, params)
+        backend.sendUnit[CloseTargetParams]("Target.closeTarget", params)
 
-    // --- End of forwarding methods ---
+    private[kyo] def disposeBrowserContext(backend: CdpBackend, params: DisposeBrowserContextParams)(using
+        Frame
+    ): Unit < (Async & Abort[BrowserReadException]) =
+        backend.sendUnit[DisposeBrowserContextParams]("Target.disposeBrowserContext", params)
 
     /** Transport-based init for testing: caller supplies a pre-wired [[JsonRpcTransport]]
       * instead of a WS URL. The [[Browser.getVersion]] probe still runs.
@@ -630,200 +683,4 @@ private[kyo] object CdpBackend:
 
 end CdpBackend
 
-/** Phase-01 byte-equivalent coexistence: the legacy method-namespace object
-  * `CdpBackendOld` carries the 228-LoC of typed wrappers + decodeOrFail +
-  * CdpSender trait so the existing CdpClient call sites continue to compile
-  * unchanged. Phase 02 deletes this object outright and inlines two-line
-  * `backend.send[Params, Result]` calls at every call site.
-  *
-  * // flow-allow: phase-01 byte-equivalent coexistence; deleted in Phase 02
-  */
-private[kyo] object CdpBackendOld:
-
-    private[kyo] val RuntimeEvaluateMethod = CdpBackend.RuntimeEvaluateMethod
-
-    /** Decodes a CDP response JSON to a typed result. A CDP error response (routed by the `CdpClient` relay into the result slot as the
-      * `CdpError` JSON) is recognized and surfaced with its real CDP message; a genuinely malformed payload raises via `decodeFailure`.
-      */
-    private[kyo] def decodeOrFail[A: Schema](wire: String, method: String)(using
-        Frame
-    )
-        : A < Abort[BrowserReadException] =
-        Json.decode[CdpReply[A]](wire) match
-            case Result.Success(reply) =>
-                reply.result match
-                    case Present(v) => v
-                    case Absent =>
-                        reply.error match
-                            case Present(cdpErr) => Abort.fail(BrowserProtocolErrorException(method, cdpErr.message))
-                            case Absent =>
-                                Abort.fail(BrowserProtocolErrorException.decodeFailure(
-                                    method,
-                                    s"reply has neither result nor error: $wire"
-                                ))
-            case typedFailure =>
-                Abort.fail(BrowserProtocolErrorException.decodeFailure(method, typedFailure.toString))
-
-    /** Fetches the session's browser history, returning the typed navigation history. */
-    private[kyo] def getNavigationHistory(sender: CdpSender)(using Frame): NavigationHistory < (Async & Abort[BrowserReadException]) =
-        sender.send("Page.getNavigationHistory").map(decodeOrFail[NavigationHistory](_, "Page.getNavigationHistory"))
-
-    /** Navigates the current tab to the given URL. Does not wait for the navigation to settle. */
-    private[kyo] def navigate(sender: CdpSender, params: NavigateParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Page.navigate", params).unit
-
-    /** Navigates to a specific history entry by its entry id. Does not wait for the navigation to settle. */
-    private[kyo] def navigateToHistoryEntry(sender: CdpSender, params: NavigateToEntryParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Page.navigateToHistoryEntry", params).unit
-
-    /** Reloads the current page. Does not wait for the navigation to settle. */
-    private[kyo] def reload(sender: CdpSender, params: ReloadParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Page.reload", params).unit
-
-    /** Returns the full frame tree for the current page. */
-    private[kyo] def getFrameTree(sender: CdpSender)(using Frame): GetFrameTreeResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Page.getFrameTree").map(decodeOrFail[GetFrameTreeResult](_, "Page.getFrameTree"))
-
-    /** Captures a screenshot and returns the typed result (base-64-encoded PNG data). */
-    private[kyo] def captureScreenshot(sender: CdpSender, params: ScreenshotParams)(using
-        Frame
-    ): ScreenshotResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Page.captureScreenshot", params).map(decodeOrFail[ScreenshotResult](_, "Page.captureScreenshot"))
-
-    /** Generates a PDF of the current page and returns the typed result (base-64-encoded PDF data). */
-    private[kyo] def printToPDF(sender: CdpSender)(using Frame): PrintToPdfResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Page.printToPDF").map(decodeOrFail[PrintToPdfResult](_, "Page.printToPDF"))
-
-    /** Evaluates a JavaScript expression and returns the raw CDP response JSON. */
-    private[kyo] def runtimeEvaluate(sender: CdpSender, params: EvalParams)(using
-        Frame
-    ): String < (Async & Abort[BrowserReadException]) =
-        sender.send(RuntimeEvaluateMethod, params)
-
-    /** Overrides the tab's viewport dimensions and device scale factor. */
-    private[kyo] def setDeviceMetricsOverride(sender: CdpSender, params: ViewportParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Emulation.setDeviceMetricsOverride", params).unit
-
-    /** Clears any active viewport override, restoring the tab's natural viewport. */
-    private[kyo] def clearDeviceMetricsOverride(sender: CdpSender)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Emulation.clearDeviceMetricsOverride").unit
-
-    /** Dispatches a keyboard event (keyDown / keyUp / char) to the focused element. */
-    private[kyo] def dispatchKeyEvent(sender: CdpSender, params: DispatchKeyEventParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Input.dispatchKeyEvent", params).unit
-
-    /** Dispatches a mouse event (mouseMoved / mousePressed / mouseReleased) at the given coordinates. */
-    private[kyo] def dispatchMouseEvent(sender: CdpSender, params: MouseEventParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Input.dispatchMouseEvent", params).unit
-
-    /** Enumerates own properties of a JS object handle. */
-    private[kyo] def getProperties(sender: CdpSender, params: GetPropertiesParams)(using
-        Frame
-    ): GetPropertiesResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Runtime.getProperties", params).map(decodeOrFail[GetPropertiesResult](_, "Runtime.getProperties"))
-
-    /** Ensures the agent's document root is initialised. Result is discarded. */
-    private[kyo] def getDocument(sender: CdpSender, params: GetDocumentParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("DOM.getDocument", params).unit
-
-    /** Pushes the node path from a JS objectId to the document root, returning the agent-local nodeId. */
-    private[kyo] def requestNode(sender: CdpSender, params: RequestNodeParams)(using
-        Frame
-    ): RequestNodeResult < (Async & Abort[BrowserReadException]) =
-        sender.send("DOM.requestNode", params).map(decodeOrFail[RequestNodeResult](_, "DOM.requestNode"))
-
-    /** Describes a DOM node by its agent-local nodeId. */
-    private[kyo] def describeNodeByNodeId(sender: CdpSender, params: DescribeNodeParams)(using
-        Frame
-    ): DescribeNodeResult < (Async & Abort[BrowserReadException]) =
-        sender.send("DOM.describeNode", params).map(decodeOrFail[DescribeNodeResult](_, "DOM.describeNode"))
-
-    /** Describes a DOM node by its backend node id. */
-    private[kyo] def describeNodeByBackendId(sender: CdpSender, params: DescribeNodeByBackendIdParams)(using
-        Frame
-    ): DescribeNodeResult < (Async & Abort[BrowserReadException]) =
-        sender.send("DOM.describeNode", params).map(decodeOrFail[DescribeNodeResult](_, "DOM.describeNode"))
-
-    /** Returns the box model of a DOM node identified by backendNodeId. */
-    private[kyo] def getBoxModel(sender: CdpSender, params: GetBoxModelParams)(using
-        Frame
-    ): BoxModel < (Async & Abort[BrowserReadException]) =
-        sender.send("DOM.getBoxModel", params).map(decodeOrFail[BoxModel](_, "DOM.getBoxModel"))
-
-    /** Sets the files for a file-input element identified by its backend node id. */
-    private[kyo] def setFileInputFiles(sender: CdpSender, params: SetFileInputFilesParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("DOM.setFileInputFiles", params).unit
-
-    /** Returns all cookies visible to the current page. */
-    private[kyo] def getCookies(sender: CdpSender)(using Frame): NetworkGetCookiesResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Network.getCookies").map(decodeOrFail[NetworkGetCookiesResult](_, "Network.getCookies"))
-
-    /** Returns cookies filtered by Chrome's `urls` predicate. */
-    private[kyo] def getCookies(sender: CdpSender, params: NetworkGetCookiesParams)(using
-        Frame
-    ): NetworkGetCookiesResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Network.getCookies", params).map(decodeOrFail[NetworkGetCookiesResult](_, "Network.getCookies"))
-
-    /** Sets a cookie in the current page's cookie jar. */
-    private[kyo] def setCookie(sender: CdpSender, params: NetworkSetCookieParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Network.setCookie", params).unit
-
-    /** Deletes a cookie from the current page's cookie jar. */
-    private[kyo] def deleteCookies(sender: CdpSender, params: NetworkDeleteCookiesParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Network.deleteCookies", params).unit
-
-    /** Returns information about all open targets (tabs, workers, etc.). */
-    private[kyo] def getTargets(sender: CdpSender)(using Frame): GetTargetsResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Target.getTargets").map(decodeOrFail[GetTargetsResult](_, "Target.getTargets"))
-
-    /** Attaches to an existing target and returns the typed result containing the session ID. */
-    private[kyo] def attachToTarget(sender: CdpSender, params: AttachParams)(using
-        Frame
-    ): AttachResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Target.attachToTarget", params).map(decodeOrFail[AttachResult](_, "Target.attachToTarget"))
-
-    /** Creates a new browser target (tab) and returns the typed result containing the target ID. */
-    private[kyo] def createTarget(sender: CdpSender, params: CreateTargetParams)(using
-        Frame
-    ): CreateTargetResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Target.createTarget", params).map(decodeOrFail[CreateTargetResult](_, "Target.createTarget"))
-
-    /** Creates a new isolated browser context and returns the typed result containing the context ID. */
-    private[kyo] def createBrowserContext(sender: CdpSender)(using
-        Frame
-    ): CreateBrowserContextResult < (Async & Abort[BrowserReadException]) =
-        sender.send("Target.createBrowserContext").map(decodeOrFail[CreateBrowserContextResult](_, "Target.createBrowserContext"))
-
-    /** Closes the target (tab or worker) with the given target id. */
-    private[kyo] def closeTarget(sender: CdpSender, params: CloseTargetParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Target.closeTarget", params).unit
-
-    /** Disposes an isolated browser context, tearing down its storage and service workers. */
-    private[kyo] def disposeBrowserContext(sender: CdpSender, params: DisposeBrowserContextParams)(using
-        Frame
-    ): Unit < (Async & Abort[BrowserReadException]) =
-        sender.send("Target.disposeBrowserContext", params).unit
-
-end CdpBackendOld
+// CdpBackendOld deleted in Phase 02 per plan.

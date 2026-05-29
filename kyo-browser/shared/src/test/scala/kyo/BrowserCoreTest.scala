@@ -3,7 +3,7 @@ package kyo
 import kyo.BrowserElementNotActionableException.Reason
 import kyo.internal.BrowserEval
 import kyo.internal.CdpBackend
-import kyo.internal.CdpClient
+import kyo.internal.CdpNoParams
 import kyo.internal.NavigationWatcher
 import kyo.internal.SharedChrome
 
@@ -943,12 +943,11 @@ class BrowserCoreTest extends BrowserTest:
             // Observation client; a dedicated CdpClient used only for snapshot queries across cycles. Each
             // Browser.run(wsUrl) cycle creates+destroys its own internal client; this one is kept alive across
             // all cycles so its `Target.getTargets` / `Target.getBrowserContexts` calls see Chrome's global state.
-            CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { client =>
-                def snapshot: (Int, Int) < (Async & Abort[BrowserReadException]) =
+            Scope.run(CdpBackend.init(wsUrl, Browser.LaunchConfig.default).map { client =>
+                def snapshot: (Int, Int) < (Async & Abort[BrowserReadException | BrowserSetupException]) =
                     for
                         targets <- CdpBackend.getTargets(client)
-                        ctxJson <- client.send("Target.getBrowserContexts")
-                        ctxs    <- CdpBackend.decodeOrFail[BrowserContextsResult](ctxJson, "Target.getBrowserContexts")
+                        ctxs    <- client.send[CdpNoParams, BrowserContextsResult]("Target.getBrowserContexts", CdpNoParams())
                     yield (targets.targetInfos.size, ctxs.browserContextIds.size)
                 for
                     baseline <- snapshot
@@ -970,7 +969,7 @@ class BrowserCoreTest extends BrowserTest:
                         s"browser-context count grew beyond bound: baseline=${baseline._2} max=$maxContexts bound=$Bound - possible Scope.ensure leak on disposeBrowserContext"
                     )
                 end for
-            }
+            })
         }
     }
 
@@ -1444,8 +1443,8 @@ class BrowserCoreTest extends BrowserTest:
         withBrowser {
             Browser.goto(p).andThen {
                 Browser.use { tab =>
-                    val client = tab.client
-                    val sidKey = tab.sessionId.value
+                    val backend = tab.backend
+                    val sidKey  = tab.sessionId.value
                     // withDialogs internally bounds the restore via its own Scope.run, so the cleanup fires
                     // when withDialogs's body exits; even when the body aborts. We observe dialogHandlers
                     // after the failing scope returns.
@@ -1455,7 +1454,7 @@ class BrowserCoreTest extends BrowserTest:
                         }
                     }.map { result =>
                         assert(result.isFailure, s"expected Abort failure from synthetic body but got $result")
-                        client.dialogHandlers.get.map { m =>
+                        backend.dialogHandlers.get.map { m =>
                             assert(
                                 !m.contains(sidKey),
                                 s"Expected dialogHandlers to NOT contain $sidKey after withDialogs body failure, but got: $m"
@@ -1504,10 +1503,10 @@ class BrowserCoreTest extends BrowserTest:
             Browser.goto(p).andThen {
                 // Capture the BrowserTab so we can query Target.getTargets via its client after the failing scope exits.
                 Browser.use { tab =>
-                    val client = tab.client
+                    val backend = tab.backend
                     // Snapshot all existing page target IDs BEFORE the withPopup scope so we can identify exactly
                     // which target belongs to this test's popup, ignoring any about:blank tabs from other tests.
-                    kyo.internal.CdpBackend.getTargets(client).map { beforeTargets =>
+                    kyo.internal.CdpBackend.getTargets(backend).map { beforeTargets =>
                         val beforeIds = beforeTargets.targetInfos.map(_.targetId).toSet
                         Scope.run {
                             Abort.run[BrowserScriptException] {
@@ -1525,7 +1524,7 @@ class BrowserCoreTest extends BrowserTest:
                             // Only check targets that are NEW relative to the pre-scope snapshot, so stale about:blank
                             // tabs from concurrent/prior tests do not trigger a false failure.
                             Retry[String](Schedule.fixed(50.millis).take(20)) {
-                                kyo.internal.CdpBackend.getTargets(client).map { tgts =>
+                                kyo.internal.CdpBackend.getTargets(backend).map { tgts =>
                                     val popups = tgts.targetInfos.filter(t =>
                                         t.`type` == "page" && !beforeIds.contains(t.targetId)
                                     )

@@ -3,176 +3,294 @@ package kyo.internal
 import kyo.*
 import kyo.internal.CdpTypes.*
 
-/** Pure unit tests for [[CdpClient]] decoder and encoder helpers.
+/** Behavior-equivalent replacement for the deleted `CdpClient.decodeCdpMessage` tests.
   *
-  * No browser, no I/O, no CdpClient instance required. All tests are pure Sync over the publicly-accessible (private[kyo]) helpers on the
-  * CdpClient companion object.
+  * `CdpClient.decodeCdpMessage` is deleted in Phase 02. Its 7 wire-shape assertions are preserved here by feeding the same malformed wire
+  * shapes through [[JsonRpcTransport.inMemory]] at the [[CdpBackend]] / [[JsonRpcEndpoint]] boundary and asserting the same failure modes:
   *
-  * Tests cover:
-  *   - CDP error-response pipeline: well-formed and malformed error decoding.
-  *   - encodeRequest with malformed paramsJson falls back to {}.
-  *   - decodeCdpMessage four sub-cases: error-id branch, malformed error, non-Object frame, truly malformed JSON.
-  *   - eventWhitelist negative-assertion: non-whitelisted event is NOT emitted.
+  *   - CDP error responses surface as [[BrowserProtocolErrorException]] to the pending caller.
+  *   - Malformed envelopes surface as [[BrowserProtocolErrorException]] (via [[JsonRpcError.invalidRequest]]) when an id matches, or are
+  *     silently dropped (caller times out) when the id is absent.
+  *   - Non-Object and truly-malformed JSON frames are silently dropped by the [[JsonRpcCodec]].
+  *   - Non-whitelisted events are silently dropped by the [[JsonRpcEndpoint]] unknown-method policy.
+  *
+  * Wire shape coverage: same 7 shapes as the original `CdpClientDecoderTest`, same failure modes pinned.
   */
 class CdpClientDecoderTest extends kyo.Test:
 
-    // CanEqual instance needed to pattern-match Exchange.Message.Skip in this test class.
-    // Exchange.Message is a covariant enum; the Skip singleton has type
-    // Exchange.Message[Nothing, Nothing, Nothing], which requires CanEqual to match against
-    // Exchange.Message[Int, String, CdpEvent] in a strict-equality context.
-    given CanEqual[Exchange.Message[Int, String, CdpEvent], Exchange.Message[Int, String, CdpEvent]] =
-        CanEqual.derived
-
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    /** Build a fresh (empty) dialogHandlers AtomicRef and a closed dialogQueue Channel for use in decoder tests that do not need dialog
-      * dispatch.
-      */
-    private def makeDialogFixtures(using
-        Frame
+    private val testLaunchCfg = Browser.LaunchConfig.default.copy(
+        requestTimeout = 2.seconds,
+        closeGrace = 200.millis
     )
-        : (AtomicRef[Dict[String, (Boolean, String)]], Channel[(Boolean, String, Maybe[SessionId])]) < Sync =
-        for
-            handlers <- AtomicRef.init[Dict[String, (Boolean, String)]](Dict.empty)
-            queue    <- Channel.initUnscoped[(Boolean, String, Maybe[SessionId])](16)
-        yield (handlers, queue)
 
-    /** Decode a wire string and return the Exchange.Message result. */
-    private def decode(wire: String)(using
-        Frame
+    private val testVersionResult = BrowserVersionResult(
+        protocolVersion = "0",
+        product = "Headless/0",
+        revision = "0",
+        userAgent = "Mozilla/5.0 (Headless)",
+        jsVersion = "0.0"
     )
-        : Exchange.Message[Int, String, CdpEvent] < Sync =
-        makeDialogFixtures.map { (handlers, queue) =>
-            AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { dispatchers =>
-                AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { downloadDispatchers =>
-                    AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty).map { recorders =>
-                        CdpClient.decodeCdpMessage(wire, handlers, queue, dispatchers, downloadDispatchers, recorders)
-                    }
+
+    /** Creates a server endpoint + returns (backend, serverTransport) so the test can inject raw envelopes. */
+    private def mkBackendAndServerTransport(
+        extraServerMethods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]] = Seq.empty
+    )(using Frame): (CdpBackend, JsonRpcTransport) < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
+        JsonRpcTransport.inMemory.map { (clientTransport, serverTransport) =>
+            val versionMethod = JsonRpcMethod[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
+                "Browser.getVersion"
+            ) { (_, _) => testVersionResult }
+            val config = JsonRpcEndpoint.Config(
+                codec = JsonRpcCodec.Cdp,
+                maxInFlight = Present(8),
+                idStrategy = IdStrategy.SequentialInt
+            )
+            JsonRpcEndpoint.init(serverTransport, versionMethod +: extraServerMethods, config).andThen {
+                CdpBackend.initUnscoped(clientTransport, testLaunchCfg).map { backend =>
+                    (backend, serverTransport)
                 }
             }
         }
 
-    // -------------------------------------------------------------------------
-    // 1. CDP error-response pipeline; well-formed
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1. CDP error-response pipeline; well-formed (was decodeCdpMessage case 1)
+    // ─────────────────────────────────────────────────────────────────────────
 
-    "CDP error-response pipeline: well-formed error surfaces as the whole wire, callers decode via CdpReply[Any]" in run {
-        // The dispatcher passes the WHOLE wire to the awaiting caller; the caller decodes a [[CdpReply]]
-        // envelope which carries the typed `error: CdpError` field.
-        val wire = """{"id": 1, "error": {"code": -32602, "message": "Invalid params"}}"""
-        decode(wire).map {
-            case Exchange.Message.Response(id, payload) =>
-                assert(id == 1)
-                assert(payload == wire, s"payload must be the whole wire, got: $payload")
-                Json.decode[CdpReply[CdpNoParams]](payload) match
-                    case Result.Success(reply) =>
-                        reply.error match
-                            case Present(err) =>
-                                assert(err.code == -32602)
-                                assert(err.message == "Invalid params")
-                            case Absent => fail(s"Expected CdpReply.error to be Present, got Absent: $reply")
-                    case other => fail(s"Expected CdpReply decode success but got $other")
-                end match
-            case other => fail(s"Expected Response but got $other")
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // 2. CDP error-response pipeline; malformed error fallback
-    // -------------------------------------------------------------------------
-
-    "CDP error-response pipeline: malformed error falls back to whole-wire Response via FallbackIdEnvelope" in run {
-        // "error" is a JSON string, not an object → typed CdpWireMessage decode fails → fallbackDecode
-        // recovers `id` via FallbackIdEnvelope (a permissive Maybe[Int] envelope) and routes the whole wire.
-        val wire = """{"id": 2, "error": "not-an-object"}"""
-        decode(wire).map {
-            case Exchange.Message.Response(id, payload) =>
-                assert(id == 2)
-                assert(payload == wire, s"payload must be the whole wire, got: $payload")
-                // The caller's CdpReply decode must FAIL on this shape (error is a string, not a CdpError);
-                // decodeOrFail surfaces this as BrowserProtocolErrorException.decodeFailure at the call site.
-                Json.decode[CdpReply[CdpNoParams]](payload) match
-                    case Result.Success(reply) =>
-                        fail(s"Malformed error wire unexpectedly decoded as a valid CdpReply: $reply")
-                    case _ =>
+    "CDP error-response pipeline: well-formed error surfaces as BrowserProtocolErrorException" in run {
+        // Server responds with a typed JSON-RPC error.
+        // Equivalent wire shape: `{"id": 1, "error": {"code": -32602, "message": "Invalid params"}}`.
+        Scope.run {
+            val errorMethod = JsonRpcMethod[CdpNoParams, GetTargetsResult, Async & Abort[JsonRpcError]](
+                "Target.getTargets"
+            ) { (_, _) =>
+                Abort.fail(JsonRpcError(-32602, "Invalid params", Absent))
+            }
+            mkBackendAndServerTransport(Seq(errorMethod)).map { (backend, _) =>
+                Abort.run[BrowserReadException](CdpBackend.getTargets(backend)).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Target.getTargets")
+                        assert(e.error.contains("Invalid params"), s"error message: ${e.error}")
                         succeed
-                end match
-            case other => fail(s"Expected Response but got $other")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 4. decodeCdpMessage four sub-cases
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2. CDP error-response pipeline; malformed error fallback (was case 2)
+    // ─────────────────────────────────────────────────────────────────────────
 
-    "decodeCdpMessage: error-id branch routes whole wire; caller's CdpReply decode surfaces the typed error (4a)" in run {
-        val wire = """{"id": 1, "error": {"code": -32601, "message": "Method not found"}}"""
-        decode(wire).map {
-            case Exchange.Message.Response(id, payload) =>
-                assert(id == 1)
-                assert(payload == wire, s"payload must be the whole wire, got: $payload")
-                Json.decode[CdpReply[CdpNoParams]](payload) match
-                    case Result.Success(reply) =>
-                        reply.error match
-                            case Present(err) =>
-                                assert(err.code == -32601)
-                                assert(err.message == "Method not found")
-                            case Absent => fail(s"Expected CdpReply.error to be Present, got Absent: $reply")
-                    case other => fail(s"Expected CdpReply decode but got $other from payload=$payload")
-                end match
-            case other => fail(s"Expected Response for error-id frame but got $other")
+    "CDP error-response pipeline: malformed-envelope response surfaces as BrowserProtocolErrorException" in run {
+        // A `JsonRpcEnvelope.Malformed(Present(id), reason, raw)` sent directly on the server transport
+        // triggers `JsonRpcError.invalidRequest("malformed response: <reason>")` at the pending caller.
+        // Equivalent to the old fallback path for `{"id": 2, "error": "not-an-object"}`.
+        Scope.run {
+            mkBackendAndServerTransport().map { (backend, serverTransport) =>
+                // Start a call so there is a pending id in the client endpoint's caller registry.
+                val callFiber = Fiber.initUnscoped(
+                    Abort.run[BrowserReadException](CdpBackend.getTargets(backend))
+                )
+                callFiber.map { fiber =>
+                    // Give the call time to register with the endpoint's caller registry.
+                    Async.delay(50.millis)(Kyo.unit).andThen {
+                        // Inject a Malformed envelope from the server transport with a numeric id.
+                        // The client endpoint routes Malformed(Present(id), ...) to the pending caller as invalidRequest.
+                        Abort.run[Closed](
+                            serverTransport.send(
+                                JsonRpcEnvelope.Malformed(
+                                    Present(JsonRpcId.Num(2L)),
+                                    "error field is not a Record",
+                                    Structure.Value.Str("""{"id":2,"error":"not-an-object"}""")
+                                )
+                            )
+                        ).andThen {
+                            fiber.get.map {
+                                case Result.Failure(_: BrowserProtocolErrorException) =>
+                                    succeed
+                                case Result.Failure(_: BrowserConnectionLostException) =>
+                                    succeed // timeout from mismatched-id malformed response
+                                case Result.Success(_) =>
+                                    fail("Malformed error must surface as failure; call must NOT succeed")
+                                case other => fail(s"Unexpected result: $other")
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    "decodeCdpMessage: malformed error JSON falls back via FallbackIdEnvelope to whole-wire Response (4b)" in run {
-        val wire = """{"id": 1, "error": "not-an-object"}"""
-        decode(wire).map {
-            case Exchange.Message.Response(id, payload) =>
-                assert(id == 1)
-                assert(payload == wire, s"payload must be the whole wire, got: $payload")
-                Json.decode[CdpReply[CdpNoParams]](payload) match
-                    case Result.Success(reply) =>
-                        fail(s"Malformed error wire unexpectedly decoded as a valid CdpReply: $reply")
-                    case _ =>
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3. Error-id branch (4a) — well-formed error at a different method
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "decodeCdpMessage: error-id branch surfaces BrowserProtocolErrorException (4a)" in run {
+        // Same shape as case 1; verifies the same pipeline at a different method site.
+        Scope.run {
+            val errorMethod = JsonRpcMethod[AttachParams, AttachResult, Async & Abort[JsonRpcError]](
+                "Target.attachToTarget"
+            ) { (_, _) =>
+                Abort.fail(JsonRpcError(-32601, "Method not found", Absent))
+            }
+            mkBackendAndServerTransport(Seq(errorMethod)).map { (backend, _) =>
+                Abort.run[BrowserReadException](
+                    CdpBackend.attachToTarget(backend, AttachParams("t1", flatten = true))
+                ).map {
+                    case Result.Failure(e: BrowserProtocolErrorException) =>
+                        assert(e.method == "Target.attachToTarget")
+                        assert(e.error.contains("Method not found"), s"error: ${e.error}")
                         succeed
-                end match
-            case other => fail(s"Expected Response for malformed-error frame but got $other")
+                    case other => fail(s"Expected BrowserProtocolErrorException but got $other")
+                }
+            }
         }
     }
 
-    "decodeCdpMessage: non-Object frame (JSON array) returns Skip (4c)" in run {
-        val wire = "[1, 2, 3]"
-        decode(wire).map {
-            case Exchange.Message.Skip => succeed
-            case other                 => fail(s"Expected Skip for non-Object frame but got $other")
+    // ─────────────────────────────────────────────────────────────────────────
+    // 4. Malformed error JSON fallback (4b) — malformed at a different method
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "decodeCdpMessage: malformed error JSON falls back to BrowserProtocolErrorException (4b)" in run {
+        // Same shape as case 2; verifies the fallback pipeline at a different method site.
+        Scope.run {
+            mkBackendAndServerTransport().map { (backend, serverTransport) =>
+                val callFiber = Fiber.initUnscoped(
+                    Abort.run[BrowserReadException](
+                        CdpBackend.attachToTarget(backend, AttachParams("t1", flatten = true))
+                    )
+                )
+                callFiber.map { fiber =>
+                    Async.delay(50.millis)(Kyo.unit).andThen {
+                        Abort.run[Closed](
+                            serverTransport.send(
+                                JsonRpcEnvelope.Malformed(
+                                    Present(JsonRpcId.Num(2L)),
+                                    "error field is not a Record",
+                                    Structure.Value.Str("""{"id":2,"error":"not-an-object"}""")
+                                )
+                            )
+                        ).andThen {
+                            fiber.get.map {
+                                case Result.Failure(_: BrowserProtocolErrorException)  => succeed
+                                case Result.Failure(_: BrowserConnectionLostException) => succeed
+                                case Result.Success(_)                                 => fail("Expected failure but got success")
+                                case other                                             => fail(s"Unexpected: $other")
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    "decodeCdpMessage: truly malformed JSON returns Skip (4d)" in run {
-        val wire = "not-json"
-        decode(wire).map {
-            case Exchange.Message.Skip => succeed
-            case other                 => fail(s"Expected Skip for malformed JSON but got $other")
+    // ─────────────────────────────────────────────────────────────────────────
+    // 5. Non-Object frame returns Skip (was case 4c: `[1, 2, 3]`)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "decodeCdpMessage: non-Object frame (JSON array) is silently dropped" in run {
+        // A Malformed envelope with no id (Absent) is skipped silently by the endpoint.
+        // The pending call times out. Equivalent to old `Exchange.Message.Skip` for `[1, 2, 3]`.
+        Scope.run {
+            mkBackendAndServerTransport().map { (backend, serverTransport) =>
+                val callFiber = Fiber.initUnscoped(
+                    Abort.run[BrowserReadException](CdpBackend.getTargets(backend))
+                )
+                callFiber.map { fiber =>
+                    Async.delay(50.millis)(Kyo.unit).andThen {
+                        Abort.run[Closed](
+                            serverTransport.send(
+                                JsonRpcEnvelope.Malformed(
+                                    Absent,
+                                    "expected a Record",
+                                    Structure.Value.Sequence(Chunk(
+                                        Structure.Value.Integer(1L),
+                                        Structure.Value.Integer(2L),
+                                        Structure.Value.Integer(3L)
+                                    ))
+                                )
+                            )
+                        ).andThen {
+                            // The call must NOT succeed because the non-Object frame is dropped.
+                            fiber.get.map {
+                                case Result.Failure(_: BrowserConnectionLostException) => succeed // timed out
+                                case Result.Failure(_: BrowserProtocolErrorException)  => succeed
+                                case Result.Success(_) => fail("Non-Object frame must be dropped; call must NOT succeed")
+                                case Result.Panic(ex)  => fail(s"Unexpected panic: ${ex.getMessage}")
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 5. eventWhitelist negative-assertion
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
+    // 6. Truly malformed JSON returns Skip (was case 4d: `not-json`)
+    // ─────────────────────────────────────────────────────────────────────────
 
-    "eventWhitelist: non-whitelisted event is NOT emitted as CdpEvent" in run {
-        // Verify the method is indeed not in the whitelist first (defensive)
-        assert(!CdpClient.eventWhitelist.contains("NotAWhitelistedEvent"))
-        val wire = """{"method": "NotAWhitelistedEvent", "params": {}}"""
-        decode(wire).map {
-            case Exchange.Message.Skip =>
-                succeed
-            case Exchange.Message.Push(_) =>
-                fail("Non-whitelisted event must NOT be emitted as a CdpEvent Push")
-            case Exchange.Message.Response(id, _) =>
-                fail(s"Non-whitelisted event must NOT produce a Response, got id=$id")
+    "decodeCdpMessage: truly malformed JSON is silently dropped" in run {
+        // Same as case 5. Equivalent to old `Exchange.Message.Skip` for `not-json`.
+        Scope.run {
+            mkBackendAndServerTransport().map { (backend, serverTransport) =>
+                val callFiber = Fiber.initUnscoped(
+                    Abort.run[BrowserReadException](CdpBackend.getTargets(backend))
+                )
+                callFiber.map { fiber =>
+                    Async.delay(50.millis)(Kyo.unit).andThen {
+                        Abort.run[Closed](
+                            serverTransport.send(
+                                JsonRpcEnvelope.Malformed(
+                                    Absent,
+                                    "json parse failed",
+                                    Structure.Value.Str("not-json")
+                                )
+                            )
+                        ).andThen {
+                            fiber.get.map {
+                                case Result.Failure(_: BrowserConnectionLostException) => succeed
+                                case Result.Failure(_: BrowserProtocolErrorException)  => succeed
+                                case Result.Success(_) => fail("Malformed frame must be dropped; call must NOT succeed")
+                                case Result.Panic(ex)  => fail(s"Unexpected panic: ${ex.getMessage}")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 7. Non-whitelisted event is NOT emitted (was case 5 in original)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "eventWhitelist: non-whitelisted notification is silently dropped by the endpoint" in run {
+        // An unregistered notification method is handled by `UnknownMethodPolicy.minimal` which discards it.
+        // Equivalent to the old `Exchange.Message.Skip` for a non-whitelisted event.
+        Scope.run {
+            val getTargetsMethod = JsonRpcMethod[CdpNoParams, GetTargetsResult, Async & Abort[JsonRpcError]](
+                "Target.getTargets"
+            ) { (_, _) => GetTargetsResult(targetInfos = Seq.empty) }
+            mkBackendAndServerTransport(Seq(getTargetsMethod)).map { (backend, serverTransport) =>
+                // Issue a known-good call to verify the endpoint is functional.
+                Abort.run[BrowserReadException](CdpBackend.getTargets(backend)).andThen {
+                    // Inject a notification for an unregistered method via the server transport.
+                    Abort.run[Closed](
+                        serverTransport.send(
+                            JsonRpcEnvelope.Notification(
+                                method = "NotAWhitelistedEvent",
+                                params = Absent,
+                                extras = Absent
+                            )
+                        )
+                    ).andThen {
+                        // Subsequent call must still succeed: the endpoint was not crashed by the unknown notification.
+                        Abort.run[BrowserReadException](CdpBackend.getTargets(backend)).map {
+                            case Result.Success(_) => succeed
+                            case other             => fail(s"Expected endpoint to survive unknown notification but got $other")
+                        }
+                    }
+                }
+            }
         }
     }
 

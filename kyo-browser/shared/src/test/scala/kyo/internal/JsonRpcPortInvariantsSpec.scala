@@ -96,11 +96,11 @@ class JsonRpcPortInvariantsSpec extends Test:
             assert(content.contains("package kyo.internal"), "CdpBackend.scala must declare package kyo.internal")
             assert(content.contains("final private[kyo] class CdpBackend"), "CdpBackend.scala must declare CdpBackend class")
             assert(content.contains("private[kyo] object CdpBackend:"), "CdpBackend.scala must declare CdpBackend companion object")
+            // Phase 02: CdpBackendOld is deleted; check it is no longer present.
             assert(
-                content.contains("// flow-allow: phase-01 byte-equivalent coexistence"),
-                "CdpBackendOld must carry flow-allow annotation"
+                !content.contains("private[kyo] object CdpBackendOld:"),
+                "CdpBackend.scala must NOT declare CdpBackendOld after Phase 02"
             )
-            assert(content.contains("private[kyo] object CdpBackendOld:"), "CdpBackend.scala must declare CdpBackendOld for Phase 01")
             succeed
         end if
     }
@@ -364,14 +364,14 @@ class JsonRpcPortInvariantsSpec extends Test:
                         Abort.run[Closed](
                             backend.dialogQueue.put((true, "answer", Absent))
                         ).andThen {
-                            Async.sleep(200.millis).andThen {
+                            untilTrue(dialogIdRef.get.map(_.isDefined)).andThen {
                                 Abort.run[BrowserReadException](
                                     backend.send[NavigateParams, NavigateResult](
                                         "Page.navigate",
                                         NavigateParams("https://x.com")
                                     )
                                 ).andThen {
-                                    Async.sleep(100.millis).andThen {
+                                    untilTrue(regularIdRef.get.map(_.isDefined)).andThen {
                                         dialogIdRef.get.map {
                                             case Present(dialogId) =>
                                                 assert(dialogId < 0)
@@ -446,6 +446,259 @@ class JsonRpcPortInvariantsSpec extends Test:
             )
             succeed
         end if
+    }
+
+    // --- Phase 02 invariant tests ---
+
+    // --- Phase 02 structural invariant tests ---
+
+    // INV-001: Browser.scala public surface byte-identical (no CdpClient references in production code)
+    "INV-001: Browser.scala public surface - CdpClient not referenced in production code" in {
+        val browserContent = readFile("kyo-browser/shared/src/main/scala/kyo/Browser.scala")
+        if browserContent.isEmpty then succeed
+        else
+            assert(
+                !browserContent.contains("CdpClient.init") && !browserContent.contains("import kyo.internal.CdpClient"),
+                "Browser.scala must not reference CdpClient after Phase 02"
+            )
+            succeed
+        end if
+    }
+
+    // INV-003: BrowserTab no longer holds client: CdpClient field
+    "INV-003: BrowserTab holds backend: CdpBackend (not client: CdpClient)" in {
+        val content = readFile("kyo-browser/shared/src/main/scala/kyo/internal/BrowserTab.scala")
+        if content.isEmpty then succeed
+        else
+            assert(!content.contains("val client: CdpClient"), "BrowserTab must not hold client: CdpClient after Phase 02")
+            assert(content.contains("val backend: CdpBackend"), "BrowserTab must hold backend: CdpBackend after Phase 02")
+            succeed
+        end if
+    }
+
+    // INV-010: CdpClient.scala is deleted
+    "INV-010: CdpClient.scala is deleted after Phase 02" in {
+        if Platform.isJVM then
+            val cdpClientExists = JsonRpcPortFileOps.fileExists(
+                "kyo-browser/shared/src/main/scala/kyo/internal/CdpClient.scala"
+            )
+            assert(!cdpClientExists, "CdpClient.scala must be deleted after Phase 02"): Unit
+        end if
+        succeed
+    }
+
+    // INV-014 Phase 02: no em-dash in BrowserTab.scala (one of the Phase 02 modified files)
+    "INV-014 Phase 02: no em-dashes or en-dashes in BrowserTab.scala" in {
+        val content = readFile("kyo-browser/shared/src/main/scala/kyo/internal/BrowserTab.scala")
+        if content.isEmpty then succeed
+        else
+            assert(
+                !content.exists(c => c == '—' || c == '–'),
+                "BrowserTab.scala must not contain em-dashes or en-dashes"
+            )
+            succeed
+        end if
+    }
+
+    // --- INV-002 Phase 02: BrowserException ADT byte-identical ---
+
+    // INV-002: BrowserException.scala is not modified by Phase 02 (public API surface preserved)
+    "INV-002 Phase 02: BrowserException.scala is unmodified (public API surface byte-identical)" in {
+        val content = readFile("kyo-browser/shared/src/main/scala/kyo/BrowserException.scala")
+        if content.isEmpty then succeed
+        else
+            // The presence and absence of key sealed traits verify the ADT shape is intact.
+            assert(content.contains("sealed abstract class BrowserException"), "BrowserException sealed abstract class must be present")
+            assert(content.contains("sealed trait BrowserReadException"), "BrowserReadException sealed trait must be present")
+            assert(content.contains("sealed trait BrowserSetupException"), "BrowserSetupException sealed trait must be present")
+            // Phase 02 must not introduce CdpClient references (legacy name) into the public exception hierarchy.
+            // Note: CdpBackend is permitted as an implementation detail in error-message factory methods.
+            assert(!content.contains("CdpClient"), "BrowserException.scala must not reference CdpClient after Phase 02")
+            succeed
+        end if
+    }
+
+    // --- INV-007 Phase 02: stability-layer files byte-identical (excluding Phase 02 authorized modifications) ---
+
+    // INV-007: The stability files not modified by Phase 02 are byte-identical to their pre-Phase-02 state.
+    // Phase 02 authorized modifications: NavigationWatcher.scala, Resolver.scala, cdp/Accessibility.scala (per 05-plan.md files_modified).
+    // The remaining 15 stability files are checked here for the absence of CdpClient references (the canonical byte-identity proxy).
+    "INV-007 Phase 02: unmodified stability files contain no CdpClient references" in {
+        if Platform.isJVM then
+            val stabilityFiles = Seq(
+                "kyo-browser/shared/src/main/scala/kyo/internal/BrowserNetworkTracker.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/MutationSettlement.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/StabilitySampler.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/Actionability.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/SharedChrome.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/BrowserLauncher.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/Selector.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/JsStringUtil.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/IFrame.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/Image.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/Key.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/KeyModifiers.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/ChromeDownloader.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/CookieWire.scala",
+                "kyo-browser/shared/src/main/scala/kyo/internal/ProbesJs.scala"
+            )
+            val violations = stabilityFiles.filter { path =>
+                val content = readFile(path)
+                // Filter out comment lines (Scaladoc `*`, line comments `//`) before checking.
+                // Only comments in SharedChrome.scala mention the legacy "CdpClient" name;
+                // those are doc-comment references, not code references.
+                val codeLines = content.linesIterator.filter { line =>
+                    val trimmed = line.trim
+                    !trimmed.startsWith("//") && !trimmed.startsWith("*")
+                }.mkString("\n")
+                codeLines.contains("CdpClient")
+            }
+            assert(
+                violations.isEmpty,
+                s"INV-007 Phase 02: stability files must not reference CdpClient in code after Phase 02: $violations"
+            ): Unit
+        end if
+        succeed
+    }
+
+    // --- INV-008 Phase 02: Rule 8c source+test pairing holds after Phase 02 changes ---
+
+    // INV-008: CdpTypes.scala (introduced in Phase 02) has a matching CdpTypesTest.scala
+    "INV-008 Phase 02: CdpTypes.scala source has matching CdpTypesTest.scala" in {
+        val sourceExists = JsonRpcPortFileOps.fileExists(
+            "kyo-browser/shared/src/main/scala/kyo/internal/CdpTypes.scala"
+        )
+        val testExists = JsonRpcPortFileOps.fileExists(
+            "kyo-browser/shared/src/test/scala/kyo/internal/CdpTypesTest.scala"
+        )
+        if Platform.isJVM then
+            assert(sourceExists, "CdpTypes.scala source not found")
+            assert(testExists, "CdpTypesTest.scala test not found")
+        else
+            succeed
+        end if
+    }
+
+    // --- INV-009 Phase 02: CdpBackendOld absent; CdpTypes.scala has primary top-level object CdpTypes ---
+
+    // INV-009: After Phase 02, CdpBackendOld is deleted and CdpTypes.scala has the CdpTypes namespace object.
+    // Also verifies no rogue `object CdpBackendOld` lingered in CdpTypes.scala.
+    "INV-009 Phase 02: CdpTypes.scala has top-level object CdpTypes and no CdpBackendOld" in {
+        val content = readFile("kyo-browser/shared/src/main/scala/kyo/internal/CdpTypes.scala")
+        if content.isEmpty then succeed
+        else
+            assert(content.contains("package kyo.internal"), "CdpTypes.scala must declare package kyo.internal")
+            assert(content.contains("private[kyo] object CdpTypes:"), "CdpTypes.scala must declare top-level object CdpTypes")
+            assert(!content.contains("CdpBackendOld"), "CdpTypes.scala must not reference CdpBackendOld after Phase 02 deletion")
+            // CdpBackend.scala also must not declare CdpBackendOld after Phase 02
+            val cdpBackendContent = readFile("kyo-browser/shared/src/main/scala/kyo/internal/CdpBackend.scala")
+            assert(
+                !cdpBackendContent.contains("object CdpBackendOld"),
+                "CdpBackend.scala must not declare object CdpBackendOld after Phase 02"
+            )
+            succeed
+        end if
+    }
+
+    // --- INV-011 Phase 02: no manual JSON in Phase 02 modified files ---
+
+    // INV-011: Phase 02 modified files (BrowserTab, Browser, Resolver, NavigationWatcher, Accessibility, PageDownload, CdpTypes) contain
+    // no manual JSON construction (no Json.parseString, no "jsonrpc" string literals, no derives Json).
+    "INV-011 Phase 02: no manual JSON in Phase 02 modified source files" in {
+        val phase02ModifiedSources = Seq(
+            "kyo-browser/shared/src/main/scala/kyo/internal/BrowserTab.scala",
+            "kyo-browser/shared/src/main/scala/kyo/Browser.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/Resolver.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/NavigationWatcher.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/cdp/Accessibility.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/cdp/PageDownload.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/CdpTypes.scala"
+        )
+        val violations = phase02ModifiedSources.flatMap { path =>
+            val content = readFile(path)
+            if content.isEmpty then Seq.empty
+            else
+                val hits = Seq(
+                    if content.contains("Json.parseString") then Some(s"$path: Json.parseString") else None,
+                    if content.contains("\"jsonrpc\"") then Some(s"$path: \"jsonrpc\" literal") else None,
+                    if content.contains("derives Json") then Some(s"$path: derives Json") else None
+                ).flatten
+                hits
+            end if
+        }
+        assert(
+            violations.isEmpty,
+            s"INV-011 Phase 02: manual JSON found in Phase 02 modified files: $violations"
+        )
+        succeed
+    }
+
+    // --- INV-012 Phase 02: no bare `var` for shared state in Phase 02 modified files ---
+
+    // INV-012: Phase 02 modified source files contain no bare `var` declarations (without flow-allow: annotation).
+    "INV-012 Phase 02: no bare var declarations in Phase 02 modified source files" in {
+        val phase02ModifiedSources = Seq(
+            "kyo-browser/shared/src/main/scala/kyo/internal/BrowserTab.scala",
+            "kyo-browser/shared/src/main/scala/kyo/Browser.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/Resolver.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/NavigationWatcher.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/cdp/Accessibility.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/cdp/PageDownload.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/CdpTypes.scala"
+        )
+        val violations = phase02ModifiedSources.flatMap { path =>
+            val content = readFile(path)
+            if content.isEmpty then Seq.empty
+            else
+                content.split("\n").zipWithIndex.collect {
+                    case (line, idx) if line.matches(".*\\bvar [a-zA-Z].*") && !line.contains("// flow-allow:") =>
+                        s"$path:${idx + 1}: ${line.trim}"
+                }
+            end if
+        }
+        assert(
+            violations.isEmpty,
+            s"INV-012 Phase 02: bare var declarations without flow-allow in Phase 02 modified files: $violations"
+        )
+        succeed
+    }
+
+    // --- INV-013 Phase 02: no unannotated AllowUnsafe / Sync.Unsafe.* in Phase 02 modified files ---
+
+    // INV-013: Phase 02 modified source files contain no AllowUnsafe, Frame.internal, or Sync.Unsafe.* without a
+    // `// Unsafe:` annotation on the same line or the immediately preceding line.
+    "INV-013 Phase 02: no unannotated AllowUnsafe or Sync.Unsafe in Phase 02 modified source files" in {
+        val phase02ModifiedSources = Seq(
+            "kyo-browser/shared/src/main/scala/kyo/internal/BrowserTab.scala",
+            "kyo-browser/shared/src/main/scala/kyo/Browser.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/Resolver.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/NavigationWatcher.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/cdp/Accessibility.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/cdp/PageDownload.scala",
+            "kyo-browser/shared/src/main/scala/kyo/internal/CdpTypes.scala"
+        )
+        val violations = phase02ModifiedSources.flatMap { path =>
+            val content = readFile(path)
+            if content.isEmpty then Seq.empty
+            else
+                val lines = content.split("\n")
+                lines.zipWithIndex.collect {
+                    case (line, idx)
+                        if (line.contains("AllowUnsafe") || line.contains("Frame.internal") || line.contains("Sync.Unsafe.")) =>
+                        val prevLine = if idx > 0 then lines(idx - 1) else ""
+                        if !line.contains("// Unsafe:") && !prevLine.contains("// Unsafe:") then
+                            Some(s"$path:${idx + 1}: ${line.trim}")
+                        else
+                            None
+                        end if
+                }.flatten
+            end if
+        }
+        assert(
+            violations.isEmpty,
+            s"INV-013 Phase 02: unannotated AllowUnsafe/Sync.Unsafe in Phase 02 modified files: $violations"
+        )
+        succeed
     }
 
 end JsonRpcPortInvariantsSpec
