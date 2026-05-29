@@ -2,7 +2,9 @@ package kyo.doctest.sbt
 
 import java.io.File
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files => NioFiles, Path => NioPath, Paths}
+import java.nio.file.{Files => NioFiles}
+import java.nio.file.{Path => NioPath}
+import java.nio.file.Paths
 import org.scalafmt.interfaces.Scalafmt
 import sbt.util.Logger
 
@@ -57,9 +59,9 @@ private[sbt] object Formatter {
       * Package-private so it can be exercised directly without touching disk.
       */
     private[sbt] def rewrite(scalafmt: Scalafmt, confPath: NioPath, content: String): (String, Int, Int, Int) = {
-        val lines   = content.split("\n", -1).toVector
-        val out     = Vector.newBuilder[String]
-        val fmtFile = Paths.get("DoctestBlock.scala")
+        val lines       = content.split("\n", -1).toVector
+        val out         = Vector.newBuilder[String]
+        val fmtFile     = Paths.get("DoctestBlock.scala")
         var i           = 0
         var reformatted = 0
         var unchanged   = 0
@@ -79,8 +81,8 @@ private[sbt] object Formatter {
                         else
                             formatBlock(scalafmt, confPath, fmtFile, body) match {
                                 case Some(formatted) if formatted != body => reformatted += 1; formatted.split("\n", -1).toVector
-                                case Some(_)                               => unchanged += 1; bodyLines
-                                case None                                  => skipped += 1; bodyLines
+                                case Some(_)                              => unchanged += 1; bodyLines
+                                case None                                 => skipped += 1; bodyLines
                             }
                     out ++= replacement
                     if (j < lines.length) out += lines(j) // closing fence
