@@ -49,11 +49,15 @@ final class YamlParser private (private val input: String)(using frame: Frame):
             visitor.scalar(context, "", ScalarMeta(anchor, tag, ScalarStyle.Plain, mark()))
         else if currentIndent() < indent then
             Result.fail(error(s"Expected indentation of at least $indent spaces"))
-        else if currentLineText().dropWhile(_ == ' ').startsWith("[") || currentLineText().dropWhile(_ == ' ').startsWith("{") then
-            parseScalarValue(context, visitor)
-        else if startsWithSequenceEntryAtIndent() then parseBlockSequence(context, currentIndent(), visitor)
-        else if isBlockMappingLine(currentLineText()) then parseBlockMapping(context, currentIndent(), visitor)
-        else parseScalarValue(context, visitor)
+        else
+            val lineText = currentLineText()
+            val stripped = lineText.dropWhile(_ == ' ')
+            if stripped.startsWith("[") || stripped.startsWith("{") then
+                parseScalarValue(context, visitor)
+            else if startsWithSequenceEntryAtIndent() then parseBlockSequence(context, currentIndent(), visitor)
+            else if isBlockMappingLine(lineText) then parseBlockMapping(context, currentIndent(), visitor)
+            else parseScalarValue(context, visitor)
+            end if
         end if
     end parseNode
 
@@ -66,7 +70,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()))) { c0 =>
             def loop(context: Ctx): Result[Err | DecodeException, Ctx] =
                 skipBlankAndCommentLines()
-                if pos >= input.length || currentIndent() < indent || !isBlockMappingLine(currentLineText()) then
+                val lineText = if pos < input.length then currentLineText() else ""
+                if pos >= input.length || currentIndent() < indent || !isBlockMappingLine(lineText) then
                     visitor.nodeEnd(context, mark())
                 else
                     parseBlockMappingEntry(context, indent, visitor).flatMap(loop)
@@ -368,10 +373,11 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end closingQuoteIndex
 
     private def shouldCollectPlainContinuation(indent: Int): Boolean =
-        pos < input.length && (
-            currentLineText().trim.isEmpty ||
-                (currentIndent() > indent && !isBlockMappingLine(currentLineText()) && !startsWithSequenceEntryAtIndent())
-        )
+        if pos >= input.length then false
+        else
+            val lineText = currentLineText()
+            lineText.trim.isEmpty ||
+            (currentIndent() > indent && !isBlockMappingLine(lineText) && !startsWithSequenceEntryAtIndent())
     end shouldCollectPlainContinuation
 
     private def collectPlainContinuation(valueText: String, indent: Int): List[BlockScalarLine] =
@@ -403,7 +409,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                 def loop(context: Ctx): Result[Err | DecodeException, Ctx] =
                     skipBlankAndCommentLines()
                     val fieldIndent = sequenceIndent + 2
-                    if pos < input.length && currentIndent() >= fieldIndent && isBlockMappingLine(currentLineText()) then
+                    val lineText    = if pos < input.length then currentLineText() else ""
+                    if pos < input.length && currentIndent() >= fieldIndent && isBlockMappingLine(lineText) then
                         parseBlockMappingEntry(context, fieldIndent, visitor).flatMap(loop)
                     else visitor.nodeEnd(context, mark())
                 end loop
@@ -807,7 +814,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         var done = false
         while !done do
             skipBlankAndCommentLines()
-            if pos < input.length && currentLineText().trim.startsWith("%") then
+            val lineText = if pos < input.length then currentLineText() else ""
+            if pos < input.length && lineText.trim.startsWith("%") then
                 val _ = readRestOfLine()
             else done = true
         end while
@@ -833,10 +841,11 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def peekChar(c: Char): Boolean     = pos < input.length && input.charAt(pos) == c
 
     private def isDocumentMarker(marker: String): Boolean =
-        currentIndent() == 0 && currentLineText().startsWith(marker) && (
-            currentLineText().length == marker.length ||
-                currentLineText().charAt(marker.length).isWhitespace ||
-                currentLineText().charAt(marker.length) == '#'
+        val lineText = currentLineText()
+        currentIndent() == 0 && lineText.startsWith(marker) && (
+            lineText.length == marker.length ||
+                lineText.charAt(marker.length).isWhitespace ||
+                lineText.charAt(marker.length) == '#'
         )
     end isDocumentMarker
 
@@ -954,8 +963,11 @@ object YamlParser:
     def apply(input: String)(using Frame): YamlParser = new YamlParser(input)
 
     def toJson(input: Span[Byte])(using Frame): Span[Byte] =
+        toJson(input, Yaml.DefaultMaxDepth, Yaml.DefaultMaxCollectionSize)
+
+    def toJson(input: Span[Byte], maxDepth: Int, maxCollectionSize: Int)(using Frame): Span[Byte] =
         val s       = new String(input.toArrayUnsafe, StandardCharsets.UTF_8)
-        val visitor = JsonBuildingVisitor()
+        val visitor = JsonBuildingVisitor(maxDepth, maxCollectionSize)
         apply(s).visit(())(visitor) match
             case Result.Success(json: String)       => Span.from(json.getBytes(StandardCharsets.UTF_8))
             case Result.Failure(e: DecodeException) => throw e
@@ -963,8 +975,9 @@ object YamlParser:
         end match
     end toJson
 
-    final private class JsonBuildingVisitor(using Frame) extends Yaml.Visitor[Unit, DecodeException, String]:
-        final private class JsonFrame(val isMapping: Boolean, var first: Boolean, var expectingKey: Boolean)
+    final private class JsonBuildingVisitor(maxDepth: Int, maxCollectionSize: Int)(using Frame)
+        extends Yaml.Visitor[Unit, DecodeException, String]:
+        final private class JsonFrame(val isMapping: Boolean, var first: Boolean, var expectingKey: Boolean, var count: Int)
         final private class Capture(val name: String, val start: Int, val depth: Int)
 
         private val out                       = new StringBuilder
@@ -984,7 +997,8 @@ object YamlParser:
             valuePrefix()
             startCapture(meta.anchor)
             out.append('{')
-            stack = JsonFrame(true, true, true) :: stack
+            stack = JsonFrame(true, true, true, 0) :: stack
+            checkDepth()
             Result.unit
         end mappingStart
 
@@ -992,7 +1006,8 @@ object YamlParser:
             valuePrefix()
             startCapture(meta.anchor)
             out.append('[')
-            stack = JsonFrame(false, true, false) :: stack
+            stack = JsonFrame(false, true, false, 0) :: stack
+            checkDepth()
             Result.unit
         end sequenceStart
 
@@ -1051,10 +1066,19 @@ object YamlParser:
             current.foreach { f =>
                 if !f.first then out.append(',')
                 f.first = false
+                f.count += 1
+                if f.count > maxCollectionSize then
+                    throw LimitExceededException("Collection size", f.count, maxCollectionSize)
             }
 
         private def valuePrefix(): Unit =
             if !inMapping then entryPrefix()
+
+        private def checkDepth(): Unit =
+            val depth = stack.size
+            if depth > maxDepth then
+                throw LimitExceededException("Nesting depth", depth, maxDepth)
+        end checkDepth
 
         private def startCapture(anchor: Maybe[String]): Unit =
             anchor.foreach { name =>
@@ -1095,50 +1119,16 @@ object YamlParser:
         end appendResolvedScalar
 
         private def appendCoreScalar(value: String): Unit =
-            resolveCoreScalar(value) match
-                case CoreScalar.Null          => out.append("null")
-                case CoreScalar.Bool(value)   => out.append(if value then "true" else "false")
-                case CoreScalar.Number(value) => out.append(value)
-                case CoreScalar.Special(value) =>
+            YamlScalars.resolveCore(value) match
+                case YamlScalars.Core.Null          => out.append("null")
+                case YamlScalars.Core.Bool(value)   => out.append(if value then "true" else "false")
+                case YamlScalars.Core.Number(value) => out.append(value)
+                case YamlScalars.Core.Special(value) =>
                     appendQuoted(value)
-                case CoreScalar.Str(value) =>
+                case YamlScalars.Core.Str(value) =>
                     appendQuoted(value)
             end match
         end appendCoreScalar
-
-        private enum CoreScalar derives CanEqual:
-            case Null
-            case Bool(value: Boolean)
-            case Number(value: String)
-            case Special(value: String)
-            case Str(value: String)
-        end CoreScalar
-
-        private def resolveCoreScalar(value: String): CoreScalar =
-            value match
-                case "" | "~" | "null" | "Null" | "NULL" => CoreScalar.Null
-                case "true" | "True" | "TRUE"            => CoreScalar.Bool(true)
-                case "false" | "False" | "FALSE"         => CoreScalar.Bool(false)
-                case octal if matches(octal, "0o[0-7]+") =>
-                    CoreScalar.Number(BigInt(octal.drop(2), 8).toString)
-                case hex if matches(hex, "0x[0-9a-fA-F]+") =>
-                    CoreScalar.Number(BigInt(hex.drop(2), 16).toString)
-                case number if matches(number, "[-+]?[0-9]+") =>
-                    CoreScalar.Number(BigInt(number).toString)
-                case number if matches(number, "[-+]?(\\.[0-9]+|[0-9]+(\\.[0-9]*)?)([eE][-+]?[0-9]+)?") =>
-                    CoreScalar.Number(BigDecimal(number).toString)
-                case inf if matches(inf, "[-+]?(\\.inf|\\.Inf|\\.INF)") =>
-                    if inf.startsWith("-") then CoreScalar.Special("-Infinity")
-                    else CoreScalar.Special("Infinity")
-                case nan if matches(nan, "\\.nan|\\.NaN|\\.NAN") =>
-                    CoreScalar.Special("NaN")
-                case other =>
-                    CoreScalar.Str(other)
-            end match
-        end resolveCoreScalar
-
-        private def matches(value: String, regex: String): Boolean =
-            value.matches(regex)
 
         private def standardScalarTag(tag: Maybe[String]): Maybe[String] =
             tag match
@@ -1158,7 +1148,7 @@ object YamlParser:
         end standardScalarTag
 
         private def appendTaggedInt(value: String): Unit =
-            parseCoreInt(value) match
+            YamlScalars.parseCoreInt(value) match
                 case Present(number) => out.append(number)
                 case Absent          => appendQuoted(value)
         end appendTaggedInt
@@ -1172,33 +1162,11 @@ object YamlParser:
         end appendTaggedBool
 
         private def appendTaggedFloat(value: String): Unit =
-            parseCoreFloat(value) match
-                case Present(CoreScalar.Number(number))   => out.append(number)
-                case Present(CoreScalar.Special(special)) => appendQuoted(special)
-                case _                                    => appendQuoted(value)
+            YamlScalars.parseCoreFloat(value) match
+                case Present(YamlScalars.Core.Number(number))   => out.append(number)
+                case Present(YamlScalars.Core.Special(special)) => appendQuoted(special)
+                case _                                          => appendQuoted(value)
         end appendTaggedFloat
-
-        private def parseCoreInt(value: String): Maybe[String] =
-            value match
-                case octal if matches(octal, "0o[0-7]+")      => Maybe(BigInt(octal.drop(2), 8).toString)
-                case hex if matches(hex, "0x[0-9a-fA-F]+")    => Maybe(BigInt(hex.drop(2), 16).toString)
-                case number if matches(number, "[-+]?[0-9]+") => Maybe(BigInt(number).toString)
-                case _                                        => Absent
-            end match
-        end parseCoreInt
-
-        private def parseCoreFloat(value: String): Maybe[CoreScalar] =
-            value match
-                case number if matches(number, "[-+]?(\\.[0-9]+|[0-9]+(\\.[0-9]*)?)([eE][-+]?[0-9]+)?") =>
-                    Maybe(CoreScalar.Number(BigDecimal(number).toString))
-                case inf if matches(inf, "[-+]?(\\.inf|\\.Inf|\\.INF)") =>
-                    Maybe(CoreScalar.Special(if inf.startsWith("-") then "-Infinity" else "Infinity"))
-                case nan if matches(nan, "\\.nan|\\.NaN|\\.NAN") =>
-                    Maybe(CoreScalar.Special("NaN"))
-                case _ =>
-                    Absent
-            end match
-        end parseCoreFloat
 
         private def appendQuoted(value: String): Unit =
             out.append('"')

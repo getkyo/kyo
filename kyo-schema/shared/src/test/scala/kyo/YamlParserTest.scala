@@ -101,6 +101,38 @@ class YamlParserTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
+    "limits" - {
+
+        "YamlParser.toJson rejects nesting beyond maxDepth while building JSON" in {
+            val yaml =
+                """root:
+                  |  child:
+                  |    name: Alice
+                  |""".stripMargin
+
+            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            val ex = intercept[LimitExceededException] {
+                kyo.internal.YamlParser.toJson(bytes, 1, Yaml.DefaultMaxCollectionSize)
+            }
+            assert(ex.limit == "Nesting depth")
+        }
+
+        "YamlParser.toJson rejects collections beyond maxCollectionSize while building JSON" in {
+            val yaml =
+                """- 1
+                  |- 2
+                  |""".stripMargin
+
+            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            val ex = intercept[LimitExceededException] {
+                kyo.internal.YamlParser.toJson(bytes, Yaml.DefaultMaxDepth, 1)
+            }
+            assert(ex.limit == "Collection size")
+        }
+    }
+
     "parse" - {
 
         "builds a YAML node tree only when requested" in {

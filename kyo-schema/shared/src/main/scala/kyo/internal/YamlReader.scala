@@ -5,10 +5,14 @@ import kyo.*
 import kyo.Codec.Reader
 
 final class YamlReader(input: Span[Byte])(using _frame: Frame) extends Reader:
-    private val json  = YamlParser.toJson(input)(using _frame)
-    private val inner = JsonReader(json)
+    private var prepared: Maybe[JsonReader] = Absent
 
     def frame: Frame = _frame
+
+    override private[kyo] def resetLimits(maxDepth: Int, maxCollectionSize: Int): Unit =
+        super.resetLimits(maxDepth, maxCollectionSize)
+        prepared.foreach(_.resetLimits(maxDepth, maxCollectionSize))
+    end resetLimits
 
     def objectStart(): Int                                   = inner.objectStart()
     def objectEnd(): Unit                                    = inner.objectEnd()
@@ -42,8 +46,20 @@ final class YamlReader(input: Span[Byte])(using _frame: Frame) extends Reader:
     override def initFields(n: Int): Array[AnyRef]           = inner.initFields(n)
     override def clearFields(n: Int): Unit                   = inner.clearFields(n)
     override def droppedFieldsMask(n: Int): Long             = inner.droppedFieldsMask(n)
-    override def release(): Unit                             = inner.release()
+    override def release(): Unit                             = prepared.foreach(_.release())
     override def captureValue(): Reader                      = inner.captureValue()
+
+    private def inner: JsonReader =
+        prepared match
+            case Present(reader) => reader
+            case Absent =>
+                val json   = YamlParser.toJson(input, maxDepth, maxCollectionSize)(using _frame)
+                val reader = JsonReader(json)
+                reader.resetLimits(maxDepth, maxCollectionSize)
+                prepared = Maybe(reader)
+                reader
+        end match
+    end inner
 end YamlReader
 
 object YamlReader:
