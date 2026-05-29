@@ -85,7 +85,7 @@ private[kyo] object YamlScalars:
         else if value.length > 2 && value.charAt(0) == '0' && value.charAt(1) == 'x' && digitsOnly(value, 2, 16) then
             Maybe(BigInt(value.drop(2), 16).toString)
         else if isDecimalInt(value) then
-            Maybe(BigInt(value).toString)
+            Maybe(canonicalDecimalInt(value))
         else Absent
     end parseYaml12Int
 
@@ -95,18 +95,15 @@ private[kyo] object YamlScalars:
         val parsed =
             if normalized.length > 2 && normalized.charAt(0) == '0' && normalized.charAt(1) == 'b' &&
                 digitsOnly(normalized, 2, 2)
-            then Maybe(BigInt(normalized.drop(2), 2))
+            then Maybe(BigInt(normalized.drop(2), 2).toString)
             else if normalized.length > 2 && normalized.charAt(0) == '0' && normalized.charAt(1) == 'x' &&
                 digitsOnly(normalized, 2, 16)
-            then Maybe(BigInt(normalized.drop(2), 16))
+            then Maybe(BigInt(normalized.drop(2), 16).toString)
             else if normalized.length > 1 && normalized.charAt(0) == '0' && digitsOnly(normalized, 1, 8) then
-                Maybe(BigInt(normalized.drop(1), 8))
-            else if isUnsignedDecimalInt(normalized) then Maybe(BigInt(normalized))
-            else parseSexagesimalInt(normalized)
-        parsed.map { value =>
-            if negative then (-value).toString
-            else value.toString
-        }
+                Maybe(BigInt(normalized.drop(1), 8).toString)
+            else if isUnsignedDecimalInt(normalized) then Maybe(canonicalUnsignedDecimalInt(normalized))
+            else parseSexagesimalInt(normalized).map(_.toString)
+        parsed.map(applySign(_, negative))
     end parseYaml11Int
 
     private def parseYaml12Float(value: String): Maybe[Core] =
@@ -192,8 +189,46 @@ private[kyo] object YamlScalars:
         val normalized =
             if value.startsWith("+") then value.drop(1)
             else value
-        parseBigDecimal(normalized).map(_.toString)
+        Maybe(canonicalDecimalFloat(normalized))
     end parseDecimalNumber
+
+    private def canonicalDecimalInt(value: String): String =
+        val negative = value.nonEmpty && value.charAt(0) == '-'
+        val start =
+            if value.nonEmpty && (value.charAt(0) == '-' || value.charAt(0) == '+') then 1
+            else 0
+        applySign(canonicalUnsignedDecimalInt(value.substring(start)), negative)
+    end canonicalDecimalInt
+
+    private def canonicalUnsignedDecimalInt(value: String): String =
+        var i = 0
+        while i < value.length - 1 && value.charAt(i) == '0' do i += 1
+        value.substring(i)
+    end canonicalUnsignedDecimalInt
+
+    private def canonicalDecimalFloat(value: String): String =
+        val exponent =
+            val e = value.indexOf('e')
+            if e >= 0 then e else value.indexOf('E')
+        val mantissaEnd =
+            if exponent >= 0 then exponent
+            else value.length
+        val suffix =
+            if exponent >= 0 then value.substring(exponent)
+            else ""
+        val mantissa = value.substring(0, mantissaEnd)
+        val normalizedMantissa =
+            if mantissa.startsWith("-.") then "-0" + mantissa.substring(1)
+            else if mantissa.startsWith(".") then "0" + mantissa
+            else if mantissa.endsWith(".") then mantissa + "0"
+            else mantissa
+        normalizedMantissa + suffix
+    end canonicalDecimalFloat
+
+    private def applySign(value: String, negative: Boolean): String =
+        if negative && value != "0" then "-" + value
+        else value
+    end applySign
 
     private def parseBigDecimal(value: String): Maybe[BigDecimal] =
         try Maybe(BigDecimal(value))

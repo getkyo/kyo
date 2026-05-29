@@ -121,36 +121,36 @@ class YamlParserTest extends Test:
 
     "limits" - {
 
-        "YamlParser.toJson rejects nesting beyond maxDepth while building JSON" in {
+        "schema decode rejects nesting beyond maxDepth without JSON bridging" in {
             val yaml =
                 """root:
                   |  child:
                   |    name: Alice
                   |""".stripMargin
 
-            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-
-            val ex = intercept[LimitExceededException] {
-                kyo.internal.YamlParser.toJson(bytes, 1, Yaml.DefaultMaxCollectionSize)
-            }
-            assert(ex.limit == "Nesting depth")
+            Yaml.decode[Map[String, Map[String, MTPerson]]](yaml, 1, Yaml.DefaultMaxCollectionSize) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.limit == "Nesting depth")
+                case other => fail(s"Expected LimitExceededException failure, got $other")
+            end match
         }
 
-        "YamlParser.toJson rejects collections beyond maxCollectionSize while building JSON" in {
+        "schema decode rejects collections beyond maxCollectionSize without JSON bridging" in {
             val yaml =
                 """- 1
                   |- 2
                   |""".stripMargin
 
-            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-
-            val ex = intercept[LimitExceededException] {
-                kyo.internal.YamlParser.toJson(bytes, Yaml.DefaultMaxDepth, 1)
-            }
-            assert(ex.limit == "Collection size")
+            Yaml.decode[List[Int]](yaml, Yaml.DefaultMaxDepth, 1) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.limit == "Collection size")
+                case other => fail(s"Expected LimitExceededException failure, got $other")
+            end match
         }
 
-        "YamlParser.toJson accounts for expanded alias contents while building JSON" in {
+        "schema decode accounts for expanded alias contents without JSON bridging" in {
+            case class AliasLimit(items: List[Int], refs: List[List[Int]]) derives CanEqual
+
             val yaml =
                 """items: &items
                   |  - 1
@@ -160,12 +160,43 @@ class YamlParserTest extends Test:
                   |  - *items
                   |""".stripMargin
 
-            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            Yaml.decode[AliasLimit](yaml, Yaml.DefaultMaxDepth, 3) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.limit == "Collection size")
+                case other => fail(s"Expected LimitExceededException failure, got $other")
+            end match
+        }
 
-            val ex = intercept[LimitExceededException] {
-                kyo.internal.YamlParser.toJson(bytes, Yaml.DefaultMaxDepth, 3)
-            }
-            assert(ex.limit == "Collection size")
+        "schema decode rejects oversized numeric scalars before numeric conversion" in {
+            val yaml = "1e999999999\n"
+
+            Yaml.decode[Double](yaml, Yaml.DefaultMaxDepth, 8) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.limit == "Numeric scalar length")
+                case other => fail(s"Expected LimitExceededException failure, got $other")
+            end match
+        }
+
+        "schema decode applies collection limits before parsing later malformed content" in {
+            val yaml =
+                """- 1
+                  |- 2
+                  |- [unterminated
+                  |""".stripMargin
+
+            Yaml.decode[List[Int]](yaml, Yaml.DefaultMaxDepth, 1) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.limit == "Collection size")
+                case other => fail(s"Expected LimitExceededException failure, got $other")
+            end match
+        }
+
+        "schema decode rejects compact BigDecimal exponent amplification" in {
+            Yaml.decode[BigDecimal]("1e100000\n") match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.limit == "Numeric scalar exponent")
+                case other => fail(s"Expected LimitExceededException failure, got $other")
+            end match
         }
     }
 

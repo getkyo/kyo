@@ -1,6 +1,5 @@
 package kyo.internal
 
-import java.nio.charset.StandardCharsets
 import kyo.*
 import scala.annotation.tailrec
 
@@ -471,14 +470,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
         run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()))) { c0 =>
-            val inner   = text.substring(1, text.length - 1).trim
-            val entries = splitTopLevel(inner, ',')
-            def loop(rest: List[String], context: Ctx): Result[Err | DecodeException, Ctx] =
-                rest match
-                    case Nil => visitor.nodeEnd(context, mark())
-                    case entry :: tail =>
-                        parseInlineMappingEntry(entry.trim, context, visitor).flatMap(loop(tail, _))
-            loop(entries.filter(_.nonEmpty), c0)
+            val inner = text.substring(1, text.length - 1).trim
+            foldTopLevel(inner, ',', c0)(parseInlineMappingEntry(_, _, visitor)).flatMap(visitor.nodeEnd(_, mark()))
         }
     end parseFlowMapping
 
@@ -489,18 +482,11 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
         run(context, visitor.sequenceStart(_, Meta(anchor, tag, mark()))) { c0 =>
-            val inner   = text.substring(1, text.length - 1).trim
-            val entries = splitTopLevel(inner, ',')
-            def loop(rest: List[String], context: Ctx): Result[Err | DecodeException, Ctx] =
-                rest match
-                    case Nil => visitor.nodeEnd(context, mark())
-                    case entry :: tail =>
-                        val trimmed = entry.trim
-                        val parsed =
-                            if isInlineMappingText(trimmed) then parseFlowMapping(s"{$trimmed}", context, visitor)
-                            else parseInlineScalar(trimmed, context, visitor)
-                        parsed.flatMap(loop(tail, _))
-            loop(entries.filter(_.nonEmpty), c0)
+            val inner = text.substring(1, text.length - 1).trim
+            foldTopLevel(inner, ',', c0) { (entry, context) =>
+                if isInlineMappingText(entry) then parseFlowMapping(s"{$entry}", context, visitor)
+                else parseInlineScalar(entry, context, visitor)
+            }.flatMap(visitor.nodeEnd(_, mark()))
         }
     end parseFlowSequence
 
@@ -530,21 +516,28 @@ final class YamlParser private (private val input: String)(using frame: Frame):
 
     private def findFlowMappingSeparator(text: String): Int =
         var start = 0
-        var idx   = findTopLevel(text.substring(start), ':')
-        while idx >= 0 do
-            val colon = start + idx
-            val key   = text.substring(0, colon).trim
-            if colon == text.length - 1 || text.charAt(colon + 1).isWhitespace || quotedScalar(key) then return colon
+        var colon = findTopLevel(text, ':', start)
+        while colon >= 0 do
+            val (keyStart, keyEnd) = trimmedRange(text, 0, colon)
+            if colon == text.length - 1 || text.charAt(colon + 1).isWhitespace || quotedScalar(text, keyStart, keyEnd) then return colon
             start = colon + 1
-            idx = findTopLevel(text.substring(start), ':')
+            colon = findTopLevel(text, ':', start)
         end while
         -1
     end findFlowMappingSeparator
 
-    private def quotedScalar(text: String): Boolean =
-        text.length >= 2 && (
-            (text.startsWith("\"") && text.endsWith("\"")) ||
-                (text.startsWith("'") && text.endsWith("'"))
+    private def trimmedRange(text: String, start: Int, end: Int): (Int, Int) =
+        var from = start
+        var to   = end
+        while from < to && text.charAt(from).isWhitespace do from += 1
+        while to > from && text.charAt(to - 1).isWhitespace do to -= 1
+        (from, to)
+    end trimmedRange
+
+    private def quotedScalar(text: String, start: Int, end: Int): Boolean =
+        end - start >= 2 && (
+            (text.charAt(start) == '"' && text.charAt(end - 1) == '"') ||
+                (text.charAt(start) == '\'' && text.charAt(end - 1) == '\'')
         )
     end quotedScalar
 
@@ -803,7 +796,10 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end unquoteKey
 
     private def findTopLevel(s: String, target: Char): Int =
-        var i      = 0
+        findTopLevel(s, target, 0)
+
+    private def findTopLevel(s: String, target: Char, from: Int): Int =
+        var i      = from
         var depth  = 0
         var single = false
         var double = false
@@ -826,14 +822,30 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         -1
     end findTopLevel
 
-    private def splitTopLevel(s: String, delimiter: Char): List[String] =
-        val out    = scala.collection.mutable.ListBuffer.empty[String]
-        var start  = 0
-        var i      = 0
-        var depth  = 0
-        var single = false
-        var double = false
-        var escape = false
+    private def foldTopLevel[Ctx, Err](
+        s: String,
+        delimiter: Char,
+        context: Ctx
+    )(parse: (String, Ctx) => Result[Err | DecodeException, Ctx]): Result[Err | DecodeException, Ctx] =
+        var current = context
+        var start   = 0
+        var i       = 0
+        var depth   = 0
+        var single  = false
+        var double  = false
+        var escape  = false
+        def emit(end: Int): Result[Err | DecodeException, Unit] =
+            val (from, to) = trimmedRange(s, start, end)
+            if from < to then
+                parse(s.substring(from, to), current) match
+                    case Result.Success(next) =>
+                        current = next
+                        Result.unit
+                    case Result.Failure(e) => Result.fail(e)
+                    case Result.Panic(e)   => Result.panic(e)
+            else Result.unit
+            end if
+        end emit
         while i < s.length do
             val ch = s.charAt(i)
             if escape then escape = false
@@ -845,15 +857,22 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                     case '[' | '{' => depth += 1
                     case ']' | '}' => depth -= 1
                     case c if c == delimiter && depth == 0 =>
-                        out += s.substring(start, i)
+                        emit(i) match
+                            case Result.Success(_) => ()
+                            case Result.Failure(e) => return Result.fail(e)
+                            case Result.Panic(e)   => return Result.panic(e)
+                        end match
                         start = i + 1
                     case _ => ()
             end if
             i += 1
         end while
-        if start <= s.length then out += s.substring(start)
-        out.toList
-    end splitTopLevel
+        emit(s.length) match
+            case Result.Success(_) => Result.succeed(current)
+            case Result.Failure(e) => Result.fail(e)
+            case Result.Panic(e)   => Result.panic(e)
+        end match
+    end foldTopLevel
 
     private def skipIgnorable(): Unit =
         var done = false
@@ -1006,251 +1025,4 @@ end YamlParser
 
 object YamlParser:
     def apply(input: String)(using Frame): YamlParser = new YamlParser(input)
-
-    def toJson(input: Span[Byte])(using Frame): Span[Byte] =
-        toJson(input, Yaml.DefaultMaxDepth, Yaml.DefaultMaxCollectionSize)
-
-    def toJson(input: Span[Byte], maxDepth: Int, maxCollectionSize: Int)(using Frame): Span[Byte] =
-        toJson(input, maxDepth, maxCollectionSize, Yaml.SpecVersion.Yaml12)
-
-    def toJson(input: Span[Byte], maxDepth: Int, maxCollectionSize: Int, yamlVersion: Yaml.SpecVersion)(using Frame): Span[Byte] =
-        val s       = new String(input.toArrayUnsafe, StandardCharsets.UTF_8)
-        val visitor = JsonBuildingVisitor(maxDepth, maxCollectionSize, yamlVersion)
-        apply(s).visit(())(visitor) match
-            case Result.Success(json: String)       => Span.from(json.getBytes(StandardCharsets.UTF_8))
-            case Result.Failure(e: DecodeException) => throw e
-            case Result.Panic(e)                    => throw e
-        end match
-    end toJson
-
-    final private class JsonBuildingVisitor(maxDepth: Int, maxCollectionSize: Int, yamlVersion: Yaml.SpecVersion)(using Frame)
-        extends Yaml.Visitor[Unit, DecodeException, String]:
-        final private class JsonFrame(val isMapping: Boolean, var first: Boolean, var expectingKey: Boolean, var count: Int)
-        final private class Capture(val name: String, val start: Int, val depth: Int, var values: Int, var maxDepth: Int)
-        final private case class AnchoredJson(value: String, values: Int, maxDepth: Int)
-
-        private val out                       = new StringBuilder
-        private val anchors                   = scala.collection.mutable.Map.empty[String, AnchoredJson]
-        private var stack: List[JsonFrame]    = Nil
-        private var captures: List[Capture]   = Nil
-        private var aliasExpandedValues: Int  = 0
-        private def current: Maybe[JsonFrame] = Maybe.fromOption(stack.headOption)
-        private def inMapping: Boolean        = current.exists(_.isMapping)
-        private def expectingKey: Boolean     = current.exists(f => f.isMapping && f.expectingKey)
-
-        def streamStart(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit]   = Result.unit
-        def documentStart(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit] = Result.unit
-        def documentEnd(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit]   = Result.unit
-        def streamEnd(context: Unit, mark: Yaml.Mark): Result[DecodeException, String]   = Result.succeed(out.toString)
-
-        def mappingStart(context: Unit, meta: Yaml.Meta): Result[DecodeException, Unit] =
-            valuePrefix()
-            startCapture(meta.anchor)
-            out.append('{')
-            stack = JsonFrame(true, true, true, 0) :: stack
-            checkDepth()
-            recordValue()
-            Result.unit
-        end mappingStart
-
-        def sequenceStart(context: Unit, meta: Yaml.Meta): Result[DecodeException, Unit] =
-            valuePrefix()
-            startCapture(meta.anchor)
-            out.append('[')
-            stack = JsonFrame(false, true, false, 0) :: stack
-            checkDepth()
-            recordValue()
-            Result.unit
-        end sequenceStart
-
-        def scalar(context: Unit, value: String, meta: Yaml.ScalarMeta): Result[DecodeException, Unit] =
-            if inMapping && expectingKey then
-                entryPrefix()
-                appendQuoted(value)
-                out.append(':')
-                current.foreach(_.expectingKey = false)
-            else
-                valuePrefix()
-                startCapture(meta.anchor)
-                appendResolvedScalar(value, meta.style, meta.tag)
-                recordValue()
-                finishScalarCapture()
-                current.foreach { f =>
-                    if f.isMapping then f.expectingKey = true
-                }
-            end if
-            Result.unit
-        end scalar
-
-        def alias(context: Unit, name: String, mark: Yaml.Mark): Result[DecodeException, Unit] =
-            anchors.get(name) match
-                case Some(anchor) =>
-                    valuePrefix()
-                    checkAliasExpansion(anchor)
-                    out.append(anchor.value)
-                    recordValues(anchor.values)
-                    current.foreach { f =>
-                        if f.isMapping then f.expectingKey = true
-                    }
-                    Result.unit
-                case None =>
-                    Result.fail(ParseException(
-                        Yaml(),
-                        name,
-                        s"Unknown alias '$name' at line ${mark.line}, column ${mark.column}",
-                        Nil,
-                        mark.index
-                    ))
-            end match
-        end alias
-
-        def nodeEnd(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit] =
-            if stack.nonEmpty then
-                val ended = stack.head
-                stack = stack.tail
-                out.append(if ended.isMapping then '}' else ']')
-                finishCollectionCapture()
-                current.foreach { parent =>
-                    if parent.isMapping && !parent.expectingKey then parent.expectingKey = true
-                }
-            end if
-            Result.unit
-        end nodeEnd
-
-        private def entryPrefix(): Unit =
-            current.foreach { f =>
-                if !f.first then out.append(',')
-                f.first = false
-                f.count += 1
-                if f.count > maxCollectionSize then
-                    throw LimitExceededException("Collection size", f.count, maxCollectionSize)
-            }
-
-        private def valuePrefix(): Unit =
-            if !inMapping then entryPrefix()
-
-        private def checkDepth(): Unit =
-            val depth = stack.size
-            if depth > maxDepth then
-                throw LimitExceededException("Nesting depth", depth, maxDepth)
-            captures.foreach { capture =>
-                capture.maxDepth = math.max(capture.maxDepth, depth - capture.depth)
-            }
-        end checkDepth
-
-        private def checkAliasExpansion(anchor: AnchoredJson): Unit =
-            val depth = stack.size + anchor.maxDepth
-            if depth > maxDepth then
-                throw LimitExceededException("Nesting depth", depth, maxDepth)
-            aliasExpandedValues += anchor.values
-            if aliasExpandedValues > maxCollectionSize then
-                throw LimitExceededException("Collection size", aliasExpandedValues, maxCollectionSize)
-        end checkAliasExpansion
-
-        private def startCapture(anchor: Maybe[String]): Unit =
-            anchor.foreach { name =>
-                captures = Capture(name, out.length, stack.size, 0, 0) :: captures
-            }
-
-        private def recordValue(): Unit =
-            recordValues(1)
-
-        private def recordValues(n: Int): Unit =
-            captures.foreach(_.values += n)
-
-        private def finishScalarCapture(): Unit =
-            captures match
-                case capture :: rest if capture.depth == stack.size =>
-                    anchors(capture.name) = AnchoredJson(out.substring(capture.start), capture.values, capture.maxDepth)
-                    captures = rest
-                case _ => ()
-
-        private def finishCollectionCapture(): Unit =
-            captures match
-                case capture :: rest if capture.depth == stack.size =>
-                    anchors(capture.name) = AnchoredJson(out.substring(capture.start), capture.values, capture.maxDepth)
-                    captures = rest
-                case _ => ()
-
-        private def appendResolvedScalar(value: String, style: Yaml.ScalarStyle, tag: Maybe[String]): Unit =
-            standardScalarTag(tag) match
-                case Present("str") =>
-                    appendQuoted(value)
-                case Present("int") =>
-                    appendTaggedInt(value)
-                case Present("bool") =>
-                    appendTaggedBool(value)
-                case Present("float") =>
-                    appendTaggedFloat(value)
-                case Present("null") =>
-                    out.append("null")
-                case _ if style != Yaml.ScalarStyle.Plain =>
-                    appendQuoted(value)
-                case _ =>
-                    appendCoreScalar(value)
-            end match
-        end appendResolvedScalar
-
-        private def appendCoreScalar(value: String): Unit =
-            YamlScalars.resolve(value, yamlVersion) match
-                case YamlScalars.Core.Null          => out.append("null")
-                case YamlScalars.Core.Bool(value)   => out.append(if value then "true" else "false")
-                case YamlScalars.Core.Number(value) => out.append(value)
-                case YamlScalars.Core.Special(value) =>
-                    appendQuoted(value)
-                case YamlScalars.Core.Str(value) =>
-                    appendQuoted(value)
-            end match
-        end appendCoreScalar
-
-        private def standardScalarTag(tag: Maybe[String]): Maybe[String] =
-            tag match
-                case Present("!" | "!!str" | "tag:yaml.org,2002:str" | "!<tag:yaml.org,2002:str>") =>
-                    Maybe("str")
-                case Present("!!int" | "tag:yaml.org,2002:int" | "!<tag:yaml.org,2002:int>") =>
-                    Maybe("int")
-                case Present("!!bool" | "tag:yaml.org,2002:bool" | "!<tag:yaml.org,2002:bool>") =>
-                    Maybe("bool")
-                case Present("!!float" | "tag:yaml.org,2002:float" | "!<tag:yaml.org,2002:float>") =>
-                    Maybe("float")
-                case Present("!!null" | "tag:yaml.org,2002:null" | "!<tag:yaml.org,2002:null>") =>
-                    Maybe("null")
-                case _ =>
-                    Absent
-            end match
-        end standardScalarTag
-
-        private def appendTaggedInt(value: String): Unit =
-            YamlScalars.parseInt(value, yamlVersion) match
-                case Present(number) => out.append(number)
-                case Absent          => appendQuoted(value)
-        end appendTaggedInt
-
-        private def appendTaggedBool(value: String): Unit =
-            YamlScalars.parseBool(value, yamlVersion) match
-                case Present(value) => out.append(if value then "true" else "false")
-                case Absent         => appendQuoted(value)
-            end match
-        end appendTaggedBool
-
-        private def appendTaggedFloat(value: String): Unit =
-            YamlScalars.parseFloat(value, yamlVersion) match
-                case Present(YamlScalars.Core.Number(number))   => out.append(number)
-                case Present(YamlScalars.Core.Special(special)) => appendQuoted(special)
-                case _                                          => appendQuoted(value)
-        end appendTaggedFloat
-
-        private def appendQuoted(value: String): Unit =
-            out.append('"')
-            value.foreach {
-                case '"'  => out.append("\\\"")
-                case '\\' => out.append("\\\\")
-                case '\n' => out.append("\\n")
-                case '\r' => out.append("\\r")
-                case '\t' => out.append("\\t")
-                case c    => out.append(c)
-            }
-            out.append('"')
-        end appendQuoted
-    end JsonBuildingVisitor
 end YamlParser

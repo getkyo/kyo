@@ -17,6 +17,7 @@ final case class YamlValueHolder(
     anyValId: YamlAnyValUserId,
     valueObject: YamlValueObject
 ) derives CanEqual
+final case class YamlUnicodeField(café: Int) derives CanEqual
 
 class YamlTest extends Test:
 
@@ -407,6 +408,21 @@ class YamlTest extends Test:
                         )
                     )
             )
+        }
+
+        "captures deferred values as YAML readers" in {
+            val reader = kyo.internal.YamlReader("value: 42\n")
+
+            discard(reader.objectStart())
+            reader.fieldParse()
+            val captured = reader.captureValue()
+
+            assert(captured.isInstanceOf[kyo.internal.YamlReader])
+            assert(captured.int() == 42)
+        }
+
+        "matches UTF-8 field names without lossy byte comparisons" in {
+            assert(Yaml.decode[YamlUnicodeField]("café: 7\n") == Result.succeed(YamlUnicodeField(7)))
         }
 
     }

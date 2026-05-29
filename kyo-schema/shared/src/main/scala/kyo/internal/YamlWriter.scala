@@ -23,6 +23,7 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
     private var pendingField: Boolean     = false
     private var released: Boolean         = false
     private var lastWriteWasLine: Boolean = false
+    private var flowDepth: Int            = 0
 
     def objectStart(name: String, size: Int): Unit = startMapping(size)
     def objectEnd(): Unit                          = endCollection()
@@ -85,6 +86,7 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
         stack = Nil
         pendingField = false
         lastWriteWasLine = false
+        flowDepth = 0
         released = true
         result
     end resultString
@@ -97,6 +99,7 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
             val flow   = flowCollections
             val indent = startContainer(isMapping = true, flow)
             if flow then out.append('{')
+            if flow then flowDepth += 1
             stack = MappingFrame(indent, first = true, inlineFirst = !flow && startsInlineMapping, flow) :: stack
         end if
     end startMapping
@@ -109,6 +112,7 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
             val flow   = flowCollections
             val indent = startContainer(isMapping = false, flow)
             if flow then out.append('[')
+            if flow then flowDepth += 1
             stack = SequenceFrame(indent, flow, first = true) :: stack
         end if
     end startSequence
@@ -148,10 +152,14 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
         stack match
             case (frame: MappingFrame) :: rest =>
                 stack = rest
-                if frame.flow then out.append('}')
+                if frame.flow then
+                    flowDepth -= 1
+                    out.append('}')
             case (frame: SequenceFrame) :: rest =>
                 stack = rest
-                if frame.flow then out.append(']')
+                if frame.flow then
+                    flowDepth -= 1
+                    out.append(']')
             case _ :: rest => stack = rest
             case Nil       => ()
         end match
@@ -371,11 +379,7 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
         config.collectionStyle == CollectionStyle.JsonCompatibleFlow
 
     private def flowContext: Boolean =
-        stack.exists {
-            case frame: MappingFrame  => frame.flow
-            case frame: SequenceFrame => frame.flow
-            case _                    => false
-        }
+        flowDepth > 0
 
     private def currentMappingFlow: Boolean =
         stack match
