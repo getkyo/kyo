@@ -1096,4 +1096,24 @@ For a complete working example, see [kyo-examples ledger](../kyo-examples/jvm/sr
 
 ## Demos
 
-Runnable end-to-end demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo): a chat room (`ChatRoom`), an API gateway (`ApiGateway`), a webhook relay (`WebhookRelay`), an MCP server (`McpServer`), a URL shortener (`UrlShortener`), an uptime monitor (`UptimeMonitor`), a paste bin (`PasteBin`), an image proxy (`ImageProxy`), and more.
+Runnable end-to-end demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-http/Test/runMain demo.<Name>'`.
+
+- [**ChatRoom**](shared/src/test/scala/demo/ChatRoom.scala): text messages plus a live SSE activity feed, with server-level CORS and OpenAPI security metadata.
+- [**ApiGateway**](shared/src/test/scala/demo/ApiGateway.scala): aggregates weather and currency APIs through typed routes, parallel client calls, and OpenAPI generation.
+- [**WebhookRelay**](shared/src/test/scala/demo/WebhookRelay.scala): receives webhooks via POST and replays them to SSE subscribers, with custom security headers and CORS.
+- [**McpServer**](shared/src/test/scala/demo/McpServer.scala): Model Context Protocol server over Streamable HTTP (JSON-RPC POST plus server-initiated SSE).
+- [**UrlShortener**](shared/src/test/scala/demo/UrlShortener.scala): 301 redirects, rate limiting, and visit tracking via request and response cookies.
+- [**UptimeMonitor**](shared/src/test/scala/demo/UptimeMonitor.scala): pings sites concurrently with `Async.parallel` and streams health results as SSE.
+- [**PasteBin**](shared/src/test/scala/demo/PasteBin.scala): content-addressed storage with etag, cache-control, 304 handling, and basic-auth delete.
+- [**ImageProxy**](shared/src/test/scala/demo/ImageProxy.scala): binary upload/download with a custom timing filter and OpenAPI deprecation metadata.
+- [**BookmarkStore**](shared/src/test/scala/demo/BookmarkStore.scala): in-memory CRUD with bearer auth, rate limiting, typed response headers, and response cookies.
+- [**TaskBoard**](shared/src/test/scala/demo/TaskBoard.scala): Kanban board with multiple typed error channels (400/404/409) on a single route.
+- [**NotePad**](shared/src/test/scala/demo/NotePad.scala): collaborative notes with PATCH, cookie sessions, and an SSE change feed.
+- [**CryptoTicker**](shared/src/test/scala/demo/CryptoTicker.scala): polls a price API and serves it as an NDJSON stream consumed by `getNdJson`.
+- [**GithubFeed**](shared/src/test/scala/demo/GithubFeed.scala): polls GitHub's public events API and re-streams them as typed SSE events.
+- [**EventBus**](shared/src/test/scala/demo/EventBus.scala): posts events via form and JSON bodies and streams them back as NDJSON.
+- [**FileLocker**](shared/src/test/scala/demo/FileLocker.scala): multipart upload and binary download with content-disposition and cache-control.
+- [**StaticSite**](shared/src/test/scala/demo/StaticSite.scala): static file server with catch-all paths, caching, HEAD, and path-traversal protection.
+- [**HackerNews**](shared/src/test/scala/demo/HackerNews.scala): proxy over the HN and Algolia APIs with `baseUrl` config and parallel story fetches.
+- [**LinkChecker**](shared/src/test/scala/demo/LinkChecker.scala): client-only demo that extracts page links and checks them concurrently with `Async.parallel`.
+- [**WikiSearch**](shared/src/test/scala/demo/WikiSearch.scala): Wikipedia search proxy showing query-param forwarding and response transformation.

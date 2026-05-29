@@ -584,4 +584,14 @@ A single CDP WebSocket carries every command and event for a Chrome process. A `
 
 ## Demos
 
-Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo): a quickstart (`QuickstartDemo`), a GitHub trending scraper (`GitHubTrendingDemo`), a Hacker News reader (`HackerNewsDemo`), Wikipedia search (`WikipediaSearchDemo`), a cookie-handling walkthrough (`CookieDanceDemo`), and more.
+Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-browser/Test/runMain demo.<Name>'`.
+
+- [**QuickstartApp**](shared/src/test/scala/demo/QuickstartDemo.scala): minimal quickstart against a self-contained page, exercising `goto`, `fill`, `click`, `assertText`, and `title`.
+- [**GitHubTrendingDemoApp**](shared/src/test/scala/demo/GitHubTrendingDemo.scala): SPA navigation that waits for client-rendered content, clicks into a repo, and switches the time range.
+- [**GitHubNotFoundRecoveryDemoApp**](shared/src/test/scala/demo/GitHubNotFoundRecoveryDemo.scala): typed recovery from a 4xx navigation, the lenient `failOnHttpError = false` escape hatch, and back/forward history.
+- [**HackerNewsDemoApp**](shared/src/test/scala/demo/HackerNewsDemo.scala): top-stories scraper that pages through "More" and uses `evalJson` to align sibling-row records.
+- [**HttpBinFormDemoApp**](shared/src/test/scala/demo/HttpBinFormDemo.scala): full form lifecycle (text, textarea, `select`, `check`) verified against the server's JSON echo.
+- [**WikipediaSearchDemoApp**](shared/src/test/scala/demo/WikipediaSearchDemo.scala): observes a typeahead XHR with `waitForRequestUrl`, submits via the Enter key, and asserts element order.
+- [**WikipediaKitDemoApp**](shared/src/test/scala/demo/WikipediaKitDemo.scala): turns an article into an offline kit (text, infobox PNG, full-page PDF) via `screenshotElement` and `pdf`.
+- [**CookieDanceDemoApp**](shared/src/test/scala/demo/CookieDanceDemo.scala): cookie lifecycle (set, reload, verify, delete) and the shared-context `withNewTab` tab model.
+- [**RegistryRaceDemoApp**](shared/src/test/scala/demo/RegistryRaceDemo.scala): five concurrent fibers, each in its own tab via `Browser.isolate.fresh`, searching package registries in parallel.

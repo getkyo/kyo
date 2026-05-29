@@ -650,4 +650,10 @@ kyo-pod compiles on JVM, JavaScript (Node.js), and Scala Native from a single so
 
 ## Demos
 
-Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo): a service mesh (`ServiceMesh`), a Prometheus exporter (`PrometheusExporter`), a log aggregator (`LogAggregator`), a code sandbox (`CodeSandbox`), and an integration-test scaffold (`IntegrationTestScaffold`).
+Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-pod/Test/runMain demo.<Name>'`.
+
+- [**ServiceMesh**](shared/src/test/scala/demo/ServiceMesh.scala): three-tier app (nginx edge, python api, redis cache) on a private network with container-name DNS.
+- [**PrometheusExporter**](shared/src/test/scala/demo/PrometheusExporter.scala): polls container `stats` on a schedule and emits Prometheus text-format metric families.
+- [**LogAggregator**](shared/src/test/scala/demo/LogAggregator.scala): merges `logStream`s from label-matched containers into one regex-filtered feed.
+- [**CodeSandbox**](shared/src/test/scala/demo/CodeSandbox.scala): locked-down runner for submitted code with memory/CPU/PID limits, no network, and a read-only root.
+- [**IntegrationTestScaffold**](shared/src/test/scala/demo/IntegrationTestScaffold.scala): spins up Postgres and Redis on a shared network with exec-based health-gated startup.
