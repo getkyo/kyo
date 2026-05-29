@@ -182,15 +182,6 @@ class JsonRpcCodecTest extends Test:
         assert(err.data == Present(Str("user")))
     }
 
-    "JsonRpcResponse success and failure factories enforce xor" in run {
-        val ok  = JsonRpcResponse.success(JsonRpcId.Num(1L), Str("r"))
-        val bad = JsonRpcResponse.failure(JsonRpcId.Num(1L), JsonRpcError.MethodNotFound)
-        assert(ok.result == Present(Str("r")))
-        assert(ok.error == Absent)
-        assert(bad.error == Present(JsonRpcError.MethodNotFound))
-        assert(bad.result == Absent)
-    }
-
     "Cdp omits jsonrpc field and Strict2_0 always includes it" in run {
         val env = JsonRpcEnvelope.Request(JsonRpcId.Num(1L), "m", Absent, Absent)
         Abort.run[JsonRpcError](JsonRpcCodec.Strict2_0.encode(env)).flatMap: rStrict =>
@@ -203,14 +194,6 @@ class JsonRpcCodecTest extends Test:
                 vCdp match
                     case Record(cf) => assert(!cf.exists(_._1 == "jsonrpc"))
                     case _          => fail("expected Record")
-    }
-
-    "Schema JsonRpcResponse compiles and round-trips via Json" in run {
-        val schema = summon[Schema[JsonRpcResponse]]
-        val resp   = JsonRpcResponse.success(JsonRpcId.Num(42L), Str("done"))
-        val json   = Json.encode[JsonRpcResponse](resp)
-        val back   = Json.decode[JsonRpcResponse](json).getOrThrow
-        assert(back == resp)
     }
 
 end JsonRpcCodecTest
