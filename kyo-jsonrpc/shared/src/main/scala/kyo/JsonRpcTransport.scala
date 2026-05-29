@@ -45,8 +45,8 @@ object JsonRpcTransport:
       * and writes `Console.printLine`. EOF on stdin closes `incoming`. One envelope per line.
       */
     def stdio(
-        codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
-        framer: Framer = Framer.lineDelimited
+        framer: Framer = Framer.lineDelimited,
+        codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
     )(using Frame): JsonRpcTransport < (Async & Scope) =
         Sync.defer(new internal.StdioWireTransport).map { wire =>
             fromWire(wire, framer, codec)

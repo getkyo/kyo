@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Bidirectional converter between raw JSON strings and [[Structure.Value]] trees.
+/** JSON-RPC envelope text-encoding bridge: converts between raw JSON strings and [[Structure.Value]] trees.
   *
   * Used by [[WireTransportAdapter]] to convert incoming wire bytes into the structural
   * representation expected by [[JsonRpcCodec.decode]], and to convert outgoing

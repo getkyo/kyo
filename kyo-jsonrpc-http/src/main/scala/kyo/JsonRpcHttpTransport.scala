@@ -12,12 +12,9 @@ object JsonRpcHttpTransport:
             // flow-allow: initUnscoped because lifetime is managed by the transport close() and Scope.ensure.
             inbound  <- Channel.initUnscoped[JsonRpcEnvelope](64)
             outbound <- Channel.initUnscoped[HttpWebSocket.Payload](64)
-            // flow-allow: Unsafe Promise used as a close gate; completed by transport.close() or Scope.ensure.
-            doneRef <- Sync.defer(Fiber.Promise.Unsafe.init[Unit, Async]()(using AllowUnsafe.embrace.danger))
+            doneRef  <- Fiber.Promise.init[Unit, Async]
             _ <- Scope.ensure(
-                Sync.defer {
-                    doneRef.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
-                }.andThen(Abort.run[Closed](inbound.close).unit)
+                doneRef.completeUnitDiscard.andThen(Abort.run[Closed](inbound.close).unit)
                     .andThen(Abort.run[Closed](outbound.close).unit)
             )
         yield
@@ -39,9 +36,8 @@ object JsonRpcHttpTransport:
                     inbound.streamUntilClosed()
 
                 def close(using Frame): Unit < Async =
-                    Sync.defer {
-                        doneRef.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
-                    }.andThen(Abort.run[Closed](inbound.close).unit)
+                    doneRef.completeUnitDiscard
+                        .andThen(Abort.run[Closed](inbound.close).unit)
                         .andThen(Abort.run[Closed](outbound.close).unit)
 
             // Start the WS connection in a background fiber.
@@ -90,11 +86,24 @@ object JsonRpcHttpTransport:
                                     case HttpWebSocket.Payload.Binary(_) =>
                                         Log.warn("kyo-jsonrpc-http: dropping binary frame (text-only contract)")
                                 },
-                                doneRef.safe.get.unit
+                                doneRef.get.unit
                             )
                         }
                     }
                 ).andThen(Abort.run[Closed](inbound.close).unit)
             }.map(_ => transport)
+
+    extension (self: JsonRpcTransport.type)
+        def webSocket(url: HttpUrl)(using Frame): JsonRpcTransport < (Async & Scope & Abort[HttpException]) =
+            JsonRpcHttpTransport.webSocket(url)
+        def webSocket(url: HttpUrl, headers: HttpHeaders)(using Frame): JsonRpcTransport < (Async & Scope & Abort[HttpException]) =
+            JsonRpcHttpTransport.webSocket(url, headers)
+        def webSocket(url: HttpUrl, headers: HttpHeaders, codec: JsonRpcCodec)(using
+            Frame
+        ): JsonRpcTransport < (Async & Scope & Abort[HttpException]) =
+            JsonRpcHttpTransport.webSocket(url, headers, codec)
+        def webSocket(url: HttpUrl, codec: JsonRpcCodec)(using Frame): JsonRpcTransport < (Async & Scope & Abort[HttpException]) =
+            JsonRpcHttpTransport.webSocket(url, codec = codec)
+    end extension
 
 end JsonRpcHttpTransport

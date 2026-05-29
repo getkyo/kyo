@@ -15,8 +15,8 @@ object JsonRpcTransportJvm:
       */
     def unixDomain(
         sockPath: Path,
-        codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
-        framer: Framer = Framer.lineDelimited
+        framer: Framer = Framer.lineDelimited,
+        codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
     )(using Frame): JsonRpcTransport < (Async & Scope) =
         Sync.defer {
             val addr    = UnixDomainSocketAddress.of(sockPath)
@@ -36,12 +36,12 @@ object JsonRpcTransportJvm:
     extension (self: JsonRpcTransport.type)
         def unixDomain(sockPath: Path)(using Frame): JsonRpcTransport < (Async & Scope) =
             JsonRpcTransportJvm.unixDomain(sockPath)
-        def unixDomain(sockPath: Path, codec: JsonRpcCodec)(using Frame): JsonRpcTransport < (Async & Scope) =
-            JsonRpcTransportJvm.unixDomain(sockPath, codec)
-        def unixDomain(sockPath: Path, codec: JsonRpcCodec, framer: Framer)(using Frame): JsonRpcTransport < (Async & Scope) =
-            JsonRpcTransportJvm.unixDomain(sockPath, codec, framer)
         def unixDomain(sockPath: Path, framer: Framer)(using Frame): JsonRpcTransport < (Async & Scope) =
-            JsonRpcTransportJvm.unixDomain(sockPath, framer = framer)
+            JsonRpcTransportJvm.unixDomain(sockPath, framer)
+        def unixDomain(sockPath: Path, framer: Framer, codec: JsonRpcCodec)(using Frame): JsonRpcTransport < (Async & Scope) =
+            JsonRpcTransportJvm.unixDomain(sockPath, framer, codec)
+        def unixDomain(sockPath: Path, codec: JsonRpcCodec)(using Frame): JsonRpcTransport < (Async & Scope) =
+            JsonRpcTransportJvm.unixDomain(sockPath, codec = codec)
     end extension
 
 end JsonRpcTransportJvm
