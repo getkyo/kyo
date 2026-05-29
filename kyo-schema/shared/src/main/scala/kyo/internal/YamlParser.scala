@@ -95,8 +95,11 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                     val rest      = stripComment(readRestOfLine()).trim
                     val parsed =
                         if rest.isEmpty then parseNode(context, indent + 2, visitor)
-                        else if isInlineMappingText(rest) then parseCompactSequenceMapping(rest, context, indent, visitor)
-                        else parseInlineScalar(rest, context, visitor, valueMark)
+                        else
+                            readFlowText(rest, valueMark).flatMap { text =>
+                                if isInlineMappingText(text) then parseCompactSequenceMapping(text, context, indent, visitor)
+                                else parseInlineScalar(text, context, visitor, valueMark)
+                            }
                     parsed.flatMap(loop)
                 end if
             end loop
@@ -106,7 +109,9 @@ final class YamlParser private (private val input: String)(using frame: Frame):
 
     private def parseScalarValue[Ctx, Err, A](context: Ctx, visitor: Visitor[Ctx, Err, A]): Result[Err | DecodeException, Ctx] =
         val valueMark = mark()
-        parseInlineScalar(stripComment(readRestOfLine()).trim, context, visitor, valueMark)
+        val text      = stripComment(readRestOfLine()).trim
+        readFlowText(text, valueMark).flatMap(parseInlineScalar(_, context, visitor, valueMark))
+    end parseScalarValue
 
     private def parseInlineScalar[Ctx, Err, A](
         text: String,
@@ -124,12 +129,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         else if valueText.startsWith("'") && valueText.endsWith("'") && valueText.length >= 2 then
             visitor.scalar(
                 context,
-                valueText.substring(1, valueText.length - 1).replace("''", "'"),
+                foldFlowScalarText(valueText.substring(1, valueText.length - 1)).replace("''", "'"),
                 ScalarMeta(anchor, tag, ScalarStyle.SingleQuoted, valueMark)
             )
         else if valueText.startsWith("\"") && valueText.endsWith("\"") && valueText.length >= 2 then
             unescapeDoubleQuoted(
-                valueText.substring(1, valueText.length - 1),
+                foldFlowScalarText(valueText.substring(1, valueText.length - 1)),
                 valueMark.copy(index = valueMark.index + 1, column = valueMark.column + 1)
             )
                 .flatMap { value =>
@@ -140,7 +145,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                     )
                 }
         else
-            visitor.scalar(context, valueText, ScalarMeta(anchor, tag, ScalarStyle.Plain, valueMark))
+            visitor.scalar(context, foldFlowScalarText(valueText), ScalarMeta(anchor, tag, ScalarStyle.Plain, valueMark))
         end if
     end parseInlineScalar
 
@@ -225,12 +230,69 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                     visitor.scalar(context, decoded, ScalarMeta(anchor, tag, ScalarStyle.DoubleQuoted, valueMark))
                 }
             }
+        else if startsFlowCollection(valueText) then
+            readFlowText(valueText, valueMark).flatMap { flowText =>
+                withPending(anchor, tag)(parseInlineScalar(flowText, context, visitor, valueMark))
+            }
         else if shouldCollectPlainContinuation(indent) then
             val lines = collectPlainContinuation(valueText, indent)
             visitor.scalar(context, foldBlockScalarLines(lines), ScalarMeta(anchor, tag, ScalarStyle.Plain, valueMark))
         else parseInlineScalar(text, context, visitor, valueMark)
         end if
     end parseBlockMappingScalarValue
+
+    private def readFlowText(text: String, valueMark: Mark): Result[DecodeException, String] =
+        if !startsFlowCollection(text) then Result.succeed(text)
+        else
+            val out      = new StringBuilder
+            var depth    = 0
+            var single   = false
+            var double   = false
+            var escape   = false
+            var started  = false
+            var complete = false
+
+            def scan(part: String): Unit =
+                val _ = out.append(part)
+                var i = 0
+                while i < part.length && !complete do
+                    val ch = part.charAt(i)
+                    if escape then escape = false
+                    else if double && ch == '\\' then escape = true
+                    else if !double && ch == '\'' then single = !single
+                    else if !single && ch == '"' then double = !double
+                    else if !single && !double then
+                        ch match
+                            case '[' | '{' =>
+                                depth += 1
+                                started = true
+                            case ']' | '}' =>
+                                depth -= 1
+                                if started && depth == 0 then complete = true
+                            case _ => ()
+                    end if
+                    i += 1
+                end while
+            end scan
+
+            scan(text)
+            while !complete && pos < input.length do
+                val next = stripComment(readRestOfLine()).trim
+                val _    = out.append('\n')
+                scan(next)
+            end while
+            if complete then Result.succeed(out.toString)
+            else Result.fail(errorAt(valueMark, "Unterminated flow collection"))
+        end if
+    end readFlowText
+
+    private def startsFlowCollection(text: String): Boolean =
+        text.startsWith("[") || text.startsWith("{")
+
+    private def foldFlowScalarText(text: String): String =
+        if !text.contains('\n') then text
+        else text.linesIterator.map(_.trim).filter(_.nonEmpty).mkString(" ")
+    end foldFlowScalarText
 
     private def closedSingleQuoted(valueText: String): Boolean =
         var i = 1
@@ -381,7 +443,11 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                 rest match
                     case Nil => visitor.nodeEnd(context, mark())
                     case entry :: tail =>
-                        parseInlineScalar(entry.trim, context, visitor).flatMap(loop(tail, _))
+                        val trimmed = entry.trim
+                        val parsed =
+                            if isInlineMappingText(trimmed) then parseFlowMapping(s"{$trimmed}", context, visitor)
+                            else parseInlineScalar(trimmed, context, visitor)
+                        parsed.flatMap(loop(tail, _))
             loop(entries.filter(_.nonEmpty), c0)
         }
     end parseFlowSequence
@@ -391,8 +457,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         context: Ctx,
         visitor: Visitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
-        val idx = findTopLevel(text, ':')
-        if idx < 0 then Result.fail(error(s"Expected ':' in mapping entry '$text'"))
+        val idx = findFlowMappingSeparator(text)
+        if idx < 0 then
+            val keyMark = mark()
+            parseInlineScalar(text, context, visitor, keyMark).flatMap { c1 =>
+                visitor.scalar(c1, "", ScalarMeta(Absent, Absent, ScalarStyle.Plain, mark()))
+            }
         else
             val key     = text.substring(0, idx).trim
             val value   = text.substring(idx + 1).trim
@@ -405,6 +475,26 @@ final class YamlParser private (private val input: String)(using frame: Frame):
             }
         end if
     end parseInlineMappingEntry
+
+    private def findFlowMappingSeparator(text: String): Int =
+        var start = 0
+        var idx   = findTopLevel(text.substring(start), ':')
+        while idx >= 0 do
+            val colon = start + idx
+            val key   = text.substring(0, colon).trim
+            if colon == text.length - 1 || text.charAt(colon + 1).isWhitespace || quotedScalar(key) then return colon
+            start = colon + 1
+            idx = findTopLevel(text.substring(start), ':')
+        end while
+        -1
+    end findFlowMappingSeparator
+
+    private def quotedScalar(text: String): Boolean =
+        text.length >= 2 && (
+            (text.startsWith("\"") && text.endsWith("\"")) ||
+                (text.startsWith("'") && text.endsWith("'"))
+        )
+    end quotedScalar
 
     private def parseBlockScalar[Ctx, Err, A](
         context: Ctx,

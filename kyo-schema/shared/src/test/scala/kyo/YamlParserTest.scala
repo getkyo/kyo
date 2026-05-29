@@ -59,6 +59,7 @@ final case class YamlCoreScalars(
 final case class YamlPlayer(name: String, hr: Int, avg: Double) derives CanEqual
 final case class YamlLeagues(american: List[String], national: List[String]) derives CanEqual
 final case class YamlEscapes(unicode: String, control: String, hex: String) derives CanEqual
+final case class YamlFlowText(doubleQuoted: String, plain: String) derives CanEqual
 final case class YamlMultilineScalars(
     literalStrip: String,
     literalClip: String,
@@ -502,6 +503,73 @@ class YamlParserTest extends Test:
                 "urn:service:orders"       -> "orders",
                 "plain"                    -> "value"
             )))
+        }
+
+        "decodes multiline flow collections and scalars" in {
+            val person =
+                """{
+                  |  name: Alice,
+                  |  age: 30
+                  |}
+                  |""".stripMargin
+            val numbers =
+                """[
+                  |  1,
+                  |  2,
+                  |  3
+                  |]
+                  |""".stripMargin
+            val text =
+                """{
+                  |  doubleQuoted: "double
+                  |    quoted",
+                  |  plain: plain
+                  |    scalar
+                  |}
+                  |""".stripMargin
+
+            assert(Yaml.decode[MTPerson](person) == Result.succeed(MTPerson("Alice", 30)))
+            assert(Yaml.decode[List[Int]](numbers) == Result.succeed(List(1, 2, 3)))
+            assert(Yaml.decode[YamlFlowText](text) == Result.succeed(YamlFlowText("double quoted", "plain scalar")))
+        }
+
+        "parses flow sequence entries that are single pair mappings" in {
+            val parsed = Yaml.parse("[single: pair]").getOrThrow
+
+            parsed match
+                case Yaml.Node.Sequence(elements, _) =>
+                    assert(elements.size == 1)
+                    elements(0) match
+                        case Yaml.Node.Mapping(entries, _) =>
+                            assert(entries.map {
+                                case (Yaml.Node.Scalar(key, _), Yaml.Node.Scalar(value, _)) => key -> value
+                                case other => fail(s"Expected scalar mapping entry, got $other")
+                            } == Chunk("single" -> "pair"))
+                        case other => fail(s"Expected mapping element, got $other")
+                    end match
+                case other => fail(s"Expected sequence, got $other")
+            end match
+        }
+
+        "treats adjacent colons and URLs as plain keys in flow mappings" in {
+            val parsed = Yaml.parse("{a:1, https://example.com, b: 2}").getOrThrow
+
+            parsed match
+                case Yaml.Node.Mapping(entries, _) =>
+                    assert(entries.map {
+                        case (Yaml.Node.Scalar(key, _), Yaml.Node.Scalar(value, _)) => key -> value
+                        case other                                                  => fail(s"Expected scalar mapping entry, got $other")
+                    } == Chunk(
+                        "a:1"                 -> "",
+                        "https://example.com" -> "",
+                        "b"                   -> "2"
+                    ))
+                case other => fail(s"Expected mapping, got $other")
+            end match
+        }
+
+        "decodes JSON-style adjacent flow mapping values" in {
+            assert(Yaml.decode[Map[String, Int]]("""{"a":1, b: 2}""") == Result.succeed(Map("a" -> 1, "b" -> 2)))
         }
 
         "reports invalid double quoted escapes as parse failures" in {
