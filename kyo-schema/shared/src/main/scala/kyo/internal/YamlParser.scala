@@ -1005,7 +1005,7 @@ object YamlParser:
             else
                 valuePrefix()
                 startCapture(meta.anchor)
-                appendResolvedScalar(value, meta.style)
+                appendResolvedScalar(value, meta.style, meta.tag)
                 finishScalarCapture()
                 current.foreach { f =>
                     if f.isMapping then f.expectingKey = true
@@ -1075,20 +1075,36 @@ object YamlParser:
                     captures = rest
                 case _ => ()
 
-        private def appendResolvedScalar(value: String, style: Yaml.ScalarStyle): Unit =
-            if style != Yaml.ScalarStyle.Plain then appendQuoted(value)
-            else
-                resolveCoreScalar(value) match
-                    case CoreScalar.Null          => out.append("null")
-                    case CoreScalar.Bool(value)   => out.append(if value then "true" else "false")
-                    case CoreScalar.Number(value) => out.append(value)
-                    case CoreScalar.Special(value) =>
-                        appendQuoted(value)
-                    case CoreScalar.Str(value) =>
-                        appendQuoted(value)
-                end match
-            end if
+        private def appendResolvedScalar(value: String, style: Yaml.ScalarStyle, tag: Maybe[String]): Unit =
+            standardScalarTag(tag) match
+                case Present("str") =>
+                    appendQuoted(value)
+                case Present("int") =>
+                    appendTaggedInt(value)
+                case Present("bool") =>
+                    appendTaggedBool(value)
+                case Present("float") =>
+                    appendTaggedFloat(value)
+                case Present("null") =>
+                    out.append("null")
+                case _ if style != Yaml.ScalarStyle.Plain =>
+                    appendQuoted(value)
+                case _ =>
+                    appendCoreScalar(value)
+            end match
         end appendResolvedScalar
+
+        private def appendCoreScalar(value: String): Unit =
+            resolveCoreScalar(value) match
+                case CoreScalar.Null          => out.append("null")
+                case CoreScalar.Bool(value)   => out.append(if value then "true" else "false")
+                case CoreScalar.Number(value) => out.append(value)
+                case CoreScalar.Special(value) =>
+                    appendQuoted(value)
+                case CoreScalar.Str(value) =>
+                    appendQuoted(value)
+            end match
+        end appendCoreScalar
 
         private enum CoreScalar derives CanEqual:
             case Null
@@ -1123,6 +1139,66 @@ object YamlParser:
 
         private def matches(value: String, regex: String): Boolean =
             value.matches(regex)
+
+        private def standardScalarTag(tag: Maybe[String]): Maybe[String] =
+            tag match
+                case Present("!" | "!!str" | "tag:yaml.org,2002:str" | "!<tag:yaml.org,2002:str>") =>
+                    Maybe("str")
+                case Present("!!int" | "tag:yaml.org,2002:int" | "!<tag:yaml.org,2002:int>") =>
+                    Maybe("int")
+                case Present("!!bool" | "tag:yaml.org,2002:bool" | "!<tag:yaml.org,2002:bool>") =>
+                    Maybe("bool")
+                case Present("!!float" | "tag:yaml.org,2002:float" | "!<tag:yaml.org,2002:float>") =>
+                    Maybe("float")
+                case Present("!!null" | "tag:yaml.org,2002:null" | "!<tag:yaml.org,2002:null>") =>
+                    Maybe("null")
+                case _ =>
+                    Absent
+            end match
+        end standardScalarTag
+
+        private def appendTaggedInt(value: String): Unit =
+            parseCoreInt(value) match
+                case Present(number) => out.append(number)
+                case Absent          => appendQuoted(value)
+        end appendTaggedInt
+
+        private def appendTaggedBool(value: String): Unit =
+            value match
+                case "true" | "True" | "TRUE"    => out.append("true")
+                case "false" | "False" | "FALSE" => out.append("false")
+                case other                       => appendQuoted(other)
+            end match
+        end appendTaggedBool
+
+        private def appendTaggedFloat(value: String): Unit =
+            parseCoreFloat(value) match
+                case Present(CoreScalar.Number(number))   => out.append(number)
+                case Present(CoreScalar.Special(special)) => appendQuoted(special)
+                case _                                    => appendQuoted(value)
+        end appendTaggedFloat
+
+        private def parseCoreInt(value: String): Maybe[String] =
+            value match
+                case octal if matches(octal, "0o[0-7]+")      => Maybe(BigInt(octal.drop(2), 8).toString)
+                case hex if matches(hex, "0x[0-9a-fA-F]+")    => Maybe(BigInt(hex.drop(2), 16).toString)
+                case number if matches(number, "[-+]?[0-9]+") => Maybe(BigInt(number).toString)
+                case _                                        => Absent
+            end match
+        end parseCoreInt
+
+        private def parseCoreFloat(value: String): Maybe[CoreScalar] =
+            value match
+                case number if matches(number, "[-+]?(\\.[0-9]+|[0-9]+(\\.[0-9]*)?)([eE][-+]?[0-9]+)?") =>
+                    Maybe(CoreScalar.Number(BigDecimal(number).toString))
+                case inf if matches(inf, "[-+]?(\\.inf|\\.Inf|\\.INF)") =>
+                    Maybe(CoreScalar.Special(if inf.startsWith("-") then "-Infinity" else "Infinity"))
+                case nan if matches(nan, "\\.nan|\\.NaN|\\.NAN") =>
+                    Maybe(CoreScalar.Special("NaN"))
+                case _ =>
+                    Absent
+            end match
+        end parseCoreFloat
 
         private def appendQuoted(value: String): Unit =
             out.append('"')

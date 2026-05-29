@@ -65,6 +65,14 @@ final case class YamlCoreNumbers(
     negativeInfinity: Double,
     nan: Double
 ) derives CanEqual
+final case class YamlTaggedScalars(
+    stringValue: String,
+    intValue: Int,
+    boolValue: Boolean,
+    floatValue: Double,
+    nullValue: Option[String],
+    disabled: String
+) derives CanEqual
 final case class YamlPlayer(name: String, hr: Int, avg: Double) derives CanEqual
 final case class YamlLeagues(american: List[String], national: List[String]) derives CanEqual
 final case class YamlEscapes(unicode: String, control: String, hex: String) derives CanEqual
@@ -806,6 +814,26 @@ class YamlParserTest extends Test:
             assert(decoded.positiveInfinity.isPosInfinity)
             assert(decoded.negativeInfinity.isNegInfinity)
             assert(decoded.nan.isNaN)
+        }
+
+        "honors standard explicit scalar tags during schema decode" in {
+            val yaml =
+                """stringValue: !!str true
+                  |intValue: !!int "0x3A"
+                  |boolValue: !!bool "false"
+                  |floatValue: !!float ".inf"
+                  |nullValue: !!null ignored
+                  |disabled: ! 12
+                  |""".stripMargin
+
+            val decoded = Yaml.decode[YamlTaggedScalars](yaml).getOrThrow
+
+            assert(decoded.stringValue == "true")
+            assert(decoded.intValue == 58)
+            assert(!decoded.boolValue)
+            assert(decoded.floatValue.isPosInfinity)
+            assert(decoded.nullValue == None)
+            assert(decoded.disabled == "12")
         }
     }
 
