@@ -32,16 +32,13 @@ final class OnceCell[A](init: () => A):
     def get()(using AllowUnsafe): A =
         val cached = ref.get()
         if cached ne OnceCell.Unset then
-            // AsInstanceOf justified: AnyRef sentinel pattern; ref holds either OnceCell.Unset or an A stored as AnyRef;
-            // the ne-Unset guard guarantees the value is the A we stored.
+            // Unsafe: AnyRef-sentinel pattern; ne-Unset guarantees the stored value is A.
             cached.asInstanceOf[A]
         else
-            // AsInstanceOf justified: we store A as AnyRef to use AtomicReference with the Unset sentinel;
-            // the union type A | Unset.type cannot be expressed without boxing in Scala 3 on AtomicReference[AnyRef].
+            // Unsafe: we store A as AnyRef to coexist with the Unset sentinel in AtomicReference[AnyRef].
             val v = init().asInstanceOf[AnyRef]
             ref.compareAndSet(OnceCell.Unset, v)
-            // AsInstanceOf justified: same as above; ref now holds either OnceCell.Unset (CAS lost, another thread won)
-            // or the v we stored; in both cases the stored value is an A.
+            // Unsafe: same sentinel pattern; ref.get() now holds the CAS-winning value.
             ref.get().asInstanceOf[A]
         end if
     end get
