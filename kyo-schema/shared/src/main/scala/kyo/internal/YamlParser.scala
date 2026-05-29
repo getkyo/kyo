@@ -119,11 +119,17 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                 ScalarMeta(anchor, tag, ScalarStyle.SingleQuoted, valueMark)
             )
         else if valueText.startsWith("\"") && valueText.endsWith("\"") && valueText.length >= 2 then
-            visitor.scalar(
-                context,
-                unescapeDoubleQuoted(valueText.substring(1, valueText.length - 1)),
-                ScalarMeta(anchor, tag, ScalarStyle.DoubleQuoted, valueMark)
+            unescapeDoubleQuoted(
+                valueText.substring(1, valueText.length - 1),
+                valueMark.copy(index = valueMark.index + 1, column = valueMark.column + 1)
             )
+                .flatMap { value =>
+                    visitor.scalar(
+                        context,
+                        value,
+                        ScalarMeta(anchor, tag, ScalarStyle.DoubleQuoted, valueMark)
+                    )
+                }
         else
             visitor.scalar(context, valueText, ScalarMeta(anchor, tag, ScalarStyle.Plain, valueMark))
         end if
@@ -139,24 +145,26 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         val key           = readUntilMappingColon()
         val valueMarkBase = mark()
         val afterColon    = readRestOfLine()
-        visitor.scalar(context, unquoteKey(key.trim), ScalarMeta(Absent, Absent, ScalarStyle.Plain, keyMark)).flatMap { c1 =>
-            val trimmed        = stripComment(afterColon).trim
-            val firstValueChar = afterColon.indexWhere(ch => !ch.isWhitespace)
-            val valueOffset    = if firstValueChar < 0 then 0 else firstValueChar
-            val valueMark      = valueMarkBase.copy(index = valueMarkBase.index + valueOffset, column = valueMarkBase.column + valueOffset)
-            val (anchor, tag, valueText) = readProperties(trimmed)
-            blockScalarHeader(valueText) match
-                case Present((style, chomp)) =>
-                    parseBlockScalar(c1, indent + 2, style, chomp, anchor, tag, visitor)
-                case Absent if valueText.isEmpty && (anchor.nonEmpty || tag.nonEmpty) =>
-                    withPending(anchor, tag) {
+        unquoteKey(key.trim, keyMark).flatMap { parsedKey =>
+            visitor.scalar(context, parsedKey, ScalarMeta(Absent, Absent, ScalarStyle.Plain, keyMark)).flatMap { c1 =>
+                val trimmed        = stripComment(afterColon).trim
+                val firstValueChar = afterColon.indexWhere(ch => !ch.isWhitespace)
+                val valueOffset    = if firstValueChar < 0 then 0 else firstValueChar
+                val valueMark = valueMarkBase.copy(index = valueMarkBase.index + valueOffset, column = valueMarkBase.column + valueOffset)
+                val (anchor, tag, valueText) = readProperties(trimmed)
+                blockScalarHeader(valueText) match
+                    case Present((style, chomp)) =>
+                        parseBlockScalar(c1, indent + 2, style, chomp, anchor, tag, visitor)
+                    case Absent if valueText.isEmpty && (anchor.nonEmpty || tag.nonEmpty) =>
+                        withPending(anchor, tag) {
+                            parseEmptyBlockMappingValue(c1, indent, visitor)
+                        }
+                    case Absent if valueText.isEmpty =>
                         parseEmptyBlockMappingValue(c1, indent, visitor)
-                    }
-                case Absent if valueText.isEmpty =>
-                    parseEmptyBlockMappingValue(c1, indent, visitor)
-                case Absent =>
-                    parseInlineScalar(trimmed, c1, visitor, valueMark)
-            end match
+                    case Absent =>
+                        parseInlineScalar(trimmed, c1, visitor, valueMark)
+                end match
+            }
         }
     end parseBlockMappingEntry
 
@@ -251,9 +259,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         val idx = findTopLevel(text, ':')
         if idx < 0 then Result.fail(error(s"Expected ':' in mapping entry '$text'"))
         else
-            val key   = text.substring(0, idx).trim
-            val value = text.substring(idx + 1).trim
-            visitor.scalar(context, unquoteKey(key), ScalarMeta(Absent, Absent, ScalarStyle.Plain, mark())).flatMap { c1 =>
+            val key     = text.substring(0, idx).trim
+            val value   = text.substring(idx + 1).trim
+            val keyMark = mark()
+            unquoteKey(key, keyMark).flatMap { parsedKey =>
+                visitor.scalar(context, parsedKey, ScalarMeta(Absent, Absent, ScalarStyle.Plain, keyMark))
+            }.flatMap { c1 =>
                 if value.isEmpty then visitor.scalar(c1, "", ScalarMeta(Absent, Absent, ScalarStyle.Plain, mark()))
                 else parseInlineScalar(value, c1, visitor)
             }
@@ -269,28 +280,60 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         tag: Maybe[String],
         visitor: Visitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
-        val lines = scala.collection.mutable.ListBuffer.empty[String]
+        val lines = scala.collection.mutable.ListBuffer.empty[BlockScalarLine]
         var done  = false
         while !done && pos < input.length do
             val n    = currentIndent()
             val text = currentLineText()
             if text.trim.isEmpty then
                 val _ = readRestOfLine()
-                lines += ""
+                lines += BlockScalarLine("", false)
             else if n >= indent then
                 consumeIndent(indent)
-                lines += readRestOfLine()
+                lines += BlockScalarLine(readRestOfLine(), n > indent)
             else done = true
             end if
         end while
+        val contentLines =
+            if chomp == '+' then lines.toList
+            else lines.toList.reverse.dropWhile(_.isBlank).reverse
         val base =
-            if style == ScalarStyle.Literal then lines.mkString("\n")
-            else lines.mkString(" ")
+            if style == ScalarStyle.Literal then contentLines.map(_.text).mkString("\n")
+            else foldBlockScalarLines(contentLines)
         val value =
-            if chomp == '-' then base
+            if chomp == '-' || base.isEmpty then base
             else base + "\n"
         visitor.scalar(context, value, ScalarMeta(anchor, tag, style, mark()))
     end parseBlockScalar
+
+    private case class BlockScalarLine(text: String, moreIndented: Boolean):
+        def isBlank: Boolean = text.isEmpty
+
+    private def foldBlockScalarLines(lines: List[BlockScalarLine]): String =
+        val out           = new StringBuilder
+        var previousText  = Maybe.empty[BlockScalarLine]
+        var pendingBlanks = 0
+        lines.foreach { line =>
+            if line.isBlank then pendingBlanks += 1
+            else
+                previousText match
+                    case Absent =>
+                        if pendingBlanks > 0 then out.append("\n" * pendingBlanks)
+                    case Present(previous) =>
+                        if pendingBlanks > 0 then
+                            val preservedBreak = if previous.moreIndented || line.moreIndented then 1 else 0
+                            out.append("\n" * (pendingBlanks + preservedBreak))
+                        else if previous.moreIndented || line.moreIndented then out.append('\n')
+                        else out.append(' ')
+                end match
+                out.append(line.text)
+                previousText = Maybe(line)
+                pendingBlanks = 0
+            end if
+        }
+        if pendingBlanks > 0 then out.append("\n" * pendingBlanks)
+        out.toString
+    end foldBlockScalarLines
 
     private def withPending[A](anchor: Maybe[String], tag: Maybe[String])(body: => A): A =
         val prevAnchor = pendingAnchor
@@ -353,12 +396,16 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def mark(): Mark = Mark(pos, line, column)
 
     private def error(message: String): ParseException =
-        val start   = math.max(0, pos - 30)
-        val end     = math.min(input.length, pos + 30)
-        val snippet = input.substring(start, end)
-        val caret   = " " * (pos - start) + "^"
-        ParseException(Yaml(), snippet + "\n" + caret, s"$message at line $line, column $column", Nil, pos)
+        errorAt(mark(), message)
     end error
+
+    private def errorAt(location: Mark, message: String): ParseException =
+        val start   = math.max(0, location.index - 30)
+        val end     = math.min(input.length, location.index + 30)
+        val snippet = input.substring(start, end)
+        val caret   = " " * (location.index - start) + "^"
+        ParseException(Yaml(), snippet + "\n" + caret, s"$message at line ${location.line}, column ${location.column}", Nil, location.index)
+    end errorAt
 
     private def currentIndent(): Int =
         var i = pos
@@ -385,7 +432,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
 
     private def isBlockMappingLine(lineText: String): Boolean =
         val stripped = lineText.dropWhile(_ == ' ')
-        val colon    = stripped.indexOf(':')
+        val colon    = findTopLevel(stripped, ':')
         colon >= 0 && (colon == stripped.length - 1 || stripped.charAt(colon + 1).isWhitespace)
     end isBlockMappingLine
 
@@ -406,8 +453,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end startsWithSequenceEntryAtIndent
 
     private def readUntilMappingColon(): String =
-        val start = pos
-        while pos < input.length && input.charAt(pos) != ':' do advance(1)
+        val line     = currentLineText()
+        val colon    = findTopLevel(line, ':')
+        val keyEnd   = if colon < 0 then line.length else colon
+        val start    = pos
+        val keyStart = pos
+        while pos < keyStart + keyEnd do advance(1)
         val out = input.substring(start, pos)
         if peekChar(':') then advance(1)
         out
@@ -443,10 +494,11 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def isInlineMappingText(s: String): Boolean =
         findTopLevel(s, ':') >= 0
 
-    private def unquoteKey(s: String): String =
-        if s.startsWith("'") && s.endsWith("'") && s.length >= 2 then s.substring(1, s.length - 1).replace("''", "'")
-        else if s.startsWith("\"") && s.endsWith("\"") && s.length >= 2 then unescapeDoubleQuoted(s.substring(1, s.length - 1))
-        else s
+    private def unquoteKey(s: String, keyMark: Mark): Result[DecodeException, String] =
+        if s.startsWith("'") && s.endsWith("'") && s.length >= 2 then Result.succeed(s.substring(1, s.length - 1).replace("''", "'"))
+        else if s.startsWith("\"") && s.endsWith("\"") && s.length >= 2 then
+            unescapeDoubleQuoted(s.substring(1, s.length - 1), keyMark.copy(index = keyMark.index + 1, column = keyMark.column + 1))
+        else Result.succeed(s)
     end unquoteKey
 
     private def findTopLevel(s: String, target: Char): Int =
@@ -547,7 +599,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         end while
     end advance
 
-    private def unescapeDoubleQuoted(s: String): String =
+    private def unescapeDoubleQuoted(s: String, valueMark: Mark): Result[DecodeException, String] =
         val b = new StringBuilder
         var i = 0
         while i < s.length do
@@ -573,23 +625,71 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                     case '_'  => b.append('\u00a0')
                     case 'L'  => b.append('\u2028')
                     case 'P'  => b.append('\u2029')
-                    case 'x' if i + 2 < s.length =>
-                        b.append(Integer.parseInt(s.substring(i + 1, i + 3), 16).toChar)
-                        i += 2
-                    case 'u' if i + 4 < s.length =>
-                        b.append(Integer.parseInt(s.substring(i + 1, i + 5), 16).toChar)
-                        i += 4
-                    case 'U' if i + 8 < s.length =>
-                        b.appendAll(Character.toChars(java.lang.Long.parseLong(s.substring(i + 1, i + 9), 16).toInt))
-                        i += 8
-                    case other => b.append(other)
+                    case 'x' =>
+                        readHexEscape(s, i, 2, valueMark) match
+                            case Result.Success(value) =>
+                                b.append(value.toChar)
+                                i += 2
+                            case Result.Failure(e) => return Result.fail(e)
+                            case Result.Panic(e)   => return Result.panic(e)
+                    case 'u' =>
+                        readHexEscape(s, i, 4, valueMark) match
+                            case Result.Success(value) =>
+                                b.append(value.toChar)
+                                i += 4
+                            case Result.Failure(e) => return Result.fail(e)
+                            case Result.Panic(e)   => return Result.panic(e)
+                    case 'U' =>
+                        readHexEscape(s, i, 8, valueMark) match
+                            case Result.Success(value) =>
+                                try b.appendAll(Character.toChars(value))
+                                catch
+                                    case _: IllegalArgumentException =>
+                                        return Result.fail(errorAt(
+                                            valueMark.copy(index = valueMark.index + i - 1, column = valueMark.column + i - 1),
+                                            s"Invalid escape sequence \\${s.charAt(i)}${s.substring(i + 1, math.min(s.length, i + 9))}"
+                                        ))
+                                end try
+                                i += 8
+                            case Result.Failure(e) => return Result.fail(e)
+                            case Result.Panic(e)   => return Result.panic(e)
+                    case other =>
+                        return Result.fail(errorAt(
+                            valueMark.copy(index = valueMark.index + i - 1, column = valueMark.column + i - 1),
+                            s"Invalid escape sequence \\$other"
+                        ))
                 end match
+            else if ch == '\\' then
+                return Result.fail(errorAt(
+                    valueMark.copy(index = valueMark.index + i, column = valueMark.column + i),
+                    "Invalid escape sequence \\"
+                ))
             else b.append(ch)
             end if
             i += 1
         end while
-        b.toString
+        Result.succeed(b.toString)
     end unescapeDoubleQuoted
+
+    private def readHexEscape(s: String, escapeIndex: Int, digits: Int, valueMark: Mark): Result[DecodeException, Int] =
+        val start = escapeIndex + 1
+        val end   = start + digits
+        if end > s.length then
+            Result.fail(errorAt(
+                valueMark.copy(index = valueMark.index + escapeIndex - 1, column = valueMark.column + escapeIndex - 1),
+                s"Invalid escape sequence \\${s.charAt(escapeIndex)}${s.substring(start)}"
+            ))
+        else
+            val hex = s.substring(start, end)
+            if hex.exists(ch => Character.digit(ch, 16) < 0) then
+                Result.fail(errorAt(
+                    valueMark.copy(index = valueMark.index + escapeIndex - 1, column = valueMark.column + escapeIndex - 1),
+                    s"Invalid escape sequence \\${s.charAt(escapeIndex)}$hex"
+                ))
+            else Result.succeed(java.lang.Long.parseLong(hex, 16).toInt)
+            end if
+        end if
+    end readHexEscape
 
 end YamlParser
 

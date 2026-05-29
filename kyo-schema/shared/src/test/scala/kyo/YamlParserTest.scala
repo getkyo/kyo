@@ -470,6 +470,52 @@ class YamlParserTest extends Test:
                 YamlEscapes("Sosa did fine.\u263A", "\b1998\t1999\t2000\n", "\r\n is \r\n")
             ))
         }
+
+        "decodes quoted block mapping keys containing colons" in {
+            val yaml =
+                """"http://example.com/users": users
+                  |'urn:service:orders': orders
+                  |plain: value
+                  |""".stripMargin
+
+            assert(Yaml.decode[Map[String, String]](yaml) == Result.succeed(Map(
+                "http://example.com/users" -> "users",
+                "urn:service:orders"       -> "orders",
+                "plain"                    -> "value"
+            )))
+        }
+
+        "reports invalid double quoted escapes as parse failures" in {
+            val result = Yaml.decode[Map[String, String]]("""bad: "\xZZ"""")
+
+            result match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("Invalid escape sequence"))
+                    assert(e.getMessage.contains("line 1"))
+                    assert(e.getMessage.contains("column"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
+        }
+
+        "folds block scalars by paragraph while preserving more-indented lines" in {
+            val yaml =
+                """text: >-
+                  |  folded
+                  |  line
+                  |
+                  |  next
+                  |  line
+                  |    code
+                  |    block
+                  |
+                  |  last
+                  |  line
+                  |""".stripMargin
+
+            assert(Yaml.decode[Map[String, String]](yaml) == Result.succeed(Map(
+                "text" -> "folded line\nnext line\n  code\n  block\n\nlast line"
+            )))
+        }
     }
 
 end YamlParserTest
