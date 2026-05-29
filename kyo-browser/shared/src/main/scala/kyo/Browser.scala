@@ -655,6 +655,10 @@ object Browser:
                     else
                         Abort.fail(ex)
                 }
+            case ex =>
+                // Any reason other than NotAttached: re-raise unchanged so the original abort propagates
+                // instead of falling through to a MatchError.
+                Abort.fail(ex)
         } {
             pressOnSelector(selector, key, modifiers)
         }

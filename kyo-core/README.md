@@ -2,7 +2,7 @@
 
 `kyo-core` is the runtime layer that turns Kyo's algebraic effects into actual programs that do things: suspend side effects, fork fibers, race and gather concurrent work, manage resources, talk to the file system and OS, schedule recurring tasks, and emit logs and metrics. It is the layer between `kyo-prelude` (pure effects and data) and the rest of the ecosystem, providing the I/O substrate that production code targets.
 
-Two effects anchor the model and split responsibility. `Sync` marks pure suspension of side effects: code that runs to completion without parking. `Async` adds the fiber scheduler on top: parking, races, structured cancellation, bounded-concurrency collection ops. Most application code reads as a chain of effectful values (`Console.printLine(...)`, `Path("data") / "users.json" read`, `Async.foreach(items)(process)`) terminating at a `KyoApp` `run` block that discharges the effects at the application boundary. The architecturally central type underneath is `Fiber[A, S]`, but you rarely name it directly: structured combinators on `Async`, `Scope`, `Channel`, `Hub`, and friends do the fiber work for you.
+Two effects anchor the model and split responsibility. `Sync` marks pure suspension of side effects: code that runs to completion without parking. `Async` adds the fiber scheduler on top: parking, races, structured cancellation, bounded-concurrency collection ops. Most application code reads as a chain of effectful values (`Console.printLine(...)`, `Path("data") / "users.json" read`, `Async.foreach(items)(process)`) terminating at a `KyoApp` `run` block that discharges the effects at the application boundary. `Fiber[A, S]` is the low-level primitive those combinators sit on top of; application code rarely names it directly, because `Async`, `Scope`, `Channel`, `Hub`, and friends do the fiber work for you.
 
 Every public API in this module works on JVM, Scala.js, and Scala Native. Platform-specific transports live under `kyo/jvm`, `kyo/js`, `kyo/native`, and `kyo/jvm-native` packages, but the surface you call is the same on all three.
 
@@ -22,6 +22,7 @@ object Crawler extends KyoApp:
     }
 
     def fetch(url: String): Int < Async = ???
+end Crawler
 ```
 
 ## From values to programs: `Sync`, `Async`, and `KyoApp`
@@ -50,16 +51,14 @@ val withCleanup: String < Sync =
 import kyo.*
 
 val read: String < Sync =
-    Sync.acquireReleaseWith(Sync.defer(new java.io.BufferedReader(new java.io.FileReader("data.txt"))))(
-        reader => Sync.defer(reader.close())
+    Sync.acquireReleaseWith(Sync.defer(new java.io.BufferedReader(new java.io.FileReader("data.txt"))))(reader =>
+        Sync.defer(reader.close())
     ) { reader =>
         Sync.defer(reader.readLine())
     }
 ```
 
 For resources whose lifetime spans more than a single `acquire`/`use` block, use `Scope` instead (covered below).
-
-`Sync.withLocal(local)(fn)` runs an effect with a `Local` value set for the duration of that computation, useful when a callee reads a `Local` that the caller controls.
 
 ### Adding fibers with `Async`
 
@@ -93,6 +92,8 @@ val cached: Int < (Async & Sync) =
 
 `Async.fromFuture(f)` lifts a `scala.concurrent.Future` into an `Async` computation, bridging existing Future-based code into the Kyo effect model.
 
+`Async.mask` runs a computation with interrupt masking, so the masked portion completes even if an interrupt arrives. The interrupt is delivered after the mask returns, so the surrounding fiber is still cancellable.
+
 ### Running an application
 
 `Async` has no `run` method. You discharge it at the application boundary with `KyoApp`:
@@ -105,6 +106,7 @@ object Hello extends KyoApp:
             _    <- Console.printLine(s"hello $name")
         yield ()
     }
+end Hello
 ```
 
 The `run` block accepts `A < (Async & Scope & Abort[Any])`. Multiple `run` blocks execute sequentially. `args: Chunk[String]` exposes the command-line arguments.
@@ -152,7 +154,7 @@ val withDeadline: Order < (Async & Abort[Timeout]) =
         Async.sleep(2.seconds).andThen(Abort.fail(Timeout()))
     )
 
-val orderId: Long = ???
+val orderId: Long                      = ???
 def loadOrder(id: Long): Order < Async = ???
 ```
 
@@ -257,8 +259,6 @@ Fibers expose `get`, `getResult`, `use`, `useResult`, `map`, `flatMap`, `mapResu
 
 > **Note:** `Fiber` is a low-level primitive; the public-facing recommendation is to write application code against `Async`'s structured combinators and reach for `Fiber.init` only when none of them fit.
 
-`Async.mask` runs a computation with interrupt masking, so the masked portion completes even if an interrupt arrives. The interrupt is delivered after the mask returns, so the surrounding fiber is still cancellable.
-
 ## Resource lifetimes with `Scope`
 
 `Scope` pairs an acquisition with its release. The release runs deterministically on success, failure, or interruption, exactly once. Resources stack: nested acquisitions release in LIFO order when the enclosing `Scope.run` exits.
@@ -266,8 +266,8 @@ Fibers expose `get`, `getResult`, `use`, `useResult`, `map`, `flatMap`, `mapResu
 ### `acquireRelease` and `acquire`
 
 ```scala
-import kyo.*
 import java.io.FileWriter
+import kyo.*
 
 val withFile: Unit < (Async & Sync) =
     Scope.run {
@@ -318,7 +318,7 @@ val app: Result[Throwable, Unit] < Async =
         openAllPools.andThen(serve)
     }
 
-def openAllPools: Unit < (Scope & Sync) = ???
+def openAllPools: Unit < (Scope & Sync)    = ???
 def serve: Result[Throwable, Unit] < Async = ???
 ```
 
@@ -457,6 +457,8 @@ val example: Unit < (Async & Sync & Scope & Abort[Closed]) =
 
 Each `listen` registers a fresh subscriber with its own buffer. The hub's main buffer fills only when a listener is full, applying backpressure to the producer. `listen(filter)` keeps only matching values; `listen(bufferSize, filter)` combines both. `Hub.initUnscoped` creates a hub without tying it to an enclosing `Scope`, useful when the hub's lifetime must be managed manually or outlive the launching computation.
 
+> **Caution:** Because backpressure is applied hub-wide, a leaked or stalled listener (one that is never drained or closed) can stall the entire Hub and block all producers, not just its own consumer. A dedicated fiber distributes messages from the Hub's buffer to each listener's individual buffer; when any listener's buffer becomes full and the Hub's buffer is also full, publishers are blocked. Always close listeners that are no longer needed, and scope them so that shutdown is automatic.
+
 ### ID-multiplexed request/response (advanced)
 
 When you're building a protocol client where a single connection multiplexes many in-flight requests (HTTP/2, WebSocket, JSON-RPC), `Exchange` is the primitive. You supply encoder/decoder/transport callbacks; `Exchange` runs a single reader fiber that drains incoming frames, routes responses by ID back to their pending callers, and surfaces unsolicited messages as events.
@@ -464,10 +466,10 @@ When you're building a protocol client where a single connection multiplexes man
 ```scala
 val client: Exchange[Request, Response, Nothing, java.io.IOException] < (Sync & Scope) =
     Exchange.init[Request, Response, Frame, Nothing, java.io.IOException](
-        encode  = (id, req) => Sync.defer(toFrame(id, req)),
-        send    = frame => transport.write(frame),
+        encode = (id, req) => Sync.defer(toFrame(id, req)),
+        send = frame => transport.write(frame),
         receive = transport.frames,
-        decode  = frame => Sync.defer(classify(frame))
+        decode = frame => Sync.defer(classify(frame))
     )
 
 trait Request; trait Response; trait Frame
@@ -553,7 +555,7 @@ case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecim
 case class Item(sku: String, qty: Int, price: BigDecimal)
 case class Txn(id: String)
 case class ChargeError() extends Exception
-val orders: Chunk[Order] = Chunk.empty
+val orders: Chunk[Order]                                 = Chunk.empty
 def charge(o: Order): Txn < (Async & Abort[ChargeError]) = ???
 
 val charged: Chunk[Txn] < (Async & Scope & Abort[ChargeError | Closed]) =
@@ -587,7 +589,7 @@ import kyo.*
 case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
 case class Item(sku: String, qty: Int, price: BigDecimal)
 case class ChargeError() extends Exception
-val order: Order = Order(1L, 100L, Chunk.empty, BigDecimal(0))
+val order: Order                                           = Order(1L, 100L, Chunk.empty, BigDecimal(0))
 def charge(o: Order): Order < (Async & Abort[ChargeError]) = ???
 
 val handle: Order < (Async & Abort[ChargeError | Rejected]) =
@@ -663,7 +665,7 @@ val counted: Long < (Async & Sync) =
     }
 ```
 
-The "when to reach for which" rule: pick `LongAdder` when many fibers increment and the value is read infrequently (request counters, hit counters). Pick `AtomicLong` when reads dominate or you need `cas` semantics.
+The "when to reach for which" rule: pick `LongAdder` when many fibers increment and the value is read infrequently (request counters, hit counters). Pick `AtomicLong` when reads dominate or you need `cas` semantics. Choosing by name alone hides the trade-off: both look like counters, but `LongAdder` trades faster contended writes for slower reads (it must sum across stripes), while `AtomicLong` is the inverse.
 
 ### Bounded caches and memoization
 
@@ -817,7 +819,7 @@ Paths build with the `/` operator (immutable, value-typed):
 
 ```scala
 val config: Path = Path / "etc" / "myapp" / "config.toml"
-val data:   Path = Path("var", "data", "myapp")
+val data: Path   = Path("var", "data", "myapp")
 
 val nested: Path = Path("home") / "user" / Path("projects", "kyo")
 ```
@@ -899,8 +901,8 @@ val processed: Unit < (Async & Sync & Scope & Abort[FileReadException]) =
         .foreach { event => process(event) }
 
 trait Event
-def parseEvent(line: String): Event   = ???
-def process(e: Event): Unit < Sync    = ???
+def parseEvent(line: String): Event = ???
+def process(e: Event): Unit < Sync  = ???
 ```
 
 `readStream`, `readBytesStream`, `readLinesStream`, `walk` (directory tree), and `tail` (follow file updates) all return `Scope`-managed streams. `Path.ReadResult` is the typed wrapper around the raw byte count returned by low-level read operations: `ReadResult.Eof` signals end-of-file, and a positive value is the number of bytes read.
@@ -1042,13 +1044,13 @@ val handled: Maybe[Order] < (Async & Sync) =
     Abort.run[Closed] {
         channel.take
     }.map {
-        case Result.Success(o) => Maybe(o)
+        case Result.Success(o)         => Maybe(o)
         case Result.Failure(_: Closed) => Absent
-        case panic: Result.Panic => Maybe.empty
+        case panic: Result.Panic       => Maybe.empty
     }
 ```
 
-## Observability
+## Metrics and stream bridges
 
 ### `Stat`: metrics registry
 
@@ -1057,13 +1059,13 @@ When you want to publish counters, histograms, gauges, and traces to a metrics b
 ```scala
 val stats: Stat = Stat.initScope("kyo", "orders")
 
-val counter:   Counter      = stats.initCounter("processed", "orders successfully charged")
-val histogram: Histogram    = stats.initHistogram("charge-latency-ms", "charge endpoint latency")
-val gauge:     Gauge        = stats.initGauge("queue-depth", "pending orders")(currentDepth.toDouble)
-val cgauge:    CounterGauge = stats.initCounterGauge("active-fibers", "live worker fibers")(activeCount)
+val counter: Counter     = stats.initCounter("processed", "orders successfully charged")
+val histogram: Histogram = stats.initHistogram("charge-latency-ms", "charge endpoint latency")
+val gauge: Gauge         = stats.initGauge("queue-depth", "pending orders")(currentDepth.toDouble)
+val cgauge: CounterGauge = stats.initCounterGauge("active-fibers", "live worker fibers")(activeCount)
 
-def currentDepth: Int  = ???
-def activeCount:  Long = ???
+def currentDepth: Int = ???
+def activeCount: Long = ???
 ```
 
 `Counter` exposes `inc`, `add(v)`, `get`. `Histogram` exposes `observe(v)`. `Gauge` and `CounterGauge` are read-only views: the registry calls the provided thunk on each scrape.
@@ -1075,6 +1077,30 @@ def activeCount:  Long = ???
 `StreamCoreExtensions` adds async `Channel`-driven stream operators. `Stream.emitChunks`, `Stream.fromChannel`, async `mapPar`, and `Stream`-level `StreamHub` for fan-out. The default `defaultAsyncStreamBufferSize` is 1024.
 
 The companion methods are imported with `kyo.*` and become available on the `Stream` companion and on existing `Stream` values.
+
+### `StreamCompression` (JVM only)
+
+`StreamCompression` is a JVM-only object (in `kyo-core/jvm`) that adds gzip and deflate operators directly to `Stream[Byte, Ctx]` via an extension. All four operators are available after importing `kyo.*`.
+
+- `stream.deflate(...)` compresses bytes using raw deflate and returns `Stream[Byte, Scope & Sync & Ctx]`.
+- `stream.inflate(...)` decompresses raw deflate data and returns `Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]]`.
+- `stream.gzip(...)` compresses bytes with the gzip framing (header + CRC-32 trailer) and returns `Stream[Byte, Scope & Sync & Ctx]`.
+- `stream.gunzip(...)` decompresses a gzip stream, validates the trailer, and returns `Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]]`.
+
+Compression behaviour is tuned through three enums nested in `StreamCompression`: `CompressionLevel` (from `NoCompression` through `BestSpeed` and `BestCompression` to `Default`), `CompressionStrategy` (`Default`, `Filtered`, `HuffmanOnly`), and `FlushMode` (`NoFlush`, `SyncFlush`, `FullFlush`, `Default`). Decompression failures surface as `StreamCompressionException`.
+
+All operators default to a 32 KB buffer (`1 << 15`) and `Default` settings, so the common case requires no arguments:
+
+```scala
+import kyo.*
+import kyo.StreamCompression.*
+
+val compressed: Stream[Byte, Scope & Sync] =
+    Stream.init(Chunk[Byte](1, 2, 3)).gzip()
+
+val decompressed: Stream[Byte, Sync & Scope & Abort[StreamCompression.StreamCompressionException]] =
+    compressed.gunzip()
+```
 
 ## Putting it together
 
@@ -1094,7 +1120,6 @@ object Checkout extends KyoApp:
 
         // Bounded-concurrency fan-out: rate-limit charges to 50/sec
         Meter.initRateLimiter(rate = 50, period = 1.second).map { limiter =>
-
             // Process each order: charge, write receipt, log
             Async.foreach(orders, concurrency = 16) { order =>
                 limiter.run(charge(order)).map { txn =>
@@ -1107,9 +1132,10 @@ object Checkout extends KyoApp:
         }
     }
 
-    def loadPending: Chunk[Order]                             = ???
-    def charge(o: Order): Txn < (Async & Abort[ChargeError])  = ???
-    def render(o: Order, t: Txn): String                      = ???
+    def loadPending: Chunk[Order]                            = ???
+    def charge(o: Order): Txn < (Async & Abort[ChargeError]) = ???
+    def render(o: Order, t: Txn): String                     = ???
+end Checkout
 ```
 
 The resulting type of the `run` block is `Chunk[Unit] < (Async & Scope & Abort[Any])`, which `KyoApp` discharges.

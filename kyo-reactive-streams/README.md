@@ -5,9 +5,9 @@
 A `Stream`-to-`Publisher` bridge is a `Scope`-managed resource. Each subscriber spawns a long-running fiber that drains the source stream into `onNext` calls under the subscriber's demand. The reverse direction wraps an external publisher in a `StreamSubscriber` whose internal state machine tracks request credits, buffers incoming items per its `EmitStrategy` (eager passthrough or buffered batches), and surfaces upstream errors as `Result.Panic` on the resulting stream. Typical use never touches `StreamSubscriber`, `StreamPublisher`, or `StreamSubscription` directly. The extension method `stream.toPublisher` and the package function `fromPublisher(p, bufferSize)` cover most code.
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
-import java.util.concurrent.Flow.Publisher
 
 def consume(p: Publisher[Int]): Int < (Scope & Async) =
     fromPublisher(p, bufferSize = 16).map(_.fold(0)(_ + _))
@@ -29,9 +29,9 @@ case class Event(id: Long, payload: String)
 When something outside Kyo produces values through a `Flow.Publisher` (a JDK `SubmissionPublisher`, a third-party reactive library, a Kafka client adapter), wrap it as a `Stream[T, Async]`. The result is in `Scope`: closing the scope cancels the upstream subscription and drops any in-flight items.
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
@@ -49,9 +49,9 @@ val sum: Long < (Scope & Async) =
 > **Note:** Upstream errors delivered via `Publisher.onError` arrive as `Result.Panic`, not `Result.Failure`. To observe them, run the stream under `Abort.run[Throwable]` rather than catching a domain-specific failure type.
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
@@ -69,9 +69,9 @@ The `observed` value is `Result.Panic(t)` when the publisher signalled `onError(
 When you have a Kyo `Stream` and want to hand it to code that consumes a `Flow.Publisher`, use the extension method:
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
@@ -79,18 +79,7 @@ def wrap[S](using Isolate[S, Sync, Any])(events: Stream[Event, S & Sync]): Publi
     streamToPublisher(events)
 ```
 
-The extension method `.toPublisher` is equivalent; `streamToPublisher` is the package-function form and takes the stream as an argument:
-
-```scala
-import kyo.*
-import kyo.interop.flow.*
-import java.util.concurrent.Flow.Publisher
-
-case class Event(id: Long, payload: String)
-
-def wrap[S](using Isolate[S, Sync, Any])(events: Stream[Event, S & Sync]): Publisher[Event] < (Scope & Sync & S) =
-    streamToPublisher(events)
-```
+`streamToPublisher` is the package-function form shown above, taking the stream as an argument. The same conversion is also available as a postfix extension on the stream, `events.toPublisher`, which reads better in a pipeline. The extension needs the compiler to summon the stream's `Isolate` evidence, which is built in for a concrete `Stream[Event, Sync]`. Inside a generic helper like the one above, where the effect row is an abstract `S`, reach for the `streamToPublisher` function form so the `Isolate[S, Sync, Any]` you already have in scope is the one used.
 
 Both forms require an `Isolate[S, Sync, Any]` for whatever effects the stream needs beyond `Sync`. For a pure `Stream[Event, Sync]` the evidence is built in; for streams that carry `Env`, `Var`, or other effects, the call site needs the matching isolation imports.
 
@@ -99,9 +88,10 @@ Both forms require an `Isolate[S, Sync, Any]` for whatever effects the stream ne
 When you already hold a `Flow.Subscriber` (a Pekko `Sink`, a Reactor consumer, a JDK `SubmissionPublisher` you want to fan out into) you can subscribe the stream directly without materializing an intermediate publisher:
 
 ```scala
+import java.util.concurrent.Flow.Subscriber
+import java.util.concurrent.Flow.Subscription
 import kyo.*
 import kyo.interop.flow.*
-import java.util.concurrent.Flow.{Subscriber, Subscription}
 
 case class Event(id: Long, payload: String)
 
@@ -119,9 +109,10 @@ The returned `Subscription` is the same object the subscriber received via its `
 When you need package-function syntax (importing the operation under a name rather than relying on the extension):
 
 ```scala
+import java.util.concurrent.Flow.Subscriber
+import java.util.concurrent.Flow.Subscription
 import kyo.*
 import kyo.interop.flow.*
-import java.util.concurrent.Flow.{Subscriber, Subscription}
 
 case class Event(id: Long, payload: String)
 
@@ -144,10 +135,10 @@ Three knobs change how items move across the bridge. They cluster together becau
 `fromPublisher` accepts an `emitStrategy: EmitStrategy = EmitStrategy.Eager`. The two cases trade latency for throughput:
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
 import kyo.interop.flow.StreamSubscriber.EmitStrategy
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
@@ -177,10 +168,10 @@ Lower values keep the subscriber's internal queue small and bound memory at the 
 When you build a publisher via `streamToPublisher` (or `stream.toPublisher`), an internal channel queues incoming `subscribe` calls until the bridge fiber picks them up. By default the queue is `Int.MaxValue` (effectively unbounded). For cases where late subscribers should fail closed rather than wait, drop into `StreamPublisher.apply` directly:
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
 import kyo.interop.flow.StreamPublisher
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
@@ -203,9 +194,9 @@ Two parallel package surfaces cover the two Reactive Streams API generations.
 The cross-platform surface, built on `java.util.concurrent.Flow.{Publisher, Subscriber, Subscription}`. These interfaces ship in the JDK from Java 9 onward and are mirrored verbatim on Scala.js and Scala Native by Kyo's standard-library shims. Use this surface unless you specifically need to interoperate with a library that exposes the legacy `org.reactivestreams.*` types.
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
@@ -245,9 +236,9 @@ Every conversion in this module returns a value in `Scope`. The scope owns the b
 Closing the scope (explicitly or by leaving a `Scope.run` block) cancels the bridge fiber. On the `fromPublisher` side, the subscriber's internal interrupt calls `subscription.cancel()` upstream. On the `streamToPublisher` side, the supervisor fiber interrupts the consume loop, which then drives `onComplete` (or `onError` on panic) for the live subscriber.
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
@@ -264,9 +255,9 @@ When `firstTen`'s scope closes after the fold finishes, the upstream subscriptio
 The Reactive Streams specification defines `onError(Throwable)` as a terminal failure signal. `fromPublisher` surfaces it on the Kyo side as `Result.Panic`. Domain `Abort[E]` handlers will not catch it; only `Abort.run[Throwable]` (or running the stream inside a `Fiber` and inspecting `getResult`) observes the failure.
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
@@ -312,10 +303,10 @@ The architectural classes `StreamSubscriber`, `StreamPublisher`, and `StreamSubs
 When you need a `Subscriber` you can hand to a publisher that subscribes itself (rather than letting `fromPublisher` drive the subscription), build one directly. The `.stream` method then exposes the Kyo `Stream` that drains it.
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
 import kyo.interop.flow.StreamSubscriber.EmitStrategy
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
@@ -324,7 +315,7 @@ def thirdParty: Publisher[Event] = ???
 val sum: Long < (Scope & Async) =
     for
         subscriber <- StreamSubscriber[Event](bufferSize = 32, EmitStrategy.Buffer)
-        _      = thirdParty.subscribe(subscriber)
+        _ = thirdParty.subscribe(subscriber)
         stream <- subscriber.stream
         total  <- stream.fold(0L)(_ + _.id)
     yield total
@@ -337,13 +328,13 @@ This is exactly what `fromPublisher` does internally. Use the explicit form when
 The TCK (Reactive Streams Technology Compatibility Kit) drives publishers and subscribers from a test harness that owns its own thread pool and lifetime. It expects to receive a `Publisher` synchronously, not a `Publisher < (Scope & Sync)`. For these cases the module exposes unsafe entry points:
 
 ```scala
+import AllowUnsafe.embrace.danger
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
 import kyo.interop.flow.StreamPublisher
-import kyo.interop.flow.StreamSubscription.{StreamCanceled, StreamComplete}
-import java.util.concurrent.Flow.Publisher
-
-import AllowUnsafe.embrace.danger
+import kyo.interop.flow.StreamSubscription.StreamCanceled
+import kyo.interop.flow.StreamSubscription.StreamComplete
 
 case class Event(id: Long, payload: String)
 
@@ -367,15 +358,15 @@ The callback receives the per-subscriber fiber (`Fiber[StreamComplete, Abort[Str
 A bidirectional bridge: a Kyo source stream of `Event`s is exposed as a multi-subscriber publisher, and an external publisher's items are merged back in as a stream.
 
 ```scala
+import java.util.concurrent.Flow.Publisher
 import kyo.*
 import kyo.interop.flow.*
 import kyo.interop.flow.StreamPublisher
 import kyo.interop.flow.StreamSubscriber.EmitStrategy
-import java.util.concurrent.Flow.Publisher
 
 case class Event(id: Long, payload: String)
 
-def externalSource: Publisher[Event] = ???
+def externalSource: Publisher[Event]        = ???
 def externalSink(p: Publisher[Event]): Unit = ???
 
 val pipeline: Long < (Scope & Async) =

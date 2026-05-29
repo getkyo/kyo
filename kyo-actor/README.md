@@ -1,8 +1,6 @@
 # kyo-actor
 
-`kyo-actor` is a message-based concurrency primitive. Each actor owns a private mailbox, processes messages sequentially in FIFO order from a `Context` that combines `Poll`, `Env`, `Abort`, `Scope`, and `Async`, and completes with either a success value or a typed error. You write actors by composing receive loops (`Actor.receiveAll`, `Actor.receiveMax`, `Actor.receiveLoop`) inside `Actor.run`, then drive them through their `subject` with `send`, `trySend`, or request-response `ask`.
-
-> **Caution:** Actor is a low-level primitive with complex semantics. For most concurrent programming needs, `kyo.Async` or `kyo.Stream` are usually a better fit. Reach for `Actor` when you need named mailbox endpoints, parent-child supervision hierarchies, or structured request-reply through `Subject`.
+`kyo-actor` is a message-based concurrency primitive. Each actor owns a private mailbox, processes messages sequentially in FIFO order, and completes with either a success value or a typed error. You write actors by composing receive loops (`Actor.receiveAll`, `Actor.receiveMax`, `Actor.receiveLoop`) inside `Actor.run`, then drive them through their `subject` with `send`, `trySend`, or request-response `ask`.
 
 `Actor.Subject[A]` is a separate, reusable abstraction. Any message sink (a `Promise`, a `Channel`, a `Queue.Unbounded`, or a custom pair of `send`/`trySend`) can be turned into a `Subject`, which is what makes `ask` work uniformly across actors and ad-hoc reply targets.
 
@@ -33,7 +31,7 @@ The sections below cover each building block. A full banking-account example tha
 
 An actor's behavior is a Kyo computation that polls its mailbox. The shape of the polling combinator controls when the actor stops processing and returns. All four combinators run in `Actor.Context[A]`, the effect row described at the end of this section.
 
-### `Actor.receiveAll`
+### `Actor.receiveAll`: run until the mailbox closes
 
 Run forever, processing every message, until something closes the mailbox.
 
@@ -46,6 +44,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 val accountActor = Actor.run {
     Var.run(Account(1, 0.0)) {
@@ -64,7 +63,7 @@ val accountActor = Actor.run {
 
 The function's result type is discarded; `receiveAll` returns `Unit`. The actor only finishes when its mailbox is closed (via `actor.close` or when the surrounding `Scope` shuts down).
 
-### `Actor.receiveMax`
+### `Actor.receiveMax`: process a fixed count, then return
 
 Process at most `n` messages, then return. Useful when the caller knows exactly how many requests will be made.
 
@@ -77,6 +76,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 val tenDeposits = Actor.run {
     Var.run(Account(1, 0.0)) {
@@ -105,6 +105,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 val untilGetBalance = Actor.run {
     Var.run(Account(1, 0.0)) {
@@ -134,6 +135,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 // Single state value: accumulate a running balance, stop when GetBalance arrives.
 val accumulating: Double < (Async & Scope & Abort[Closed]) =
@@ -173,6 +175,8 @@ opaque type Context[A] <: Poll[A] & Env[Actor.Subject[A]] & Abort[Closed] & Scop
 
 You never construct a `Context` yourself; `Actor.run` provides it. The row appears in the signatures so the type system can track exactly which capabilities a behavior uses.
 
+> **Note:** The actor has no hidden runtime loop. `Actor.run` repeatedly does `Poll.runFirst` on your behavior, and whenever the behavior asks for another message it does a `Channel.take` from the mailbox and resumes. The behavior decides when to stop (return a value, or `Loop.done`), which is why `receiveAll`, `receiveMax`, and `receiveLoop` differ only in their termination condition.
+
 ## Starting and driving an actor
 
 `Actor.run` spawns the actor, registers its lifecycle with the surrounding `Scope`, and returns a handle of type `Actor[E, A, B]`. The handle exposes the actor's `subject` (re-exported as `send`, `trySend`, `ask`), its `fiber`, and the lifecycle methods `await` and `close`.
@@ -195,7 +199,7 @@ Both overloads return an `Actor` value scoped to the surrounding `Scope.run`. Th
 
 > **Note:** The mailbox is created with `Access.MultiProducerSingleConsumer`. Many senders can publish concurrently; only one fiber may consume, which the actor itself guarantees. Don't share the underlying channel between two actor instances.
 
-### `Actor.defaultCapacity`
+### `Actor.defaultCapacity`: the bounded mailbox (default 128)
 
 When you call `Actor.run(behavior)` without specifying a capacity, the mailbox size comes from `Actor.defaultCapacity`. This value is read once at module load from the JVM system property `kyo.actor.capacity.default`; if the property is absent the fallback is **128** messages.
 
@@ -204,8 +208,6 @@ When you call `Actor.run(behavior)` without specifying a capacity, the mailbox s
 // or via java.lang.System.setProperty before kyo.Actor is touched.
 val cap: Int = Actor.defaultCapacity
 ```
-
-> **Note:** The scaladoc text says the default is 100; the code uses 128. The code is authoritative.
 
 ### The `Actor[E, A, B]` handle
 
@@ -231,6 +233,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 val driveActor: Double < (Async & Abort[Closed] & Scope) =
     for
@@ -267,6 +270,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 val accountUse: Double < (Async & Abort[Closed] & Scope) =
     for
@@ -322,8 +326,8 @@ The pong actor doesn't know who sent it a `Ping`; the sender embeds its own `Act
 
 ```scala
 sealed trait Job
-case object Tick                 extends Job
-case class Schedule(work: Int)   extends Job
+case object Tick               extends Job
+case class Schedule(work: Int) extends Job
 
 val scheduler = Actor.run {
     Actor.receiveAll[Job] {
@@ -339,7 +343,7 @@ val scheduler = Actor.run {
 
 > **Note:** Re-enqueued messages go to the back of the FIFO queue, not the front. If the mailbox already contains 50 messages, the re-enqueued one is processed after all of them.
 
-### `Subject#ask`
+### `Subject#ask`: a one-shot reply channel per request
 
 `ask` is request-response. It takes a function `Actor.Subject[B] => A`, builds a fresh `Promise[B, Any]`, wraps that promise in a one-shot `Actor.Subject[B]`, and sends `f(replySubject)` to the target. It returns the value the recipient sends to that reply subject.
 
@@ -350,6 +354,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 val accountQuery: Double < (Async & Abort[Closed] & Scope) =
     for
@@ -377,6 +382,7 @@ trait SubjectExample[A]:
     def send(message: A): Unit < (Async & Abort[Closed])
     def trySend(message: A): Boolean < (Sync & Abort[Closed])
     def ask[B](f: Actor.Subject[B] => A): B < (Async & Abort[Closed])
+end SubjectExample
 ```
 
 Actors are subjects (the `Actor` handle re-exports its subject), but so are promises, channels, queues, and any custom sink you construct with `Actor.Subject.init`. This is what lets `ask` work uniformly: the reply target doesn't have to be an actor.
@@ -392,6 +398,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 // Fire-and-forget into a void:
 val drop: Unit < (Async & Abort[Closed]) =
@@ -409,9 +416,9 @@ val singleShot: Double < (Async & Abort[Closed]) =
     for
         promise <- Promise.init[Double, Any]
         subject = Actor.Subject.init(promise)
-        _       <- subject.send(42.0)
+        _ <- subject.send(42.0)
         // subject.send(99.0) here would Abort[Closed]
-        value   <- promise.get
+        value <- promise.get
     yield value
 ```
 
@@ -428,13 +435,14 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 val buffered: Boolean < (Async & Abort[Closed] & Scope) =
     for
         channel <- Channel.init[AccountMessage](capacity = 8)
-        subject  = Actor.Subject.init(channel)
-        _       <- subject.send(AccountMessage.Deposit(1.0, Actor.Subject.noop))
-        ok      <- subject.trySend(AccountMessage.Deposit(2.0, Actor.Subject.noop))
+        subject = Actor.Subject.init(channel)
+        _  <- subject.send(AccountMessage.Deposit(1.0, Actor.Subject.noop))
+        ok <- subject.trySend(AccountMessage.Deposit(2.0, Actor.Subject.noop))
     yield ok
 ```
 
@@ -449,10 +457,10 @@ case class Transaction(id: Int, kind: String, amount: Double, balance: Double)
 
 val sink: Boolean < (Async & Abort[Closed] & Scope) =
     for
-        queue   <- Queue.Unbounded.init[Transaction]()
-        subject  = Actor.Subject.init(queue)
-        _       <- subject.send(Transaction(1, "deposit", 10.0, 10.0))
-        ok      <- subject.trySend(Transaction(1, "deposit", 20.0, 30.0))
+        queue <- Queue.Unbounded.init[Transaction]()
+        subject = Actor.Subject.init(queue)
+        _  <- subject.send(Transaction(1, "deposit", 10.0, 10.0))
+        ok <- subject.trySend(Transaction(1, "deposit", 20.0, 30.0))
     yield ok
 ```
 
@@ -463,8 +471,8 @@ val sink: Boolean < (Async & Abort[Closed] & Scope) =
 The low-level constructor. You supply the two operations directly.
 
 ```scala
-import kyo.*
 import java.lang.System as J
+import kyo.*
 
 case class Transaction(id: Int, kind: String, amount: Double, balance: Double)
 
@@ -533,7 +541,7 @@ val drain: Maybe[Seq[Int]] < (Async & Scope & Abort[Closed]) =
 
 > **Caution:** `close` does NOT interrupt the message currently being processed. The actor finishes its current message, then completes. If you need to abort in-flight work, `close` is not the right tool; cancel the actor's `fiber` instead.
 
-### Composing handlers around the behavior
+### Supervision is handler composition, not a strategy API
 
 The actor loop only halts when its behavior stops polling. That means any Kyo handler placed around the behavior controls how the actor reacts to failures and what state it carries between iterations. Three patterns cover most supervision needs.
 
@@ -590,6 +598,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 val stateful =
     Actor.run {
@@ -645,6 +654,7 @@ enum AccountMessage:
     case Deposit(amount: Double, replyTo: Actor.Subject[Double])
     case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
     case GetBalance(replyTo: Actor.Subject[Double])
+end AccountMessage
 
 // Start an actor that owns Account state and serves messages.
 val program: Double < (Async & Scope & Abort[Closed]) =
@@ -668,13 +678,13 @@ val program: Double < (Async & Scope & Abort[Closed]) =
             }
         }
         // Request-response: ask threads a one-shot reply Subject into the message.
-        _        <- account.ask(AccountMessage.Deposit(100.0, _))
-        result   <- account.ask(AccountMessage.Withdraw(40.0, _))
+        _      <- account.ask(AccountMessage.Deposit(100.0, _))
+        result <- account.ask(AccountMessage.Withdraw(40.0, _))
         // Fire-and-forget: send returns once the mailbox accepts the message.
-        _        <- account.send(AccountMessage.Deposit(10.0, Actor.Subject.noop))
+        _ <- account.send(AccountMessage.Deposit(10.0, Actor.Subject.noop))
         // Close: stop accepting new messages, in-flight processing finishes.
-        _        <- account.close
+        _ <- account.close
         // Await: get the actor's final value (or its failure).
-        balance  <- account.ask(AccountMessage.GetBalance(_))
+        balance <- account.ask(AccountMessage.GetBalance(_))
     yield balance
 ```

@@ -4,7 +4,14 @@
 ```scala
 import kyo.*
 import kyo.test.*
-import zio.test.{Gen, Spec, TestAspect, TestResult, assertCompletes, assertTrue, check, suite}
+import zio.test.Gen
+import zio.test.Spec
+import zio.test.TestAspect
+import zio.test.TestResult
+import zio.test.assertCompletes
+import zio.test.assertTrue
+import zio.test.check
+import zio.test.suite
 
 final case class User(name: String, email: String):
     def normalized: User = copy(email = email.trim)
@@ -15,13 +22,13 @@ trait Conn:
 
 def openConn(): Conn = new Conn:
     def loadUser(name: String) = User(name, s"$name@example.com")
-    def close() = ()
+    def close()                = ()
 ```
 -->
 
 kyo-zio-test plugs Kyo effects into ZIO Test. You extend `KyoSpecDefault` (or the generic `KyoSpecAbstract[S]` if you want a custom effect row), write a `spec` exactly as you would in a normal `ZIOSpecDefault`, and return values of type `TestResult < S` directly from each `test(...)` block. The library supplies the `TestConstructor` and `CheckConstructor` givens that teach ZIO Test how to interpret a Kyo computation as a test, so the resulting spec runs under ZIO Test's regular harness, with `TestAspect`, `check`, generators, timeouts, and reporting all working unchanged.
 
-`KyoSpecDefault` fixes the effect row to `Async & Scope & Abort[Throwable]`, runs each test through `ZIOs.run(Scope.run(v))`, and exposes a `timeout` hook. Use `KyoSpecAbstract[S]` directly when you need a different effect row (for example, an additional `Env[Config]` or a custom error type), supplying your own `run` to discharge those effects into a `ZIO[Environment, Throwable, In]`. The module is published for JVM, JavaScript, and Scala Native and depends on `kyo-core` and `kyo-zio`.
+`KyoSpecDefault` fixes the effect row to `Async & Scope & Abort[Throwable]` and runs each test through `ZIOs.run(Scope.run(v))`. Use `KyoSpecAbstract[S]` directly when you need a different effect row (for example, an additional `Env[Config]` or a custom error type), supplying your own `run` to discharge those effects into a `ZIO[Environment, Throwable, In]`. The module is published for JVM, JavaScript, and Scala Native and depends on `kyo-core` and `kyo-zio`.
 
 ```scala
 object HelloSpec extends KyoSpecDefault:
@@ -30,13 +37,14 @@ object HelloSpec extends KyoSpecDefault:
             for greeting <- Sync.defer("hello, world")
             yield assertTrue(greeting == "hello, world")
     )
+end HelloSpec
 ```
 
 ## Writing a spec
 
 The common path: pick a name, extend `KyoSpecDefault`, define `spec`. Each `test(...)` body returns `TestResult < (Async & Scope & Abort[Throwable])`, so you can drop `Sync.defer`, `Async.delay`, and `Scope.acquireRelease` directly into a for-yield, and the assertion at the end is the test's result.
 
-### `KyoSpecDefault`
+### The default effect row: `KyoSpecDefault`
 
 When your test body only needs `Sync`, `Async`, `Scope`, and `Abort[Throwable]`, this is the base class to extend; it fixes the effect row to `Async & Scope & Abort[Throwable]` and discharges those effects automatically, so test bodies look like ordinary Kyo computations that happen to end in a `TestResult`.
 
@@ -54,15 +62,18 @@ object UserSpec extends KyoSpecDefault:
                 user <- Sync.defer(conn.loadUser("alice"))
             yield assertTrue(user.name == "alice")
     )
+end UserSpec
 ```
 
 > **Note:** Every test runs inside `Scope.run`, so any `Scope.acquireRelease` resource acquired in the body is released before the next test starts. `assertTrue` captures inside the for-yield see the live resource, not a closed-over handle from after release.
 
 The Kyo side is otherwise unchanged: `Abort.fail[Throwable](e)` in a test body surfaces as a failed test, and a thrown exception inside `Sync.defer` does the same. Generators (`Gen.boolean`, `Gen.int`, ...) compose with Kyo bodies through `check`, which is covered below.
 
-### `spec`
+### Assembling the spec
 
 If you have used `ZIOSpecDefault` before, `spec` is the same abstract member, with the same `Spec[Environment, Any]` return type; `Environment` is fixed to `Any` for both `KyoSpecDefault` and `KyoSpecAbstract`. The `suite` and `test` builders re-exposed on the class delegate to ZIO Test's, so the value you assemble here is a ZIO Test `Spec` in every respect.
+
+> **Note:** ZIO environments are not supported: `Environment` is pinned to `Any` and `bootstrap` to `ZLayer.empty`, mirroring kyo-zio's `compiletime.error` on lifting an environment-bearing `ZIO[R, E, A]`. A spec cannot thread a `ZLayer` environment through Kyo test bodies.
 
 ```scala
 object MultiSuiteSpec extends KyoSpecDefault:
@@ -78,32 +89,16 @@ object MultiSuiteSpec extends KyoSpecDefault:
                 yield assertTrue(conn.loadUser("alice").name == "alice")
         )
     ) @@ TestAspect.timed
+end MultiSuiteSpec
 ```
 
 `TestAspect.timed`, `TestAspect.failing`, `TestAspect.flaky`, `TestAspect.timeout`, and the rest of ZIO Test's aspects attach to suites and individual tests the same way they would in a `ZIOSpecDefault`.
-
-### `timeout`
-
-When every test in a spec should be bounded by the same default deadline, override `timeout`; it is a spec-class-wide `Duration` settable by `def timeout: Duration`. The default is `Duration.Infinity`, meaning no spec-class-wide bound. Per-test `TestAspect.timeout(...)` still overrides this on the test it applies to.
-
-```scala
-object SlowLookupSpec extends KyoSpecDefault:
-    override def timeout: Duration = 5L.seconds
-
-    def spec = suite("slow lookup")(
-        test("times out a hanging fiber"):
-            Async.delay(Duration.Infinity)(assertCompletes)
-        @@ TestAspect.timeout(zio.Duration.fromMillis(100))
-    )
-```
-
-> **Note:** `Async.delay(Duration.Infinity)(assertCompletes)` combined with `TestAspect.timeout(...)` is the supported pattern for testing timeout behavior. The per-test aspect wins over `timeout` on the spec class.
 
 ## Custom effect rows
 
 When the test body needs to use an effect that is not in `Async & Scope & Abort[Throwable]` (for example, an `Env[Config]` for ambient configuration, or a typed `Abort[ValidationError]` in addition to `Abort[Throwable]`), extend `KyoSpecAbstract[S]` directly and supply your own `run` that knows how to discharge `S`.
 
-### `KyoSpecAbstract[S]`
+### A custom effect row: `KyoSpecAbstract[S]`
 
 When you need an effect row other than `Async & Scope & Abort[Throwable]`, extend this directly and supply your own `run`; `S` is the effect row that every test body in the spec is allowed to use. The `Environment` type and `bootstrap` `ZLayer` are fixed to `Any` and `ZLayer.empty`; specs that need a ZIO `ZLayer` provide it through ZIO Test's regular `provideLayer` on the assembled `Spec`, not through `bootstrap`.
 
@@ -119,6 +114,7 @@ abstract class ConfiguredSpec
         v: => In < (Async & Scope & Abort[Throwable] & Env[Config])
     )(using Frame): zio.ZIO[Environment, Throwable, In] =
         ZIOs.run(Scope.run(Env.run(config)(v)))
+end ConfiguredSpec
 
 object OrderApiSpec extends ConfiguredSpec:
     def config = Config("https://api.example.com")
@@ -129,11 +125,12 @@ object OrderApiSpec extends ConfiguredSpec:
                 base <- Env.use[Config](c => c.baseUrl)
             yield assertTrue(base == "https://api.example.com")
     )
+end OrderApiSpec
 ```
 
 The pattern: pick a base class that fixes the effect row and the `run` implementation, then per-spec subclasses fill in only the data (here, `config`) and the `spec`.
 
-### `run`
+### Supplying the interpreter: `run`
 
 Inside `KyoSpecAbstract[S]`, `run` is the single seam where Kyo effects discharge into ZIO; its signature is `protected def run[In](v: => In < S)(using Frame): ZIO[Environment, Throwable, In]`. For `KyoSpecDefault`, this is hardcoded to `ZIOs.run(Scope.run(v))`. For a custom subclass of `KyoSpecAbstract[S]`, the body is your composition of effect-discharging handlers: `Env.run`, `Var.run`, `Memo.run`, additional `Abort.run` calls, and so on, terminated by `ZIOs.run`.
 
@@ -145,6 +142,7 @@ abstract class TracedSpec
         v: => In < (Async & Scope & Abort[Throwable] & Var[List[String]])
     )(using Frame): zio.ZIO[Environment, Throwable, In] =
         ZIOs.run(Scope.run(Var.run(List.empty[String])(v)))
+end TracedSpec
 ```
 
 The `S1 >: S` bound on the constructor givens (covered next) means individual tests can use a subset of the spec's `S`. They cannot widen beyond `S`: a test inside `OrderApiSpec` cannot use `Env[OtherConfig]`, because `OtherConfig` was not promised in the spec's type parameter.
@@ -169,6 +167,7 @@ object DirectConstructorSpec extends KyoSpecDefault:
         test("works with a single Kyo expression"):
             Sync.defer(assertCompletes)
     )
+end DirectConstructorSpec
 ```
 
 > **Caution:** The constructor forces the `TestResult` value (`val _ = result.result`) before returning, so a pure-side `assertTrue` failure inside the `result` surfaces as a failed test instead of being silently dropped. A custom test wrapper that builds a `Spec.test` from a Kyo body should mirror this pattern; without it, evaluation laziness can hide failures.
@@ -194,6 +193,7 @@ object PropertySpec extends KyoSpecDefault:
                 yield assertTrue(sum == a + b)
             }
     )
+end PropertySpec
 ```
 
 Both givens apply the same `result.result` force, and both accept any `S1 >: S`. The practical consequence: a test body's effect row may be a SUBSET of the spec's `S` (a test that only uses `Sync` inside a spec parameterized by `Async & Scope & Abort[Throwable]` typechecks), but it can never widen beyond `S`.

@@ -56,7 +56,7 @@ import kyo.*
 import org.slf4j.LoggerFactory
 
 val rawLogger = LoggerFactory.getLogger(classOf[MyService])
-val log: Log = SLF4JLog(rawLogger)
+val log: Log  = SLF4JLog(rawLogger)
 
 val program: Unit < Sync =
     Log.let(log) {
@@ -81,11 +81,11 @@ val auditLog  = SLF4JLog("com.example.audit")
 val program: Unit < Sync =
     for
         _ <- Log.let(workerLog) {
-                 Log.info("starting batch")
-             }
+            Log.info("starting batch")
+        }
         _ <- Log.let(auditLog) {
-                 Log.info("permission check passed")
-             }
+            Log.info("permission check passed")
+        }
     yield ()
 ```
 
@@ -141,9 +141,9 @@ val program: Unit < Sync =
 The `level` field on the returned `Log` is computed once from the underlying SLF4J logger, by checking `isTraceEnabled` / `isDebugEnabled` / `isInfoEnabled` / `isWarnEnabled` / `isErrorEnabled` in that order and recording the most permissive enabled level. Later runtime level changes on the SLF4J `Logger` are not reflected in `Log#level`.
 
 ```scala
-import kyo.*
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger as LBLogger
+import kyo.*
 import org.slf4j.LoggerFactory
 
 // SLF4J logger is configured to INFO at construction time

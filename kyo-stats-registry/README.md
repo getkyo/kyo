@@ -2,16 +2,14 @@
 
 kyo-stats-registry is the low-level metrics and tracing substrate the rest of Kyo uses to report telemetry. Each module asks `StatsRegistry` for a `Scope` (a dotted path like `"kyo" :: "fiber" :: Nil`) and then mints counters, histograms, gauges, and counter-gauges hanging off that scope. Instruments are deduplicated per path: the second call from anywhere in the process returns the same handle the first call did, so a module's "the counter for X" is a process-global singleton rather than a per-call-site allocation. Instrument handles are held weakly, so an instrument the rest of the program has dropped will not pin the registry's map.
 
-Everything in `kyo.stats.internal` is `Unsafe`: the methods take an `AllowUnsafe` evidence and skip the effect system. That is intentional. This is the layer exporters and instrumented hot paths talk to directly; higher layers are responsible for wrapping calls in effects when they need to. The tracing side mirrors the same shape: `TraceExporter.get` runs `java.util.ServiceLoader` discovery against `ExporterFactory` implementations on the classpath, composes them with `TraceExporter.all`, and hands back a single exporter that mints `UnsafeTraceSpan` handles for spans.
-
-Every example in this README that calls a counter, gauge, histogram, or tracing instrument needs an `AllowUnsafe` witness in scope. The import is written out in each code block so it is visible at every call site. The witness is the project-wide opt-in marker for "I am bypassing the effect system on purpose." The risks are real: the call runs synchronously on the calling thread, ignores fiber and cancellation rules, and discharges `Sync` by running rather than handling. The exporter and registry layers are the documented users of this surface; application code should usually go through a higher layer like `Stat.initScope(...).initCounter(...)` in `kyo-core`.
+Everything in `kyo.stats.internal` is `Unsafe`: the methods take an `AllowUnsafe` evidence and skip the effect system. That is intentional. This is the layer exporters and instrumented hot paths talk to directly; higher layers are responsible for wrapping calls in effects when they need to. The tracing side mirrors the same shape: `TraceExporter.get` runs `java.util.ServiceLoader` discovery against `ExporterFactory` implementations on the classpath, composes them with `TraceExporter.all`, and hands back a single exporter that mints `UnsafeTraceSpan` handles for spans. Application code should usually go through a higher layer like `Stat.initScope(...).initCounter(...)` in `kyo-core`.
 
 <!-- doctest:setup
 ```scala
+import java.time.Instant
 import kyo.stats.*
 import kyo.stats.internal.*
-import java.time.Instant
-val httpClientScope = StatsRegistry.scope("kyo", "http", "client")
+val httpClientScope              = StatsRegistry.scope("kyo", "http", "client")
 def currentInFlightCount: Double = 0.0
 ```
 -->
@@ -90,8 +88,8 @@ requests.add(8)
 ```scala
 import kyo.AllowUnsafe.embrace.danger
 
-val requests = httpClientScope.counter("requests", "HTTP requests issued")
-val polled: Long = requests.get()    // sumThenReset: returns total and zeroes
+val requests        = httpClientScope.counter("requests", "HTTP requests issued")
+val polled: Long    = requests.get()   // sumThenReset: returns total and zeroes
 val sinceLast: Long = requests.delta() // stateful: total minus last delta() value
 ```
 
@@ -149,11 +147,13 @@ payloadBytes.observe(4096L)
 
 `Summary` is the value-class snapshot returned by `UnsafeHistogram.summary()`. It carries the boundaries, per-bucket counts, total count, min, and max. `percentile(p)` linearly interpolates within the bucket containing the target rank.
 
+> **Note:** the bucket counts are non-cumulative (each bucket holds only its own observations, matching the OTLP explicit-bucket data model), and there is no `sum` field. Sum is omitted by design: exact observed values are not retained, and the OTLP histogram model marks sum optional.
+
 ```scala
 import kyo.AllowUnsafe.embrace.danger
 
-val latency = httpClientScope.histogram("latency_ms", "Outbound request latency in milliseconds")
-val s: Summary = latency.summary()
+val latency     = httpClientScope.histogram("latency_ms", "Outbound request latency in milliseconds")
+val s: Summary  = latency.summary()
 val p50: Double = s.percentile(50.0)
 val p99: Double = s.percentile(99.0)
 ```
@@ -186,7 +186,7 @@ val gcCount = StatsRegistry.scope("kyo", "runtime").counterGauge("gc_count")(
     java.lang.management.ManagementFactory.getGarbageCollectorMXBeans
         .stream().mapToLong(_.getCollectionCount).sum()
 )
-val current: Long = gcCount.collect()
+val current: Long   = gcCount.collect()
 val sinceLast: Long = gcCount.delta()
 ```
 
@@ -207,19 +207,18 @@ An exporter library plugs into the registry through a service-loader seam. Three
 Plugging an exporter into the registry happens through `ExporterFactory`, the SPI base class the ServiceLoader scans for. The default `traceExporter()` returns `None` (factory present, not opted in); override it to return `Some(exporter)`.
 
 ```scala
+import java.time.Instant
 // In package myapp.telemetry:
 import kyo.AllowUnsafe
+import kyo.stats.Attributes
 import kyo.stats.internal.ExporterFactory
 import kyo.stats.internal.TraceExporter
-import kyo.stats.Attributes
-import java.time.Instant
 
-class MyExporterFactory extends ExporterFactory {
+class MyExporterFactory extends ExporterFactory:
     override def traceExporter()(implicit _au: AllowUnsafe): Option[TraceExporter] =
         Some(new MyTraceExporter)
-}
 
-class MyTraceExporter extends TraceExporter {
+class MyTraceExporter extends TraceExporter:
     def startSpan(
         scope: List[String],
         name: String,
@@ -227,7 +226,7 @@ class MyTraceExporter extends TraceExporter {
         parent: Option[UnsafeTraceSpan] = None,
         attributes: Attributes = Attributes.empty
     )(implicit _au: AllowUnsafe): UnsafeTraceSpan = UnsafeTraceSpan.noop
-}
+end MyTraceExporter
 ```
 
 Declare the class in `src/main/resources/META-INF/services/kyo.stats.internal.ExporterFactory`:
@@ -243,7 +242,7 @@ myapp.telemetry.MyExporterFactory
 Once the factory is wired, the exporter itself has one job: hand callers an `UnsafeTraceSpan`. `TraceExporter.startSpan(scope, name, now, parent?, attributes?)` is the one method to implement; the exporter does ID generation, batching, and shipping to the backend behind it.
 
 ```scala
-class MyTraceExporter extends TraceExporter {
+class MyTraceExporter extends TraceExporter:
     def startSpan(
         scope: List[String],
         name: String,
@@ -252,13 +251,13 @@ class MyTraceExporter extends TraceExporter {
         attributes: Attributes = Attributes.empty
     )(implicit _au: AllowUnsafe): UnsafeTraceSpan =
         new MyTraceSpan(scope, name)
-}
+end MyTraceExporter
 
-class MyTraceSpan(scope: List[String], name: String) extends UnsafeTraceSpan {
-    def end(now: Instant)(implicit _au: AllowUnsafe): Unit = ()
+class MyTraceSpan(scope: List[String], name: String) extends UnsafeTraceSpan:
+    def end(now: Instant)(implicit _au: AllowUnsafe): Unit                             = ()
     def event(n: String, a: Attributes, now: Instant)(implicit _au: AllowUnsafe): Unit = ()
-    def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe): Unit = ()
-}
+    def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe): Unit     = ()
+end MyTraceSpan
 ```
 
 ### Discovering exporters at startup
@@ -271,8 +270,8 @@ import kyo.AllowUnsafe.embrace.danger
 val exporter: TraceExporter = TraceExporter.get
 val span = exporter.startSpan(
     scope = List("kyo", "http", "client"),
-    name  = "GET /users",
-    now   = Instant.now()
+    name = "GET /users",
+    now = Instant.now()
 )
 span.setStatus(UnsafeTraceSpan.Status.Ok)
 span.end(Instant.now())
@@ -308,22 +307,22 @@ The `Status` sealed type has three variants:
 
 ```scala
 val unset: UnsafeTraceSpan.Status = UnsafeTraceSpan.Status.Unset
-val ok:    UnsafeTraceSpan.Status = UnsafeTraceSpan.Status.Ok
-val err:   UnsafeTraceSpan.Status = UnsafeTraceSpan.Status.Error("upstream timeout")
+val ok: UnsafeTraceSpan.Status    = UnsafeTraceSpan.Status.Ok
+val err: UnsafeTraceSpan.Status   = UnsafeTraceSpan.Status.Error("upstream timeout")
 ```
 
 `Propagatable` is a mixin trait an exporter's span class implements when it carries cross-service context:
 
 ```scala
-class MyTraceSpan(name: String, parent: Option[UnsafeTraceSpan]) extends UnsafeTraceSpan with UnsafeTraceSpan.Propagatable {
-    val traceId: String = generateTraceId()
-    val spanId:  String = generateSpanId()
-    def end(now: Instant)(implicit _au: AllowUnsafe): Unit = ()
+class MyTraceSpan(name: String, parent: Option[UnsafeTraceSpan]) extends UnsafeTraceSpan with UnsafeTraceSpan.Propagatable:
+    val traceId: String                                                                = generateTraceId()
+    val spanId: String                                                                 = generateSpanId()
+    def end(now: Instant)(implicit _au: AllowUnsafe): Unit                             = ()
     def event(n: String, a: Attributes, now: Instant)(implicit _au: AllowUnsafe): Unit = ()
-    def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe): Unit = ()
-    private def generateTraceId() = "trace-1"
-    private def generateSpanId()  = "span-1"
-}
+    def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe): Unit     = ()
+    private def generateTraceId()                                                      = "trace-1"
+    private def generateSpanId()                                                       = "span-1"
+end MyTraceSpan
 ```
 
 `UnsafeTraceSpan.noop` is the span every `TraceExporter.noop.startSpan` call returns. It is built with `AllowUnsafe.embrace.danger` already in scope so callers do not need to provide one.
@@ -349,8 +348,8 @@ val attrs: Attributes = Attributes.empty
 The companion exposes `empty`, `add(name, value)` for a single-pair `Attributes`, and `all(list)` to flatten a `List[Attributes]` into one.
 
 ```scala
-val a = Attributes.add("k1", "v1")
-val b = Attributes.add("k2", 42L)
+val a                  = Attributes.add("k1", "v1")
+val b                  = Attributes.add("k2", 42L)
 val merged: Attributes = Attributes.all(List(a, b))
 assert(merged.get.length == 2)
 ```
@@ -381,8 +380,8 @@ This is the shape an exporter sees on the wire.
 Only a small set of Scala types are valid attribute values; the `AsAttribute[A]` type class is what enforces that restriction at compile time. Instances exist for `Boolean`, `Double`, `Long`, `Int`, `String`, and `List` of each. The `@implicitNotFound` message lists allowed types when resolution fails.
 
 ```scala
-val ok: Attributes  = Attributes.add("count", 42)        // Int -> LongAttribute
-val ok2: Attributes = Attributes.add("name", "alice")    // String
+val ok: Attributes  = Attributes.add("count", 42)     // Int -> LongAttribute
+val ok2: Attributes = Attributes.add("name", "alice") // String
 // Attributes.add("ratio", 0.5f) // does NOT compile: Float has no AsAttribute instance
 // Attributes.add("opt",   Some(1)) // does NOT compile: Option has no AsAttribute instance
 ```
@@ -402,13 +401,13 @@ The application-level consequence is small in practice: code that holds instrume
 A realistic instrumented module wires the registry, the instruments, and an exporter together at startup. The instruments are `val`s on the module object so the strong references survive for the lifetime of the process; the exporter is fetched once and reused.
 
 ```scala
+import java.time.Instant
 import kyo.*
+import kyo.AllowUnsafe.embrace.danger
 import kyo.stats.*
 import kyo.stats.internal.*
-import kyo.AllowUnsafe.embrace.danger
-import java.time.Instant
 
-object HttpClientTelemetry {
+object HttpClientTelemetry:
 
     private val scope = StatsRegistry.scope("kyo", "http", "client")
 
@@ -420,7 +419,7 @@ object HttpClientTelemetry {
 
     val exporter: TraceExporter = TraceExporter.get
 
-    def recordRequest(method: String, path: String, durationMs: Long, statusOk: Boolean): Unit = {
+    def recordRequest(method: String, path: String, durationMs: Long, statusOk: Boolean): Unit =
         requests.inc()
         latency.observe(durationMs)
         val span = exporter.startSpan(
@@ -429,17 +428,17 @@ object HttpClientTelemetry {
             Instant.now(),
             attributes = Attributes.empty
                 .add("http.method", method)
-                .add("http.path",   path)
+                .add("http.path", path)
         )
         span.setStatus(
-            if (statusOk) UnsafeTraceSpan.Status.Ok
+            if statusOk then UnsafeTraceSpan.Status.Ok
             else UnsafeTraceSpan.Status.Error("non-2xx response")
         )
         span.end(Instant.now())
-    }
+    end recordRequest
 
     private def currentInFlightCount(): Double = 0.0
-}
+end HttpClientTelemetry
 ```
 
 An exporter polls the instruments on its own clock:
@@ -447,23 +446,23 @@ An exporter polls the instruments on its own clock:
 ```scala
 import kyo.AllowUnsafe.embrace.danger
 
-object HttpClientTelemetry {
+object HttpClientTelemetry:
     private val scope = StatsRegistry.scope("kyo", "http", "client")
-    val requests = scope.counter("requests", "HTTP requests issued")
-    val latency  = scope.histogram("latency_ms", "Request latency in ms")
-    val inFlight = scope.gauge("in_flight", "Currently outstanding requests")(0.0)
-}
+    val requests      = scope.counter("requests", "HTTP requests issued")
+    val latency       = scope.histogram("latency_ms", "Request latency in ms")
+    val inFlight      = scope.gauge("in_flight", "Currently outstanding requests")(0.0)
+end HttpClientTelemetry
 
-def poll(): Unit = {
-    val totalRequests: Long  = HttpClientTelemetry.requests.get()   // resets to 0
-    val latencySnapshot      = HttpClientTelemetry.latency.summary()
-    val currentInFlight      = HttpClientTelemetry.inFlight.collect()
-    publish("kyo.http.client.requests",        totalRequests)
-    publish("kyo.http.client.latency_ms.p99",  latencySnapshot.percentile(99.0))
-    publish("kyo.http.client.in_flight",       currentInFlight)
-}
+def poll(): Unit =
+    val totalRequests: Long = HttpClientTelemetry.requests.get() // resets to 0
+    val latencySnapshot     = HttpClientTelemetry.latency.summary()
+    val currentInFlight     = HttpClientTelemetry.inFlight.collect()
+    publish("kyo.http.client.requests", totalRequests)
+    publish("kyo.http.client.latency_ms.p99", latencySnapshot.percentile(99.0))
+    publish("kyo.http.client.in_flight", currentInFlight)
+end poll
 
-def publish(name: String, value: Long):   Unit = ()
+def publish(name: String, value: Long): Unit   = ()
 def publish(name: String, value: Double): Unit = ()
 ```
 

@@ -5,9 +5,9 @@
 import kyo.*
 
 // Stub flag objects used in examples (stand-ins for objects declared in named packages)
-object poolSize   extends StaticFlag[Int](10)
-object maxRetries extends StaticFlag[Int](3)
-object jdbcUrl    extends StaticFlag[String]("jdbc:h2:mem:test")
+object poolSize    extends StaticFlag[Int](10)
+object maxRetries  extends StaticFlag[Int](3)
+object jdbcUrl     extends StaticFlag[String]("jdbc:h2:mem:test")
 object newCheckout extends DynamicFlag[Boolean](false)
 object rateLimit   extends DynamicFlag[Int](100)
 ```
@@ -15,10 +15,10 @@ object rateLimit   extends DynamicFlag[Int](100)
 
 Type-safe, cross-platform configuration flags for Kyo applications. Flags are Scala objects whose fully-qualified name becomes the config key. Two kinds are provided:
 
-- **StaticFlag** resolves once at class load. Use for infrastructure settings that should not change at runtime -- pool sizes, timeouts, codec selections.
-- **DynamicFlag** evaluates per call with a caller-provided key. Use for values that must vary per request or change without restart -- feature gates, A/B tests, per-tenant rate limits.
+- **StaticFlag** resolves once at class load. Use for infrastructure settings that should not change at runtime: pool sizes, timeouts, codec selections.
+- **DynamicFlag** evaluates per call with a caller-provided key. Use for values that must vary per request or change without restart: feature gates, A/B tests, per-tenant rate limits.
 
-Both share the same declaration style, typed parsing, and validation. Flags can also vary by deployment topology and percentage sampling through a rollout expression DSL (covered in a dedicated section below). Configuration is read from system properties, environment variables, or defaults -- in that priority order.
+Both share the same declaration style, typed parsing, and validation. Flags can also vary by deployment topology and percentage sampling through a rollout expression DSL (covered in a dedicated section below). Configuration is read from system properties, environment variables, or defaults (in that priority order).
 
 ## Getting Started
 
@@ -34,6 +34,8 @@ libraryDependencies += "io.getkyo" %% "kyo-config" % "<latest version>"
 
 Flags are declared as Scala objects. The fully-qualified object name becomes the configuration key:
 
+Note: Flags must be Scala `object`s declared at top level or nested in other objects. The flag name is derived from the JVM class name, so a flag declared inside a class, trait, method, or as an anonymous value gets a mangled name and is rejected at construction with `FlagNameException`.
+
 ```scala doctest:expect=skipped
 package myapp.db
 
@@ -48,10 +50,10 @@ object jdbcUrl    extends StaticFlag[String]("jdbc:h2:mem:test")
 
 ### Reading Values
 
-A static flag's value is available immediately -- it's just a field read:
+A static flag's value is available immediately: it is just a field read.
 
 ```scala
-val size: Int = poolSize()
+val size: Int   = poolSize()
 val url: String = jdbcUrl()
 ```
 
@@ -59,11 +61,13 @@ val url: String = jdbcUrl()
 
 Flags resolve in this order:
 
-1. **System property** -- `-Dmyapp.db.poolSize=20`
-2. **Environment variable** -- `MYAPP_DB_POOLSIZE=20` (dots become underscores, uppercased)
-3. **Default** -- the value passed to the constructor
+1. **System property**: `-Dmyapp.db.poolSize=20`
+2. **Environment variable**: `MYAPP_DB_POOLSIZE=20` (dots become underscores, uppercased)
+3. **Default**: the value passed to the constructor
 
-The first source found wins. When a flag resolves to its default, kyo-config scans for near-miss system properties (case-insensitive) and prints a warning to stderr. This catches typos like `-Dmyapp.db.PoolSize` when the flag expects `myapp.db.poolSize`.
+The first source found wins.
+
+Note: When a flag resolves to its default, kyo-config scans system properties and env vars for a case-insensitive near-match and warns on stderr ("did you mean ...?"), catching the classic "I set the property but it is still the default" typo.
 
 ### Validation
 
@@ -84,11 +88,15 @@ object jdbcUrl extends StaticFlag[String]("jdbc:h2:mem:test", url =>
 )
 ```
 
-The validate parameter has signature `A => Either[Throwable, A]`. Validation runs at class load time. A failure throws a `FlagValidationFailedException` and crashes the process before serving traffic -- bad config is caught at startup.
+The validate parameter has signature `A => Either[Throwable, A]`.
+
+Note: Validation runs at class-load time. A parse or validation failure throws and crashes the process before it serves traffic.
 
 ### Typed Parsing
 
-Built-in `Flag.Reader` instances handle common types:
+Built-in `Flag.Reader` instances cover `Int`, `Long`, `Double`, `Boolean`, `String`, and `Seq[A]` (comma-separated; the element type must be scalar). For any other type, supply your own `Flag.Reader`. There is no Schema-derived or multi-field reader in this module.
+
+> **Note:** When `kyo-data` is on the classpath, a flag value type can also be a kyo-data type. `Duration`, `Chunk`, `Span`, `Dict`, `Instant`, `Text`, and a multi-field `Record` all have ready-made `Flag.Reader` instances shipped by kyo-data, so they parse from a system property or environment variable with no extra wiring. See [Reading values from configuration](../kyo-data/README.md#reading-values-from-configuration) in the kyo-data README for the accepted string formats and the compile-time-derived `Record` reader.
 
 | Type | Example |
 |------|---------|
@@ -99,43 +107,6 @@ Built-in `Flag.Reader` instances handle common types:
 | `String` | `-Dmyapp.db.jdbcUrl=jdbc:h2:mem` |
 | `Seq[A]` | `-Dmyapp.db.hosts=host1,host2,host3` |
 
-The `kyo-data` module adds readers for Kyo's data types (available when `kyo-data` is on the classpath):
-
-| Type | Format | Example |
-|------|--------|---------|
-| `Duration` | number + unit | `"5s"`, `"100ms"`, `"2minutes"`, `"infinity"` |
-| `Chunk[A]` | comma-separated | `"a,b,c"` |
-| `Span[A]` | comma-separated | `"1,2,3"` |
-| `Dict[K,V]` | key=value pairs | `"host=localhost,port=8080"` |
-| `Instant` | ISO-8601 | `"2024-01-15T10:30:00Z"` |
-| `Text` | plain string | `"hello"` |
-| `Record[F]` | key=value pairs, validated against field schema | `"host=localhost,port=8080"` |
-
-The `Record` reader is derived at compile time — it summons a `Flag.Reader` for each field's value type and validates that all required fields are present. This lets you define structured, multi-field configuration as a single flag:
-
-```scala doctest:expect=skipped
-package myapp.db
-
-import kyo.*
-
-// A typed database config with three fields, each parsed and validated independently
-object connection extends StaticFlag[Record["host" ~ String & "port" ~ Int & "timeout" ~ Duration]](
-  "host" ~ "localhost" & "port" ~ 5432 & "timeout" ~ Duration.fromUnits(30, Duration.Units.Seconds)
-)
-```
-
-Configure via system property:
-```
--Dmyapp.db.connection="host=db.prod.internal,port=5432,timeout=5s"
-```
-
-Field order in the expression doesn't matter. Missing fields produce a clear error listing the absent names. Each field value is parsed by its own `Flag.Reader` — so `port` must be a valid `Int`, `timeout` must be a valid `Duration`, and type errors are reported per field.
-
-Records compose with the rollout DSL:
-```
--Dmyapp.db.connection="host=db-us.prod,port=5432,timeout=5s@prod/us-east-1;host=db.prod,port=5432,timeout=10s@prod;host=localhost,port=5432,timeout=30s"
-```
-
 For custom types, implement a `Reader`:
 
 ```scala
@@ -144,10 +115,10 @@ import kyo.*
 case class Endpoint(host: String, port: Int)
 
 given Flag.Reader[Endpoint] = new Flag.Reader[Endpoint]:
-  def apply(s: String): Either[Throwable, Endpoint] =
-    val parts = s.split(":")
-    Right(Endpoint(parts(0), parts(1).toInt))
-  def typeName: String = "Endpoint"
+    def apply(s: String): Either[Throwable, Endpoint] =
+        val parts = s.split(":")
+        Right(Endpoint(parts(0), parts(1).toInt))
+    def typeName: String = "Endpoint"
 ```
 
 Parse errors at class load time throw a `FlagValueParseException`, failing fast before the application serves traffic.
@@ -173,12 +144,14 @@ Dynamic flags evaluate against a key (typically a user ID or tenant ID) and opti
 
 ```scala
 val enabled: Boolean = newCheckout("user-123")
-val limit: Int = rateLimit("tenant-abc", "premium")
+val limit: Int       = rateLimit("tenant-abc", "premium")
 ```
 
 The key identifies the entity being evaluated. Attributes provide additional context for matching (see the Rollout DSL section below for how keys and attributes are used in rollout expressions).
 
-Each call to `apply` also tracks evaluation counters (bounded at 100 distinct result values). For hot loops where counter overhead matters, use `evaluate` instead:
+Note: `apply(key, attrs*)` increments an evaluation counter on every call. `evaluate(key, attrs*)` returns the identical value with no counter overhead, so use `evaluate` in hot loops. Counters are approximate (a volatile var map, not atomic) and bounded at 100 distinct result values, with overflow bucketed under "other".
+
+For hot loops where counter overhead matters, use `evaluate` instead:
 
 ```scala
 val enabled: Boolean = newCheckout.evaluate("user-123")
@@ -186,7 +159,7 @@ val enabled: Boolean = newCheckout.evaluate("user-123")
 
 ### Runtime Updates
 
-Dynamic flags can be updated at runtime. Since `update` and `reload` perform side effects, they require an `AllowUnsafe` evidence:
+Dynamic flags can be updated at runtime. `update` and `reload` require an implicit `AllowUnsafe` because they mutate volatile runtime state, breaking the otherwise resolve-once model:
 
 ```scala
 import kyo.AllowUnsafe.embrace.danger
@@ -194,7 +167,9 @@ newCheckout.update("true")
 rateLimit.update("200")
 ```
 
-The new value is parsed and validated atomically -- if anything fails, the old state is preserved.
+The new value is parsed and validated atomically. If anything fails, the old state is preserved.
+
+Note: Validation is two-tier. At construction (deploy time), rollout weights summing over 100% throw and fail fast. At `update()` (runtime), the same condition is normalized or clamped and a warning is written to stderr, so a live service keeps serving.
 
 The current expression is always available:
 
@@ -209,17 +184,18 @@ val expr: String = newCheckout.expression
 ```scala
 import kyo.AllowUnsafe.embrace.danger
 newCheckout.reload() match
-  case Flag.ReloadResult.Updated(newExpr) =>
-    println(s"Updated to: $newExpr")
-  case Flag.ReloadResult.Unchanged =>
-    println("Expression unchanged")
-  case Flag.ReloadResult.NoSource =>
-    println("No config source found")
+    case Flag.ReloadResult.Updated(newExpr) =>
+        println(s"Updated to: $newExpr")
+    case Flag.ReloadResult.Unchanged =>
+        println("Expression unchanged")
+    case Flag.ReloadResult.NoSource =>
+        println("No config source found")
+end match
 ```
 
 ## Rollout DSL
 
-Both `StaticFlag` and `DynamicFlag` support a rollout expression DSL for conditional values. Rollout expressions let you vary a flag's value by deployment topology (environment, region, cluster) and percentage-based sampling -- without changing code or restarting the process.
+Both `StaticFlag` and `DynamicFlag` support a rollout expression DSL for conditional values. Rollout expressions let you vary a flag's value by deployment topology (environment, region, cluster) and percentage-based sampling, without changing code or restarting the process.
 
 ### Grammar
 
@@ -237,14 +213,14 @@ percentage = digits "%"
 
 **Components:**
 
-- **expression** — one or more choices separated by `;`. Evaluated left to right, first match wins.
-- **choice** — a value paired with a selector (`value@selector`), or a bare value with no `@` (a **terminal** that always matches and stops evaluation).
-- **value** — the flag value to use if this choice matches. Parsed by the flag's `Flag.Reader`.
-- **selector** — a path, a percentage, or both. Determines whether this choice applies to the current instance or entity.
-- **path** — one or more segments separated by `/`. Matched as a prefix against the target path. `prod/us-east-1` matches any path starting with those two segments.
-- **segment** — either `*` (wildcard, matches any single path component) or a literal string (exact match).
-- **percentage** — a trailing `N%` on a selector. Controls what fraction of entities receive this choice (see Percentage Weights below).
-- **terminal** — a choice with no `@`. Always matches. Acts as a default within the expression. Only needed when the desired fallback differs from the flag's constructor default.
+- **expression**: one or more choices separated by `;`. Evaluated left to right, first match wins.
+- **choice**: a value paired with a selector (`value@selector`), or a bare value with no `@` (a **terminal** that always matches and stops evaluation).
+- **value**: the flag value to use if this choice matches. Parsed by the flag's `Flag.Reader`.
+- **selector**: a path, a percentage, or both. Determines whether this choice applies to the current instance or entity.
+- **path**: one or more segments separated by `/`. Matched as a prefix against the target path. `prod/us-east-1` matches any path starting with those two segments.
+- **segment**: either `*` (wildcard, matches any single path component) or a literal string (exact match).
+- **percentage**: a trailing `N%` on a selector. Controls what fraction of entities receive this choice (see Percentage Weights below).
+- **terminal**: a choice with no `@`. Always matches. Acts as a default within the expression. Only needed when the desired fallback differs from the flag's constructor default.
 
 ### Matching Rules
 
@@ -256,8 +232,8 @@ Choices are evaluated left to right. The first match wins. If no choice matches,
 
 For the expression above, evaluation proceeds as follows:
 
-1. Try `50@prod/us-east-1` -- does the path start with `prod/us-east-1`?
-2. If not, try `30@prod` -- does the path start with `prod`?
+1. Try `50@prod/us-east-1`: does the path start with `prod/us-east-1`?
+2. If not, try `30@prod`: does the path start with `prod`?
 3. If not, fall through to `10` (terminal, always matches)
 
 ### Path Matching
@@ -304,7 +280,9 @@ Multi-segment paths match as a prefix:
 
 ### Percentage Weights
 
-A trailing `N%` on a selector controls what fraction of entities receive that value. Percentages are **weights**, not thresholds -- each percentage specifies the size of a bucket range, and they accumulate left to right.
+A trailing `N%` on a selector controls what fraction of entities receive that value. Percentages are **weights**, not thresholds: each percentage specifies the size of a bucket range, and they accumulate left to right.
+
+Note: Because weights accumulate left to right into cumulative bucket ranges, lowering a percentage removes entities previously in-bucket (reducing 75% to 50% drops the top 25%).
 
 ```
 -Dmyapp.features.newCheckout="true@30%;false"
@@ -368,7 +346,7 @@ Increasing the percentage adds entities without removing existing ones. A typica
 
 Bucketing is deterministic per key (via MurmurHash3), so a user who was included at 5% stays included at 25%. The bucket range grows from the same starting point, making progressive rollouts additive.
 
-However, **decreasing** a percentage can remove entities -- going from 75% back to 50% drops buckets 50-74, removing 25% of previously included users.
+However, **decreasing** a percentage can remove entities: going from 75% back to 50% drops buckets 50-74, removing 25% of previously included users.
 
 ### Rollout with StaticFlag
 
@@ -466,8 +444,8 @@ newCheckout.update("true@premium/75%;true@free/25%;false")
 import kyo.*
 
 Rollout.validate("true@50%;false") match
-  case Right(warnings) => warnings.foreach(println)
-  case Left(error)     => println(s"Error: $error")
+    case Right(warnings) => warnings.foreach(println)
+    case Left(error)     => println(s"Error: $error")
 ```
 
 It catches:
@@ -490,6 +468,8 @@ val bucket: Int = Rollout.bucketFor("user-123") // e.g., 47
 ```
 
 Same key always produces the same bucket across platforms and process restarts. Use this to verify which bucket a specific user or tenant falls into during debugging.
+
+Note: `Rollout.bucketFor` and `Rollout.validate` are the only public members of `Rollout`. The selector and choice grammar types and internal evaluation functions (`select`, `parseChoices`, `evaluateIndex`) are private[kyo] internals.
 
 ## Choosing Between StaticFlag and DynamicFlag
 
@@ -567,19 +547,19 @@ All flag errors are subtypes of `FlagException`, organized into three categories
 
 Thrown when a value or expression cannot be parsed:
 
-- **FlagValueParseException** -- a raw string could not be parsed into the expected type (e.g., `"abc"` for an `Int` flag)
-- **FlagRolloutParseException** -- a rollout expression has structural errors (via `Rollout.select`)
-- **FlagExpressionParseException** -- a dynamic flag expression has structural issues (empty choice, empty selector, bad percentage)
-- **FlagChoiceParseException** -- a specific choice within a rollout expression failed to parse
+- **FlagValueParseException**: a raw string could not be parsed into the expected type (e.g., `"abc"` for an `Int` flag)
+- **FlagRolloutParseException**: a rollout expression has structural errors
+- **FlagExpressionParseException**: a dynamic flag expression has structural issues (empty choice, empty selector, bad percentage)
+- **FlagChoiceParseException**: a specific choice within a rollout expression failed to parse
 
 ### Validation Errors (FlagValidationException)
 
-- **FlagValidationFailedException** -- the user-supplied validation function rejected a value
+- **FlagValidationFailedException**: the user-supplied validation function rejected a value
 
 ### Registration Errors (FlagRegistrationException)
 
-- **FlagDuplicateNameException** -- two flags share the same fully-qualified name
-- **FlagNameException** -- a flag is declared inside a class, trait, or method instead of as a top-level object
+- **FlagDuplicateNameException**: two flags share the same fully-qualified name
+- **FlagNameException**: a flag is declared inside a class, trait, or method instead of as a top-level object
 
 All exceptions include the flag name, the problematic value or expression, and the underlying cause. They support pattern matching on category traits:
 
@@ -587,92 +567,23 @@ All exceptions include the flag name, the problematic value or expression, and t
 import kyo.*
 
 try
-  // flag initialization
-  ()
-catch
-  case e: FlagParseException        => println(s"Parse error: ${e.getMessage}")
-  case e: FlagValidationException   => println(s"Validation error: ${e.getMessage}")
-  case e: FlagRegistrationException => println(s"Registration error: ${e.getMessage}")
-```
-
-## HTTP Admin (kyo-http)
-
-The `kyo-http` module provides `FlagAdmin` for managing flags over HTTP. Add kyo-http as a dependency to use these features.
-
-### Admin Routes
-
-`FlagAdmin.routes` returns a sequence of HTTP handlers for flag management:
-
-```scala doctest:expect=skipped
-import kyo.*
-
-val adminHandlers = FlagAdmin.routes(prefix = "flags")
-val server = HttpServer.init(adminHandlers*)
-```
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/{prefix}` | List all flags (optional `?filter=glob` for filtering) |
-| `GET` | `/{prefix}/:name` | Single flag detail as JSON |
-| `PUT` | `/{prefix}/:name` | Update a dynamic flag expression (plain text body) |
-| `POST` | `/{prefix}/:name/reload` | Reload a dynamic flag from its config source |
-
-The PUT body is plain text (the rollout expression), not JSON:
-
-```bash
-curl -X PUT -d 'true@premium/50%' http://localhost:8080/flags/myapp.features.newCheckout
-```
-
-### Security
-
-Token-based authentication is configured via the `kyo.flag.admin.token` system property. When set, PUT and POST requests require an `Authorization: Bearer <token>` header. GET endpoints are always open.
-
-Read-only mode blocks all mutations:
-
-```scala doctest:expect=skipped
-import kyo.*
-
-val adminHandlers = FlagAdmin.routes(prefix = "flags", readOnly = true)
-```
-
-## Config Sync (kyo-http)
-
-`FlagSync` runs a background fiber that periodically updates dynamic flags from external sources.
-
-### Reloading from Config Sources
-
-`startReloader` polls system properties and environment variables on an interval:
-
-```scala doctest:expect=skipped
-import kyo.*
-
-val reloader = FlagSync.startReloader(30.seconds)
-```
-
-Each cycle iterates over all registered dynamic flags and calls `reload()`. Static flags are skipped.
-
-### Custom Source
-
-`startSync` fetches expressions from a caller-supplied function, such as a database, Consul, or etcd:
-
-```scala doctest:expect=skipped
-import kyo.*
-
-val sync = FlagSync.startSync(30.seconds, name =>
-  // Return Present(expr) to update, Absent to skip
-  fetchFromConsul(name)
+    // flag initialization
+    (
 )
+catch
+    case e: FlagParseException        => println(s"Parse error: ${e.getMessage}")
+    case e: FlagValidationException   => println(s"Validation error: ${e.getMessage}")
+    case e: FlagRegistrationException => println(s"Registration error: ${e.getMessage}")
+end try
 ```
 
-### Error Backoff
+## HTTP Admin and Sync (kyo-http)
 
-Both sync strategies track consecutive failures per flag. The first 5 failures log at WARN level. The 6th triggers a single ERROR escalation. Subsequent failures are suppressed until a successful sync resets the counter. This prevents log spam from persistently broken config sources.
+The kyo-http module builds on kyo-config to expose dynamic-flag management over HTTP (`FlagAdmin`) and background reload/sync (`FlagSync`). `FlagAdmin` serves HTTP endpoints for listing, reading, and updating dynamic flag expressions at runtime. `FlagSync` runs a background fiber that periodically reloads or replaces flag expressions from external sources. The full API, route tables, authentication model, and backoff behavior are documented in kyo-http's README.
 
 ## Cross-Platform
 
-kyo-config compiles and runs on JVM, JavaScript, and Scala Native. The same flag declarations, rollout expressions, and typed parsing work identically across all platforms. Bucketing is deterministic and consistent -- the same key produces the same bucket regardless of platform.
+kyo-config compiles and runs on JVM, JavaScript, and Scala Native. The same flag declarations, rollout expressions, and typed parsing work identically across all platforms. Bucketing is deterministic and consistent: the same key produces the same bucket regardless of platform.
 
 - **JVM**: No additional setup required.
 - **JavaScript**: Full support. System properties are not available, so flags resolve from environment variables or defaults.

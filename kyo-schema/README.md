@@ -10,29 +10,22 @@ val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", 
 ```
 -->
 
-```scala
-// Schema-based JSON and Protobuf
-Json.encode(alice)      // {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
-Protobuf.encode(alice)  // Span[Byte] (binary)
+```scala doctest:scope=nested
+case class Address(city: String, zip: String)
+case class User(id: Int, name: String, email: String, password: String, address: Address) derives Schema
 
-// Type-safe lenses reach any depth
+val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", "97201"))
+
+Json.encode(alice)
+// {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
+
 Schema[User].focus(_.address.city).update(alice)(_.toUpperCase)
 // User(1, "Alice", "alice@example.com", "secret", Address("PORTLAND", "97201"))
-
-// Type-level reshaping: drop sensitive fields, rename, add computed
-val publicView =
-    Schema[User]
-        .drop(_.password)
-        .rename(_.name, "displayName")
-// Encodes alice as: {"id":1,"displayName":"Alice","email":"alice@example.com","address":{"city":"Portland","zip":"97201"}}
-
-// Diffs as data: capture just what changed, ship, replay
-val renamed = alice.copy(name = "Alicia")
-val cs = Changeset(alice, renamed) // Produces a changeset with the new name patch
-cs.applyTo(alice)                  // Result.Success(renamed)
 ```
 
 Everything flows from `Schema[A]`, the central type that captures a type's structure at compile time. It's the single source of truth that powers serialization, validation, navigation, and conversion.
+
+The serialization format is chosen at the call site, not baked into the type. `Json.encode(value)` and `Protobuf.encode(value)` summon the `Schema[A]` from implicit scope; a schema you reshaped or enriched only takes effect when you encode through that instance with `s.encode[Json](value)`.
 
 These are the top-level entry points:
 
@@ -69,7 +62,7 @@ case class Person(name: String, age: Int) derives Schema
 
 **Note:** nearly every method in this module takes an implicit `kyo.Frame` parameter used for source-location reporting in exceptions. The signatures shown throughout this document omit `(using Frame)` for readability; the compiler synthesizes it at the call site from the caller's frame.
 
-## Schemas
+## Schemas: the single source of truth
 
 Every API in this module reads from a `Schema[A]`. Once you have one, serialization, navigation, validation, and conversion are methods you call on it:
 
@@ -84,14 +77,16 @@ val schema =
         .check(_.name)(_.nonEmpty, "name must not be blank")
         .checkMin(_.id)(0)
 
-Json.encode(alice)                // uses Schema[User] implicitly
-schema.focus(_.name).get(alice)   // "Alice"
+Json.encode(alice)              // uses Schema[User] implicitly
+schema.focus(_.name).get(alice) // "Alice"
 schema.validate(alice.copy(name = "", id = -1))
 // Chunk(
 //   ValidationFailedException(path = List("name"), message = "name must not be blank", ...),
 //   ValidationFailedException(path = List("id"),   message = "must be >= 0.0", ...)
 // )
 ```
+
+`validate` is never invoked automatically during encode or decode; constraints are enforced only when you call it explicitly.
 
 Schemas compose: a case class whose fields already have a `Schema` gets one for free. Sealed traits, collections, tuples, and the built-in scalar types work the same way.
 
@@ -218,6 +213,8 @@ val proto = Protobuf.protoSchema[User]
 
 The field numbers in the generated `.proto` are assigned in declaration order (`1`, `2`, `3`, ...) and do **not** reflect the MurmurHash3-derived wire IDs that kyo-schema's own Protobuf codec uses on the wire. If you plan to interoperate with an external consumer of the `.proto`, pin field IDs explicitly with `fieldId(_.name)(1)` so the wire format matches the `.proto`.
 
+A few shapes that proto3 cannot express raise `IllegalArgumentException` at encode or `protoSchema` time: `Option[Option[_]]`, `List[Option[_]]`, `List[List[_]]`, `List[Map[_,_]]`, and `Unit`-typed fields. `BigInt` and `BigDecimal` serialize as proto3 `string`, since proto3 has no arbitrary-precision number type; this preserves exact round-trip values.
+
 ### Built-in Types
 
 Schemas are provided for all common types out of the box:
@@ -246,7 +243,7 @@ opaque type Email = String
 
 object Email:
     def apply(s: String): Email = s
-    given Schema[Email] = Schema[String]
+    given Schema[Email]         = Schema[String]
 ```
 
 Inside the companion, `Email` is `String` to the compiler, so `Schema[String]` satisfies `Schema[Email]` without any conversion. Outside the companion the types are distinct, so the given must live inside where the boundary is visible.
@@ -260,6 +257,7 @@ object Username:
     def apply(s: String): Username = s.toLowerCase
     given Schema[Username] =
         Schema[String].transform[Username](Username(_))(identity)
+end Username
 ```
 
 ## Validation
@@ -275,10 +273,10 @@ case class Product(name: String, price: Double, quantity: Int)
 
 val schema =
     Schema[Product]
-        .checkMin(_.price)(0.0)          // price >= 0.0
-        .checkMax(_.price)(99999.99)     // price <= 99999.99
-        .checkMin(_.quantity)(1)         // quantity >= 1
-        .checkMax(_.quantity)(1000)      // quantity <= 1000
+        .checkMin(_.price)(0.0)      // price >= 0.0
+        .checkMax(_.price)(99999.99) // price <= 99999.99
+        .checkMin(_.quantity)(1)     // quantity >= 1
+        .checkMax(_.quantity)(1000)  // quantity <= 1000
 ```
 
 `checkExclusiveMin` and `checkExclusiveMax` use strict inequality (`>` and `<`).
@@ -286,14 +284,12 @@ val schema =
 String constraints validate length and format:
 
 ```scala
-case class Account(username: String, email: String)
-
 val schema =
-    Schema[Account]
-        .checkMinLength(_.username)(3)              // at least 3 characters
-        .checkMaxLength(_.username)(20)             // at most 20 characters
-        .checkPattern(_.email)("^.+@.+\\..+$")     // must match regex
-        .checkFormat(_.email)("email")             // advisory: appears in JSON Schema only
+    Schema[User]
+        .checkMinLength(_.name)(3)             // at least 3 characters
+        .checkMaxLength(_.name)(20)            // at most 20 characters
+        .checkPattern(_.email)("^.+@.+\\..+$") // must match regex
+        .checkFormat(_.email)("email")         // advisory: appears in JSON Schema only
 ```
 
 `checkPattern` both validates at runtime and records the pattern in JSON Schema output. For cross-platform compatibility, use POSIX regex features (character classes, anchors, alternation, quantifiers). `checkFormat` is advisory only: it annotates JSON Schema but does not produce a runtime check.
@@ -305,9 +301,9 @@ case class Order(id: Int, tags: List[String])
 
 val schema =
     Schema[Order]
-        .checkMinItems(_.tags)(1)     // at least 1 tag
-        .checkMaxItems(_.tags)(10)    // at most 10 tags
-        .checkUniqueItems(_.tags)     // no duplicates
+        .checkMinItems(_.tags)(1)  // at least 1 tag
+        .checkMaxItems(_.tags)(10) // at most 10 tags
+        .checkUniqueItems(_.tags)  // no duplicates
 ```
 
 ### Custom Checks
@@ -315,17 +311,17 @@ val schema =
 For validations that cannot be expressed as standard constraints, `check` accepts an arbitrary predicate. Unlike constraint methods, `check` does not appear in JSON Schema output because the predicate is an opaque function:
 
 ```scala
-case class Account(username: String, email: String)
-
 val schema =
-    Schema[Account]
-        .checkMinLength(_.username)(3)
-        .check(_.username)(_.forall(_.isLetterOrDigit), "alphanumeric only")
+    Schema[User]
+        .checkMinLength(_.name)(3)
+        .check(_.name)(_.forall(_.isLetterOrDigit), "alphanumeric only")
 ```
 
 There are two forms: `.check(_.field)(pred, msg)` targets a single field, while `.check(pred, msg)` targets the root value for cross-field validation:
 
 ```scala
+case class Person(name: String, age: Int)
+
 val schema =
     Schema[Person]
         .check(_.name)(_.nonEmpty, "name is required")
@@ -378,25 +374,25 @@ val enriched = Json.jsonSchema[Product]
 // The "price" property now includes minimum=0.0, maximum=99999.99, and description="Product price in USD"
 ```
 
-## Navigation
+## Navigation and lenses
 
 So far every operation has worked on whole values. `Focus` lets you read, write, and update individual fields at any depth.
 
-### Focus
+### Reading and writing one field
 
 Call `schema.focus(_.path)` to create a lens that targets a specific field:
 
 ```scala doctest:scope=nested
-case class Address(street: String, city: String, zip: String)
-case class Person(name: String, age: Int, address: Address)
+case class Address(city: String, zip: String)
+case class User(id: Int, name: String, email: String, password: String, address: Address) derives Schema
 
-val cityFocus = Schema[Person].focus(_.address.city)
+val cityFocus = Schema[User].focus(_.address.city)
 
-val person = Person("Alice", 30, Address("123 Main St", "Portland", "97201"))
+val user = User(1, "Alice", "alice@example.com", "secret", Address("Portland", "97201"))
 
-cityFocus.get(person)                     // "Portland"
-cityFocus.set(person, "Seattle")          // Person with city = "Seattle"
-cityFocus.update(person)(_.toUpperCase)   // Person with city = "PORTLAND"
+cityFocus.get(user)                   // "Portland"
+cityFocus.set(user, "Seattle")        // User with city = "Seattle"
+cityFocus.update(user)(_.toUpperCase) // User with city = "PORTLAND"
 ```
 
 Every other field is preserved. Only the targeted value changes, at any depth.
@@ -411,8 +407,8 @@ case class Drawing(title: String, shape: Shape)
 
 val radiusFocus = Schema[Drawing].focus(_.shape.Circle.radius)
 
-radiusFocus.get(Drawing("art", Circle(5.0)))       // Maybe(5.0)
-radiusFocus.get(Drawing("art", Rectangle(3, 4)))   // Maybe.empty
+radiusFocus.get(Drawing("art", Circle(5.0)))     // Maybe(5.0)
+radiusFocus.get(Drawing("art", Rectangle(3, 4))) // Maybe.empty
 
 radiusFocus.set(Drawing("art", Circle(5.0)), Maybe(10.0))     // Drawing with radius 10.0
 radiusFocus.set(Drawing("art", Rectangle(3, 4)), Maybe.empty) // unchanged
@@ -428,7 +424,7 @@ A Maybe-mode `Focus` also provides `getOrElse` and `isDefined`. The mode isn't s
 
 Once you cross a sum variant or enter a collection, every subsequent step inherits that uncertainty.
 
-### Foreach
+### Navigating into collections
 
 When a schema contains collection fields, `foreach` navigates into the elements. It returns a `Focus` in `Chunk` mode:
 
@@ -436,7 +432,7 @@ When a schema contains collection fields, `foreach` navigates into the elements.
 case class Item(name: String, price: Double)
 case class Order(id: Int, items: List[Item])
 
-val each = Schema[Order].foreach(_.items)
+val each  = Schema[Order].foreach(_.items)
 val order = Order(1, List(Item("Widget", 9.99), Item("Gadget", 19.99)))
 
 each.get(order)
@@ -455,24 +451,26 @@ val order = Order(1, List(Item("Widget", 9.99), Item("Gadget", 19.99)))
 
 val prices = Schema[Order].foreach(_.items).focus(_.price)
 
-prices.get(order)            // Chunk(9.99, 19.99)
-prices.update(order)(_ * 2)  // all prices doubled
+prices.get(order)           // Chunk(9.99, 19.99)
+prices.update(order)(_ * 2) // all prices doubled
 ```
 
 `foreach` composes for nested collections: `foreach(_.orders).foreach(_.items)` flattens across both levels.
 
-### Fold
+### Walking every field
 
 `Focus` navigates to a specific field. When you need to process *every* field generically, `fold` visits each one in turn with its name and value and accumulates a result. It's the right tool for building a log line, a field-name-to-value map, or any other traversal that doesn't know the type statically:
 
 ```scala
-val person = Person("Alice", 30)
+case class Config(host: String, port: Int, ssl: Boolean)
+val config = Config("localhost", 8080, false)
 
-val summary = Schema[Person].fold(person)(List.empty[String]) {
-    [N <: String, V] => (acc, field, value) =>
-        s"${field.name}=$value" :: acc
+val summary = Schema[Config].fold(config)(List.empty[String]) {
+    [N <: String, V] =>
+        (acc, field, value) =>
+            s"${field.name}=$value" :: acc
 }.reverse.mkString(", ")
-// "name=Alice, age=30"
+// "host=localhost, port=8080, ssl=false"
 ```
 
 The polymorphic function (the `[N <: String, V] => ...` syntax) receives the exact singleton name type `N` and value type `V` for each field along with a `Field[N, V]` descriptor carrying the field name, tag, default value, and a list of nested field descriptors when the value is itself a `Record`. `fold` respects active transforms: dropped fields are skipped, renamed fields use the new name, and computed fields are included.
@@ -482,19 +480,21 @@ The polymorphic function (the `[N <: String, V] => ...` syntax) receives the exa
 Every `Focus` carries the metadata associated with its field path, readable without round-tripping through `fieldDescriptors`:
 
 ```scala
-val f = Schema[Person].focus(_.age)
+case class Config(host: String, port: Int = 8080, ssl: Boolean = false)
 
-f.doc           // Maybe[String] — documentation attached via .doc(_.age)(...)
-f.deprecated    // Maybe[String] — deprecation reason, if any
-f.default       // Maybe[Int]    — compile-time default from the case class
-f.optional      // Boolean       — true if typed Option or Maybe
-f.fieldId       // Int           — stable wire ID (MurmurHash3-based unless pinned)
-f.constraints   // Chunk[Schema.Constraint] — validators targeting this path
+val f = Schema[Config].focus(_.port)
+
+f.doc         // Maybe[String]            (documentation attached via .doc(_.port)(...))
+f.deprecated  // Maybe[String]            (deprecation reason, if any)
+f.default     // Maybe[Int]               (compile-time default from the case class)
+f.optional    // Boolean                  (true if typed Option or Maybe)
+f.fieldId     // Int                      (stable wire ID, MurmurHash3-based unless pinned)
+f.constraints // Chunk[Schema.Constraint] (validators targeting this path)
 ```
 
 These are useful when generating form UIs, API specs, or documentation from the schema.
 
-## Transforms
+## Reshaping schemas
 
 Sometimes the entire shape needs to change: omitting sensitive fields for an API response, renaming for a different convention, or adding computed values. Transforms reshape a schema's structural type without changing the source type `A` (case classes only). Because serialization, validation, and navigation all read the same structural description, a transform affects all of them consistently.
 
@@ -550,7 +550,9 @@ Schema[Person].flatten
 // Serialized: {"name":"Alice","city":"Portland","zip":"97201"}
 ```
 
-When the field name isn't known at compile time, `drop` and `rename` accept string-based overloads — `drop("field")`, `rename("from", "to")`, `select("f1", "f2")`. `flatten` takes no arguments. `add` always takes a string literal for the new field name (since the name doesn't exist yet to point a lambda at) plus a lambda that computes the value.
+When the field name isn't known at compile time, `drop` and `rename` accept string-based overloads: `drop("field")`, `rename("from", "to")`, `select("f1", "f2")`. `flatten` takes no arguments. `add` always takes a string literal for the new field name (since the name doesn't exist yet to point a lambda at) plus a lambda that computes the value.
+
+These transforms are `transparent inline` and declared to return `Any`; the compiler refines the real result to a re-typed `Schema[A]`, so navigation and conversion against the reshaped view stay fully typed.
 
 ### Serializing transformed schemas
 
@@ -585,7 +587,7 @@ case class Coords(x: Int, y: Int)
 
 val convert = Convert[Point2D, Coords]
 
-convert(Point2D(3, 4))  // Coords(3, 4)
+convert(Point2D(3, 4)) // Coords(3, 4)
 ```
 
 `Convert` extends `scala.Conversion[A, B]`, so providing it as a `given` enables implicit conversion:
@@ -598,7 +600,7 @@ given Convert[Point2D, Coords] = Convert[Point2D, Coords]
 
 def draw(c: Coords): Unit = ???
 
-draw(Point2D(3, 4))  // implicit conversion applied
+draw(Point2D(3, 4)) // implicit conversion applied
 ```
 
 Providing `Convert[A, B]` as a `given` makes any `A` flow into a context expecting `B` without an explicit call site, which can be surprising at a distance. Prefer explicit `.apply` unless the conversion is genuinely ambient.
@@ -642,7 +644,7 @@ When you need to compare two values, patch one into another, or describe mutatio
 
 All three use the same focus lambda syntax (`_.field`) introduced in Navigation.
 
-### Compare
+### Comparing two values
 
 `Compare` gives you a field-by-field view of the differences between two values:
 
@@ -654,17 +656,17 @@ val production = Config("prod.example.com", 443, true)
 
 val d = Compare(staging, production)
 
-d.changed              // true (at least one field differs)
-d.changed(_.host)      // true
-d.changed(_.port)      // true
-d.left(_.host)         // Maybe("staging.example.com")
-d.right(_.host)        // Maybe("prod.example.com")
-d.changes              // Seq(("host", ..., ...), ("port", ..., ...), ("ssl", ..., ...))
+d.changed         // true (at least one field differs)
+d.changed(_.host) // true
+d.changed(_.port) // true
+d.left(_.host)    // Maybe("staging.example.com")
+d.right(_.host)   // Maybe("prod.example.com")
+d.changes         // Seq(("host", ..., ...), ("port", ..., ...), ("ssl", ..., ...))
 ```
 
 `left` and `right` return `Maybe[V]` because the path might cross a sealed trait variant that is not active.
 
-### Modify
+### Batching mutations
 
 `Modify` accumulates field mutations and applies them all at once. Use it when you want to describe a set of changes as a reusable value before applying them:
 
@@ -682,7 +684,7 @@ val updated =
 
 **Modify vs Focus.set/update**: `Focus` is for immediate, single-field operations where you have a value and want to change one thing right now. `Modify` is for building up a batch of changes as a first-class value that you can store, pass around, and apply later. If you only need to change one field, use `Focus`. If you need to describe multiple changes as a unit, use `Modify`.
 
-For sum-type paths, if the active variant does not match, the operation is silently skipped:
+For sum-type paths, if the active variant does not match, the operation is silently skipped. `applyTo` returns the root value unchanged (no error), so chained mutations on the wrong variant are no-ops rather than failures:
 
 ```scala
 sealed trait Shape
@@ -691,11 +693,11 @@ case class Rectangle(width: Double, height: Double) extends Shape
 val someShape: Shape = Circle(5.0)
 
 Modify[Shape]
-    .update(_.Circle.radius)(_ * 2)  // applied if shape is Circle, skipped otherwise
+    .update(_.Circle.radius)(_ * 2) // applied if shape is Circle, skipped otherwise
     .applyTo(someShape)
 ```
 
-### Changeset
+### Diffs as data
 
 `Changeset` computes the difference between two values and stores it as a sequence of patch operations. Unlike `Compare`, which requires both values in memory, a `Changeset` is self-contained data that can be serialized, sent over the wire, and applied independently.
 
@@ -708,9 +710,9 @@ val production = Config("prod.example.com", 443, true)
 
 val cs = Changeset(staging, production)
 
-cs.isEmpty  // false
-cs.operations
-// Chunk(
+val empty = cs.isEmpty // false
+val ops   = cs.operations
+// ops == Chunk(
 //   StringPatch(Chunk("host"), 0, 7, "prod"),
 //   NumericDelta(Chunk("port"), -7637),
 //   SetField(Chunk("ssl"), Structure.Value.Bool(true))
@@ -744,13 +746,13 @@ val serialized: String = Json.encode(cs)
 
 // Receiver: deserialize and apply
 val received = Json.decode[Changeset[Config]](serialized).getOrThrow
-val updated = received.applyTo(staging)
+val updated  = received.applyTo(staging)
 // Result.Success(Config("prod.example.com", 443, true))
 ```
 
 Changesets compose with `andThen`.
 
-## Construction
+## Constructing values with Builder
 
 `Builder[A]` provides type-safe incremental construction of case classes. Fields can be set in any order, but all required fields (those without default values) must be set before calling `.result`. The compiler tracks which fields are still missing:
 
@@ -789,14 +791,14 @@ people.sorted
 ```scala doctest:scope=inherited
 import schema.canEqual
 
-Person("Alice", 30) == Person("Alice", 30)  // true
+Person("Alice", 30) == Person("Alice", 30) // true
 ```
 
 The ordering always follows the case class field declaration order, regardless of any transforms applied to the schema.
 
 ## Structural Introspection
 
-### Metadata
+### Docs, examples, deprecation
 
 Schemas carry documentation, examples, and deprecation markers. These flow into JSON Schema generation, making your API spec reflect the annotations you add in code:
 
@@ -811,7 +813,7 @@ val schema =
 
 Field layout is also available at runtime for building dynamic UIs, generating documentation, or driving generic serialization. `Schema[A].fieldNames` and `Schema[A].fieldDescriptors` return the field names and full `Field` descriptors (name, tag, default, metadata). `schema.defaults` returns a typed `Record` of fields with compile-time defaults, useful for `Builder`-style construction. `schema.toRecord` converts a value into a typed `Record` respecting active transforms. `schema.fieldDocs`, `schema.droppedFields`, and `schema.renamedFields` expose transform metadata for tools that need to inspect what reshaping has been applied.
 
-### Structure
+### The runtime type and value trees
 
 `Structure` is the runtime type description API. It provides two complementary trees: `Structure.Type` describes the shape of a Scala type (fields, variants, element types), and `Structure.Value` holds actual data in an untyped, format-neutral representation. Together they let you traverse, compare, and transform values without knowing their concrete types. This is useful for generic programming, building admin UIs, bridging to dynamic languages, and powering `Changeset`.
 
@@ -840,7 +842,7 @@ Case classes become `Value.Record`, scalars become typed leaves (`Str`, `Integer
 
 ```scala doctest:scope=inherited
 val path = Structure.Path.field("name")
-path.get(dynamic)  // Result.Success(Chunk(Str("Alice")))
+path.get(dynamic) // Result.Success(Chunk(Str("Alice")))
 ```
 
 Path segments include `Field("name")` for record fields, `Variant("Circle")` for sum variants, `Index(0)` for sequence elements, and `Each` for wildcard traversal of all elements.
@@ -849,10 +851,10 @@ Path segments include `Field("name")` for record fields, `Variant("Circle")` for
 
 The `Structure.Type` tree ships with a small set of operations for runtime inspection:
 
-- `Structure.Type.compatible(a, b)` — structural equality check: returns `true` when two `Type`s have the same shape (same field names and types, same variants, recursively). Useful when verifying that a foreign-produced value matches an expected shape.
-- `Structure.Type.fold(tpe)(init)(f)` — depth-first walk that threads an accumulator across every node in the type tree.
-- `Structure.Type.fieldPaths(tpe)` — returns a `Chunk[Chunk[String]]` of all leaf paths through a `Product` type, flattening nested records.
-- `Structure.typedValue[A](value)` — bundles a `Structure.Type` descriptor (from `Structure.of[A]`) together with the encoded `Structure.Value` into a `Structure.TypedValue`, handy for passing fully-described data to a generic receiver.
+- `Structure.Type.compatible(a, b)`: structural equality check, returns `true` when two `Type`s have the same shape (same field names and types, same variants, recursively). Useful when verifying that a foreign-produced value matches an expected shape.
+- `Structure.Type.fold(tpe)(init)(f)`: depth-first walk that threads an accumulator across every node in the type tree.
+- `Structure.Type.fieldPaths(tpe)`: returns a `Chunk[Chunk[String]]` of all leaf paths through a `Product` type, flattening nested records.
+- `Structure.typedValue[A](value)`: bundles a `Structure.Type` descriptor (from `Structure.of[A]`) together with the encoded `Structure.Value` into a `Structure.TypedValue`, handy for passing fully-described data to a generic receiver.
 
 ## Custom Formats
 
@@ -868,7 +870,7 @@ abstract class Codec:
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
 ```
 
-`Writer` receives a stream of structural events and accumulates bytes; `Reader` consumes bytes and answers the same events in reverse to reconstruct the value. Schemas never know which codec is in use — they traverse the value in declaration order and emit events; the codec decides how those events are laid out on the wire.
+`Writer` receives a stream of structural events and accumulates bytes; `Reader` consumes bytes and answers the same events in reverse to reconstruct the value. Schemas never know which codec is in use. They traverse the value in declaration order and emit events; the codec decides how those events are laid out on the wire.
 
 ### The event model
 
@@ -889,13 +891,13 @@ The Reader also exposes `initFields(n)`, `clearFields(n)`, `droppedFieldsMask(n)
 
 ### A minimal codec
 
-A complete codec is three classes: a `Writer` that accumulates bytes from structural events, a `Reader` that answers the same events back from bytes, and a `Codec` that hands them out. The full `Writer`/`Reader` interface is around twenty methods each — one per primitive plus the structural start/end pairs. Rather than reproduce the whole contract here, the following sketch shows the pattern for a line-oriented text format handling strings and ints; a real implementation must cover every primitive the schema pipeline can emit:
+A complete codec is three classes: a `Writer` that accumulates bytes from structural events, a `Reader` that answers the same events back from bytes, and a `Codec` that hands them out. The full `Writer`/`Reader` interface is around twenty methods each (one per primitive plus the structural start/end pairs). Rather than reproduce the whole contract here, the following sketch shows the pattern for a line-oriented text format handling strings and ints; a real implementation must cover every primitive the schema pipeline can emit:
 
 ```scala doctest:expect=skipped
 import java.nio.charset.StandardCharsets
 
 final class LinesWriter extends Codec.Writer:
-    private val sb = StringBuilder()
+    private val sb                                 = StringBuilder()
     def objectStart(name: String, size: Int): Unit = ()
     def objectEnd(): Unit                          = ()
     def field(name: String, id: Int): Unit         = sb.append(name).append('=')
@@ -915,14 +917,16 @@ object Lines extends Codec:
     def newReader(input: Span[Byte])(using Frame): Codec.Reader = LinesReader(input)
 ```
 
-Because `Lines` is an object, you don't need to instantiate it or introduce a `given` — just pass it directly to any schema method:
+Because `Lines` is an object, you don't need to instantiate it or introduce a `given`. Just pass it directly to any schema method:
 
 ```scala doctest:expect=skipped
-Schema[User].encode(alice)(using Lines)    // Span[Byte] in the Lines format
-Schema[User].decode(bytes)(using Lines)    // Result[DecodeException, User]
+Schema[User].encode(alice)(using Lines) // Span[Byte] in the Lines format
+Schema[User].decode(bytes)(using Lines) // Result[DecodeException, User]
 ```
 
-For a complete example, read `JsonWriter` and `JsonReader` (or their Protobuf counterparts) in the same package: they implement the full contract. Abstract members must be supplied (including `fieldParse`, `matchField`, `lastFieldName`, and `captureValue`); optional overrides like `fieldBytes`, `initFields`, `clearFields`, `droppedFieldsMask`, and `release` are where real codecs recover allocation-sensitive performance.
+For a complete example, read `JsonWriter` and `JsonReader` (or their Protobuf counterparts) in the same package: they implement the full contract.
+
+When writing a custom schema for an opaque or wrapper type, you can also construct a `Schema` instance directly using the public factories `Schema.init` (for plain schemas) and `Schema.initFocused` (when you need to track the focused type member). Both take inlined `writeFn` and `readFn` lambdas, plus an optional `getterFn`/`setterFn` pair for lens support. Abstract members must be supplied (including `fieldParse`, `matchField`, `lastFieldName`, and `captureValue`); optional overrides like `fieldBytes`, `initFields`, `clearFields`, `droppedFieldsMask`, and `release` are where real codecs recover allocation-sensitive performance.
 
 ### Safety limits
 
@@ -948,3 +952,44 @@ All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. T
 | `SchemaIndexOutOfBoundsException` | a sequence index falls outside the bounds |
 
 All of these subtype one of the sealed markers `DecodeException`, `ValidationException`, `TransformException`, or `NavigationException`, so pattern-matching on a marker catches a family at once.
+
+## Putting it together
+
+A single `derives Schema` powers JSON and Protobuf serialization, deep lenses, type-level reshaping, and structural diffs, all on the same value:
+
+```scala doctest:scope=nested
+case class Address(city: String, zip: String)
+case class User(id: Int, name: String, email: String, password: String, address: Address) derives Schema
+
+val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", "97201"))
+
+// JSON and Protobuf
+Json.encode(
+    alice
+) // {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
+Protobuf.encode(alice) // Span[Byte] (binary)
+
+// Type-safe lenses reach any depth
+Schema[User].focus(_.address.city).update(alice)(_.toUpperCase)
+// User(1, "Alice", "alice@example.com", "secret", Address("PORTLAND", "97201"))
+
+// Type-level reshaping: drop sensitive fields, rename, add computed
+val publicView =
+    Schema[User]
+        .drop(_.password)
+        .rename(_.name, "displayName")
+// Encodes alice as: {"id":1,"displayName":"Alice","email":"alice@example.com","address":{"city":"Portland","zip":"97201"}}
+
+// Diffs as data: capture just what changed, ship, replay
+val renamed = alice.copy(name = "Alicia")
+val cs      = Changeset(alice, renamed) // Produces a changeset with the new name patch
+cs.applyTo(alice) // Result.Success(renamed)
+```
+
+## Cross-platform behavior
+
+kyo-schema runs on JVM, Scala.js, and Scala Native, but two areas behave differently across platforms:
+
+- **ASCII bytes to String conversion**: the JVM uses a zero-copy path that constructs `String` directly from the underlying byte array via the private LATIN1 String constructor, sharing the array without copying. Scala.js and Scala Native copy the bytes via `new String(bytes, StandardCharsets.US_ASCII)`. This is an implementation detail that does not affect correctness, but may appear in allocations-per-request profiling on high-throughput JVM workloads.
+
+- **Regex support in `checkPattern`**: `checkPattern` uses `java.util.regex.Pattern`. Scala.js and Scala Native emulate this API but do not support all JVM regex features. Features unavailable off-JVM include possessive quantifiers (`a++`, `a*+`), atomic groups (`(?>...)`), some Unicode property classes (`\p{...}`), and lookbehind on older JS engines. For cross-platform constraints, stick to POSIX features: character classes, anchors, alternation, basic quantifiers, capture groups, backreferences, and simple lookahead.

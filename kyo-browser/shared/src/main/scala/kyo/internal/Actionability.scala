@@ -290,7 +290,7 @@ private[kyo] object Actionability:
                         env.exceptionDetails match
                             case Present(_) => Result.Failure(Reason.NotAttached)
                             case Absent =>
-                                env.result.flatMap(_.value) match
+                                (env.result.flatMap(_.value): @unchecked) match
                                     case Present(v) => decodeValue(v, ref)
                                     case Absent     => Result.Failure(Reason.NotAttached)
                     case Absent =>
