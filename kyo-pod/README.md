@@ -9,11 +9,21 @@ Kyo's Docker and Podman client. A single API compiles across JVM, JavaScript, an
 
 You get typed, streaming access to the full Docker API — containers, exec, logs, stats, images, networks, volumes, checkpointing — without wrapping CLI commands or juggling blocking I/O. Long-running operations stream incrementally: log tails, stats snapshots, exec stdout/stderr, image-pull progress, and build progress all emit from the first byte rather than buffering. Health checks plug in via five built-in strategies (exec, TCP port, HTTP GET, log grep, custom) or a bare function. Stack startup with health gates, fire-and-forget batch jobs with auto-teardown, and test-fixture brackets are first-class patterns, not code you write on top. Errors surface as a sealed `ContainerException` hierarchy for granular recovery, concurrent daemon calls are bounded by a `Meter`, and advanced features (CRIU checkpoint/restore, registry auth from `~/.docker/config.json`, multi-step builds with buildArgs and labels) are in the core surface.
 
+<!-- doctest:setup
+```scala
+import kyo.*
+import Container.*
+import ContainerImage.*
+val alpine: ContainerImage = ContainerImage.Alpine
+val img: ContainerImage    = ContainerImage("alpine", "3.19")
+```
+-->
+
 ## Getting Started
 
 Add the dependency to your `build.sbt`:
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %% "kyo-pod" % "<latest version>"
 ```
 
@@ -67,12 +77,12 @@ A running container accepts direct lifecycle commands:
 ```scala
 Container.init(alpine).map { c =>
   for
-    _ <- c.pause                    // freeze processes via SIGSTOP
-    _ <- c.unpause                  // resume via SIGCONT
-    _ <- c.restart                  // stop then start
-    _ <- c.stop                     // SIGTERM, wait up to stopTimeout
-    _ <- c.kill(Signal.SIGKILL)     // immediate termination
-    _ <- c.remove(force = true)     // delete the container
+    _ <- c.pause                            // freeze processes via SIGSTOP
+    _ <- c.unpause                          // resume via SIGCONT
+    _ <- c.restart                          // stop then start
+    _ <- c.stop                             // SIGTERM, wait up to stopTimeout
+    _ <- c.kill(Container.Signal.SIGKILL)   // immediate termination
+    _ <- c.remove(force = true)             // delete the container
   yield ()
 }
 ```
@@ -98,7 +108,7 @@ Container.init(alpine).map { c =>
 
 For continuous observation, `statsStream` emits a new snapshot at a fixed interval:
 
-```scala
+```scala doctest:expect=skipped
 // Emit one Stats value every 200ms (default interval)
 val live: Stream[Container.Stats, Async & Abort[ContainerException]] =
   c.statsStream
@@ -119,7 +129,7 @@ Lifecycle state transitions follow a predictable machine:
 
 Running a command inside the container comes in three flavors:
 
-```scala
+```scala doctest:expect=skipped
 // Wait for completion, collect stdout/stderr
 val result: Container.ExecResult < (Async & Abort[ContainerException]) =
   c.exec("ls", "-la", "/etc")
@@ -141,7 +151,7 @@ Each entry in `execStream`'s output is a `LogEntry(source, content)` where `sour
 
 Container logs accumulate whatever the main process writes to stdout/stderr. Read them four ways:
 
-```scala
+```scala doctest:expect=skipped
 val recent     = c.logs                              // stdout + stderr, last 1000 lines (default)
 val asText     = c.logsText                          // same, flattened to a string
 val small      = c.logs(tail = 100)                  // last 100 lines only
@@ -320,8 +330,8 @@ Create a network, connect containers to it, and let the scope clean up:
 ```scala
 Scope.run {
   Container.Network.init(Network.Config.default.copy(name = "backend")).map { netId =>
-    Container.initWith(alpine.name("server")) { server =>
-      Container.initWith(alpine.name("client")) { client =>
+    Container.initWith(Container.Config(alpine).name("server")) { server =>
+      Container.initWith(Container.Config(alpine).name("client")) { client =>
         for
           _ <- Container.Network.connect(netId, server.id, aliases = Chunk("srv"))
           _ <- Container.Network.connect(netId, client.id)
@@ -339,10 +349,10 @@ The network is removed when the scope exits. Containers are removed first (they'
 
 For networks that outlive the creating scope, use `Network.initUnscoped` and call `Network.remove(id)` manually:
 
-```scala
+```scala doctest:expect=skipped
 Container.Network.initUnscoped(cfg)   // returns Id, no scope cleanup
 Container.Network.list                // all networks
-Container.Network.list(filters = …)   // filtered listing
+Container.Network.list(filters = ...)   // filtered listing
 Container.Network.inspect(id)         // full network info
 Container.Network.disconnect(net, c)  // detach a container
 Container.Network.prune               // remove unused networks
@@ -357,7 +367,7 @@ Volumes hold persistent data that can be shared across containers or survive a c
 ```scala
 Scope.run {
   Container.Volume.init(Volume.Config.default.copy(name = Present(Volume.Id("mydata")))).map { _ =>
-    Container.initWith(alpine.volume(Volume.Id("mydata"), Path("/data"))) { c =>
+    Container.initWith(Container.Config(alpine).volume(Volume.Id("mydata"), Path("/data"))) { c =>
       c.exec("sh", "-c", "echo hello > /data/file.txt")
     }
   }
@@ -370,7 +380,7 @@ The volume is removed when the scope exits. As with networks, container cleanup 
 
 For volumes that outlive the scope, `Volume.initUnscoped` returns the full `Info` (with daemon-assigned name, mountpoint, and driver options). Call `Volume.remove(id)` manually.
 
-```scala
+```scala doctest:expect=skipped
 Container.Volume.initUnscoped(cfg)    // returns Info
 Container.Volume.list
 Container.Volume.inspect(id)
@@ -508,7 +518,7 @@ On timeout, the container is still torn down (via scope) and the result carries 
 `initWith` provides bracket semantics — create a container, run a function with it, clean up automatically:
 
 ```scala
-val check = Container.initWith(alpine) { c =>
+val check = Container.initWith(Container.Config(alpine)) { c =>
   c.exec("echo", "from inside").map(_.stdout.trim == "from inside")
 }
 ```
@@ -531,7 +541,7 @@ All container operations fail with `Abort[ContainerException]`. The hierarchy is
 
 ### Recovery Patterns
 
-```scala
+```scala doctest:expect=skipped
 // Fall back to a different image if the first isn't available
 val withFallback =
   Abort.recover[ContainerImageMissingException] { _ =>
@@ -570,7 +580,7 @@ c.map { container =>
 
 All three `BackendConfig` variants accept a `Meter` that bounds concurrent daemon operations. Useful for load-testing or when the daemon is the bottleneck:
 
-```scala
+```scala doctest:expect=skipped
 Meter.initSemaphore(8).map { meter =>
   Container.withBackendConfig(_.AutoDetect(meter = meter)) {
     // at most 8 backend calls in flight at once

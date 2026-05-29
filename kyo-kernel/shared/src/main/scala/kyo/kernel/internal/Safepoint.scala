@@ -43,7 +43,7 @@ final class Safepoint private () extends Trace.Owner with Serializable:
     private[kernel] def exit(): Unit =
         state = state.decrementDepth
 
-    private[kernel] def getInterceptor(): Interceptor = interceptor
+    private[kyo] def getInterceptor(): Interceptor = interceptor
 
     private[kernel] def setInterceptor(newInterceptor: Interceptor): Unit =
         interceptor = newInterceptor

@@ -1,0 +1,2 @@
+# Failure: one failing fence, doctest must exit 1.
+-> doctest

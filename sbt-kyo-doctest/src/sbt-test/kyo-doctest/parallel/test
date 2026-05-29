@@ -1,0 +1,2 @@
+# Parallel: kyoDoctestParallel := 1, two passing fences, doctest exits 0.
+> doctest

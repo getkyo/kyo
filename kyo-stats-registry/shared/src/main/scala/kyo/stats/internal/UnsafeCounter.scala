@@ -24,7 +24,7 @@ class UnsafeCounter extends Serializable {
         (Long.MaxValue - a) + b
     }
 
-    private[kyo] def delta()(implicit _au: AllowUnsafe) = {
+    def delta()(implicit _au: AllowUnsafe) = {
         val curr  = addExact(get(), last)
         val delta = if (curr >= last) curr - last else findDelta(last, curr)
         last = curr

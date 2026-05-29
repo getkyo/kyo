@@ -79,7 +79,14 @@ Global / concurrentRestrictions := {
         Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
         Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
         Tags.limit(Tags.Test, testLimit),
-        Tags.limit(Tags.ForkedTestGroup, forkLimit)
+        Tags.limit(Tags.ForkedTestGroup, forkLimit),
+        // Cap concurrent doctest forks. Each fork already uses dotty's internal
+        // multi-thread backend; allowing 2 keeps cross-module work overlapping
+        // without saturating the host. The plugin adds this same limit via
+        // `+=` in globalSettings, but our `:=` above replaces
+        // concurrentRestrictions wholesale, so we restate it here. See
+        // KyoDoctestPlugin.scala for the tag's role.
+        Tags.limit(DoctestTag, 2)
     )
 }
 
@@ -94,8 +101,30 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
+    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    doctestPredef := Seq("import kyo.*"),
+    // Non-LTS modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
+    // dedups naturally. LTS fallback modules (3.3.7) must NOT have kyo-doctest on the Test
+    // compile classpath, because its scala3-library 3.8.3 clashes with the project's 3.3.7
+    // ("package scala contains object and package with same name: caps"). For those the
+    // plugin's doctestExtraClasspath path supplies kyo-doctest at fork time only, and
+    // reconcileClasspath strips the mismatched scala3-library before the fork starts.
+    Test / unmanagedJars ++= {
+        if (scalaVersion.value == scala3Version)
+            (LocalProject("kyo-doctest") / Compile / fullClasspath).value
+        else
+            Seq.empty[Attributed[File]]
+    },
+    doctestExtraClasspath := {
+        if (scalaVersion.value == scala3Version)
+            Seq.empty[File]
+        else
+            (LocalProject("kyo-doctest") / Compile / fullClasspath).value.files
+    }
 )
+
+Global / excludeLintKeys += doctestPredef
+Global / excludeLintKeys += doctestExtraClasspath
 
 Global / onLoad := {
 
@@ -172,7 +201,7 @@ lazy val kyoJVM: Project = project
         //   3. The unidoc sidebar has no per-artifact / per-module grouping.
         //      The flat alphabetical index is the only layout scaladoc emits.
     )
-    .disablePlugins(MimaPlugin)
+    .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
@@ -214,7 +243,10 @@ lazy val kyoJVM: Project = project
         `kyo-compat-ce`.jvm,
         `kyo-compat-ox`.jvm,
         `kyo-compat-twitter-future`.jvm,
-        `kyo-compat`
+        `kyo-compat`,
+        `kyo-doctest`.jvm,
+        `sbt-kyo-doctest`,
+        `root-readme`
     )
 
 lazy val kyoJS = project
@@ -223,7 +255,7 @@ lazy val kyoJS = project
         name := "kyoJS",
         `kyo-settings`
     )
-    .disablePlugins(MimaPlugin)
+    .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
         `kyo-scheduler`.js,
         `kyo-data`.js,
@@ -260,7 +292,7 @@ lazy val kyoNative = project
         name := "kyoNative",
         `native-settings`
     )
-    .disablePlugins(MimaPlugin)
+    .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
         `kyo-data`.native,
         `kyo-prelude`.native,
@@ -392,6 +424,7 @@ lazy val `kyo-scheduler-finagle` =
             }
         )
         .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .dependsOn(`kyo-scheduler`)
 
 lazy val `kyo-data` =
@@ -421,6 +454,9 @@ lazy val `kyo-kernel` =
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.settings(
+            doctestFreshDriver := true
+        ))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
@@ -487,6 +523,9 @@ lazy val `kyo-offheap` =
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.settings(
+            doctestScalacOptions := Seq("-release", "22")
+        ))
         .nativeSettings(
             `native-settings`,
             Compile / doc / sources := Seq.empty
@@ -504,6 +543,12 @@ lazy val `kyo-direct` =
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.settings(
+            // dotty-cps-async macros register denotations into the compiler symbol table, which the warm
+            // Driver invalidates on subsequent Runs ("denotation class SeqAsyncShift invalid in run N").
+            // Rebuild the Compiler per fence to side-step the assertion.
+            doctestFreshDriver := true
+        ))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
@@ -778,6 +823,7 @@ lazy val `kyo-compat-future` =
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
+        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .jsSettings(`js-settings`, mimaCheck(false))
         .nativeSettings(`native-settings`, mimaCheck(false))
 
@@ -807,6 +853,10 @@ lazy val `kyo-compat-kyo` =
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
+        .jvmConfigure(_.settings(
+            // kyo-compat README lives at kyo-compat/ (three levels up from jvm/)
+            doctestSources := Seq(baseDirectory.value / ".." / ".." / ".." / "README.md")
+        ))
 
 lazy val `kyo-compat-zio` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
@@ -839,6 +889,7 @@ lazy val `kyo-compat-zio` =
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
+        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
 
 lazy val `kyo-compat-ce` =
     crossProject(JSPlatform, JVMPlatform)
@@ -869,6 +920,7 @@ lazy val `kyo-compat-ce` =
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
+        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
 
 lazy val `kyo-compat-ox` =
     crossProject(JVMPlatform)
@@ -897,6 +949,7 @@ lazy val `kyo-compat-ox` =
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
+        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
 
 lazy val `kyo-compat-twitter-future` =
     crossProject(JVMPlatform)
@@ -926,6 +979,7 @@ lazy val `kyo-compat-twitter-future` =
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
             }
         )
+        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
 
 // IDE/navigation anchor for the cross-binding test suite. The same shared+jvm
 // test sources are picked up by all 6 bindings via `unmanagedSourceDirectories`;
@@ -935,6 +989,7 @@ lazy val `kyo-compat-tests` =
     project
         .in(file("kyo-compat/test"))
         .dependsOn(`kyo-compat-future`.jvm)
+        .disablePlugins(KyoDoctestPlugin)
         .settings(
             `kyo-settings`,
             scalaVersion       := scala3LTSVersion,
@@ -1159,6 +1214,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-scheduler-zio`)
         .dependsOn(`kyo-scheduler-cats`)
         .disablePlugins(MimaPlugin)
+        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
             `kyo-settings`,
             Test / testForkedParallel := true,
@@ -1215,40 +1271,42 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"                               %% "zio-blocks-schema"     % "0.017"
         )
 
-lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
-
-addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
-
-lazy val readme =
+lazy val `kyo-doctest` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .in(file("target/readme"))
-        .enablePlugins(MdocPlugin)
+        .in(file("kyo-doctest"))
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-parse`)
+        .dependsOn(`kyo-direct` % Test)
+        .disablePlugins(MimaPlugin)
+        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
             `kyo-settings`,
-            mdocIn  := new File("./../../README-in.md"),
-            mdocOut := new File("./../../README-out.md"),
-            scalacOptions --= compilerOptionFailDiscard +: scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
-            rewriteReadmeFile := {
-                val readmeFile       = new File("README.md")
-                val targetReadmeFile = new File("target/README-in.md")
-                val contents         = IO.read(readmeFile)
-                val newContents =
-                    contents
-                        .replaceAll("```scala\n", "```scala mdoc:reset\n")
-                        .replaceAll("```scala mdoc:skip\n", "```scala\n")
-                IO.write(targetReadmeFile, newContents)
-            }
+            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala3Version
         )
+
+// Validates the root README.md (repo-level, outside any module directory).
+// The smart default does not reach the repo root from target/root-readme/,
+// so doctestSources is overridden to point there explicitly.
+lazy val `root-readme` =
+    project
+        .in(file("target/root-readme"))
+        .disablePlugins(MimaPlugin)
         .dependsOn(
-            `kyo-core`,
-            `kyo-direct`,
-            `kyo-bench`,
-            `kyo-zio`,
-            `kyo-cats`,
-            `kyo-caliban`,
-            `kyo-combinators`
+            `kyo-core`.jvm,
+            `kyo-direct`.jvm,
+            `kyo-bench`.jvm,
+            `kyo-zio`.jvm,
+            `kyo-cats`.jvm,
+            `kyo-caliban`.jvm,
+            `kyo-combinators`.jvm
+        )
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            doctestSources := Seq((ThisBuild / baseDirectory).value / "README.md")
         )
 
 lazy val `openssl-native-settings` = Seq(
@@ -1308,9 +1366,11 @@ lazy val scalaFixScalaVersion = V.scala213
 
 lazy val `kyo-scalafix` = (project in file("scalafix"))
     .aggregate(`kyo-rules`, `kyo-scalafix-input`, `kyo-scalafix-output`, `kyo-scalafix-test`)
+    .disablePlugins(KyoDoctestPlugin)
     .settings(publish / skip := true)
 
 lazy val `kyo-rules` = (project in file("scalafix/rules"))
+    .disablePlugins(KyoDoctestPlugin)
     .settings(
         moduleName                             := "kyo-rules",
         libraryDependencies += "ch.epfl.scala" %% "scalafix-core" % V.scalafixVersion,
@@ -1318,6 +1378,7 @@ lazy val `kyo-rules` = (project in file("scalafix/rules"))
     )
 
 lazy val `kyo-scalafix-input` = (project in file("scalafix/input"))
+    .disablePlugins(KyoDoctestPlugin)
     .settings(
         publish / skip                     := true,
         scalaVersion                       := scala3Version,
@@ -1328,6 +1389,7 @@ lazy val `kyo-scalafix-input` = (project in file("scalafix/input"))
     )
 
 lazy val `kyo-scalafix-output` = (project in file("scalafix/output"))
+    .disablePlugins(KyoDoctestPlugin)
     .settings(
         publish / skip    := true,
         scalaVersion      := scala3Version,
@@ -1339,6 +1401,7 @@ lazy val `kyo-scalafix-output` = (project in file("scalafix/output"))
     )
 
 lazy val `kyo-scalafix-test` = (project in file("scalafix/tests"))
+    .disablePlugins(KyoDoctestPlugin)
     .settings(
         scalaVersion                           := scalaFixScalaVersion,
         publish / skip                         := true,
@@ -1351,6 +1414,25 @@ lazy val `kyo-scalafix-test` = (project in file("scalafix/tests"))
     .dependsOn(`kyo-rules`)
     .enablePlugins(ScalafixTestkitPlugin)
 
+// --- sbt-kyo-doctest (sbt plugin; pairs with kyo-doctest library)
+//
+// Scala 2.12 sbt plugin that forks the kyo-doctest library CLI to validate Markdown fences.
+// Aggregated into kyoJVM only. Behavioral tests run via `sbt-kyo-doctest/scripted`.
+lazy val `sbt-kyo-doctest` = (project in file("sbt-kyo-doctest"))
+    .enablePlugins(SbtPlugin)
+    .disablePlugins(KyoDoctestPlugin)
+    .settings(
+        name               := "sbt-kyo-doctest",
+        scalaVersion       := "2.12.20",
+        crossScalaVersions := Seq("2.12.20"),
+        sbtPlugin          := true,
+        scriptedLaunchOpts := Seq(
+            "-Xmx1024M",
+            "-Dplugin.version=" + version.value
+        ),
+        scriptedBufferLog := false
+    )
+
 // --- kyo-compat (in-tree sbt plugin; published as artifact `kyo-compat`)
 //
 // First SbtPlugin module in kyo. Scala 2.12 only (sbt 1.x runtime).
@@ -1359,6 +1441,7 @@ lazy val `kyo-scalafix-test` = (project in file("scalafix/tests"))
 // Its behavioral tests are scripted tests, run in CI via `kyo-compat/scripted`.
 lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
     .enablePlugins(SbtPlugin)
+    .disablePlugins(KyoDoctestPlugin)
     .settings(
         moduleName         := "kyo-compat",
         scalaVersion       := "2.12.20",

@@ -1,5 +1,39 @@
 # kyo-compat
 
+<!-- doctest:setup
+```scala
+import kyo.compat.*
+import scala.util.{Try, Success, Failure}
+import scala.concurrent.duration.*
+import java.util.concurrent.TimeoutException
+
+// Domain stubs used throughout examples
+case class User(name: String, id: String) {
+  def placeholder(id: String): User = User("placeholder", id)
+}
+object User {
+  def placeholder(id: String): User = User("placeholder", id)
+}
+case class Profile(user: User, followers: Int)
+case class Response(body: String)
+class NetworkError(msg: String) extends Exception(msg)
+
+val id = "user-42"
+def fetchUser(id: String): CIO[User]              = CIO.defer(User("alice", id))
+def fetchUserFromCache(id: String): CIO[User]     = CIO.defer(User("alice-cached", id))
+def countFollowers(id: String): CIO[Int]          = CIO.defer(42)
+def slowFetch(key: String): CIO[String]           = CIO.defer(s"slow-$key")
+def fastFetch(key: String): CIO[String]           = CIO.defer(s"fast-$key")
+def fetch(url: String): CIO[String]               = CIO.defer(s"fetched-$url")
+def query(q: String): CIO[String]                 = CIO.defer(s"result-$q")
+case class Request(id: String)
+def process(req: Request): CIO[Response]          = CIO.defer(Response("ok"))
+val req: Request                                  = Request("req-1")
+def wrapWithContext(e: Throwable): Throwable      = new RuntimeException("wrapped", e)
+type Result = String
+```
+-->
+
 kyo-compat lets you write a library once against the `kyo.compat.*` surface and ship it to all 6 backends. Consumers pick the runtime at deploy time (ZIO, Cats Effect, scala.concurrent.Future, Ox, Twitter Future, or Kyo); each pulls only its own runtime's jar.
 
 - **Overhead-free.** Every method is `inline def` and lowers at the call site to the backend's primitive. No typeclass dispatch, no adapter layer.
@@ -26,7 +60,7 @@ Kyo, ZIO, and Cats Effect alias a backend effect type directly: `A < S`, `ZIO`, 
 
 Write a library once against `CIO`. Here a greeting is assembled from two values fetched concurrently:
 
-```scala
+```scala doctest:scope=env:greeter
 import kyo.compat.*
 
 object Greeter:
@@ -42,27 +76,25 @@ end Greeter
 
 `Greeter` compiles unchanged against every `kyo-compat-X` artifact. The consumer picks a backend at deploy time with one dependency. For Cats Effect:
 
-```scala
+```scala doctest:expect=skipped
 // build.sbt
 libraryDependencies += "io.getkyo" %% "kyo-compat-ce" % "<latest version>"
 ```
 
 `unsafeRun` then materializes the `CIO` into a `scala.concurrent.Future`:
 
-```scala
+```scala doctest:scope=env:greeter
 import scala.concurrent.Await
-import scala.concurrent.duration.*
 
-@main def run(): Unit =
-    println(Await.result(Greeter.greeting.unsafeRun, 30.seconds))
-    // hello from kyo-compat 1.0
+val greeting: scala.concurrent.Future[String] = Greeter.greeting.unsafeRun
+// hello from kyo-compat 1.0
 ```
 
 Linking `kyo-compat-zio` instead runs the same `Greeter` on ZIO, `kyo-compat-future` on `scala.concurrent.Future`, and so on. `unsafeRun` returns `scala.concurrent.Future[A]` on every binding, with the backend's default global runtime (CE's `IORuntime`, ZIO's `Runtime`, etc.) bound inside it. The Ox binding's `unsafeRun` additionally needs a `given ExecutionContext` to bridge the Ox computation onto a `Future`; the Kyo binding's needs only a `Frame`, which the compiler synthesizes at the call site; the other four take no user-supplied implicit.
 
 For error recovery, use `.recover` anywhere in the chain:
 
-```scala
+```scala doctest:scope=env:greeter
 val resilient: CIO[String] =
     Greeter.greeting.recover {
         case _ => CIO.value("hello (offline)")
@@ -88,7 +120,7 @@ An exception escaping the thunk is caught and surfaced through the failure chann
 
 `CIO.lift(effect)` wraps an already-constructed, pure backend effect value as a `CIO[A]` (a `cats.effect.IO`, a `zio.ZIO`, a Kyo `A < S`, or a finished `Future`). `CIO.deferLift { ... }` instead *suspends* side-effecting code that produces the backend effect, re-running it on every materialization; on Future the block receives an ambient `LocalCtx` and yields a `Future[A]`, on Ox an ambient `Ox` capability. (`CIO.defer` is the matching suspension for code that produces a plain, non-effect value.) `c.lower` extracts the backend carrier back out.
 
-```scala
+```scala doctest:expect=skipped
 val onCe:  CIO[Int] = CIO.lift(cats.effect.IO.pure(42))
 val onZio: CIO[Int] = CIO.lift(zio.ZIO.succeed(42))
 val onFut: CIO[Int] =
@@ -139,7 +171,7 @@ val program: CIO[String] =
 `for`-comprehensions work the same way across every backend:
 
 ```scala
-def loadProfile(id: Int): CIO[Profile] =
+def loadProfile(id: String): CIO[Profile] =
     for
         user      <- fetchUser(id)
         followers <- countFollowers(user.id)
@@ -474,7 +506,7 @@ The carrier is `cats.effect.IO[A]`. `CIO.acquireReleaseWith` is `IO.bracket`; re
 
 Requires Scala 3. Add `kyo-compat-future` as your local dev dependency. It has no third-party transitive deps, so the compile and IDE loop is fast:
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %% "kyo-compat-future" % "<latest version>"
 ```
 
@@ -490,7 +522,7 @@ The bundled `kyo-compat` sbt plugin extends `sbt-projectmatrix`'s `ProjectMatrix
 
 #### Setup
 
-```scala
+```scala doctest:expect=skipped
 // project/plugins.sbt
 addSbtPlugin("io.getkyo"          % "kyo-compat"                    % "<latest version>")
 addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.10.1")
@@ -500,7 +532,7 @@ addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % "0.5.10")
 addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2")
 ```
 
-```scala
+```scala doctest:expect=skipped
 // build.sbt
 import sbt.VirtualAxis
 
@@ -577,7 +609,7 @@ For per-platform settings, `compatLibrary(...)` returns a matrix on which `.jvmS
 
 `.bindLocally(backend, local)` (and `.bindAllLocally(map)`) swap the auto-injected `libraryDependencies += "io.getkyo" %%% s"kyo-compat-<id>"` for a project-level `dependsOn(local)`. Used by contributors testing local snapshots and by in-repo modules wiring against unpublished compat backends:
 
-```scala
+```scala doctest:expect=skipped
 lazy val myLib = (projectMatrix in file("my-lib"))
     .compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))
     .bindLocally(KyoLib, myInTreeKyoCompatKyo: ProjectReference)
@@ -589,7 +621,7 @@ Bindings must be set BEFORE first access to the matrix's `componentProjects` / `
 
 When one compat library depends on another, chain `.dependsOn(other)` on the matrix returned by `compatLibrary(...)`. The wiring is backend-aware out of the box because `CompatBackendAxis` extends `VirtualAxis.WeakAxis`: each row in the dependent matrix resolves to the matching-backend row in the dependee.
 
-```scala
+```scala doctest:expect=skipped
 lazy val myFetcher = (projectMatrix in file("my-fetcher"))
     .compatLibrary(KyoLib, ZioLib)(VirtualAxis.jvm, VirtualAxis.js)(Seq("3.3.4"))
 
@@ -604,7 +636,7 @@ lazy val myHttp = (projectMatrix in file("my-http"))
 
 For a "test or publish all backends" CI target, `.aggregate(id)` returns a plain `Project` that fans every per-(backend, platform) row of the matrix into one task target:
 
-```scala
+```scala doctest:expect=skipped
 lazy val myLibAll = myLib.aggregate("my-lib-all")
 
 // sbt myLibAll/test          -> runs every (backend, platform) cell

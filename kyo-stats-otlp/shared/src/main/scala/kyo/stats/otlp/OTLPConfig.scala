@@ -56,8 +56,8 @@ case class OTLPConfig(
 
 object OTLPConfig:
 
-    /** Returns Absent if OTEL_EXPORTER_OTLP_ENDPOINT is not set — export is disabled. */
-    private[otlp] def loadIfEnabled()(using AllowUnsafe) =
+    /** Returns Absent if OTEL_EXPORTER_OTLP_ENDPOINT is not set, export is disabled. */
+    def loadIfEnabled()(using AllowUnsafe) =
         val endpoint = java.lang.System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
         if endpoint == null then Absent
         else
