@@ -1,3 +1,33 @@
+<!-- doctest:setup
+```scala
+import kyo.*
+import kyo.HttpPath.*
+
+case class User(id: Int, name: String) derives Schema
+case class CreateUser(name: String, email: String) derives Schema
+case class Post(id: Int, title: String) derives Schema
+case class StockPrice(symbol: String, price: Double) derives Schema
+case class Tick(count: Int, timestamp: Long) derives Schema
+case class NotFound(message: String) derives Schema
+case class Forbidden(reason: String) derives Schema
+case class Resource(id: Int) derives Schema
+case class Data(value: String) derives Schema
+case class Credentials(username: String, password: String) derives Schema
+case class ApiError(message: String) derives Schema
+
+def lookupUser(id: Int): Maybe[User] < Sync = Present(User(id, "Alice"))
+def checkPermission(req: HttpRequest[?]): Boolean < Sync = true
+def findResource(id: Int): Maybe[Resource] < Sync = Present(Resource(id))
+def authenticate(creds: Credentials): User < Sync = User(1, creds.username)
+def isAuthorized(req: HttpRequest[?]): Boolean = true
+def getData(): String = "data"
+def validateToken(token: String): Boolean < Sync = true
+
+val handler1 = HttpHandler.getText("health1") { _ => "ok" }
+val handler2 = HttpHandler.getText("health2") { _ => "ok" }
+```
+-->
+
 # kyo-http
 
 Kyo's HTTP/1.1 client and server module. Both client and server share a single API that compiles across JVM, JavaScript, and Scala Native, with platform-specific backends handling the actual I/O:
@@ -14,7 +44,7 @@ The library handles JSON, text, and binary content types with automatic serializ
 
 Add the dependency to your `build.sbt`:
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %% "kyo-http" % "<latest version>"
 ```
 
@@ -35,16 +65,12 @@ Text and binary methods (`getText`, `postText`, `putText`, `patchText`, `getBina
 For JSON, the library needs to know how to serialize and deserialize your types. This is provided by a `Schema` instance, which can be derived automatically for case classes and sealed types:
 
 ```scala
-case class User(id: Int, name: String) derives Schema
-
 val user = HttpClient.getJson[User]("https://api.example.com/users/1")
 ```
 
 For requests with a body, you specify the response type and the body type is inferred:
 
 ```scala
-case class CreateUser(name: String, email: String) derives Schema
-
 // User is the response type, CreateUser is inferred from the body argument
 val created =
   HttpClient.postJson[User](
@@ -93,8 +119,6 @@ By default, `*Response` methods also fail on non-2xx. Pass `failOnError = false`
 SSE and NDJSON responses are returned as a `Stream` that emits values as they arrive from the server:
 
 ```scala
-case class StockPrice(symbol: String, price: Double) derives Schema
-
 // Consumes an SSE endpoint, parsing each event's data as StockPrice
 val events = HttpClient.getSseJson[StockPrice]("https://api.example.com/prices")
 
@@ -169,7 +193,6 @@ The `HttpClient` methods use a default client backed by a thread-safe connection
 ```scala
 for
   client <- HttpClient.init(
-    HttpBackend.Client.default,
     maxConnectionsPerHost = 50,
     idleConnectionTimeout = 30.seconds
   )
@@ -209,12 +232,7 @@ For GET/DELETE, both the path and response type are inferred from the handler fu
 
 `HttpServer.init` binds one or more handlers to a port:
 
-```scala
-import kyo.*
-
-case class User(id: Int, name: String) derives Schema
-case class CreateUser(name: String) derives Schema
-
+```scala doctest:scope=inherited
 val getUsers =
   HttpHandler.getJson("users") { req =>
     User(1, "Alice")
@@ -233,8 +251,8 @@ val server = HttpServer.init(getUsers, createUser, HttpHandler.health())
 
 To bind to a specific host and port, pass an `HttpServerConfig`:
 
-```scala
-val server = HttpServer.init(
+```scala doctest:scope=inherited
+val server2 = HttpServer.init(
   HttpServerConfig.default
     .port(8080)          // fixed port instead of OS-assigned
     .host("127.0.0.1")   // bind to localhost only (default is "0.0.0.0", all interfaces)
@@ -252,12 +270,10 @@ Streaming handlers return a `Stream` that the server writes to the response as v
 #### Server-Sent Events
 
 ```scala
-case class Tick(count: Int, timestamp: Long) derives Schema
-
 val handler =
   HttpHandler.getSseJson[Tick]("ticks") { req =>
-    Stream.init(1, 2, 3).map { n =>
-      Clock.now.map(now => HttpSseEvent(Tick(n, now.toEpochMilli)))
+    Stream.init(Seq(1, 2, 3)).map { n =>
+      Clock.now.map(now => HttpSseEvent(data = Tick(n, now.toDuration.toMillis)))
     }
   }
 ```
@@ -269,7 +285,7 @@ val handler =
 ```scala
 val handler =
   HttpHandler.getNdJson[Tick]("stream") { req =>
-    Stream.init(Tick(1, 0L), Tick(2, 1L), Tick(3, 2L))
+    Stream.init(Seq(Tick(1, 0L), Tick(2, 1L), Tick(3, 2L)))
   }
 ```
 
@@ -378,10 +394,7 @@ def handle(req: HttpRequest["id" ~ Int & "name" ~ String]) =
 
 An `HttpRoute` defines the full contract of an endpoint: the HTTP method, path, which fields to extract from the request, what the response looks like, and how errors map to status codes. You build a route by chaining `.request(...)` and `.response(...)` calls that each add typed fields:
 
-```scala
-case class User(id: Int, name: String, email: String) derives Schema
-case class NotFound(message: String) derives Schema
-
+```scala doctest:scope=inherited
 val route = HttpRoute
   .getRaw("users" / Capture[Int]("id"))
   .request(
@@ -398,7 +411,7 @@ This route extracts an `id` from the path, a `page` query parameter with a defau
 
 Each call in the chain adds fields to the route's type parameters, which track request fields, response fields, and error types separately:
 
-```scala
+```scala doctest:expect=skipped
 val route: HttpRoute[
   "id" ~ Int & "page" ~ Int & "authorization" ~ Maybe[String], // request fields
   "body" ~ User, // response fields
@@ -461,7 +474,7 @@ Response definitions also support `header` / `headerOpt`, `status(HttpStatus.Cre
 
 Converting a route to a handler with `.handler` gives you a request where all declared fields are available:
 
-```scala
+```scala doctest:scope=inherited
 val handler =
   route.handler { req =>
     // req.fields.id is type-safe: Int, from the path capture
@@ -477,13 +490,13 @@ When the handler aborts with `NotFound`, the framework serializes it as JSON and
 
 The `req` parameter carries the fields declared in the route's request type. Since the route above defined `"id" ~ Int & "page" ~ Int & "authorization" ~ Maybe[String]`, those fields are available with their expected types:
 
-```scala
-val handler =
+```scala doctest:scope=nested
+val handler2 =
   route.handler { req =>
     val id: Int = req.fields.id
     val page: Int = req.fields.page
     val auth: Maybe[String] = req.fields.authorization
-    // ...
+    HttpResponse.ok(User(id, "found"))
   }
 ```
 
@@ -494,9 +507,6 @@ Accessing a field not declared in the route is a compilation error.
 Routes can map custom error types to HTTP status codes. When a handler aborts with one of these types, the framework serializes it and uses the declared status:
 
 ```scala
-case class NotFound(message: String) derives Schema
-case class Forbidden(reason: String) derives Schema
-
 val route = HttpRoute
   .getRaw("resources" / Capture[Int]("id"))
   .response(
@@ -562,7 +572,7 @@ val handler =
     // "authorization" from .request, "user" added by basicAuth
     val auth: Maybe[String] = req.fields.authorization
     val user: String = req.fields.user
-    // ...
+    HttpResponse.ok(Data(s"Hello, $user"))
   }
 ```
 
@@ -618,12 +628,14 @@ val route = "articles" / Capture[Slug]("slug")
 `HttpResponse.halt` can be called from any handler or filter to abort processing and send a response immediately. This is useful for authorization checks or other early exits:
 
 ```scala
+val haltRoute = HttpRoute.getRaw("protected").response(_.bodyJson[Data])
+
 val handler =
-  route.handler { req =>
+  haltRoute.handler { req =>
     if !isAuthorized(req) then
       HttpResponse.halt(HttpResponse.forbidden)
     else
-      HttpResponse.ok(getData())
+      HttpResponse.ok(Data(getData()))
   }
 ```
 
@@ -653,9 +665,9 @@ HttpResponse.notFound     // 404
 HttpResponse.serverError  // 500
 
 // With bodies
-HttpResponse.ok(user)
+HttpResponse.ok(User(1, "Alice"))
 HttpResponse.badRequest("invalid input")
-HttpResponse.notFound(ErrorMessage("not found"))
+HttpResponse.notFound("not found")
 ```
 
 Additional variants are available for other status codes (`accepted`, `conflict`, `tooManyRequests`, `serviceUnavailable`, etc.). Each accepts a `String`, `Span[Byte]`, or JSON-serializable body.
@@ -696,7 +708,7 @@ Additional metadata options: `.markDeprecated`, `.externalDocs(url)`, `.security
 
 `HttpOpenApi.fromJson` and `HttpOpenApi.fromFile` are compile-time macros that read an OpenAPI spec and produce typed `HttpRoute` values. Path parameters, query parameters, headers, and response bodies are all reflected in the route types.
 
-```scala
+```scala doctest:expect=skipped
 val api = HttpOpenApi.fromFile("api.json")
 
 // Each operation becomes a typed route, accessed by operationId
@@ -705,7 +717,7 @@ val route = api.getPet
 
 The macro parses the spec at compile time, mapping OpenAPI types to Scala types (`integer` to `Int`, `integer`/`int64` to `Long`, `string`/`uuid` to `UUID`, `boolean` to `Boolean`, `number` to `Double`). Optional parameters become `Maybe[A]` fields. The resulting route carries the full type derived from the spec:
 
-```scala
+```scala doctest:expect=skipped
 val route: HttpRoute["petId" ~ Int, "body" ~ Pet, Nothing] = api.getPet
 ```
 
@@ -723,14 +735,14 @@ val api = HttpOpenApi.fromJson("""{
           "name": "petId",
           "in": "path",
           "required": true,
-          "schema": {"type": "integer"}
+          "json": {"type": "integer"}
         }],
         "responses": {
           "200": {
             "description": "ok",
             "content": {
               "application/json": {
-                "schema": {"type": "string"}
+                "json": {"type": "string"}
               }
             }
           }
@@ -765,7 +777,7 @@ Backends are expected to behave uniformly across platforms. If you encounter a b
 
 `kyo-sttp` exposed sttp's request DSL through `Requests`, where the request was built with a function over `BasicRequest`. In kyo-http, requests are issued with method-specific helpers on `HttpClient`, and JSON/text/binary codecs are inferred from the type.
 
-```scala
+```scala doctest:expect=skipped
 // kyo-sttp
 import sttp.client3.*
 val resp: String < (Async & Abort[FailedRequest]) =
@@ -780,8 +792,6 @@ val resp: String < (Async & Abort[HttpException]) =
 For typed JSON requests, derive `Schema` instead of a zio-json codec:
 
 ```scala
-case class User(id: Int, name: String) derives Schema
-
 val user = HttpClient.getJson[User]("https://api.example.com/users/1")
 ```
 
@@ -791,7 +801,7 @@ See the [Client](#client) section for the full set of helpers (`getText`, `postJ
 
 Tapir endpoints described inputs/outputs/errors with a fluent builder, then bound an implementation through `Routes.add`. In kyo-http, the same description lives on `HttpRoute`, and the implementation is attached with `.handler`. Path captures use `HttpPath.Capture` instead of `path[A](...)`, and `jsonBody` is replaced by `request(_.bodyJson[A])` / `response(_.bodyJson[A])`.
 
-```scala
+```scala doctest:expect=skipped
 // kyo-tapir
 import sttp.tapir.*
 import sttp.tapir.json.zio.*
@@ -836,7 +846,7 @@ val handler = createUser.handler { req =>
 
 `NettyKyoServer` and `Routes.run` are replaced by a single `HttpServer.init` that accepts handlers as varargs and returns a `Scope`-managed server.
 
-```scala
+```scala doctest:expect=skipped
 // kyo-tapir
 import sttp.tapir.server.netty.*
 
@@ -870,8 +880,6 @@ val app =
 - **Typed domain errors** — declare error types on the route with `.error[E](status)`. The framework serializes the error as JSON and responds with the declared status:
 
   ```scala
-  case class ApiError(message: String) derives Schema
-
   val route =
     HttpRoute.getRaw("users" / Capture[Int]("id"))
       .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
@@ -885,7 +893,7 @@ val app =
 
 kyo-http uses `Schema` from `kyo-schema` for all JSON, form, and protobuf serialization. Replace zio-json's `derives JsonCodec` with `derives Schema`. Both `Option[A]` and `Maybe[A]` are supported for optional fields; `Maybe[A] = Absent` is the idiomatic choice in Kyo code.
 
-```scala
+```scala doctest:expect=skipped
 // before
 case class Transaction(amount: Int, description: Option[String]) derives JsonCodec
 

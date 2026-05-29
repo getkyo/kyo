@@ -1,0 +1,2 @@
+# Basic: one passing fence, doctest exits 0.
+> doctest

@@ -67,6 +67,21 @@ jobs:
           key: deps-${{ inputs.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
           restore-keys: deps-${{ inputs.os }}-
 
+      # kyo-browser auto-downloads `chrome-headless-shell` (~120 MB) on first launch and caches it under the
+      # platform's user cache dir. Without this step every job re-fetches the same binary. The cache key includes
+      # Browser.scala (carries the pinned fallbackVersion) and ChromeDownloader.scala (carries the URL template and
+      # extracted layout) so a version bump or a downloader change invalidates the cache cleanly. linux-arm64 and
+      # windows-arm64 jobs cancel kyo-browser tests at runtime (no chrome-headless-shell build for those platforms),
+      # so the cache stays empty there — harmless.
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/kyo-browser
+            ~/Library/Caches/kyo-browser
+            ~/AppData/Local/kyo-browser
+          key: kyo-browser-${{ inputs.os }}-${{ hashFiles('kyo-browser/shared/src/main/scala/kyo/Browser.scala', 'kyo-browser/shared/src/main/scala/kyo/internal/ChromeDownloader.scala') }}
+          restore-keys: kyo-browser-${{ inputs.os }}-
+
       # apt/brew package-mirror reachability is a recurring transient CI failure
       # (e.g. ports.ubuntu.com Network unreachable). Retry only the dependency-install
       # network operations — never compile/test steps.

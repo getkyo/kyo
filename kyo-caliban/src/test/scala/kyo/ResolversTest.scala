@@ -778,10 +778,13 @@ class ResolverTest extends Test:
         }
     end expectMessage
 
-    /** Poll `ws.closeReason` until Present, with a short deadline. Use instead of `Async.sleep + ws.closeReason` to remove timing
-      * dependency from tests that expect the server to close the connection.
+    /** Poll `ws.closeReason` until Present. Use instead of `Async.sleep + ws.closeReason` to remove timing dependency from tests that
+      * expect the server to close the connection.
+      *
+      * Default deadline of 5 seconds: caliban's pipe takes ~500ms to materialise a `Left(close)` after a hook-failure in `afterInit`; CI
+      * runners with CPU contention and GC pauses regularly add another 1-2 seconds.
       */
-    private def awaitClose(ws: HttpWebSocket, deadline: Duration = 1.second)(using
+    private def awaitClose(ws: HttpWebSocket, deadline: Duration = 5.seconds)(using
         Frame
     ): (Int, String) < Async =
         val loop = Loop.foreach {

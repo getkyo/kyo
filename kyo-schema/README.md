@@ -2,6 +2,14 @@
 
 Define a case class and get JSON serialization, Protobuf encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
 
+<!-- doctest:setup
+```scala
+case class Address(city: String, zip: String)
+case class User(id: Int, name: String, email: String, password: String, address: Address) derives Schema
+val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", "97201"))
+```
+-->
+
 ```scala
 // Schema-based JSON and Protobuf
 Json.encode(alice)      // {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
@@ -43,7 +51,7 @@ These are the top-level entry points:
 
 Add the dependency to your `build.sbt`:
 
-```scala
+```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %% "kyo-schema" % "<latest version>"
 ```
 
@@ -65,13 +73,13 @@ case class Person(name: String, age: Int) derives Schema
 
 Every API in this module reads from a `Schema[A]`. Once you have one, serialization, navigation, validation, and conversion are methods you call on it:
 
-```scala
+```scala doctest:scope=nested
 case class Address(city: String, zip: String)
 case class User(id: Int, name: String, email: String, password: String, address: Address) derives Schema
 
 val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", "97201"))
 
-val schema: Schema[User] =
+val schema =
     Schema[User]
         .check(_.name)(_.nonEmpty, "name must not be blank")
         .checkMin(_.id)(0)
@@ -123,6 +131,10 @@ On decode, the key determines which subtype to construct. This format is self-de
 For a flat encoding with a type discriminator field, use `schema.discriminator`:
 
 ```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
 given Schema[Shape] = Schema[Shape].discriminator("type")
 
 Json.encode[Shape](Circle(5.0))
@@ -152,6 +164,7 @@ Json.decodeBytes[User](bytes)
 When accepting untrusted input, configure safety limits to protect against denial-of-service attacks. `maxDepth` limits nesting depth (default `Json.DefaultMaxDepth`, currently `512`) and `maxCollectionSize` limits the number of entries in any single collection or object (default `Json.DefaultMaxCollectionSize`, currently `100000`):
 
 ```scala
+val untrustedInput = """{"id":1,"name":"Alice","email":"a@b.com","password":"s","address":{"city":"Portland","zip":"97201"}}"""
 Json.decode[User](untrustedInput, maxDepth = 64, maxCollectionSize = 10000)
 ```
 
@@ -302,6 +315,8 @@ val schema =
 For validations that cannot be expressed as standard constraints, `check` accepts an arbitrary predicate. Unlike constraint methods, `check` does not appear in JSON Schema output because the predicate is an opaque function:
 
 ```scala
+case class Account(username: String, email: String)
+
 val schema =
     Schema[Account]
         .checkMinLength(_.username)(3)
@@ -322,6 +337,13 @@ val schema =
 `validate` runs every accumulated constraint and check, collecting all failures:
 
 ```scala
+case class Product(name: String, price: Double, quantity: Int)
+
+val schema =
+    Schema[Product]
+        .checkMin(_.price)(0.0)
+        .checkMin(_.quantity)(1)
+
 val errors: Chunk[ValidationFailedException] =
     schema.validate(Product("", -1.0, 0))
 // Chunk(
@@ -344,6 +366,8 @@ val spec = Json.jsonSchema[User]
 When a `Schema[A]` with constraints or documentation is in scope, the output is enriched with all registered metadata:
 
 ```scala
+case class Product(name: String, price: Double, quantity: Int)
+
 given Schema[Product] =
     Schema[Product]
         .checkMin(_.price)(0.0)
@@ -362,7 +386,7 @@ So far every operation has worked on whole values. `Focus` lets you read, write,
 
 Call `schema.focus(_.path)` to create a lens that targets a specific field:
 
-```scala
+```scala doctest:scope=nested
 case class Address(street: String, city: String, zip: String)
 case class Person(name: String, age: Int, address: Address)
 
@@ -425,6 +449,10 @@ each.update(order)(item => item.copy(price = item.price * 1.1))
 Because `foreach` returns a `Focus`, you can chain `.focus` to drill into a specific field of each element:
 
 ```scala
+case class Item(name: String, price: Double)
+case class Order(id: Int, items: List[Item])
+val order = Order(1, List(Item("Widget", 9.99), Item("Gadget", 19.99)))
+
 val prices = Schema[Order].foreach(_.items).focus(_.price)
 
 prices.get(order)            // Chunk(9.99, 19.99)
@@ -438,6 +466,8 @@ prices.update(order)(_ * 2)  // all prices doubled
 `Focus` navigates to a specific field. When you need to process *every* field generically, `fold` visits each one in turn with its name and value and accumulates a result. It's the right tool for building a log line, a field-name-to-value map, or any other traversal that doesn't know the type statically:
 
 ```scala
+val person = Person("Alice", 30)
+
 val summary = Schema[Person].fold(person)(List.empty[String]) {
     [N <: String, V] => (acc, field, value) =>
         s"${field.name}=$value" :: acc
@@ -512,7 +542,7 @@ Schema[Person].select(_.name)
 
 **flatten** inlines nested case class fields into the parent level:
 
-```scala
+```scala doctest:scope=nested
 case class Address(city: String, zip: String)
 case class Person(name: String, address: Address)
 
@@ -561,6 +591,9 @@ convert(Point2D(3, 4))  // Coords(3, 4)
 `Convert` extends `scala.Conversion[A, B]`, so providing it as a `given` enables implicit conversion:
 
 ```scala
+case class Point2D(x: Int, y: Int)
+case class Coords(x: Int, y: Int)
+
 given Convert[Point2D, Coords] = Convert[Point2D, Coords]
 
 def draw(c: Coords): Unit = ???
@@ -636,6 +669,9 @@ d.changes              // Seq(("host", ..., ...), ("port", ..., ...), ("ssl", ..
 `Modify` accumulates field mutations and applies them all at once. Use it when you want to describe a set of changes as a reusable value before applying them:
 
 ```scala
+case class Config(host: String, port: Int, ssl: Boolean)
+val staging = Config("staging.example.com", 8080, false)
+
 val updated =
     Modify[Config]
         .set(_.host)("prod.example.com")
@@ -649,6 +685,11 @@ val updated =
 For sum-type paths, if the active variant does not match, the operation is silently skipped:
 
 ```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+val someShape: Shape = Circle(5.0)
+
 Modify[Shape]
     .update(_.Circle.radius)(_ * 2)  // applied if shape is Circle, skipped otherwise
     .applyTo(someShape)
@@ -661,6 +702,10 @@ Modify[Shape]
 Under the hood, both values are converted to untyped `Structure.Value` trees and compared field by field. For each difference, the most specific operation is chosen: an arithmetic delta for numbers, a text patch for strings, recursive descent for nested records, element-level tracking for collections and maps. The result is a `Chunk[Changeset.Patch]` that can reconstruct the target from the source:
 
 ```scala
+case class Config(host: String, port: Int, ssl: Boolean)
+val staging    = Config("staging.example.com", 8080, false)
+val production = Config("prod.example.com", 443, true)
+
 val cs = Changeset(staging, production)
 
 cs.isEmpty  // false
@@ -677,6 +722,11 @@ Each operation carries its field path (`Chunk[String]`) so it knows where to app
 `applyTo` replays the operations against a source value:
 
 ```scala
+case class Config(host: String, port: Int, ssl: Boolean)
+val staging    = Config("staging.example.com", 8080, false)
+val production = Config("prod.example.com", 443, true)
+val cs         = Changeset(staging, production)
+
 val result: Result[SchemaException, Config] = cs.applyTo(staging)
 // Result.Success(Config("prod.example.com", 443, true))
 ```
@@ -684,6 +734,11 @@ val result: Result[SchemaException, Config] = cs.applyTo(staging)
 `Changeset` derives `Schema`, so it serializes like any other data. This makes it possible to compute a diff on one machine, send it over the wire, and apply it on another:
 
 ```scala
+case class Config(host: String, port: Int, ssl: Boolean)
+val staging    = Config("staging.example.com", 8080, false)
+val production = Config("prod.example.com", 443, true)
+val cs         = Changeset(staging, production)
+
 // Sender: compute and serialize the diff
 val serialized: String = Json.encode(cs)
 
@@ -717,7 +772,7 @@ Fields with defaults are always optional. Calling `.result` before setting all r
 
 Both are exposed as `given` members on the schema instance, so you `import schema.order` (or `schema.canEqual`) to bring them into implicit scope:
 
-```scala
+```scala doctest:scope=inherited
 case class Person(name: String, age: Int) derives Schema
 
 val schema = Schema[Person]
@@ -731,7 +786,7 @@ people.sorted
 
 `CanEqual` enables `==` when strict equality is active:
 
-```scala
+```scala doctest:scope=inherited
 import schema.canEqual
 
 Person("Alice", 30) == Person("Alice", 30)  // true
@@ -771,7 +826,7 @@ The type tree has variants for each category of Scala type: `Product` (case clas
 
 `Structure.encode` converts a typed value into the untyped `Value` tree. `Structure.decode` converts it back:
 
-```scala
+```scala doctest:scope=inherited
 val dynamic: Structure.Value = Structure.encode(Person("Alice", 30))
 // Structure.Value.Record(Chunk(("name", Str("Alice")), ("age", Integer(30))))
 
@@ -783,7 +838,7 @@ Case classes become `Value.Record`, scalars become typed leaves (`Str`, `Integer
 
 `Structure.Path` navigates untyped value trees via `get` and `set`, composing segments with `/`:
 
-```scala
+```scala doctest:scope=inherited
 val path = Structure.Path.field("name")
 path.get(dynamic)  // Result.Success(Chunk(Str("Alice")))
 ```
@@ -836,7 +891,9 @@ The Reader also exposes `initFields(n)`, `clearFields(n)`, `droppedFieldsMask(n)
 
 A complete codec is three classes: a `Writer` that accumulates bytes from structural events, a `Reader` that answers the same events back from bytes, and a `Codec` that hands them out. The full `Writer`/`Reader` interface is around twenty methods each — one per primitive plus the structural start/end pairs. Rather than reproduce the whole contract here, the following sketch shows the pattern for a line-oriented text format handling strings and ints; a real implementation must cover every primitive the schema pipeline can emit:
 
-```scala
+```scala doctest:expect=skipped
+import java.nio.charset.StandardCharsets
+
 final class LinesWriter extends Codec.Writer:
     private val sb = StringBuilder()
     def objectStart(name: String, size: Int): Unit = ()
@@ -860,7 +917,7 @@ object Lines extends Codec:
 
 Because `Lines` is an object, you don't need to instantiate it or introduce a `given` — just pass it directly to any schema method:
 
-```scala
+```scala doctest:expect=skipped
 Schema[User].encode(alice)(using Lines)    // Span[Byte] in the Lines format
 Schema[User].decode(bytes)(using Lines)    // Result[DecodeException, User]
 ```
