@@ -1,0 +1,2036 @@
+plan_version: 1
+task_type: refactor
+module: kyo-tasty
+crossPlatforms: [jvm, js, native]
+
+phases:
+  - id: 1
+    name: "Rewrite documentation"
+    depends_on: []
+    addresses: [L1, L2, L3, L4, L6, L7, A1]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/README.md
+        before: "# kyo-reflect ... Reflect.* ... ReflectError ... .kyo-reflect-cache ... Reflect.Reads"
+        after: "# kyo-tasty ... Tasty.* ... TastyError ... .kyo-tasty-cache (Reads removed)"
+      - path: kyo-tasty/DESIGN.md
+        before: "kyo-reflect Design; Section 1 mixes goals + perf"
+        after: "kyo-tasty Design; Section 1 user goals, Section 1a perf targets"
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "// Phase 0 flags, // Phase 3 flags, // Phase 10 flag at lines 78, 95, 124; campaign-phase scaladoc at lines 589, 602, 1012"
+        after: "// Core access flags, // Extended modifier flags, // Scala 2 origin flag; scaladoc rewritten with no Phase N references; added Sync/Async/Scope rationale on open"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/classfile/ClassfileUnpickler.scala
+        before: "// Phase C: classfile attribute decoder"
+        after: "// Classfile attribute decoder (one match arm per JVMS attribute name)."
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 4
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TastyTest.scala
+      leaves:
+        - id: 1
+          name: "README rename consistency"
+          given: "kyo-tasty/README.md read as String"
+          when: "test counts substring occurrences"
+          then: "kyo-reflect appears 0 times AND Reflect.Reads appears 0 times AND kyo-tasty appears >= 1 time"
+          pins: "INV-020, INV-026"
+        - id: 2
+          name: "DESIGN section split"
+          given: "kyo-tasty/DESIGN.md headers"
+          when: "test reads header lines"
+          then: "'## 1a. Performance targets' (or '## 2.') appears once AND '## 1. Goals' appears once"
+          pins: "L7"
+        - id: 3
+          name: "No phase-metadata comments in production source"
+          given: "recursive scan of kyo-tasty/shared/src/main/scala/kyo and kyo-tasty/jvm/src/main/scala/kyo"
+          when: "each .scala file read"
+          then: "zero lines match regex '// Phase [0-9CB]'"
+          pins: "INV-021"
+        - id: 4
+          name: "README doctest extraction compiles"
+          given: "fenced scala blocks inside kyo-tasty/README.md"
+          when: "each block compiled by kyo.Test doctest extractor"
+          then: "every block compiles AND every API name reachable through import kyo.*"
+          pins: "INV-020, L6"
+    consumed_invariants: []
+    produced_invariants: [INV-007, INV-020, INV-021, INV-026]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TastyTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TastyTest]
+    test_count: 4
+    test_runtime_estimate_min: 1
+    estimated_loc: 280
+    estimated_wall_clock_min: 35
+    oversize_justified: ""
+
+  - id: 2
+    name: "Propagate AllowUnsafe through accessor signatures"
+    depends_on: []
+    addresses: [A2, A4]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "Name.asString, Symbol.fullName/isPackageObject/scaladoc/position/declaredType/parents/typeParams/declarations/companion bodies each contain import AllowUnsafe.embrace.danger; Symbol.body inner bridge embraces; TastyOrigin.addrMap is (using AllowUnsafe); Classpath.open one-arg calls openImpl"
+        after: "every accessor signature gains (using AllowUnsafe); bodies drop import danger; Symbol.body inner bridge becomes Sync.Unsafe.defer { _bodyOnce.get() }; addrMap becomes private[kyo]; open(roots) delegates to open(roots, strict = false)"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/query/Classpath.scala
+        before: "pureClass/purePackage/pureModule/pureTopLevelClasses/purePackages/accumulatedErrors/allSymbols/isClosed/transitionToReady/close bodies embrace AllowUnsafe.danger"
+        after: "each signature gains (using AllowUnsafe); bodies drop import danger"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/query/ClasspathRef.scala
+        before: "assign/get/isAssigned bodies embrace AllowUnsafe.danger"
+        after: "each signature gains (using AllowUnsafe); bodies drop import danger"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/type_/Subtyping.scala
+        before: "def isSubtype(sub, sup, cp, budget): Boolean"
+        after: "def isSubtype(sub, sup, cp, budget)(using AllowUnsafe): Boolean (return type changes in Phase 15)"
+    files_deleted: []
+    public_api:
+      - signature: "def asString(using AllowUnsafe): String"
+        receiver: "Tasty.Name extension"
+      - signature: "def fullName(using AllowUnsafe): Name"
+        receiver: "Tasty.Symbol"
+      - signature: "def isPackageObject(using AllowUnsafe): Boolean"
+        receiver: "Tasty.Symbol"
+      - signature: "def scaladoc(using AllowUnsafe): Maybe[String]"
+        receiver: "Tasty.Symbol"
+      - signature: "def position(using AllowUnsafe): Maybe[Position]"
+        receiver: "Tasty.Symbol"
+      - signature: "def declaredType(using AllowUnsafe): Type"
+        receiver: "Tasty.Symbol"
+      - signature: "def parents(using AllowUnsafe): Chunk[Type]"
+        receiver: "Tasty.Symbol"
+      - signature: "def typeParams(using AllowUnsafe): Chunk[Symbol]"
+        receiver: "Tasty.Symbol"
+      - signature: "def declarations(using AllowUnsafe): Chunk[Symbol]"
+        receiver: "Tasty.Symbol"
+      - signature: "def companion(using AllowUnsafe): Maybe[Symbol]"
+        receiver: "Tasty.Symbol"
+      - signature: "private[kyo] def addrMap: IntMap[Tasty.Symbol]"
+        receiver: "Tasty.Symbol.TastyOrigin"
+      - signature: "def open(roots: Seq[String])(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError])"
+        receiver: "Tasty.Classpath"
+      - signature: "def open(roots: Seq[String], strict: Boolean)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError])"
+        receiver: "Tasty.Classpath"
+    tests:
+      total: 6
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TastyTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TastySymbolTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/ClasspathRefDedupTest.scala
+      leaves:
+        - id: 1
+          name: "Signature scan: every routine accessor takes (using AllowUnsafe)"
+          given: "source kyo-tasty/shared/src/main/scala/kyo/Tasty.scala"
+          when: "test greps for def (fullName|isPackageObject|scaladoc|position|declaredType|parents|typeParams|declarations|companion|asString)"
+          then: "every matched signature contains '(using AllowUnsafe)' literal; AND zero 'import AllowUnsafe.embrace.danger' inside those accessor bodies"
+          pins: "INV-001"
+        - id: 2
+          name: "addrMap is not publicly accessible"
+          given: "a synthetic test in package other calling kyo.Tasty.Symbol.TastyOrigin.addrMap"
+          when: "test compiles"
+          then: "compilation fails with private[kyo] access error; same call from kyo.internal.tasty.symbol succeeds"
+          pins: "INV-011"
+        - id: 3
+          name: "fullName reads correct FQN under explicit proof"
+          given: "sym = cp.findClass('scala.Predef').get; given AllowUnsafe = AllowUnsafe.embrace.danger"
+          when: "sym.fullName.asString"
+          then: "returned String equals 'scala.Predef'"
+          pins: "INV-001"
+        - id: 4
+          name: "Accessors allocate zero defer closure per call"
+          given: "sym for scala.Predef; AllocationCounter (java.lang.management.ThreadMXBean)"
+          when: "10000 calls to sym.fullName, sym.parents, sym.declarations"
+          then: "allocated bytes equal baseline OnceCell.get-only run; no additional closure allocation"
+          pins: "INV-002"
+        - id: 5
+          name: "ClasspathRef.get requires proof"
+          given: "ref with assigned Classpath"
+          when: "ref.get() with proof in scope vs without"
+          then: "proof-in-scope returns the assigned Classpath; no-proof call fails to compile with 'no given instance of kyo.AllowUnsafe'"
+          pins: "INV-001"
+        - id: 6
+          name: "Classpath.open one-arg delegates to (roots, strict=false)"
+          given: "stub orchestrator recording args"
+          when: "Tasty.Classpath.open(Seq('/tmp/x'))"
+          then: "stub records one call with strict = false"
+          pins: "INV-025"
+    consumed_invariants: []
+    produced_invariants: [INV-001, INV-002, INV-011, INV-025]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TastyTest kyo.TastySymbolTest kyo.ClasspathRefDedupTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TastyTest, kyo.TastySymbolTest, kyo.ClasspathRefDedupTest]
+    test_count: 6
+    test_runtime_estimate_min: 2
+    estimated_loc: 720
+    estimated_wall_clock_min: 70
+    oversize_justified: "Atomic cutover: every accessor signature must change together with every caller in a single compile-and-test-green unit; splitting leaves the module not compiling between phases. Q-006 confirms 159 callsites updated atomically."
+
+  - id: 3
+    name: "Reject malformed binary inputs"
+    depends_on: []
+    addresses: [B1, B4, B7, B10, C4]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/binary/Varint.scala
+        before: "readNat/readLongNat have unbounded continuation loops"
+        after: "readNat caps at 5 bytes, readLongNat caps at 10; over-cap throws MalformedVarintException(byteOffset)"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/binary/ByteView.scala
+        before: "subView does no bounds check on from/until"
+        after: "subView rejects from<0 || until<from || until>length"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/reader/NameUnpickler.scala
+        before: "QUALIFIED/EXPANDED/EXPANDPREFIX/UNIQUE/DEFAULTGETTER/SUPERACCESSOR/INLINEACCESSOR/OBJECTCLASS/BODYRETAINER/SIGNED/TARGETSIGNED do buf(idx) without bounds check"
+        after: "each indexed read bounds-checked against buf.length; out-of-range throws AIOOBE with descriptive message; outer read() catches and returns MalformedSection"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/reader/SectionIndex.scala
+        before: "readSync calls names(nameRef).asString without bounds check"
+        after: "readSync bounds-checks nameRef and sectionLen; out-of-range throws AIOOBE with descriptive message"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/symbol/Interner.scala
+        before: "bytesEqual checks entry.bytes.length == length but not offset+length<=bytes.length"
+        after: "bytesEqual additionally validates offset>=0, length>=0, offset+length<=bytes.length, no overflow"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 8
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/VarintTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/ByteViewTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/NameUnpicklerTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/SectionIndexTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/InternerTest.scala
+      leaves:
+        - id: 1
+          name: "readNat rejects > 5-byte continuation"
+          given: "ByteView.Heap over Array.fill(6)(0x00)"
+          when: "Varint.readNat(view)"
+          then: "MalformedVarintException thrown with message containing 'continuation runs past 5'"
+          pins: "INV-010, B4"
+        - id: 2
+          name: "readLongNat rejects > 10-byte continuation"
+          given: "ByteView.Heap over Array.fill(11)(0x00)"
+          when: "Varint.readLongNat(view)"
+          then: "MalformedVarintException with message containing 'continuation runs past 10'"
+          pins: "INV-010, B4"
+        - id: 3
+          name: "readLongNat 10-byte with terminator succeeds"
+          given: "ByteView.Heap of nine 0x01 continuation bytes + 0x81 terminator"
+          when: "Varint.readLongNat(view)"
+          then: "returned Long equals bit-pattern of nine 7-bit 0x01 groups + 0x01"
+          pins: "B4 boundary"
+        - id: 4
+          name: "subView rejects negative from"
+          given: "10-byte ByteView.Heap; from=-1 until=5"
+          when: "view.subView(-1, 5)"
+          then: "AIOOBE with message 'from=-1'"
+          pins: "INV-010, B7"
+        - id: 5
+          name: "subView rejects until > length"
+          given: "10-byte view; from=0 until=11"
+          when: "view.subView(0, 11)"
+          then: "AIOOBE with message 'until=11'"
+          pins: "INV-010, B7"
+        - id: 6
+          name: "QUALIFIED with out-of-range prefix returns MalformedSection"
+          given: "synthetic name table with QUALIFIED prefix=99 (table size 3)"
+          when: "Abort.run(NameUnpickler.read)"
+          then: "Result.Failure(MalformedSection('Names', reason)) where reason contains 'QUALIFIED nameRef out of range: prefix=99'"
+          pins: "INV-010, B1"
+        - id: 7
+          name: "SectionIndex nameRef out-of-range returns MalformedSection"
+          given: "section index with first entry nameRef=99; names.length=3"
+          when: "Abort.run(SectionIndex.read)"
+          then: "Result.Failure(MalformedSection('SectionIndex', reason)) where reason contains 'nameRef=99 out of range'"
+          pins: "INV-010, C4"
+        - id: 8
+          name: "bytesEqual rejects offset+length > bytes.length"
+          given: "interner with entry [1,2,3]; bytes len 5; offset=4 length=2"
+          when: "interner.intern(bytes, 4, 2)"
+          then: "AIOOBE with message 'offset=4 length=2 bytes.length=5'"
+          pins: "INV-010, B10"
+    consumed_invariants: []
+    produced_invariants: [INV-010]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.VarintTest kyo.ByteViewTest kyo.NameUnpicklerTest kyo.SectionIndexTest kyo.InternerTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.VarintTest, kyo.ByteViewTest, kyo.NameUnpicklerTest, kyo.SectionIndexTest, kyo.InternerTest]
+    test_count: 8
+    test_runtime_estimate_min: 1
+    estimated_loc: 380
+    estimated_wall_clock_min: 45
+    oversize_justified: ""
+
+  - id: 4
+    name: "Handle 64-bit JAR offsets"
+    depends_on: []
+    addresses: [C1, B2, B3, B6, B11]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/jvm/src/main/scala/kyo/internal/tasty/query/JarCentralDirectory.scala
+        before: ".toInt truncation at lines 140, 142, 174, 189, 342, 345, 526, 560, 570; parseAllEntries does not detect truncated records"
+        after: "Long arithmetic throughout; Zip64 EOCD locator detection; truncated record returns MalformedSection"
+      - path: kyo-tasty/jvm/src/main/scala/kyo/internal/tasty/query/JarMappedReader.scala
+        before: "entry.lfhOffset.toInt + 30 + nameLen + extraLen at lines 65, 72, 85"
+        after: "Long arithmetic with overflow check before channel.read"
+      - path: kyo-tasty/jvm/src/main/scala/kyo/internal/tasty/binary/MappedByteView.scala
+        before: "peekByte(Int), readEnd():Int, subView(Int,Int), goto(Int), remaining:Int, position:Int"
+        after: "peekByte(Long), readEnd():Long, subView(Long,Long), goto(Long), remaining:Long, position:Long; readByte guards cursor>Int.MaxValue"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/binary/ByteView.scala
+        before: "trait methods readEnd():Int, subView(Int,Int), goto(Int), remaining:Int, position:Int"
+        after: "trait methods widen to Long; Int wrappers (readEndInt etc) preserved for legacy callers"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 6
+      files:
+        - kyo-tasty/jvm/src/test/scala/kyo/JarCentralDirectoryTest.scala
+        - kyo-tasty/jvm/src/test/scala/kyo/JvmFileSourceTest.scala
+        - kyo-tasty/jvm/src/test/scala/kyo/MappedByteViewTest.scala
+      leaves:
+        - id: 1
+          name: "Zip64 EOCD locator detected"
+          given: "synthetic JAR with Zip64 EOCD locator pointing to CD at 2_500_000_000L"
+          when: "JarCentralDirectory.read(jarPath)"
+          then: "first entry's lfhOffset equals 2_500_000_000L (Long-valued)"
+          pins: "INV-012, C1"
+        - id: 2
+          name: "Truncated CEN record returns MalformedSection"
+          given: "JAR with CEN record declaring nameLen=1000 but only 100 bytes follow"
+          when: "Abort.run(JarCentralDirectory.read)"
+          then: "Result.Failure(MalformedSection('jar', reason)) where reason contains 'truncated CEN record'"
+          pins: "INV-012, B11"
+        - id: 3
+          name: "CD > 2GB without Zip64 returns MalformedSection"
+          given: "JAR EOCD claiming CD size 2_500_000_000L without Zip64 locator"
+          when: "JarCentralDirectory.read"
+          then: "Result.Failure(MalformedSection('jar', reason)) where reason contains 'exceeds 2GB'"
+          pins: "INV-012, B3"
+        - id: 4
+          name: "64-bit LFH offset round-trip"
+          given: "Zip64 JAR entry with lfhOffset = Int.MaxValue+1L"
+          when: "JarMappedReader.read(jar, entry)"
+          then: "returned bytes equal the source compressed content"
+          pins: "INV-012, B2"
+        - id: 5
+          name: "MappedByteView.position is Long"
+          given: "MappedByteView with cursor=3_000_000_000L"
+          when: "view.position"
+          then: "returns 3_000_000_000L"
+          pins: "INV-018, B6"
+        - id: 6
+          name: "MappedByteView readByte past Int.MaxValue raises IllegalStateException"
+          given: "MappedByteView with cursor=Int.MaxValue.toLong+1L"
+          when: "view.readByte()"
+          then: "IllegalStateException with message 'mmap segment overflow'"
+          pins: "INV-018, B6"
+    consumed_invariants: []
+    produced_invariants: [INV-012, INV-018]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.JarCentralDirectoryTest kyo.JvmFileSourceTest kyo.MappedByteViewTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.JarCentralDirectoryTest, kyo.JvmFileSourceTest, kyo.MappedByteViewTest]
+    test_count: 6
+    test_runtime_estimate_min: 2
+    estimated_loc: 480
+    estimated_wall_clock_min: 55
+    oversize_justified: ""
+
+  - id: 5
+    name: "Atomicize resource lifecycle"
+    depends_on: [2]
+    addresses: [B14, B15]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/jvm/src/main/scala/kyo/internal/tasty/query/JvmFileSource.scala
+        before: "activePool.set(pool) then Scope.ensure as two separate steps (lines 152, 155)"
+        after: "Scope.acquireRelease wraps both in one atomic acquire/release"
+      - path: kyo-tasty/jvm/src/main/scala/kyo/internal/tasty/query/JarMappedReader.scala
+        before: "channel.map() inside try; thrown IOException may retain channel reference"
+        after: "inner catch wraps IOException with fresh message naming the file path; channel reference not propagated"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 3
+      files:
+        - kyo-tasty/jvm/src/test/scala/kyo/JvmFileSourceTest.scala
+      leaves:
+        - id: 1
+          name: "Pool registration atomic on Scope.ensure failure"
+          given: "synthetic Scope.ensure that throws on first invocation"
+          when: "JvmFileSource.openPool throws; test inspects activePool"
+          then: "activePool.get() returns prior pool (or null); the new pool's close() invoked via release branch"
+          pins: "B14"
+        - id: 2
+          name: "channel.map failure does not leak channel reference"
+          given: "non-existent JAR path triggering IOException inside channel.map"
+          when: "JarMappedReader.read; inspect thrown exception"
+          then: "IOException with message 'map failed'; stack trace contains no FileChannel reference; raf.getFD().valid() == false"
+          pins: "B15"
+        - id: 3
+          name: "Pool exhaustion under Scope close"
+          given: "JvmFileSource maxPoolSize=1; 10 concurrent fibers; outer Scope closes mid-execution"
+          when: "every fiber completes"
+          then: "activeCount==0; no IllegalStateException from any fiber"
+          pins: "T8, B14"
+    consumed_invariants: [INV-001]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.JvmFileSourceTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.JvmFileSourceTest]
+    test_count: 3
+    test_runtime_estimate_min: 2
+    estimated_loc: 220
+    estimated_wall_clock_min: 35
+    oversize_justified: ""
+
+  - id: 6
+    name: "Enforce OnceCell idempotence"
+    depends_on: [2]
+    addresses: [C2, A3]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/symbol/OnceCell.scala
+        before: "OnceCell.get() CAS-then-blind-read; asInstanceOf comments inline; no idempotence check"
+        after: "scaladoc states 'REQUIRES IDEMPOTENT INIT'; debug-mode flag throws IllegalStateException on CAS-loser value mismatch; canonical '// Unsafe:' comments on each asInstanceOf"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 4
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/OnceCellTest.scala
+      leaves:
+        - id: 1
+          name: "First call returns init result"
+          given: "OnceCell[Int](() => 42); given AllowUnsafe in scope"
+          when: "cell.get()"
+          then: "returned value equals 42"
+          pins: "INV-009"
+        - id: 2
+          name: "Subsequent calls return cached value"
+          given: "OnceCell[Int](() => { counter.incrementAndGet(); 7 }); counter starts at 0"
+          when: "10 sequential cell.get() calls"
+          then: "every call returns 7 AND counter.get()==1"
+          pins: "INV-009"
+        - id: 3
+          name: "Concurrent first-callers see consistent value"
+          given: "OnceCell[String](non-idempotent nanoTime init); 32 fibers"
+          when: "fibers race on cell.get()"
+          then: "every fiber's returned String reference-equals every other (CAS-winner)"
+          pins: "INV-009"
+        - id: 4
+          name: "Debug-mode flags non-idempotent init"
+          given: "debugIdempotent=true via system property; init increments counter and returns its value"
+          when: "8 fibers race on cell.get()"
+          then: "at least one fiber's call throws IllegalStateException with message 'idempotence violated'"
+          pins: "INV-009, A3"
+    consumed_invariants: [INV-001]
+    produced_invariants: [INV-009]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.OnceCellTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.OnceCellTest]
+    test_count: 4
+    test_runtime_estimate_min: 1
+    estimated_loc: 140
+    estimated_wall_clock_min: 25
+    oversize_justified: ""
+
+  - id: 7
+    name: "Harden Interner concurrency"
+    depends_on: [3]
+    addresses: [B12, B13]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/symbol/Interner.scala
+        before: "internInShard grow-then-retry crosses unsynchronized boundary"
+        after: "grow-and-recheck pair runs inside shardRef.synchronized; eliminates stale-shard window"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/query/PerfCounters.scala
+        before: "reset() zeroes counters individually; no snapshot accessor"
+        after: "case class Snapshot; def snapshot() returns frozen view; reset() returns the pre-reset snapshot"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 4
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/InternerTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/PerfCountersTest.scala
+      leaves:
+        - id: 1
+          name: "Concurrent grow-and-insert under contention"
+          given: "Interner(2,4); 8 fibers each insert 1000 unique sequences to same shard"
+          when: "all complete"
+          then: "total entry count==8000 AND every sequence's Entry is unique (eq) under re-intern"
+          pins: "B12"
+        - id: 2
+          name: "Grow during contention preserves reference equality"
+          given: "Interner(1,2); 4 fibers race to insert [1,2,3]"
+          when: "all complete"
+          then: "every fiber's Entry reference-equals every other"
+          pins: "B12"
+        - id: 3
+          name: "snapshot returns coherent view"
+          given: "writer thread increments jarOpenCount then entryReadCount in loop; reader thread takes snapshots"
+          when: "reader observes 100 snapshots"
+          then: "every snapshot has entryReadCount >= jarOpenCount"
+          pins: "B13"
+        - id: 4
+          name: "reset returns pre-reset snapshot"
+          given: "jarOpenCount.set(42); entryReadCount.set(7)"
+          when: "PerfCounters.reset()"
+          then: "returned Snapshot.jarOpenCount==42 AND entryReadCount==7; post-reset jarOpenCount.get()==0"
+          pins: "B13"
+    consumed_invariants: [INV-010]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.InternerTest kyo.PerfCountersTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.InternerTest, kyo.PerfCountersTest]
+    test_count: 4
+    test_runtime_estimate_min: 2
+    estimated_loc: 250
+    estimated_wall_clock_min: 35
+    oversize_justified: ""
+
+  - id: 8
+    name: "Bound recursion depth"
+    depends_on: []
+    addresses: [B8, B9]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/type_/TypeArena.scala
+        before: "internRec(t) unbounded recursion"
+        after: "internRec(t, depth=0) caps at MaxDepth=1024; over-cap throws DepthExceededException"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/reader/PositionsUnpickler.scala
+        before: "lineStarts(k+1) = lineStarts(k) + lineSizes(k) + 1 (Int overflow)"
+        after: "computes nextStart as Long; overflow > Int.MaxValue throws AIOOBE 'exceeds Int.MaxValue'"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 4
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TypeArenaTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/PositionsUnpicklerTest.scala
+      leaves:
+        - id: 1
+          name: "Deeply nested Applied chain reports MalformedSection"
+          given: "Type nested 2000 levels deep"
+          when: "Abort.run(arena.merge)"
+          then: "Result.Failure(MalformedSection('Types', reason)) where reason contains 'depth 1024 exceeded'"
+          pins: "INV-019, B8"
+        - id: 2
+          name: "Nesting at MaxDepth-1 succeeds"
+          given: "Type nested exactly 1023 levels"
+          when: "arena.merge"
+          then: "Result.Success(_); structurally matches input"
+          pins: "B8 boundary"
+        - id: 3
+          name: "Overflow detected on very large source"
+          given: "Positions section with 1000 lines, each Int.MaxValue/1000 chars"
+          when: "Abort.run(PositionsUnpickler.read)"
+          then: "Result.Failure(MalformedSection('Positions', reason)) where reason contains 'exceeds Int.MaxValue'"
+          pins: "B9"
+        - id: 4
+          name: "Normal-sized file decodes positions correctly"
+          given: "200-line synthetic Positions section, line k size 100+k"
+          when: "PositionsUnpickler.read"
+          then: "lineStarts(10) equals sum of lineSizes 100..109 plus 10 newlines"
+          pins: "B9 baseline"
+    consumed_invariants: []
+    produced_invariants: [INV-019]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TypeArenaTest kyo.PositionsUnpicklerTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TypeArenaTest, kyo.PositionsUnpicklerTest]
+    test_count: 4
+    test_runtime_estimate_min: 1
+    estimated_loc: 180
+    estimated_wall_clock_min: 25
+    oversize_justified: ""
+
+  - id: 9
+    name: "Verify ConstantPool cross-entry kinds"
+    depends_on: []
+    addresses: [B5, C3]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/classfile/ConstantPool.scala
+        before: "entry(idx) returns Entry without tag validation; Utf8Lazy.view: ByteView.Heap (rejects Mapped)"
+        after: "new typed accessors utf8At/classRefAt/methodRefAt that verify referenced entry tag; Utf8Lazy.view: ByteView (Heap and Mapped both supported); decode preserves Mapped cursor"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 4
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/ConstantPoolTest.scala
+      leaves:
+        - id: 1
+          name: "utf8At rejects ClassRef"
+          given: "pool with entries[5]=ClassRef(nameIdx=6)"
+          when: "pool.utf8At(5)"
+          then: "ClassfileFormatException with 'expected Utf8, found ClassRef'"
+          pins: "B5"
+        - id: 2
+          name: "classRefAt rejects Utf8"
+          given: "pool with entries[3]=Utf8('foo')"
+          when: "pool.classRefAt(3)"
+          then: "ClassfileFormatException with 'expected ClassRef, found Utf8'"
+          pins: "B5"
+        - id: 3
+          name: "Utf8Lazy.decode reads from Mapped view"
+          given: "Mapped ByteView wrapping bytes [0x66,0x6f,0x6f] at offset 0"
+          when: "Utf8Lazy(mapped,0,3).decode"
+          then: "returned String equals 'foo'"
+          pins: "C3"
+        - id: 4
+          name: "Utf8Lazy.decode preserves Mapped cursor"
+          given: "Mapped view with cursor=5L at start"
+          when: "Utf8Lazy(mapped,0,3).decode then read mapped.position"
+          then: "position returns to 5L"
+          pins: "C3"
+    consumed_invariants: []
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.ConstantPoolTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.ConstantPoolTest]
+    test_count: 4
+    test_runtime_estimate_min: 1
+    estimated_loc: 200
+    estimated_wall_clock_min: 25
+    oversize_justified: ""
+
+  - id: 10
+    name: "Log unknown TASTy type tags"
+    depends_on: []
+    addresses: [M7]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/reader/TypeUnpickler.scala
+        before: "case other => Type.Named(makeUnresolvedSym('unknown-type-tag-$other', ctx.home)) (silent fallback)"
+        after: "Log.live.unsafe.warn(tag, classfilePath, byteOffset) before the existing Named fallback"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 2
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TypeUnpicklerTest.scala
+      leaves:
+        - id: 1
+          name: "Unknown tag logged"
+          given: "synthetic Type section with first byte=250 (no known tag); Log test backend"
+          when: "TypeUnpickler.decode(view, ctx)"
+          then: "captured list has one warn message containing 'unknown TASTy type tag 250'; returned Type is Named(unresolved) with name 'unknown-type-tag-250'"
+          pins: "INV-004"
+        - id: 2
+          name: "Known tag does not emit warning"
+          given: "TYPEREF-encoding section; Log test backend"
+          when: "TypeUnpickler.decode"
+          then: "captured list is empty"
+          pins: "INV-004"
+    consumed_invariants: []
+    produced_invariants: [INV-004]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TypeUnpicklerTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TypeUnpicklerTest]
+    test_count: 2
+    test_runtime_estimate_min: 1
+    estimated_loc: 60
+    estimated_wall_clock_min: 15
+    oversize_justified: ""
+
+  - id: 11
+    name: "Decode missing classfile attributes"
+    depends_on: [9]
+    addresses: [M8]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "Symbol has _parents/_typeParams/_declarations SingleAssign; JavaMetadata has 5 fields"
+        after: "Symbol adds _permittedSubclasses SingleAssign + permittedSubclasses accessor; JavaMetadata adds paramNames, runtimeTypeAnnotations, nestHost, nestMembers, bootstrapMethods fields"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/classfile/ClassfileUnpickler.scala
+        before: "attribute dispatch handles Signature, InnerClasses, EnclosingMethod, Record, Exceptions, RuntimeVisibleAnnotations, RuntimeInvisibleAnnotations, ScalaSig, Scala"
+        after: "adds BootstrapMethods, NestHost, NestMembers, PermittedSubclasses, MethodParameters, RuntimeVisibleTypeAnnotations, RuntimeInvisibleTypeAnnotations match arms; unknown attribute logs warning"
+    files_deleted: []
+    public_api:
+      - signature: "def permittedSubclasses(using AllowUnsafe): Maybe[Chunk[Tasty.Symbol]]"
+        receiver: "Tasty.Symbol"
+      - signature: "case class JavaMetadata(... paramNames, runtimeTypeAnnotations, nestHost, nestMembers, bootstrapMethods)"
+        receiver: "Tasty.JavaMetadata"
+    tests:
+      total: 8
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/JavaSymbolTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/ClassfileReaderTest.scala
+      leaves:
+        - id: 1
+          name: "PermittedSubclasses populates accessor"
+          given: "synthetic sealed class Sealed permits Foo, Bar; cp.findClass('Sealed').get"
+          when: "sym.permittedSubclasses"
+          then: "Present(Chunk(symFoo, symBar)) with fullName.asString matching"
+          pins: "INV-008"
+        - id: 2
+          name: "Non-sealed returns Absent"
+          given: "regular class Plain with no PermittedSubclasses attribute"
+          when: "sym.permittedSubclasses"
+          then: "Maybe.Absent"
+          pins: "M8"
+        - id: 3
+          name: "BootstrapMethods table parsed"
+          given: "classfile with BootstrapMethods (methodHandleIdx=7, args=[9,10])"
+          when: "load; sym.javaSpecific.get.bootstrapMethods"
+          then: "Chunk(Chunk(7,9,10))"
+          pins: "M8 BootstrapMethods"
+        - id: 4
+          name: "NestHost resolved"
+          given: "inner Outer$Inner with NestHost->Outer"
+          when: "load both"
+          then: "sym.javaSpecific.get.nestHost==Present(outerSym)"
+          pins: "M8 NestHost"
+        - id: 5
+          name: "NestMembers enumerated"
+          given: "Outer with NestMembers listing Outer$A, Outer$B"
+          when: "load; sym.javaSpecific.get.nestMembers.map(_.fullName.asString)"
+          then: "Chunk('Outer.A','Outer.B')"
+          pins: "M8 NestMembers"
+        - id: 6
+          name: "MethodParameters captures names"
+          given: "method compute(int x, String y) with MethodParameters ['x','y']"
+          when: "load; cls.javaSpecific.get.paramNames"
+          then: "contains (Name('compute'), Chunk(Name('x'), Name('y')))"
+          pins: "M8 MethodParameters"
+        - id: 7
+          name: "RuntimeVisibleTypeAnnotations captured"
+          given: "classfile with @NotNull RuntimeVisibleTypeAnnotation"
+          when: "load; sym.javaSpecific.get.runtimeTypeAnnotations"
+          then: "single JavaAnnotation whose annotationClass.fullName.asString ends with 'NotNull'"
+          pins: "M8 RuntimeTypeAnnotations"
+        - id: 8
+          name: "Unknown attribute logs warning"
+          given: "classfile with unknown attribute 'Foo'; Log test backend"
+          when: "load"
+          then: "warning containing 'unknown attribute Foo'; load succeeds"
+          pins: "INV-008"
+    consumed_invariants: [INV-001, INV-010]
+    produced_invariants: [INV-008]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.JavaSymbolTest kyo.ClassfileReaderTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.JavaSymbolTest, kyo.ClassfileReaderTest]
+    test_count: 8
+    test_runtime_estimate_min: 2
+    estimated_loc: 540
+    estimated_wall_clock_min: 55
+    oversize_justified: ""
+
+  - id: 12
+    name: "Decode Scala 2 EXT references"
+    depends_on: []
+    addresses: [M9]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/scala2/Scala2PickleReader.scala
+        before: "decodeEntry handles cases 1-6 (NONEsym, TYPEsym, ALIASsym, CLASSsym, MODULEsym, VALsym)"
+        after: "adds case 7 EXTref and case 8 EXTMODCLASSref via decodeExtRef/decodeExtModClassRef; EXT entries produce UnresolvedRef-flavored Symbol"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 3
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/Scala2PickleTest.scala
+      leaves:
+        - id: 1
+          name: "EXTref decodes to UnresolvedRef"
+          given: "Scala 2 pickle entry 5 = EXTref(name='Foo', owner='com.example')"
+          when: "Scala2PickleReader.decode(buf, cp)"
+          then: "resulting symbol has fullName.asString=='com.example.Foo' AND kind==SymbolKind.Unresolved"
+          pins: "M9"
+        - id: 2
+          name: "EXTMODCLASSref appends $"
+          given: "entry 6 = EXTMODCLASSref(name='Foo', owner='com.example')"
+          when: "decode"
+          then: "symbol.fullName.asString=='com.example.Foo$'"
+          pins: "M9"
+        - id: 3
+          name: "Round-trip via inflate then decode"
+          given: "real Scala 2 classfile with ZLIB Scala-attribute containing EXTref entries"
+          when: "inflate via InflateHook then decode"
+          then: "produced FQNs match golden list from scala-reflect on same input"
+          pins: "M9"
+    consumed_invariants: []
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.Scala2PickleTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.Scala2PickleTest]
+    test_count: 3
+    test_runtime_estimate_min: 1
+    estimated_loc: 160
+    estimated_wall_clock_min: 25
+    oversize_justified: ""
+
+  - id: 13
+    name: "Test thin public API methods"
+    depends_on: [2, 11]
+    addresses: [T1]
+    files_produced: []
+    files_modified: []
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 6
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TastySymbolTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TastyTypeTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TastyAnnotationTest.scala
+      leaves:
+        - id: 1
+          name: "binaryName for Scala nested class"
+          given: "sym = cp.findClass('com.example.Outer.Inner').get"
+          when: "sym.binaryName"
+          then: "returns 'com/example/Outer$Inner'"
+          pins: "T1"
+        - id: 2
+          name: "binaryName for top-level Scala class"
+          given: "sym = cp.findClass('com.example.Foo').get"
+          when: "sym.binaryName"
+          then: "returns 'com/example/Foo'"
+          pins: "T1"
+        - id: 3
+          name: "isPackageObject true for package module"
+          given: "TASTy package object com.example produces Module-kind Symbol named 'package'"
+          when: "sym.isPackageObject"
+          then: "returns true"
+          pins: "T1"
+        - id: 4
+          name: "Type.show for Applied(List, Int)"
+          given: "t = Applied(Named(listSym), Chunk(Named(intSym)))"
+          when: "t.show"
+          then: "returns 'scala.List[scala.Int]'"
+          pins: "T1"
+        - id: 5
+          name: "Type.show for OrType(A, B)"
+          given: "t = OrType(named('A'), named('B'))"
+          when: "t.show"
+          then: "returns 'A | B'"
+          pins: "T1"
+        - id: 6
+          name: "Synthetic Annotation factory"
+          given: "a = Tasty.Annotation(Type.Named(deprecatedSym), Chunk.empty)"
+          when: "inspect annotationType, argsPickle, unapply(a)"
+          then: "annotationType.show=='scala.deprecated'; argsPickle.isEmpty; unapply==Some((annotationType, Chunk.empty))"
+          pins: "T1"
+    consumed_invariants: [INV-001, INV-008]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TastySymbolTest kyo.TastyTypeTest kyo.TastyAnnotationTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TastySymbolTest, kyo.TastyTypeTest, kyo.TastyAnnotationTest]
+    test_count: 6
+    test_runtime_estimate_min: 1
+    estimated_loc: 200
+    estimated_wall_clock_min: 25
+    oversize_justified: ""
+
+  - id: 14
+    name: "Enrich TastyError byte-offset context"
+    depends_on: [3]
+    addresses: [L5, T3]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/TastyError.scala
+        before: "MalformedSection(name, reason); ClassfileFormatError(path, reason); SnapshotFormatError(path, reason)"
+        after: "MalformedSection(name, reason, byteOffset: Long); ClassfileFormatError(path, reason, byteOffset: Long); SnapshotFormatError(path, reason, byteOffset: Long)"
+      - path: "callsites in Tasty.scala, ConstantPool.scala, JarCentralDirectory.scala, ClassfileUnpickler.scala, ModuleInfoReader.scala, every Phase 3/4 callsite"
+        before: "TastyError.MalformedSection(name, reason)"
+        after: "TastyError.MalformedSection(name, reason, byteOffset)"
+    files_deleted: []
+    public_api:
+      - signature: "case MalformedSection(name: String, reason: String, byteOffset: Long)"
+        receiver: "TastyError"
+      - signature: "case ClassfileFormatError(path: String, reason: String, byteOffset: Long)"
+        receiver: "TastyError"
+      - signature: "case SnapshotFormatError(path: String, reason: String, byteOffset: Long)"
+        receiver: "TastyError"
+    tests:
+      total: 4
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TastyErrorTest.scala
+      leaves:
+        - id: 1
+          name: "MalformedSection carries byte offset"
+          given: "synthetic decode failure at byte offset 12345L"
+          when: "Abort.run"
+          then: "Result.Failure(MalformedSection(name, reason, off)) where off==12345L"
+          pins: "INV-006, L5"
+        - id: 2
+          name: "SymbolNotFound carries FQN"
+          given: "classpath with no symbol 'missing.X'"
+          when: "cp.lookupClass('missing.X') via Abort.run; separately construct SymbolNotFound('missing.X')"
+          then: "lookup is Result.Success(Absent); constructed value's .fqn=='missing.X'"
+          pins: "T3"
+        - id: 3
+          name: "ParameterizedTypeNotAllowed carries tag"
+          given: "synthetic Type section with APPLIEDtype illegal at position"
+          when: "Abort.run"
+          then: "Result.Failure(ParameterizedTypeNotAllowed(tag)) where tag=='APPLIEDtype'"
+          pins: "T3"
+        - id: 4
+          name: "ClassfileFormatError byte offset captured"
+          given: "corrupted classfile with invalid CP tag at byte 89"
+          when: "load via Abort.run"
+          then: "Result.Failure(ClassfileFormatError(path, _, 89L))"
+          pins: "INV-006, L5"
+    consumed_invariants: [INV-010, INV-012]
+    produced_invariants: [INV-006]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TastyErrorTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TastyErrorTest]
+    test_count: 4
+    test_runtime_estimate_min: 1
+    estimated_loc: 240
+    estimated_wall_clock_min: 30
+    oversize_justified: ""
+
+  - id: 15
+    name: "Return SubtypeVerdict from isSubtypeOf"
+    depends_on: [2]
+    addresses: [M6]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "extension (t: Type).isSubtypeOf(other)(using cp: Classpath, AllowUnsafe): Boolean"
+        after: "enum SubtypeVerdict { Sub, NotSub, Unknown }; extension returns SubtypeVerdict"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/type_/Subtyping.scala
+        before: "isSubtype returns Boolean; budget exhaustion returns false; partial classpath returns false"
+        after: "isSubtype returns SubtypeVerdict; budget exhaustion returns Unknown; partial classpath returns Unknown; lattice combinators implement the three-state logic"
+    files_deleted: []
+    public_api:
+      - signature: "enum SubtypeVerdict { Sub, NotSub, Unknown }"
+        receiver: "Tasty"
+      - signature: "extension (t: Type) def isSubtypeOf(other: Type)(using cp: Classpath, AllowUnsafe): SubtypeVerdict"
+        receiver: "Tasty"
+    tests:
+      total: 5
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/SubtypeTest.scala
+      leaves:
+        - id: 1
+          name: "Positive subtype returns Sub"
+          given: "t=Int, other=Any"
+          when: "t.isSubtypeOf(other)"
+          then: "SubtypeVerdict.Sub"
+          pins: "INV-016"
+        - id: 2
+          name: "Negative returns NotSub"
+          given: "t=String, other=Int"
+          when: "t.isSubtypeOf(other)"
+          then: "SubtypeVerdict.NotSub"
+          pins: "INV-016"
+        - id: 3
+          name: "Budget exhaustion returns Unknown"
+          given: "Rec type triggering 66 unfoldings"
+          when: "isSubtypeOf"
+          then: "SubtypeVerdict.Unknown"
+          pins: "INV-016"
+        - id: 4
+          name: "Partial classpath returns Unknown"
+          given: "classpath missing _parents for Foo; t=Foo, other=Bar"
+          when: "isSubtypeOf"
+          then: "SubtypeVerdict.Unknown"
+          pins: "INV-016"
+        - id: 5
+          name: "Exhaustiveness match catches all three cases"
+          given: "verdict from isSubtypeOf"
+          when: "match Sub|NotSub|Unknown without default"
+          then: "compiles cleanly (no exhaustiveness warning); evaluates to one of three strings"
+          pins: "Q-001"
+    consumed_invariants: [INV-001]
+    produced_invariants: [INV-016]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.SubtypeTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.SubtypeTest]
+    test_count: 5
+    test_runtime_estimate_min: 1
+    estimated_loc: 260
+    estimated_wall_clock_min: 35
+    oversize_justified: ""
+
+  - id: 16
+    name: "Resolve ClassConst type reference"
+    depends_on: [2]
+    addresses: [M3]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/symbol/Constant.scala
+        before: "CLASSconst case calls skipTree(view) and returns ClassConst(Type.Named(classConstSentinel))"
+        after: "CLASSconst case calls TypeUnpickler.decodeType(view, decodeCtx); classConstSentinel removed; fromTastyTag receives DecodeContext"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 3
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/UnifiedModelTest.scala
+      leaves:
+        - id: 1
+          name: "ClassConst carries real Type"
+          given: "TASTy with classOf[String]; load; get val x.body"
+          when: "traverse to find Literal(ClassConst(tpe))"
+          then: "tpe is Type.Named(stringSym) where stringSym.fullName.asString=='java.lang.String'; NOT the sentinel"
+          pins: "INV-013"
+        - id: 2
+          name: "ClassConst with unresolved class produces UnresolvedRef"
+          given: "TASTy classOf[com.missing.X] not in classpath"
+          when: "extract ClassConst(tpe)"
+          then: "tpe = Type.Named(unresolved) where unresolved.kind==Unresolved AND fullName.asString=='com.missing.X'"
+          pins: "INV-013"
+        - id: 3
+          name: "No classConstSentinel exported"
+          given: "Constant.scala source text"
+          when: "read as text"
+          then: "substring 'classConstSentinel' appears 0 times"
+          pins: "M10"
+    consumed_invariants: [INV-001]
+    produced_invariants: [INV-013]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.UnifiedModelTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.UnifiedModelTest]
+    test_count: 3
+    test_runtime_estimate_min: 1
+    estimated_loc: 110
+    estimated_wall_clock_min: 20
+    oversize_justified: ""
+
+  - id: 17
+    name: "Decode Annotation args lazily"
+    depends_on: [2, 16]
+    addresses: [M2]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "Annotation.args returns Abort.fail(NotImplemented) when _decodeCtx is null or argsPickle is empty"
+        after: "Annotation.args returns Tree.Unknown(-1, 0) for null context or empty pickle; structured MalformedSection on decode failure"
+    files_deleted: []
+    public_api:
+      - signature: "def args(using Frame): Tree < (Sync & Abort[TastyError])"
+        receiver: "Tasty.Annotation"
+    tests:
+      total: 4
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TreeUnpicklerTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TastyAnnotationTest.scala
+      leaves:
+        - id: 1
+          name: "Orchestrator-discovered annotation args decode"
+          given: "TASTy @deprecated('msg','since 1.0') def foo()"
+          when: "annotation.args"
+          then: "Tree.Apply(Select(New(Named(deprecated)),<init>), List(Literal(StringConst('msg')), Literal(StringConst('since 1.0'))))"
+          pins: "INV-014"
+        - id: 2
+          name: "Annotation with empty argsPickle returns Tree.Unknown"
+          given: "annotation with non-null _decodeCtx but argsPickle.isEmpty"
+          when: "annotation.args"
+          then: "Tree.Unknown(-1, 0)"
+          pins: "INV-014"
+        - id: 3
+          name: "Synthetic factory annotation args returns Tree.Unknown"
+          given: "a = Tasty.Annotation(Type.Named(sym), Chunk.empty)"
+          when: "a.args"
+          then: "Tree.Unknown(-1, 0); NOT Abort.fail(NotImplemented)"
+          pins: "INV-014"
+        - id: 4
+          name: "Args decode after classpath open returns"
+          given: "classpath opened, then sym.annotations.head.args invoked later"
+          when: "invoked"
+          then: "returns decoded Tree (no NotImplemented)"
+          pins: "INV-014"
+    consumed_invariants: [INV-001, INV-006]
+    produced_invariants: [INV-014]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TreeUnpicklerTest kyo.TastyAnnotationTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TreeUnpicklerTest, kyo.TastyAnnotationTest]
+    test_count: 4
+    test_runtime_estimate_min: 1
+    estimated_loc: 100
+    estimated_wall_clock_min: 20
+    oversize_justified: ""
+
+  - id: "18a"
+    name: "Decode Tree category 1 modifiers"
+    depends_on: [17]
+    addresses: [M1-cat1]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "Tree ADT lacks Modifier case"
+        after: "Tree ADT gains case Modifier(flag: Flag)"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/reader/TreeUnpickler.scala
+        before: "tag < firstASTtag falls through to Tree.Unknown"
+        after: "tag < firstASTtag dispatched to decodeCategoryOneModifier; every TASTy v28.8 modifier tag (PRIVATE through INTO) produces Tree.Modifier(flag)"
+    files_deleted: []
+    public_api:
+      - signature: "case Modifier(flag: Flag)"
+        receiver: "Tasty.Tree"
+    tests:
+      total: 4
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TreeUnpicklerTest.scala
+      leaves:
+        - id: 1
+          name: "Every category-1 tag decodes to Modifier"
+          given: "synthetic TASTy AST with one of each modifier tag (PRIVATE..INTO)"
+          when: "decode each"
+          then: "each produces Tree.Modifier(flag) with matching Flag; no Tree.Unknown emitted"
+          pins: "INV-005, M1"
+        - id: 2
+          name: "PRIVATE decodes to Modifier(Flag.Private)"
+          given: "bytes [PRIVATE]"
+          when: "decode"
+          then: "Tree.Modifier(Flag.Private)"
+          pins: "INV-005"
+        - id: 3
+          name: "Unknown category-1 tag throws DecodeException"
+          given: "bytes [5] (below firstASTtag but unrecognized)"
+          when: "decode via Abort.run"
+          then: "Result.Failure(MalformedSection('ASTs', reason, _)) where reason contains 'unknown category-1 modifier tag 5'"
+          pins: "INV-005"
+        - id: 4
+          name: "Empty category-1 scan over real TASTy"
+          given: "real TASTy file from kyo-core"
+          when: "decode Sync.defer's body; count Tree.Unknown with tag in (0, firstASTtag)"
+          then: "Tree.Unknown count equals 0 for category-1 tags"
+          pins: "INV-005"
+    consumed_invariants: [INV-014, INV-006]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TreeUnpicklerTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TreeUnpicklerTest]
+    test_count: 4
+    test_runtime_estimate_min: 1
+    estimated_loc: 280
+    estimated_wall_clock_min: 35
+    oversize_justified: ""
+
+  - id: "18b"
+    name: "Decode Tree category 2 tag+Nat"
+    depends_on: ["18a"]
+    addresses: [M1-cat2]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "Tree ADT lacks Shared, Literal cases"
+        after: "Tree ADT gains case Shared(addr: Int), case Literal(constant: Constant)"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/reader/TreeUnpickler.scala
+        before: "tags 60-89 fall through to Tree.Unknown"
+        after: "tags 60-89 dispatched to decodeCategoryTwo; SHAREDtype/SHAREDterm produce Shared(addr), constants produce Literal(constant)"
+    files_deleted: []
+    public_api:
+      - signature: "case Shared(addr: Int)"
+        receiver: "Tasty.Tree"
+      - signature: "case Literal(constant: Constant)"
+        receiver: "Tasty.Tree"
+    tests:
+      total: 3
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TreeUnpicklerTest.scala
+      leaves:
+        - id: 1
+          name: "SHAREDtype decodes to Shared(addr)"
+          given: "bytes [SHAREDtype, 42]"
+          when: "decode"
+          then: "Tree.Shared(42)"
+          pins: "INV-005"
+        - id: 2
+          name: "INTconst decodes to Literal(IntConst)"
+          given: "bytes [INTconst, <varint 7>]"
+          when: "decode"
+          then: "Tree.Literal(Constant.IntConst(7))"
+          pins: "INV-005"
+        - id: 3
+          name: "Category-2 scan over real TASTy"
+          given: "real TASTy from kyo-core"
+          when: "decode body; count Tree.Unknown with tag in [60,89]"
+          then: "Tree.Unknown count equals 0 for category-2 tags"
+          pins: "INV-005"
+    consumed_invariants: []
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TreeUnpicklerTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TreeUnpicklerTest]
+    test_count: 3
+    test_runtime_estimate_min: 1
+    estimated_loc: 200
+    estimated_wall_clock_min: 30
+    oversize_justified: ""
+
+  - id: "18c"
+    name: "Decode Tree category 3 tag+AST"
+    depends_on: ["18b"]
+    addresses: [M1-cat3]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "Tree ADT lacks RecType, SuperType, RefinedType, AppliedType, TypeBounds, AnnotatedType, AndType, OrType, ByNameType, MatchType, FlexibleType cases"
+        after: "Tree ADT gains 11 new cases for category-3 tags"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/reader/TreeUnpickler.scala
+        before: "tags 90-109 fall through to Tree.Unknown"
+        after: "tags 90-109 dispatched to decodeCategoryThree with named sub-tree decodes per TastyFormat spec"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 3
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TreeUnpicklerTest.scala
+      leaves:
+        - id: 1
+          name: "APPLIEDtype decodes nested arguments"
+          given: "bytes for APPLIEDtype(Named(List), [Named(Int)])"
+          when: "decode"
+          then: "Tree.AppliedType(Named(listSym), Chunk(Named(intSym)))"
+          pins: "INV-005"
+        - id: 2
+          name: "MATCHtype with cases"
+          given: "bytes for MATCHtype(bound, scrut, 2 cases)"
+          when: "decode"
+          then: "Tree.MatchType(bound, scrut, cases) with cases.length==2"
+          pins: "INV-005"
+        - id: 3
+          name: "Category-3 scan over real TASTy"
+          given: "real TASTy from kyo-core"
+          when: "count Tree.Unknown with tag in [90,109]"
+          then: "Tree.Unknown count equals 0 for category-3 tags"
+          pins: "INV-005"
+    consumed_invariants: []
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TreeUnpicklerTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TreeUnpicklerTest]
+    test_count: 3
+    test_runtime_estimate_min: 1
+    estimated_loc: 380
+    estimated_wall_clock_min: 45
+    oversize_justified: ""
+
+  - id: "18d"
+    name: "Decode Tree category 4 tag+Nat+AST"
+    depends_on: ["18c"]
+    addresses: [M1-cat4]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "Tree ADT lacks IdentTpt, SelectTpt, SingletonTpt, TermRefPkg, TypeRefPkg, TermRefSymbol, TypeRefSymbol, TermRefDirect, TypeRefDirect, SelectIn cases"
+        after: "Tree ADT gains 11 new cases for category-4 tags"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/reader/TreeUnpickler.scala
+        before: "tags 110-127 fall through to Tree.Unknown"
+        after: "tags 110-127 dispatched to decodeCategoryFour with Nat-then-AST decode shape per TastyFormat spec"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 3
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TreeUnpicklerTest.scala
+      leaves:
+        - id: 1
+          name: "TERMREFpkg decodes name"
+          given: "bytes [TERMREFpkg, <nameRef 5>] with names(5)='scala'"
+          when: "decode"
+          then: "Tree.TermRefPkg(Name('scala'))"
+          pins: "INV-005"
+        - id: 2
+          name: "SELECTin captures qual/name/owner"
+          given: "bytes for SELECTin(name='map', qual=Named(List), owner=Named(scala))"
+          when: "decode"
+          then: "Tree.SelectIn(Named(listSym), Name('map'), Named(scalaSym))"
+          pins: "INV-005"
+        - id: 3
+          name: "Category-4 scan over real TASTy"
+          given: "real TASTy from kyo-core"
+          when: "count Tree.Unknown with tag in [110,127]"
+          then: "Tree.Unknown count equals 0 for category-4 tags"
+          pins: "INV-005"
+    consumed_invariants: []
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TreeUnpicklerTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TreeUnpicklerTest]
+    test_count: 3
+    test_runtime_estimate_min: 1
+    estimated_loc: 280
+    estimated_wall_clock_min: 35
+    oversize_justified: ""
+
+  - id: "18e"
+    name: "Decode Tree category 5 length-prefixed"
+    depends_on: ["18d"]
+    addresses: [M1-cat5]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "Tree ADT lacks ValDef, DefDef, TypeDef, Template, ClassDef, Import, Export, Apply (already), TypeApply (already), New, Throw, Return, Block (already), If, Match, CaseDef, While, Try, Bind, Alternative, UnApply, Annotation, AnnotatedTpt cases"
+        after: "Tree ADT gains 23+ new cases for category-5 length-prefixed tags"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/reader/TreeUnpickler.scala
+        before: "tags >= firstLengthTreeTag dispatched only for IDENT/SELECT/APPLY/TYPEAPPLY/BLOCK; others fall through to Tree.Unknown"
+        after: "decodeCategoryFive dispatches every TASTy v28.8 length-prefixed tag; unknown tag logs warning and emits Tree.Unknown for forward-compat"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 5
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TreeUnpicklerTest.scala
+      leaves:
+        - id: 1
+          name: "VALDEF decodes name, tpe, rhs"
+          given: "bytes for VALDEF('x', Tpt(Int), Literal(IntConst(7)))"
+          when: "decode"
+          then: "Tree.ValDef(Name('x'), <Int tpe>, Tree.Literal(IntConst(7)), Chunk.empty)"
+          pins: "INV-005"
+        - id: 2
+          name: "BLOCK decodes stats and expr"
+          given: "bytes for BLOCK(expr=Ident('y'), stats=[ValDef(...)])"
+          when: "decode"
+          then: "Tree.Block(Chunk(ValDef(...)), Tree.Ident(Name('y'),_))"
+          pins: "INV-005"
+        - id: 3
+          name: "APPLY captures fun and args"
+          given: "bytes for APPLY(Select(Ident('List'),'apply'), [Literal(IntConst(1)), Literal(IntConst(2))])"
+          when: "decode"
+          then: "Tree.Apply(_, Chunk(_,_)) with args.length==2"
+          pins: "INV-005"
+        - id: 4
+          name: "Unknown category-5 tag logs warning and emits Tree.Unknown"
+          given: "bytes encoding tag 250 with 10-byte length-prefixed payload; Log test backend"
+          when: "decode"
+          then: "captured list contains 'unknown category-5 tag 250'; returned tree is Tree.Unknown(250, 10)"
+          pins: "INV-005"
+        - id: 5
+          name: "Full TASTy corpus emits zero Tree.Unknown"
+          given: "every TASTy file in kyo-core JVM artifact (Scala 3.6+ v28.8)"
+          when: "decode every Symbol body Tree"
+          then: "summed Tree.Unknown count across all bodies equals 0"
+          pins: "INV-005"
+    consumed_invariants: []
+    produced_invariants: [INV-005]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TreeUnpicklerTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.TreeUnpicklerTest]
+    test_count: 5
+    test_runtime_estimate_min: 3
+    estimated_loc: 650
+    estimated_wall_clock_min: 75
+    oversize_justified: "Category 5 covers 23 length-prefixed AST tags whose decoders share helper functions (decodeTreeListUntil, decodeModifiersUntil, decodeDefDefBody); splitting would require duplicating these helpers across atomic-green phases."
+
+  - id: 19
+    name: "Bump snapshot format minor version"
+    depends_on: ["18e"]
+    addresses: [M4, M10]
+    files_produced: []
+    files_modified:
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/snapshot/SnapshotFormat.scala
+        before: "minorVersion = 2; sectionNames missing TPARAMS_"
+        after: "minorVersion = 3; sectionNames adds 'TPARAMS_'"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/snapshot/SnapshotWriter.scala
+        before: "PARENTS and MEMBERS written as empty bytes"
+        after: "PARENTS, MEMBERS, TPARAMS_ populated via serializeSymbolRefLists with (symbolId, count, refs)"
+      - path: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/snapshot/SnapshotReader.scala
+        before: "_parents/_typeParams/_declarations set to Chunk.empty unconditionally at lines 170-177"
+        after: "section lookup fills Chunks from PARENTS/MEMBERS/TPARAMS_ when present; falls back to Chunk.empty for minor=2 snapshots"
+      - path: kyo-tasty/shared/src/main/scala/kyo/Tasty.scala
+        before: "Symbol.body: if !home.isAssigned then stub('Symbol.body')"
+        after: "stub removed; rely on home.isAssigned invariant after Classpath.open returns"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 7
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/SnapshotRoundTripTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/SnapshotFormatTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/SnapshotReaderTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/SnapshotWriterTest.scala
+      leaves:
+        - id: 1
+          name: "Parents round-trip preserves chunks"
+          given: "Classpath with class Foo extends Bar with Baz; write/read snapshot"
+          when: "cp2.findClass('Foo').get.parents.map(_.show)"
+          then: "Chunk('Bar','Baz')"
+          pins: "INV-015, INV-023"
+        - id: 2
+          name: "typeParams round-trip"
+          given: "class Foo[A, B <: AnyRef]; write/read"
+          when: "cp2.findClass('Foo').get.typeParams.map(_.name.asString)"
+          then: "Chunk('A','B')"
+          pins: "INV-015"
+        - id: 3
+          name: "declarations round-trip"
+          given: "class Foo { def m(): Int; val x: String }; write/read"
+          when: "cp2.findClass('Foo').get.declarations.map(_.name.asString).toSet"
+          then: "Set('m','x')"
+          pins: "INV-015"
+        - id: 4
+          name: "minor version is 3"
+          given: "SnapshotFormat.minorVersion"
+          when: "read"
+          then: "value equals 3 exactly"
+          pins: "INV-023"
+        - id: 5
+          name: "sectionNames includes TPARAMS_"
+          given: "SnapshotFormat.sectionNames"
+          when: "read"
+          then: "includes 'TPARAMS_'"
+          pins: "INV-023"
+        - id: 6
+          name: "minor=2 snapshot loads with empty parents"
+          given: "pre-recorded snapshot written at minorVersion 2"
+          when: "load"
+          then: "succeeds; cp.findClass('Foo').get.parents == Chunk.empty; no SnapshotVersionMismatch"
+          pins: "INV-023"
+        - id: 7
+          name: "PARENTS section length > 0 after write"
+          given: "Classpath with class Foo extends Bar; write snapshot"
+          when: "read section table"
+          then: "PARENTS section length > 0; bytes encode (1, 1, parentTypeId) plus count prefix"
+          pins: "INV-015"
+    consumed_invariants: [INV-003]
+    produced_invariants: [INV-003, INV-015, INV-023]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.SnapshotRoundTripTest kyo.SnapshotFormatTest kyo.SnapshotReaderTest kyo.SnapshotWriterTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.SnapshotRoundTripTest, kyo.SnapshotFormatTest, kyo.SnapshotReaderTest, kyo.SnapshotWriterTest]
+    test_count: 7
+    test_runtime_estimate_min: 3
+    estimated_loc: 480
+    estimated_wall_clock_min: 55
+    oversize_justified: ""
+
+  - id: 20
+    name: "Implement cross-platform ZLIB inflate"
+    depends_on: [14]
+    addresses: [M5]
+    files_produced:
+      - source: kyo-tasty/shared/src/main/scala/kyo/internal/tasty/scala2/PortableInflate.scala
+        test: kyo-tasty/shared/src/test/scala/kyo/PortableInflateTest.scala
+        code: "package kyo.internal.tasty.scala2 ; pure-Scala RFC 1950 inflate (full source in plan markdown)"
+    files_modified:
+      - path: kyo-tasty/js/src/main/scala/kyo/internal/tasty/scala2/InflateHook.scala
+        before: "Abort.fail(TastyError.NotImplemented('Scala.js'))"
+        after: "Sync.defer wrapping PortableInflate.inflate; catches InflateException and maps to MalformedSection"
+      - path: kyo-tasty/native/src/main/scala/kyo/internal/tasty/scala2/InflateHook.scala
+        before: "Abort.fail(TastyError.NotImplemented('Scala Native'))"
+        after: "Sync.defer wrapping java.util.zip.InflaterInputStream (available via scala-native javalib FFI to libz); catches ZipException/IOException"
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 6
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/Scala2PickleTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/InflateHookTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/PortableInflateTest.scala
+      leaves:
+        - id: 1
+          name: "JS hook produces same bytes as JVM reference"
+          given: "fixed 1024-byte RFC 1950 input"
+          when: "run on JS and JVM"
+          then: "Arrays.equals returns true"
+          pins: "INV-017, INV-024"
+        - id: 2
+          name: "Native hook produces same bytes as JVM"
+          given: "same input"
+          when: "Native and JVM"
+          then: "Arrays.equals returns true"
+          pins: "INV-017, INV-024"
+        - id: 3
+          name: "Empty input produces empty output"
+          given: "6-byte ZLIB stream decoding to zero bytes"
+          when: "InflateHook.inflate"
+          then: "Array.emptyByteArray"
+          pins: "INV-017"
+        - id: 4
+          name: "Corrupted ZLIB header returns MalformedSection"
+          given: "stream with first byte 0xff (invalid CMF)"
+          when: "Abort.run"
+          then: "Result.Failure(MalformedSection('Scala2Inflate', _, _))"
+          pins: "INV-017"
+        - id: 5
+          name: "Dynamic Huffman block decodes correctly"
+          given: "ZLIB stream of 'the quick brown fox' (dynamic Huffman)"
+          when: "PortableInflate.inflate"
+          then: "returned bytes equal 'the quick brown fox'.getBytes(UTF-8)"
+          pins: "M5"
+        - id: 6
+          name: "End-to-end inflate-then-decode cross-platform"
+          given: "Scala 2 classfile with ZLIB Scala-attribute payload"
+          when: "load via Classpath.open on JS, Native, JVM"
+          then: "resulting Symbol table identical across all three (same FQNs, same kinds)"
+          pins: "INV-024"
+    consumed_invariants: [INV-006]
+    produced_invariants: [INV-017, INV-024]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.InflateHookTest kyo.PortableInflateTest kyo.Scala2PickleTest' 'kyo-tastyJS/testOnly kyo.InflateHookTest kyo.PortableInflateTest' 'kyo-tastyNative/testOnly kyo.InflateHookTest kyo.Scala2PickleTest'"
+    verification_strategy: cross-platform-full
+    targeted_test_specs: [kyo.InflateHookTest, kyo.PortableInflateTest, kyo.Scala2PickleTest]
+    test_count: 6
+    test_runtime_estimate_min: 4
+    estimated_loc: 700
+    estimated_wall_clock_min: 90
+    oversize_justified: "RFC 1951 + RFC 1950 in-tree implementation is irreducible: BitStream, three block decoders, Huffman tree builder, Adler-32 are tightly coupled and cannot be split into atomic-green slices; alternative is an external dependency rejected by steering."
+
+  - id: 21
+    name: "Test internal classes"
+    depends_on: [6, 7, 9, 19]
+    addresses: [T2]
+    files_produced: []
+    files_modified: []
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 14
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/JavaAnnotationUnpicklerTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/UnresolvedRefTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TastyStatTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/DigestComputerTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/ConstantTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/FqnCanonicalizerTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/SingleAssignTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/SymbolKindTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/PlatformHashingStateTest.scala
+      leaves:
+        - id: 1
+          name: "Simple annotation reads correctly"
+          given: "classfile bytestream @Deprecated"
+          when: "JavaAnnotationUnpickler.read(view, pool)"
+          then: "JavaAnnotation(annClass, Map.empty) where annClass.fullName.asString=='java.lang.Deprecated'"
+          pins: "T2"
+        - id: 2
+          name: "Annotation with array value"
+          given: "@Foo({'a','b'})"
+          when: "parse"
+          then: "JavaAnnotation(_, Map(Name('value')->ArrayVal(Chunk(StringVal('a'),StringVal('b')))))"
+          pins: "T2"
+        - id: 3
+          name: "UnresolvedRef.make produces Unresolved Symbol"
+          given: "fqn='missing.X', classpathRef"
+          when: "UnresolvedRef.make"
+          then: "Symbol with kind==Unresolved, fullName.asString=='missing.X'"
+          pins: "T2"
+        - id: 4
+          name: "TastyStat.scope.traceSpan invokes block"
+          given: "side-effect counter; traceSpan('test', Attributes.empty){counter.incrementAndGet()}"
+          when: "call returns"
+          then: "counter.get()==1"
+          pins: "T2"
+        - id: 5
+          name: "Same input produces same digest"
+          given: "byte array [1,2,3]"
+          when: "compute digest twice"
+          then: "both digests are equal (deterministic)"
+          pins: "T2"
+        - id: 6
+          name: "Different input produces different digest"
+          given: "[1,2,3] and [1,2,4]"
+          when: "compute both"
+          then: "digests differ"
+          pins: "T2"
+        - id: 7
+          name: "STRINGconst decodes via name table"
+          given: "bytes [STRINGconst, <nameRef 2>] with names(2)='hello'"
+          when: "Constant.fromTastyTag(STRINGconst, view, ctx)"
+          then: "Constant.StringConst('hello')"
+          pins: "T2"
+        - id: 8
+          name: "NULLconst returns canonical NullConst"
+          given: "bytes [NULLconst]"
+          when: "decode"
+          then: "Constant.NullConst"
+          pins: "T2"
+        - id: 9
+          name: "Dotted FQN canonical"
+          given: "'com/example/Foo$Inner'"
+          when: "FqnCanonicalizer.toDotted(input)"
+          then: "'com.example.Foo.Inner'"
+          pins: "T2"
+        - id: 10
+          name: "SingleAssign set/get round trip"
+          given: "SingleAssign[Int]"
+          when: "slot.set(7); slot.get()"
+          then: "returns 7 from the slot"
+          pins: "T2"
+        - id: 11
+          name: "SingleAssign second set throws"
+          given: "SingleAssign with first set succeeded"
+          when: "second set"
+          then: "IllegalStateException containing 'already assigned'"
+          pins: "T2"
+        - id: 12
+          name: "SymbolKind enum has 14 cases"
+          given: "Tasty.SymbolKind.values"
+          when: "count"
+          then: "enum size is 14 cases"
+          pins: "T2"
+        - id: 13
+          name: "SymbolKind CanEqual reflexive"
+          given: "SymbolKind.Class == SymbolKind.Class"
+          when: "evaluated"
+          then: "true; Class == Trait is false"
+          pins: "T2"
+        - id: 14
+          name: "PlatformHashingState stable across platforms"
+          given: "byte array [1,2,3]"
+          when: "hash"
+          then: "Long matches canonical FNV-1a 64-bit golden value"
+          pins: "T2"
+    consumed_invariants: [INV-001, INV-006, INV-009, INV-023]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.JavaAnnotationUnpicklerTest kyo.UnresolvedRefTest kyo.TastyStatTest kyo.DigestComputerTest kyo.ConstantTest kyo.FqnCanonicalizerTest kyo.SingleAssignTest kyo.SymbolKindTest kyo.PlatformHashingStateTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.JavaAnnotationUnpicklerTest, kyo.UnresolvedRefTest, kyo.TastyStatTest, kyo.DigestComputerTest, kyo.ConstantTest, kyo.FqnCanonicalizerTest, kyo.SingleAssignTest, kyo.SymbolKindTest, kyo.PlatformHashingStateTest]
+    test_count: 14
+    test_runtime_estimate_min: 2
+    estimated_loc: 380
+    estimated_wall_clock_min: 50
+    oversize_justified: ""
+
+  - id: 22
+    name: "Test edge inputs"
+    depends_on: [3, 4, 8, "18e"]
+    addresses: [T4]
+    files_produced: []
+    files_modified: []
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 12
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/Utf8Test.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TastyTypeTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TypeArenaTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TastySymbolTest.scala
+        - kyo-tasty/jvm/src/test/scala/kyo/JarCentralDirectoryTest.scala
+        - kyo-tasty/jvm/src/test/scala/kyo/JvmFileSourceTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/SnapshotRoundTripTest.scala
+      leaves:
+        - id: 1
+          name: "UTF-8 surrogate pair decodes"
+          given: "bytes [0xf0,0x9f,0x98,0x80] (U+1F600)"
+          when: "Utf8.decode(bytes,0,4)"
+          then: "String length 2, surrogate pair [0xd83d,0xde00], codePoint at 0 equals 0x1F600"
+          pins: "T4"
+        - id: 2
+          name: "Modified-UTF-8 null 0xC0 0x80 rejected"
+          given: "bytes [0xc0,0x80]"
+          when: "Abort.run(Utf8.decode)"
+          then: "Result.Failure(MalformedSection('Utf8', reason, _)) mentioning overlong encoding"
+          pins: "T4"
+        - id: 3
+          name: "4-byte UTF-8 outside BMP"
+          given: "bytes for U+10FFFF"
+          when: "decode"
+          then: "String length 2 (surrogate pair)"
+          pins: "T4"
+        - id: 4
+          name: "Empty Function param chunk"
+          given: "t = Applied(named('Function0'), Chunk.empty)"
+          when: "t.show"
+          then: "'Function0[]' or canonical '() => ?'"
+          pins: "T4"
+        - id: 5
+          name: "Cyclic Rec type handled"
+          given: "Rec type whose RecThis references itself at depth 2"
+          when: "intern via TypeArena.merge"
+          then: "succeeds; canonical value reference-equal under repeated internRec"
+          pins: "T4"
+        - id: 6
+          name: "Depth at MaxDepth-1 succeeds"
+          given: "nesting exactly MaxDepth-1"
+          when: "intern"
+          then: "succeeds without DepthExceededException"
+          pins: "T4"
+        - id: 7
+          name: "Root-owned symbol"
+          given: "root sentinel Symbol with owner eq self"
+          when: "fullName.asString, binaryName"
+          then: "both return empty String ''"
+          pins: "T4"
+        - id: 8
+          name: "Deeply nested binaryName"
+          given: "5-level chain A.B.C.D.E all Class kind"
+          when: "eSym.binaryName"
+          then: "'A$B$C$D$E'"
+          pins: "T4"
+        - id: 9
+          name: "Multi-disk archive rejected"
+          given: "JAR EOCD with diskNumber=2"
+          when: "read via Abort.run"
+          then: "Result.Failure(MalformedSection('jar', reason, _)) containing 'multi-disk'"
+          pins: "T4"
+        - id: 10
+          name: "JMOD archive recognized"
+          given: ".jmod file with Zip layout"
+          when: "read"
+          then: "produces same Chunk of entries as JAR with identical content"
+          pins: "T4"
+        - id: 11
+          name: "Corrupted mmap region surfaces error"
+          given: "test FileChannel that throws IOException at offset 150"
+          when: "Abort.run"
+          then: "Result.Failure(CorruptedFile(_, 150L, _))"
+          pins: "T4"
+        - id: 12
+          name: "Concurrent snapshot writers produce one valid file"
+          given: "two threads simultaneously call SnapshotWriter.write same cacheDir"
+          when: "both complete"
+          then: "exactly one ${digest}.krfl in cacheDir; reading produces Classpath with allSymbols.length matching source"
+          pins: "T4"
+    consumed_invariants: [INV-010, INV-012, INV-019, INV-005]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.Utf8Test kyo.TastyTypeTest kyo.TypeArenaTest kyo.TastySymbolTest kyo.JarCentralDirectoryTest kyo.JvmFileSourceTest kyo.SnapshotRoundTripTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.Utf8Test, kyo.TastyTypeTest, kyo.TypeArenaTest, kyo.TastySymbolTest, kyo.JarCentralDirectoryTest, kyo.JvmFileSourceTest, kyo.SnapshotRoundTripTest]
+    test_count: 12
+    test_runtime_estimate_min: 3
+    estimated_loc: 320
+    estimated_wall_clock_min: 45
+    oversize_justified: ""
+
+  - id: 23
+    name: "Test cross-platform parity"
+    depends_on: [19, 20]
+    addresses: [T5]
+    files_produced: []
+    files_modified: []
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 8
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/Utf8Test.scala
+        - kyo-tasty/shared/src/test/scala/kyo/InflateHookTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/JsFileSourceTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/NativeFileSourceTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/NativeMmapReaderTest.scala
+      leaves:
+        - id: 1
+          name: "JS Utf8 matches JVM byte-for-byte"
+          given: "input bytes for 'hello world'"
+          when: "Utf8.decode on JS"
+          then: "String 'hello world' (char-by-char equal to JVM)"
+          pins: "T5"
+        - id: 2
+          name: "Native Utf8 matches JVM"
+          given: "same input"
+          when: "Native"
+          then: "String equals JVM decode result char-by-char"
+          pins: "T5"
+        - id: 3
+          name: "JS ArrayBuffer-backed reads"
+          given: "JS ArrayBuffer with 100 bytes"
+          when: "JsFileSource read(path,0,50)"
+          then: "50 bytes equal source"
+          pins: "T5"
+        - id: 4
+          name: "JS InflateHook delegates to PortableInflate"
+          given: "known RFC 1950 input"
+          when: "JsInflateHook.inflate"
+          then: "matches PortableInflate.inflate byte-for-byte"
+          pins: "T5, INV-024"
+        - id: 5
+          name: "Native POSIX open/close"
+          given: "temp file via Files.write"
+          when: "NativeFileSource.read(path)"
+          then: "bytes match written content; FD count unchanged"
+          pins: "T5"
+        - id: 6
+          name: "Native mmap closed arena raises IllegalStateException"
+          given: "mmap ByteView with closed=true"
+          when: "second read"
+          then: "IllegalStateException with 'mmap arena closed'"
+          pins: "T5"
+        - id: 7
+          name: "Native signal-safety smoke"
+          given: "mmap region; concurrent reader fiber"
+          when: "forced unmap mid-read"
+          then: "reader exception is IllegalStateException; no SIGSEGV"
+          pins: "T5"
+        - id: 8
+          name: "JS InflateHook fallback semantics"
+          given: "invalid ZLIB stream"
+          when: "JS Abort.run"
+          then: "Result.Failure(MalformedSection('Scala2Inflate',_,_))"
+          pins: "T5, INV-017"
+    consumed_invariants: [INV-017, INV-024]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJS/Test/compile' 'kyo-tastyJS/testOnly kyo.Utf8Test kyo.InflateHookTest kyo.JsFileSourceTest' 'kyo-tastyNative/Test/compile' 'kyo-tastyNative/testOnly kyo.Utf8Test kyo.NativeFileSourceTest kyo.NativeMmapReaderTest'"
+    verification_strategy: cross-platform-full
+    targeted_test_specs: [kyo.Utf8Test, kyo.InflateHookTest, kyo.JsFileSourceTest, kyo.NativeFileSourceTest, kyo.NativeMmapReaderTest]
+    test_count: 8
+    test_runtime_estimate_min: 4
+    estimated_loc: 280
+    estimated_wall_clock_min: 50
+    oversize_justified: ""
+
+  - id: 24
+    name: "Test concurrency and resource cleanup"
+    depends_on: [5, 6, 8]
+    addresses: [T7, T8]
+    files_produced: []
+    files_modified: []
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 7
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/OnceCellTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/SingleAssignTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TypeArenaTest.scala
+        - kyo-tasty/jvm/src/test/scala/kyo/JvmFileSourceTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/ClasspathOrchestratorPipelineTest.scala
+      leaves:
+        - id: 1
+          name: "64-fiber concurrent first-call returns same value"
+          given: "OnceCell[Long](nanoTime)"
+          when: "64 fibers race"
+          then: "all 64 returned Longs equal (CAS-winner)"
+          pins: "T7, INV-009"
+        - id: 2
+          name: "16-fiber concurrent SingleAssign.set"
+          given: "SingleAssign[Int]; 16 fibers"
+          when: "all complete"
+          then: "exactly one set succeeded; 15 caught IllegalStateException; slot.get() equals winner's index"
+          pins: "T7"
+        - id: 3
+          name: "8-fiber concurrent interning preserves canonicality"
+          given: "empty TypeArena; 8 fibers internRec same t"
+          when: "all complete"
+          then: "all 8 returned refs are eq; arena.values.size==1"
+          pins: "T7"
+        - id: 4
+          name: "JAR pool exhaustion under load"
+          given: "JvmFileSource maxPoolSize=2; 50 fibers requesting same JAR"
+          when: "all complete"
+          then: "every read correct; pool.activeCount==0 at end"
+          pins: "T8"
+        - id: 5
+          name: "Classpath close during pending body decode"
+          given: "fiber A calls sym.body; fiber B calls Classpath.close concurrently"
+          when: "both complete"
+          then: "A returns decoded Tree OR fails with ClasspathClosed; never uncaught exception"
+          pins: "T8"
+        - id: 6
+          name: "Mmap arena close during Symbol.body"
+          given: "mmap-backed Symbol; close arena while reading body"
+          when: "read completes"
+          then: "TastyError.ClasspathClosed"
+          pins: "T8"
+        - id: 7
+          name: "Scope exit closes JAR pool with checked-out reader"
+          given: "Classpath in Scope; scope exits while reader checked out"
+          when: "Scope finalizer fires"
+          then: "release branch runs; pool.activeCount==0; no IllegalStateException"
+          pins: "T8"
+    consumed_invariants: [INV-009, INV-019]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.OnceCellTest kyo.SingleAssignTest kyo.TypeArenaTest kyo.JvmFileSourceTest kyo.ClasspathOrchestratorPipelineTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.OnceCellTest, kyo.SingleAssignTest, kyo.TypeArenaTest, kyo.JvmFileSourceTest, kyo.ClasspathOrchestratorPipelineTest]
+    test_count: 7
+    test_runtime_estimate_min: 3
+    estimated_loc: 280
+    estimated_wall_clock_min: 40
+    oversize_justified: ""
+
+  - id: 25
+    name: "Add seeded generative tests"
+    depends_on: [22]
+    addresses: [T6]
+    files_produced: []
+    files_modified: []
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 4
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/VarintTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/Utf8Test.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TastySymbolTest.scala
+        - kyo-tasty/shared/src/test/scala/kyo/TypeArenaTest.scala
+      leaves:
+        - id: 1
+          name: "Varint round-trip on 100 random Longs"
+          given: "Random.setSeed(0x12345L); 100 Longs in [0, Long.MaxValue]"
+          when: "encode each then decode"
+          then: "every decoded value equals source"
+          pins: "T6"
+        - id: 2
+          name: "Utf8 round-trip 100 random Strings"
+          given: "Random.setSeed(0x67890L); 100 Strings length 0-100 from non-surrogate code-points"
+          when: "encode UTF-8 then Utf8.decode"
+          then: "every decoded String equals source"
+          pins: "T6"
+        - id: 3
+          name: "binaryName preserves dotted form"
+          given: "Random.setSeed(0xabcdL); 50 (kind,name) chains length 1-5"
+          when: "build Symbol chain; binaryName"
+          then: "binaryName.replace('/','.').replace('$','.') equals dotted FQN"
+          pins: "T6"
+        - id: 4
+          name: "Interning 200 random Applied is idempotent"
+          given: "Random.setSeed(0xdeadL); 200 nested Applied depth 1-10"
+          when: "arena.internRec(t) twice each"
+          then: "two returned refs eq"
+          pins: "T6"
+    consumed_invariants: [INV-010, INV-019]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.VarintTest kyo.Utf8Test kyo.TastySymbolTest kyo.TypeArenaTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.VarintTest, kyo.Utf8Test, kyo.TastySymbolTest, kyo.TypeArenaTest]
+    test_count: 4
+    test_runtime_estimate_min: 2
+    estimated_loc: 140
+    estimated_wall_clock_min: 25
+    oversize_justified: ""
+
+  - id: 26
+    name: "Extract kyo-tasty-examples module"
+    depends_on: [1]
+    addresses: [Q-009]
+    files_produced:
+      - source: kyo-tasty-examples/shared/src/main/scala/examples/CodegenExample.scala
+        test: ""
+        code: "package examples ; moved with package declaration change"
+      - source: kyo-tasty-examples/shared/src/main/scala/examples/IdeHoverExample.scala
+        test: ""
+        code: "package examples ; moved"
+      - source: kyo-tasty-examples/shared/src/main/scala/examples/JavaScalaBridgeExample.scala
+        test: ""
+        code: "package examples ; moved"
+      - source: kyo-tasty-examples/shared/src/main/scala/examples/RuntimeReflectionExample.scala
+        test: ""
+        code: "package examples ; moved"
+    files_modified:
+      - path: build.sbt
+        before: "lazy val kyo-tasty-bench definition without kyo-tasty-examples"
+        after: "adds lazy val kyo-tasty-examples crossProject with publish/skip := true and dependsOn(kyo-tasty)"
+    files_deleted:
+      - kyo-tasty/shared/src/main/scala/kyo/tasty/examples/CodegenExample.scala
+      - kyo-tasty/shared/src/main/scala/kyo/tasty/examples/IdeHoverExample.scala
+      - kyo-tasty/shared/src/main/scala/kyo/tasty/examples/JavaScalaBridgeExample.scala
+      - kyo-tasty/shared/src/main/scala/kyo/tasty/examples/RuntimeReflectionExample.scala
+    public_api: []
+    tests:
+      total: 3
+      files:
+        - kyo-tasty/shared/src/test/scala/kyo/TastyTest.scala
+      leaves:
+        - id: 1
+          name: "Examples no longer ship in main kyo-tasty jar"
+          given: "kyo-tasty/jvm/target/scala-3.*/kyo-tasty_3-*.jar"
+          when: "list entries"
+          then: "no entry under kyo/tasty/examples/"
+          pins: "INV-022"
+        - id: 2
+          name: "kyo-tasty-examples sources at expected path"
+          given: "kyo-tasty-examples/shared/src/main/scala/examples"
+          when: "list .scala files"
+          then: "exactly 4 files (CodegenExample, IdeHoverExample, JavaScalaBridgeExample, RuntimeReflectionExample); each declares package examples at line 1"
+          pins: "INV-022"
+        - id: 3
+          name: "kyo-tasty-examples builds against kyo-tasty"
+          given: "kyo-tasty-examples module (JVM platform)"
+          when: "synthetic example calling Tasty.Classpath.open compiled"
+          then: "compile succeeds; import resolves to kyo.Tasty.*"
+          pins: "INV-022"
+    consumed_invariants: [INV-020]
+    produced_invariants: [INV-022]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-tasty-examplesJVM/compile' 'kyo-tastyJVM/Test/compile' 'kyo-tastyJVM/testOnly kyo.TastyTest'"
+    verification_strategy: module
+    targeted_test_specs: [kyo.TastyTest]
+    test_count: 3
+    test_runtime_estimate_min: 2
+    estimated_loc: 220
+    estimated_wall_clock_min: 30
+    oversize_justified: ""
+
+  - id: 27
+    name: "Benchmark regression sweep"
+    depends_on: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, "18a", "18b", "18c", "18d", "18e", 19, 20, 21, 22, 23, 24, 25, 26]
+    addresses: []
+    files_produced: []
+    files_modified: []
+    files_deleted: []
+    public_api: []
+    tests:
+      total: 2
+      files:
+        - kyo-tasty/jvm/src/test/scala/kyo/BenchmarkRegressionTest.scala
+      leaves:
+        - id: 1
+          name: "Cold-load median within 5% tolerance"
+          given: "baseline cold-load median at kyo-tasty/bench-baselines/cold-load.json; post-campaign median via ColdLoadBench"
+          when: "test reads both files"
+          then: "(post / pre) < 1.05; test prints actual ratio"
+          pins: "INV-027"
+        - id: 2
+          name: "Warm-cache snapshot read within tolerance"
+          given: "pre and post warm-cache medians from TastyQueryCompareBench warm-mode"
+          when: "compare"
+          then: "(post / pre) < 1.05"
+          pins: "INV-027"
+    consumed_invariants: [INV-001, INV-002, INV-003, INV-004, INV-005, INV-006, INV-007, INV-008, INV-009, INV-010, INV-011, INV-012, INV-013, INV-014, INV-015, INV-016, INV-017, INV-018, INV-019, INV-020, INV-021, INV-022, INV-023, INV-024, INV-025, INV-026]
+    produced_invariants: [INV-027]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm]
+    verification_command: "sbt 'kyo-tasty-benchJVM/Jmh/run -i 3 -wi 3 -f 1 ColdLoadBench TastyQueryCompareBench' 'kyo-tastyJVM/testOnly kyo.BenchmarkRegressionTest'"
+    verification_strategy: targeted
+    targeted_test_specs: [kyo.BenchmarkRegressionTest]
+    test_count: 2
+    test_runtime_estimate_min: 15
+    estimated_loc: 80
+    estimated_wall_clock_min: 60
+    oversize_justified: ""
+
+# Test totals
+# total_tests: 4+6+8+6+3+4+4+4+4+2+8+3+6+4+5+3+4+4+3+3+3+5+7+6+14+12+8+7+4+3+2 = 160
+# total findings addressed (counting M1 split a-e as 5 instances of M1): 48 unique codes
