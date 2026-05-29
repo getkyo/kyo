@@ -31,6 +31,11 @@ class CdpBackendTest extends Test:
       */
     private case class BadResult() derives Schema
 
+    /** Wrong-type shape for [[CdpBackend.getTargets]] decode-failure test: `targetInfos` is an `Int` instead of a sequence, so
+      * kyo-schema must reject it with a type error rather than defaulting to `Seq.empty`.
+      */
+    private case class BadGetTargetsResult(targetInfos: Int = 42) derives Schema
+
     /** Creates a server-side [[JsonRpcEndpoint]] that handles `Browser.getVersion` with [[testVersionResult]] and routes any other request
       * to `extraMethods`. Registers the endpoint with the enclosing Scope so it is closed on test exit.
       */
@@ -290,9 +295,9 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getTargets surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcMethod[CdpNoParams, BadGetTargetsResult, Async & Abort[JsonRpcError]](
                 "Target.getTargets"
-            ) { (_, _) => BadResult() }
+            ) { (_, _) => BadGetTargetsResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
                 Abort.run[BrowserReadException](CdpBackend.getTargets(backend)).map {
                     case Result.Failure(e: BrowserProtocolErrorException) =>

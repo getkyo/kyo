@@ -23,9 +23,14 @@ private[kyo] object BrowserEval:
     private[kyo] def evalJs(expr: String)(using Frame): String < (Browser & Abort[BrowserReadException]) =
         Browser.activeIFrameLocal.use(active => active.map(_.executionContextId)).map { ctx =>
             Browser.use { tab =>
-                CdpBackend.runtimeEvaluate(tab.session, EvalParams(expr, contextId = ctx.map(c => c.value)))
-                    .map(translateContextDestroyed)
-                    .map(CdpEvalDecoder.parseAndExtractEvalValue)
+                Abort.recover[BrowserProtocolErrorException] { e =>
+                    if e.error.contains(CdpErrorStrings.UnreturnableValueErrorMessage) then ""
+                    else Abort.fail(e)
+                } {
+                    CdpBackend.runtimeEvaluate(tab.session, EvalParams(expr, contextId = ctx.map(c => c.value)))
+                        .map(translateContextDestroyed)
+                        .map(CdpEvalDecoder.parseAndExtractEvalValue)
+                }
             }
         }
 
@@ -49,21 +54,30 @@ private[kyo] object BrowserEval:
     ): String < (Browser & Abort[BrowserReadException]) =
         Browser.activeIFrameLocal.use(active => active.map(_.executionContextId)).map { ctx =>
             Browser.use { tab =>
-                CdpBackend.runtimeEvaluate(tab.session, EvalParams(expr, contextId = ctx.map(c => c.value)))
-                    .map(translateContextDestroyed)
-                    .map { result =>
-                        if CdpEvalDecoder.isUnreturnableValueError(result) then ""
-                        else
-                            CdpEvalEnvelope.decodeEvalEnvelope(result, "evalJsChecked") { env =>
-                                env.exceptionDetails match
-                                    case Present(ex) =>
-                                        Abort.fail(
-                                            BrowserScriptErrorException(ExceptionDetailsFormat.format(ex))
-                                        )
-                                    case Absent => CdpEvalDecoder.extractEvalValue(env)
-                            }
-                        end if
-                    }
+                // Recover the unreturnable-value error (e.g. JS Symbols) BEFORE the result string is
+                // decoded: the pre-port CdpClient returned the raw wire so callers could inspect the
+                // error field; the new typed path converts the CDP error to BrowserProtocolErrorException
+                // before returning, so we intercept it here and degrade to "" to preserve behavior.
+                Abort.recover[BrowserProtocolErrorException] { e =>
+                    if e.error.contains(CdpErrorStrings.UnreturnableValueErrorMessage) then ""
+                    else Abort.fail(e)
+                } {
+                    CdpBackend.runtimeEvaluate(tab.session, EvalParams(expr, contextId = ctx.map(c => c.value)))
+                        .map(translateContextDestroyed)
+                        .map { result =>
+                            if CdpEvalDecoder.isUnreturnableValueError(result) then ""
+                            else
+                                CdpEvalEnvelope.decodeEvalEnvelope(result, "evalJsChecked") { env =>
+                                    env.exceptionDetails match
+                                        case Present(ex) =>
+                                            Abort.fail(
+                                                BrowserScriptErrorException(ExceptionDetailsFormat.format(ex))
+                                            )
+                                        case Absent => CdpEvalDecoder.extractEvalValue(env)
+                                }
+                            end if
+                        }
+                }
             }
         }
 

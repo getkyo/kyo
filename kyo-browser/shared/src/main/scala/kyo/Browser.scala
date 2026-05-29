@@ -2587,15 +2587,15 @@ object Browser:
     private def parseDownloadEvent(ev: CdpEvent.Generic)(using Frame): Maybe[Browser.DownloadEvent] =
         ev.method match
             case "Page.downloadWillBegin" =>
-                Json.decode[CdpEventParams[PageDownload.DownloadWillBeginWire]](ev.paramsJson) match
-                    case Result.Success(env) =>
-                        val w = env.params
+                // ev.paramsJson carries the params object directly (Json.encode of the typed params),
+                // NOT wrapped in CdpEventParams. Decode without the envelope wrapper.
+                Json.decode[PageDownload.DownloadWillBeginWire](ev.paramsJson) match
+                    case Result.Success(w) =>
                         Present(Browser.DownloadEvent.WillBegin(w.guid, w.url, w.suggestedFilename))
                     case _ => Absent
             case "Page.downloadProgress" =>
-                Json.decode[CdpEventParams[PageDownload.DownloadProgressWire]](ev.paramsJson) match
-                    case Result.Success(env) =>
-                        val w = env.params
+                Json.decode[PageDownload.DownloadProgressWire](ev.paramsJson) match
+                    case Result.Success(w) =>
                         Present(Browser.DownloadEvent.Progress(w.guid, w.totalBytes, w.receivedBytes, w.state))
                     case _ => Absent
             case _ => Absent

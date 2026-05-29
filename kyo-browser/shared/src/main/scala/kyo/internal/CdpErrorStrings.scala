@@ -18,4 +18,11 @@ private[kyo] object CdpErrorStrings:
       */
     val ContextDestroyedErrorMessage: String = "Cannot find context with specified id"
 
+    /** Emitted by `Runtime.evaluate` when `returnByValue=true` is set but the result is a non-serialisable value (e.g. a JS Symbol or
+      * a circular object). Triggers the unreturnable-value recovery path in [[CdpBackend.runtimeEvaluate]]: the error is re-encoded as a
+      * fake wire JSON so that [[CdpEvalDecoder.isUnreturnableValueError]] can detect it and degrade to an empty-string result instead of
+      * raising a typed abort.
+      */
+    val UnreturnableValueErrorMessage: String = "Object couldn't be returned by value"
+
 end CdpErrorStrings

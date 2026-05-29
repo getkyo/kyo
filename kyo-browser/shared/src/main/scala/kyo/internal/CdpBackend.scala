@@ -53,9 +53,17 @@ final private[kyo] class CdpBackend private[kyo] (
                     // JsonRpcError.RequestCancelled (code -32800) is how the engine surfaces
                     // a requestTimeout expiry (internally Abort.run[Timeout] -> JsonRpcError.cancelled).
                     // Map it to BrowserConnectionLostException to preserve legacy CdpClient.submit semantics.
+                    // JsonRpcError.internalError("endpoint closed") is how the engine surfaces a call that
+                    // was in-flight when the endpoint was closed; also maps to BrowserConnectionLostException
+                    // to preserve pre-port behavior where CdpClient.submit recovered Closed to that exception.
                     if err.code == JsonRpcError.RequestCancelled.code then
                         Abort.fail(BrowserConnectionLostException(
                             s"Request timeout: $method",
+                            Absent
+                        ))
+                    else if err.message == "endpoint closed" then
+                        Abort.fail(BrowserConnectionLostException(
+                            s"Connection lost: endpoint closed during $method",
                             Absent
                         ))
                     else
@@ -663,6 +671,13 @@ private[kyo] object CdpBackend:
 
     /** Same dispatch shape as dispatchFrameEvent but for download events;
       * carries the typed schema wrapper so kyo-schema validates incoming wire.
+      *
+      * Behavior-preservation note: the pre-port CdpClient routed download events with no session or
+      * no matching session handler into the shared exchange.events stream, where any registered
+      * session consumer (via Browser.onDownload) could observe them. The new code preserves this by
+      * broadcasting to all registered handlers when no session-specific handler is found. In practice
+      * Chrome sends Page.downloadWillBegin events without a sessionId when using the browser-level
+      * download path, so the broadcast path is the common case.
       */
     private def dispatchDownloadEvent[P: Schema](
         downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
@@ -672,11 +687,18 @@ private[kyo] object CdpBackend:
     )(using Frame): Unit < (Async & Abort[JsonRpcError]) =
         val key  = sid.map(_.value).getOrElse("")
         val json = Json.encode(params)
+        val ev   = CdpEvent.Generic(method, json, sid)
         for
             table <- downloadEventDispatchers.get
             _ <- table.get(key) match
-                case Present(h) => h(CdpEvent.Generic(method, json, sid))
-                case Absent     => Kyo.unit
+                case Present(h) => h(ev)
+                case Absent     =>
+                    // No session-specific handler found. Broadcast to all registered handlers to
+                    // preserve pre-port behavior where unmatched events reached exchange.events
+                    // consumers. This handles Chrome emitting events without a sessionId or with a
+                    // browser-level sessionId that differs from the tab's CDP session.
+                    val allHandlers = table.foldLeft(List.empty[CdpEvent.Generic => Unit < Sync]) { (acc, _, h) => h :: acc }
+                    Kyo.foreachDiscard(allHandlers)(h => h(ev))
         yield ()
         end for
     end dispatchDownloadEvent

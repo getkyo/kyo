@@ -358,7 +358,7 @@ final private[kyo] case class RequestNodeResult(nodeId: Int) derives Schema
 
 /** Target domain, target listing. */
 final private[kyo] case class TargetInfo(targetId: String, `type`: String, url: String) derives Schema
-final private[kyo] case class GetTargetsResult(targetInfos: Seq[TargetInfo]) derives Schema
+final private[kyo] case class GetTargetsResult(targetInfos: Seq[TargetInfo] = Seq.empty) derives Schema
 
 /** `Page.handleJavaScriptDialog`. */
 final private[kyo] case class HandleJavaScriptDialogParams(accept: Boolean, promptText: String) derives Schema
