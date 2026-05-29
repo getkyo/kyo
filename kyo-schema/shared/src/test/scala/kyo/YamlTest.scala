@@ -227,6 +227,50 @@ class YamlTest extends Test:
             assert(Yaml.decodeAll[MTPerson](yaml) == Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25))))
         }
 
+        "decodeAll handles YAML document markers with comments and empty documents" in {
+            val yaml =
+                """--- # explicit empty document
+                  |...
+                  |---
+                  |present
+                  |""".stripMargin
+
+            assert(Yaml.decodeAll[Option[String]](yaml) == Result.succeed(Chunk(None, Some("present"))))
+        }
+
+        "document selection ignores indented markers inside block scalars" in {
+            val yaml =
+                """---
+                  |text: |
+                  |  ---
+                  |  literal marker
+                  |...
+                  |--- # next document
+                  |text: next
+                  |""".stripMargin
+
+            assert(Yaml.decode[Map[String, String]](yaml, Yaml.DocumentIndex(0)) == Result.succeed(Map(
+                "text" -> "---\nliteral marker\n"
+            )))
+            assert(Yaml.decode[Map[String, String]](yaml, Yaml.DocumentIndex(1)) == Result.succeed(Map("text" -> "next")))
+        }
+
+        "single document decode rejects trailing content after an end marker" in {
+            val yaml =
+                """name: Alice
+                  |age: 30
+                  |...
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            Yaml.decode[MTPerson](yaml) match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("Unexpected content after YAML document end"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
+        }
+
         "reports line and column in parser failures" in {
             val result = Yaml.decode[MTPerson]("name: Alice\nage: *missing\n")
 

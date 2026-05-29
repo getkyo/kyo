@@ -16,17 +16,26 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     def visit[Ctx, Err, A](context: Ctx)(visitor: Visitor[Ctx, Err, A]): Result[Err | DecodeException, A] =
         run(context, visitor.streamStart(_, mark())) { c1 =>
             skipIgnorable()
-            if startsWith("---") then
-                advance(3)
-                skipToNextLine()
+            if isDocumentMarker("---") then
+                val _ = readRestOfLine()
             run(c1, visitor.documentStart(_, mark())) { c2 =>
                 parseNode(c2, 0, visitor).flatMap { c3 =>
                     skipIgnorable()
                     run(c3, visitor.documentEnd(_, mark())) { c4 =>
                         skipIgnorable()
-                        if startsWith("---") then
+                        if isDocumentMarker("...") then
+                            val endMark = mark()
+                            val _       = readRestOfLine()
+                            skipIgnorable()
+                            if pos < input.length then
+                                Result.fail(errorAt(endMark, "Unexpected content after YAML document end"))
+                            else visitor.streamEnd(c4, mark())
+                        else if isDocumentMarker("---") then
                             Result.fail(error("Expected a single YAML document for this parser entry point"))
+                        else if pos < input.length then
+                            Result.fail(error("Unexpected content after YAML document"))
                         else visitor.streamEnd(c4, mark())
+                        end if
                     }
                 }
             }
@@ -709,6 +718,14 @@ final class YamlParser private (private val input: String)(using frame: Frame):
 
     private def startsWith(s: String): Boolean = input.startsWith(s, pos)
     private def peekChar(c: Char): Boolean     = pos < input.length && input.charAt(pos) == c
+
+    private def isDocumentMarker(marker: String): Boolean =
+        currentIndent() == 0 && currentLineText().startsWith(marker) && (
+            currentLineText().length == marker.length ||
+                currentLineText().charAt(marker.length).isWhitespace ||
+                currentLineText().charAt(marker.length) == '#'
+        )
+    end isDocumentMarker
 
     private def advance(n: Int): Unit =
         var i = 0

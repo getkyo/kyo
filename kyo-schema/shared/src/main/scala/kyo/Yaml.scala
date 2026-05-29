@@ -262,26 +262,7 @@ object Yaml:
     end selectDocument
 
     private def splitDocuments(input: String): Chunk[String] =
-        val docs    = scala.collection.mutable.ListBuffer.empty[String]
-        val current = new StringBuilder
-        input.linesIterator.foreach { line =>
-            line.trim match
-                case directive if directive.startsWith("%") && current.toString.trim.isEmpty =>
-                    ()
-                case "---" =>
-                    if current.toString.trim.nonEmpty then
-                        docs += current.toString
-                        current.clear()
-                case "..." =>
-                    if current.toString.trim.nonEmpty then
-                        docs += current.toString
-                        current.clear()
-                case _ =>
-                    current.append(line).append('\n')
-            end match
-        }
-        if current.toString.trim.nonEmpty then docs += current.toString
-        Chunk.from(docs.toList)
+        internal.YamlDocuments.split(input)
     end splitDocuments
 
     sealed private trait NodeFrame
