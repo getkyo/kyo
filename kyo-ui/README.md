@@ -1059,3 +1059,16 @@ Why every piece is there:
 - `UI.runMount(ui)` runs the whole thing in `Async & Scope`. Closing the scope tears down listeners and removes nodes.
 
 This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_ => initialUiValue))` or `UI.runRender(initialUiValue)` to drive an SSE-backed or stream-backed deployment. Swap the runner; keep the UI.
+
+## Demos
+
+Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-ui/Test/runMain demo.<Name>'`; the server-push demos print a `localhost` URL to open.
+
+- [**Kanban**](shared/src/test/scala/demo/Kanban.scala): Trello-style board over server-push: add, move, and delete cards across columns.
+- [**Signup**](shared/src/test/scala/demo/Signup.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
+- [**Dashboard**](shared/src/test/scala/demo/Dashboard.scala): live metrics pushed over SSE from a background fiber, with no client code.
+- [**Search**](shared/src/test/scala/demo/Search.scala): live Wikipedia search via `HttpClient`, with loading and error states.
+- [**Cart**](shared/src/test/scala/demo/Cart.scala): shopping cart with quantity steppers and a derived running total.
+- [**Playground**](shared/src/test/scala/demo/Playground.scala): HTML playground: a textarea feeds a live `iframe` preview.
+- [**Router**](shared/src/test/scala/demo/Router.scala): signal-routed multi-view SPA, including a parameterized `/users/:id` route.
+- [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshot.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
