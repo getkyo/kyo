@@ -16,37 +16,78 @@ every cycle.
 
 ## Atomic phase sizing (HARD constraint for the restructure)
 
-Empirical lesson from the first Phase 01 run: bundled phases make
-ceremony expensive without buying any verification guarantee. The
-restructure binds the planner to these rules:
+Empirical lesson: bundled phases make ceremony expensive without
+buying any verification guarantee; over-atomized phases make
+ceremony EXPENSIVE TIMES N for no extra guarantee. The unit of
+decomposition is the CONCEPTUAL CHANGE, not the code change.
 
-- **Phase name format:** `<verb> <noun>`. Zero conjunctions. No
-  "AND". No commas joining multiple actions. "Rewrite documentation"
-  looks atomic but bundled 6+ unrelated changes; the rename, the
-  vaporware-section deletion, the Goals split, the scaladoc
-  expansion, the comment cleanup, and the locked-decision inversion
-  each become their own phase.
-- **One INV per phase.** Each phase's `produced_invariants` list
-  contains exactly one INV. If a single conceptual change produces
-  multiple INVs, that is fine, but multiple INVs from unrelated
-  changes signal a bundle that must split.
+### The unit is one conceptual change, not one code edit
+
+A "conceptual change" is a single explanation that a reviewer can
+hold in head as one idea. "Propagate `(using AllowUnsafe)` through
+Symbol accessors" is ONE conceptual change even though it touches 9
+methods. "Add bounds checks to binary input primitives (Varint,
+ByteView, NameUnpickler, SectionIndex, Interner)" is ONE conceptual
+change even though it touches 5 files. The test is: can the phase
+name say what it does in one verb-noun without listing the items?
+If yes, it is one phase regardless of how many sites are touched.
+
+### The rules
+
+- **Phase name format:** `<verb> <noun>`. Zero conjunctions ("and",
+  "+", commas joining actions). The noun may be plural (Symbol
+  accessors, classfile attributes); plurality of TARGETS is fine,
+  plurality of ACTIONS is not.
+- **One conceptual INV per phase.** Each phase produces exactly one
+  invariant. If the planner finds itself producing the same INV
+  across N phases, those N phases are the same conceptual change
+  and must merge.
 - **One acceptance criterion per phase.** Verifiable by a single
-  targeted test, grep, or compile check. "Multiple acceptances"
-  signals a bundle.
-- **LoC budget:** 50-200 lines of change per phase (src + tests +
-  config). Oversize-justified should be RARE, reserved for genuine
-  irreducible atomic units like an in-tree RFC 1951 inflate where
-  the spec literally cannot split.
-- **Multiple files OK only when supporting one conceptual change.**
-  A rename that touches 5 files is one phase. Renaming + restructure
-  + deletion across the same 5 files is 3 phases.
-- **Canonical model: Phase 18a-e** (Tree decoder split by TASTy
-  category). One parent finding (M1) decomposed into 5 atomic
-  sub-phases. Apply the same pattern wherever a phase aggregates
-  more than one conceptual unit.
+  targeted test or grep. If the test would have to enumerate 25
+  separate cases, the phase is one conceptual change covering all
+  25; if the test would have to assert 25 unrelated properties,
+  those are different concepts.
+- **LoC budget:** 50-400 lines of change per phase. Phases at the
+  high end of this range are still ONE concept; the budget exists
+  to flag bundles, not to force splits when the concept is
+  irreducible.
+- **Heuristic for the right granularity:** group by INV first, by
+  subsystem second, by file last. One INV across 9 methods = one
+  phase. Test coverage for 18 internal classes = group by subsystem
+  (binary, classfile, query, reader, scala2, snapshot, symbol,
+  type_ = 8 phases), not 18 per-class phases.
 
-When the restructured plan lands, every phase satisfies the above
-or is explicitly justified.
+### Anti-pattern examples (REJECT)
+
+- "Propagate AllowUnsafe on Symbol fullName" + "Propagate AllowUnsafe
+  on Symbol parents" + ... (9 phases). MERGE into "Propagate
+  AllowUnsafe through Symbol accessors" (1 phase, 9 method edits).
+- "Test ConstantPool" + "Test JavaAnnotationUnpickler" + ... (18
+  phases). MERGE by subsystem ("Test classfile internals" covers
+  ConstantPool + JavaAnnotationUnpickler).
+- "Decode BootstrapMethods" + "Decode NestHost" + "Decode
+  NestMembers" + ... (6 phases). KEEP SPLIT only if each parser
+  is genuinely a different conceptual decoder; MERGE if they share
+  one parser harness extended for each.
+
+### Canonical right-shape examples (KEEP)
+
+- Phase 18a-e (Tree decoder by TASTy spec category). Each category
+  has its own decode strategy (modifier vs tag+Nat vs length-prefixed
+  vs ...); these ARE distinct conceptual changes.
+- "Implement BitStream primitive" + "Implement Huffman decoder" +
+  "Decode block type 0" + "Decode block type 1" + "Decode block type
+  2" (RFC 1951 inflate layers). Each is a distinct conceptual layer
+  of the spec.
+
+### Expected count after the restructure
+
+The original 31-phase plan was bundled. The 131-phase plan was
+over-atomized. The right count for this campaign is roughly 60-80
+phases.
+
+When the restructured plan lands, every phase passes "one verb-noun,
+one INV, one explanation a reviewer can hold in head as one idea."
 
 ## No priority, no human-time estimates
 
