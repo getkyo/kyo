@@ -903,7 +903,7 @@ object Tasty:
           * One-arg variant: delegates to the canonical two-arg form with `strict = false`.
           */
         def open(roots: Seq[String])(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-            openImpl(roots, strict = false)
+            open(roots, strict = false)
 
         /** Open a classpath from directory/file roots.
           *

@@ -240,6 +240,33 @@ class TastyTest extends Test:
         Future.successful(succeed)
     }
 
+    // ── Phase 02f source-text invariant test (INV-025) ────────────────────────
+
+    "Classpath.open one-arg delegates to open(roots, strict = false)" in {
+        // INV-025: The no-strict Classpath.open(roots) overload delegates by name to the canonical
+        // Classpath.open(roots, strict) with `strict = false` explicit; no default-parameter shim.
+        // Given: source Tasty.scala read as String, lines split.
+        // When: locate the one-arg open overload by its signature and read its body line.
+        // Then: the body line contains the literal substring `open(roots, strict = false)`.
+        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
+        val lines     = Files.readString(tastyPath).split("\n")
+        // Find the one-arg overload: `def open(roots: Seq[String])(using Frame)` without a second param.
+        val sigPattern = """^\s+def open\(roots: Seq\[String\]\)\(using Frame\)""".r
+        val sigIdx     = lines.indexWhere(l => sigPattern.findFirstIn(l).isDefined)
+        assert(sigIdx >= 0, "INV-025: could not locate one-arg open signature in Tasty.scala")
+        // The body is on the next non-blank line after the signature.
+        val bodyLine = lines.slice(sigIdx + 1, sigIdx + 3).find(_.trim.nonEmpty).getOrElse("")
+        assert(
+            bodyLine.contains("open(roots, strict = false)"),
+            s"INV-025 violated: one-arg open body is '${bodyLine.trim}'; expected 'open(roots, strict = false)'"
+        )
+        assert(
+            !bodyLine.contains("openImpl"),
+            s"INV-025 violated: one-arg open body still calls openImpl; got '${bodyLine.trim}'"
+        )
+        Future.successful(succeed)
+    }
+
     /** Count non-overlapping occurrences of `needle` in `haystack`. */
     private def countOccurrences(haystack: String, needle: String): Int =
         var count = 0
