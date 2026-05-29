@@ -1,0 +1,3 @@
+?? kyo-jsonrpc-PROMPT.md
+?? kyo-lsp-SCOPE.md
+?? kyo-tasty/audit-fixes/phase-01-baseline.txt

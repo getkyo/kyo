@@ -44,7 +44,14 @@ object Tasty:
       */
     opaque type Name = Interner.Entry
     object Name:
-        /** Construct a `Name` from a `String` by encoding to UTF-8 and interning the bytes. */
+        /** Construct a `Name` from a `String` by encoding to UTF-8 and interning the bytes.
+          *
+          * Example:
+          * {{{
+          *   val n = Tasty.Name("scala.Predef")
+          *   n.asString == "scala.Predef"
+          * }}}
+          */
         def apply(s: String): Name =
             val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
             globalInterner.intern(bytes, 0, bytes.length)
@@ -69,13 +76,21 @@ object Tasty:
         def |(other: Flags): Flags        = new Flags(bits | other.bits)
 
     object Flags:
+        /** The empty flag set (no modifiers).
+          *
+          * Example:
+          * {{{
+          *   Tasty.Flags.empty.bits == 0L
+          * }}}
+          */
         val empty: Flags = new Flags(0L)
+    end Flags
 
     final class Flag(val bit: Long, val name: String):
         override def toString: String = name
 
     object Flag:
-        // Phase 0 flags (bits 0-15)
+        // Core access flags (bits 0-15)
         val Inline: Flag      = Flag(1L << 0, "Inline")
         val Private: Flag     = Flag(1L << 1, "Private")
         val Protected: Flag   = Flag(1L << 2, "Protected")
@@ -92,7 +107,7 @@ object Tasty:
         val JavaDefined: Flag = Flag(1L << 13, "JavaDefined")
         val Enum: Flag        = Flag(1L << 14, "Enum")
         val JavaRecord: Flag  = Flag(1L << 15, "JavaRecord")
-        // Phase 3 flags (bits 16+)
+        // Extended modifier flags (bits 16+)
         val Open: Flag          = Flag(1L << 16, "Open")
         val ParamAccessor: Flag = Flag(1L << 17, "ParamAccessor")
         val Lazy: Flag          = Flag(1L << 18, "Lazy")
@@ -121,7 +136,7 @@ object Tasty:
         val PARAMsetter: Flag   = Flag(1L << 41, "PARAMsetter")
         val PARAMalias: Flag    = Flag(1L << 42, "PARAMalias")
         val Static: Flag        = Flag(1L << 43, "Static")
-        // Phase 10 flag (bit 44): identifies symbols decoded from Scala 2 pickles embedded in classfiles.
+        // Scala 2 origin flag (bit 44): identifies symbols decoded from Scala 2 pickles embedded in classfiles.
         val Scala2: Flag = Flag(1L << 44, "Scala2")
     end Flag
 
@@ -502,7 +517,7 @@ object Tasty:
         private[kyo] val origin: Symbol.Origin,
         private[kyo] val javaMetadata: Maybe[JavaMetadata]
     ):
-        // Write-once slots populated during classpath orchestration (Phase 3 / Phase 5).
+        // Write-once slots populated during classpath orchestration.
         // Unsafe: SingleAssign is an unsafe-tier helper; callers in mergeResults / ClassfileUnpickler hold AllowUnsafe.
         private[kyo] val _parents: kyo.internal.tasty.symbol.SingleAssign[Chunk[Type]]      = new kyo.internal.tasty.symbol.SingleAssign
         private[kyo] val _typeParams: kyo.internal.tasty.symbol.SingleAssign[Chunk[Symbol]] = new kyo.internal.tasty.symbol.SingleAssign
@@ -586,7 +601,7 @@ object Tasty:
             else Maybe.Absent
         end position
 
-        // Resolving accessors (return TastyError.NotImplemented in Phase 0).
+        // Resolving accessors.
 
         /** The declared type of this symbol.
           *
@@ -599,7 +614,7 @@ object Tasty:
           *   - For a DEFDEF: the return type (reconstructed in mergeResults from Pass 1 data).
           *   - For Package symbols: throws IllegalArgumentException (pure accessor; programmer error).
           * @note
-          *   Implemented in v2 Phase 5. Populated eagerly during Pass 1 / mergeResults. Pure in v3 Phase 3.
+          *   Populated eagerly during cold-load mergeResults; readable as a pure accessor thereafter.
           */
         def declaredType: Type =
             if kind == SymbolKind.Package then
@@ -823,7 +838,7 @@ object Tasty:
         ): Symbol =
             new Symbol(kind, flags, name, owner, home, origin, javaMetadata)
 
-        /** The complete Symbol.Origin ADT. Phase 5 adds JavaOrigin construction sites; the ADT itself is sealed here. */
+        /** The complete Symbol.Origin ADT. Sealed here; JavaOrigin and TastyOrigin are the two concrete subtypes. */
         sealed trait Origin derives CanEqual
 
         /** Origin for a symbol decoded from a TASTy file.
@@ -894,18 +909,39 @@ object Tasty:
 
         /** Open a classpath from directory/file roots. Soft-fail mode (errors accumulate in `cp.errors`).
           *
-          * Registers a finalizer on the enclosing `Scope` to close the classpath.
+          * Effect row rationale:
+          *   - `Sync`: file I/O for JAR, classfile, and TASTy reads.
+          *   - `Async`: parallel per-file decode across the workgroup.
+          *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
+          *   - `Abort[TastyError]`: fatal errors (classpath build state, snapshot mismatch).
+          *
+          * One-arg variant: delegates to the canonical two-arg form with `strict = false`.
           */
         def open(roots: Seq[String])(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
             openImpl(roots, strict = false)
 
-        /** Open a classpath from directory/file roots. Strict mode: any file error aborts immediately. */
+        /** Open a classpath from directory/file roots.
+          *
+          * Effect row rationale:
+          *   - `Sync`: file I/O for JAR, classfile, and TASTy reads.
+          *   - `Async`: parallel per-file decode across the workgroup.
+          *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
+          *   - `Abort[TastyError]`: fatal errors (classpath build state, snapshot mismatch).
+          *
+          * Canonical two-arg form. Soft-fail when `strict = false`; fail-fast when `strict = true`.
+          */
         def open(roots: Seq[String], strict: Boolean)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
             openImpl(roots, strict)
 
         /** Open a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
           *
           * On a cache hit (digest match), deserializes the snapshot directly. On a miss, opens normally then writes a new snapshot.
+          *
+          * Effect row rationale:
+          *   - `Sync`: file I/O for snapshot read/write plus JAR, classfile, and TASTy reads on a cache miss.
+          *   - `Async`: parallel per-file decode on a cache miss.
+          *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
+          *   - `Abort[TastyError]`: fatal errors (snapshot mismatch, classpath build failures).
           */
         def openCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
             openCachedImpl(roots, cacheDir)
@@ -1009,7 +1045,7 @@ object Tasty:
         /** Look up a class symbol by fully-qualified dotted name.
           *
           * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns. After close, returns
-          * whatever heap state is there (closed-state enforcement is Body-only, Phase 4).
+          * whatever heap state is there (closed-state enforcement is Symbol.body only).
           */
         def findClass(fqn: String): Maybe[Symbol] = cp.pureClass(fqn)
 
@@ -1033,7 +1069,7 @@ object Tasty:
 
         /** Errors accumulated during loading (soft-fail mode).
           *
-          * Pure accessor: reads from immutable error state populated after Phase C. Empty for clean classpaths.
+          * Pure accessor: reads from immutable error state populated during classpath open. Empty for clean classpaths.
           */
         def errors: Chunk[TastyError] = cp.accumulatedErrors
 

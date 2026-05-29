@@ -16,13 +16,14 @@ import scala.collection.mutable
   * @param classSymbol
   *   The Tasty.Symbol for the class or interface defined by this file.
   * @param parents
-  *   Unresolved parent types: super class (if any) followed by implemented interfaces. Phase 7 resolver replaces with real symbols.
+  *   Unresolved parent types: super class (if any) followed by implemented interfaces. The classpath orchestrator resolves these to real
+  *   symbols during the merge pass.
   * @param innerClassTable
   *   Map from inner binary name to (outer binary name, simple inner name). Outer is "" for anonymous/local classes.
   * @param symbols
   *   All field and method symbols declared by the class.
   * @param arena
-  *   The TypeArena passed in; included for Phase 7 merge.
+  *   The TypeArena used during decoding; retained so the orchestrator can merge per-file arenas into the canonical arena.
   */
 final case class ClassfileResult(
     classSymbol: Tasty.Symbol,

@@ -14,6 +14,40 @@ every cycle.
 - Do not drop, weaken, or substitute. Implement exactly per plan or
   escalate to the supervisor.
 
+## Atomic phase sizing (HARD constraint for the restructure)
+
+Empirical lesson from the first Phase 01 run: bundled phases make
+ceremony expensive without buying any verification guarantee. The
+restructure binds the planner to these rules:
+
+- **Phase name format:** `<verb> <noun>`. Zero conjunctions. No
+  "AND". No commas joining multiple actions. "Rewrite documentation"
+  looks atomic but bundled 6+ unrelated changes; the rename, the
+  vaporware-section deletion, the Goals split, the scaladoc
+  expansion, the comment cleanup, and the locked-decision inversion
+  each become their own phase.
+- **One INV per phase.** Each phase's `produced_invariants` list
+  contains exactly one INV. If a single conceptual change produces
+  multiple INVs, that is fine, but multiple INVs from unrelated
+  changes signal a bundle that must split.
+- **One acceptance criterion per phase.** Verifiable by a single
+  targeted test, grep, or compile check. "Multiple acceptances"
+  signals a bundle.
+- **LoC budget:** 50-200 lines of change per phase (src + tests +
+  config). Oversize-justified should be RARE, reserved for genuine
+  irreducible atomic units like an in-tree RFC 1951 inflate where
+  the spec literally cannot split.
+- **Multiple files OK only when supporting one conceptual change.**
+  A rename that touches 5 files is one phase. Renaming + restructure
+  + deletion across the same 5 files is 3 phases.
+- **Canonical model: Phase 18a-e** (Tree decoder split by TASTy
+  category). One parent finding (M1) decomposed into 5 atomic
+  sub-phases. Apply the same pattern wherever a phase aggregates
+  more than one conceptual unit.
+
+When the restructured plan lands, every phase satisfies the above
+or is explicitly justified.
+
 ## No priority, no human-time estimates
 
 - Phases ordered solely by technical dependency. No "high priority" /
