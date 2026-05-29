@@ -1,3 +1,4 @@
+// flow-allow: PUBLIC error-channel ADT appearing in JsonRpcEndpoint Abort rows and user error matching
 package kyo
 
 import kyo.Frame
@@ -10,17 +11,17 @@ import kyo.Structure
 case class JsonRpcError(code: Int, message: String, data: Maybe[Structure.Value]) derives Schema, CanEqual
 
 object JsonRpcError:
-    val ParseError           = JsonRpcError(-32700, "Parse error", Absent)
-    val InvalidRequest       = JsonRpcError(-32600, "Invalid Request", Absent)
-    val MethodNotFound       = JsonRpcError(-32601, "Method not found", Absent)
-    val InvalidParams        = JsonRpcError(-32602, "Invalid params", Absent)
-    val InternalError        = JsonRpcError(-32603, "Internal error", Absent)
-    val ServerNotInitialized = JsonRpcError(-32002, "Server not initialized", Absent)
-    val UnknownErrorCode     = JsonRpcError(-32001, "Unknown error code", Absent)
-    val RequestCancelled     = JsonRpcError(-32800, "Request cancelled", Absent)
-    val ContentModified      = JsonRpcError(-32801, "Content modified", Absent)
-    val ServerCancelled      = JsonRpcError(-32802, "Server cancelled", Absent)
-    val RequestFailed        = JsonRpcError(-32803, "Request failed", Absent)
+    val ParseError: JsonRpcError           = JsonRpcError(-32700, "Parse error", Absent)
+    val InvalidRequest: JsonRpcError       = JsonRpcError(-32600, "Invalid Request", Absent)
+    val MethodNotFound: JsonRpcError       = JsonRpcError(-32601, "Method not found", Absent)
+    val InvalidParams: JsonRpcError        = JsonRpcError(-32602, "Invalid params", Absent)
+    val InternalError: JsonRpcError        = JsonRpcError(-32603, "Internal error", Absent)
+    val ServerNotInitialized: JsonRpcError = JsonRpcError(-32002, "Server not initialized", Absent)
+    val UnknownErrorCode: JsonRpcError     = JsonRpcError(-32001, "Unknown error code", Absent)
+    val RequestCancelled: JsonRpcError     = JsonRpcError(-32800, "Request cancelled", Absent)
+    val ContentModified: JsonRpcError      = JsonRpcError(-32801, "Content modified", Absent)
+    val ServerCancelled: JsonRpcError      = JsonRpcError(-32802, "Server cancelled", Absent)
+    val RequestFailed: JsonRpcError        = JsonRpcError(-32803, "Request failed", Absent)
 
     def methodNotFound(name: String)(using Frame): JsonRpcError =
         JsonRpcError(-32601, s"Method not found: $name", Absent)

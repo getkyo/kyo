@@ -1,3 +1,4 @@
+// flow-allow: PUBLIC codec interface referenced by JsonRpcEndpoint.Config.codec field
 package kyo
 
 import kyo.Abort
@@ -13,7 +14,4 @@ end JsonRpcCodec
 object JsonRpcCodec:
     val Strict2_0: JsonRpcCodec = internal.JsonRpcCodecImpl.Strict2_0
     val Cdp: JsonRpcCodec       = internal.JsonRpcCodecImpl.Cdp
-
-    private[kyo] val cdpReservedKeys: Set[String] =
-        Set("id", "method", "params", "result", "error", "jsonrpc")
 end JsonRpcCodec

@@ -1,3 +1,4 @@
+// flow-allow: PUBLIC handler-context receiver consumed by user JsonRpcMethod handlers
 package kyo
 
 import kyo.Async
@@ -9,6 +10,7 @@ import kyo.Maybe.Present
 import kyo.Structure
 import kyo.Sync
 
+// flow-allow: Hub.scala:22 smart-constructor pattern; framework creates instances via forTest or JsonRpcEndpointImpl
 final class HandlerCtx private[kyo] (
     val cancelled: Fiber.Promise[Unit, Sync],
     val requestId: Maybe[JsonRpcId],
@@ -22,6 +24,7 @@ final class HandlerCtx private[kyo] (
 end HandlerCtx
 
 object HandlerCtx:
+    // flow-allow: test-only construction escape hatch consumed by JsonRpcMethodTest
     private[kyo] def forTest(
         cancelled: Fiber.Promise[Unit, Sync],
         requestId: Maybe[JsonRpcId],

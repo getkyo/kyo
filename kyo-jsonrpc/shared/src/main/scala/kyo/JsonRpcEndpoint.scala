@@ -1,7 +1,9 @@
+// flow-allow: PUBLIC primary user-facing endpoint surface
 package kyo
 
 import kyo.Stream
 
+// flow-allow: Hub.scala:22 smart-constructor pattern; init through JsonRpcEndpoint.init
 final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.JsonRpcEndpointImpl):
 
     def call[In: Schema, Out: Schema](
@@ -49,6 +51,7 @@ end JsonRpcEndpoint
 
 object JsonRpcEndpoint:
 
+    // flow-allow: Hub.scala:22 smart-constructor pattern; Pending built only by JsonRpcEndpointImpl.callWithProgress
     final class Pending[Out] private[kyo] (
         val id: JsonRpcId,
         val result: Out < (Async & Abort[JsonRpcError | Closed]),

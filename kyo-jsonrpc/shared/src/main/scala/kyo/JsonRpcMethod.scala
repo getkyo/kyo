@@ -1,3 +1,4 @@
+// flow-allow: PUBLIC method-binding surface built by user and passed to JsonRpcEndpoint.init
 package kyo
 
 import kyo.Abort
@@ -13,8 +14,11 @@ import kyo.Structure
 sealed trait JsonRpcMethod[+S]:
     def name: String
     def kind: JsonRpcMethod.Kind
+    // flow-allow: Stream.scala:48 sealed-protocol with framework-only abstract members
     private[kyo] def schemaIn: Schema[?]
+    // flow-allow: Stream.scala:48 sealed-protocol with framework-only abstract members
     private[kyo] def schemaOut: Schema[?]
+    // flow-allow: Stream.scala:48 sealed-protocol with framework-only abstract members
     private[kyo] def handle(params: Structure.Value, ctx: HandlerCtx)(using Frame): Structure.Value < (Async & Abort[JsonRpcError])
 end JsonRpcMethod
 

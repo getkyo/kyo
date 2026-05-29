@@ -1,3 +1,4 @@
+// flow-allow: PUBLIC transport interface implemented by users and consumed by JsonRpcEndpoint.init
 package kyo
 
 import kyo.Stream
@@ -21,7 +22,9 @@ object JsonRpcTransport:
             aToB <- Channel.initUnscoped[JsonRpcEnvelope](capacity)
             bToA <- Channel.initUnscoped[JsonRpcEnvelope](capacity)
         yield
+            // flow-allow: type-widening from internal subtype to public supertype required for the returned tuple element type
             val a: JsonRpcTransport = new internal.InMemoryTransport(out = aToB, in = bToA)
+            // flow-allow: type-widening from internal subtype to public supertype required for the returned tuple element type
             val b: JsonRpcTransport = new internal.InMemoryTransport(out = bToA, in = aToB)
             (a, b)
 

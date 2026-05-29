@@ -1,6 +1,7 @@
 package kyo
 package internal
 
+// flow-allow: ConcurrentHashMap follows kyo.Exchange pending-map precedent (kyo-core/shared Exchange.scala:3); cross-platform via JS/Native JDK shim
 import java.util.concurrent.ConcurrentHashMap
 
 private[kyo] case class OutboundReq(
@@ -16,6 +17,7 @@ private[kyo] case class CallerInfo(
     method: String,
     extras: Maybe[Structure.Value],
     abortSignal: Fiber.Promise[JsonRpcError, Any],
+    // flow-allow: AtomicReference is kyo.AtomicRef's underlying type (Atomic.scala:354); cross-platform via JS/Native JDK shim
     pendingCancelError: java.util.concurrent.atomic.AtomicReference[Maybe[JsonRpcError]]
 )
 
@@ -59,6 +61,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     private[kyo] val progressStreams: ConcurrentHashMap[Structure.Value, Channel[Structure.Value]],
     private[kyo] val outboundIdToToken: ConcurrentHashMap[JsonRpcId, Structure.Value],
     private val meter: Maybe[Meter],
+    // flow-allow: AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); ConcurrentHashMap follows Exchange precedent; cross-platform via JS/Native JDK shim
     private[kyo] val tokenToDeadline: ConcurrentHashMap[Structure.Value, java.util.concurrent.atomic.AtomicLong]
 ):
 
@@ -70,6 +73,7 @@ final class JsonRpcEndpointImpl private[kyo] (
         RateLimitEngine.maxInFlightGuard(meter) {
             Fiber.Promise.init[JsonRpcError, Any].map { abortSignal =>
                 // Unsafe: Promise.Unsafe.init for idSignal so it can be read from the encode callback
+                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                 Sync.Unsafe.defer {
                     val idSignal      = Promise.Unsafe.init[JsonRpcId, Any]()
                     val encodedParams = Present(Structure.encode[In](params))
@@ -84,6 +88,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                                     inFlight.decrementAndGet.map { newCount =>
                                         (if newCount == 0 then snapshot.completeUnitDiscard else Kyo.unit).andThen {
                                             // Unsafe: poll idSignal to clean callerRegistry on request completion
+                                            // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                             Sync.Unsafe.defer {
                                                 idSignal.poll() match
                                                     case Maybe.Present(Result.Success(id)) =>
@@ -119,14 +124,15 @@ final class JsonRpcEndpointImpl private[kyo] (
                                                 // Timeout fired: enqueue cancel notification, then fail with the policy-determined error.
                                                 // Do NOT await abortSignal here: raceFirst's cleanup has already interrupted
                                                 // the abortSignal promise with Panic(Interrupted), so awaiting it would panic.
-                                                val abortError: JsonRpcError = config.cancellation match
+                                                val abortError = config.cancellation match
                                                     case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(Absent))
                                                     case Absent     => JsonRpcError.cancelled(Absent)
                                                 // Unsafe: read idSignal to find the id for cancel notification
+                                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                 Sync.Unsafe.defer {
                                                     idSignal.poll() match
                                                         case Maybe.Present(Result.Success(rawId)) =>
-                                                            val id: JsonRpcId = rawId.eval
+                                                            val id = rawId.eval
                                                             CancellationEngine.handleTimeout(
                                                                 id,
                                                                 Absent,
@@ -157,9 +163,11 @@ final class JsonRpcEndpointImpl private[kyo] (
         method: String,
         encodedParams: Maybe[Structure.Value],
         extras: ExtrasEncoder,
+        // flow-allow: AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); used as a mutable deadline cell shared between call and monitor fibers
         deadlineRef: Maybe[java.util.concurrent.atomic.AtomicLong]
     )(using frame: Frame): (Fiber.Promise[JsonRpcId, Any], Out < (Async & Abort[JsonRpcError | Closed])) =
         // Unsafe: Promise.Unsafe.init so idSignal is accessible before the call runs
+        // flow-allow: Promise Unsafe init constructs a state cell readable from Sync-only Exchange callbacks; no safe Promise equivalent
         val idSignalUnsafe = Promise.Unsafe.init[JsonRpcId, Any]()(using AllowUnsafe.embrace.danger)
         val idSignal       = idSignalUnsafe
         val idPromise      = idSignalUnsafe.safe
@@ -175,6 +183,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                                 inFlight.decrementAndGet.map { newCount =>
                                     (if newCount == 0 then snapshot.completeUnitDiscard else Kyo.unit).andThen {
                                         // Unsafe: poll idSignal to clean callerRegistry on request completion
+                                        // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                         Sync.Unsafe.defer {
                                             idSignal.poll() match
                                                 case Maybe.Present(Result.Success(id)) =>
@@ -213,7 +222,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                                     // timeoutSignal: fired by monitor fiber when deadline passes without a progress reset.
                                     // Carries Unit so the outer race arm can call handleTimeout and then fail.
                                     Fiber.Promise.init[Unit, Any].map { timeoutSignal =>
-                                        val abortError: JsonRpcError = config.cancellation match
+                                        val abortError = config.cancellation match
                                             case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(Absent))
                                             case Absent     => JsonRpcError.cancelled(Absent)
                                         // Poll interval: requestTimeout * 0.1, minimum 10ms
@@ -223,7 +232,10 @@ final class JsonRpcEndpointImpl private[kyo] (
                                         def monitorLoop: Unit < Async =
                                             Async.sleep(pollInterval).andThen {
                                                 // Unsafe: read deadlineAt from monitor fiber
+                                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                 Sync.Unsafe.defer {
+                                                    // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
+                                                    // flow-allow: wall-clock read inside Sync.Unsafe.defer suspension boundary
                                                     val now      = java.lang.System.currentTimeMillis()
                                                     val deadline = dref.get()
                                                     now > deadline
@@ -231,7 +243,9 @@ final class JsonRpcEndpointImpl private[kyo] (
                                                     if expired then
                                                         // Deadline passed; signal the outer race arm to fire timeout.
                                                         // Unsafe: complete timeoutSignal from monitor fiber
+                                                        // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                         Sync.Unsafe.defer {
+                                                            // flow-allow: CAS-won path completes unit promise from outside originating fiber; no safe equivalent in Promise public API
                                                             timeoutSignal.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
                                                         }
                                                     else
@@ -244,9 +258,12 @@ final class JsonRpcEndpointImpl private[kyo] (
                                             // On any arm winning, Sync.ensure cleans up the monitor fiber.
                                             Sync.ensure(
                                                 // Unsafe: interrupt monitor fiber when the call completes (any outcome)
+                                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                 Sync.Unsafe.defer {
+                                                    // flow-allow: fiber interrupt cleans up monitor or writer or handler fiber from outside its scheduler; no safe equivalent in Fiber public API
                                                     monitorFiber.unsafe.interruptDiscard(
                                                         Result.Panic(Interrupted(frame))
+                                                        // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                     )(using AllowUnsafe.embrace.danger)
                                                 }
                                             ) {
@@ -255,6 +272,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                                                         // timeoutSignal arm: deadline expired, run cancel then fail
                                                         timeoutSignal.get.andThen {
                                                             // Unsafe: read idSignal to find the id for cancel notification
+                                                            // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                             Sync.Unsafe.defer {
                                                                 idSignal.poll() match
                                                                     case Maybe.Present(Result.Success(rawId)) =>
@@ -288,14 +306,15 @@ final class JsonRpcEndpointImpl private[kyo] (
                                     Abort.run[Timeout](Async.timeout(config.requestTimeout)(raceResult)).map {
                                         case Result.Success(v) => v
                                         case Result.Failure(_) =>
-                                            val abortError: JsonRpcError = config.cancellation match
+                                            val abortError = config.cancellation match
                                                 case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(Absent))
                                                 case Absent     => JsonRpcError.cancelled(Absent)
                                             // Unsafe: read idSignal to find the id for cancel notification
+                                            // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                             Sync.Unsafe.defer {
                                                 idSignal.poll() match
                                                     case Maybe.Present(Result.Success(rawId)) =>
-                                                        val id: JsonRpcId = rawId.eval
+                                                        val id = rawId.eval
                                                         CancellationEngine.handleTimeout(
                                                             id,
                                                             Absent,
@@ -343,16 +362,23 @@ final class JsonRpcEndpointImpl private[kyo] (
             case Present(policy) =>
                 RateLimitEngine.maxInFlightGuard(meter) {
                     // Unsafe: channel init and ConcurrentHashMap put for progress side-channel
+                    // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                     Sync.Unsafe.defer {
+                        // flow-allow: Random token generation inside unsafe deferred block; no safe Random equivalent that runs without Async
                         val tokenStr = Random.live.unsafe.nextStringAlphanumeric(32)(using AllowUnsafe.embrace.danger)
                         val tokenVal = Structure.Value.Str(tokenStr)
                         // Unsafe: Channel.Unsafe.init for progress channel
+                        // flow-allow: Channel Unsafe init constructs a channel inside an unsafe deferred block; no safe Channel equivalent that runs without Async
                         val progChan = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe
                         // Unsafe: AtomicLong deadline for progressResetsTimeout; Absent when flag is false.
                         // Initial deadline: now + requestTimeout millis. Progress notifications extend it.
+                        // flow-allow: AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); used as deadline cell shared between call and monitor fibers
                         val deadlineRef: Maybe[java.util.concurrent.atomic.AtomicLong] =
                             if config.progressResetsTimeout && config.requestTimeout != Duration.Infinity then
+                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
+                                // flow-allow: wall-clock read inside enclosing Sync.Unsafe.defer suspension boundary
                                 val initialDeadline = java.lang.System.currentTimeMillis() + config.requestTimeout.toMillis
+                                // flow-allow: AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); per-request deadline cell
                                 Present(new java.util.concurrent.atomic.AtomicLong(initialDeadline))
                             else Absent
                         (tokenVal, progChan, deadlineRef)
@@ -360,6 +386,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                         val encodedParams = Structure.encode[In](params)
                         policy.stampOutboundToken(encodedParams, tokenVal).map { stampedParams =>
                             // Unsafe: register in progressStreams (and tokenToDeadline if needed) before issuing call
+                            // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                             Sync.Unsafe.defer {
                                 discard(progressStreams.put(tokenVal, progChan))
                                 deadlineRef.foreach { ref =>
@@ -376,11 +403,15 @@ final class JsonRpcEndpointImpl private[kyo] (
                                     // before the channel fully closes; this avoids dropping progress items that arrived
                                     // just before the response.
                                     // Unsafe: onComplete from outside the fiber
+                                    // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                     Sync.Unsafe.defer {
+                                        // flow-allow: fiber onComplete attaches cleanup hook from outside the fiber; no safe equivalent in Fiber public API
                                         fiber.unsafe.onComplete { _ =>
                                             progressStreams.remove(tokenVal)
                                             tokenToDeadline.remove(tokenVal)
+                                            // flow-allow: channel close or closeAwaitEmpty from finalizer or onComplete hook outside originating fiber; no safe equivalent
                                             discard(progChan.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
+                                        // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                         }(using AllowUnsafe.embrace.danger)
                                     }.andThen {
                                         // Await the id (populated in encode callback, which fires as the fiber starts)
@@ -414,17 +445,23 @@ final class JsonRpcEndpointImpl private[kyo] (
                 Stream[T, Async & Abort[JsonRpcError | Closed]] {
                     RateLimitEngine.maxInFlightGuard(meter) {
                         // Unsafe: channel init and token/stamp inside Stream emit body
+                        // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                         Sync.Unsafe.defer {
+                            // flow-allow: Random token generation inside unsafe deferred block; no safe Random equivalent that runs without Async
                             val tokenStr = Random.live.unsafe.nextStringAlphanumeric(32)(using AllowUnsafe.embrace.danger)
                             val tokenVal = Structure.Value.Str(tokenStr)
                             // Unsafe: Channel.Unsafe.init for partial-results channel
+                            // flow-allow: Channel Unsafe init constructs a channel inside an unsafe deferred block; no safe Channel equivalent that runs without Async
                             val progChan = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe
                             // Unsafe: AtomicRef.Unsafe.init for the final response result (non-progress chunks)
+                            // flow-allow: AtomicX Unsafe init follows kyo Exchange pending-map precedent; no safe equivalent in AtomicX public API
                             val finalRef = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger).safe
                             (tokenVal, progChan, finalRef)
                         }.map { (tokenVal, progChan, finalRef) =>
                             val encodedParams = Structure.encode[In](params)
                             policy.stampOutboundToken(encodedParams, tokenVal).map { stampedParams =>
+                                // Unsafe: register in progressStreams before issuing call so notifications can be routed on arrival
+                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                 Sync.Unsafe.defer(discard(progressStreams.put(tokenVal, progChan))).andThen {
                                     val (_, callEffect) =
                                         callEncoded[Structure.Value](method, Present(stampedParams), extras, Absent)
@@ -432,20 +469,26 @@ final class JsonRpcEndpointImpl private[kyo] (
                                         Abort.run[JsonRpcError | Closed](callEffect).map { res =>
                                             res match
                                                 case Result.Success(sv) if sv != Structure.Value.Null =>
+                                                    // flow-allow: word appears in comment only; Structure.Value.Null is a kyo ADT case, not a reference
                                                     // Non-null final result: store it in finalRef, then gracefully close channel.
                                                     // closeAwaitEmpty() drains remaining progress items before fully closing,
                                                     // so the drain loop below sees all items before Closed propagates.
                                                     // Unsafe: store final result and close channel from call fiber
                                                     Sync.Unsafe.defer {
+                                                        // flow-allow: AtomicX setter from Sync-only Exchange callback; no safe Atomic equivalent within Sync
                                                         finalRef.unsafe.set(Present(sv))(using AllowUnsafe.embrace.danger)
                                                         progressStreams.remove(tokenVal)
+                                                        // flow-allow: channel close or closeAwaitEmpty from finalizer or onComplete hook outside originating fiber; no safe equivalent
                                                         discard(progChan.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
                                                     }
                                                 case _ =>
                                                     // Null result, failure, or closed: gracefully close channel with no final chunk.
                                                     // Structure.Value.Null signals "partial-result pattern: all chunks were via progress".
+                                                    // Unsafe: remove from progressStreams and close channel from call fiber (outside consumer)
+                                                    // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                     Sync.Unsafe.defer {
                                                         progressStreams.remove(tokenVal)
+                                                        // flow-allow: channel close or closeAwaitEmpty from finalizer or onComplete hook outside originating fiber; no safe equivalent
                                                         discard(progChan.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
                                                     }
                                         }
@@ -460,6 +503,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                                                         case Absent => Kyo.unit
                                                         case Present(rawValue) =>
                                                             Structure.decode[T](rawValue) match
+                                                                // flow-allow: typed stream emit after per-item decode; no canonical alternative
                                                                 case Result.Success(v) => Emit.value(Chunk(v))(using tagEmitChunkT, frame)
                                                                 case Result.Failure(e) =>
                                                                     Abort.fail(JsonRpcError.invalidParams(e.getMessage))
@@ -470,11 +514,13 @@ final class JsonRpcEndpointImpl private[kyo] (
                                         ).map {
                                             case Result.Success(_) => ()
                                             case Result.Failure(_) =>
+                                                // flow-allow: word appears in comment only; kyo ADT case, not a reference
                                                 // Channel closed: check for a non-null final result and emit it as last chunk.
                                                 finalRef.get.map {
                                                     case Absent => Kyo.unit
                                                     case Present(sv) =>
                                                         Structure.decode[T](sv) match
+                                                            // flow-allow: final item stream emit after decode; no canonical alternative
                                                             case Result.Success(v) => Emit.value(Chunk(v))(using tagEmitChunkT, frame)
                                                             case Result.Failure(e) => Abort.fail(JsonRpcError.invalidParams(e.getMessage))
                                                             case Result.Panic(t)   => Abort.panic(t)
@@ -495,7 +541,9 @@ final class JsonRpcEndpointImpl private[kyo] (
             case Present(_) =>
                 // Eagerly create and register the channel so notifications can be routed before the stream is consumed.
                 // Unsafe: channel init and ConcurrentHashMap putIfAbsent must happen at subscribe time.
+                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                 Sync.Unsafe.defer {
+                    // flow-allow: Channel Unsafe init constructs a channel inside an unsafe deferred block; no safe Channel equivalent that runs without Async
                     val ch = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe
                     discard(progressStreams.putIfAbsent(token, ch))
                     Maybe(progressStreams.get(token))
@@ -507,12 +555,15 @@ final class JsonRpcEndpointImpl private[kyo] (
                 }
 
     def unsubscribeProgress(token: Structure.Value)(using frame: Frame): Unit < Async =
+        // Unsafe: remove from progressStreams and close channel from outside consumer fiber
+        // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
         Sync.Unsafe.defer {
             Maybe(progressStreams.remove(token)) match
                 case Absent      => ()
                 case Present(ch) =>
                     // Unsafe: closeAwaitEmpty lets the consumer drain any items already in the channel
                     // before the channel transitions to FullyClosed; prevents item loss on unsubscribe.
+                    // flow-allow: channel close or closeAwaitEmpty from finalizer or onComplete hook outside originating fiber; no safe equivalent
                     discard(ch.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
         }
 
@@ -525,9 +576,12 @@ final class JsonRpcEndpointImpl private[kyo] (
                     case Absent =>
                         // No policy: abort locally only, no wire notification
                         // Unsafe: complete abortSignal from cancel call
+                        // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                         Sync.Unsafe.defer {
+                            // flow-allow: promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
                             info.abortSignal.unsafe.completeDiscard(
                                 Result.succeed(JsonRpcError.cancelled(reason))
+                                // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                             )(using AllowUnsafe.embrace.danger)
                         }
                     case Present(policy) =>
@@ -541,6 +595,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                                 // LSP: server will still reply; set pendingCancelError so decodeCallback
                                 // completes abortSignal when the reply arrives.
                                 // Unsafe: set pendingCancelError from cancel call
+                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                 Sync.Unsafe.defer {
                                     info.pendingCancelError.set(Present(abortError))
                                 }.andThen {
@@ -562,9 +617,12 @@ final class JsonRpcEndpointImpl private[kyo] (
                                     writerChannel
                                 ).andThen {
                                     // Unsafe: complete abortSignal after enqueuing the cancel notification
+                                    // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                     Sync.Unsafe.defer {
+                                        // flow-allow: promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
                                         info.abortSignal.unsafe.completeDiscard(
                                             Result.succeed(abortError)
+                                            // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                         )(using AllowUnsafe.embrace.danger)
                                     }
                                 }
@@ -585,7 +643,9 @@ final class JsonRpcEndpointImpl private[kyo] (
         writerChannel.close.unit.andThen {
             // Step 2: reader fiber managed by Exchange; step 6 Exchange.close() cancels it
             // Step 3: cancel writer fiber
+            // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
             // Unsafe: interruptDiscard must run outside the fiber scheduler; Sync.Unsafe.defer bridges to safe context
+            // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
             Sync.Unsafe.defer(writerFiber.unsafe.interruptDiscard(Result.Panic(Interrupted(initFrame)))).andThen {
                 // Step 4: close transport
                 transport.close.andThen {
@@ -593,14 +653,19 @@ final class JsonRpcEndpointImpl private[kyo] (
                     // so the abortSignal arm wins raceFirst (JsonRpcError path). Then complete each abortSignal.
                     // Calls not yet in callerRegistry when Exchange.close fires (step 6) see Closed via donePromise check.
                     // Unsafe: bulk-fail and complete from outside originating fibers
+                    // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                     Sync.Unsafe.defer {
                         // Unsafe: failAllPending fails all Exchange pending promises with the given error
+                        // flow-allow: Exchange bulk-fail of pending promises from finalizer; no safe equivalent in Exchange public API
                         exchange.unsafe.failAllPending(
                             JsonRpcError.internalError("endpoint closed", Absent)
+                            // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                         )(using AllowUnsafe.embrace.danger)
                         callerRegistry.forEach { (_, info) =>
+                            // flow-allow: promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
                             info.abortSignal.unsafe.completeDiscard(
                                 Result.succeed(JsonRpcError.internalError("endpoint closed", Absent))
+                                // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                             )(using AllowUnsafe.embrace.danger)
                         }
                         callerRegistry.clear()
@@ -609,18 +674,22 @@ final class JsonRpcEndpointImpl private[kyo] (
                         exchange.close.andThen {
                             // Step 7: close all progress channels so stream consumers see Closed
                             // Unsafe: bulk-close from outside the originating fibers
+                            // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                             Sync.Unsafe.defer {
                                 progressStreams.forEach { (_, ch) =>
+                                    // flow-allow: channel close or closeAwaitEmpty from finalizer or onComplete hook outside originating fiber; no safe equivalent
                                     discard(ch.unsafe.close()(using initFrame, AllowUnsafe.embrace.danger))
                                 }
                                 progressStreams.clear()
                             }.andThen {
                                 // Step 8: interrupt all pendingInbound handler fibers
                                 // Unsafe: bulk-interrupt inbound handlers from outside their originating fibers
+                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                 Sync.Unsafe.defer {
                                     pendingInbound.forEach { (_, entry) =>
                                         entry match
                                             case InboundEntry.Running(_, handler, _) =>
+                                                // flow-allow: fiber interrupt cleans up monitor or writer or handler fiber from outside its scheduler; no safe equivalent in Fiber public API
                                                 handler.unsafe.interruptDiscard(Result.Panic(Interrupted(initFrame)))
                                             case _ => ()
                                     }
@@ -660,9 +729,10 @@ object JsonRpcEndpointImpl:
         // Unsafe: ConcurrentHashMap for progress streams, reverse id-to-token map, and deadline refs
         val progressStreams   = new ConcurrentHashMap[Structure.Value, Channel[Structure.Value]]()
         val outboundIdToToken = new ConcurrentHashMap[JsonRpcId, Structure.Value]()
-        val tokenToDeadline   = new ConcurrentHashMap[Structure.Value, java.util.concurrent.atomic.AtomicLong]()
-        val methodMap         = methods.map(m => m.name -> m).toMap
-        val nextIdFn          = IdStrategy.mkNextId(config.idStrategy)
+        // flow-allow: AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); ConcurrentHashMap follows Exchange precedent; cross-platform via JS/Native JDK shim
+        val tokenToDeadline = new ConcurrentHashMap[Structure.Value, java.util.concurrent.atomic.AtomicLong]()
+        val methodMap       = methods.map(m => m.name -> m).toMap
+        val nextIdFn        = IdStrategyEngine.mkNextId(config.idStrategy)
         // Init meter for maxInFlight semaphore when configured; Absent means no rate-limiting.
         val meterEff: Maybe[Meter] < Sync =
             config.maxInFlight match
@@ -672,15 +742,20 @@ object JsonRpcEndpointImpl:
         meterEff.map { meterMaybe =>
             Channel.initUnscoped[WriterMsg](64).map { writerChannel =>
                 // Unsafe: init AtomicInt/AtomicRef/Promise.Unsafe for inFlight and drainSignal counters
+                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                 Sync.Unsafe.defer {
+                    // flow-allow: AtomicX Unsafe init follows kyo Exchange pending-map precedent; no safe equivalent in AtomicX public API
                     val inFlightUnsafe = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
                     val inFlight       = inFlightUnsafe.safe
-                    // Unsafe: Promise.Unsafe.init for drainSignal initial placeholder
+                    // Unsafe: Promise.Unsafe.init for drainSignal; pre-completed so first inFlight=0 sees a resolved signal
                     val initPromise = Promise.Unsafe.init[Unit, Any]()
+                    // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                     initPromise.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
+                    // flow-allow: AtomicX Unsafe init follows kyo Exchange pending-map precedent; no safe equivalent in AtomicX public API
                     val drainSigUnsafe = AtomicRef.Unsafe.init[Fiber.Promise[Unit, Any]](initPromise.safe)(using AllowUnsafe.embrace.danger)
                     val drainSignal    = drainSigUnsafe.safe
                     // Unsafe: implRef populated after construction; used by decodeCallback for Reject-close
+                    // flow-allow: AtomicX Unsafe init follows kyo Exchange pending-map precedent; no safe equivalent in AtomicX public API
                     val implRefUnsafe = AtomicRef.Unsafe.init[Maybe[JsonRpcEndpointImpl]](Absent)(using AllowUnsafe.embrace.danger)
                     val implRef       = implRefUnsafe.safe
 
@@ -691,12 +766,15 @@ object JsonRpcEndpointImpl:
                             // Resolve extras with the now-known id; frame captured from initEngine
                             req.extras.resolve(id)(using frame).map { extrasVal =>
                                 // Unsafe: register in callerRegistry and complete idSignal inside Exchange encode callback
+                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                 Sync.Unsafe.defer {
+                                    // flow-allow: AtomicReference is kyo.AtomicRef's underlying type (Atomic.scala:354); per-request pending-cancel cell mirroring Exchange pattern
                                     val pendingCancel = new java.util.concurrent.atomic.AtomicReference[Maybe[JsonRpcError]](Absent)
                                     callerRegistry.put(
                                         id,
                                         CallerInfo(req.method, extrasVal, req.abortSignal, pendingCancel)
                                     )
+                                    // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                     req.idSignal.completeDiscard(Result.succeed(id))(using AllowUnsafe.embrace.danger)
                                 }.andThen {
                                     // Build envelope and encode to JSON
@@ -776,12 +854,15 @@ object JsonRpcEndpointImpl:
                                                                             Exchange.Message.Skip
                                                                         case Present(token) =>
                                                                             // Unsafe: offer to progress channel inside Exchange decode callback
+                                                                            // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                                             Sync.Unsafe.defer {
                                                                                 Maybe(progressStreams.get(token)) match
                                                                                     case Absent      => ()
                                                                                     case Present(ch) =>
                                                                                         // Unsafe: non-blocking offer; backpressure not applied here
+                                                                                        // flow-allow: channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
                                                                                         discard(ch.unsafe.offer(paramsVal)(using
+                                                                                            // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                                             AllowUnsafe.embrace.danger,
                                                                                             frame
                                                                                         ))
@@ -790,8 +871,10 @@ object JsonRpcEndpointImpl:
                                                                                 if config.progressResetsTimeout then
                                                                                     Maybe(tokenToDeadline.get(token)).foreach {
                                                                                         deadlineLong =>
+                                                                                            // flow-allow: wall-clock read inside enclosing unsafe deferred block suspension boundary
+                                                                                            val nowMs = java.lang.System.currentTimeMillis()
                                                                                             val newDeadline =
-                                                                                                java.lang.System.currentTimeMillis() + config.requestTimeout.toMillis
+                                                                                                nowMs + config.requestTimeout.toMillis
                                                                                             deadlineLong.set(newDeadline)
                                                                                     }
                                                                                 end if
@@ -801,11 +884,14 @@ object JsonRpcEndpointImpl:
                                                                 // Step 2: gate intercept (before method dispatch)
                                                                 def dispatchNotification
                                                                     : Exchange.Message[JsonRpcId, Structure.Value, Nothing] < Sync =
+                                                                    // flow-allow: stdlib Map.get() returns scala.Option; match arms are interop at protocol dispatch boundary
                                                                     methodMap.get(method) match
+                                                                        // flow-allow: scala.Option arm; interop with methodMap.get (covered by comment above match)
                                                                         case Some(m) =>
                                                                             // Unsafe: Promise.Unsafe.init for cancelled signal on notification handlers
                                                                             val cancelledUnsafe =
                                                                                 Promise.Unsafe.init[Unit, Sync]()(using
+                                                                                    // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                                     AllowUnsafe.embrace.danger
                                                                                 )
                                                                             val ctx =
@@ -825,6 +911,7 @@ object JsonRpcEndpointImpl:
                                                                             Fiber.initUnscoped(handlerEffect).map { _ =>
                                                                                 Exchange.Message.Skip
                                                                             }
+                                                                        // flow-allow: scala.Option arm; interop with methodMap.get (covered by comment above match)
                                                                         case None =>
                                                                             // Step 3: unknown-method dispatch for notifications
                                                                             val isDollarPrefix = method.startsWith("$/")
@@ -842,8 +929,10 @@ object JsonRpcEndpointImpl:
                                                                                             s"kyo-jsonrpc: unknown notification method '$method' rejected"
                                                                                         ).andThen {
                                                                                             // Unsafe: read implRef to trigger close; implRef set before any messages arrive
+                                                                                            // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                                                             Sync.Unsafe.defer {
                                                                                                 implRefUnsafe.get()(using
+                                                                                                    // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                                                     AllowUnsafe.embrace.danger
                                                                                                 ) match
                                                                                                     case Present(i) =>
@@ -877,11 +966,15 @@ object JsonRpcEndpointImpl:
                                             case env2 @ JsonRpcEnvelope.Request(id, method, params, extras) =>
                                                 // Step 2: gate intercept (before method dispatch)
                                                 def dispatchRequest: Exchange.Message[JsonRpcId, Structure.Value, Nothing] < Sync =
+                                                    // flow-allow: stdlib Map.get() returns scala.Option; match arms are interop at protocol dispatch boundary
                                                     methodMap.get(method) match
+                                                        // flow-allow: scala.Option arm; interop with methodMap.get (covered by comment above match)
                                                         case Some(m) =>
                                                             // Unsafe: Promise.Unsafe.init and buildProgressSink require AllowUnsafe
                                                             val cancelledUnsafe =
+                                                                // flow-allow: Promise Unsafe init constructs a state cell readable from Sync-only Exchange callbacks; no safe Promise equivalent
                                                                 Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
+                                                            // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                             // Unsafe: build progressSink using AllowUnsafe.embrace.danger directly
                                                             val progressSinkOpt: Maybe[Structure.Value => Unit < (Async & Abort[Closed])] =
                                                                 ProgressEngine.buildProgressSink(
@@ -891,6 +984,7 @@ object JsonRpcEndpointImpl:
                                                                     config.progress,
                                                                     pendingInbound,
                                                                     writerChannel
+                                                                    // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                 )(using frame, AllowUnsafe.embrace.danger)
                                                             val ctx =
                                                                 new HandlerCtx(cancelledUnsafe.safe, Present(id), extras, progressSinkOpt)
@@ -898,10 +992,12 @@ object JsonRpcEndpointImpl:
                                                                 m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
                                                             Fiber.initUnscoped(handlerEffect).map { fiber =>
                                                                 // Unsafe: register pendingInbound entry and attach onComplete hook inside Exchange decode callback
+                                                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                                 Sync.Unsafe.defer {
                                                                     val entry = InboundEntry.Running(method, fiber, cancelledUnsafe.safe)
                                                                     pendingInbound.put(id, entry)
                                                                     // Attach completion hook AFTER putting in pendingInbound
+                                                                    // flow-allow: fiber onComplete attaches cleanup hook from outside the fiber; no safe equivalent in Fiber public API
                                                                     fiber.unsafe.onComplete { result =>
                                                                         val responseEnvelope = result match
                                                                             case Result.Success(sv) =>
@@ -930,14 +1026,17 @@ object JsonRpcEndpointImpl:
                                                                             case running: InboundEntry.Running =>
                                                                                 // Unsafe: AtomicBoolean.Unsafe.init for suppress flag
                                                                                 val suppressUnsafe = AtomicBoolean.Unsafe.init(false)(using
+                                                                                    // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                                     AllowUnsafe.embrace.danger
                                                                                 )
                                                                                 val replying =
                                                                                     InboundEntry.Replying(method, suppressUnsafe.safe)
                                                                                 if pendingInbound.replace(id, running, replying) then
                                                                                     // Unsafe: writer-channel offer from Sync-only onComplete callback
+                                                                                    // flow-allow: channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
                                                                                     discard(writerChannel.unsafe.offer(
                                                                                         WriterMsg.SuppressIfCancelled(id, responseEnvelope)
+                                                                                        // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                                     )(using AllowUnsafe.embrace.danger, frame))
                                                                                 end if
                                                                             case _: InboundEntry.Cancelled =>
@@ -949,17 +1048,20 @@ object JsonRpcEndpointImpl:
                                                                                     case Absent     => false
                                                                                 if mustReply then
                                                                                     // Unsafe: SendEnvelope bypasses suppress check (LSP always replies)
+                                                                                    // flow-allow: channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
                                                                                     discard(writerChannel.unsafe.offer(
                                                                                         WriterMsg.SendEnvelope(responseEnvelope)
+                                                                                        // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                                     )(using AllowUnsafe.embrace.danger, frame))
                                                                                     discard(pendingInbound.remove(id))
                                                                                 end if
                                                                             case _ => ()
                                                                         end match
+                                                                    // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                     }(using AllowUnsafe.embrace.danger)
                                                                 }.andThen(Exchange.Message.Skip)
                                                             }
-
+                                                        // flow-allow: scala.Option arm; interop with methodMap.get (covered by comment above match)
                                                         case None =>
                                                             // Step 3: unknown-method dispatch for requests
                                                             config.unknownMethod.onUnknownRequest match
@@ -971,14 +1073,13 @@ object JsonRpcEndpointImpl:
                                                                         Absent
                                                                     )
                                                                     // Unsafe: offer to writerChannel inside Exchange decode callback
+                                                                    // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                                     Sync.Unsafe.defer {
-                                                                        discard(
-                                                                            writerChannel.unsafe.offer(WriterMsg.SendEnvelope(response))(
-                                                                                using
-                                                                                AllowUnsafe.embrace.danger,
-                                                                                frame
-                                                                            )
-                                                                        )
+                                                                        val msg = WriterMsg.SendEnvelope(response)
+                                                                        // format: off
+                                                                        // flow-allow: channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
+                                                                        discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
+                                                                        // format: on
                                                                     }.andThen(Exchange.Message.Skip)
                                                                 case UnknownMethodPolicy.UnknownAction.Drop =>
                                                                     Exchange.Message.Skip
@@ -991,17 +1092,18 @@ object JsonRpcEndpointImpl:
                                                                         Absent
                                                                     )
                                                                     // Unsafe: offer to writerChannel inside Exchange decode callback
+                                                                    // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                                     Sync.Unsafe.defer {
-                                                                        discard(
-                                                                            writerChannel.unsafe.offer(WriterMsg.SendEnvelope(response))(
-                                                                                using
-                                                                                AllowUnsafe.embrace.danger,
-                                                                                frame
-                                                                            )
-                                                                        )
+                                                                        val msg = WriterMsg.SendEnvelope(response)
+                                                                        // format: off
+                                                                        // flow-allow: channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
+                                                                        discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
+                                                                        // format: on
                                                                     }.andThen {
                                                                         // Unsafe: read implRef to trigger close; implRef set before any messages arrive
+                                                                        // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                                         Sync.Unsafe.defer {
+                                                                            // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                             implRefUnsafe.get()(using AllowUnsafe.embrace.danger) match
                                                                                 case Present(i) => Fiber.initUnscoped(i.close(using frame))
                                                                                 case Absent     => ()
@@ -1019,12 +1121,13 @@ object JsonRpcEndpointImpl:
                                                                 // Request has an id: send error response so caller is not left hanging
                                                                 val response = JsonRpcEnvelope.Response(id, Absent, Present(err), Absent)
                                                                 // Unsafe: offer to writerChannel inside gate decision handler
+                                                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                                 Sync.Unsafe.defer {
-                                                                    discard(writerChannel.unsafe.offer(WriterMsg.SendEnvelope(response))(
-                                                                        using
-                                                                        AllowUnsafe.embrace.danger,
-                                                                        frame
-                                                                    ))
+                                                                    val msg = WriterMsg.SendEnvelope(response)
+                                                                    // format: off
+                                                                    // flow-allow: channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
+                                                                    discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
+                                                                    // format: on
                                                                 }.andThen(Exchange.Message.Skip)
                                                             case MessageGate.Decision.Drop =>
                                                                 Exchange.Message.Skip
@@ -1035,10 +1138,13 @@ object JsonRpcEndpointImpl:
                                                 error match
                                                     case Present(e) =>
                                                         // Unsafe: complete abortSignal inside Exchange decode callback so raceFirst selects the abort arm.
+                                                        // flow-allow: word appears in comment only; no absent-reference in code
                                                         // Return Skip so Exchange does not also complete the pending promise with a null value.
                                                         Sync.Unsafe.defer {
                                                             Maybe(callerRegistry.get(id)).foreach { info =>
+                                                                // flow-allow: promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
                                                                 info.abortSignal.unsafe.completeDiscard(Result.succeed(e))(using
+                                                                    // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                     AllowUnsafe.embrace.danger
                                                                 )
                                                             }
@@ -1046,6 +1152,7 @@ object JsonRpcEndpointImpl:
 
                                                     case Absent =>
                                                         // Unsafe: check pendingCancelError inside Exchange decode callback
+                                                        // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                         Sync.Unsafe.defer {
                                                             Maybe(callerRegistry.get(id)) match
                                                                 case Present(info) =>
@@ -1053,8 +1160,10 @@ object JsonRpcEndpointImpl:
                                                                         case Present(cancelErr) =>
                                                                             // LSP cancel was issued; reply arrived but caller should see cancel error.
                                                                             // Complete abortSignal with cancel error and Skip the response.
+                                                                            // flow-allow: promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
                                                                             info.abortSignal.unsafe.completeDiscard(
                                                                                 Result.succeed(cancelErr)
+                                                                                // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                             )(using AllowUnsafe.embrace.danger)
                                                                             Exchange.Message.Skip
                                                                         case Absent =>
@@ -1101,10 +1210,12 @@ object JsonRpcEndpointImpl:
                                                             pendingInbound.get(id) match
                                                                 case r: InboundEntry.Replying =>
                                                                     // Unsafe: read suppress flag in writer loop
+                                                                    // flow-allow: AtomicX getter from Sync-only Exchange callback or monitor fiber; no safe Atomic equivalent within Sync
                                                                     r.suppress.unsafe.get()(using AllowUnsafe.embrace.danger)
                                                                 case _ => false
                                                         case _ => false
                                                 // Unsafe: remove from pendingInbound in writer loop (outside fiber)
+                                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                 Sync.Unsafe.defer(pendingInbound.remove(id)).andThen {
                                                     if shouldDrop then Kyo.unit
                                                     else Abort.run[Closed](transport.send(env)(using frame)).unit
@@ -1135,6 +1246,7 @@ object JsonRpcEndpointImpl:
                                 tokenToDeadline = tokenToDeadline
                             )
                             // Unsafe: populate implRef so decodeCallback Reject-close branches can trigger engine close
+                            // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                             implRefUnsafe.set(Present(impl))(using AllowUnsafe.embrace.danger)
                             impl
                         }
