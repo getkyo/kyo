@@ -1,0 +1,1610 @@
+plan_version: 2
+task_type: refactor
+module: kyo-jsonrpc
+crossPlatforms: [jvm, js, native]
+phases:
+  - id: 1
+    name: "Engine refactor and Config neutrality (Items 8, 9, 10 + Config flip)"
+    depends_on: []
+    files_produced: []
+    files_modified:
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEnvelope.scala
+        before: |
+          case Malformed(reason: String, raw: Structure.Value)
+          end JsonRpcEnvelope
+        after: |
+          case Malformed(id: Maybe[JsonRpcId], reason: String, raw: Structure.Value)
+          end JsonRpcEnvelope
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/JsonRpcCodecImpl.scala
+        before: |
+          JsonRpcEnvelope.Malformed("response has both result and error", raw)
+        after: |
+          JsonRpcEnvelope.Malformed(idMaybe, "response has both result and error", raw)
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/JsonRpcEndpointImpl.scala
+        before: |
+          case JsonRpcEnvelope.Malformed(reason, _) =>
+              Exchange.Message.Skip
+        after: |
+          case JsonRpcEnvelope.Malformed(Present(id), reason, _) =>
+              Maybe(callerRegistry.get(id)) match
+                  case Present(info) =>
+                      info.responsePromise.unsafe.completeDiscard(
+                          Result.fail(JsonRpcError.invalidRequest(s"malformed response: $reason"))
+                      )(using AllowUnsafe.embrace.danger)
+                      Exchange.Message.Skip
+                  case Absent =>
+                      Exchange.Message.Skip
+          case JsonRpcEnvelope.Malformed(Absent, _, _) =>
+              Exchange.Message.Skip
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEndpoint.scala
+        before: |
+          final case class Config(
+              codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
+              cancellation: Maybe[CancellationPolicy] = Present(CancellationPolicy.lsp),
+              progress: Maybe[ProgressPolicy] = Absent,
+              unknownMethod: UnknownMethodPolicy = UnknownMethodPolicy.minimal,
+              gate: Maybe[MessageGate] = Absent,
+              maxInFlight: Maybe[Int] = Absent,
+              requestTimeout: Duration = Duration.Infinity,
+              idStrategy: IdStrategy = IdStrategy.SequentialLong,
+              progressResetsTimeout: Boolean = false
+          )
+
+          def awaitDrain(using Frame): Unit < Async = impl.awaitDrain
+
+          def close(using Frame): Unit < Async = impl.close
+
+          end JsonRpcEndpoint
+        after: |
+          final case class Config(
+              codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
+              cancellation: Maybe[CancellationPolicy] = Absent,
+              progress: Maybe[ProgressPolicy] = Absent,
+              unknownMethod: UnknownMethodPolicy = UnknownMethodPolicy.minimal,
+              gate: Maybe[MessageGate] = Absent,
+              maxInFlight: Maybe[Int] = Absent,
+              requestTimeout: Duration = Duration.Infinity,
+              idStrategy: IdStrategy = IdStrategy.SequentialLong,
+              progressResetsTimeout: Boolean = false
+          )
+
+          def awaitDrain(using Frame): Unit < Async = impl.awaitDrain
+
+          def close(using Frame): Unit < Async = impl.close(Duration.Zero)
+
+          def close(gracePeriod: Duration)(using Frame): Unit < Async = impl.close(gracePeriod)
+
+          def closeNow(using Frame): Unit < Async = impl.close(Duration.Zero)
+
+          end JsonRpcEndpoint
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/JsonRpcEndpointImpl.scala
+        before: |
+          def close(using Frame): Unit < Async =
+              finalizer
+        after: |
+          def close(gracePeriod: Duration)(using Frame): Unit < Async =
+              if gracePeriod == Duration.Zero then finalizer
+              else
+                  Abort.run[Timeout](Async.timeout(gracePeriod)(awaitDrain)).map { _ =>
+                      finalizer
+                  }
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/CancellationPolicy.scala
+        before: |
+          final case class CancellationPolicy(
+              cancelMethod: String,
+              encodeParams: CancellationPolicy.ParamsEncoder,
+              expectReplyForCancelledRequest: Boolean,
+              cancelledError: Maybe[JsonRpcError],
+              protectedMethods: Set[String]
+          ) derives CanEqual
+        after: |
+          final case class CancellationPolicy(
+              cancelMethod: String,
+              encodeParams: CancellationPolicy.ParamsEncoder,
+              decodeParams: Structure.Value => Maybe[JsonRpcId] < Sync,
+              expectReplyForCancelledRequest: Boolean,
+              cancelledError: Maybe[JsonRpcError],
+              protectedMethods: Set[String]
+          ) derives CanEqual
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/CancellationEngine.scala
+        before: |
+          private def extractCancelId(
+              policy: CancellationPolicy,
+              params: Maybe[Structure.Value]
+          )(using Frame): Maybe[JsonRpcId] =
+              params.flatMap { sv =>
+                  if policy.cancelMethod == "$/cancelRequest" then
+                      Structure.decode[LspCancelParams](sv) match
+                          case Result.Success(p) => Present(p.id)
+                          case _                 => Absent
+                  else
+                      Structure.decode[McpCancelParams](sv) match
+                          case Result.Success(p) => Present(p.requestId)
+                          case _                 => Absent
+              }
+        after: |
+          private def extractCancelId(
+              policy: CancellationPolicy,
+              params: Maybe[Structure.Value]
+          )(using Frame): Maybe[JsonRpcId] < Sync =
+              params match
+                  case Absent      => Absent
+                  case Present(sv) => policy.decodeParams(sv)
+    files_deleted: []
+    public_api:
+      - signature: "def close(gracePeriod: Duration)(using Frame): Unit < Async"
+        receiver: "JsonRpcEndpoint"
+      - signature: "def closeNow(using Frame): Unit < Async"
+        receiver: "JsonRpcEndpoint"
+      - signature: "CancellationPolicy.decodeParams: Structure.Value => Maybe[JsonRpcId] < Sync"
+        receiver: "CancellationPolicy (case-class field)"
+    private_helpers:
+      - name: lspDecoder
+      - name: mcpDecoder
+    extension: []
+    stubs: []
+    shared_state:
+      - name: callerRegistry
+        type: "ConcurrentHashMap[JsonRpcId, CallerInfo]"
+        scope: instance
+        init_site: "JsonRpcEndpointImpl init (existing, pre-Phase-01)"
+        observable_by: "decodeCallback after init completes"
+    side_effects:
+      - call: "Async.timeout"
+        suspended_in: "Abort.run[Timeout]"
+    case_classes: []
+    tests:
+      total: 10
+      files:
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointTest.scala
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEnvelopeTest.scala
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcCodecTest.scala
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/CancellationPolicyTest.scala
+      leaves:
+        - id: 1
+          name: "default Config() has cancellation = Absent"
+          given: "no setup; JsonRpcEndpoint.Config() evaluated"
+          when: "read cancellation field plus codec / progress / unknownMethod"
+          then: "cancellation == Absent; codec == Strict2_0; progress == Absent; unknownMethod == minimal"
+          pins: "INV-002 producer (Config() no-arg default protocol-neutral)"
+          code: |
+            "default Config() has cancellation Absent" in run {
+                val cfg = JsonRpcEndpoint.Config()
+                assert(cfg.cancellation == Absent)
+                assert(cfg.codec eq JsonRpcCodec.Strict2_0)
+                assert(cfg.progress == Absent)
+                assert(cfg.unknownMethod == UnknownMethodPolicy.minimal)
+            }
+        - id: 2
+          name: "Config() default plus LSP-shaped timeout emits no cancel notification"
+          given: "two endpoints over inMemory with Config(); slow handler sleeping 2s on server"
+          when: "client.call('slow', ()) under Async.timeout(100.millis); observe server.incoming for 500ms"
+          then: "server.incoming records the Request envelope; no Notification('$/cancelRequest', _, _) observed"
+          pins: "INV-002 (no-policy-configured timeout suppresses cancel emission)"
+          code: |
+            "Config() default plus LSP-shaped timeout emits no cancel" in run {
+                val seen = AtomicRef.Unsafe.init[Chunk[JsonRpcEnvelope]](Chunk.empty)(using AllowUnsafe.embrace.danger)
+                val slow = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("slow") { (_, _) => Async.sleep(2.seconds) }
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    val tbWrap = new JsonRpcTransport:
+                        def send(env: JsonRpcEnvelope)(using Frame) = tb.send(env)
+                        def incoming(using Frame) = tb.incoming.mapPure { env =>
+                            discard(seen.updateAndGet(_ :+ env)(using AllowUnsafe.embrace.danger))
+                            env
+                        }
+                        def close(using Frame) = tb.close
+                    JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                        JsonRpcEndpoint.init(tbWrap, Seq(slow)).map { _ =>
+                            Abort.run[JsonRpcError | Closed](Async.timeout(100.millis)(a.call[Unit, Unit]("slow", ()))).andThen {
+                                Async.sleep(500.millis).andThen {
+                                    val envs = seen.get()(using AllowUnsafe.embrace.danger)
+                                    assert(envs.exists { case JsonRpcEnvelope.Request(_, "slow", _, _) => true; case _ => false })
+                                    assert(!envs.exists { case JsonRpcEnvelope.Notification("$/cancelRequest", _, _) => true; case _ => false })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 3
+          name: "Malformed carries Maybe id slot"
+          given: "construct Malformed(Present(JsonRpcId.Num(7)), reason, raw)"
+          when: "pattern-match"
+          then: "extracted id equals Present(JsonRpcId.Num(7))"
+          pins: "INV-001"
+          code: |
+            "Malformed carries Maybe id slot" in run {
+                val env = JsonRpcEnvelope.Malformed(Present(JsonRpcId.Num(7)), "stringy error", Structure.Value.Str("raw"))
+                env match
+                    case JsonRpcEnvelope.Malformed(id, _, _) => assert(id == Present(JsonRpcId.Num(7)))
+                    case _                                    => fail("expected Malformed")
+            }
+        - id: 4
+          name: "Strict2_0 decoder recovers id from malformed response"
+          given: "raw {jsonrpc:2.0, id:42, error:'stringy'}"
+          when: "Strict2_0.decode(raw)"
+          then: "Malformed(Present(JsonRpcId.Num(42)), _, _) with non-empty reason"
+          pins: "INV-001 producer"
+          code: |
+            "Strict2_0 decoder recovers id from malformed response" in run {
+                val raw = Structure.Value.Record(Chunk(
+                    "jsonrpc" -> Structure.Value.Str("2.0"),
+                    "id"      -> Structure.Value.Integer(42),
+                    "error"   -> Structure.Value.Str("stringy")
+                ))
+                JsonRpcCodec.Strict2_0.decode(raw).map {
+                    case JsonRpcEnvelope.Malformed(Present(JsonRpcId.Num(42)), reason, _) =>
+                        assert(reason.nonEmpty)
+                    case other => fail(s"expected Malformed-with-id, got $other")
+                }
+            }
+        - id: 5
+          name: "Cdp decoder recovers id from malformed response"
+          given: "raw {id:99, result:{x:1}, error:'boom'}"
+          when: "Cdp.decode(raw)"
+          then: "Malformed(Present(JsonRpcId.Num(99)), _, _)"
+          pins: "INV-001"
+          code: |
+            "Cdp decoder recovers id from malformed response" in run {
+                val raw = Structure.Value.Record(Chunk(
+                    "id"     -> Structure.Value.Integer(99),
+                    "result" -> Structure.Value.Record(Chunk("x" -> Structure.Value.Integer(1))),
+                    "error"  -> Structure.Value.Str("boom")
+                ))
+                JsonRpcCodec.Cdp.decode(raw).map {
+                    case JsonRpcEnvelope.Malformed(Present(JsonRpcId.Num(99)), _, _) => succeed
+                    case other => fail(s"expected Malformed-with-id, got $other")
+                }
+            }
+        - id: 6
+          name: "Malformed for non-Record carries Absent id"
+          given: "raw Structure.Value.Str('not a record')"
+          when: "Strict2_0.decode(raw)"
+          then: "Malformed(Absent, 'expected a Record', _)"
+          pins: "INV-001 Absent path"
+          code: |
+            "Malformed for non-Record carries Absent id" in run {
+                JsonRpcCodec.Strict2_0.decode(Structure.Value.Str("not a record")).map {
+                    case JsonRpcEnvelope.Malformed(Absent, reason, _) =>
+                        assert(reason == "expected a Record")
+                    case other => fail(s"expected Malformed(Absent, ...), got $other")
+                }
+            }
+        - id: 7
+          name: "malformed response with id fails caller fast"
+          given: "two endpoints over inMemory; server returns Response decoded as Malformed-with-id"
+          when: "client calls a method"
+          then: "the call fails within 1 second with invalidRequest containing 'malformed response'"
+          pins: "INV-001 consumer"
+          code: |
+            "malformed response with id fails caller fast" in run {
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                        Fiber.initUnscoped(tb.send(JsonRpcEnvelope.Response(JsonRpcId.Num(1), Absent, Present(JsonRpcError.invalidRequest("x")), Absent))).andThen {
+                            Async.timeout(1.second)(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("noop", ()))).map {
+                                case Result.Success(Result.Failure(err: JsonRpcError)) =>
+                                    assert(err.message.contains("malformed response") || err.code == JsonRpcError.InvalidRequest.code)
+                                case other => fail(s"unexpected $other")
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 8
+          name: "close(0) is equivalent to closeNow"
+          given: "endpoint with one in-flight slow handler (sleeps 5 seconds)"
+          when: "endpoint.close(Duration.Zero); then attempt endpoint.call"
+          then: "handler interrupted; subsequent call aborts with Closed"
+          pins: "INV-005 no-grace"
+          code: |
+            "close(0) is equivalent to closeNow" in run {
+                val slow = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("slow") { (_, _) => Async.sleep(5.seconds) }
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                        JsonRpcEndpoint.init(tb, Seq(slow)).map { _ =>
+                            Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ()))).map { _ =>
+                                a.close(Duration.Zero).andThen {
+                                    Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ())).map {
+                                        case Result.Failure(_: Closed) => succeed
+                                        case other                     => fail(s"expected Closed, got $other")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 9
+          name: "close(gracePeriod) drains before forcing"
+          given: "in-flight handler completes after 200ms"
+          when: "endpoint.close(1.second)"
+          then: "handler completes; close returns well before 1 second"
+          pins: "INV-005 producer"
+          code: |
+            "close(gracePeriod) drains before forcing" in run {
+                val done = Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe
+                val q = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("q") { (_, _) =>
+                    Async.sleep(200.millis).andThen(done.completeUnit)
+                }
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                        JsonRpcEndpoint.init(tb, Seq(q)).map { _ =>
+                            Fiber.initUnscoped(a.call[Unit, Unit]("q", ())).andThen {
+                                val start = java.lang.System.currentTimeMillis
+                                a.close(1.second).map { _ =>
+                                    val elapsed = java.lang.System.currentTimeMillis - start
+                                    assert(elapsed < 900)
+                                    done.get.map(_ => succeed)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 10
+          name: "custom policy decoder routes through decodeParams"
+          given: "custom CancellationPolicy with decodeParams reading params.target"
+          when: "CancellationEngine.extractCancelIdForTest fed a target-shaped notification"
+          then: "result equals Present(JsonRpcId.Str('abc'))"
+          pins: "INV-003 producer"
+          code: |
+            "custom policy decoder routes through decodeParams" in run {
+                val decoder: Structure.Value => Maybe[JsonRpcId] < Sync = sv => Sync.defer {
+                    sv match
+                        case Structure.Value.Record(fields) =>
+                            fields.iterator.collectFirst {
+                                case ("target", Structure.Value.Str(s)) => JsonRpcId.Str(s)
+                            } match
+                                case Some(id) => Present(id)
+                                case None     => Absent
+                        case _ => Absent
+                }
+                val policy = CancellationPolicy("x.cancel", CancellationPolicy.lsp.encodeParams, decoder, false, Absent, Set.empty)
+                val params = Present(Structure.Value.Record(Chunk("target" -> Structure.Value.Str("abc"))))
+                internal.CancellationEngine.extractCancelIdForTest(policy, params).map { result =>
+                    assert(result == Present(JsonRpcId.Str("abc")))
+                }
+            }
+    consumed_invariants: []
+    produced_invariants: [INV-001, INV-002, INV-003, INV-005]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-jsonrpcJVM/testOnly *JsonRpcEnvelopeTest *JsonRpcCodecTest *JsonRpcEndpointTest *CancellationPolicyTest' 'kyo-jsonrpcJS/testOnly *JsonRpcEnvelopeTest *JsonRpcCodecTest *JsonRpcEndpointTest *CancellationPolicyTest' 'kyo-jsonrpcNative/testOnly *JsonRpcEnvelopeTest *JsonRpcCodecTest *JsonRpcEndpointTest *CancellationPolicyTest'"
+    test_count: 10
+
+  - id: 2
+    name: "API additions (Items 3, 12, 13)"
+    depends_on: [1]
+    files_produced: []
+    files_modified:
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/ProgressEngine.scala
+        before: |
+          private[kyo] object ProgressEngine:
+
+              /** Builds a per-invocation progress sink closure for a handler.
+        after: |
+          private[kyo] object ProgressEngine:
+
+              private[kyo] def allocateProgressToken(
+                  progressStreams: ConcurrentHashMap[Structure.Value, Channel[Structure.Value]],
+                  channel: Channel[Structure.Value],
+                  maxAttempts: Int
+              )(using Frame): Structure.Value < (Sync & Abort[JsonRpcError]) =
+                  def loop(attemptsLeft: Int): Structure.Value < (Sync & Abort[JsonRpcError]) =
+                      if attemptsLeft <= 0 then
+                          Abort.fail(JsonRpcError.internalError("progress token exhaustion", Absent))
+                      else
+                          Random.live.nextStringAlphanumeric(32).map { raw =>
+                              val token: Structure.Value = Structure.Value.Str(raw)
+                              Sync.defer {
+                                  val prior = progressStreams.putIfAbsent(token, channel)
+                                  if prior == null then token
+                                  else loop(attemptsLeft - 1)
+                              }.flatten
+                          }
+                  loop(maxAttempts)
+              end allocateProgressToken
+
+              /** Builds a per-invocation progress sink closure for a handler.
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/JsonRpcEndpointImpl.scala
+        before: |
+          // callWithProgress token alloc ~line 368
+          Random.live.unsafe.nextStringAlphanumeric(32).map { raw =>
+              val token: Structure.Value = Structure.Value.Str(raw)
+              Sync.defer(discard(progressStreams.put(token, progChan))).andThen {
+        after: |
+          ProgressEngine.allocateProgressToken(progressStreams, progChan, 32).map { token =>
+              // Registration is now atomic-inside-helper; no separate put call here.
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcMethod.scala
+        before: |
+          end notification
+
+          final private class RequestMethod[In, Out, S](
+        after: |
+          end notification
+
+          def dispatch[S](
+              name: String,
+              methods: Seq[JsonRpcMethod[S]],
+              params: Structure.Value,
+              ctx: HandlerCtx
+          )(using Frame, (Async & Abort[JsonRpcError]) <:< S): Maybe[Structure.Value < (S & Abort[JsonRpcError])] =
+              val methodMap: Map[String, JsonRpcMethod[S]] =
+                  methods.iterator.map(m => (m.name, m)).toMap
+              val ev = summon[(Async & Abort[JsonRpcError]) <:< S]
+              methodMap.get(name) match
+                  case Some(method) =>
+                      val handled: Structure.Value < (Async & Abort[JsonRpcError]) = method.handle(params, ctx)
+                      Present(ev.liftContra[[X] =>> Structure.Value < (X & Abort[JsonRpcError])].apply(handled))
+                  case None => Absent
+          end dispatch
+
+          final private class RequestMethod[In, Out, S](
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEndpoint.scala
+        before: |
+          def notify[In: Schema](
+              method: String,
+              params: In,
+              extras: ExtrasEncoder = ExtrasEncoder.empty
+          )(using Frame): Unit < (Async & Abort[Closed]) =
+              impl.notify[In](method, params, extras)
+        after: |
+          def notify[In: Schema](
+              method: String,
+              params: In,
+              extras: ExtrasEncoder = ExtrasEncoder.empty
+          )(using Frame): Unit < (Async & Abort[Closed]) =
+              impl.notify[In](method, params, extras)
+
+          def sendUnmatched[In: Schema](
+              method: String,
+              params: In,
+              id: JsonRpcId,
+              extras: ExtrasEncoder = ExtrasEncoder.empty
+          )(using Frame): Unit < (Async & Abort[Closed]) =
+              impl.sendUnmatched[In](method, params, id, extras)
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/JsonRpcEndpointImpl.scala
+        before: |
+          def notify[In: Schema](method: String, params: In, extras: ExtrasEncoder)(using Frame): Unit < (Async & Abort[Closed]) =
+              // ... existing body
+        after: |
+          def notify[In: Schema](method: String, params: In, extras: ExtrasEncoder)(using Frame): Unit < (Async & Abort[Closed]) =
+              // ... existing body
+
+          def sendUnmatched[In: Schema](
+              method: String,
+              params: In,
+              id: JsonRpcId,
+              extras: ExtrasEncoder
+          )(using Frame): Unit < (Async & Abort[Closed]) =
+              Sync.defer(Structure.encode[In](params)).map { encodedParams =>
+                  extras(id).map { extrasVal =>
+                      val env = JsonRpcEnvelope.Request(id, method, Present(encodedParams), extrasVal)
+                      writerChannel.put(WriterMsg.SendEnvelope(env))
+                  }
+              }
+    files_deleted: []
+    public_api:
+      - signature: "def JsonRpcMethod.dispatch[S](name, methods, params, ctx): Maybe[Structure.Value < (S & Abort[JsonRpcError])]"
+        receiver: "JsonRpcMethod (companion)"
+      - signature: "def JsonRpcEndpoint.sendUnmatched[In: Schema](method, params, id, extras): Unit < (Async & Abort[Closed])"
+        receiver: "JsonRpcEndpoint"
+      - signature: "private[kyo] def ProgressEngine.allocateProgressToken(progressStreams, channel, maxAttempts): Structure.Value < (Sync & Abort[JsonRpcError])"
+        receiver: "internal.ProgressEngine (engine-internal)"
+    private_helpers:
+      - name: allocateProgressToken
+    extension: []
+    stubs: []
+    shared_state: []
+    side_effects:
+      - call: "ConcurrentHashMap.putIfAbsent"
+        suspended_in: "Sync.defer"
+      - call: "Random.live.nextStringAlphanumeric"
+        suspended_in: "Sync (Random.live built-in)"
+    case_classes: []
+    tests:
+      total: 8
+      files:
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcMethodTest.scala
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointTest.scala
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/ProgressPolicyTest.scala
+      leaves:
+        - id: 11
+          name: "dispatch known request returns Present"
+          given: "JsonRpcMethod 'add' summing two ints; fresh HandlerCtx.forTest"
+          when: "JsonRpcMethod.dispatch('add', Seq(method), params, ctx)"
+          then: "Present(comp); comp evaluates to AddResp(5)"
+          pins: "Item 12"
+          code: |
+            "dispatch known request returns Present" in run {
+                val addM = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") { (req, _) => AddResp(req.a + req.b) }
+                Sync.defer(Structure.encode(AddReq(2, 3))).map { params =>
+                    val ctx = HandlerCtx.forTest(Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe, Absent, Absent, Absent)
+                    JsonRpcMethod.dispatch[Async & Abort[JsonRpcError]]("add", Seq(addM), params, ctx) match
+                        case Present(comp) =>
+                            comp.map { sv => Structure.decode[AddResp](sv) match
+                                case Result.Success(r) => assert(r == AddResp(5))
+                                case other             => fail(s"decode failed $other")
+                            }
+                        case Absent => fail("expected Present")
+                }
+            }
+        - id: 12
+          name: "dispatch unknown name returns Absent"
+          given: "methods = Seq(addMethod)"
+          when: "dispatch with name 'missing'"
+          then: "Absent"
+          pins: "Item 12 unknown branch"
+          code: |
+            "dispatch unknown name returns Absent" in run {
+                val addM = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") { (r, _) => AddResp(r.a + r.b) }
+                val ctx = HandlerCtx.forTest(Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe, Absent, Absent, Absent)
+                val result = JsonRpcMethod.dispatch[Async & Abort[JsonRpcError]]("missing", Seq(addM), Structure.Value.Null, ctx)
+                assert(result == Absent)
+            }
+        - id: 13
+          name: "dispatch known notification returns Present(Null)"
+          given: "notification 'log' incrementing counter"
+          when: "dispatch invoked; inner computation evaluated"
+          then: "Present(comp); comp yields Null; counter increments to 1"
+          pins: "Item 12 notification arm"
+          code: |
+            "dispatch known notification returns Present Null" in run {
+                val counter = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+                val logM = JsonRpcMethod.notification[LogMsg, Async & Abort[JsonRpcError]]("log") {
+                    (_, _) => Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
+                }
+                Sync.defer(Structure.encode(LogMsg("x"))).map { params =>
+                    val ctx = HandlerCtx.forTest(Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe, Absent, Absent, Absent)
+                    JsonRpcMethod.dispatch[Async & Abort[JsonRpcError]]("log", Seq(logM), params, ctx) match
+                        case Present(comp) =>
+                            comp.map { sv =>
+                                assert(sv == Structure.Value.Null)
+                                assert(counter.get()(using AllowUnsafe.embrace.danger) == 1)
+                            }
+                        case Absent => fail("expected Present")
+                }
+            }
+        - id: 14
+          name: "dispatch propagates handler Abort"
+          given: "request method whose handler Abort.fail(invalidParams('bad'))"
+          when: "comp evaluated under Abort.run[JsonRpcError]"
+          then: "Result.Failure(invalidParams('bad'))"
+          pins: "Item 12 abort propagation"
+          code: |
+            "dispatch propagates handler Abort" in run {
+                val m = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("err") { (_, _) => Abort.fail(JsonRpcError.invalidParams("bad")) }
+                Sync.defer(Structure.encode(())).map { params =>
+                    val ctx = HandlerCtx.forTest(Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe, Absent, Absent, Absent)
+                    JsonRpcMethod.dispatch[Async & Abort[JsonRpcError]]("err", Seq(m), params, ctx) match
+                        case Present(comp) =>
+                            Abort.run[JsonRpcError](comp).map {
+                                case Result.Failure(err) => assert(err.message == "bad")
+                                case other               => fail(s"expected Failure, got $other")
+                            }
+                        case Absent => fail("expected Present")
+                }
+            }
+        - id: 15
+          name: "sendUnmatched emits request envelope with id"
+          given: "two endpoints over inMemory; server records inbound envelopes"
+          when: "client.sendUnmatched('Page.handleJavaScriptDialog', DialogParams(true), Num(-1))"
+          then: "server receives one Request with id Num(-1)"
+          pins: "Item 13"
+          code: |
+            "sendUnmatched emits request envelope with id" in run {
+                val seen = AtomicRef.Unsafe.init[Chunk[JsonRpcEnvelope]](Chunk.empty)(using AllowUnsafe.embrace.danger)
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    val tbWrap = new JsonRpcTransport:
+                        def send(env: JsonRpcEnvelope)(using Frame) = tb.send(env)
+                        def incoming(using Frame) = tb.incoming.mapPure { env =>
+                            discard(seen.updateAndGet(_ :+ env)(using AllowUnsafe.embrace.danger))
+                            env
+                        }
+                        def close(using Frame) = tb.close
+                    JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                        JsonRpcEndpoint.init(tbWrap, Seq.empty).map { _ =>
+                            a.sendUnmatched("Page.handleJavaScriptDialog", DialogParams(true), JsonRpcId.Num(-1)).andThen {
+                                untilTrue(Sync.defer(seen.get()(using AllowUnsafe.embrace.danger).exists {
+                                    case JsonRpcEnvelope.Request(JsonRpcId.Num(-1), "Page.handleJavaScriptDialog", _, _) => true
+                                    case _ => false
+                                })).andThen(succeed)
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 16
+          name: "sendUnmatched registers no pending caller"
+          given: "two endpoints over inMemory; server is a sink"
+          when: "invoke sendUnmatched 5 times then awaitDrain under timeout(200ms)"
+          then: "awaitDrain completes within 200ms"
+          pins: "Item 13; INV-001 consumer"
+          code: |
+            "sendUnmatched registers no pending caller" in run {
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                        JsonRpcEndpoint.init(tb, Seq.empty).map { _ =>
+                            Kyo.foreachDiscard(1 to 5) { i =>
+                                a.sendUnmatched("noop", (), JsonRpcId.Num(i.toLong))
+                            }.andThen {
+                                Async.timeout(200.millis)(a.awaitDrain).map(_ => succeed)
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 17
+          name: "sendUnmatched does not block waiting for response"
+          given: "server has no method 'noop'; client uses sendUnmatched"
+          when: "sendUnmatched then awaitDrain"
+          then: "awaitDrain returns within 100ms"
+          pins: "Item 13 fire-and-forget"
+          code: |
+            "sendUnmatched does not block waiting for response" in run {
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                        JsonRpcEndpoint.init(tb, Seq.empty).map { _ =>
+                            val start = java.lang.System.currentTimeMillis
+                            a.sendUnmatched("noop", (), JsonRpcId.Num(1)).andThen(a.awaitDrain).map { _ =>
+                                val elapsed = java.lang.System.currentTimeMillis - start
+                                assert(elapsed < 100)
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 18
+          name: "progress-token allocator regenerates on collision"
+          given: "ConcurrentHashMap pre-seeded with fixed-string token; two fresh Channels"
+          when: "call allocateProgressToken(map, ch1, 32) then allocateProgressToken(map, ch2, 32)"
+          then: "both tokens non-equal to each other and to the seed; both registered"
+          pins: "Item 3 (MCP unique-tokens MUST)"
+          code: |
+            "progress-token allocator regenerates on collision" in run {
+                val map  = new java.util.concurrent.ConcurrentHashMap[Structure.Value, Channel[Structure.Value]]()
+                val seed = Structure.Value.Str("seed-token")
+                Channel.initUnscoped[Structure.Value](1).map { ch0 =>
+                    discard(map.put(seed, ch0))
+                    Channel.initUnscoped[Structure.Value](1).map { ch1 =>
+                        Channel.initUnscoped[Structure.Value](1).map { ch2 =>
+                            internal.ProgressEngine.allocateProgressToken(map, ch1, 32).map { t1 =>
+                                internal.ProgressEngine.allocateProgressToken(map, ch2, 32).map { t2 =>
+                                    assert(t1 != t2)
+                                    assert(t1 != seed)
+                                    assert(t2 != seed)
+                                    assert(map.containsKey(t1))
+                                    assert(map.containsKey(t2))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+    consumed_invariants: [INV-001]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-jsonrpcJVM/testOnly *JsonRpcMethodTest *JsonRpcEndpointTest *ProgressPolicyTest' 'kyo-jsonrpcJS/testOnly *JsonRpcMethodTest *JsonRpcEndpointTest *ProgressPolicyTest' 'kyo-jsonrpcNative/testOnly *JsonRpcMethodTest *JsonRpcEndpointTest *ProgressPolicyTest'"
+    test_count: 8
+
+  - id: 3
+    name: "Wire transport seam plus stdio (Items 7, 5)"
+    depends_on: [1, 2]
+    files_produced:
+      - source: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/WireTransport.scala
+        test:   /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/WireTransportTest.scala
+        code: |
+          // flow-allow: PUBLIC byte-level user-facing transport seam consumed by JsonRpcTransport.fromWire
+          package kyo
+
+          import kyo.Stream
+
+          trait WireTransport:
+              def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed])
+              def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]]
+              def close(using Frame): Unit < Async
+          end WireTransport
+
+          object WireTransport:
+              val empty: WireTransport = new WireTransport:
+                  def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) = Kyo.unit
+                  def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]]    = Stream.empty
+                  def close(using Frame): Unit < Async                                      = Kyo.unit
+          end WireTransport
+      - source: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/Framer.scala
+        test:   /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/FramerTest.scala
+        code: |
+          // flow-allow: PUBLIC framer preset library for byte-stream transports
+          package kyo
+
+          import kyo.Stream
+          import kyo.Sync
+
+          trait Framer:
+              def frame(bytes: Chunk[Byte])(using Frame): Chunk[Byte] < Sync
+              def parse(stream: Stream[Chunk[Byte], Async & Abort[Closed]])(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]]
+          end Framer
+
+          object Framer:
+
+              val lineDelimited: Framer = new Framer:
+                  def frame(bytes: Chunk[Byte])(using Frame): Chunk[Byte] < Sync =
+                      Sync.defer(bytes :+ '\n'.toByte)
+
+                  def parse(stream: Stream[Chunk[Byte], Async & Abort[Closed]])(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
+                      internal.FramerImpl.parseLineDelimited(stream)
+
+              val contentLength: Framer = new Framer:
+                  def frame(bytes: Chunk[Byte])(using Frame): Chunk[Byte] < Sync =
+                      Sync.defer {
+                          val header = s"Content-Length: ${bytes.length}\r\n\r\n".getBytes("UTF-8")
+                          Chunk.from(header) ++ bytes
+                      }
+
+                  def parse(stream: Stream[Chunk[Byte], Async & Abort[Closed]])(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
+                      internal.FramerImpl.parseContentLength(stream)
+          end Framer
+      - source: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/FramerImpl.scala
+        test:   /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/FramerTest.scala
+        code: |
+          package kyo.internal
+
+          import kyo.*
+
+          private[kyo] object FramerImpl:
+
+              def parseLineDelimited(
+                  stream: Stream[Chunk[Byte], Async & Abort[Closed]]
+              )(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
+                  Stream.statefulChunk[Chunk[Byte], Async & Abort[Closed], Chunk[Byte]](Chunk.empty)(stream) { (buffer, chunk) =>
+                      val combined           = buffer ++ chunk
+                      val (frames, leftover) = splitOnLf(combined)
+                      (leftover, frames)
+                  }
+
+              def parseContentLength(
+                  stream: Stream[Chunk[Byte], Async & Abort[Closed]]
+              )(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
+                  Stream.statefulChunk[Chunk[Byte], Async & Abort[Closed], Chunk[Byte]](Chunk.empty)(stream) { (buffer, chunk) =>
+                      val combined           = buffer ++ chunk
+                      val (frames, leftover) = splitContentLength(combined)
+                      (leftover, frames)
+                  }
+
+              private def splitOnLf(buf: Chunk[Byte]): (Chunk[Chunk[Byte]], Chunk[Byte]) =
+                  val builder = scala.collection.mutable.ArrayBuffer.empty[Chunk[Byte]]
+                  var start   = 0
+                  var i       = 0
+                  val arr     = buf.toArray
+                  while i < arr.length do
+                      if arr(i) == '\n'.toByte then
+                          val end   = if i > 0 && arr(i - 1) == '\r'.toByte then i - 1 else i
+                          val frame = Chunk.from(arr.slice(start, end))
+                          if frame.nonEmpty then builder += frame
+                          start = i + 1
+                      i += 1
+                  val leftover = Chunk.from(arr.slice(start, arr.length))
+                  (Chunk.from(builder.toSeq), leftover)
+
+              private def splitContentLength(buf: Chunk[Byte]): (Chunk[Chunk[Byte]], Chunk[Byte]) =
+                  val builder = scala.collection.mutable.ArrayBuffer.empty[Chunk[Byte]]
+                  var rest    = buf
+                  var done    = false
+                  while !done do
+                      parseOneContentLengthFrame(rest) match
+                          case Maybe.Absent              => done = true
+                          case Maybe.Present((frame, r)) =>
+                              builder += frame
+                              rest = r
+                  (Chunk.from(builder.toSeq), rest)
+              end splitContentLength
+
+              private def parseOneContentLengthFrame(buf: Chunk[Byte]): Maybe[(Chunk[Byte], Chunk[Byte])] =
+                  val arr    = buf.toArray
+                  val sep1   = indexOf(arr, "\r\n\r\n".getBytes("UTF-8"))
+                  val sep2   = indexOf(arr, "\n\n".getBytes("UTF-8"))
+                  val sepIdx = (sep1, sep2) match
+                      case (-1, -1) => -1
+                      case (a, -1)  => a
+                      case (-1, b)  => b
+                      case (a, b)   => Math.min(a, b)
+                  if sepIdx == -1 then Maybe.Absent
+                  else
+                      val sepLen  = if sepIdx == sep1 then 4 else 2
+                      val headers = new String(arr.slice(0, sepIdx), "UTF-8")
+                      val len     = parseContentLengthHeader(headers).getOrElse(-1)
+                      if len < 0 then Maybe.Absent
+                      else
+                          val bodyStart = sepIdx + sepLen
+                          val bodyEnd   = bodyStart + len
+                          if arr.length < bodyEnd then Maybe.Absent
+                          else
+                              val frame = Chunk.from(arr.slice(bodyStart, bodyEnd))
+                              val rest  = Chunk.from(arr.slice(bodyEnd, arr.length))
+                              Maybe.Present((frame, rest))
+              end parseOneContentLengthFrame
+
+              private def parseContentLengthHeader(headers: String): Maybe[Int] =
+                  val lines = headers.split("\r?\n").iterator
+                  var found: Maybe[Int] = Maybe.Absent
+                  while lines.hasNext && found.isEmpty do
+                      val line  = lines.next()
+                      val colon = line.indexOf(':')
+                      if colon > 0 then
+                          val key   = line.substring(0, colon).trim
+                          val value = line.substring(colon + 1).trim
+                          if key.equalsIgnoreCase("Content-Length") then
+                              scala.util.Try(value.toInt).toOption match
+                                  case Some(n) if n >= 0 => found = Maybe.Present(n)
+                                  case _                 => ()
+                  found
+              end parseContentLengthHeader
+
+              private def indexOf(haystack: Array[Byte], needle: Array[Byte]): Int =
+                  var i     = 0
+                  val limit = haystack.length - needle.length
+                  while i <= limit do
+                      var j  = 0
+                      var ok = true
+                      while j < needle.length && ok do
+                          if haystack(i + j) != needle(j) then ok = false
+                          j += 1
+                      if ok then return i
+                      i += 1
+                  -1
+              end indexOf
+
+          end FramerImpl
+      - source: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/WireTransportAdapter.scala
+        test:   /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcTransportTest.scala
+        code: |
+          package kyo.internal
+
+          import kyo.*
+
+          private[kyo] final class WireTransportAdapter(
+              wire: WireTransport,
+              framer: Framer,
+              codec: JsonRpcCodec
+          ) extends JsonRpcTransport:
+
+              def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+                  Abort.run[JsonRpcError](codec.encode(env)).map {
+                      case Result.Success(structure) =>
+                          Json.encode(structure).map { jsonStr =>
+                              val bytes = Chunk.from(jsonStr.getBytes("UTF-8"))
+                              framer.frame(bytes).map(framed => wire.send(framed))
+                          }
+                      case Result.Failure(err) =>
+                          Log.warn(s"kyo-jsonrpc: wire-transport encode failed: ${err.message}")
+                      case Result.Panic(t) =>
+                          Log.warn(s"kyo-jsonrpc: wire-transport encode panic: ${t.getMessage}")
+                  }
+
+              def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
+                  framer.parse(wire.incoming).mapEffectful { bytes =>
+                      val jsonStr = new String(bytes.toArray, "UTF-8")
+                      Json.decode[Structure.Value](jsonStr) match
+                          case Result.Success(sv) => codec.decode(sv)
+                          case Result.Failure(_)  => Sync.defer(JsonRpcEnvelope.Malformed(Absent, "json parse failed", Structure.Value.Str(jsonStr)))
+                          case Result.Panic(t)    => Sync.defer(JsonRpcEnvelope.Malformed(Absent, s"json parse panic: ${t.getMessage}", Structure.Value.Null))
+                  }
+
+              def close(using Frame): Unit < Async = wire.close
+          end WireTransportAdapter
+      - source: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/internal/StdioWireTransport.scala
+        test:   /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcTransportTest.scala
+        code: |
+          package kyo.internal
+
+          import kyo.*
+
+          private[kyo] final class StdioWireTransport extends WireTransport:
+
+              def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
+                  val line    = new String(bytes.toArray, "UTF-8")
+                  val trimmed = if line.endsWith("\n") then line.dropRight(1) else line
+                  Console.printLine(trimmed)
+
+              def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
+                  Stream.unfold[Chunk[Byte], Async & Abort[Closed], Unit](()) { _ =>
+                      Console.readLine.map {
+                          case Maybe.Absent => Maybe.Absent
+                          case Maybe.Present(line) =>
+                              val bytes = Chunk.from((line + "\n").getBytes("UTF-8"))
+                              Maybe.Present((bytes, ()))
+                      }
+                  }
+
+              def close(using Frame): Unit < Async = Kyo.unit
+          end StdioWireTransport
+    files_modified:
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcTransport.scala
+        before: |
+          def inMemory(using Frame): (JsonRpcTransport, JsonRpcTransport) < Sync = inMemory(64)
+          end JsonRpcTransport
+        after: |
+          def inMemory(using Frame): (JsonRpcTransport, JsonRpcTransport) < Sync = inMemory(64)
+
+          def fromWire(
+              wire: WireTransport,
+              framer: Framer,
+              codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
+          )(using Frame): JsonRpcTransport < (Async & Scope) =
+              Sync.defer(new internal.WireTransportAdapter(wire, framer, codec))
+
+          def stdio(
+              codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
+              framer: Framer = Framer.lineDelimited
+          )(using Frame): JsonRpcTransport < (Async & Scope) =
+              Sync.defer(new internal.StdioWireTransport).map { wire =>
+                  fromWire(wire, framer, codec)
+              }
+          end JsonRpcTransport
+    files_deleted: []
+    public_api:
+      - signature: "trait WireTransport { def send; def incoming; def close }"
+        receiver: "kyo.WireTransport"
+      - signature: "val WireTransport.empty: WireTransport"
+        receiver: "WireTransport companion"
+      - signature: "trait Framer { def frame; def parse }"
+        receiver: "kyo.Framer"
+      - signature: "val Framer.lineDelimited: Framer"
+        receiver: "Framer companion"
+      - signature: "val Framer.contentLength: Framer"
+        receiver: "Framer companion"
+      - signature: "def JsonRpcTransport.fromWire(wire, framer, codec): JsonRpcTransport < (Async & Scope)"
+        receiver: "JsonRpcTransport companion"
+      - signature: "def JsonRpcTransport.stdio(codec, framer): JsonRpcTransport < (Async & Scope)"
+        receiver: "JsonRpcTransport companion"
+    private_helpers:
+      - name: splitOnLf
+      - name: splitContentLength
+      - name: parseOneContentLengthFrame
+      - name: parseContentLengthHeader
+      - name: indexOf
+    extension: []
+    stubs: []
+    shared_state: []
+    side_effects:
+      - call: "Console.readLine"
+        suspended_in: "Sync (Console.readLine effect)"
+      - call: "Console.printLine"
+        suspended_in: "Sync (Console.printLine effect)"
+    case_classes: []
+    tests:
+      total: 12
+      files:
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/WireTransportTest.scala
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/FramerTest.scala
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcTransportTest.scala
+      leaves:
+        - id: 19
+          name: "empty wire transport produces no bytes"
+          given: "WireTransport.empty"
+          when: "consume incoming with .run"
+          then: "empty Chunk"
+          pins: "Item 7 empty preset"
+          code: |
+            "empty wire transport produces no bytes" in run {
+                WireTransport.empty.incoming.run.map { c => assert(c.isEmpty) }
+            }
+        - id: 20
+          name: "fromWire round-trips one envelope"
+          given: "paired in-memory WireTransport; fromWire(wire, lineDelimited, Strict2_0) on each side"
+          when: "send Request(Num(1), 'ping', Absent, Absent) from side A"
+          then: "side B incoming yields matching Request"
+          pins: "INV-004 producer"
+          code: |
+            "fromWire round-trips one envelope" in run {
+                val (wireA, wireB) = mkPairedWire(64)
+                Scope.run {
+                    JsonRpcTransport.fromWire(wireA, Framer.lineDelimited).map { ta =>
+                        JsonRpcTransport.fromWire(wireB, Framer.lineDelimited).map { tb =>
+                            ta.send(JsonRpcEnvelope.Request(JsonRpcId.Num(1), "ping", Absent, Absent)).andThen {
+                                tb.incoming.take(1).run.map { c =>
+                                    c.headOption match
+                                        case Some(JsonRpcEnvelope.Request(JsonRpcId.Num(1), "ping", _, _)) => succeed
+                                        case other => fail(s"unexpected $other")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 21
+          name: "lineDelimited.frame appends LF"
+          given: "Framer.lineDelimited.frame(Chunk.from('abc'.getBytes))"
+          when: "evaluated"
+          then: "Chunk.from('abc\\n'.getBytes)"
+          pins: "Item 7 frame"
+          code: |
+            "lineDelimited.frame appends LF" in run {
+                Framer.lineDelimited.frame(Chunk.from("abc".getBytes("UTF-8"))).map { out =>
+                    assert(out.toArray.toSeq == "abc\n".getBytes("UTF-8").toSeq)
+                }
+            }
+        - id: 22
+          name: "lineDelimited.parse splits multi-line buffer"
+          given: "single chunk 'a\\nb\\nc\\n'"
+          when: "parse and run"
+          then: "Chunk(a, b, c)"
+          pins: "INV-004 (line splitter)"
+          code: |
+            "lineDelimited.parse splits multi-line buffer" in run {
+                val src = Stream.emit(Chunk(Chunk.from("a\nb\nc\n".getBytes("UTF-8"))))
+                Framer.lineDelimited.parse(src).run.map { frames =>
+                    val strs = frames.map(c => new String(c.toArray, "UTF-8"))
+                    assert(strs == Chunk("a", "b", "c"))
+                }
+            }
+        - id: 23
+          name: "lineDelimited.parse strips CR before LF"
+          given: "chunk 'a\\r\\nb\\r\\n'"
+          when: "parse and run"
+          then: "yields 'a','b' with no CR bytes"
+          pins: "Item 7 CR-stripping"
+          code: |
+            "lineDelimited.parse strips CR before LF" in run {
+                val src = Stream.emit(Chunk(Chunk.from("a\r\nb\r\n".getBytes("UTF-8"))))
+                Framer.lineDelimited.parse(src).run.map { frames =>
+                    val strs = frames.map(c => new String(c.toArray, "UTF-8"))
+                    assert(strs == Chunk("a", "b"))
+                    assert(frames.forall(c => !c.toArray.contains('\r'.toByte)))
+                }
+            }
+        - id: 24
+          name: "lineDelimited.parse skips empty lines"
+          given: "chunk 'a\\n\\n\\nb\\n'"
+          when: "parse and run"
+          then: "Chunk(a, b)"
+          pins: "Item 7 empty-line skip"
+          code: |
+            "lineDelimited.parse skips empty lines" in run {
+                val src = Stream.emit(Chunk(Chunk.from("a\n\n\nb\n".getBytes("UTF-8"))))
+                Framer.lineDelimited.parse(src).run.map { frames =>
+                    val strs = frames.map(c => new String(c.toArray, "UTF-8"))
+                    assert(strs == Chunk("a", "b"))
+                }
+            }
+        - id: 25
+          name: "contentLength.frame prepends header"
+          given: "payload '{}'"
+          when: "Framer.contentLength.frame(payload)"
+          then: "'Content-Length: 2\\r\\n\\r\\n{}'"
+          pins: "Item 7 contentLength emit (strict)"
+          code: |
+            "contentLength.frame prepends header" in run {
+                val payload = Chunk.from("{}".getBytes("UTF-8"))
+                Framer.contentLength.frame(payload).map { out =>
+                    val s = new String(out.toArray, "UTF-8")
+                    assert(s == "Content-Length: 2\r\n\r\n{}")
+                }
+            }
+        - id: 26
+          name: "contentLength.parse extracts one frame"
+          given: "'Content-Length: 5\\r\\n\\r\\nhello'"
+          when: "parse and run"
+          then: "Chunk('hello')"
+          pins: "INV-004 contentLength parse"
+          code: |
+            "contentLength.parse extracts one frame" in run {
+                val src = Stream.emit(Chunk(Chunk.from("Content-Length: 5\r\n\r\nhello".getBytes("UTF-8"))))
+                Framer.contentLength.parse(src).run.map { frames =>
+                    val strs = frames.map(c => new String(c.toArray, "UTF-8"))
+                    assert(strs == Chunk("hello"))
+                }
+            }
+        - id: 27
+          name: "contentLength.parse tolerates double-LF header terminator"
+          given: "'Content-Length: 2\\n\\n{}'"
+          when: "parse and run"
+          then: "Chunk('{}')"
+          pins: "Item 7 tolerant on parse"
+          code: |
+            "contentLength.parse tolerates double-LF header terminator" in run {
+                val src = Stream.emit(Chunk(Chunk.from("Content-Length: 2\n\n{}".getBytes("UTF-8"))))
+                Framer.contentLength.parse(src).run.map { frames =>
+                    val strs = frames.map(c => new String(c.toArray, "UTF-8"))
+                    assert(strs == Chunk("{}"))
+                }
+            }
+        - id: 28
+          name: "stdio transport sends one line per envelope"
+          given: "Console.Unsafe captures stdout; JsonRpcTransport.stdio()"
+          when: "send Notification('log', Present(Record(text:'hi')), Absent)"
+          then: "captured stdout receives one valid JSON-RPC line"
+          pins: "Item 5 stdio contract"
+          code: |
+            "stdio transport sends one line per envelope" in run {
+                withCapturedStdout { captured =>
+                    Scope.run {
+                        JsonRpcTransport.stdio().map { t =>
+                            val p = Structure.Value.Record(Chunk("text" -> Structure.Value.Str("hi")))
+                            t.send(JsonRpcEnvelope.Notification("log", Present(p), Absent)).andThen {
+                                val lines = captured()
+                                assert(lines.length == 1)
+                                Json.decode[Structure.Value](lines.head) match
+                                    case Result.Success(_) => succeed
+                                    case other             => fail(s"expected valid JSON, got $other")
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 29
+          name: "stdio transport reads one envelope per stdin line"
+          given: "Console.Unsafe pre-loaded with one ping line"
+          when: "consume stdio.incoming.run"
+          then: "Chunk(Notification('ping', _, _))"
+          pins: "Item 5 line-per-envelope"
+          code: |
+            "stdio transport reads one envelope per stdin line" in run {
+                withCannedStdin(List("""{"jsonrpc":"2.0","method":"ping"}""")) {
+                    Scope.run {
+                        JsonRpcTransport.stdio().map { t =>
+                            t.incoming.take(1).run.map {
+                                case Chunk1(JsonRpcEnvelope.Notification("ping", _, _)) => succeed
+                                case other => fail(s"unexpected $other")
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 30
+          name: "stdio transport EOF closes incoming"
+          given: "empty stdin"
+          when: "consume stdio.incoming"
+          then: "empty Chunk; does not hang (bounded by 2s timeout)"
+          pins: "Item 5 EOF"
+          code: |
+            "stdio transport EOF closes incoming" in run {
+                withCannedStdin(Nil) {
+                    Scope.run {
+                        JsonRpcTransport.stdio().map { t =>
+                            Async.timeout(2.seconds)(t.incoming.run).map {
+                                case Result.Success(c) => assert(c.isEmpty)
+                                case other             => fail(s"unexpected $other")
+                            }
+                        }
+                    }
+                }
+            }
+    consumed_invariants: [INV-001]
+    produced_invariants: [INV-004, INV-006, INV-007]
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-jsonrpcJVM/testOnly *WireTransportTest *FramerTest *JsonRpcTransportTest' 'kyo-jsonrpcJS/testOnly *WireTransportTest *FramerTest *JsonRpcTransportTest' 'kyo-jsonrpcNative/testOnly *WireTransportTest *FramerTest *JsonRpcTransportTest'"
+    test_count: 12
+
+  - id: 4
+    name: "JVM unixDomain transport (Item 6)"
+    depends_on: [3]
+    files_produced:
+      - source: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/jvm/src/main/scala/kyo/JsonRpcTransportJvm.scala
+        test:   /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/jvm/src/test/scala/kyo/JsonRpcTransportJvmTest.scala
+        code: |
+          // flow-allow: PUBLIC JVM-only UDS transport extension on the shared JsonRpcTransport companion
+          package kyo
+
+          import java.net.StandardProtocolFamily
+          import java.net.UnixDomainSocketAddress
+          import java.nio.channels.ServerSocketChannel
+          import java.nio.file.Files
+          import java.nio.file.Path
+
+          object JsonRpcTransportJvm:
+
+              def unixDomain(
+                  sockPath: Path,
+                  codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
+                  framer: Framer = Framer.lineDelimited
+              )(using Frame): JsonRpcTransport < (Async & Scope) =
+                  Sync.defer {
+                      val addr    = UnixDomainSocketAddress.of(sockPath)
+                      val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+                      channel.bind(addr)
+                      Scope.ensure(Sync.defer {
+                          channel.close()
+                          Files.deleteIfExists(sockPath)
+                          ()
+                      }).andThen {
+                          Sync.defer(new internal.UdsWireTransport(channel)).map { wire =>
+                              JsonRpcTransport.fromWire(wire, framer, codec)
+                          }
+                      }
+                  }
+
+              extension (self: JsonRpcTransport.type)
+                  def unixDomain(
+                      sockPath: Path,
+                      codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
+                      framer: Framer = Framer.lineDelimited
+                  )(using Frame): JsonRpcTransport < (Async & Scope) =
+                      JsonRpcTransportJvm.unixDomain(sockPath, codec, framer)
+
+          end JsonRpcTransportJvm
+      - source: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/jvm/src/main/scala/kyo/internal/UdsWireTransport.scala
+        test:   /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/jvm/src/test/scala/kyo/JsonRpcTransportJvmTest.scala
+        code: |
+          package kyo.internal
+
+          import java.nio.ByteBuffer
+          import java.nio.channels.ServerSocketChannel
+          import java.nio.channels.SocketChannel
+          import kyo.*
+
+          private[kyo] final class UdsWireTransport(server: ServerSocketChannel) extends WireTransport:
+
+              private val activeChannelRef: AtomicRef.Unsafe[Maybe[SocketChannel]] =
+                  AtomicRef.Unsafe.init[Maybe[SocketChannel]](Absent)(using AllowUnsafe.embrace.danger)
+
+              def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
+                  Sync.defer {
+                      activeChannelRef.get()(using AllowUnsafe.embrace.danger) match
+                          case Present(socket) =>
+                              val buffer = ByteBuffer.wrap(bytes.toArray)
+                              while buffer.hasRemaining do discard(socket.write(buffer))
+                          case Absent =>
+                              ()
+                  }
+
+              def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
+                  Stream.unfold[Chunk[Byte], Async & Abort[Closed], Unit](()) { _ =>
+                      Sync.defer {
+                          val socket = activeChannelRef.get()(using AllowUnsafe.embrace.danger) match
+                              case Present(s) => s
+                              case Absent     =>
+                                  val s = server.accept()
+                                  discard(activeChannelRef.compareAndSet(Absent, Present(s))(using AllowUnsafe.embrace.danger))
+                                  s
+                          val buffer = ByteBuffer.allocate(4096)
+                          val n      = socket.read(buffer)
+                          if n < 0 then Maybe.Absent
+                          else
+                              buffer.flip()
+                              val arr = new Array[Byte](n)
+                              buffer.get(arr)
+                              Maybe.Present((Chunk.from(arr), ()))
+                      }
+                  }
+
+              def close(using Frame): Unit < Async =
+                  Sync.defer {
+                      activeChannelRef.get()(using AllowUnsafe.embrace.danger).foreach(_.close())
+                      server.close()
+                  }
+          end UdsWireTransport
+    files_modified: []
+    files_deleted: []
+    public_api:
+      - signature: "def JsonRpcTransport.unixDomain(sockPath, codec, framer): JsonRpcTransport < (Async & Scope)"
+        receiver: "JsonRpcTransport companion (via extension)"
+    private_helpers: []
+    extension:
+      - on: "JsonRpcTransport.type"
+        method: "unixDomain"
+    stubs: []
+    shared_state:
+      - name: activeChannelRef
+        type: "AtomicRef.Unsafe[Maybe[SocketChannel]]"
+        scope: instance
+        init_site: "UdsWireTransport constructor"
+        observable_by: "send / incoming / close methods"
+    side_effects:
+      - call: "ServerSocketChannel.accept"
+        suspended_in: "Sync.defer"
+      - call: "SocketChannel.read"
+        suspended_in: "Sync.defer"
+      - call: "Files.deleteIfExists"
+        suspended_in: "Sync.defer (Scope.ensure)"
+    case_classes: []
+    tests:
+      total: 4
+      files:
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc/jvm/src/test/scala/kyo/JsonRpcTransportJvmTest.scala
+      leaves:
+        - id: 31
+          name: "unixDomain binds and accepts a connection"
+          given: "temp dir; sockPath = tempDir.resolve('test.sock')"
+          when: "JsonRpcTransport.unixDomain(sockPath) under Scope; client SocketChannel.open"
+          then: "Files.exists(sockPath) == true AND client.isConnected"
+          pins: "Item 6 bind"
+          code: |
+            "unixDomain binds and accepts a connection" in run {
+                val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")
+                val sock    = tempDir.resolve("test.sock")
+                Scope.run {
+                    JsonRpcTransport.unixDomain(sock).map { _ =>
+                        Sync.defer {
+                            val client = SocketChannel.open(UnixDomainSocketAddress.of(sock))
+                            try
+                                assert(Files.exists(sock))
+                                assert(client.isConnected)
+                            finally client.close()
+                        }
+                    }
+                }
+            }
+        - id: 32
+          name: "unixDomain round-trips one envelope (line-delimited)"
+          given: "bound UDS transport on tempDir/test.sock; client writes one ping line"
+          when: "consume server incoming.run"
+          then: "Chunk(Notification('ping', _, _))"
+          pins: "INV-004 consumer"
+          code: |
+            "unixDomain round-trips one envelope" in run {
+                val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")
+                val sock    = tempDir.resolve("test.sock")
+                Scope.run {
+                    JsonRpcTransport.unixDomain(sock).map { t =>
+                        Sync.defer {
+                            val client = SocketChannel.open(UnixDomainSocketAddress.of(sock))
+                            try
+                                val payload = """{"jsonrpc":"2.0","method":"ping"}""" + "\n"
+                                discard(client.write(ByteBuffer.wrap(payload.getBytes("UTF-8"))))
+                                client.shutdownOutput()
+                            finally client.close()
+                        }.andThen {
+                            t.incoming.take(1).run.map {
+                                case Chunk1(JsonRpcEnvelope.Notification("ping", _, _)) => succeed
+                                case other => fail(s"unexpected $other")
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 33
+          name: "unixDomain Scope cleanup deletes socket file"
+          given: "bound UDS transport"
+          when: "scope completes"
+          then: "Files.exists(sockPath) == false"
+          pins: "Item 6 scope cleanup"
+          code: |
+            "unixDomain Scope cleanup deletes socket file" in run {
+                val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")
+                val sock    = tempDir.resolve("test.sock")
+                Scope.run {
+                    JsonRpcTransport.unixDomain(sock).map(_ => ())
+                }.andThen {
+                    Sync.defer(assert(!Files.exists(sock)))
+                }
+            }
+        - id: 34
+          name: "unixDomain framer override changes wire shape"
+          given: "framer=contentLength; client sends Content-Length-framed payload"
+          when: "consume server incoming.run"
+          then: "yields Notification with method 'p'"
+          pins: "Item 6 framer parameter"
+          code: |
+            "unixDomain framer override changes wire shape" in run {
+                val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")
+                val sock    = tempDir.resolve("test.sock")
+                Scope.run {
+                    JsonRpcTransport.unixDomain(sock, framer = Framer.contentLength).map { t =>
+                        Sync.defer {
+                            val client = SocketChannel.open(UnixDomainSocketAddress.of(sock))
+                            try
+                                val body    = """{"jsonrpc":"2.0","method":"p"}"""
+                                val payload = s"Content-Length: ${body.length}\r\n\r\n$body"
+                                discard(client.write(ByteBuffer.wrap(payload.getBytes("UTF-8"))))
+                                client.shutdownOutput()
+                            finally client.close()
+                        }.andThen {
+                            t.incoming.take(1).run.map {
+                                case Chunk1(JsonRpcEnvelope.Notification("p", _, _)) => succeed
+                                case other => fail(s"unexpected $other")
+                            }
+                        }
+                    }
+                }
+            }
+    consumed_invariants: [INV-004, INV-006, INV-007]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm]
+    verification_command: "sbt 'kyo-jsonrpcJVM/testOnly *JsonRpcTransportJvmTest'"
+    test_count: 4
+
+  - id: 5
+    name: "kyo-jsonrpc-http subproject plus webSocket transport (Item 4)"
+    depends_on: [3]
+    files_produced:
+      - source: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc-http/shared/src/main/scala/kyo/JsonRpcHttpTransport.scala
+        test:   /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc-http/shared/src/test/scala/kyo/JsonRpcHttpTransportTest.scala
+        code: |
+          // flow-allow: PUBLIC kyo-http-backed WebSocket transport adapter lifting HttpWebSocket text frames to JsonRpcTransport
+          package kyo
+
+          object JsonRpcHttpTransport:
+
+              def webSocket(
+                  url: HttpUrl,
+                  headers: HttpHeaders = HttpHeaders.empty,
+                  codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
+              )(using Frame): JsonRpcTransport < (Async & Scope & Abort[HttpException]) =
+                  HttpClient.webSocket(url, headers, HttpWebSocket.Config()) { ws =>
+                      for
+                          inbound <- Channel.initUnscoped[JsonRpcEnvelope](64)
+                          _       <- Fiber.initUnscoped {
+                              ws.stream.foreach {
+                                  case HttpWebSocket.Frame.Text(text) =>
+                                      Json.decode[Structure.Value](text) match
+                                          case Result.Success(sv) =>
+                                              Abort.run[JsonRpcError](codec.decode(sv)).map {
+                                                  case Result.Success(env) => Abort.run[Closed](inbound.put(env)).unit
+                                                  case Result.Failure(err) => Abort.run[Closed](inbound.put(JsonRpcEnvelope.Malformed(Absent, err.message, sv))).unit
+                                                  case Result.Panic(t)     => Log.warn(s"kyo-jsonrpc-http: codec panic ${t.getMessage}")
+                                              }
+                                          case Result.Failure(e) =>
+                                              Abort.run[Closed](inbound.put(JsonRpcEnvelope.Malformed(Absent, s"json parse: ${e.getMessage}", Structure.Value.Str(text)))).unit
+                                          case Result.Panic(t) =>
+                                              Log.warn(s"kyo-jsonrpc-http: json parse panic ${t.getMessage}")
+                                  case HttpWebSocket.Frame.Binary(_) =>
+                                      Log.warn("kyo-jsonrpc-http: dropping binary frame (text-only contract)")
+                                  case _ => Kyo.unit
+                              }
+                          }
+                          _ <- Scope.ensure(Abort.run[Closed](inbound.close).unit.andThen(ws.close))
+                      yield new JsonRpcTransport:
+                          def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+                              Abort.run[JsonRpcError](codec.encode(env)).map {
+                                  case Result.Success(structure) =>
+                                      Json.encode(structure).map { jsonStr =>
+                                          ws.put(HttpWebSocket.Frame.Text(jsonStr))
+                                      }
+                                  case Result.Failure(err) =>
+                                      Log.warn(s"kyo-jsonrpc-http: encode failed ${err.message}")
+                                  case Result.Panic(t) =>
+                                      Log.warn(s"kyo-jsonrpc-http: encode panic ${t.getMessage}")
+                              }
+
+                          def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
+                              Stream.fromChannel(inbound)
+
+                          def close(using Frame): Unit < Async =
+                              Abort.run[Closed](inbound.close).unit.andThen(ws.close)
+                  }
+          end JsonRpcHttpTransport
+    files_modified:
+      - path: /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/build.sbt
+        before: |
+          lazy val `kyo-jsonrpc` =
+              crossProject(JVMPlatform, JSPlatform, NativePlatform)
+                  .crossType(CrossType.Full)
+                  .in(file("kyo-jsonrpc"))
+                  .dependsOn(`kyo-schema`)
+                  .settings(/* ... existing settings ... */)
+        after: |
+          lazy val `kyo-jsonrpc` =
+              crossProject(JVMPlatform, JSPlatform, NativePlatform)
+                  .crossType(CrossType.Full)
+                  .in(file("kyo-jsonrpc"))
+                  .dependsOn(`kyo-schema`)
+                  .settings(/* ... existing settings ... */)
+
+          lazy val `kyo-jsonrpc-http` =
+              crossProject(JVMPlatform, JSPlatform, NativePlatform)
+                  .crossType(CrossType.Full)
+                  .in(file("kyo-jsonrpc-http"))
+                  .dependsOn(`kyo-jsonrpc`, `kyo-http`)
+                  .settings(/* inherit common test + scalac settings */)
+    files_deleted: []
+    public_api:
+      - signature: "def JsonRpcHttpTransport.webSocket(url, headers, codec): JsonRpcTransport < (Async & Scope & Abort[HttpException])"
+        receiver: "kyo.JsonRpcHttpTransport"
+    private_helpers: []
+    extension: []
+    stubs: []
+    shared_state:
+      - name: inbound
+        type: "Channel[JsonRpcEnvelope]"
+        scope: "per-webSocket-session"
+        init_site: "for-yield inside HttpClient.webSocket block"
+        observable_by: "bridge fiber + returned JsonRpcTransport.incoming"
+    side_effects:
+      - call: "HttpClient.webSocket"
+        suspended_in: "Async & Scope & Abort[HttpException]"
+      - call: "Log.warn"
+        suspended_in: "Sync"
+    case_classes: []
+    tests:
+      total: 4
+      files:
+        - /Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/kyo-jsonrpc-http/shared/src/test/scala/kyo/JsonRpcHttpTransportTest.scala
+      leaves:
+        - id: 35
+          name: "webSocket connects to a local kyo-http server"
+          given: "local HttpServer with WS echo on 127.0.0.1:0"
+          when: "client webSocket then send Request"
+          then: "client incoming observes matching Request from echo"
+          pins: "Item 4 connect"
+          code: |
+            "webSocket connects to a local kyo-http server" in run {
+                withLocalEchoWsServer { url =>
+                    Scope.run {
+                        Abort.run[HttpException](JsonRpcHttpTransport.webSocket(url)).map {
+                            case Result.Success(t) =>
+                                val req = JsonRpcEnvelope.Request(JsonRpcId.Num(1), "ping", Absent, Absent)
+                                t.send(req).andThen {
+                                    t.incoming.take(1).run.map {
+                                        case Chunk1(JsonRpcEnvelope.Request(JsonRpcId.Num(1), "ping", _, _)) => succeed
+                                        case other => fail(s"unexpected $other")
+                                    }
+                                }
+                            case other => fail(s"unexpected $other")
+                        }
+                    }
+                }
+            }
+        - id: 36
+          name: "webSocket drops binary frames with warn"
+          given: "local server sends a binary frame after upgrade"
+          when: "consume client incoming for 200ms"
+          then: "no envelope observed; warn log contains 'dropping binary frame'"
+          pins: "Item 4 binary-drop"
+          code: |
+            "webSocket drops binary frames with warn" in run {
+                withLocalBinaryWsServer { url =>
+                    Scope.run {
+                        withCapturedLog { logCapture =>
+                            Abort.run[HttpException](JsonRpcHttpTransport.webSocket(url)).map {
+                                case Result.Success(t) =>
+                                    Async.timeout(200.millis)(t.incoming.take(1).run).map {
+                                        case Result.Failure(_: Timeout) =>
+                                            assert(logCapture().exists(_.contains("dropping binary frame")))
+                                        case Result.Success(c) if c.isEmpty =>
+                                            assert(logCapture().exists(_.contains("dropping binary frame")))
+                                        case other => fail(s"unexpected $other")
+                                    }
+                                case other => fail(s"unexpected $other")
+                            }
+                        }
+                    }
+                }
+            }
+        - id: 37
+          name: "Scope.ensure closes the WS on scope exit"
+          given: "local server tracking close events"
+          when: "Scope.run block containing webSocket completes"
+          then: "server observes WS close handshake within 1s"
+          pins: "Item 4 Scope.ensure"
+          code: |
+            "Scope.ensure closes the WS on scope exit" in run {
+                withLocalCloseTrackingWsServer { (url, closes) =>
+                    Scope.run {
+                        Abort.run[HttpException](JsonRpcHttpTransport.webSocket(url)).map(_ => ())
+                    }.andThen {
+                        untilTrue(Sync.defer(closes() >= 1)).andThen(succeed)
+                    }
+                }
+            }
+        - id: 38
+          name: "codec failure on malformed text frame surfaces as Malformed envelope"
+          given: "server sends 'not json'"
+          when: "consume one envelope"
+          then: "Malformed(Absent, _, _) reason contains 'json parse'"
+          pins: "Item 4 malformed-frame; INV-001 consumer"
+          code: |
+            "codec failure on malformed text frame surfaces as Malformed envelope" in run {
+                withLocalGarbageWsServer { url =>
+                    Scope.run {
+                        Abort.run[HttpException](JsonRpcHttpTransport.webSocket(url)).map {
+                            case Result.Success(t) =>
+                                t.incoming.take(1).run.map {
+                                    case Chunk1(JsonRpcEnvelope.Malformed(Absent, reason, _)) =>
+                                        assert(reason.contains("json parse"))
+                                    case other => fail(s"unexpected $other")
+                                }
+                            case other => fail(s"unexpected $other")
+                        }
+                    }
+                }
+            }
+    consumed_invariants: [INV-001, INV-004, INV-006, INV-007]
+    produced_invariants: []
+    convention_sweep: [em-dash, AllowUnsafe, Option-vs-Maybe, semicolons, asInstanceOf, default-params, Frame.internal, java.util.concurrent, llm-tells]
+    platforms: [jvm, js, native]
+    verification_command: "sbt 'kyo-jsonrpc-httpJVM/testOnly *JsonRpcHttpTransportTest' 'kyo-jsonrpc-httpJS/testOnly *JsonRpcHttpTransportTest' 'kyo-jsonrpc-httpNative/testOnly *JsonRpcHttpTransportTest'"
+    test_count: 4
