@@ -10,7 +10,7 @@ import ox.flow.Flow
   * argument. Operations delegate to the native `Flow` methods directly; method names mirror `kyo.Stream`
   * (`mapPure`/`filterPure`/`takeWhilePure`/`collectPure`/`foldPure`/`discard`); the pure/effectful split tracks the kyo convention.
   */
-opaque type CStream[+A] = Ox => Flow[A]
+opaque type CStream[A] = Ox => Flow[A]
 
 object CStream:
 

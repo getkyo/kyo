@@ -8,7 +8,7 @@ import fs2.Stream
   * the carrier is already an `fs2.Stream`. Method names mirror `kyo.Stream`
   * (`mapPure`/`filterPure`/`takeWhilePure`/`collectPure`/`foldPure`/`discard`); the pure/effectful split tracks the kyo convention.
   */
-opaque type CStream[+A] = Stream[IO, A]
+opaque type CStream[A] = Stream[IO, A]
 
 object CStream:
 

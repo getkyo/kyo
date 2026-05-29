@@ -376,11 +376,11 @@ Available operations: `CMeter.init(permits)`, `meter.run(c): CIO[A]`, `meter.try
 
 ## Streams
 
-`CStream[+A]` is a portable stream type alongside `CIO`. A library targeting the streams surface compiles unchanged against every binding; each backend wraps a native stream type where one exists, or supplies a hand-rolled implementation where the ecosystem lacks one.
+`CStream[A]` is a portable stream type alongside `CIO`. A library targeting the streams surface compiles unchanged against every binding; each backend wraps a native stream type where one exists, or supplies a hand-rolled implementation where the ecosystem lacks one. It is invariant in `A` on every binding, so portable code never relies on a covariance one binding lacks: the Kyo binding wraps a richer computation that can carry multiple effect channels and so must be invariant (see below).
 
-| Backend        | `CStream[+A]` resolves to                            |
+| Backend        | `CStream[A]` resolves to                             |
 |----------------|------------------------------------------------------|
-| Kyo            | `kyo.Stream[A, Abort[Throwable] & Async]`            |
+| Kyo            | holder over `kyo.Stream[A, Abort[Throwable] & Async]` |
 | ZIO            | `zio.stream.ZStream[Any, Throwable, A]`              |
 | Cats Effect    | `fs2.Stream[cats.effect.IO, A]`                      |
 | Ox             | `ox.Ox ?=> ox.flow.Flow[A]`                          |
@@ -391,7 +391,11 @@ Platform footprints match the existing CIO surface: Kyo and ZIO ship JVM / JS / 
 
 The kyo-named API tracks `kyo.Stream`: constructors `empty`, `init(seq)`, `init(c: CIO[Seq[A]])`, `range`, `unfold`; transforms `concat`, `mapPure` / `map`, `flatMap`, `tap`, `take`, `drop`, `takeWhilePure`, `filterPure` / `filter`, `collectPure`; and terminals `run: CIO[CChunk[A]]`, `foldPure`, `foreach`, `discard`. The pure/effectful split (`mapPure` vs. `map`, `filterPure` vs. `filter`, `foldPure`, `collectPure`, `takeWhilePure`) tracks the kyo convention; effectful variants take `A => CIO[B]`.
 
-On the four bindings that wrap a third-party stream library (Kyo, ZIO, Cats Effect, Ox), every method is an `inline def` that compiles to a single native call, with at most a trivial type adapter (`Option ⇆ Maybe`, `n.toLong` for fs2/ZIO long-arity takes/drops, `Function.unlift` for partial-function collects, `Stream.eval(c.lower).flatMap(Stream.emits)` for fs2 `init`). The Twitter binding's `unfold` is the only exception on those four — `AsyncStream` ships no native unfold, so the wrap is a small recursive helper built on `AsyncStream.mk(head, => tail)`. The Future binding is the only fully hand-rolled implementation: `scala.concurrent.Future` has no canonical async stream, so the binding supplies a cons-stream where `Repr[A]` is a binding-private ADT (`Empty | Cons(head, tail: LocalCtx => Future[Repr[A]])`) matching the `CIO` carrier shape. Transformations build cons cells with lazy tails; terminal walks use a nested `@tailrec def loop` so 100000-element sync-completed streams don't blow the stack.
+On the three bindings that wrap a third-party stream library with no extra plumbing (ZIO, Cats Effect, Ox), every method is an `inline def` that compiles to a single native call, with at most a trivial type adapter (`Option ⇆ Maybe`, `n.toLong` for fs2/ZIO long-arity takes/drops, `Function.unlift` for partial-function collects, `Stream.eval(c.lower).flatMap(Stream.emits)` for fs2 `init`). The Twitter binding's `unfold` is the only exception on those: `AsyncStream` ships no native unfold, so the wrap is a small recursive helper built on `AsyncStream.mk(head, => tail)`.
+
+The Future binding is the only fully hand-rolled implementation: `scala.concurrent.Future` has no canonical async stream, so the binding supplies a cons-stream where `Repr[A]` is a binding-private ADT (`Empty | Cons(head, tail: LocalCtx => Future[Repr[A]])`) matching the `CIO` carrier shape. Transformations build cons cells with lazy tails; terminal walks use a nested `@tailrec def loop` so 100000-element sync-completed streams don't blow the stack.
+
+The Kyo binding is a `final class` rather than a thin wrapper, because `kyo.Stream` re-summons a `Tag[Emit[Chunk[A]]]` on every operator: a plain delegation would leak that `Tag` onto callers and break generic pipelines. `CStream` captures the `Tag` once at construction (where `A` is concrete) and threads it through, so element-preserving operators stay tag-free and only element-changing ones (`map`/`flatMap`/...) ask for the output `Tag`. It is invariant because a lowered `kyo.Stream` is a richer computation that can carry several independent effect channels keyed by element type, and invariance keeps the stored tag matched to that carrier.
 
 ```scala
 import kyo.compat.*
@@ -404,7 +408,7 @@ This compiles and runs against every binding × supported platform.
 
 Constructors and terminals not in the surface compose from what is:
 
-- Failure stream: `CStream.init(CIO.fail(e))` — `init(c: CIO[Seq[A]])` propagates `c`'s failure.
+- Failure stream: `CStream.init(CIO.fail(e))`, `init(c: CIO[Seq[A]])` propagates `c`'s failure.
 - Count: `s.foldPure(0L)((c, _) => c + 1L)`.
 
 ### Known divergences (kyo binding)
