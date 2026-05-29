@@ -198,6 +198,7 @@ lazy val kyoJVM: Project = project
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-jsonrpc`.jvm,
+        `kyo-jsonrpc-http`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -248,6 +249,7 @@ lazy val kyoJS = project
         `kyo-http`.js,
         `kyo-flow`.js,
         `kyo-jsonrpc`.js,
+        `kyo-jsonrpc-http`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
@@ -281,6 +283,7 @@ lazy val kyoNative = project
         `kyo-http`.native,
         `kyo-flow`.native,
         `kyo-jsonrpc`.native,
+        `kyo-jsonrpc-http`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
@@ -688,6 +691,21 @@ lazy val `kyo-jsonrpc` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
+
+lazy val `kyo-jsonrpc-http` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-jsonrpc-http"))
+        .dependsOn(`kyo-jsonrpc`)
+        .dependsOn(`kyo-http`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
 
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
