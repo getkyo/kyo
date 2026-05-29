@@ -220,13 +220,15 @@ object Signal:
         CanEqual[A, A],
         CanEqual[Chunk[A], Chunk[A]]
     ): Signal[Chunk[A]] =
-        if signals.isEmpty then initConst(Chunk.empty[A])
-        else
-            val sigs = Chunk.from(signals)
-            initRaw(
-                currentWith = [B, S] => f => Kyo.foreach(sigs)(_.current).map(f),
-                nextWith = [B, S] => f => Async.foreachDiscard(sigs, sigs.size)(_.next).andThen(Kyo.foreach(sigs)(_.current).map(f))
-            )
+        signals.size match
+            case 0 => initConst(Chunk.empty[A])
+            case 1 => signals.head.map(Chunk(_))
+            case n =>
+                val sigs = Chunk.from(signals, n)
+                initRaw(
+                    currentWith = [B, S] => f => Kyo.foreach(sigs)(_.current).map(f),
+                    nextWith = [B, S] => f => Async.foreachDiscard(sigs, sigs.size)(_.next).andThen(Kyo.foreach(sigs)(_.current).map(f))
+                )
 
     /** Zips a sequence of signals, emitting when any changes.
       *
@@ -242,8 +244,8 @@ object Signal:
         signals.size match
             case 0 => initConst(Chunk.empty[A])
             case 1 => signals.head.map(Chunk(_))
-            case _ =>
-                val sigs = Chunk.from(signals)
+            case n =>
+                val sigs = Chunk.from(signals, n)
                 initRaw(
                     currentWith = [C, S] => g => Kyo.foreach(sigs)(_.current).map(g),
                     nextWith = [C, S] => g => awaitAny(sigs).andThen(Kyo.foreach(sigs)(_.current).map(g))
