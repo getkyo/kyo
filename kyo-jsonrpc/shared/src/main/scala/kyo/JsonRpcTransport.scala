@@ -29,4 +29,26 @@ object JsonRpcTransport:
             (a, b)
 
     def inMemory(using Frame): (JsonRpcTransport, JsonRpcTransport) < Sync = inMemory(64)
+
+    /** Lifts a byte-stream transport plus framer plus envelope codec into the envelope-level
+      * `JsonRpcTransport` seam. Inbound bytes pass through `framer.parse` and `codec.decode`;
+      * outbound envelopes pass through `codec.encode` and `framer.frame`.
+      */
+    def fromWire(
+        wire: WireTransport,
+        framer: Framer,
+        codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
+    )(using Frame): JsonRpcTransport < (Async & Scope) =
+        Sync.defer(new internal.WireTransportAdapter(wire, framer, codec))
+
+    /** Line-delimited stdio transport for CLI-style RPC servers. Reads `Console.readLine`
+      * and writes `Console.printLine`. EOF on stdin closes `incoming`. One envelope per line.
+      */
+    def stdio(
+        codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
+        framer: Framer = Framer.lineDelimited
+    )(using Frame): JsonRpcTransport < (Async & Scope) =
+        Sync.defer(new internal.StdioWireTransport).map { wire =>
+            fromWire(wire, framer, codec)
+        }
 end JsonRpcTransport

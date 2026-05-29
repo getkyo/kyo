@@ -70,4 +70,70 @@ class JsonRpcTransportTest extends JsonRpcTestBase:
         yield assert(!notDone && result.isFailure)
     }
 
+    "stdio transport sends one line per envelope" in run {
+        Scope.run {
+            Console.withOut {
+                for
+                    transport <- JsonRpcTransport.stdio()
+                    notification = JsonRpcEnvelope.Notification(
+                        "log",
+                        Maybe.Present(Structure.Value.Record(Chunk("text" -> Structure.Value.Str("hi")))),
+                        Absent
+                    )
+                    _ <- Abort.run[Closed](transport.send(notification))
+                yield ()
+            }.map { case (out, _) =>
+                val line = out.stdOut.trim
+                assert(line.nonEmpty)
+                val parsed = internal.RawJsonParser.parse(line)
+                assert(parsed.isSuccess)
+            }
+        }
+    }
+
+    "stdio transport reads one envelope per stdin line" in run {
+        val inputLine = """{"jsonrpc":"2.0","method":"ping"}"""
+        Console.withIn(List(inputLine)) {
+            Scope.run {
+                for
+                    transport <- JsonRpcTransport.stdio()
+                    result    <- Abort.run[Closed](transport.incoming.take(1).run)
+                yield result
+            }
+        }.map { result =>
+            result match
+                case Result.Success(chunk) =>
+                    assert(chunk.size == 1)
+                    chunk.head match
+                        case JsonRpcEnvelope.Notification(method, _, _) =>
+                            assert(method == "ping")
+                        case other =>
+                            fail(s"unexpected envelope: $other")
+                    end match
+                case other =>
+                    fail(s"unexpected result: $other")
+        }
+    }
+
+    "stdio transport EOF closes incoming" in run {
+        Console.withIn(Seq.empty[String]) {
+            Abort.run[Timeout](Async.timeout(2.seconds) {
+                Scope.run {
+                    for
+                        transport <- JsonRpcTransport.stdio()
+                        result    <- Abort.run[Closed](transport.incoming.run)
+                    yield result
+                }
+            })
+        }.map { outerResult =>
+            outerResult match
+                case Result.Failure(_) => fail("timed out - incoming did not close on EOF")
+                case Result.Panic(t)   => fail(s"panic: ${t.getMessage}")
+                case Result.Success(innerResult) =>
+                    innerResult match
+                        case Result.Success(chunk: Chunk[?]) => assert(chunk.isEmpty)
+                        case other                           => assert(true, s"acceptable result: $other")
+        }
+    }
+
 end JsonRpcTransportTest
