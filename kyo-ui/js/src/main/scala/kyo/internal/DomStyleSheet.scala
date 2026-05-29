@@ -23,6 +23,7 @@ private[kyo] object DomStyleSheet:
           |body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
           |div, section, main, header, footer, form, article, aside, p, ul, ol, pre, code, h1, h2, h3, h4, h5, h6, label { display: flex; flex-direction: column; }
           |nav, li, span, button, a { display: flex; flex-direction: row; align-items: center; }
+          |[data-kyo-reactive] { display: contents; }
           |ul, ol { list-style: none; padding: 0; margin: 0; }
           |h1, h2, h3, h4, h5, h6, p { margin: 0; }
           |a { color: inherit; text-decoration: none; }

@@ -366,6 +366,7 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
 
     def flexGrow(v: Double): Style   = appendProp(Prop.FlexGrowProp(math.max(0.0, v)))
     def flexShrink(v: Double): Style = appendProp(Prop.FlexShrinkProp(math.max(0.0, v)))
+    def flexBasis(v: Length): Style  = appendProp(Prop.FlexBasisProp(clampSize(v)))
 
     // Visibility
 
@@ -535,6 +536,7 @@ object Style:
     def position(f: Position.type => Position): Style                          = empty.position(f)
     def flexGrow(v: Double): Style                                             = empty.flexGrow(v)
     def flexShrink(v: Double): Style                                           = empty.flexShrink(v)
+    def flexBasis(v: Length): Style                                            = empty.flexBasis(v)
     def displayNone: Style                                                     = empty.displayNone
     def brightness(v: Double): Style                                           = empty.brightness(v)
     def contrast(v: Double): Style                                             = empty.contrast(v)
@@ -762,6 +764,7 @@ object Style:
         // Flex grow/shrink
         case FlexGrowProp(value: Double)
         case FlexShrinkProp(value: Double)
+        case FlexBasisProp(value: Length)
         // Filters
         case BrightnessProp(value: Double)
         case ContrastProp(value: Double)

@@ -189,6 +189,7 @@ private[kyo] object CssStyleRenderer:
         case HiddenProp        => "display: none;"
         case FlexGrowProp(v)   => s"flex-grow: ${fmt(v)};"
         case FlexShrinkProp(v) => s"flex-shrink: ${fmt(v)};"
+        case FlexBasisProp(v)  => s"flex-basis: ${size(v)};"
         case _: BrightnessProp | _: ContrastProp | _: GrayscaleProp | _: SepiaProp |
             _: InvertProp | _: SaturateProp | _: HueRotateProp | _: BlurProp => ""
         case BgGradientProp(dir, colors, positions) =>

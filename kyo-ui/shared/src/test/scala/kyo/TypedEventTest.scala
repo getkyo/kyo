@@ -204,4 +204,60 @@ class TypedEventTest extends Test:
             assert(result.get.targetId == Present("my-input"))
     }
 
+    // ---- Tests 13-15: dispatch resolves the click target through a Reactive boundary ----
+    //
+    // A signal-typed setter such as `.disabled(Signal)` wraps its element in a `Reactive`. The
+    // server-side dispatch must still recognise the wrapped element by its concrete type (Button) and
+    // read its current attributes (disabled), otherwise a submit button wrapped in `.disabled(valid)`
+    // (the canonical "enable submit only when valid" pattern) no longer submits the form. Regression
+    // for that bug.
+
+    "Form.onSubmit fires when a Click targets a submit button wrapped in .disabled(Signal=false)" in run {
+        for
+            fired    <- AtomicRef.init(false)
+            disabled <- Signal.initRef(false)
+            form = UI.form.id("f").onSubmit(fired.set(true))(
+                UI.input.id("x"),
+                UI.button("Go").id("go").disabled(disabled)
+            )
+            dispatch <- makeDispatch(form)
+            // The button (index 1) is wrapped in a Reactive, so its path is the wrapper's path Seq("1").
+            _      <- dispatch(Seq("1"), UIEvent.Click(Seq("1"), MouseEventData(UI.Modifiers.none, Present("go"))))
+            result <- fired.get
+        yield assert(result)
+    }
+
+    "Form.onSubmit does NOT fire when the wrapped submit button is disabled via Signal=true" in run {
+        for
+            fired    <- AtomicRef.init(false)
+            disabled <- Signal.initRef(true)
+            form = UI.form.id("f").onSubmit(fired.set(true))(
+                UI.input.id("x"),
+                UI.button("Go").id("go").disabled(disabled)
+            )
+            dispatch <- makeDispatch(form)
+            _        <- dispatch(Seq("1"), UIEvent.Click(Seq("1"), MouseEventData(UI.Modifiers.none, Present("go"))))
+            result   <- fired.get
+        yield assert(!result)
+    }
+
+    "Form.onSubmit fires after a disabled-wrapped submit button is re-enabled by its Signal" in run {
+        for
+            fired    <- AtomicRef.init(false)
+            disabled <- Signal.initRef(true)
+            form = UI.form.id("f").onSubmit(fired.set(true))(
+                UI.input.id("x"),
+                UI.button("Go").id("go").disabled(disabled)
+            )
+            dispatch <- makeDispatch(form)
+            _        <- dispatch(Seq("1"), UIEvent.Click(Seq("1"), MouseEventData(UI.Modifiers.none, Present("go"))))
+            blocked  <- fired.get
+            _        <- disabled.set(false)
+            _        <- dispatch(Seq("1"), UIEvent.Click(Seq("1"), MouseEventData(UI.Modifiers.none, Present("go"))))
+            allowed  <- fired.get
+        yield
+            assert(!blocked)
+            assert(allowed)
+    }
+
 end TypedEventTest

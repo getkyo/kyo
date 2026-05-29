@@ -55,6 +55,27 @@ class RealtimeScenarioItTest extends UITest:
         }
     }
 
+    "typing into a two-way-bound email input preserves character order" in run {
+        // Regression: email/number inputs do not support selectionStart, so echoing each keystroke back as a
+        // Replace reset the caret to 0, reversing typed text (e.g. "abcdef" -> "fedcba"). The framework now skips
+        // re-rendering the focused field. Type character by character (Browser.fill sets the value in one shot
+        // and would not exercise the per-keystroke caret path).
+        val app: UI < Async =
+            for ref <- Signal.initRef("")
+            yield UI.div(
+                UI.emailInput.id("e").value(ref),
+                ref.map(v => UI.span(s"sig:$v").id("v"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("e"))
+                _ <- Kyo.foreachDiscard("abcdef".toList)(c => Browser.press(Selector.id("e"), Browser.Key(c)))
+                _ <- Browser.assertText(Selector.id("v"), "sig:abcdef")
+                v <- Browser.value(Selector.id("e"))
+            yield assert(v == "abcdef")
+        }
+    }
+
     "typing then external update external wins" in run {
         val app: UI < Async =
             for ref <- Signal.initRef("")

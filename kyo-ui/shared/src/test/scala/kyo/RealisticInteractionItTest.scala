@@ -299,8 +299,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "xy")
                 _ <- Browser.assertText(Selector.id("sig"), "signal:xy")
-                _ <- Browser.assertAttribute(Selector.id("i"), "value", "xy")
-            yield succeed
+                // The input stays focused after fill, and the framework no longer re-renders (clobbers) a focused
+                // field, so its `value` ATTRIBUTE intentionally lags. Assert the live `value` PROPERTY, which is what
+                // the user sees and submits; it (and the signal above) is correct.
+                v <- Browser.value(Selector.id("i"))
+            yield assert(v == "xy")
         }
     }
 

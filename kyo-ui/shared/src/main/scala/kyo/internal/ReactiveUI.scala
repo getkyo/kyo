@@ -194,69 +194,44 @@ private[kyo] object ReactiveUI:
             val childSegment = targetPath(myPath.size)
             val childIdx     = childSegment.toIntOption
 
-            // Check if the target element is disabled (for Form submit suppression)
-            val targetDisabled = event match
-                case _: UIEvent.Click => isTargetDisabled(elem, myPath, targetPath)
-                case _                => false
-
-            // Check if target is a Button (only Button clicks submit forms)
-            val targetIsButton = event match
-                case _: UIEvent.Click => isTargetButton(elem, myPath, targetPath)
-                case _                => false
-
-            // Check if target is a Select (Enter on Select should not submit form)
-            val targetIsSelect = event match
-                case _: UIEvent.KeyDown => isTargetSelect(elem, myPath, targetPath)
-                case _                  => false
-
             // Find the reactive child whose path is a prefix of (or equals) targetPath. Matching by
             // `lastOption.contains(childSegment)` is incorrect when reactive children are nested
             // multiple levels deep; their last segment may collide with a sibling's index at the
             // current level. Using prefix-match correctly routes only when the target lies inside.
             val reactiveChild = reactiveChildren.find(rc => targetPath.startsWith(rc.path))
 
-            reactiveChild match
-                case Some(child) =>
-                    for
-                        keepBubbling <- safeDispatch(child.handle, targetPath, event)
-                        result <- if keepBubbling then
-                            dispatchToElement(
-                                elem,
-                                event,
-                                isTarget = false,
-                                disabledTarget = targetDisabled,
-                                submitOrigin = targetIsButton,
-                                selectTarget = targetIsSelect
-                            )
-                        else Kyo.lift(false)
-                    yield result
-                case None =>
-                    childIdx.flatMap(i => staticHandlers.find(_._1 == i).map(_._2)) match
-                        case Some(childHandle) =>
-                            for
-                                keepBubbling <- safeDispatch(childHandle, targetPath, event)
-                                result <-
-                                    if keepBubbling then
-                                        dispatchToElement(
-                                            elem,
-                                            event,
-                                            isTarget = false,
-                                            disabledTarget = targetDisabled,
-                                            submitOrigin = targetIsButton,
-                                            selectTarget = targetIsSelect
-                                        )
-                                    else Kyo.lift(false)
-                            yield result
-                        case None =>
-                            dispatchToElement(
-                                elem,
-                                event,
-                                isTarget = false,
-                                disabledTarget = targetDisabled,
-                                submitOrigin = targetIsButton,
-                                selectTarget = targetIsSelect
-                            )
-            end match
+            for
+                // Disabled-target (Form submit suppression), Button-target (only Button clicks submit
+                // forms), and Select-target (Enter on Select must not submit) all resolve through any
+                // Reactive/Foreach boundary wrapping the target, so signal-typed setters do not hide it.
+                targetDisabled <- event match
+                    case _: UIEvent.Click => isTargetDisabled(elem, myPath, targetPath)
+                    case _                => Kyo.lift(false)
+                targetIsButton <- event match
+                    case _: UIEvent.Click => isTargetButton(elem, myPath, targetPath)
+                    case _                => Kyo.lift(false)
+                targetIsSelect <- event match
+                    case _: UIEvent.KeyDown => isTargetSelect(elem, myPath, targetPath)
+                    case _                  => Kyo.lift(false)
+                bubble = dispatchToElement(
+                    elem,
+                    event,
+                    isTarget = false,
+                    disabledTarget = targetDisabled,
+                    submitOrigin = targetIsButton,
+                    selectTarget = targetIsSelect
+                )
+                result <- reactiveChild match
+                    case Some(child) =>
+                        safeDispatch(child.handle, targetPath, event).map(keep => if keep then bubble else false)
+                    case None =>
+                        childIdx.flatMap(i => staticHandlers.find(_._1 == i).map(_._2)) match
+                            case Some(childHandle) =>
+                                safeDispatch(childHandle, targetPath, event).map(keep => if keep then bubble else false)
+                            case None =>
+                                bubble
+            yield result
+            end for
         else
             true
 
@@ -338,65 +313,66 @@ private[kyo] object ReactiveUI:
     private def isHidden(elem: Element): Boolean =
         elem.attrs.hidden.getOrElse(false)
 
-    /** Walk from current element down to targetPath and check if the target is disabled. */
-    private def isTargetDisabled(elem: Element, myPath: Seq[String], targetPath: Seq[String]): Boolean =
-        if targetPath.size <= myPath.size then false
-        else
-            val segment  = targetPath(myPath.size)
-            val childIdx = segment.toIntOption
-            childIdx match
-                case Some(i) if i >= 0 && i < elem.children.size =>
-                    val child = elem.children(i) match
-                        case kc: KeyedChild => kc.child
-                        case c              => c
-                    val childPath = myPath :+ segment
-                    if childPath.size == targetPath.size then
-                        child match
-                            case e: Element => isDisabled(e)
-                            case _          => false
-                    else
-                        child match
-                            case e: Element => isTargetDisabled(e, childPath, targetPath)
-                            case _          => false
-                    end if
-                case _ => false
-            end match
+    /** Resolve the (possibly reactive) node at `targetPath` and test `predicate` against the concrete element there.
+      *
+      * Mirrors the renderer's path scheme: element children are index-addressed, a `Reactive`'s rendered content occupies the same path as
+      * the boundary, `Foreach` items live at `path :+ key` (or `:+ index`), and `Fragment` children at `path :+ index`. Resolving through
+      * these boundaries is what lets an element wrapped by a signal-typed setter (e.g. `.disabled(Signal)`, which wraps it in a `Reactive`)
+      * still be recognized by its concrete type, so button-click form submit and disabled detection keep working through such wrappers.
+      */
+    private def targetSatisfies(node: UI, nodePath: Seq[String], targetPath: Seq[String], predicate: Element => Boolean)(using
+        Frame
+    ): Boolean < Sync =
+        node match
+            case kc: KeyedChild =>
+                targetSatisfies(kc.child, nodePath, targetPath, predicate)
+            case r: Reactive =>
+                // A Reactive's rendered content occupies the same path as the boundary, so re-test at nodePath.
+                r.signal.current(using r.frame).map(cur => targetSatisfies(cur, nodePath, targetPath, predicate))
+            case Fragment(children) =>
+                if targetPath.size <= nodePath.size then false
+                else
+                    val seg = targetPath(nodePath.size)
+                    seg.toIntOption match
+                        case Some(i) if i >= 0 && i < children.size =>
+                            targetSatisfies(children(i), nodePath :+ seg, targetPath, predicate)
+                        case _ => false
+                    end match
+            case fe: Foreach[?] @unchecked =>
+                if targetPath.size <= nodePath.size then false
+                else
+                    val seg = targetPath(nodePath.size)
+                    fe.applyTyped {
+                        [T] =>
+                            (signal, keyFn, renderFn) =>
+                                signal.current(using fe.frame).map { items =>
+                                    val idx = keyFn match
+                                        case Present(f) => items.indexWhere(it => f(it) == seg)
+                                        case Absent     => seg.toIntOption.getOrElse(-1)
+                                    if idx >= 0 && idx < items.size then
+                                        targetSatisfies(renderFn(idx, items(idx)), nodePath :+ seg, targetPath, predicate)
+                                    else false
+                            }
+                    }
+            case e: Element =>
+                if targetPath.size <= nodePath.size then predicate(e)
+                else
+                    val seg = targetPath(nodePath.size)
+                    seg.toIntOption match
+                        case Some(i) if i >= 0 && i < e.children.size =>
+                            targetSatisfies(e.children(i), nodePath :+ seg, targetPath, predicate)
+                        case _ => false
+                    end match
+            case _: Text => false
 
-    /** Walk the UI tree to check if the target element matches a predicate. */
-    private def isTargetOfType(
-        elem: Element,
-        myPath: Seq[String],
-        targetPath: Seq[String],
-        predicate: Element => Boolean
-    ): Boolean =
-        if targetPath.size <= myPath.size then
-            predicate(elem)
-        else
-            val segment  = targetPath(myPath.size)
-            val childIdx = segment.toIntOption
-            childIdx match
-                case Some(i) if i >= 0 && i < elem.children.size =>
-                    val child = elem.children(i) match
-                        case kc: KeyedChild => kc.child
-                        case c              => c
-                    val childPath = myPath :+ segment
-                    if childPath.size == targetPath.size then
-                        child match
-                            case e: Element => predicate(e)
-                            case _          => false
-                    else
-                        child match
-                            case e: Element => isTargetOfType(e, childPath, targetPath, predicate)
-                            case _          => false
-                    end if
-                case _ => false
-            end match
+    private def isTargetDisabled(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
+        targetSatisfies(elem, myPath, targetPath, isDisabled)
 
-    private def isTargetButton(elem: Element, myPath: Seq[String], targetPath: Seq[String]): Boolean =
-        isTargetOfType(elem, myPath, targetPath, _.isInstanceOf[Button])
+    private def isTargetButton(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
+        targetSatisfies(elem, myPath, targetPath, _.isInstanceOf[Button])
 
-    private def isTargetSelect(elem: Element, myPath: Seq[String], targetPath: Seq[String]): Boolean =
-        isTargetOfType(elem, myPath, targetPath, _.isInstanceOf[Select])
+    private def isTargetSelect(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
+        targetSatisfies(elem, myPath, targetPath, _.isInstanceOf[Select])
 
     /** Dispatch event to element. isTarget=true when element is the click target, false on bubble. disabledTarget=true when the original
       * click target was disabled (prevents Form onSubmit on bubble).

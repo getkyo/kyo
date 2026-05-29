@@ -663,9 +663,26 @@ class StyleTest extends Test:
             assert(s.props(0) == Style.Prop.FlexShrinkProp(0.5))
         }
 
+        "flexBasis" in {
+            val s = Style.flexBasis(Length.zero)
+            assert(s.props(0) == Style.Prop.FlexBasisProp(Length.zero))
+        }
+
         "chaining flexGrow and flexShrink" in {
             val s = Style.flexGrow(1.0).flexShrink(0.0)
             assert(s.props.size == 2)
+        }
+
+        "equal columns: flex grow 1 + basis 0" in {
+            val s = Style.flexGrow(1.0).flexBasis(Length.zero)
+            assert(s.props.size == 2)
+            assert(s.props(0) == Style.Prop.FlexGrowProp(1.0))
+            assert(s.props(1) == Style.Prop.FlexBasisProp(Length.zero))
+        }
+
+        "flexBasis renders flex-basis css" in {
+            assert(Style.flexBasis(Length.zero).toCss == "flex-basis: 0;")
+            assert(Style.flexBasis(50.pct).toCss == "flex-basis: 50%;")
         }
     }
 

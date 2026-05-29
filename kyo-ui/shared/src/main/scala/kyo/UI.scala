@@ -153,6 +153,9 @@ object UI:
     /** An image element. `src` selects the source kind (URL, path, or inline data) and `alt` is the accessibility text. */
     def img(src: ImgSrc, alt: String)(using Frame): Img = Img(src = Present(src), alt = Present(alt))
 
+    /** An inline frame embedding the document at `src` (a URL or `data:` URI). Give it a size with `.style` and a `.title` for accessibility. */
+    def iframe(src: String)(using Frame): Iframe = Iframe(src = Present(src))
+
     /** Groups children into a single UI without introducing a wrapper element; the children render as siblings in the parent. */
     def fragment(cs: UI*)(using Frame): UI = Fragment(Chunk.from(cs))
 
@@ -1252,6 +1255,21 @@ object UI:
                 Reactive(v.map(s => this.src(s): UI))
             def alt(v: String): Img = copy(alt = Present(v))
         end Img
+
+        /** An inline frame embedding another document at `src`. `title` names the frame for assistive technology. Size it with `.style`. */
+        final case class Iframe(
+            attrs: Attrs = Attrs(),
+            src: Maybe[String] = Absent,
+            frameTitle: Maybe[String] = Absent
+        )(using val frame: Frame) extends Block with Void:
+            type Self = Iframe
+            def withAttrs(a: Attrs): Iframe = copy(attrs = a)
+            def src(v: String): Iframe      = copy(src = Present(v))
+            def src(v: Signal[String]): UI =
+                given Frame = frame
+                Reactive(v.map(s => this.src(s): UI))
+            def title(v: String): Iframe = copy(frameTitle = Present(v))
+        end Iframe
 
         // ---- Custom dropdown (div-based overlay, NOT native <select>) ----
 
