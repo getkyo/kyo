@@ -153,8 +153,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                 val valueMark = valueMarkBase.copy(index = valueMarkBase.index + valueOffset, column = valueMarkBase.column + valueOffset)
                 val (anchor, tag, valueText) = readProperties(trimmed)
                 blockScalarHeader(valueText) match
-                    case Present((style, chomp)) =>
-                        parseBlockScalar(c1, indent + 2, style, chomp, anchor, tag, visitor)
+                    case Present((style, chomp, explicitIndent)) =>
+                        parseBlockScalar(c1, indent + explicitIndent.getOrElse(2), style, chomp, anchor, tag, visitor)
                     case Absent if valueText.isEmpty && (anchor.nonEmpty || tag.nonEmpty) =>
                         withPending(anchor, tag) {
                             parseEmptyBlockMappingValue(c1, indent, visitor)
@@ -162,7 +162,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                     case Absent if valueText.isEmpty =>
                         parseEmptyBlockMappingValue(c1, indent, visitor)
                     case Absent =>
-                        parseInlineScalar(trimmed, c1, visitor, valueMark)
+                        parseBlockMappingScalarValue(trimmed, c1, indent, visitor, valueMark)
                 end match
             }
         }
@@ -183,16 +183,142 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         end if
     end parseEmptyBlockMappingValue
 
-    private def blockScalarHeader(valueText: String): Maybe[(ScalarStyle, Char)] =
+    private def blockScalarHeader(valueText: String): Maybe[(ScalarStyle, Char, Maybe[Int])] =
         if valueText.nonEmpty && (valueText.charAt(0) == '|' || valueText.charAt(0) == '>') then
-            val style = if valueText.charAt(0) == '|' then ScalarStyle.Literal else ScalarStyle.Folded
+            val style          = if valueText.charAt(0) == '|' then ScalarStyle.Literal else ScalarStyle.Folded
+            var explicitIndent = Maybe.empty[Int]
+            valueText.drop(1).foreach { ch =>
+                if ch >= '1' && ch <= '9' then explicitIndent = Maybe(ch - '0')
+            }
             val chomp =
                 if valueText.contains("-") then '-'
                 else if valueText.contains("+") then '+'
                 else ' '
-            Maybe(style -> chomp)
+            Maybe((style, chomp, explicitIndent))
         else Absent
     end blockScalarHeader
+
+    private def parseBlockMappingScalarValue[Ctx, Err, A](
+        text: String,
+        context: Ctx,
+        indent: Int,
+        visitor: Visitor[Ctx, Err, A],
+        valueMark: Mark
+    ): Result[Err | DecodeException, Ctx] =
+        val (anchor, tag, valueText) = readProperties(text)
+        if valueText.startsWith("'") && !closedSingleQuoted(valueText) then
+            collectQuotedMultiline(valueText, indent, '\'', valueMark).flatMap { value =>
+                visitor.scalar(context, value.replace("''", "'"), ScalarMeta(anchor, tag, ScalarStyle.SingleQuoted, valueMark))
+            }
+        else if valueText.startsWith("\"") && !closedDoubleQuoted(valueText) then
+            collectQuotedMultiline(valueText, indent, '"', valueMark).flatMap { value =>
+                unescapeDoubleQuoted(value, valueMark.copy(index = valueMark.index + 1, column = valueMark.column + 1)).flatMap { decoded =>
+                    visitor.scalar(context, decoded, ScalarMeta(anchor, tag, ScalarStyle.DoubleQuoted, valueMark))
+                }
+            }
+        else if shouldCollectPlainContinuation(indent) then
+            val lines = collectPlainContinuation(valueText, indent)
+            visitor.scalar(context, foldBlockScalarLines(lines), ScalarMeta(anchor, tag, ScalarStyle.Plain, valueMark))
+        else parseInlineScalar(text, context, visitor, valueMark)
+        end if
+    end parseBlockMappingScalarValue
+
+    private def closedSingleQuoted(valueText: String): Boolean =
+        var i = 1
+        while i < valueText.length do
+            if valueText.charAt(i) == '\'' then
+                if i + 1 < valueText.length && valueText.charAt(i + 1) == '\'' then i += 2
+                else return true
+            else i += 1
+        end while
+        false
+    end closedSingleQuoted
+
+    private def closedDoubleQuoted(valueText: String): Boolean =
+        var i      = 1
+        var escape = false
+        while i < valueText.length do
+            val ch = valueText.charAt(i)
+            if escape then escape = false
+            else if ch == '\\' then escape = true
+            else if ch == '"' then return true
+            i += 1
+        end while
+        false
+    end closedDoubleQuoted
+
+    private def collectQuotedMultiline(valueText: String, indent: Int, quote: Char, valueMark: Mark): Result[DecodeException, String] =
+        val lines = scala.collection.mutable.ListBuffer.empty[BlockScalarLine]
+        lines += BlockScalarLine(valueText.drop(1), false)
+        var done = false
+        while !done && pos < input.length do
+            if currentLineText().trim.isEmpty then
+                val _ = readRestOfLine()
+                lines += BlockScalarLine("", false)
+            else if currentIndent() <= indent then
+                return Result.fail(errorAt(valueMark, s"Unterminated ${if quote == '\'' then "single" else "double"} quoted scalar"))
+            else
+                val lineText = readContinuationText(indent + 2)
+                closingQuoteIndex(lineText, quote) match
+                    case Present(idx) =>
+                        lines += BlockScalarLine(lineText.substring(0, idx), false)
+                        done = true
+                    case Absent =>
+                        lines += BlockScalarLine(lineText, false)
+                end match
+            end if
+        end while
+        if done then Result.succeed(foldBlockScalarLines(lines.toList))
+        else Result.fail(errorAt(valueMark, s"Unterminated ${if quote == '\'' then "single" else "double"} quoted scalar"))
+    end collectQuotedMultiline
+
+    private def closingQuoteIndex(text: String, quote: Char): Maybe[Int] =
+        if quote == '\'' then
+            var i = 0
+            while i < text.length do
+                if text.charAt(i) == '\'' then
+                    if i + 1 < text.length && text.charAt(i + 1) == '\'' then i += 2
+                    else return Maybe(i)
+                else i += 1
+            end while
+            Absent
+        else
+            var i      = 0
+            var escape = false
+            while i < text.length do
+                val ch = text.charAt(i)
+                if escape then escape = false
+                else if ch == '\\' then escape = true
+                else if ch == '"' then return Maybe(i)
+                i += 1
+            end while
+            Absent
+        end if
+    end closingQuoteIndex
+
+    private def shouldCollectPlainContinuation(indent: Int): Boolean =
+        pos < input.length && (
+            currentLineText().trim.isEmpty ||
+                (currentIndent() > indent && !isBlockMappingLine(currentLineText()) && !startsWithSequenceEntryAtIndent())
+        )
+    end shouldCollectPlainContinuation
+
+    private def collectPlainContinuation(valueText: String, indent: Int): List[BlockScalarLine] =
+        val lines = scala.collection.mutable.ListBuffer(BlockScalarLine(valueText, false))
+        while shouldCollectPlainContinuation(indent) do
+            if currentLineText().trim.isEmpty then
+                val _ = readRestOfLine()
+                lines += BlockScalarLine("", false)
+            else lines += BlockScalarLine(readContinuationText(indent + 2), false)
+        end while
+        lines.toList.reverse.dropWhile(_.isBlank).reverse
+    end collectPlainContinuation
+
+    private def readContinuationText(contentIndent: Int): String =
+        val n = math.min(currentIndent(), contentIndent)
+        consumeIndent(n)
+        readRestOfLine()
+    end readContinuationText
 
     private def parseCompactSequenceMapping[Ctx, Err, A](
         firstEntry: String,

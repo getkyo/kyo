@@ -59,6 +59,17 @@ final case class YamlCoreScalars(
 final case class YamlPlayer(name: String, hr: Int, avg: Double) derives CanEqual
 final case class YamlLeagues(american: List[String], national: List[String]) derives CanEqual
 final case class YamlEscapes(unicode: String, control: String, hex: String) derives CanEqual
+final case class YamlMultilineScalars(
+    literalStrip: String,
+    literalClip: String,
+    literalKeep: String,
+    literalIndent: String,
+    foldedStrip: String,
+    foldedKeep: String,
+    singleQuoted: String,
+    doubleQuoted: String,
+    plain: String
+) derives CanEqual
 final case class YamlHellConfig(server_config: YamlHellServerConfig) derives CanEqual
 final case class YamlHellServerConfig(
     port_mapping: List[String],
@@ -522,6 +533,60 @@ class YamlParserTest extends Test:
 
             assert(Yaml.decode[Map[String, String]](yaml) == Result.succeed(Map(
                 "text" -> "folded line\nnext line\n  code\n  block\n\nlast line"
+            )))
+        }
+
+        "decodes multiline scalar styles and block scalar indicators" in {
+            val yaml =
+                """literalStrip: |-
+                  |  line one
+                  |  line two
+                  |
+                  |literalClip: |
+                  |  line one
+                  |  line two
+                  |
+                  |literalKeep: |+
+                  |  line one
+                  |  line two
+                  |
+                  |
+                  |literalIndent: |4
+                  |    indented
+                  |      deeper
+                  |
+                  |foldedStrip: >2-
+                  |  line one
+                  |  line two
+                  |
+                  |  line three
+                  |foldedKeep: >+2
+                  |  line one
+                  |  line two
+                  |
+                  |
+                  |singleQuoted: 'line one
+                  |  line two
+                  |
+                  |  line three'
+                  |doubleQuoted: "line one
+                  |  line two\nline three"
+                  |plain: line one
+                  |  line two
+                  |
+                  |  line three
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlMultilineScalars](yaml) == Result.succeed(YamlMultilineScalars(
+                literalStrip = "line one\nline two",
+                literalClip = "line one\nline two\n",
+                literalKeep = "line one\nline two\n\n\n",
+                literalIndent = "indented\n  deeper\n",
+                foldedStrip = "line one line two\nline three",
+                foldedKeep = "line one line two\n\n\n",
+                singleQuoted = "line one line two\nline three",
+                doubleQuoted = "line one line two\nline three",
+                plain = "line one line two\nline three"
             )))
         }
 
