@@ -232,8 +232,8 @@ lazy val kyoJVM: Project = project
         `kyo-zio`.jvm,
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
+        `kyo-browser`.jvm,
         `kyo-case-app`.jvm,
-        `kyo-playwright`.jvm,
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
         `kyo-actor`.jvm,
@@ -278,6 +278,7 @@ lazy val kyoJS = project
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
+        `kyo-browser`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
@@ -315,6 +316,7 @@ lazy val kyoNative = project
         `kyo-zio-test`.native,
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
+        `kyo-browser`.native,
         `kyo-pod`.native,
         `kyo-compat-future`.native,
         `kyo-compat-kyo`.native,
@@ -1122,17 +1124,58 @@ lazy val `kyo-pod` =
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
 
-lazy val `kyo-playwright` =
-    crossProject(JVMPlatform)
+lazy val `kyo-browser` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-playwright"))
-        .dependsOn(`kyo-core`)
+        .in(file("kyo-browser"))
+        .dependsOn(`kyo-http`)
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "com.microsoft.playwright" % "playwright" % "1.58.0"
+            `kyo-settings`
         )
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(
+            mimaCheck(false),
+            // Per-suite JVM forking: each test suite gets its own JVM (and its own SharedChrome).
+            // Cross-suite Chrome state degradation makes a single shared Chrome unstable over 700+ tests
+            // in a 10-minute run; isolating each suite eliminates that contamination at the cost of ~3
+            // minutes of additional Chrome startup. parallelExecution = false serializes the per-suite
+            // groups so Chrome processes don't compete for resources; testForkedParallel = false keeps
+            // within-fork tests sequential as a belt-and-braces safeguard.
+            Test / parallelExecution  := false,
+            Test / testForkedParallel := false,
+            Test / testGrouping := {
+                val javaOptionsValue = (Test / javaOptions).value.toVector
+                val envsVarsValue    = envVars.value
+                (Test / definedTests).value map { test =>
+                    Tests.Group(
+                        name = test.name,
+                        tests = Seq(test),
+                        runPolicy = Tests.SubProcess(
+                            ForkOptions(
+                                javaHome = javaHome.value,
+                                outputStrategy = outputStrategy.value,
+                                bootJars = Vector.empty,
+                                workingDirectory = Some(baseDirectory.value),
+                                runJVMOptions = javaOptionsValue,
+                                connectInput = connectInput.value,
+                                envVars = envsVarsValue
+                            )
+                        )
+                    )
+                }
+            }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`,
+            // Chrome resource contention makes parallel test-suite execution flaky on Native — serialize
+            // suites so each owns the shared Chrome WebSocket channel in turn.
+            Test / parallelExecution := false
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)

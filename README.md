@@ -294,7 +294,7 @@ Domain-shaped modules: parsing, durable workflows, container management, low-lat
 | [kyo-flow](kyo-flow/README.md)                         | ✅   | ✅   | ✅      | Durable workflow engine (Temporal/Cadence/ZIO-Flow space); value-replay execution, auto-generated REST     |
 | [kyo-pod](kyo-pod/README.md)                           | ✅   | ✅   | ✅      | Docker and Podman client cross-compiled to JVM/JS/Native, streaming logs/stats, scope-managed cleanup     |
 | [kyo-aeron](kyo-aeron/README.md)                       | ✅   | ❌   | ❌      | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API             |
-| [kyo-playwright](kyo-playwright/README.md)             | ✅   | ❌   | ❌      | Browser automation over Microsoft Playwright; `readableContent` returns page main as Markdown             |
+| [kyo-browser](kyo-browser/README.md)                   | ✅   | ✅   | ✅      | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown |
 
 ### Observability
 
