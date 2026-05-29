@@ -101,10 +101,16 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                     val parsed =
                         if rest.isEmpty then parseNode(context, indent + 2, visitor)
                         else
-                            readFlowText(rest, valueMark).flatMap { text =>
-                                if isInlineMappingText(text) then parseCompactSequenceMapping(text, context, indent, visitor)
-                                else parseInlineScalar(text, context, visitor, valueMark)
-                            }
+                            val (anchor, tag, valueText) = readProperties(rest)
+                            blockScalarHeader(valueText) match
+                                case Present((style, chomp, explicitIndent)) =>
+                                    parseBlockScalar(context, indent, explicitIndent, style, chomp, anchor, tag, visitor)
+                                case Absent =>
+                                    readFlowText(rest, valueMark).flatMap { text =>
+                                        if isInlineMappingText(text) then parseCompactSequenceMapping(text, context, indent, visitor)
+                                        else parseInlineScalar(text, context, visitor, valueMark)
+                                    }
+                            end match
                     parsed.flatMap(loop)
                 end if
             end loop
@@ -113,9 +119,16 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end parseBlockSequence
 
     private def parseScalarValue[Ctx, Err, A](context: Ctx, visitor: Visitor[Ctx, Err, A]): Result[Err | DecodeException, Ctx] =
-        val valueMark = mark()
-        val text      = stripComment(readRestOfLine()).trim
-        readFlowText(text, valueMark).flatMap(parseInlineScalar(_, context, visitor, valueMark))
+        val valueMark                = mark()
+        val indent                   = currentIndent()
+        val text                     = stripComment(readRestOfLine()).trim
+        val (anchor, tag, valueText) = readProperties(text)
+        blockScalarHeader(valueText) match
+            case Present((style, chomp, explicitIndent)) =>
+                parseBlockScalar(context, indent, explicitIndent, style, chomp, anchor, tag, visitor)
+            case Absent =>
+                readFlowText(text, valueMark).flatMap(parseInlineScalar(_, context, visitor, valueMark))
+        end match
     end parseScalarValue
 
     private def parseInlineScalar[Ctx, Err, A](
@@ -405,7 +418,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
         run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()))) { c0 =>
-            parseInlineMappingEntry(firstEntry, c0, visitor).flatMap { c1 =>
+            parseCompactMappingEntry(firstEntry, c0, sequenceIndent + 2, visitor).flatMap { c1 =>
                 def loop(context: Ctx): Result[Err | DecodeException, Ctx] =
                     skipBlankAndCommentLines()
                     val fieldIndent = sequenceIndent + 2
@@ -418,6 +431,38 @@ final class YamlParser private (private val input: String)(using frame: Frame):
             }
         }
     end parseCompactSequenceMapping
+
+    private def parseCompactMappingEntry[Ctx, Err, A](
+        text: String,
+        context: Ctx,
+        indent: Int,
+        visitor: Visitor[Ctx, Err, A]
+    ): Result[Err | DecodeException, Ctx] =
+        val idx = findFlowMappingSeparator(text)
+        if idx < 0 then parseInlineMappingEntry(text, context, visitor)
+        else
+            val key     = text.substring(0, idx).trim
+            val value   = text.substring(idx + 1).trim
+            val keyMark = mark()
+            unquoteKey(key, keyMark).flatMap { parsedKey =>
+                visitor.scalar(context, parsedKey, ScalarMeta(Absent, Absent, ScalarStyle.Plain, keyMark))
+            }.flatMap { c1 =>
+                val (anchor, tag, valueText) = readProperties(value)
+                blockScalarHeader(valueText) match
+                    case Present((style, chomp, explicitIndent)) =>
+                        parseBlockScalar(c1, indent, explicitIndent, style, chomp, anchor, tag, visitor)
+                    case Absent if valueText.isEmpty && (anchor.nonEmpty || tag.nonEmpty) =>
+                        withPending(anchor, tag) {
+                            parseEmptyBlockMappingValue(c1, indent, visitor)
+                        }
+                    case Absent if valueText.isEmpty =>
+                        parseEmptyBlockMappingValue(c1, indent, visitor)
+                    case Absent =>
+                        parseBlockMappingScalarValue(value, c1, indent, visitor, mark())
+                end match
+            }
+        end if
+    end parseCompactMappingEntry
 
     private def parseFlowMapping[Ctx, Err, A](
         text: String,
@@ -978,12 +1023,14 @@ object YamlParser:
     final private class JsonBuildingVisitor(maxDepth: Int, maxCollectionSize: Int)(using Frame)
         extends Yaml.Visitor[Unit, DecodeException, String]:
         final private class JsonFrame(val isMapping: Boolean, var first: Boolean, var expectingKey: Boolean, var count: Int)
-        final private class Capture(val name: String, val start: Int, val depth: Int)
+        final private class Capture(val name: String, val start: Int, val depth: Int, var values: Int, var maxDepth: Int)
+        final private case class AnchoredJson(value: String, values: Int, maxDepth: Int)
 
         private val out                       = new StringBuilder
-        private val anchors                   = scala.collection.mutable.Map.empty[String, String]
+        private val anchors                   = scala.collection.mutable.Map.empty[String, AnchoredJson]
         private var stack: List[JsonFrame]    = Nil
         private var captures: List[Capture]   = Nil
+        private var aliasExpandedValues: Int  = 0
         private def current: Maybe[JsonFrame] = Maybe.fromOption(stack.headOption)
         private def inMapping: Boolean        = current.exists(_.isMapping)
         private def expectingKey: Boolean     = current.exists(f => f.isMapping && f.expectingKey)
@@ -999,6 +1046,7 @@ object YamlParser:
             out.append('{')
             stack = JsonFrame(true, true, true, 0) :: stack
             checkDepth()
+            recordValue()
             Result.unit
         end mappingStart
 
@@ -1008,6 +1056,7 @@ object YamlParser:
             out.append('[')
             stack = JsonFrame(false, true, false, 0) :: stack
             checkDepth()
+            recordValue()
             Result.unit
         end sequenceStart
 
@@ -1021,6 +1070,7 @@ object YamlParser:
                 valuePrefix()
                 startCapture(meta.anchor)
                 appendResolvedScalar(value, meta.style, meta.tag)
+                recordValue()
                 finishScalarCapture()
                 current.foreach { f =>
                     if f.isMapping then f.expectingKey = true
@@ -1031,9 +1081,11 @@ object YamlParser:
 
         def alias(context: Unit, name: String, mark: Yaml.Mark): Result[DecodeException, Unit] =
             anchors.get(name) match
-                case Some(value) =>
+                case Some(anchor) =>
                     valuePrefix()
-                    out.append(value)
+                    checkAliasExpansion(anchor)
+                    out.append(anchor.value)
+                    recordValues(anchor.values)
                     current.foreach { f =>
                         if f.isMapping then f.expectingKey = true
                     }
@@ -1078,24 +1130,42 @@ object YamlParser:
             val depth = stack.size
             if depth > maxDepth then
                 throw LimitExceededException("Nesting depth", depth, maxDepth)
+            captures.foreach { capture =>
+                capture.maxDepth = math.max(capture.maxDepth, depth - capture.depth)
+            }
         end checkDepth
+
+        private def checkAliasExpansion(anchor: AnchoredJson): Unit =
+            val depth = stack.size + anchor.maxDepth
+            if depth > maxDepth then
+                throw LimitExceededException("Nesting depth", depth, maxDepth)
+            aliasExpandedValues += anchor.values
+            if aliasExpandedValues > maxCollectionSize then
+                throw LimitExceededException("Collection size", aliasExpandedValues, maxCollectionSize)
+        end checkAliasExpansion
 
         private def startCapture(anchor: Maybe[String]): Unit =
             anchor.foreach { name =>
-                captures = Capture(name, out.length, stack.size) :: captures
+                captures = Capture(name, out.length, stack.size, 0, 0) :: captures
             }
+
+        private def recordValue(): Unit =
+            recordValues(1)
+
+        private def recordValues(n: Int): Unit =
+            captures.foreach(_.values += n)
 
         private def finishScalarCapture(): Unit =
             captures match
                 case capture :: rest if capture.depth == stack.size =>
-                    anchors(capture.name) = out.substring(capture.start)
+                    anchors(capture.name) = AnchoredJson(out.substring(capture.start), capture.values, capture.maxDepth)
                     captures = rest
                 case _ => ()
 
         private def finishCollectionCapture(): Unit =
             captures match
                 case capture :: rest if capture.depth == stack.size =>
-                    anchors(capture.name) = out.substring(capture.start)
+                    anchors(capture.name) = AnchoredJson(out.substring(capture.start), capture.values, capture.maxDepth)
                     captures = rest
                 case _ => ()
 

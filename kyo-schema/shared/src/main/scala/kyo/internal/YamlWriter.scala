@@ -230,7 +230,7 @@ final class YamlWriter private extends Writer:
     end appendQuoted
 
     private def appendLiteral(value: String, contentIndent: Int): Unit =
-        out.append(if value.endsWith("\n") then "|" else "|-")
+        out.append(literalHeader(value))
         out.append('\n')
         val end =
             if value.endsWith("\n") then value.length - 1
@@ -250,6 +250,15 @@ final class YamlWriter private extends Writer:
         end while
         lastWriteWasLine = true
     end appendLiteral
+
+    private def literalHeader(value: String): String =
+        if !value.endsWith("\n") then "|-"
+        else
+            var i = value.length - 1
+            while i >= 0 && value.charAt(i) == '\n' do i -= 1
+            if value.length - 1 - i > 1 then "|+"
+            else "|"
+    end literalHeader
 
     private def isPlainSafeKey(value: String): Boolean =
         isPlainSafe(value) && value.indexOf(':') < 0

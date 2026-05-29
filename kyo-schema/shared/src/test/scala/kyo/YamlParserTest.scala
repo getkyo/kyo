@@ -131,6 +131,24 @@ class YamlParserTest extends Test:
             }
             assert(ex.limit == "Collection size")
         }
+
+        "YamlParser.toJson accounts for expanded alias contents while building JSON" in {
+            val yaml =
+                """items: &items
+                  |  - 1
+                  |  - 2
+                  |refs:
+                  |  - *items
+                  |  - *items
+                  |""".stripMargin
+
+            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            val ex = intercept[LimitExceededException] {
+                kyo.internal.YamlParser.toJson(bytes, Yaml.DefaultMaxDepth, 3)
+            }
+            assert(ex.limit == "Collection size")
+        }
     }
 
     "parse" - {
