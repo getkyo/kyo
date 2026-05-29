@@ -1,6 +1,6 @@
 # kyo-schema
 
-Define a case class and get JSON serialization, Protobuf encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
+Define a case class and get JSON/YAML serialization, Protobuf encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
 
 <!-- doctest:setup
 ```scala
@@ -11,8 +11,9 @@ val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", 
 -->
 
 ```scala
-// Schema-based JSON and Protobuf
+// Schema-based JSON, YAML, and Protobuf
 Json.encode(alice)      // {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
+Yaml.encode(alice)      // YAML 1.2-compatible text
 Protobuf.encode(alice)  // Span[Byte] (binary)
 
 // Type-safe lenses reach any depth
@@ -38,7 +39,7 @@ These are the top-level entry points:
 
 | Entry point | Purpose |
 |-------------|---------|
-| `Json` / `Protobuf` | Serialize to JSON strings or Protocol Buffers bytes |
+| `Json` / `Yaml` / `Protobuf` | Serialize to JSON strings, YAML documents, or Protocol Buffers bytes |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
 | `Modify` | Batched field mutations applied as a single unit |
@@ -169,6 +170,27 @@ Json.decode[User](untrustedInput, maxDepth = 64, maxCollectionSize = 10000)
 ```
 
 Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitExceededException` is a subtype of `DecodeException`, so the same pattern-match handles malformed input and limit breaches.
+
+### YAML
+
+`Yaml.decode` parses one YAML document into a typed value and returns `Result[DecodeException, A]`. For document streams, use `Yaml.decodeAll`.
+
+```scala
+val yaml =
+    """id: 1
+      |name: Alice
+      |email: alice@example.com
+      |password: secret
+      |address:
+      |  city: Portland
+      |  zip: "97201"
+      |""".stripMargin
+
+Yaml.decode[User](yaml)
+// Result.Success(alice)
+```
+
+For lower-level use cases, `Yaml.visit` exposes an event-first parser API. It lets callers carry their own context and fail early without building a YAML node tree. `Yaml.parse` and `Yaml.parseAll` are available when a DOM-style node tree is desired.
 
 ### Protobuf
 
