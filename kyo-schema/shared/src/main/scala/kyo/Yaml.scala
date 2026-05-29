@@ -24,6 +24,33 @@ object Yaml:
 
     given Yaml = Yaml()
 
+    /** Zero-based selector for one YAML document within a stream.
+      *
+      * YAML streams can contain multiple documents separated by `---` or `...`. `DocumentIndex` lets callers select one of those
+      * documents while keeping that selection distinct from parser limits such as `maxDepth`. The first document is
+      * `DocumentIndex(0)`, the second is `DocumentIndex(1)`, and so on.
+      */
+    opaque type DocumentIndex = Int
+
+    object DocumentIndex:
+        def apply(value: Int): DocumentIndex = value
+    end DocumentIndex
+
+    extension (index: DocumentIndex) def value: Int = index
+
+    /** Decoding settings for YAML input.
+      *
+      * `Config` keeps parser limits and stream selection in one value so callers can choose a document from a multi-document stream
+      * without losing access to safety limits. `maxDepth` limits nested codec reads, and `maxCollectionSize` limits collection entries in
+      * the same way as [[Json]] decoding. `documentIndex` is empty for single-document decoding and set to `DocumentIndex(n)` to decode
+      * the zero-based nth document from a stream. The default configuration decodes exactly one document with the standard limits.
+      */
+    case class Config(
+        maxDepth: Int = DefaultMaxDepth,
+        maxCollectionSize: Int = DefaultMaxCollectionSize,
+        documentIndex: Maybe[DocumentIndex] = Absent
+    ) derives CanEqual
+
     /** Source position in the YAML stream. */
     case class Mark(index: Int, line: Int, column: Int) derives CanEqual
 
@@ -67,9 +94,23 @@ object Yaml:
     def visit[Ctx, Err, A](input: String, context: Ctx)(visitor: Visitor[Ctx, Err, A])(using Frame): Result[Err | DecodeException, A] =
         internal.YamlParser(input).visit(context)(visitor)
 
+    /** Visits one document from a YAML stream without constructing a YAML DOM. */
+    def visit[Ctx, Err, A](
+        input: String,
+        documentIndex: DocumentIndex,
+        context: Ctx
+    )(visitor: Visitor[Ctx, Err, A])(using Frame): Result[Err | DecodeException, A] =
+        selectDocument(input, documentIndex).flatMap(doc => visit(doc, context)(visitor))
+    end visit
+
     /** Parses a single YAML document into an optional DOM node tree. */
     def parse(input: String)(using Frame): Result[DecodeException, Node] =
         internal.YamlParser(input).visit(())(NodeBuilder())
+
+    /** Parses one document from a YAML stream into an optional DOM node tree. */
+    def parse(input: String, documentIndex: DocumentIndex)(using Frame): Result[DecodeException, Node] =
+        selectDocument(input, documentIndex).flatMap(parse)
+    end parse
 
     /** Parses an explicit YAML document stream into node trees. */
     def parseAll(input: String)(using Frame): Result[DecodeException, Chunk[Node]] =
@@ -95,7 +136,20 @@ object Yaml:
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        decodeBytes(Span.from(input.getBytes(StandardCharsets.UTF_8)), maxDepth, maxCollectionSize)
+        decode(input, Config(maxDepth, maxCollectionSize))
+    end decode
+
+    /** Decodes YAML into a value of type A using explicit configuration. */
+    def decode[A](
+        input: String,
+        config: Config
+    )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        config.documentIndex match
+            case Present(index) =>
+                selectDocument(input, index).flatMap(doc => decode[A](doc, config.copy(documentIndex = Absent)))
+            case Absent =>
+                decodeBytes(Span.from(input.getBytes(StandardCharsets.UTF_8)), config)
+        end match
     end decode
 
     /** Decodes UTF-8 YAML bytes into a value of type A. */
@@ -104,11 +158,68 @@ object Yaml:
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        decodeBytes(input, Config(maxDepth, maxCollectionSize))
+    end decodeBytes
+
+    /** Decodes UTF-8 YAML bytes into a value of type A using explicit configuration. */
+    def decodeBytes[A](
+        input: Span[Byte],
+        config: Config
+    )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        config.documentIndex match
+            case Present(index) =>
+                decode[A](String(input.toArray, StandardCharsets.UTF_8), config.copy(documentIndex = Maybe(index)))
+            case Absent =>
+                decodePreparedBytes(input, config.maxDepth, config.maxCollectionSize)
+        end match
+    end decodeBytes
+
+    private def decodePreparedBytes[A](
+        input: Span[Byte],
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         Result.catching[DecodeException] {
             val reader = yaml.newReader(input)
             reader.resetLimits(maxDepth, maxCollectionSize)
             schema.readFrom(reader)
         }
+    end decodePreparedBytes
+
+    /** Decodes one document from a YAML stream into a value of type A. */
+    def decode[A](
+        input: String,
+        documentIndex: DocumentIndex
+    )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        decode[A](input, documentIndex, DefaultMaxDepth, DefaultMaxCollectionSize)
+    end decode
+
+    /** Decodes one document from a YAML stream into a value of type A with explicit limits. */
+    def decode[A](
+        input: String,
+        documentIndex: DocumentIndex,
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        decode[A](input, Config(maxDepth, maxCollectionSize, Maybe(documentIndex)))
+    end decode
+
+    /** Decodes one document from UTF-8 YAML bytes into a value of type A. */
+    def decodeBytes[A](
+        input: Span[Byte],
+        documentIndex: DocumentIndex
+    )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        decodeBytes[A](input, documentIndex, DefaultMaxDepth, DefaultMaxCollectionSize)
+    end decodeBytes
+
+    /** Decodes one document from UTF-8 YAML bytes into a value of type A with explicit limits. */
+    def decodeBytes[A](
+        input: Span[Byte],
+        documentIndex: DocumentIndex,
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        decodeBytes[A](input, Config(maxDepth, maxCollectionSize, Maybe(documentIndex)))
     end decodeBytes
 
     /** Decodes every document in an explicit YAML stream. */
@@ -134,6 +245,21 @@ object Yaml:
                         case Result.Panic(e)       => Result.panic(e)
         loop(docs.toList, Chunk.empty)
     end parseEach
+
+    private def selectDocument(input: String, documentIndex: DocumentIndex)(using Frame): Result[DecodeException, String] =
+        val docs = splitDocuments(input)
+        if documentIndex >= 0 && documentIndex < docs.size then
+            Result.succeed(docs(documentIndex))
+        else
+            Result.fail(ParseException(
+                Yaml(),
+                "",
+                s"YAML document index $documentIndex is out of range; found ${docs.size} document(s)",
+                Nil,
+                0
+            ))
+        end if
+    end selectDocument
 
     private def splitDocuments(input: String): Chunk[String] =
         val docs    = scala.collection.mutable.ListBuffer.empty[String]

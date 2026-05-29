@@ -1,5 +1,23 @@
 package kyo
 
+object YamlOpaqueUserId:
+    opaque type Type = String
+
+    def apply(value: String): Type = value
+
+    extension (id: Type) def value: String = id
+
+    given Schema[Type] = Schema.stringSchema.transform[Type](apply)(_.value)
+end YamlOpaqueUserId
+
+final case class YamlAnyValUserId(value: String) extends AnyVal derives CanEqual
+final case class YamlValueObject(value: String) derives CanEqual
+final case class YamlValueHolder(
+    opaqueId: YamlOpaqueUserId.Type,
+    anyValId: YamlAnyValUserId,
+    valueObject: YamlValueObject
+) derives CanEqual
+
 class YamlTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
@@ -111,6 +129,79 @@ class YamlTest extends Test:
             assert(Yaml.decodeAll[MTPerson](yaml) == Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25))))
         }
 
+        "decode targets a document by zero-based index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |---
+                  |name: Charlie
+                  |age: 35
+                  |""".stripMargin
+
+            assert(Yaml.decode[MTPerson](yaml, Yaml.DocumentIndex(1)) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "decode reports an invalid document index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |""".stripMargin
+
+            val decoded = Yaml.decode[MTPerson](yaml, Yaml.DocumentIndex(1))
+
+            decoded match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("document index 1"))
+                    assert(e.getMessage.contains("found 1"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
+        }
+
+        "decodeBytes targets a document by zero-based index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            assert(Yaml.decodeBytes[MTPerson](bytes, Yaml.DocumentIndex(1)) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "decode config combines document index and limits" in {
+            val yaml =
+                """---
+                  |value: 0
+                  |children: []
+                  |---
+                  |value: 1
+                  |children:
+                  |  - value: 2
+                  |    children:
+                  |      - value: 3
+                  |        children: []
+                  |""".stripMargin
+
+            val config = Yaml.Config(
+                maxDepth = Yaml.DefaultMaxDepth,
+                maxCollectionSize = Yaml.DefaultMaxCollectionSize,
+                documentIndex = Maybe(Yaml.DocumentIndex(1))
+            )
+
+            val expected = TreeNode(1, List(TreeNode(2, List(TreeNode(3, Nil)))))
+
+            assert(Yaml.decode[TreeNode](yaml, config) == Result.succeed(expected))
+        }
+
         "accepts YAML directives before the document marker" in {
             val yaml =
                 """%YAML 1.2
@@ -219,6 +310,45 @@ class YamlTest extends Test:
 
             assert(Yaml.decode[AdtHolder](yaml) == Result.succeed(AdtHolder(MTRectangle(3.0, 4.0), Lit(9), (5, "five"))))
         }
+
+        "decodes opaque types through their underlying scalar schema" in {
+            val decoded = Yaml.decode[YamlOpaqueUserId.Type]("user-123\n")
+
+            assert(decoded == Result.succeed(YamlOpaqueUserId("user-123")))
+        }
+
+        "decodes AnyVal value classes as single-field products" in {
+            val decoded = Yaml.decode[YamlAnyValUserId]("value: user-123\n")
+
+            assert(decoded == Result.succeed(YamlAnyValUserId("user-123")))
+        }
+
+        "decodes old single-field value objects as products" in {
+            val decoded = Yaml.decode[YamlValueObject]("value: user-123\n")
+
+            assert(decoded == Result.succeed(YamlValueObject("user-123")))
+        }
+
+        "decodes opaque and value wrappers nested in a product" in {
+            val yaml =
+                """opaqueId: user-123
+                  |anyValId:
+                  |  value: user-456
+                  |valueObject:
+                  |  value: user-789
+                  |""".stripMargin
+
+            assert(
+                Yaml.decode[YamlValueHolder](yaml) ==
+                    Result.succeed(
+                        YamlValueHolder(
+                            YamlOpaqueUserId("user-123"),
+                            YamlAnyValUserId("user-456"),
+                            YamlValueObject("user-789")
+                        )
+                    )
+            )
+        }
     }
 
     "parse" - {
@@ -230,6 +360,30 @@ class YamlTest extends Test:
                 case Yaml.Node.Mapping(entries, _) =>
                     assert(entries.map(_._1.asInstanceOf[Yaml.Node.Scalar].value) == Chunk("name", "age"))
                     assert(entries.map(_._2.asInstanceOf[Yaml.Node.Scalar].value) == Chunk("Alice", "30"))
+                case other => fail(s"Expected mapping, got $other")
+            end match
+        }
+
+        "parse targets a document by zero-based index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            val parsed = Yaml.parse(yaml, Yaml.DocumentIndex(1)).getOrThrow
+
+            parsed match
+                case Yaml.Node.Mapping(entries, _) =>
+                    val fields = entries.map {
+                        case (Yaml.Node.Scalar(key, _), Yaml.Node.Scalar(value, _)) => key -> value
+                        case other                                                  => fail(s"Expected scalar entry, got $other")
+                    }.toMap
+                    assert(fields("name") == "Bob")
+                    assert(fields("age") == "25")
                 case other => fail(s"Expected mapping, got $other")
             end match
         }
@@ -321,6 +475,48 @@ class YamlTest extends Test:
                     "alias:id"
                 ))
             )
+        }
+
+        "visit targets a document by zero-based index" in {
+            val visitor = new Yaml.Visitor[List[String], String, List[String]]:
+                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
+                    Result.succeed(value :: context)
+
+                def alias(context: List[String], name: String, mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context)
+
+                def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
+                    Result.succeed(context.reverse)
+            end visitor
+
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            assert(Yaml.visit(yaml, Yaml.DocumentIndex(1), Nil)(visitor) == Result.succeed(List("name", "Bob", "age", "25")))
         }
     }
 
