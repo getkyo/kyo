@@ -191,7 +191,7 @@ class YamlTest extends Test:
                   |        children: []
                   |""".stripMargin
 
-            val config = Yaml.Config(
+            val config = Yaml.ReaderConfig(
                 maxDepth = Yaml.DefaultMaxDepth,
                 maxCollectionSize = Yaml.DefaultMaxCollectionSize,
                 documentIndex = Maybe(Yaml.DocumentIndex(1))
@@ -200,6 +200,21 @@ class YamlTest extends Test:
             val expected = TreeNode(1, List(TreeNode(2, List(TreeNode(3, Nil)))))
 
             assert(Yaml.decode[TreeNode](yaml, config) == Result.succeed(expected))
+        }
+
+        "decode uses a contextual reader config for single-argument decode" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            given Yaml.ReaderConfig = Yaml.ReaderConfig(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            assert(Yaml.decode[MTPerson](yaml) == Result.succeed(MTPerson("Bob", 25)))
         }
 
         "accepts YAML directives before the document marker" in {

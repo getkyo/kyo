@@ -173,7 +173,7 @@ Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitE
 
 ### YAML
 
-`Yaml.decode` parses one YAML document into a typed value and returns `Result[DecodeException, A]`. For document streams, use `Yaml.decodeAll`, or pass `Yaml.DocumentIndex(n)` to target one zero-based document without decoding the whole stream. Use `Yaml.Config` when you need both document selection and decode limits.
+`Yaml.decode` parses one YAML document into a typed value and returns `Result[DecodeException, A]`. For document streams, use `Yaml.decodeAll`, or pass `Yaml.DocumentIndex(n)` to target one zero-based document without decoding the whole stream. Use `Yaml.ReaderConfig` when you need both document selection and decode limits.
 
 ```scala
 val yaml =
@@ -192,7 +192,7 @@ Yaml.decode[User](yaml)
 Yaml.decode[User](stream, Yaml.DocumentIndex(1))
 // decodes the second document in the stream
 
-Yaml.decode[User](stream, Yaml.Config(
+Yaml.decode[User](stream, Yaml.ReaderConfig(
     documentIndex = Maybe(Yaml.DocumentIndex(1)),
     maxDepth = 64,
     maxCollectionSize = 1024

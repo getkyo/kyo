@@ -58,9 +58,11 @@ class YamlWriterTest extends Test:
                       |    age: 30
                       |  size: 5
                       |people:
-                      |  - name: Alice
+                      |  -
+                      |    name: Alice
                       |    age: 30
-                      |  - name: Bob
+                      |  -
+                      |    name: Bob
                       |    age: 25
                       |labels:
                       |  env: prod
@@ -86,11 +88,13 @@ class YamlWriterTest extends Test:
 
             assert(
                 yaml ==
-                    """- items:
+                    """-
+                      |  items:
                       |    - 1
                       |    - 2
                       |  name: a
-                      |- items:
+                      |-
+                      |  items:
                       |    - 3
                       |  name: b
                       |""".stripMargin
@@ -105,7 +109,8 @@ class YamlWriterTest extends Test:
 
             assert(
                 yaml ==
-                    """- text: |
+                    """-
+                      |  text: |
                       |    line one
                       |    line two
                       |  name: a
@@ -161,6 +166,34 @@ class YamlWriterTest extends Test:
             assert(Yaml.encode(".5") == "\".5\"\n")
             assert(Yaml.encode("+12e03") == "\"+12e03\"\n")
             assert(Yaml.encode(".inf") == "\".inf\"\n")
+        }
+
+        "uses the readable writer config as the default profile" in {
+            assert(Yaml.WriterConfig.Default == Yaml.WriterConfig.Readable)
+            assert(Yaml.encode(List(MTPerson("Alice", 30))) == "-\n  name: Alice\n  age: 30\n")
+        }
+
+        "uses a contextual writer config for single-argument encode" in {
+            given Yaml.WriterConfig = Yaml.WriterConfig.Compact
+
+            assert(Yaml.encode(List(MTPerson("Alice", 30))) == "- name: Alice\n  age: 30\n")
+        }
+
+        "supports explicit compact small and fast writer profiles" in {
+            val value = MTPerson("Alice", 30)
+
+            assert(Yaml.encode(value, Yaml.WriterConfig.Compact) == "name: Alice\nage: 30\n")
+            assert(Yaml.encode(value, Yaml.WriterConfig.Small) == "{name: Alice, age: 30}")
+            assert(Yaml.encode(value, Yaml.WriterConfig.Fast) == "{\"name\":\"Alice\",\"age\":30}")
+        }
+
+        "supports scalar quoting modes and quote styles" in {
+            val minimal      = Yaml.WriterConfig.Readable.copy(scalarQuoting = Yaml.WriterConfig.ScalarQuoting.WhenNeeded)
+            val singleQuoted = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
+
+            assert(Yaml.encode("true", minimal) == "true\n")
+            assert(Yaml.encode("true", Yaml.WriterConfig.Readable) == "\"true\"\n")
+            assert(Yaml.encode("Alice #1", singleQuoted) == "'Alice #1'\n")
         }
     }
 end YamlWriterTest

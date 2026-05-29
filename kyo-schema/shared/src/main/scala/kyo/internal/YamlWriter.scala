@@ -4,12 +4,13 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.Writer
 
-final class YamlWriter private extends Writer:
+final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
+    import Yaml.WriterConfig.*
 
     sealed private trait Frame
-    final private class MappingFrame(val indent: Int, var first: Boolean, var inlineFirst: Boolean) extends Frame
-    final private class SequenceFrame(val indent: Int)                                              extends Frame
-    final private class EmptyFrame                                                                  extends Frame
+    final private class MappingFrame(val indent: Int, var first: Boolean, var inlineFirst: Boolean, val flow: Boolean) extends Frame
+    final private class SequenceFrame(val indent: Int, val flow: Boolean, var first: Boolean)                          extends Frame
+    final private class EmptyFrame                                                                                     extends Frame
 
     private enum Scalar derives CanEqual:
         case Plain(value: String)
@@ -33,6 +34,14 @@ final class YamlWriter private extends Writer:
 
     override def field(name: String, fieldId: Int): Unit =
         stack match
+            case (frame: MappingFrame) :: _ if frame.flow =>
+                if frame.first then frame.first = false
+                else appendFlowSeparator()
+                writeFlowKey(name)
+                out.append(':')
+                if config.collectionStyle == CollectionStyle.Flow then out.append(' ')
+                pendingField = true
+                lastWriteWasLine = false
             case (frame: MappingFrame) :: _ =>
                 if frame.first then
                     if frame.inlineFirst then frame.inlineFirst = false
@@ -70,8 +79,8 @@ final class YamlWriter private extends Writer:
         Span.from(resultString.getBytes(StandardCharsets.UTF_8))
 
     override def resultString: String =
-        if !released && !lastWriteWasLine then out.append('\n')
-        val result = out.toString
+        if !released && shouldAppendTrailingNewline then out.append('\n')
+        val result = withDocumentMarkers(out.toString)
         out.clear()
         stack = Nil
         pendingField = false
@@ -85,8 +94,10 @@ final class YamlWriter private extends Writer:
             writeEmpty("{}")
             stack = EmptyFrame() :: stack
         else
-            val indent = startContainer(isMapping = true)
-            stack = MappingFrame(indent, first = true, inlineFirst = startsInlineMapping) :: stack
+            val flow   = flowCollections
+            val indent = startContainer(isMapping = true, flow)
+            if flow then out.append('{')
+            stack = MappingFrame(indent, first = true, inlineFirst = !flow && startsInlineMapping, flow) :: stack
         end if
     end startMapping
 
@@ -95,28 +106,36 @@ final class YamlWriter private extends Writer:
             writeEmpty("[]")
             stack = EmptyFrame() :: stack
         else
-            val indent = startContainer(isMapping = false)
-            stack = SequenceFrame(indent) :: stack
+            val flow   = flowCollections
+            val indent = startContainer(isMapping = false, flow)
+            if flow then out.append('[')
+            stack = SequenceFrame(indent, flow, first = true) :: stack
         end if
     end startSequence
 
-    private def startContainer(isMapping: Boolean): Int =
+    private def startContainer(isMapping: Boolean, childFlow: Boolean): Int =
         released = false
         stack match
+            case (_: MappingFrame) :: _ if pendingField && currentMappingFlow =>
+                pendingField = false
+                currentIndent
             case (_: MappingFrame) :: _ if pendingField =>
                 out.append('\n')
                 pendingField = false
                 lastWriteWasLine = true
-                currentIndent + 2
+                currentIndent + indentSize
+            case (frame: SequenceFrame) :: _ if frame.flow =>
+                flowSequenceElement(frame)
+                frame.indent
             case (frame: SequenceFrame) :: _ =>
                 writeIndent(frame.indent)
                 out.append("-")
-                if isMapping then out.append(' ')
+                if isMapping && config.sequenceMappingStyle == SequenceMappingStyle.Compact && !childFlow then out.append(' ')
                 else
                     out.append('\n')
                     lastWriteWasLine = true
                 end if
-                frame.indent + 2
+                frame.indent + indentSize
             case _ =>
                 0
         end match
@@ -127,6 +146,12 @@ final class YamlWriter private extends Writer:
 
     private def endCollection(): Unit =
         stack match
+            case (frame: MappingFrame) :: rest =>
+                stack = rest
+                if frame.flow then out.append('}')
+            case (frame: SequenceFrame) :: rest =>
+                stack = rest
+                if frame.flow then out.append(']')
             case _ :: rest => stack = rest
             case Nil       => ()
         end match
@@ -138,18 +163,26 @@ final class YamlWriter private extends Writer:
     private def writeScalar(scalar: Scalar): Unit =
         released = false
         stack match
+            case (_: MappingFrame) :: _ if pendingField && currentMappingFlow =>
+                val _ = appendScalar(scalar, currentIndent + indentSize)
+                pendingField = false
+                lastWriteWasLine = false
             case (_: MappingFrame) :: _ if pendingField =>
                 out.append(' ')
-                if !appendScalar(scalar, currentIndent + 2) then out.append('\n')
+                if !appendScalar(scalar, currentIndent + indentSize) then out.append('\n')
                 pendingField = false
                 lastWriteWasLine = true
+            case (frame: SequenceFrame) :: _ if frame.flow =>
+                flowSequenceElement(frame)
+                val _ = appendScalar(scalar, frame.indent + indentSize)
+                lastWriteWasLine = false
             case (frame: SequenceFrame) :: _ =>
                 writeIndent(frame.indent)
                 out.append("- ")
-                if !appendScalar(scalar, frame.indent + 2) then out.append('\n')
+                if !appendScalar(scalar, frame.indent + indentSize) then out.append('\n')
                 lastWriteWasLine = true
             case _ =>
-                if !appendScalar(scalar, 2) then out.append('\n')
+                if !appendScalar(scalar, indentSize) then out.append('\n')
                 lastWriteWasLine = true
         end match
     end writeScalar
@@ -168,22 +201,23 @@ final class YamlWriter private extends Writer:
     end appendScalar
 
     private def stringScalar(value: String): Scalar =
-        if value.indexOf('\n') >= 0 && value.indexOf('\r') < 0 then Scalar.Literal(value)
-        else if isPlainSafe(value) then Scalar.Plain(value)
+        if value.indexOf('\n') >= 0 && value.indexOf('\r') < 0 && config.multilineStyle != MultilineStyle.DoubleQuoted && !flowContext then
+            Scalar.Literal(value)
+        else if config.scalarQuoting != ScalarQuoting.QuoteAllStrings && isPlainSafe(value) && !jsonCompatibleFlow then Scalar.Plain(value)
         else Scalar.Quoted(value)
     end stringScalar
 
     private def floatScalar(value: Float): Scalar =
-        if value.isNaN then Scalar.Plain(".nan")
-        else if value == Float.PositiveInfinity then Scalar.Plain(".inf")
-        else if value == Float.NegativeInfinity then Scalar.Plain("-.inf")
+        if value.isNaN then specialFloat("NaN", ".nan")
+        else if value == Float.PositiveInfinity then specialFloat("Infinity", ".inf")
+        else if value == Float.NegativeInfinity then specialFloat("-Infinity", "-.inf")
         else Scalar.Plain(value.toString)
     end floatScalar
 
     private def doubleScalar(value: Double): Scalar =
-        if value.isNaN then Scalar.Plain(".nan")
-        else if value == Double.PositiveInfinity then Scalar.Plain(".inf")
-        else if value == Double.NegativeInfinity then Scalar.Plain("-.inf")
+        if value.isNaN then specialFloat("NaN", ".nan")
+        else if value == Double.PositiveInfinity then specialFloat("Infinity", ".inf")
+        else if value == Double.NegativeInfinity then specialFloat("-Infinity", "-.inf")
         else Scalar.Plain(value.toString)
     end doubleScalar
 
@@ -208,7 +242,18 @@ final class YamlWriter private extends Writer:
         else appendQuoted(value)
     end writeKey
 
+    private def writeFlowKey(value: String): Unit =
+        if jsonCompatibleFlow then appendDoubleQuoted(value)
+        else writeKey(value)
+    end writeFlowKey
+
     private def appendQuoted(value: String): Unit =
+        if config.quoteStyle == QuoteStyle.Single && !value.exists(c => c < ' ' || c == '\n' || c == '\r' || c == '\t') then
+            appendSingleQuoted(value)
+        else appendDoubleQuoted(value)
+    end appendQuoted
+
+    private def appendDoubleQuoted(value: String): Unit =
         out.append('"')
         value.foreach {
             case '"'  => out.append("\\\"")
@@ -227,7 +272,16 @@ final class YamlWriter private extends Writer:
             case c => out.append(c)
         }
         out.append('"')
-    end appendQuoted
+    end appendDoubleQuoted
+
+    private def appendSingleQuoted(value: String): Unit =
+        out.append('\'')
+        value.foreach {
+            case '\'' => out.append("''")
+            case c    => out.append(c)
+        }
+        out.append('\'')
+    end appendSingleQuoted
 
     private def appendLiteral(value: String, contentIndent: Int): Unit =
         out.append(literalHeader(value))
@@ -252,20 +306,37 @@ final class YamlWriter private extends Writer:
     end appendLiteral
 
     private def literalHeader(value: String): String =
-        if !value.endsWith("\n") then "|-"
-        else
-            var i = value.length - 1
-            while i >= 0 && value.charAt(i) == '\n' do i -= 1
-            if value.length - 1 - i > 1 then "|+"
-            else "|"
+        val marker =
+            config.multilineStyle match
+                case MultilineStyle.Folded => ">"
+                case _                     => "|"
+        marker + (
+            config.chomping match
+                case Chomping.Strip => "-"
+                case Chomping.Keep  => "+"
+                case Chomping.Clip  => ""
+                case Chomping.Preserve =>
+                    if !value.endsWith("\n") then "-"
+                    else
+                        var i = value.length - 1
+                        while i >= 0 && value.charAt(i) == '\n' do i -= 1
+                        if value.length - 1 - i > 1 then "+"
+                        else ""
+        )
     end literalHeader
 
     private def isPlainSafeKey(value: String): Boolean =
-        isPlainSafe(value) && value.indexOf(':') < 0
+        config.scalarQuoting != ScalarQuoting.QuoteAllStrings &&
+            isPlainSyntaxSafe(value) && value.indexOf(':') < 0 && !quotesAmbiguousScalar(value)
 
     private def isPlainSafe(value: String): Boolean =
+        isPlainSyntaxSafe(value) && !quotesAmbiguousScalar(value)
+
+    private def quotesAmbiguousScalar(value: String): Boolean =
+        config.scalarQuoting == ScalarQuoting.QuoteAmbiguous && resolvesAsCoreScalar(value)
+
+    private def isPlainSyntaxSafe(value: String): Boolean =
         if value.isEmpty || value.trim != value then false
-        else if resolvesAsCoreScalar(value) then false
         else
             val first = value.charAt(0)
             if first == '-' || first == '?' || first == ':' || first == ',' || first == '[' || first == ']' ||
@@ -288,12 +359,62 @@ final class YamlWriter private extends Writer:
                 safe
             end if
         end if
-    end isPlainSafe
+    end isPlainSyntaxSafe
 
     private def resolvesAsCoreScalar(value: String): Boolean =
         YamlScalars.resolvesAsCore(value)
+
+    private def flowCollections: Boolean =
+        config.collectionStyle != CollectionStyle.Block
+
+    private def jsonCompatibleFlow: Boolean =
+        config.collectionStyle == CollectionStyle.JsonCompatibleFlow
+
+    private def flowContext: Boolean =
+        stack.exists {
+            case frame: MappingFrame  => frame.flow
+            case frame: SequenceFrame => frame.flow
+            case _                    => false
+        }
+
+    private def currentMappingFlow: Boolean =
+        stack match
+            case (frame: MappingFrame) :: _ => frame.flow
+            case _                          => false
+
+    private def appendFlowSeparator(): Unit =
+        out.append(',')
+        if config.collectionStyle == CollectionStyle.Flow then out.append(' ')
+
+    private def flowSequenceElement(frame: SequenceFrame): Unit =
+        if frame.first then frame.first = false
+        else appendFlowSeparator()
+
+    private def specialFloat(quoted: String, yaml: String): Scalar =
+        config.specialFloatStyle match
+            case SpecialFloatStyle.QuotedJsonCompatible => Scalar.Quoted(quoted)
+            case SpecialFloatStyle.YamlCore             => Scalar.Plain(yaml)
+
+    private def indentSize: Int =
+        math.max(1, config.indent)
+
+    private def shouldAppendTrailingNewline: Boolean =
+        config.trailingNewline && !lastWriteWasLine
+
+    private def withDocumentMarkers(body: String): String =
+        config.documentMarkers match
+            case DocumentMarkers.None =>
+                body
+            case DocumentMarkers.Start =>
+                "---\n" + body
+            case DocumentMarkers.StartAndEnd =>
+                val middle =
+                    if body.endsWith("\n") then body
+                    else body + "\n"
+                "---\n" + middle + "...\n"
 end YamlWriter
 
 object YamlWriter:
-    def apply(): YamlWriter = new YamlWriter()
+    def apply(): YamlWriter                          = new YamlWriter(Yaml.WriterConfig.Default)
+    def apply(config: Yaml.WriterConfig): YamlWriter = new YamlWriter(config)
 end YamlWriter

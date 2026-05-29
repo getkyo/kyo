@@ -2,8 +2,8 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-final class Yaml extends Codec:
-    def newWriter(): Codec.Writer = kyo.internal.YamlWriter()
+final class Yaml(writerConfig: Yaml.WriterConfig = Yaml.WriterConfig.Default) extends Codec:
+    def newWriter(): Codec.Writer = kyo.internal.YamlWriter(writerConfig)
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         kyo.internal.YamlReader(input)
 end Yaml
@@ -40,16 +40,108 @@ object Yaml:
 
     /** Decoding settings for YAML input.
       *
-      * `Config` keeps parser limits and stream selection in one value so callers can choose a document from a multi-document stream
+      * `ReaderConfig` keeps parser limits and stream selection in one value so callers can choose a document from a multi-document stream
       * without losing access to safety limits. `maxDepth` limits nested codec reads, and `maxCollectionSize` limits collection entries in
       * the same way as [[Json]] decoding. `documentIndex` is empty for single-document decoding and set to `DocumentIndex(n)` to decode
       * the zero-based nth document from a stream. The default configuration decodes exactly one document with the standard limits.
       */
-    case class Config(
+    case class ReaderConfig(
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize,
         documentIndex: Maybe[DocumentIndex] = Absent
     ) derives CanEqual
+
+    object ReaderConfig:
+        val Default: ReaderConfig = ReaderConfig()
+        given ReaderConfig        = Default
+    end ReaderConfig
+
+    /** Encoding settings for YAML output.
+      *
+      * `WriterConfig` controls the YAML surface syntax produced by schema encoding without changing the value being written. The default
+      * profile favors readable, round-trip-friendly block YAML: collections use indentation, ambiguous strings are quoted, and multiline
+      * strings use block scalars.
+      *
+      * The config can also select flow output for compact documents, JSON-compatible flow output for speed-oriented processing, quote and
+      * multiline scalar styles, document markers, indentation width, trailing newline behavior, and special floating-point rendering.
+      * Profiles in the companion provide named starting points for common tradeoffs: readability, compactness, smaller payloads, and fast
+      * downstream processing.
+      *
+      * IMPORTANT: `ScalarQuoting.WhenNeeded` can emit plain strings such as `true` or `0x3A` without quotes. Use the default
+      * `QuoteAmbiguous` behavior when encoded YAML should decode back to strings under the YAML Core schema.
+      */
+    case class WriterConfig(
+        collectionStyle: WriterConfig.CollectionStyle = WriterConfig.CollectionStyle.Block,
+        sequenceMappingStyle: WriterConfig.SequenceMappingStyle = WriterConfig.SequenceMappingStyle.Indented,
+        indent: Int = 2,
+        scalarQuoting: WriterConfig.ScalarQuoting = WriterConfig.ScalarQuoting.QuoteAmbiguous,
+        quoteStyle: WriterConfig.QuoteStyle = WriterConfig.QuoteStyle.Double,
+        multilineStyle: WriterConfig.MultilineStyle = WriterConfig.MultilineStyle.Literal,
+        chomping: WriterConfig.Chomping = WriterConfig.Chomping.Preserve,
+        documentMarkers: WriterConfig.DocumentMarkers = WriterConfig.DocumentMarkers.None,
+        trailingNewline: Boolean = true,
+        specialFloatStyle: WriterConfig.SpecialFloatStyle = WriterConfig.SpecialFloatStyle.YamlCore
+    ) derives CanEqual
+
+    object WriterConfig:
+        enum CollectionStyle derives CanEqual:
+            case Block, Flow, JsonCompatibleFlow
+        end CollectionStyle
+
+        enum SequenceMappingStyle derives CanEqual:
+            case Compact, Indented
+        end SequenceMappingStyle
+
+        enum ScalarQuoting derives CanEqual:
+            case WhenNeeded, QuoteAmbiguous, QuoteAllStrings
+        end ScalarQuoting
+
+        enum QuoteStyle derives CanEqual:
+            case Double, Single
+        end QuoteStyle
+
+        enum MultilineStyle derives CanEqual:
+            case Literal, Folded, DoubleQuoted
+        end MultilineStyle
+
+        enum Chomping derives CanEqual:
+            case Clip, Strip, Keep, Preserve
+        end Chomping
+
+        enum DocumentMarkers derives CanEqual:
+            case None, Start, StartAndEnd
+        end DocumentMarkers
+
+        enum SpecialFloatStyle derives CanEqual:
+            case YamlCore, QuotedJsonCompatible
+        end SpecialFloatStyle
+
+        val Readable: WriterConfig = WriterConfig()
+
+        val Compact: WriterConfig =
+            WriterConfig(sequenceMappingStyle = SequenceMappingStyle.Compact)
+
+        val Small: WriterConfig =
+            WriterConfig(
+                collectionStyle = CollectionStyle.Flow,
+                sequenceMappingStyle = SequenceMappingStyle.Compact,
+                multilineStyle = MultilineStyle.DoubleQuoted,
+                trailingNewline = false
+            )
+
+        val Fast: WriterConfig =
+            WriterConfig(
+                collectionStyle = CollectionStyle.JsonCompatibleFlow,
+                sequenceMappingStyle = SequenceMappingStyle.Compact,
+                scalarQuoting = ScalarQuoting.QuoteAllStrings,
+                multilineStyle = MultilineStyle.DoubleQuoted,
+                specialFloatStyle = SpecialFloatStyle.QuotedJsonCompatible,
+                trailingNewline = false
+            )
+
+        val Default: WriterConfig = Readable
+        given WriterConfig        = Default
+    end WriterConfig
 
     /** Source position in the YAML stream. */
     case class Mark(index: Int, line: Int, column: Int) derives CanEqual
@@ -117,32 +209,53 @@ object Yaml:
         parseEach(input)(parse)
 
     /** Encodes a value of type A as YAML. */
-    inline def encode[A](value: A)(using schema: Schema[A], frame: Frame): String =
-        val w = summon[Yaml].newWriter()
+    inline def encode[A](value: A)(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): String =
+        val w = internal.YamlWriter(writerConfig)
+        schema.writeTo(value, w)
+        w.resultString
+    end encode
+
+    /** Encodes a value of type A as YAML using explicit writer configuration. */
+    inline def encode[A](value: A, writerConfig: WriterConfig)(using schema: Schema[A], frame: Frame): String =
+        val w = internal.YamlWriter(writerConfig)
         schema.writeTo(value, w)
         w.resultString
     end encode
 
     /** Encodes a value of type A as UTF-8 YAML bytes. */
-    inline def encodeBytes[A](value: A)(using schema: Schema[A], frame: Frame): Span[Byte] =
-        val w = summon[Yaml].newWriter()
+    inline def encodeBytes[A](value: A)(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): Span[Byte] =
+        val w = internal.YamlWriter(writerConfig)
+        schema.writeTo(value, w)
+        w.result()
+    end encodeBytes
+
+    /** Encodes a value of type A as UTF-8 YAML bytes using explicit writer configuration. */
+    inline def encodeBytes[A](value: A, writerConfig: WriterConfig)(using schema: Schema[A], frame: Frame): Span[Byte] =
+        val w = internal.YamlWriter(writerConfig)
         schema.writeTo(value, w)
         w.result()
     end encodeBytes
 
     /** Decodes a single YAML document into a value of type A. */
     def decode[A](
+        input: String
+    )(using yaml: Yaml, schema: Schema[A], config: ReaderConfig, frame: Frame): Result[DecodeException, A] =
+        decode(input, config)
+    end decode
+
+    /** Decodes a single YAML document into a value of type A with explicit limits. */
+    def decode[A](
         input: String,
-        maxDepth: Int = DefaultMaxDepth,
-        maxCollectionSize: Int = DefaultMaxCollectionSize
+        maxDepth: Int,
+        maxCollectionSize: Int
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        decode(input, Config(maxDepth, maxCollectionSize))
+        decode(input, ReaderConfig(maxDepth, maxCollectionSize))
     end decode
 
     /** Decodes YAML into a value of type A using explicit configuration. */
     def decode[A](
         input: String,
-        config: Config
+        config: ReaderConfig
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         config.documentIndex match
             case Present(index) =>
@@ -154,17 +267,24 @@ object Yaml:
 
     /** Decodes UTF-8 YAML bytes into a value of type A. */
     def decodeBytes[A](
+        input: Span[Byte]
+    )(using yaml: Yaml, schema: Schema[A], config: ReaderConfig, frame: Frame): Result[DecodeException, A] =
+        decodeBytes(input, config)
+    end decodeBytes
+
+    /** Decodes UTF-8 YAML bytes into a value of type A with explicit limits. */
+    def decodeBytes[A](
         input: Span[Byte],
-        maxDepth: Int = DefaultMaxDepth,
-        maxCollectionSize: Int = DefaultMaxCollectionSize
+        maxDepth: Int,
+        maxCollectionSize: Int
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        decodeBytes(input, Config(maxDepth, maxCollectionSize))
+        decodeBytes(input, ReaderConfig(maxDepth, maxCollectionSize))
     end decodeBytes
 
     /** Decodes UTF-8 YAML bytes into a value of type A using explicit configuration. */
     def decodeBytes[A](
         input: Span[Byte],
-        config: Config
+        config: ReaderConfig
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         config.documentIndex match
             case Present(index) =>
@@ -201,7 +321,7 @@ object Yaml:
         maxDepth: Int,
         maxCollectionSize: Int
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        decode[A](input, Config(maxDepth, maxCollectionSize, Maybe(documentIndex)))
+        decode[A](input, ReaderConfig(maxDepth, maxCollectionSize, Maybe(documentIndex)))
     end decode
 
     /** Decodes one document from UTF-8 YAML bytes into a value of type A. */
@@ -219,7 +339,7 @@ object Yaml:
         maxDepth: Int,
         maxCollectionSize: Int
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        decodeBytes[A](input, Config(maxDepth, maxCollectionSize, Maybe(documentIndex)))
+        decodeBytes[A](input, ReaderConfig(maxDepth, maxCollectionSize, Maybe(documentIndex)))
     end decodeBytes
 
     /** Decodes every document in an explicit YAML stream. */
