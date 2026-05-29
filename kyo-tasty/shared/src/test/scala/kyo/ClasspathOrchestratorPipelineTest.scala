@@ -15,6 +15,8 @@ import scala.collection.mutable
   */
 class ClasspathOrchestratorPipelineTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     /** Minimal in-memory FileSource for pipeline tests. */
     final class MemFileSource(files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty) extends FileSource:
 

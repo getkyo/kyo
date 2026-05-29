@@ -23,6 +23,8 @@ import kyo.internal.tasty.symbol.Interner
   */
 class NameUnpicklerTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     /** Return the PlainClass.tasty fixture bytes (embedded for cross-platform compatibility). */
     private def loadFixture(): Array[Byte] = Embedded.plainClassTasty
 

@@ -31,6 +31,8 @@ import kyo.internal.tasty.type_.TypeArena
   */
 class Scala2PickleTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     private val interner = new Interner(numShards = 32, initialShardCapacity = 16)
 
     // -------------------------------------------------------------------------

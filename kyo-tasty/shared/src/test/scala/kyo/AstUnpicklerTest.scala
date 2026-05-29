@@ -23,6 +23,8 @@ import scala.collection.mutable
   */
 class AstUnpicklerTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     private def loadFixtureBytes(fileName: String): Array[Byte] =
         fileName match
             case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty

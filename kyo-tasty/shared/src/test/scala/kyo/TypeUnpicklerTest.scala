@@ -32,6 +32,8 @@ import scala.collection.mutable
   */
 class TypeUnpicklerTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     private def makeArena(): TypeArena   = TypeArena.canonical()
     private def makeHome(): ClasspathRef = new ClasspathRef
 

@@ -48,6 +48,8 @@ object Subtyping:
       *   remaining Rec-unfolding steps; 0 means return false conservatively
       */
     def isSubtype(sub: Tasty.Type, sup: Tasty.Type, cp: InternalClasspath, budget: Int): Boolean =
+        // Unsafe: Symbol.fullName and Name.asString require AllowUnsafe; embraced here in the subtype-check context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         if budget <= 0 then false
         else
             // Any is supertype of everything
@@ -125,6 +127,7 @@ object Subtyping:
 
                         case _ =>
                             false
+        end if
     end isSubtype
 
     /** Check `Named(subSym) <: Named(supSym)` by walking `subSym`'s transitive parent chain. */

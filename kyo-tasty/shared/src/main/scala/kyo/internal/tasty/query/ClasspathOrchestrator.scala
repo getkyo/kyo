@@ -524,6 +524,8 @@ object ClasspathOrchestrator:
         interner: Interner,
         cp: Classpath
     )(using Frame): FileResult < (Sync & Abort[TastyError]) =
+        // Unsafe: Symbol.fullName requires AllowUnsafe; embraced here in the orchestration decode context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         val view  = ByteView(bytes)
         val home  = new ClasspathRef
         val arena = new TypeArena
@@ -575,8 +577,11 @@ object ClasspathOrchestrator:
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
     private def nameToString(n: Tasty.Name): String =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the orchestration context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         import Tasty.Name.asString
         n.asString
+    end nameToString
 
     /** Create a synthetic unresolved symbol for a FQN not found in fqnIndex.
       *

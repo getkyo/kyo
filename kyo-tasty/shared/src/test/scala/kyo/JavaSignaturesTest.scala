@@ -9,6 +9,8 @@ import kyo.internal.tasty.symbol.Interner
   */
 class JavaSignaturesTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     private val interner = new Interner(numShards = 8, initialShardCapacity = 16)
 
     // -------------------------------------------------------------------------

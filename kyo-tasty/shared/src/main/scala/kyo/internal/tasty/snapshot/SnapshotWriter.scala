@@ -296,7 +296,10 @@ object SnapshotWriter:
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
     private def nameToStr(n: Tasty.Name): String =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the snapshot-serialization context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         import Tasty.Name.asString
         n.asString
+    end nameToStr
 
 end SnapshotWriter

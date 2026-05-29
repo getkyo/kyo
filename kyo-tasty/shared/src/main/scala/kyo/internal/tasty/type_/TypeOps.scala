@@ -1,5 +1,6 @@
 package kyo.internal.tasty.type_
 
+import kyo.AllowUnsafe
 import kyo.Chunk
 import kyo.Tasty
 
@@ -27,6 +28,8 @@ object TypeOps:
 
     /** Smart constructor for APPLIEDtype normalization. */
     def applied(base: Tasty.Type, args: Chunk[Tasty.Type]): Tasty.Type =
+        // Unsafe: Symbol.fullName and Name.asString require AllowUnsafe; embraced here in type-normalization context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         base match
             case Tasty.Type.Named(sym) =>
                 val fqn = sym.fullName.asString
@@ -43,13 +46,19 @@ object TypeOps:
                 end if
             case _ =>
                 Tasty.Type.Applied(base, args)
+        end match
+    end applied
 
     /** Smart constructor for ANDtype normalization: collapse AndType(Singleton, X) or AndType(X, Singleton) to X. */
     def andType(left: Tasty.Type, right: Tasty.Type): Tasty.Type =
+        // Unsafe: Symbol.fullName and Name.asString require AllowUnsafe; embraced here in type-normalization context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         (left, right) match
             case (Tasty.Type.Named(sym), _) if sym.fullName.asString == SingletonFqn => right
             case (_, Tasty.Type.Named(sym)) if sym.fullName.asString == SingletonFqn => left
             case _                                                                   => Tasty.Type.AndType(left, right)
+        end match
+    end andType
 
     /** Direct Array constructor for Java array types from the classfile reader. */
     def mkArray(elem: Tasty.Type): Tasty.Type = Tasty.Type.Array(elem)

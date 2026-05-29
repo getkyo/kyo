@@ -29,6 +29,8 @@ import scala.collection.immutable.IntMap
   */
 class PositionsUnpicklerTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     // ── Encoding helpers ─────────────────────────────────────────────────────
 
     /** Encode a small non-negative Nat (0-127) as a single TASTy byte. */

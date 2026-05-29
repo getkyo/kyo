@@ -72,6 +72,8 @@ object AttributeUnpickler:
     end read
 
     private def readSync(view: ByteView, names: Array[Tasty.Name]): FileAttributes =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         var explicitNulls             = false
         var captureChecked            = false
         var isJava                    = false

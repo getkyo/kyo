@@ -14,6 +14,8 @@ object RuntimeReflectionExample:
 
     /** Returns the public val fields of `A` as `(name, type)` pairs. */
     def fieldsOf[A](using t: Tag[A], frame: Frame): Chunk[(String, Tasty.Type)] < (Sync & Async & Abort[TastyError] & Scope) =
+        // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         val fqn = Tasty.classFqn[A]
         for
             cp  <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
@@ -27,6 +29,8 @@ object RuntimeReflectionExample:
 
     /** Returns a structural type summary of a known type for debugging or printing. */
     def describe[A](using t: Tag[A], frame: Frame): String < (Sync & Async & Abort[TastyError] & Scope) =
+        // Unsafe: Symbol.parents requires AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         val fqn = Tasty.classFqn[A]
         for
             cp  <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")

@@ -17,6 +17,8 @@ import scala.collection.mutable
   */
 class SnapshotRoundTripTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     /** An in-memory FileSource backed by a mutable map of path -> bytes. */
     class MemoryFileSource(val files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty) extends FileSource:
 

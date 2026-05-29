@@ -35,6 +35,8 @@ object CodegenExample:
         yield ()
 
     private def buildFacadeType(sym: Tasty.Symbol): FacadeType =
+        // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         val parents = sym.parents
         val decls   = sym.declarations
         val methods = decls.filter(_.kind == Tasty.SymbolKind.Method).map(buildFacadeMethod)
@@ -42,12 +44,18 @@ object CodegenExample:
     end buildFacadeType
 
     private def buildFacadeMethod(sym: Tasty.Symbol): FacadeMethod =
+        // Unsafe: Symbol.declaredType requires AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         sym.declaredType match
             case f: Tasty.Type.Function => FacadeMethod(sym.name, sym.flags, f.result, f.params)
             case other                  => FacadeMethod(sym.name, sym.flags, other, Chunk.empty)
+    end buildFacadeMethod
 
     private def renderFacade(f: FacadeType): String =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         val methodLines = f.methods.map(m => s"  ${m.name.asString}: ${m.returnType.show}").mkString("\n")
         s"facade ${f.name.asString} {\n$methodLines\n}"
+    end renderFacade
 
 end CodegenExample

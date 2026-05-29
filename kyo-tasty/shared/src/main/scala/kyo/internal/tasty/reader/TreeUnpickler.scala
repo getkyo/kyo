@@ -171,6 +171,8 @@ object TreeUnpickler:
 
     /** Dispatch on the tag byte (already consumed). */
     private def decodeTreeTag(tag: Int, startAddr: Int, view: ByteView, ctx: DecodeCtx): Tasty.Tree =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the tree-decode context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         tag match
 
             // ── Category 1: tag only (1-59) -- literal constants & modifiers ─────

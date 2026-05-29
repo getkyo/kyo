@@ -63,11 +63,10 @@ object Tasty:
         given CanEqual[Name, Name] = CanEqual.canEqualAny
 
         extension (n: Name)
-            /** Decode the interned bytes to a String (lazily cached). */
-            def asString: String =
-                // Unsafe: OnceCell.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
-                import AllowUnsafe.embrace.danger
-                n.string.get()
+            /** Decode the interned bytes to a String (lazily cached). Requires (using AllowUnsafe) because the underlying OnceCell.get() is
+              * unsafe-tier.
+              */
+            def asString(using AllowUnsafe): String = n.string.get()
         end extension
     end Name
 
@@ -388,13 +387,19 @@ object Tasty:
         case MatchType(bound: Type, scrutinee: Type, cases: Chunk[Type])
         case FlexibleType(underlying: Type)
 
-        def show: String = this match
-            case Named(sym)             => sym.fullName.toString
-            case Applied(base, args)    => s"${base.show}[${args.map(_.show).mkString(", ")}]"
-            case Array(elem)            => s"${elem.show}[]"
-            case Function(ps, r, isCtx) => s"(${ps.map(_.show).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${r.show}"
-            case Tuple(es)              => s"(${es.map(_.show).mkString(", ")})"
-            case other                  => other.toString
+        def show: String =
+            // Unsafe: sym.fullName requires AllowUnsafe; embraced here at the diagnostic display boundary (§839 case 3).
+            import AllowUnsafe.embrace.danger
+            import Name.asString
+            this match
+                case Named(sym)             => sym.fullName.asString
+                case Applied(base, args)    => s"${base.show}[${args.map(_.show).mkString(", ")}]"
+                case Array(elem)            => s"${elem.show}[]"
+                case Function(ps, r, isCtx) => s"(${ps.map(_.show).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${r.show}"
+                case Tuple(es)              => s"(${es.map(_.show).mkString(", ")})"
+                case other                  => other.toString
+            end match
+        end show
     end Type
 
     // ── Tree ADT ────────────────────────────────────────────────────────────
@@ -557,20 +562,13 @@ object Tasty:
             )
 
         // Pure accessors (no effect, always present even after classpath close).
-        def fullName: Name =
-            // Unsafe: OnceCell.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
-            import AllowUnsafe.embrace.danger
-            _fullNameOnce.get()
-        end fullName
-        def binaryName: String    = Symbol.computeBinaryName(this)
-        def isInline: Boolean     = flags.contains(Flag.Inline)
-        def isContextual: Boolean = flags.contains(Flag.Given)
-        def isOpaque: Boolean     = flags.contains(Flag.Opaque)
-        def isPackageObject: Boolean =
-            // Unsafe: OnceCell.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public API boundary.
-            import AllowUnsafe.embrace.danger
+        def fullName(using AllowUnsafe): Name = _fullNameOnce.get()
+        def binaryName: String                = Symbol.computeBinaryName(this)
+        def isInline: Boolean                 = flags.contains(Flag.Inline)
+        def isContextual: Boolean             = flags.contains(Flag.Given)
+        def isOpaque: Boolean                 = flags.contains(Flag.Opaque)
+        def isPackageObject(using AllowUnsafe): Boolean =
             flags.contains(Flag.Module) && name.string.get() == "package"
-        end isPackageObject
         def isModule: Boolean = flags.contains(Flag.Module)
         def isJava: Boolean   = flags.contains(Flag.JavaDefined)
 
@@ -580,12 +578,9 @@ object Tasty:
           * symbols without a comment, for Java-sourced classfile symbols (classfiles have no Comments section), and for symbols whose home
           * classpath has not yet been loaded. This is a pure accessor: it reads from a pre-populated write-once slot with no classpath I/O.
           */
-        def scaladoc: Maybe[String] =
-            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
-            import AllowUnsafe.embrace.danger
+        def scaladoc(using AllowUnsafe): Maybe[String] =
             if _scaladoc.isSet then _scaladoc.get()
             else Maybe.Absent
-        end scaladoc
 
         /** The source position of this symbol, if known.
           *
@@ -594,12 +589,9 @@ object Tasty:
           * section, and for symbols whose home classpath has not yet been loaded. This is a pure accessor: it reads from a pre-populated
           * write-once slot with no classpath I/O.
           */
-        def position: Maybe[Position] =
-            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
-            import AllowUnsafe.embrace.danger
+        def position(using AllowUnsafe): Maybe[Position] =
             if _position.isSet then _position.get()
             else Maybe.Absent
-        end position
 
         // Resolving accessors.
 
@@ -616,47 +608,29 @@ object Tasty:
           * @note
           *   Populated eagerly during cold-load mergeResults; readable as a pure accessor thereafter.
           */
-        def declaredType: Type =
+        def declaredType(using AllowUnsafe): Type =
             if kind == SymbolKind.Package then
                 throw new IllegalArgumentException("Symbol.declaredType is not available for Package symbols")
             else
-                // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
-                // Reading immutable Ready-state data populated during open, before any user access.
-                import AllowUnsafe.embrace.danger
                 _declaredType.get()
 
         /** The parent types of this symbol (superclass and mixed-in traits).
           *
           * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
           */
-        def parents: Chunk[Type] =
-            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
-            // Reading immutable Ready-state data set during open, before any user access.
-            import AllowUnsafe.embrace.danger
-            _parents.get()
-        end parents
+        def parents(using AllowUnsafe): Chunk[Type] = _parents.get()
 
         /** The type parameters of this symbol.
           *
           * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
           */
-        def typeParams: Chunk[Symbol] =
-            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
-            // Reading immutable Ready-state data set during open, before any user access.
-            import AllowUnsafe.embrace.danger
-            _typeParams.get()
-        end typeParams
+        def typeParams(using AllowUnsafe): Chunk[Symbol] = _typeParams.get()
 
         /** The member declarations of this symbol (methods, fields, nested types).
           *
           * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
           */
-        def declarations: Chunk[Symbol] =
-            // Unsafe: SingleAssign.get() is an unsafe-tier helper; AllowUnsafe is embraced here at the public accessor boundary.
-            // Reading immutable Ready-state data set during open, before any user access.
-            import AllowUnsafe.embrace.danger
-            _declarations.get()
-        end declarations
+        def declarations(using AllowUnsafe): Chunk[Symbol] = _declarations.get()
 
         /** The companion object symbol of this class or trait, if one exists.
           *
@@ -666,7 +640,7 @@ object Tasty:
           *
           * Pure accessor: reads from the fqnIndex HashMap in the immutable Ready state via AllowUnsafe. Valid after `open` returns.
           */
-        def companion: Maybe[Symbol] =
+        def companion(using AllowUnsafe): Maybe[Symbol] =
             if isJava then Maybe.Absent
             else if !home.isAssigned then Maybe.Absent
             else
@@ -772,6 +746,9 @@ object Tasty:
           * computed separately via computeBinaryName.
           */
         private[Tasty] def computeFullName(s: Symbol): Name =
+            // Unsafe: name.asString requires AllowUnsafe; embraced here because this method runs only as an
+            // OnceCell init thunk (initialization context, §839 case 3).
+            import AllowUnsafe.embrace.danger
             val parts = new scala.collection.mutable.ArrayBuffer[String]()
             var cur   = s
             while (cur ne null) && (cur.owner ne cur) && cur.owner != null do
@@ -785,6 +762,9 @@ object Tasty:
         end computeFullName
 
         private[Tasty] def computeBinaryName(s: Symbol): String =
+            // Unsafe: name.asString requires AllowUnsafe; embraced here because binaryName is a pure
+            // computation from interned Names (initialization context, §839 case 3).
+            import AllowUnsafe.embrace.danger
             // Walk owner chain producing JVM binary form:
             //   - packages (kind == Package) contribute segments separated by '/'
             //   - class/trait/object segments are separated by '$' from a preceding class segment

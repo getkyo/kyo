@@ -19,6 +19,8 @@ object JavaScalaBridgeExample:
     )
 
     def summarize(fqn: String)(using Frame): Maybe[ClassSummary] < (Sync & Async & Abort[TastyError] & Scope) =
+        // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         for
             cp <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
         yield cp.findClass(fqn) match
@@ -32,6 +34,7 @@ object JavaScalaBridgeExample:
                     parents = parents.map(_.show),
                     members = decls.map(_.name.asString)
                 ))
+    end summarize
 
     /** Compare a Java class and its Scala counterpart side-by-side. */
     def compare(javaFqn: String, scalaFqn: String)(using Frame): String < (Sync & Async & Abort[TastyError] & Scope) =

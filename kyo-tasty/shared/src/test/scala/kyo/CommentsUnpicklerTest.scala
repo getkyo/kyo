@@ -27,6 +27,8 @@ import scala.collection.immutable.IntMap
   */
 class CommentsUnpicklerTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     // ── Encoding helpers ─────────────────────────────────────────────────────
 
     /** Encode a small Nat (0-127) as a single TASTy byte. */

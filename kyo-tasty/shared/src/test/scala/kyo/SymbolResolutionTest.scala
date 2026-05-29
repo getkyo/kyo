@@ -22,6 +22,8 @@ import scala.collection.mutable
   */
 class SymbolResolutionTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     /** An in-memory FileSource backed by a mutable map of path -> bytes. */
     final class MemoryFileSource(files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty) extends FileSource:
 

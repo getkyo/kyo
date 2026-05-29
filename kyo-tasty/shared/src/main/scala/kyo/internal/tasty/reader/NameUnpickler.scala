@@ -57,6 +57,8 @@ object NameUnpickler:
     end read
 
     private def readUnsafe(view: ByteView, interner: Interner): Array[Tasty.Name] =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         val nameTableByteCount = view.readNat()
         val nameTableEnd       = view.position + nameTableByteCount
         val buf                = new scala.collection.mutable.ArrayBuffer[Tasty.Name]()

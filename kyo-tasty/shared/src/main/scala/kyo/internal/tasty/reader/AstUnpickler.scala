@@ -689,6 +689,8 @@ object AstUnpickler:
 
     /** Recursively read a package path, prepending each segment to `segments`. */
     private def extractPackagePathSegments(view: ByteView, names: Array[Tasty.Name], segments: mutable.ArrayBuffer[String]): Unit =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         val pathTag = view.readByte() & 0xff
         pathTag match
             case TastyFormat.TERMREFpkg =>

@@ -4,6 +4,8 @@ import kyo.internal.tasty.symbol.Interner
 
 class InternerTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     private def utf8Bytes(s: String): Array[Byte] =
         s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
 

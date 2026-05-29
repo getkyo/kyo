@@ -48,6 +48,8 @@ object Constant:
     end fromTastyTag
 
     private def decodeConstant(tag: Int, view: ByteView, names: Array[Tasty.Name]): Tasty.Constant =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         tag match
             case TastyFormat.UNITconst  => Tasty.Constant.UnitConst
             case TastyFormat.FALSEconst => Tasty.Constant.BooleanConst(false)
@@ -85,6 +87,8 @@ object Constant:
                 Tasty.Constant.ClassConst(Tasty.Type.Named(classConstSentinel))
             case other =>
                 throw new ArrayIndexOutOfBoundsException(s"Unrecognized constant tag $other")
+        end match
+    end decodeConstant
 
     /** Skip one tree from the view. Used for CLASSconst sub-AST skipping. */
     private def skipTree(view: ByteView): Unit =

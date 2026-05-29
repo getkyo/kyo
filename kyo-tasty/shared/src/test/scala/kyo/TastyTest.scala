@@ -154,6 +154,47 @@ class TastyTest extends Test:
         Future.successful(succeed)
     }
 
+    // ── Phase 02a source-text invariant tests (INV-001) ─────────────────────
+
+    "every Symbol accessor signature carries (using AllowUnsafe)" in {
+        // INV-001: Name.asString + 9 Symbol accessors all use (using AllowUnsafe) not import danger in body.
+        // Given: source Tasty.scala read as String.
+        // When: regex search counts occurrences of def (accessor)(using AllowUnsafe).
+        // Then: count equals 10.
+        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
+        val src       = Files.readString(tastyPath)
+        val pattern =
+            """def (fullName|isPackageObject|scaladoc|position|declaredType|parents|typeParams|declarations|companion|asString)\(using AllowUnsafe\)""".r
+        val count = pattern.findAllIn(src).length
+        assert(count == 10, s"Expected 10 accessor signatures with (using AllowUnsafe), found $count")
+        Future.successful(succeed)
+    }
+
+    "no import AllowUnsafe.embrace.danger in any migrated Symbol accessor body" in {
+        // INV-001: after Phase 02a, no import danger inside the 10 migrated accessor bodies.
+        // Given: source Tasty.scala read as String.
+        // When: substring scan for import AllowUnsafe.embrace.danger on lines within the 10 accessor bodies.
+        // Then: count is 0.
+        // Note: import danger may remain in Symbol.body and computeFullName/computeBinaryName/show (§839 case 3 non-accessor sites).
+        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
+        val lines     = Files.readString(tastyPath).split("\n")
+        // The 10 accessor defs (after Phase 02a) are single-line or short-body forms.
+        // The key invariant: no line in the range covering accessor bodies has BOTH a (using AllowUnsafe) accessor def
+        // AND an import danger on the SAME body line. We verify that none of the 10 accessor signatures are
+        // immediately followed by `import AllowUnsafe.embrace.danger` within 3 lines.
+        val accessorPattern =
+            """def (fullName|isPackageObject|scaladoc|position|declaredType|parents|typeParams|declarations|companion)\(using AllowUnsafe\)""".r
+        var violations = List.empty[String]
+        for (line, idx) <- lines.zipWithIndex do
+            if accessorPattern.findFirstIn(line).isDefined then
+                val window = lines.slice(idx + 1, idx + 4).mkString(" ")
+                if window.contains("import AllowUnsafe.embrace.danger") then
+                    violations = violations :+ s"line ${idx + 1}: accessor followed by import danger within 3 lines"
+        end for
+        assert(violations.isEmpty, s"INV-001 violated: ${violations.mkString("; ")}")
+        Future.successful(succeed)
+    }
+
     /** Count non-overlapping occurrences of `needle` in `haystack`. */
     private def countOccurrences(haystack: String, needle: String): Int =
         var count = 0

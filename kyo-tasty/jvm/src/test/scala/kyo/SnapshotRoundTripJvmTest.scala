@@ -13,6 +13,8 @@ import scala.collection.mutable
 /** JVM-only tests for SnapshotRoundTrip that require java.io.File (mmap tests G16a, G16b). */
 class SnapshotRoundTripJvmTest extends Test:
 
+    import AllowUnsafe.embrace.danger
+
     /** An in-memory FileSource backed by a mutable map of path -> bytes. */
     class MemoryFileSource(val files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty) extends FileSource:
 

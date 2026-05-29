@@ -30,6 +30,8 @@ object IdeHoverExample:
         file: String,
         line: Int
     )(using Frame): Maybe[HoverInfo] < (Sync & Async & Abort[TastyError] & Scope) =
+        // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         for
             cp <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
         yield
@@ -59,9 +61,13 @@ object IdeHoverExample:
                 i += 1
             end while
             result
+        end for
+    end hover
 
     /** Simplified hover that looks up by FQN and member name. Demonstrates the same pure accessor pattern. */
     def hoverByName(fqn: String, member: String)(using Frame): Maybe[String] < (Sync & Async & Abort[TastyError] & Scope) =
+        // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+        import AllowUnsafe.embrace.danger
         for
             cp <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
         yield cp.findClass(fqn) match
@@ -70,6 +76,7 @@ object IdeHoverExample:
                 Maybe.fromOption(cls.declarations.find(_.name.asString == member)) match
                     case Absent     => Absent
                     case Present(s) => Present(s"${s.name.asString}: ${s.declaredType.show}")
+    end hoverByName
 
     /** "Find all sealed classes in this classpath" composed query. Pure filter over topLevelClasses. */
     def findSealed(using Frame): Chunk[Tasty.Symbol] < (Sync & Async & Abort[TastyError] & Scope) =

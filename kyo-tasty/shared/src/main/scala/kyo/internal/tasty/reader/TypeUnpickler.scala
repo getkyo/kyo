@@ -262,6 +262,8 @@ object TypeUnpickler:
 
     /** Dispatch on the tag byte (already consumed). */
     private def decodeTag(tag: Int, startAddr: Int, view: ByteView, ctx: DecodeCtx): Tasty.Type =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the type-decode context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         tag match
 
             // ── Category 1 constant types ─────────────────────────────────────────

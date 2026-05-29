@@ -24,6 +24,7 @@ import scala.collection.mutable
   */
 class TreeUnpicklerTest extends Test:
 
+    import AllowUnsafe.embrace.danger
     import Tasty.Name.asString
 
     // ── FileSource for tests that need full classpath ─────────────────────────

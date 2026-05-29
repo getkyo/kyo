@@ -46,6 +46,8 @@ object SectionIndex:
     end read
 
     private def readSync(view: ByteView, names: Array[Tasty.Name]): SectionIndex =
+        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
+        import AllowUnsafe.embrace.danger
         val builder = Map.newBuilder[String, (Int, Int)]
         while view.remaining > 0 do
             val nameRef    = view.readNat() // 0-based index into names
