@@ -450,3 +450,17 @@ final private[kyo] case class MockResponseEnvelope(status: Int, body: String, he
 
 /** Single `(name, value)` entry inside [[MockResponseEnvelope.headers]]. */
 final private[kyo] case class MockHeader(name: String, value: String) derives Schema
+
+// --- Browser.getVersion probe types (Phase 01: CdpBackend.initUnscoped connect-probe) ---
+
+/** Params for the `Browser.getVersion` CDP probe call. No fields: the command takes no parameters. */
+final private[kyo] case class BrowserGetVersionParams() derives Schema
+
+/** Result of the `Browser.getVersion` CDP probe call. Fields match the CDP spec's `Browser.getVersion` response. */
+final private[kyo] case class BrowserVersionResult(
+    protocolVersion: String,
+    product: String,
+    revision: String,
+    userAgent: String,
+    jsVersion: String
+) derives Schema
