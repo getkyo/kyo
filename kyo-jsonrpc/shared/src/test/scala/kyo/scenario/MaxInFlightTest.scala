@@ -1,9 +1,10 @@
-package kyo
+package kyo.scenario
 
+import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class MaxInFlightTest extends Test:
+class MaxInFlightTest extends JsonRpcTestBase:
 
     case class PingReq(n: Int) derives Schema, CanEqual
     case class PingResp(n: Int) derives Schema, CanEqual

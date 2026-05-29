@@ -1,9 +1,10 @@
-package kyo
+package kyo.scenario
 
+import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class ScenarioBidiTest extends Test:
+class BidiTest extends JsonRpcTestBase:
 
     case class AddReq(a: Int, b: Int) derives Schema, CanEqual
     case class AddResp(sum: Int) derives Schema, CanEqual
@@ -205,4 +206,4 @@ class ScenarioBidiTest extends Test:
         }
     }
 
-end ScenarioBidiTest
+end BidiTest

@@ -11,7 +11,7 @@ import kyo.Result
 import kyo.Structure
 import kyo.Sync
 
-class JsonRpcMethodTest extends Test:
+class JsonRpcMethodTest extends JsonRpcTestBase:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 

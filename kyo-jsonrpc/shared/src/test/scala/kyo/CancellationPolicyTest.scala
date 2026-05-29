@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class CancellationPolicyTest extends Test:
+class CancellationPolicyTest extends JsonRpcTestBase:
 
     case class EchoReq(text: String) derives Schema, CanEqual
     case class EchoResp(text: String) derives Schema, CanEqual

@@ -1,9 +1,10 @@
-package kyo
+package kyo.scenario
 
+import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class ScenarioWsStyleTest extends Test:
+class WsStyleTest extends JsonRpcTestBase:
 
     case class CmdReq(cmd: String) derives Schema, CanEqual
     case class CmdResp(result: String) derives Schema, CanEqual
@@ -190,4 +191,4 @@ class ScenarioWsStyleTest extends Test:
         }
     }
 
-end ScenarioWsStyleTest
+end WsStyleTest

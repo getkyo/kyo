@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class UnknownMethodPolicyTest extends Test:
+class UnknownMethodPolicyTest extends JsonRpcTestBase:
 
     case class Ping(msg: String) derives Schema, CanEqual
     case class Pong(reply: String) derives Schema, CanEqual

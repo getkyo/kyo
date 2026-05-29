@@ -13,7 +13,7 @@ import kyo.Structure.Value.Null
 import kyo.Structure.Value.Record
 import kyo.Structure.Value.Str
 
-class JsonRpcCodecTest extends Test:
+class JsonRpcCodecTest extends JsonRpcTestBase:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 

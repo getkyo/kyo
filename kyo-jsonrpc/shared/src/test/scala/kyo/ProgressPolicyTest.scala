@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class ProgressPolicyTest extends Test:
+class ProgressPolicyTest extends JsonRpcTestBase:
 
     case class TaskReq(name: String) derives Schema, CanEqual
     case class TaskResp(done: Boolean) derives Schema, CanEqual

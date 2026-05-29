@@ -2,7 +2,7 @@ package kyo
 
 import kyo.Maybe.Absent
 
-class JsonRpcTransportTest extends Test:
+class JsonRpcTransportTest extends JsonRpcTestBase:
 
     val ping1 = JsonRpcEnvelope.Request(JsonRpcId.Num(1L), "ping", Absent, Absent)
     val ping2 = JsonRpcEnvelope.Request(JsonRpcId.Num(2L), "ping", Absent, Absent)
