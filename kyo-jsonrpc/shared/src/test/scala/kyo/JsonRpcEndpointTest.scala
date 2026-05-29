@@ -8,6 +8,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     case class AddReq(a: Int, b: Int) derives Schema, CanEqual
     case class AddResp(sum: Int) derives Schema, CanEqual
     case class LogMsg(text: String) derives Schema, CanEqual
+    case class DialogParams(accept: Boolean) derives Schema, CanEqual
 
     private def mkEndpoints(
         methodsA: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]],
@@ -544,6 +545,57 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
                             assert(elapsed < 900)
                             done.get.map(_ => succeed)
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    "sendUnmatched emits request envelope with id" in run {
+        val seen = AtomicRef.Unsafe.init[Chunk[JsonRpcEnvelope]](Chunk.empty)(using AllowUnsafe.embrace.danger)
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            val tbWrap = new JsonRpcTransport:
+                def send(env: JsonRpcEnvelope)(using Frame) = tb.send(env)
+                def incoming(using Frame) = tb.incoming.mapPure { env =>
+                    discard(seen.updateAndGet(_ :+ env)(using AllowUnsafe.embrace.danger))
+                    env
+                }
+                def close(using Frame) = tb.close
+            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                JsonRpcEndpoint.init(tbWrap, Seq.empty).map { _ =>
+                    a.sendUnmatched("Page.handleJavaScriptDialog", DialogParams(true), JsonRpcId.Num(-1)).andThen {
+                        untilTrue(Sync.defer(seen.get()(using AllowUnsafe.embrace.danger).exists {
+                            case JsonRpcEnvelope.Request(JsonRpcId.Num(-1), "Page.handleJavaScriptDialog", _, _) => true
+                            case _                                                                               => false
+                        })).andThen(succeed)
+                    }
+                }
+            }
+        }
+    }
+
+    "sendUnmatched registers no pending caller" in run {
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                JsonRpcEndpoint.init(tb, Seq.empty).map { _ =>
+                    Kyo.foreachDiscard(1 to 5) { i =>
+                        a.sendUnmatched("noop", (), JsonRpcId.Num(i.toLong))
+                    }.andThen {
+                        Async.timeout(200.millis)(a.awaitDrain).map(_ => succeed)
+                    }
+                }
+            }
+        }
+    }
+
+    "sendUnmatched does not block waiting for response" in run {
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
+                JsonRpcEndpoint.init(tb, Seq.empty).map { _ =>
+                    val start = java.lang.System.currentTimeMillis
+                    a.sendUnmatched("noop", (), JsonRpcId.Num(1)).andThen(a.awaitDrain).map { _ =>
+                        val elapsed = java.lang.System.currentTimeMillis - start
+                        assert(elapsed < 100)
                     }
                 }
             }

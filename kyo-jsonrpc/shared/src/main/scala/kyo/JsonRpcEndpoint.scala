@@ -20,6 +20,14 @@ final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.JsonRp
     )(using Frame): Unit < (Async & Abort[Closed]) =
         impl.notify[In](method, params, extras)
 
+    def sendUnmatched[In: Schema](
+        method: String,
+        params: In,
+        id: JsonRpcId,
+        extras: ExtrasEncoder = ExtrasEncoder.empty
+    )(using Frame): Unit < (Async & Abort[Closed]) =
+        impl.sendUnmatched[In](method, params, id, extras)
+
     def callWithProgress[In: Schema, Out: Schema](
         method: String,
         params: In,

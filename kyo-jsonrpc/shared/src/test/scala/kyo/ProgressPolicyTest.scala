@@ -431,4 +431,25 @@ class ProgressPolicyTest extends JsonRpcTestBase:
         }
     }
 
+    "progress-token allocator regenerates on collision" in run {
+        val map  = new java.util.concurrent.ConcurrentHashMap[Structure.Value, Channel[Structure.Value]]()
+        val seed = Structure.Value.Str("seed-token")
+        Channel.initUnscoped[Structure.Value](1).map { ch0 =>
+            discard(map.put(seed, ch0))
+            Channel.initUnscoped[Structure.Value](1).map { ch1 =>
+                Channel.initUnscoped[Structure.Value](1).map { ch2 =>
+                    internal.ProgressEngine.allocateProgressToken(map, ch1, 32).map { t1 =>
+                        internal.ProgressEngine.allocateProgressToken(map, ch2, 32).map { t2 =>
+                            assert(t1 != t2)
+                            assert(t1 != seed)
+                            assert(t2 != seed)
+                            assert(map.containsKey(t1))
+                            assert(map.containsKey(t2))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end ProgressPolicyTest

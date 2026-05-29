@@ -349,6 +349,20 @@ final class JsonRpcEndpointImpl private[kyo] (
         }
     end notify
 
+    def sendUnmatched[In: Schema](
+        method: String,
+        params: In,
+        id: JsonRpcId,
+        extras: ExtrasEncoder
+    )(using Frame): Unit < (Async & Abort[Closed]) =
+        Sync.defer(Structure.encode[In](params)).map { encodedParams =>
+            extras.resolve(id).map { extrasVal =>
+                val env = JsonRpcEnvelope.Request(id, method, Present(encodedParams), extrasVal)
+                writerChannel.put(WriterMsg.SendEnvelope(env))
+            }
+        }
+    end sendUnmatched
+
     def callWithProgress[In: Schema, Out: Schema](
         method: String,
         params: In,
@@ -361,12 +375,9 @@ final class JsonRpcEndpointImpl private[kyo] (
                 ))
             case Present(policy) =>
                 RateLimitEngine.maxInFlightGuard(meter) {
-                    // Unsafe: channel init and ConcurrentHashMap put for progress side-channel
+                    // Unsafe: channel init and deadline ref setup before token allocation
                     // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                     Sync.Unsafe.defer {
-                        // flow-allow: Random token generation inside unsafe deferred block; no safe Random equivalent that runs without Async
-                        val tokenStr = Random.live.unsafe.nextStringAlphanumeric(32)(using AllowUnsafe.embrace.danger)
-                        val tokenVal = Structure.Value.Str(tokenStr)
                         // Unsafe: Channel.Unsafe.init for progress channel
                         // flow-allow: Channel Unsafe init constructs a channel inside an unsafe deferred block; no safe Channel equivalent that runs without Async
                         val progChan = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe
@@ -381,47 +392,49 @@ final class JsonRpcEndpointImpl private[kyo] (
                                 // flow-allow: AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); per-request deadline cell
                                 Present(new java.util.concurrent.atomic.AtomicLong(initialDeadline))
                             else Absent
-                        (tokenVal, progChan, deadlineRef)
-                    }.map { (tokenVal, progChan, deadlineRef) =>
-                        val encodedParams = Structure.encode[In](params)
-                        policy.stampOutboundToken(encodedParams, tokenVal).map { stampedParams =>
-                            // Unsafe: register in progressStreams (and tokenToDeadline if needed) before issuing call
+                        (progChan, deadlineRef)
+                    }.map { (progChan, deadlineRef) =>
+                        // Registration is now atomic-inside-helper; token allocated via putIfAbsent retry loop.
+                        ProgressEngine.allocateProgressToken(progressStreams, progChan, 32).map { tokenVal =>
+                            // Register deadline ref (if present) after token is claimed.
                             // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                             Sync.Unsafe.defer {
-                                discard(progressStreams.put(tokenVal, progChan))
-                                deadlineRef.foreach { ref =>
-                                    discard(tokenToDeadline.put(tokenVal, ref))
-                                }
+                                deadlineRef match
+                                    case Present(ref) => discard(tokenToDeadline.put(tokenVal, ref))
+                                    case Absent       => ()
                             }.andThen {
-                                val (idPromise, callEffect) = callEncoded[Out](method, Present(stampedParams), extras, deadlineRef)
-                                // Fork the call so progress stream can be consumed concurrently.
-                                // callEffect fires the encode callback (populating idPromise) before suspending,
-                                // so idPromise.get below won't starve.
-                                Fiber.initUnscoped(callEffect).map { fiber =>
-                                    // Register cleanup callback: gracefully closes progChan when fiber finishes.
-                                    // closeAwaitEmpty() transitions to HalfOpen so pending items are still drained by the consumer
-                                    // before the channel fully closes; this avoids dropping progress items that arrived
-                                    // just before the response.
-                                    // Unsafe: onComplete from outside the fiber
-                                    // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
-                                    Sync.Unsafe.defer {
-                                        // flow-allow: fiber onComplete attaches cleanup hook from outside the fiber; no safe equivalent in Fiber public API
-                                        fiber.unsafe.onComplete { _ =>
-                                            progressStreams.remove(tokenVal)
-                                            tokenToDeadline.remove(tokenVal)
-                                            // flow-allow: channel close or closeAwaitEmpty from finalizer or onComplete hook outside originating fiber; no safe equivalent
-                                            discard(progChan.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
-                                        // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
-                                        }(using AllowUnsafe.embrace.danger)
-                                    }.andThen {
-                                        // Await the id (populated in encode callback, which fires as the fiber starts)
-                                        idPromise.get.map { id =>
-                                            new JsonRpcEndpoint.Pending[Out](
-                                                id = id,
-                                                result = fiber.get,
-                                                progress = progChan.streamUntilClosed(),
-                                                cancel = cancel(id, Absent)
-                                            )
+                                val encodedParams = Structure.encode[In](params)
+                                policy.stampOutboundToken(encodedParams, tokenVal).map { stampedParams =>
+                                    val (idPromise, callEffect) = callEncoded[Out](method, Present(stampedParams), extras, deadlineRef)
+                                    // Fork the call so progress stream can be consumed concurrently.
+                                    // callEffect fires the encode callback (populating idPromise) before suspending,
+                                    // so idPromise.get below won't starve.
+                                    Fiber.initUnscoped(callEffect).map { fiber =>
+                                        // Register cleanup callback: gracefully closes progChan when fiber finishes.
+                                        // closeAwaitEmpty() transitions to HalfOpen so pending items are still drained by the consumer
+                                        // before the channel fully closes; this avoids dropping progress items that arrived
+                                        // just before the response.
+                                        // Unsafe: onComplete from outside the fiber
+                                        // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
+                                        Sync.Unsafe.defer {
+                                            // flow-allow: fiber onComplete attaches cleanup hook from outside the fiber; no safe equivalent in Fiber public API
+                                            fiber.unsafe.onComplete { _ =>
+                                                progressStreams.remove(tokenVal)
+                                                tokenToDeadline.remove(tokenVal)
+                                                // flow-allow: channel close or closeAwaitEmpty from finalizer or onComplete hook outside originating fiber; no safe equivalent
+                                                discard(progChan.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
+                                            // flow-allow: embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
+                                            }(using AllowUnsafe.embrace.danger)
+                                        }.andThen {
+                                            // Await the id (populated in encode callback, which fires as the fiber starts)
+                                            idPromise.get.map { id =>
+                                                new JsonRpcEndpoint.Pending[Out](
+                                                    id = id,
+                                                    result = fiber.get,
+                                                    progress = progChan.streamUntilClosed(),
+                                                    cancel = cancel(id, Absent)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -444,25 +457,21 @@ final class JsonRpcEndpointImpl private[kyo] (
                 // All setup runs inside the Stream body so the return type is Stream (not Stream < Sync).
                 Stream[T, Async & Abort[JsonRpcError | Closed]] {
                     RateLimitEngine.maxInFlightGuard(meter) {
-                        // Unsafe: channel init and token/stamp inside Stream emit body
+                        // Unsafe: channel init and finalRef setup inside Stream emit body
                         // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                         Sync.Unsafe.defer {
-                            // flow-allow: Random token generation inside unsafe deferred block; no safe Random equivalent that runs without Async
-                            val tokenStr = Random.live.unsafe.nextStringAlphanumeric(32)(using AllowUnsafe.embrace.danger)
-                            val tokenVal = Structure.Value.Str(tokenStr)
                             // Unsafe: Channel.Unsafe.init for partial-results channel
                             // flow-allow: Channel Unsafe init constructs a channel inside an unsafe deferred block; no safe Channel equivalent that runs without Async
                             val progChan = Channel.Unsafe.init[Structure.Value](64)(using frame, AllowUnsafe.embrace.danger).safe
                             // Unsafe: AtomicRef.Unsafe.init for the final response result (non-progress chunks)
                             // flow-allow: AtomicX Unsafe init follows kyo Exchange pending-map precedent; no safe equivalent in AtomicX public API
                             val finalRef = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger).safe
-                            (tokenVal, progChan, finalRef)
-                        }.map { (tokenVal, progChan, finalRef) =>
-                            val encodedParams = Structure.encode[In](params)
-                            policy.stampOutboundToken(encodedParams, tokenVal).map { stampedParams =>
-                                // Unsafe: register in progressStreams before issuing call so notifications can be routed on arrival
-                                // flow-allow: unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
-                                Sync.Unsafe.defer(discard(progressStreams.put(tokenVal, progChan))).andThen {
+                            (progChan, finalRef)
+                        }.map { (progChan, finalRef) =>
+                            // Registration is now atomic-inside-helper; no separate put call here.
+                            ProgressEngine.allocateProgressToken(progressStreams, progChan, 32).map { tokenVal =>
+                                val encodedParams = Structure.encode[In](params)
+                                policy.stampOutboundToken(encodedParams, tokenVal).map { stampedParams =>
                                     val (_, callEffect) =
                                         callEncoded[Structure.Value](method, Present(stampedParams), extras, Absent)
                                     Fiber.initUnscoped(

@@ -8,6 +8,31 @@ import kyo.Maybe.Present
 
 private[kyo] object ProgressEngine:
 
+    /** Allocates a unique progress token by generating random alphanumeric strings
+      * and registering them with `progressStreams.putIfAbsent` until success.
+      * Fails fast with `JsonRpcError.internalError("progress token exhaustion")`
+      * after `maxAttempts` collisions (default 32).
+      */
+    private[kyo] def allocateProgressToken(
+        progressStreams: ConcurrentHashMap[Structure.Value, Channel[Structure.Value]],
+        channel: Channel[Structure.Value],
+        maxAttempts: Int
+    )(using Frame): Structure.Value < (Sync & Abort[JsonRpcError]) =
+        def loop(attemptsLeft: Int): Structure.Value < (Sync & Abort[JsonRpcError]) =
+            if attemptsLeft <= 0 then
+                Abort.fail(JsonRpcError.internalError("progress token exhaustion", Absent))
+            else
+                Random.live.nextStringAlphanumeric(32).map { raw =>
+                    val token: Structure.Value = Structure.Value.Str(raw)
+                    // flow-allow: putIfAbsent returns Java reference; Absent means null (insert succeeded), Present means collision
+                    Sync.defer(Maybe(progressStreams.putIfAbsent(token, channel))).map {
+                        case Absent     => (token: Structure.Value)
+                        case Present(_) => loop(attemptsLeft - 1)
+                    }
+                }
+        loop(maxAttempts)
+    end allocateProgressToken
+
     /** Builds a per-invocation progress sink closure for a handler.
       * Returns Absent when no token is found in params or no progress policy is configured.
       * Must be called inside an unsafe-deferred block (AllowUnsafe in scope).

@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Abort
 import kyo.Async
+import kyo.AtomicInt
 import kyo.Chunk
 import kyo.Closed
 import kyo.Maybe
@@ -14,6 +15,10 @@ import kyo.Sync
 class JsonRpcMethodTest extends JsonRpcTestBase:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
+
+    case class AddReq(a: Int, b: Int) derives Schema, CanEqual
+    case class AddResp(sum: Int) derives Schema, CanEqual
+    case class LogMsg(text: String) derives Schema, CanEqual
 
     private def makeCtx(
         requestId: Maybe[JsonRpcId],
@@ -117,6 +122,65 @@ class JsonRpcMethodTest extends JsonRpcTestBase:
                 r2 <- Abort.run[JsonRpcError](withoutCtx.handle(params, ctx))
             yield assert(r1 == r2)
             end for
+    }
+
+    "dispatch known request returns Present" in run {
+        val addM = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") { (req, _) => AddResp(req.a + req.b) }
+        Sync.defer(Structure.encode(AddReq(2, 3))).map { params =>
+            val ctx =
+                HandlerCtx.forTest(Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe, Absent, Absent, Absent)
+            JsonRpcMethod.dispatch[Async & Abort[JsonRpcError]]("add", Seq(addM), params, ctx) match
+                case Present(comp) =>
+                    comp.map { sv =>
+                        Structure.decode[AddResp](sv) match
+                            case Result.Success(r) => assert(r == AddResp(5))
+                            case other             => fail(s"decode failed $other")
+                    }
+                case Absent => fail("expected Present")
+            end match
+        }
+    }
+
+    "dispatch unknown name returns Absent" in run {
+        val addM = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") { (r, _) => AddResp(r.a + r.b) }
+        val ctx = HandlerCtx.forTest(Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe, Absent, Absent, Absent)
+        val result = JsonRpcMethod.dispatch[Async & Abort[JsonRpcError]]("missing", Seq(addM), Structure.Value.Null, ctx)
+        assert(result == Absent)
+    }
+
+    "dispatch known notification returns Present Null" in run {
+        val counter = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        val logM = JsonRpcMethod.notification[LogMsg, Async & Abort[JsonRpcError]]("log") {
+            (_, _) => Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
+        }
+        Sync.defer(Structure.encode(LogMsg("x"))).map { params =>
+            val ctx =
+                HandlerCtx.forTest(Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe, Absent, Absent, Absent)
+            JsonRpcMethod.dispatch[Async & Abort[JsonRpcError]]("log", Seq(logM), params, ctx) match
+                case Present(comp) =>
+                    comp.map { sv =>
+                        assert(sv == Structure.Value.Null)
+                        assert(counter.get()(using AllowUnsafe.embrace.danger) == 1)
+                    }
+                case Absent => fail("expected Present")
+            end match
+        }
+    }
+
+    "dispatch propagates handler Abort" in run {
+        val m = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("err") { (_, _) => Abort.fail(JsonRpcError.invalidParams("bad")) }
+        Sync.defer(Structure.encode(())).map { params =>
+            val ctx =
+                HandlerCtx.forTest(Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe, Absent, Absent, Absent)
+            JsonRpcMethod.dispatch[Async & Abort[JsonRpcError]]("err", Seq(m), params, ctx) match
+                case Present(comp) =>
+                    Abort.run[JsonRpcError](comp).map {
+                        case Result.Failure(err) => assert(err.code == JsonRpcError.InvalidParams.code)
+                        case other               => fail(s"expected Failure, got $other")
+                    }
+                case Absent => fail("expected Present")
+            end match
+        }
     }
 
 end JsonRpcMethodTest

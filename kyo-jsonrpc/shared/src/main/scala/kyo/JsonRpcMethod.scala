@@ -56,6 +56,28 @@ object JsonRpcMethod:
         new NotificationMethod(capturedName, capturedSchemaIn, handler, ev)
     end notification
 
+    /** Dispatches `params` to the named method in `methods`. Returns Absent for unknown method.
+      * Public reach-in for non-engine consumers (one-shot stdio loop, HTTP POST endpoints,
+      * custom routers); keeps `JsonRpcMethod.handle` private[kyo]. For Notification kind the
+      * inner result is `Structure.Value.Null` after the handler completes.
+      */
+    def dispatch[S](
+        name: String,
+        methods: Seq[JsonRpcMethod[S]],
+        params: Structure.Value,
+        ctx: HandlerCtx
+    )(using Frame, (Async & Abort[JsonRpcError]) <:< S): Maybe[Structure.Value < (Async & Abort[JsonRpcError])] =
+        val methodMap: Map[String, JsonRpcMethod[S]] =
+            methods.iterator.map(m => (m.name, m)).toMap
+        // flow-allow: Map.get returns scala.Option; match arms are interop, not kyo code
+        methodMap.get(name) match
+            // flow-allow: scala.Option arm; interop with Map.get
+            case Some(method) => Present(method.handle(params, ctx))
+            // flow-allow: scala.Option arm; interop with Map.get
+            case None => Absent
+        end match
+    end dispatch
+
     final private class RequestMethod[In, Out, S](
         val name: String,
         in: Schema[In],
