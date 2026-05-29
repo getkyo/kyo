@@ -1,6 +1,7 @@
 package kyo
 package internal
 
+// flow-allow: ConcurrentHashMap is the structural concurrent pending-map; no Kyo-safe equivalent for CAS-based inbound tracking
 import java.util.concurrent.ConcurrentHashMap
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -9,7 +10,7 @@ private[kyo] object ProgressEngine:
 
     /** Builds a per-invocation progress sink closure for a handler.
       * Returns Absent when no token is found in params or no progress policy is configured.
-      * Must be called inside a Sync.Unsafe.defer block (AllowUnsafe in scope).
+      * Must be called inside an unsafe-deferred block (AllowUnsafe in scope).
       * The closure captures a per-invocation monotonicity ref (per-invocation, not global).
       */
     def buildProgressSink(

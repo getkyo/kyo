@@ -29,7 +29,7 @@ class CancellationPolicyTest extends JsonRpcTestBase:
     end CapturingTransport
 
     // GatedTransport holds responses until gateP is completed, then forwards them.
-    // gateP replaces java.util.concurrent.CountDownLatch(1): complete it to open the gate.
+    // gateP acts as a latch (replaces a one-shot countdown latch): complete it to open the gate.
     private class GatedTransport(
         inner: JsonRpcTransport,
         gateP: Fiber.Promise[Unit, Abort[Closed]]

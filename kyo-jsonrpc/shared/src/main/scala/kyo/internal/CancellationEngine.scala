@@ -1,6 +1,7 @@
 package kyo
 package internal
 
+// flow-allow: ConcurrentHashMap is the structural concurrent pending-map; no Kyo-safe equivalent for CAS-based inbound tracking
 import java.util.concurrent.ConcurrentHashMap
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -41,18 +42,17 @@ private[kyo] object CancellationEngine:
                 Sync.defer {
                     Maybe(pendingInbound.get(id)) match
                         case Absent =>
-                            // Unsafe: warn inside Sync.defer (Sync.Unsafe.defer context)
-                            discard(Log.live.unsafe.warn(s"kyo-jsonrpc: inbound cancel for unknown id $id, dropping")(using
-                                summon[Frame],
-                                AllowUnsafe.embrace.danger
-                            ))
+                            // flow-allow: Log.live unsafe-warn inside deferred-sync block; no safe Log equivalent within Sync
+                            // format: off
+                            discard(Log.live.unsafe.warn(s"kyo-jsonrpc: inbound cancel for unknown id $id, dropping")(using summon[Frame], AllowUnsafe.embrace.danger))
+                            // format: on
                         case Present(running: InboundEntry.Running) =>
                             val cancelled = InboundEntry.Cancelled(running.method)
                             if pendingInbound.replace(id, running, cancelled) then
-                                // Unsafe: complete unit promise from outside handler fiber
+                                // flow-allow: CAS-won path completes promise from outside originating fiber; no safe equivalent in Promise public API
                                 running.cancelled.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
                                 if !policy.expectReplyForCancelledRequest then
-                                    // MCP: interrupt handler fiber so no reply is produced
+                                    // flow-allow: interrupt monitor/cleanup fiber from outside its scheduler; no safe equivalent in Fiber public API
                                     running.handler.unsafe.interruptDiscard(
                                         Result.Panic(Interrupted(summon[Frame]))
                                     )(using AllowUnsafe.embrace.danger)
@@ -61,14 +61,14 @@ private[kyo] object CancellationEngine:
                                 // CAS lost: handler transitioned to Replying before we got here
                                 Maybe(pendingInbound.get(id)) match
                                     case Present(r: InboundEntry.Replying) =>
-                                        // Unsafe: set suppress flag on Replying entry
+                                        // flow-allow: suppress-flag access from Sync-only Exchange callback; no safe Atomic equivalent inside Sync block
                                         r.suppress.unsafe.set(true)(using AllowUnsafe.embrace.danger)
                                     case _ => ()
                                 end match
                             end if
                         case Present(r: InboundEntry.Replying) =>
                             // Cancel arrived after handler completed; set suppress so writer drops the reply
-                            // Unsafe: set suppress flag on Replying entry
+                            // flow-allow: suppress-flag access from Sync-only Exchange callback; no safe Atomic equivalent inside Sync block
                             r.suppress.unsafe.set(true)(using AllowUnsafe.embrace.danger)
                         case Present(_: InboundEntry.Cancelled) =>
                             // Idempotent: already cancelled
@@ -104,13 +104,13 @@ private[kyo] object CancellationEngine:
         Sync.defer(Maybe(callerRegistry.get(id))).map {
             case Absent => Kyo.unit
             case Present(info) =>
-                val abortError: JsonRpcError = cancellation match
+                val abortError = cancellation match
                     case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(reason))
                     case Absent     => JsonRpcError.cancelled(reason)
                 cancellation match
                     case Present(policy) =>
                         buildAndEnqueueOutboundCancel(id, reason, info, policy, writerChannel).andThen {
-                            // Unsafe: complete abortSignal from timeout context
+                            // flow-allow: CAS-won path completes promise from outside originating fiber; no safe equivalent in Promise public API
                             Sync.Unsafe.defer {
                                 info.abortSignal.unsafe.completeDiscard(
                                     Result.succeed(abortError)
@@ -119,7 +119,7 @@ private[kyo] object CancellationEngine:
                         }
                     case Absent =>
                         // No policy: abort locally only, no wire notification
-                        // Unsafe: complete abortSignal from timeout context
+                        // flow-allow: CAS-won path completes promise from outside originating fiber; no safe equivalent in Promise public API
                         Sync.Unsafe.defer {
                             info.abortSignal.unsafe.completeDiscard(
                                 Result.succeed(abortError)
