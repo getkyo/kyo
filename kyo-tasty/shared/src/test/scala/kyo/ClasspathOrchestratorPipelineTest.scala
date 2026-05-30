@@ -224,4 +224,41 @@ class ClasspathOrchestratorPipelineTest extends Test:
                     throw t
     }
 
+    // Phase 24b - T8 Test 2: classpath close during pending body decode.
+    //
+    // Uses explicit serialization (not a race): open classpath, find a symbol whose body slice is
+    // non-zero, close the classpath, then call sym.body. The isClosed guard in Symbol.body must
+    // fire and return TastyError.ClasspathClosed. No uncaught exception may escape.
+    //
+    // Cross-platform: uses the in-memory MemFileSource, so the test runs on JVM, JS, and Native.
+    // Pins: T8 (classpath close during pending body decode).
+    "P24b-T2: sym.body after explicit classpath close returns ClasspathClosed without uncaught exception" in run {
+        Scope.run:
+            Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                val rawCp = Tasty.Classpath.unwrap(cp)
+                Sync.defer:
+                    val symWithBody =
+                        rawCp.allSymbols.find: s =>
+                            s.origin match
+                                case o: Tasty.Symbol.TastyOrigin => o.bodyStart > 0 && o.bodyEnd > 0
+                                case _                           => false
+                    symWithBody
+                .flatMap:
+                    case None =>
+                        Abort.fail(TastyError.NotImplemented("no symbol with body slice in fixture"))
+                    case Some(sym) =>
+                        Sync.defer(InternalClasspath.close(rawCp)).andThen:
+                            sym.body).map:
+                case Result.Failure(TastyError.ClasspathClosed) =>
+                    succeed
+                case Result.Failure(TastyError.NotImplemented(_)) =>
+                    pending
+                case Result.Failure(e) =>
+                    fail(s"P24b-T2: expected ClasspathClosed but got: $e")
+                case Result.Success(_) =>
+                    fail("P24b-T2: expected ClasspathClosed but body decode succeeded on closed classpath")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
 end ClasspathOrchestratorPipelineTest

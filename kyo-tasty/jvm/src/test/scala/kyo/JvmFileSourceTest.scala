@@ -476,4 +476,133 @@ class JvmFileSourceTest extends Test:
         )
     }
 
+    // Phase 24b - T8 Test 1: JAR pool exhaustion under 50-fiber concurrent load.
+    //
+    // Opens a withReadBatch scope (installing a JarMappedReaderPool), then launches 50 concurrent
+    // fibers via Async.foreach. Every fiber reads the same JAR entry. The pool serves all 50 reads
+    // from a single JarMappedReader (one per jar path, cached in ConcurrentHashMap). After the
+    // Scope exits the pool is cleared and activePool returns to null.
+    //
+    // Pins: T8 (resource lifecycle - pool survives under concurrent load, releases cleanly).
+    "P24b-T1: 50 concurrent fibers reading the same JAR entry all succeed and pool is cleared on scope exit" taggedAs jvmOnly in run {
+        val dir       = makeTempDir()
+        val jarPath   = s"$dir/pool-exhaustion.jar"
+        val entryName = "kyo/PoolTest.tasty"
+        writeJar(jarPath, Seq((entryName, knownBytes1)))
+        val fullPath = s"$jarPath!/$entryName"
+
+        val activePoolField = JvmFileSource.getClass.getDeclaredField("kyo$internal$tasty$query$JvmFileSource$$$activePool")
+        activePoolField.setAccessible(true)
+
+        val fiberCount = 50
+        val fibers     = Chunk.fill(fiberCount)(())
+
+        Scope.run(
+            JvmFileSource.withReadBatch(
+                Abort.run[TastyError](
+                    Async.foreach(fibers, fiberCount) { _ =>
+                        JvmFileSource.read(fullPath)
+                    }
+                )
+            )
+        ).map: result =>
+            val poolAfter = activePoolField.get(JvmFileSource)
+                .asInstanceOf[java.util.concurrent.atomic.AtomicReference[?]]
+                .get()
+            assert(
+                poolAfter == null,
+                s"Expected activePool null after scope exit but got: $poolAfter"
+            )
+            result match
+                case Result.Success(bytesChunk) =>
+                    assert(bytesChunk.length == fiberCount, s"Expected $fiberCount results, got ${bytesChunk.length}")
+                    val allMatch = bytesChunk.forall(bytes => java.util.Arrays.equals(bytes, knownBytes1))
+                    assert(allMatch, "At least one fiber read returned wrong bytes")
+                case Result.Failure(e) =>
+                    fail(s"P24b-T1: unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+            end match
+    }
+
+    // Phase 24b - T8 Test 3: mmap arena close during Symbol.body access.
+    //
+    // Opens a classpath inside a Scope using the in-memory fixture (same bytes that the shared
+    // TreeUnpicklerTest uses), finds a declaration symbol that has a non-zero body slice, captures
+    // that symbol, then exits the Scope (which closes the classpath). Calling sym.body after scope
+    // exit must return TastyError.ClasspathClosed. This exercises the isClosed guard added in Phase
+    // 02d and the IllegalStateException -> ClasspathClosed mapping for mmap-backed reads.
+    //
+    // Pins: T8 (mmap arena close path).
+    "P24b-T3: sym.body after classpath close returns ClasspathClosed (mmap arena close path)" taggedAs jvmOnly in run {
+        import kyo.internal.tasty.query.Classpath as InternalClasspath
+        import kyo.internal.tasty.query.ClasspathOrchestrator
+        import kyo.internal.tasty.query.ClasspathTestHelpers
+        import kyo.internal.tasty.query.FileSource
+        import scala.collection.mutable
+
+        final class MemSrc extends FileSource:
+            private val files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty
+            def add(p: String, b: Array[Byte]): Unit                = files(p) = b
+            def read(p: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
+                files.get(p) match
+                    case Some(b) => b
+                    case None    => Abort.fail(TastyError.FileNotFound(p))
+            def write(p: String, b: Array[Byte])(using Frame): Unit < (Sync & Abort[TastyError]) =
+                Sync.defer(files(p) = b)
+            def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+                files.get(from) match
+                    case Some(b) =>
+                        Sync.defer { files.remove(from); files(to) = b }
+                    case None =>
+                        Abort.fail(TastyError.SnapshotIoError(s"rename: $from not found"))
+            def mkdirs(p: String)(using Frame): Unit < (Sync & Abort[TastyError]) = Kyo.unit
+            def list(d: String, s: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+                Sync.defer(Chunk.from(files.keys.filter(k => k.startsWith(d + "/") && s.exists(k.endsWith)).toSeq))
+            def exists(p: String)(using Frame): Boolean < Sync =
+                Sync.defer(files.contains(p) || files.keys.exists(_.startsWith(p + "/")))
+            def stat(p: String)(using Frame): FileSource.FileStat < (Sync & Abort[TastyError]) =
+                Sync.defer(FileSource.FileStat(0L, files.get(p).map(_.length.toLong).getOrElse(0L)))
+        end MemSrc
+
+        val src = MemSrc()
+        src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
+
+        // Unsafe: Sync.Unsafe.defer provides AllowUnsafe for close() and allSymbols().
+        val captureResult: Result[TastyError, Tasty.Symbol] < Async =
+            Scope.run:
+                Abort.run[TastyError]:
+                    InternalClasspath.allocate.flatMap: rawCp =>
+                        Scope.ensure(Sync.Unsafe.defer(InternalClasspath.close(rawCp))).andThen:
+                            ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).flatMap: _ =>
+                                ClasspathTestHelpers.assignHomesForTest(rawCp)
+                                Sync.Unsafe.defer:
+                                    val syms = rawCp.allSymbols
+                                    val symWithBody = syms.find: s =>
+                                        s.origin match
+                                            case o: Tasty.Symbol.TastyOrigin => o.bodyStart > 0 && o.bodyEnd > 0
+                                            case _                           => false
+                                    symWithBody
+                                .flatMap:
+                                    case Some(s) => Kyo.lift(s)
+                                    case None    => Abort.fail(TastyError.NotImplemented("no symbol with body slice"))
+        captureResult.flatMap:
+            case Result.Success(sym) =>
+                Abort.run[TastyError](sym.body).map:
+                    case Result.Failure(TastyError.ClasspathClosed) =>
+                        succeed
+                    case Result.Failure(e) =>
+                        fail(s"P24b-T3: expected ClasspathClosed but got: $e")
+                    case Result.Success(_) =>
+                        fail("P24b-T3: expected ClasspathClosed but body decode succeeded on closed classpath")
+                    case Result.Panic(t) =>
+                        throw t
+            case Result.Failure(TastyError.NotImplemented(_)) =>
+                pending
+            case Result.Failure(e) =>
+                fail(s"P24b-T3: failed to capture symbol: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
 end JvmFileSourceTest
