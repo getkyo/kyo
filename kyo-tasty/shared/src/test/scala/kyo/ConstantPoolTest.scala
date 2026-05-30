@@ -5,9 +5,10 @@ import kyo.internal.tasty.classfile.ClassfileFormat
 import kyo.internal.tasty.classfile.ConstantPool
 import kyo.internal.tasty.symbol.Interner
 
-/** Tests for ConstantPool.read accepting ByteView.Mapped (Phase 05c, C3).
+/** Tests for ConstantPool constant pool entry validation (Phase 05c C3, Phase 09 B5).
   *
-  * Pins: C3 - Utf8Lazy eagerly copies bytes from Mapped ByteView; no IllegalStateException.
+  * Pins: C3 - Utf8Lazy eagerly copies bytes from Mapped ByteView; no IllegalStateException. B5 - Typed accessors validate cross-entry
+  * reference kinds; malformed pool produces structured errors.
   */
 class ConstantPoolTest extends Test:
 
@@ -64,6 +65,56 @@ class ConstantPoolTest extends Test:
         buf
     end buildUtf8PoolBytes
 
+    /** Build a pool with two entries: slot 1 = ClassRef(nameIdx=2), slot 2 = Utf8(s).
+      *
+      * count=3, entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8(s). Format: u2 count=3 u1 tag=7 (CONSTANT_Class), u2 nameIdx=2 u1 tag=1
+      * (CONSTANT_Utf8), u2 len, u1* bytes
+      */
+    private def buildClassRefThenUtf8Bytes(s: String): Array[Byte] =
+        val strBytes = s.getBytes("UTF-8")
+        val len      = strBytes.length
+        // 2 (count) + 3 (ClassRef) + 1+2+len (Utf8)
+        val buf = new Array[Byte](2 + 3 + 1 + 2 + len)
+        // count = 3
+        buf(0) = 0
+        buf(1) = 3
+        // entry[1]: CONSTANT_Class, nameIdx=2
+        buf(2) = ClassfileFormat.CONSTANT_Class.toByte
+        buf(3) = 0
+        buf(4) = 2
+        // entry[2]: CONSTANT_Utf8
+        buf(5) = ClassfileFormat.CONSTANT_Utf8.toByte
+        buf(6) = ((len >> 8) & 0xff).toByte
+        buf(7) = (len & 0xff).toByte
+        var i = 0
+        while i < len do
+            buf(8 + i) = strBytes(i)
+            i += 1
+        buf
+    end buildClassRefThenUtf8Bytes
+
+    /** Build a pool with one Long entry: slot 1 = Long(value), slot 2 = Hole.
+      *
+      * count=3 (slots 1 and 2 consumed by one Long). Format: u2 count=3 u1 tag=5 (CONSTANT_Long), u8 value
+      */
+    private def buildLongPoolBytes(value: Long): Array[Byte] =
+        // 2 (count) + 1 (tag) + 8 (value)
+        val buf = new Array[Byte](2 + 1 + 8)
+        buf(0) = 0
+        buf(1) = 3
+        buf(2) = ClassfileFormat.CONSTANT_Long.toByte
+        // big-endian 8 bytes
+        buf(3) = ((value >>> 56) & 0xff).toByte
+        buf(4) = ((value >>> 48) & 0xff).toByte
+        buf(5) = ((value >>> 40) & 0xff).toByte
+        buf(6) = ((value >>> 32) & 0xff).toByte
+        buf(7) = ((value >>> 24) & 0xff).toByte
+        buf(8) = ((value >>> 16) & 0xff).toByte
+        buf(9) = ((value >>> 8) & 0xff).toByte
+        buf(10) = (value & 0xff).toByte
+        buf
+    end buildLongPoolBytes
+
     // -------------------------------------------------------------------------
     // Test 1 (C3): ConstantPool.read succeeds on a Mapped ByteView; utf8 entry decoded correctly.
     // -------------------------------------------------------------------------
@@ -109,6 +160,103 @@ class ConstantPoolTest extends Test:
                         view.position == bytes.length.toLong,
                         s"Expected cursor at ${bytes.length} but got ${view.position}"
                     )
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 09 tests (B5): typed accessor validates entry kind; structured errors on mismatch.
+    // -------------------------------------------------------------------------
+
+    // Test B5-1: utf8(idx) rejects a ClassRef entry; error message names the found kind.
+    "utf8 at a ClassRef index yields structured error naming ClassRef" in run {
+        // Given: pool with entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8("scala/Int").
+        // When: utf8(1) is called.
+        // Then: Abort[TastyError] with message containing "expected Utf8" and "ClassRef".
+        // Pins: B5.
+        val bytes = buildClassRefThenUtf8Bytes("scala/Int")
+        val view  = ByteView(bytes)
+        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+            case Result.Failure(err) => fail(s"Read failed: $err")
+            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Success(pool) =>
+                Abort.run(pool.utf8(1)).map:
+                    case Result.Success(s) =>
+                        fail(s"Expected failure but utf8(1) returned '$s'")
+                    case Result.Panic(ex) =>
+                        fail(s"Expected Failure but got Panic: $ex")
+                    case Result.Failure(TastyError.ClassfileFormatError(_, msg)) =>
+                        assert(msg.contains("Utf8"), s"Error message should mention 'Utf8': $msg")
+                        assert(msg.contains("ClassRef"), s"Error message should mention 'ClassRef': $msg")
+                    case Result.Failure(other) =>
+                        fail(s"Unexpected error type: $other")
+    }
+
+    // Test B5-2: classRef resolves ClassRef.nameIdx to Utf8 string.
+    "classRef resolving through nameIdx returns the Utf8 string" in run {
+        // Given: pool with entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8("scala/Int").
+        // When: classRef(1) is called.
+        // Then: returns "scala/Int".
+        // Pins: B5.
+        val bytes = buildClassRefThenUtf8Bytes("scala/Int")
+        val view  = ByteView(bytes)
+        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+            case Result.Failure(err) => fail(s"Read failed: $err")
+            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Success(pool) =>
+                Abort.run(pool.classRef(1)).map:
+                    case Result.Success(name) =>
+                        assert(name == "scala/Int", s"Expected 'scala/Int' but got '$name'")
+                    case other =>
+                        fail(s"Expected success but got $other")
+    }
+
+    // Test B5-3: utf8At the Utf8 slot succeeds; classRef(idx) where idx points to Utf8 yields structured error naming Utf8.
+    "classRef at a Utf8 index yields structured error naming Utf8" in run {
+        // Given: pool with entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8("scala/Int").
+        // When: classRef(2) is called (slot 2 is Utf8, not ClassRef).
+        // Then: Abort[TastyError] with message containing "ClassRef" and "Utf8".
+        // Pins: B5.
+        val bytes = buildClassRefThenUtf8Bytes("scala/Int")
+        val view  = ByteView(bytes)
+        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+            case Result.Failure(err) => fail(s"Read failed: $err")
+            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Success(pool) =>
+                Abort.run(pool.classRef(2)).map:
+                    case Result.Success(name) =>
+                        fail(s"Expected failure but classRef(2) returned '$name'")
+                    case Result.Panic(ex) =>
+                        fail(s"Expected Failure but got Panic: $ex")
+                    case Result.Failure(TastyError.ClassfileFormatError(_, msg)) =>
+                        assert(msg.contains("ClassRef"), s"Error message should mention 'ClassRef': $msg")
+                        assert(msg.contains("Utf8"), s"Error message should mention 'Utf8': $msg")
+                    case Result.Failure(other) =>
+                        fail(s"Unexpected error type: $other")
+    }
+
+    // Test B5-4: entry() rejects Long/Double Hole slot with structured error.
+    "utf8 at a Long/Double Hole slot yields structured error" in run {
+        // Given: pool with entry[1]=Long(42L); slot 2 is the Hole.
+        // When: utf8(2) is called (slot 2 is a Hole).
+        // Then: Abort[TastyError] mentioning "hole" (case-insensitive).
+        // Pins: B5.
+        val bytes = buildLongPoolBytes(42L)
+        val view  = ByteView(bytes)
+        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+            case Result.Failure(err) => fail(s"Read failed: $err")
+            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Success(pool) =>
+                Abort.run(pool.utf8(2)).map:
+                    case Result.Success(s) =>
+                        fail(s"Expected failure but utf8(2) returned '$s'")
+                    case Result.Panic(ex) =>
+                        fail(s"Expected Failure but got Panic: $ex")
+                    case Result.Failure(TastyError.ClassfileFormatError(_, msg)) =>
+                        assert(
+                            msg.toLowerCase.contains("hole") || msg.toLowerCase.contains("long/double"),
+                            s"Error message should mention Hole or Long/Double: $msg"
+                        )
+                    case Result.Failure(other) =>
+                        fail(s"Unexpected error type: $other")
     }
 
 end ConstantPoolTest

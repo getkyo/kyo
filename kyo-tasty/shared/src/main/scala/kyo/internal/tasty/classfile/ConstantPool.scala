@@ -62,7 +62,10 @@ final class ConstantPool(
     val path: String
 ):
 
-    /** Validate an index and return the entry. */
+    /** Validate an index and return the entry.
+      *
+      * Returns a structured error for out-of-range indices, null slots (unread entries), and Long/Double hole slots.
+      */
     private def entry(idx: Int)(using Frame): CpEntry < Abort[TastyError] =
         if idx < 1 || idx >= entries.length then
             Abort.fail(TastyError.ClassfileFormatError(path, s"Constant pool index $idx out of bounds [1, ${entries.length - 1}]"))
@@ -73,10 +76,40 @@ final class ConstantPool(
                         path,
                         s"Constant pool slot $idx is a Long/Double hole (invalid reference)"
                     ))
-                case e =>
-                    e
+                case e: CpEntry =>
+                    if e eq CpEntry.Hole then
+                        Abort.fail(TastyError.ClassfileFormatError(
+                            path,
+                            s"Constant pool slot $idx is the unused second slot of a Long/Double entry (invalid reference)"
+                        ))
+                    else e
 
-    /** Decode UTF-8 constant at `idx`. */
+    /** Return a short tag name for a CpEntry, used in cross-entry error messages. */
+    private def tagName(e: CpEntry): String = e match
+        case _: CpEntry.Utf8Lazy           => "Utf8"
+        case _: CpEntry.Utf8Decoded        => "Utf8"
+        case _: CpEntry.ClassRef           => "ClassRef"
+        case _: CpEntry.NameAndType        => "NameAndType"
+        case _: CpEntry.Fieldref           => "Fieldref"
+        case _: CpEntry.Methodref          => "Methodref"
+        case _: CpEntry.InterfaceMethodref => "InterfaceMethodref"
+        case _: CpEntry.CpInteger          => "Integer"
+        case _: CpEntry.CpFloat            => "Float"
+        case _: CpEntry.CpLong             => "Long"
+        case _: CpEntry.CpDouble           => "Double"
+        case _: CpEntry.StringConst        => "String"
+        case _: CpEntry.MethodHandle       => "MethodHandle"
+        case _: CpEntry.MethodType         => "MethodType"
+        case _: CpEntry.Dynamic            => "Dynamic"
+        case _: CpEntry.InvokeDynamic      => "InvokeDynamic"
+        case _: CpEntry.CpModule           => "Module"
+        case _: CpEntry.CpPackage          => "Package"
+        case _                             => "Hole"
+
+    /** Decode UTF-8 constant at `idx`.
+      *
+      * Fails with a structured error if `pool[idx]` is not a Utf8 entry, including the actual entry kind found.
+      */
     def utf8(idx: Int)(using Frame): String < (Sync & Abort[TastyError]) =
         entry(idx).map: cpEntry =>
             cpEntry match
@@ -92,74 +125,102 @@ final class ConstantPool(
                         import AllowUnsafe.embrace.danger
                         e.string.get()
                     }
-                case _ =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Utf8 at pool[$idx]"))
+                case other =>
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Utf8 at pool[$idx], found ${tagName(other)}"))
 
-    /** Return the binary class name (with '/' separators) for a CONSTANT_Class entry at `idx`. */
+    /** Return the binary class name (with '/' separators) for a CONSTANT_Class entry at `idx`.
+      *
+      * Fails with a structured chain error when `pool[idx]` is not a ClassRef, or when the nameIdx it contains does not point to a Utf8.
+      */
     def classRef(idx: Int)(using Frame): String < (Sync & Abort[TastyError]) =
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.ClassRef(nameIdx) =>
                     utf8(nameIdx)
-                case _ =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Class at pool[$idx]"))
+                case other =>
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected ClassRef at pool[$idx], found ${tagName(other)}"))
 
-    /** Return an integer constant at `idx`. */
+    /** Return an integer constant at `idx`.
+      *
+      * Fails with a structured error including the actual entry kind found when `pool[idx]` is not an Integer.
+      */
     def integer(idx: Int)(using Frame): Int < Abort[TastyError] =
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpInteger(value) => value
-                case _                        => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Integer at pool[$idx]"))
+                case other => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Integer at pool[$idx], found ${tagName(other)}"))
 
-    /** Return a long constant at `idx`. */
+    /** Return a long constant at `idx`.
+      *
+      * Fails with a structured error including the actual entry kind found when `pool[idx]` is not a Long.
+      */
     def long_(idx: Int)(using Frame): Long < Abort[TastyError] =
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpLong(value) => value
-                case _                     => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Long at pool[$idx]"))
+                case other => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Long at pool[$idx], found ${tagName(other)}"))
 
-    /** Return a float constant at `idx`. */
+    /** Return a float constant at `idx`.
+      *
+      * Fails with a structured error including the actual entry kind found when `pool[idx]` is not a Float.
+      */
     def float_(idx: Int)(using Frame): Float < Abort[TastyError] =
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpFloat(value) => value
-                case _                      => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Float at pool[$idx]"))
+                case other => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Float at pool[$idx], found ${tagName(other)}"))
 
-    /** Return a double constant at `idx`. */
+    /** Return a double constant at `idx`.
+      *
+      * Fails with a structured error including the actual entry kind found when `pool[idx]` is not a Double.
+      */
     def double_(idx: Int)(using Frame): Double < Abort[TastyError] =
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpDouble(value) => value
-                case _                       => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Double at pool[$idx]"))
+                case other => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Double at pool[$idx], found ${tagName(other)}"))
 
-    /** Return the module name string (with '.' separators) for a CONSTANT_Module entry at `idx`. */
+    /** Return the module name string (with '.' separators) for a CONSTANT_Module entry at `idx`.
+      *
+      * Fails with a structured chain error when `pool[idx]` is not a Module, or when its nameIdx does not point to a Utf8.
+      */
     def moduleName(idx: Int)(using Frame): String < (Sync & Abort[TastyError]) =
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpModule(nameIdx) =>
                     utf8(nameIdx)
-                case _ =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Module at pool[$idx]"))
+                case other =>
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Module at pool[$idx], found ${tagName(other)}"))
 
-    /** Return the package name string (with '/' separators) for a CONSTANT_Package entry at `idx`. */
+    /** Return the package name string (with '/' separators) for a CONSTANT_Package entry at `idx`.
+      *
+      * Fails with a structured chain error when `pool[idx]` is not a Package, or when its nameIdx does not point to a Utf8.
+      */
     def packageName(idx: Int)(using Frame): String < (Sync & Abort[TastyError]) =
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpPackage(nameIdx) =>
                     utf8(nameIdx)
-                case _ =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Package at pool[$idx]"))
+                case other =>
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Package at pool[$idx], found ${tagName(other)}"))
 
-    /** Return (name, descriptor) for a CONSTANT_NameAndType entry. */
+    /** Return (name, descriptor) for a CONSTANT_NameAndType entry.
+      *
+      * Fails with a structured chain error when `pool[idx]` is not a NameAndType, or when the name/descriptor indices do not point to Utf8.
+      */
     def nameAndType(idx: Int)(using Frame): (String, String) < (Sync & Abort[TastyError]) =
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.NameAndType(nameIdx, descIdx) =>
                     utf8(nameIdx).map(name => utf8(descIdx).map(desc => (name, desc)))
-                case _ =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected NameAndType at pool[$idx]"))
+                case other =>
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected NameAndType at pool[$idx], found ${tagName(other)}"))
 
-    /** Return (className, memberName, descriptor) for a field/method ref entry. */
+    /** Return (className, memberName, descriptor) for a field/method ref entry.
+      *
+      * Fails with a structured chain error when `pool[idx]` is not a Fieldref/Methodref/InterfaceMethodref, or when cross-entry references
+      * (classIdx to ClassRef, nameAndTypeIdx to NameAndType) point to wrong-kind entries.
+      */
     def memberRef(idx: Int)(using Frame): (String, String, String) < (Sync & Abort[TastyError]) =
         entry(idx).map: cpEntry =>
             cpEntry match
@@ -169,8 +230,8 @@ final class ConstantPool(
                     classRef(classIdx).map(cls => nameAndType(natIdx).map((name, desc) => (cls, name, desc)))
                 case CpEntry.InterfaceMethodref(classIdx, natIdx) =>
                     classRef(classIdx).map(cls => nameAndType(natIdx).map((name, desc) => (cls, name, desc)))
-                case _ =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Fieldref/Methodref at pool[$idx]"))
+                case other =>
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Fieldref/Methodref at pool[$idx], found ${tagName(other)}"))
 
 end ConstantPool
 
