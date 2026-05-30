@@ -28,7 +28,7 @@ import scala.jdk.CollectionConverters.*
 object JvmFileSource extends FileSource:
 
     def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
-        Sync.defer:
+        Sync.Unsafe.defer:
             try
                 if path.startsWith("jrt:/") then
                     readJrtPath(path)
@@ -168,27 +168,27 @@ object JvmFileSource extends FileSource:
         Files.readAllBytes(jrtPath)
     end readJrtPath
 
-    private def readJarEntry(jarPath: String, entryName: String): Array[Byte] =
-        PerfCounters.jarOpenCount.incrementAndGet()
+    private def readJarEntry(jarPath: String, entryName: String)(using AllowUnsafe): Array[Byte] =
+        TastyPerfStats.jarOpens.inc()
         val t0 = java.lang.System.nanoTime()
         // Unsafe: activePool.get() may return null when no batch is active
         val pool = activePool.get()
         if pool != null then
             val reader = pool.get(jarPath)
             val t1     = java.lang.System.nanoTime()
-            PerfCounters.jarConstructTimeNs.addAndGet(t1 - t0)
+            TastyPerfStats.jarConstructNs.add(t1 - t0)
             val bytes = reader.readEntry(entryName)
             val t2    = java.lang.System.nanoTime()
-            PerfCounters.jarReadTimeNs.addAndGet(t2 - t1)
+            TastyPerfStats.jarReadNs.add(t2 - t1)
             bytes
         else
             // Fallback: open-on-demand mmap reader (not pooled; GC handles cleanup)
             val reader = JarMappedReader.open(jarPath)
             val t1     = java.lang.System.nanoTime()
-            PerfCounters.jarConstructTimeNs.addAndGet(t1 - t0)
+            TastyPerfStats.jarConstructNs.add(t1 - t0)
             val bytes = reader.readEntry(entryName)
             val t2    = java.lang.System.nanoTime()
-            PerfCounters.jarReadTimeNs.addAndGet(t2 - t1)
+            TastyPerfStats.jarReadNs.add(t2 - t1)
             bytes
         end if
     end readJarEntry
