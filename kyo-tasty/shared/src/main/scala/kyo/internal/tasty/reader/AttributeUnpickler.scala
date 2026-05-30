@@ -63,9 +63,10 @@ object AttributeUnpickler:
             try Right(readSync(view, names))
             catch
                 case _: ArrayIndexOutOfBoundsException =>
-                    Left(TastyError.MalformedSection("Attributes", "unexpected end of attributes section"))
+                    // no cursor: exception does not carry a byte offset
+                    Left(TastyError.MalformedSection("Attributes", "unexpected end of attributes section", 0L))
                 case e: UnknownTagException =>
-                    Left(TastyError.MalformedSection("Attributes", s"Unknown attribute tag ${e.tag} at position ${e.pos}"))
+                    Left(TastyError.MalformedSection("Attributes", s"Unknown attribute tag ${e.tag} at position ${e.pos}", e.pos.toLong))
         result match
             case Right(fa) => Sync.defer(fa)
             case Left(err) => Abort.fail(err)

@@ -91,9 +91,9 @@ object TypeUnpickler:
                 Right((t, Chunk.from(placeholders)))
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
-                    Left(TastyError.MalformedSection("ASTs", s"unexpected end reading type: ${ex.getMessage}"))
+                    Left(TastyError.MalformedSection("ASTs", s"unexpected end reading type: ${ex.getMessage}", view.position))
                 case ex: Exception =>
-                    Left(TastyError.MalformedSection("ASTs", s"type decode error: ${ex.getMessage}"))
+                    Left(TastyError.MalformedSection("ASTs", s"type decode error: ${ex.getMessage}", view.position))
         result match
             case Right(r)  => Sync.defer(r)
             case Left(err) => Abort.fail(err)

@@ -51,7 +51,7 @@ class ClassfileReaderTest extends Test:
                     val astView = view.subView(offset, offset + length)
                     AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
-                    Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
+                    Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
         yield result.symbols.find(_.kind == Tasty.SymbolKind.Class).getOrElse(result.rootSymbol)
         end for
     end firstClassSymbolFromTasty
@@ -176,7 +176,7 @@ class ClassfileReaderTest extends Test:
         )
         Abort.run(ClassfileUnpickler.read(badBytes, interner, new TypeArena, new ClasspathRef)).map: result =>
             result match
-                case Result.Failure(TastyError.ClassfileFormatError(_, reason)) =>
+                case Result.Failure(TastyError.ClassfileFormatError(_, reason, _)) =>
                     assert(reason.contains("magic") || reason.contains("0xdeadbeef"), s"Unexpected reason: $reason")
                 case other =>
                     fail(s"Expected ClassfileFormatError, got $other")

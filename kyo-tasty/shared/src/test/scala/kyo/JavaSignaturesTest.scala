@@ -158,7 +158,7 @@ class JavaSignaturesTest extends Test:
     "parseFieldSignature with unclosed < produces ClassfileFormatError" in run {
         Abort.run(JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;", interner)).map: result =>
             result match
-                case Result.Failure(TastyError.ClassfileFormatError(_, reason)) =>
+                case Result.Failure(TastyError.ClassfileFormatError(_, reason, _)) =>
                     assert(reason.nonEmpty)
                 case other =>
                     fail(s"Expected ClassfileFormatError, got $other")

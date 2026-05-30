@@ -227,8 +227,8 @@ class JarCentralDirectoryTest extends Test:
                 fail("Expected Abort[TastyError.MalformedSection] for non-JAR file, got success")
             case Result.Failure(e) =>
                 e match
-                    case TastyError.MalformedSection(_, _) => succeed
-                    case other                             => fail(s"Expected MalformedSection but got: $other")
+                    case TastyError.MalformedSection(_, _, _) => succeed
+                    case other                                => fail(s"Expected MalformedSection but got: $other")
             case Result.Panic(t) =>
                 fail(s"unexpected panic: $t")
     }
@@ -267,8 +267,8 @@ class JarCentralDirectoryTest extends Test:
                 fail("Expected Abort[TastyError.MalformedSection] for corrupted EOCD")
             case Result.Failure(e) =>
                 e match
-                    case TastyError.MalformedSection(_, _) => succeed
-                    case other                             => fail(s"Expected MalformedSection but got: $other")
+                    case TastyError.MalformedSection(_, _, _) => succeed
+                    case other                                => fail(s"Expected MalformedSection but got: $other")
             case Result.Panic(t) =>
                 throw t
     }
@@ -456,7 +456,7 @@ class JarCentralDirectoryTest extends Test:
         ).map:
             case Result.Failure(e) =>
                 e match
-                    case TastyError.MalformedSection(_, reason) =>
+                    case TastyError.MalformedSection(_, reason, _) =>
                         assert(
                             reason.contains("out of range"),
                             s"Expected reason containing 'out of range' but got: $reason"

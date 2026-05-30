@@ -118,7 +118,7 @@ class NameUnpicklerTest extends Test:
             NameUnpickler.read(view, interner)
         }.map { result =>
             result match
-                case Result.Failure(TastyError.MalformedSection("Names", _)) =>
+                case Result.Failure(TastyError.MalformedSection("Names", _, _)) =>
                     succeed
                 case other =>
                     fail(s"Expected MalformedSection but got: $other")
@@ -244,7 +244,7 @@ class NameUnpicklerTest extends Test:
             NameUnpickler.read(view, interner)
         }.map { result =>
             result match
-                case Result.Failure(TastyError.MalformedSection("Names", reason)) =>
+                case Result.Failure(TastyError.MalformedSection("Names", reason, _)) =>
                     assert(
                         reason.contains("prefix=99") || reason.contains("ref=99"),
                         s"Expected reason to mention prefix=99 but was: $reason"

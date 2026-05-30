@@ -98,12 +98,12 @@ object AstUnpickler:
             try Right(runPass1(view, names, attrs, home, arena))
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
-                    Left(TastyError.MalformedSection("ASTs", s"unexpected end: ${ex.getMessage}"))
+                    Left(TastyError.MalformedSection("ASTs", s"unexpected end: ${ex.getMessage}", view.position))
                 case ex: java.lang.Error
                     if ex.getCause != null && ex.getCause.isInstanceOf[ArrayIndexOutOfBoundsException] =>
-                    Left(TastyError.MalformedSection("ASTs", s"unexpected end: ${ex.getCause.getMessage}"))
+                    Left(TastyError.MalformedSection("ASTs", s"unexpected end: ${ex.getCause.getMessage}", view.position))
                 case ex: Exception =>
-                    Left(TastyError.MalformedSection("ASTs", s"parse error: ${ex.getMessage}"))
+                    Left(TastyError.MalformedSection("ASTs", s"parse error: ${ex.getMessage}", view.position))
         result match
             case Right(r)  => Sync.defer(r)
             case Left(err) => Abort.fail(err)

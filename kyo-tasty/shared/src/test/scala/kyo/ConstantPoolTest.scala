@@ -183,7 +183,7 @@ class ConstantPoolTest extends Test:
                         fail(s"Expected failure but utf8(1) returned '$s'")
                     case Result.Panic(ex) =>
                         fail(s"Expected Failure but got Panic: $ex")
-                    case Result.Failure(TastyError.ClassfileFormatError(_, msg)) =>
+                    case Result.Failure(TastyError.ClassfileFormatError(_, msg, _)) =>
                         assert(msg.contains("Utf8"), s"Error message should mention 'Utf8': $msg")
                         assert(msg.contains("ClassRef"), s"Error message should mention 'ClassRef': $msg")
                     case Result.Failure(other) =>
@@ -226,7 +226,7 @@ class ConstantPoolTest extends Test:
                         fail(s"Expected failure but classRef(2) returned '$name'")
                     case Result.Panic(ex) =>
                         fail(s"Expected Failure but got Panic: $ex")
-                    case Result.Failure(TastyError.ClassfileFormatError(_, msg)) =>
+                    case Result.Failure(TastyError.ClassfileFormatError(_, msg, _)) =>
                         assert(msg.contains("ClassRef"), s"Error message should mention 'ClassRef': $msg")
                         assert(msg.contains("Utf8"), s"Error message should mention 'Utf8': $msg")
                     case Result.Failure(other) =>
@@ -250,7 +250,7 @@ class ConstantPoolTest extends Test:
                         fail(s"Expected failure but utf8(2) returned '$s'")
                     case Result.Panic(ex) =>
                         fail(s"Expected Failure but got Panic: $ex")
-                    case Result.Failure(TastyError.ClassfileFormatError(_, msg)) =>
+                    case Result.Failure(TastyError.ClassfileFormatError(_, msg, _)) =>
                         assert(
                             msg.toLowerCase.contains("hole") || msg.toLowerCase.contains("long/double"),
                             s"Error message should mention Hole or Long/Double: $msg"

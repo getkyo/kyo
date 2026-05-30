@@ -548,7 +548,8 @@ object ClasspathOrchestrator:
                     val astView = view.subView(offset, offset + length)
                     AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
-                    Abort.fail(TastyError.MalformedSection("ASTs", s"$file: ASTs section not found")))
+                    // no cursor: missing section detected at orchestration level, before stream access
+                    Abort.fail(TastyError.MalformedSection("ASTs", s"$file: ASTs section not found", 0L)))
             commentsBySymbol <- timed(PerfCounters.commentsUnpicklerTimeNs)(sections.get(TastyFormat.CommentsSection) match
                 case Present((offset, length)) =>
                     val commentsView = view.subView(offset, offset + length)

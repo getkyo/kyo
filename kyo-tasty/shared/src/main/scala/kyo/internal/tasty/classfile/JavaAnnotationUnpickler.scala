@@ -67,7 +67,8 @@ object JavaAnnotationUnpickler:
         if depth > MaxAnnotationDepth then
             Abort.fail(TastyError.ClassfileFormatError(
                 pool.path,
-                s"Annotation nesting depth exceeds maximum ($MaxAnnotationDepth)"
+                s"Annotation nesting depth exceeds maximum ($MaxAnnotationDepth)",
+                view.position
             ))
         else
             Sync.defer(readU2(view)).map: typeIdx =>
@@ -182,7 +183,8 @@ object JavaAnnotationUnpickler:
                 case unknown =>
                     Abort.fail(TastyError.ClassfileFormatError(
                         pool.path,
-                        s"Unknown annotation element_value tag: ${unknown.toChar} (0x${unknown.toHexString})"
+                        s"Unknown annotation element_value tag: ${unknown.toChar} (0x${unknown.toHexString})",
+                        view.position
                     ))
     end readElementValue
 

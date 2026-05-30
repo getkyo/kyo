@@ -48,10 +48,10 @@ object NameUnpickler:
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
                     val reason = if ex.getMessage != null then ex.getMessage else "unexpected end of name table"
-                    Left(TastyError.MalformedSection("Names", reason))
+                    Left(TastyError.MalformedSection("Names", reason, view.position))
                 case ex: java.lang.Error
                     if ex.getCause != null && ex.getCause.isInstanceOf[ArrayIndexOutOfBoundsException] =>
-                    Left(TastyError.MalformedSection("Names", "unexpected end of name table"))
+                    Left(TastyError.MalformedSection("Names", "unexpected end of name table", view.position))
         result match
             case Right(names) => Sync.defer(names)
             case Left(err)    => Abort.fail(err)

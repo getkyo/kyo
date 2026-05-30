@@ -180,7 +180,7 @@ class SymbolResolutionTest extends Test:
                     val astView = view.subView(offset, offset + length)
                     AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
-                    Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
+                    Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
         yield result
         end for
     end decodeBytes
@@ -205,7 +205,8 @@ class SymbolResolutionTest extends Test:
                 if plainResult.placeholders.isEmpty then
                     Abort.fail(TastyError.MalformedSection(
                         "ASTs",
-                        s"Expected non-empty placeholders from PlainClass.tasty but got empty"
+                        s"Expected non-empty placeholders from PlainClass.tasty but got empty",
+                        0L
                     ))
                 else
                     val placeholder = plainResult.placeholders(0)
@@ -265,7 +266,8 @@ class SymbolResolutionTest extends Test:
                 if plainResult.placeholders.isEmpty then
                     Abort.fail(TastyError.MalformedSection(
                         "ASTs",
-                        s"Expected non-empty placeholders from PlainClass.tasty but got empty"
+                        s"Expected non-empty placeholders from PlainClass.tasty but got empty",
+                        0L
                     ))
                 else
                     import AllowUnsafe.embrace.danger

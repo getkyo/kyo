@@ -123,7 +123,7 @@ class CommentsUnpicklerTest extends Test:
         Abort.run[TastyError](CommentsUnpickler.read(view, addrMap)).map:
             case Result.Success(result) =>
                 fail(s"Expected MalformedSection failure but got success with ${result.size} entries")
-            case Result.Failure(TastyError.MalformedSection("Comments", _)) =>
+            case Result.Failure(TastyError.MalformedSection("Comments", _, _)) =>
                 succeed
             case Result.Failure(other) =>
                 fail(s"Expected MalformedSection but got: $other")

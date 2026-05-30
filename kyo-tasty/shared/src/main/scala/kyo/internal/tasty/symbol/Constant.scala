@@ -41,7 +41,7 @@ object Constant:
             try Right(decodeConstant(tag, view, names))
             catch
                 case _: ArrayIndexOutOfBoundsException =>
-                    Left(TastyError.MalformedSection("ASTs", s"unexpected end while reading constant tag $tag"))
+                    Left(TastyError.MalformedSection("ASTs", s"unexpected end while reading constant tag $tag", view.position))
         result match
             case Right(c)  => Sync.defer(c)
             case Left(err) => Abort.fail(err)

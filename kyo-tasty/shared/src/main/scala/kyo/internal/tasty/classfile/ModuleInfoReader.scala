@@ -62,7 +62,8 @@ object ModuleInfoReader:
         if magic != ClassfileFormat.Magic then
             Abort.fail(TastyError.ClassfileFormatError(
                 path,
-                s"Bad magic: expected 0xCAFEBABE, got 0x${magic.toHexString}"
+                s"Bad magic: expected 0xCAFEBABE, got 0x${magic.toHexString}",
+                view.position
             ))
         else
             val minorVersion = readU2(view)
@@ -70,7 +71,8 @@ object ModuleInfoReader:
             if majorVersion < 53 then
                 Abort.fail(TastyError.ClassfileFormatError(
                     path,
-                    s"module-info.class requires major version >= 53 (Java 9+), got $majorVersion.$minorVersion"
+                    s"module-info.class requires major version >= 53 (Java 9+), got $majorVersion.$minorVersion",
+                    view.position
                 ))
             else
                 Kyo.unit
@@ -157,8 +159,9 @@ object ModuleInfoReader:
         if idx >= total then
             found match
                 case Present(desc) => desc
-                case Absent =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, "No Module attribute found in module-info.class"))
+                case Absent        =>
+                    // no cursor: the module attribute scan has fully consumed the view by this point
+                    Abort.fail(TastyError.ClassfileFormatError(path, "No Module attribute found in module-info.class", 0L))
         else
             val nameIdx = readU2(view)
             val attrLen = readU4(view)

@@ -9,13 +9,13 @@ enum TastyError derives CanEqual:
     case CorruptedFile(path: String, at: Long, reason: String)
     case UnsupportedVersion(found: Tasty.Version, supported: Tasty.Version)
     case InconsistentClasspath(file: String, expectedUuid: java.util.UUID, foundUuid: java.util.UUID)
-    case MalformedSection(name: String, reason: String)
+    case MalformedSection(name: String, reason: String, byteOffset: Long)
     case SymbolNotFound(fqn: String)
-    case ClassfileFormatError(path: String, reason: String)
+    case ClassfileFormatError(path: String, reason: String, byteOffset: Long)
     case ParameterizedTypeNotAllowed(tag: String)
     case ClasspathClosed
     case ClasspathBuilding
-    case SnapshotFormatError(path: String, reason: String)
+    case SnapshotFormatError(path: String, reason: String, byteOffset: Long)
     case SnapshotVersionMismatch(found: Tasty.Version, supported: Tasty.Version)
     case SnapshotIoError(cause: String)
     case NotImplemented(feature: String)

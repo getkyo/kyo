@@ -86,7 +86,7 @@ private[kyo] object JarCentralDirectory:
                 catch
                     case err: TastyErrorWrapper => Abort.fail(err.error)
                     case ex: java.io.IOException =>
-                        Abort.fail(TastyError.MalformedSection("jar", s"$jarPath: ${ex.getMessage}"))
+                        Abort.fail(TastyError.MalformedSection("jar", s"$jarPath: ${ex.getMessage}", 0L))
                 finally
                     if raf != null then
                         try raf.close()
@@ -111,7 +111,7 @@ private[kyo] object JarCentralDirectory:
                 catch
                     case err: TastyErrorWrapper => Abort.fail(err.error)
                     case ex: java.io.IOException =>
-                        Abort.fail(TastyError.MalformedSection("jar", s"$jarPath: ${ex.getMessage}"))
+                        Abort.fail(TastyError.MalformedSection("jar", s"$jarPath: ${ex.getMessage}", 0L))
                 finally
                     if raf != null then
                         try raf.close()
@@ -166,7 +166,7 @@ private[kyo] object JarCentralDirectory:
         suffixes: Chunk[String]
     ): Chunk[(String, String)] =
         val fileLen = raf.length()
-        if fileLen == 0 then throw new TastyErrorWrapper(TastyError.MalformedSection("jar", s"$jarPath: empty file"))
+        if fileLen == 0 then throw new TastyErrorWrapper(TastyError.MalformedSection("jar", s"$jarPath: empty file", 0L))
 
         // Locate EOCD record by scanning from the end
         val (eocdOffset, eocdBuf) = findEocd(jarPath, raf, fileLen)
@@ -177,7 +177,7 @@ private[kyo] object JarCentralDirectory:
         // Validate CEN offset is within file bounds
         if cenOffset < 0 || cenOffset >= fileLen then
             throw new TastyErrorWrapper(
-                TastyError.MalformedSection("jar", s"$jarPath: CEN offset $cenOffset out of range [0, $fileLen)")
+                TastyError.MalformedSection("jar", s"$jarPath: CEN offset $cenOffset out of range [0, $fileLen)", eocdOffset)
             )
         end if
 
@@ -185,7 +185,11 @@ private[kyo] object JarCentralDirectory:
         val cenSizeLong0 = (eocdOffset - cenOffset).max(0L)
         if cenSizeLong0 > Int.MaxValue then
             throw new TastyErrorWrapper(
-                TastyError.MalformedSection("jar", s"$jarPath: central directory size $cenSizeLong0 exceeds 2GB; Zip64 required")
+                TastyError.MalformedSection(
+                    "jar",
+                    s"$jarPath: central directory size $cenSizeLong0 exceeds 2GB; Zip64 required",
+                    eocdOffset
+                )
             )
         end if
         val cenSize = cenSizeLong0.toInt
@@ -222,7 +226,7 @@ private[kyo] object JarCentralDirectory:
         end while
 
         throw new TastyErrorWrapper(
-            TastyError.MalformedSection("jar", s"$jarPath: EOCD record not found (not a valid ZIP/JAR file)")
+            TastyError.MalformedSection("jar", s"$jarPath: EOCD record not found (not a valid ZIP/JAR file)", fileLen)
         )
     end findEocd
 
@@ -247,7 +251,7 @@ private[kyo] object JarCentralDirectory:
         // Multi-disk check on standard EOCD
         if stdDiskNum != 0 || stdStartDisk != 0 then
             throw new TastyErrorWrapper(
-                TastyError.MalformedSection("jar", s"$jarPath: multi-disk jars unsupported")
+                TastyError.MalformedSection("jar", s"$jarPath: multi-disk jars unsupported", eocdOffset)
             )
         end if
 
@@ -262,7 +266,7 @@ private[kyo] object JarCentralDirectory:
                 val locDiskCount = readUInt32LE(locBuf, 16)
                 if locDiskCount > 1 then
                     throw new TastyErrorWrapper(
-                        TastyError.MalformedSection("jar", s"$jarPath: multi-disk jars unsupported")
+                        TastyError.MalformedSection("jar", s"$jarPath: multi-disk jars unsupported", locOffset)
                     )
                 end if
                 val zip64EocdOffset = readUInt64LE(locBuf, 8)
@@ -275,7 +279,7 @@ private[kyo] object JarCentralDirectory:
                         val zip64StartDisk = readUInt32LE(zip64Buf, 20)
                         if zip64DiskNum != 0 || zip64StartDisk != 0 then
                             throw new TastyErrorWrapper(
-                                TastyError.MalformedSection("jar", s"$jarPath: multi-disk jars unsupported")
+                                TastyError.MalformedSection("jar", s"$jarPath: multi-disk jars unsupported", zip64EocdOffset)
                             )
                         end if
                         val totalEntries = readUInt64LE(zip64Buf, 32)
@@ -349,21 +353,25 @@ private[kyo] object JarCentralDirectory:
         suffixes: Chunk[String]
     ): Chunk[JarEntry] =
         val fileLen = raf.length()
-        if fileLen == 0 then throw new TastyErrorWrapper(TastyError.MalformedSection("jar", s"$jarPath: empty file"))
+        if fileLen == 0 then throw new TastyErrorWrapper(TastyError.MalformedSection("jar", s"$jarPath: empty file", 0L))
 
         val (eocdOffset, eocdBuf)     = findEocd(jarPath, raf, fileLen)
         val (totalEntries, cenOffset) = readCenLocation(jarPath, raf, fileLen, eocdOffset, eocdBuf)
 
         if cenOffset < 0 || cenOffset >= fileLen then
             throw new TastyErrorWrapper(
-                TastyError.MalformedSection("jar", s"$jarPath: CEN offset $cenOffset out of range [0, $fileLen)")
+                TastyError.MalformedSection("jar", s"$jarPath: CEN offset $cenOffset out of range [0, $fileLen)", eocdOffset)
             )
         end if
 
         val cenSizeLong1 = (eocdOffset - cenOffset).max(0L)
         if cenSizeLong1 > Int.MaxValue then
             throw new TastyErrorWrapper(
-                TastyError.MalformedSection("jar", s"$jarPath: central directory size $cenSizeLong1 exceeds 2GB; Zip64 required")
+                TastyError.MalformedSection(
+                    "jar",
+                    s"$jarPath: central directory size $cenSizeLong1 exceeds 2GB; Zip64 required",
+                    eocdOffset
+                )
             )
         end if
         val cenSize = cenSizeLong1.toInt

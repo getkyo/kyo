@@ -382,7 +382,7 @@ class ModuleInfoTest extends Test:
         val bytes = buf.toArray
         Abort.run[TastyError](ModuleInfoReader.read(bytes)).map: result =>
             result match
-                case Result.Failure(TastyError.ClassfileFormatError(_, msg)) =>
+                case Result.Failure(TastyError.ClassfileFormatError(_, msg, _)) =>
                     assert(
                         msg.contains("Bad magic"),
                         s"Expected 'Bad magic' in error message, got: $msg"

@@ -137,7 +137,7 @@ class PositionsUnpicklerTest extends Test:
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Absent)).map:
             case Result.Success(result) =>
                 fail(s"Expected MalformedSection failure but got success with ${result.size} entries")
-            case Result.Failure(TastyError.MalformedSection("Positions", _)) =>
+            case Result.Failure(TastyError.MalformedSection("Positions", _, _)) =>
                 succeed
             case Result.Failure(other) =>
                 fail(s"Expected MalformedSection but got: $other")
@@ -359,7 +359,7 @@ class PositionsUnpicklerTest extends Test:
         Abort.run[TastyError](PositionsUnpickler.read(view, IntMap.empty, Absent)).map:
             case Result.Success(result) =>
                 fail(s"Expected MalformedSection for overflow but got success with ${result.size} entries")
-            case Result.Failure(TastyError.MalformedSection("Positions", reason)) =>
+            case Result.Failure(TastyError.MalformedSection("Positions", reason, _)) =>
                 assert(
                     reason.contains("exceeds Int.MaxValue"),
                     s"Expected reason to contain 'exceeds Int.MaxValue' but got: $reason"

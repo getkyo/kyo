@@ -48,7 +48,7 @@ class AstUnpicklerTest extends Test:
                     val astView = view.subView(offset, offset + length)
                     AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
-                    Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
+                    Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
         yield result
         end for
     end runPass1
@@ -71,7 +71,7 @@ class AstUnpicklerTest extends Test:
                     val astView = view.subView(offset, offset + length)
                     AstUnpickler.readPass1(astView, names, attrs, home, arena)
                 case Absent =>
-                    Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
+                    Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
         yield result
         end for
     end runPass1WithArena
@@ -486,7 +486,7 @@ class AstUnpicklerTest extends Test:
         val attrs       = FileAttributes.default
         Abort.run[TastyError](AstUnpickler.readPass1(view, Array.empty, attrs, home, arena)).map { result =>
             result match
-                case Result.Failure(TastyError.MalformedSection("ASTs", _)) =>
+                case Result.Failure(TastyError.MalformedSection("ASTs", _, _)) =>
                     // Exact error type: MalformedSection with section name "ASTs".
                     succeed
                 case Result.Failure(other) =>

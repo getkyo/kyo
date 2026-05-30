@@ -68,19 +68,24 @@ final class ConstantPool(
       */
     private def entry(idx: Int)(using Frame): CpEntry < Abort[TastyError] =
         if idx < 1 || idx >= entries.length then
-            Abort.fail(TastyError.ClassfileFormatError(path, s"Constant pool index $idx out of bounds [1, ${entries.length - 1}]"))
+            // no cursor: constant pool entry lookup by index does not have a stream position
+            Abort.fail(TastyError.ClassfileFormatError(path, s"Constant pool index $idx out of bounds [1, ${entries.length - 1}]", 0L))
         else
             entries(idx) match
                 case null =>
+                    // no cursor: constant pool slot validation does not have a stream position
                     Abort.fail(TastyError.ClassfileFormatError(
                         path,
-                        s"Constant pool slot $idx is a Long/Double hole (invalid reference)"
+                        s"Constant pool slot $idx is a Long/Double hole (invalid reference)",
+                        0L
                     ))
                 case e: CpEntry =>
                     if e eq CpEntry.Hole then
+                        // no cursor: constant pool slot validation does not have a stream position
                         Abort.fail(TastyError.ClassfileFormatError(
                             path,
-                            s"Constant pool slot $idx is the unused second slot of a Long/Double entry (invalid reference)"
+                            s"Constant pool slot $idx is the unused second slot of a Long/Double entry (invalid reference)",
+                            0L
                         ))
                     else e
 
@@ -126,7 +131,8 @@ final class ConstantPool(
                         e.string.get()
                     }
                 case other =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Utf8 at pool[$idx], found ${tagName(other)}"))
+                    // no cursor: constant pool accessor errors do not carry a stream position
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Utf8 at pool[$idx], found ${tagName(other)}", 0L))
 
     /** Return the binary class name (with '/' separators) for a CONSTANT_Class entry at `idx`.
       *
@@ -138,7 +144,8 @@ final class ConstantPool(
                 case CpEntry.ClassRef(nameIdx) =>
                     utf8(nameIdx)
                 case other =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected ClassRef at pool[$idx], found ${tagName(other)}"))
+                    // no cursor: constant pool accessor errors do not carry a stream position
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected ClassRef at pool[$idx], found ${tagName(other)}", 0L))
 
     /** Return an integer constant at `idx`.
       *
@@ -148,7 +155,9 @@ final class ConstantPool(
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpInteger(value) => value
-                case other => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Integer at pool[$idx], found ${tagName(other)}"))
+                // no cursor: constant pool accessor errors do not carry a stream position
+                case other =>
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Integer at pool[$idx], found ${tagName(other)}", 0L))
 
     /** Return a long constant at `idx`.
       *
@@ -158,7 +167,8 @@ final class ConstantPool(
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpLong(value) => value
-                case other => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Long at pool[$idx], found ${tagName(other)}"))
+                // no cursor: constant pool accessor errors do not carry a stream position
+                case other => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Long at pool[$idx], found ${tagName(other)}", 0L))
 
     /** Return a float constant at `idx`.
       *
@@ -168,7 +178,9 @@ final class ConstantPool(
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpFloat(value) => value
-                case other => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Float at pool[$idx], found ${tagName(other)}"))
+                // no cursor: constant pool accessor errors do not carry a stream position
+                case other =>
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Float at pool[$idx], found ${tagName(other)}", 0L))
 
     /** Return a double constant at `idx`.
       *
@@ -178,7 +190,9 @@ final class ConstantPool(
         entry(idx).map: cpEntry =>
             cpEntry match
                 case CpEntry.CpDouble(value) => value
-                case other => Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Double at pool[$idx], found ${tagName(other)}"))
+                // no cursor: constant pool accessor errors do not carry a stream position
+                case other =>
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Double at pool[$idx], found ${tagName(other)}", 0L))
 
     /** Return the module name string (with '.' separators) for a CONSTANT_Module entry at `idx`.
       *
@@ -190,7 +204,8 @@ final class ConstantPool(
                 case CpEntry.CpModule(nameIdx) =>
                     utf8(nameIdx)
                 case other =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Module at pool[$idx], found ${tagName(other)}"))
+                    // no cursor: constant pool accessor errors do not carry a stream position
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Module at pool[$idx], found ${tagName(other)}", 0L))
 
     /** Return the package name string (with '/' separators) for a CONSTANT_Package entry at `idx`.
       *
@@ -202,7 +217,8 @@ final class ConstantPool(
                 case CpEntry.CpPackage(nameIdx) =>
                     utf8(nameIdx)
                 case other =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Package at pool[$idx], found ${tagName(other)}"))
+                    // no cursor: constant pool accessor errors do not carry a stream position
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Package at pool[$idx], found ${tagName(other)}", 0L))
 
     /** Return (name, descriptor) for a CONSTANT_NameAndType entry.
       *
@@ -214,7 +230,8 @@ final class ConstantPool(
                 case CpEntry.NameAndType(nameIdx, descIdx) =>
                     utf8(nameIdx).map(name => utf8(descIdx).map(desc => (name, desc)))
                 case other =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected NameAndType at pool[$idx], found ${tagName(other)}"))
+                    // no cursor: constant pool accessor errors do not carry a stream position
+                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected NameAndType at pool[$idx], found ${tagName(other)}", 0L))
 
     /** Return (className, memberName, descriptor) for a field/method ref entry.
       *
@@ -231,7 +248,12 @@ final class ConstantPool(
                 case CpEntry.InterfaceMethodref(classIdx, natIdx) =>
                     classRef(classIdx).map(cls => nameAndType(natIdx).map((name, desc) => (cls, name, desc)))
                 case other =>
-                    Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Fieldref/Methodref at pool[$idx], found ${tagName(other)}"))
+                    // no cursor: constant pool accessor errors do not carry a stream position
+                    Abort.fail(TastyError.ClassfileFormatError(
+                        path,
+                        s"Expected Fieldref/Methodref at pool[$idx], found ${tagName(other)}",
+                        0L
+                    ))
 
 end ConstantPool
 
@@ -256,10 +278,11 @@ object ConstantPool:
             val count   = readU2(view)
             val entries = new Array[CpEntry | Null](count)
 
-            // errorMsg is set inside the while loop when a non-recoverable format error is detected.
-            // We cannot call Abort.fail inside Sync.defer, so we capture the error and surface it
-            // as Abort.fail after the Sync.defer block completes.
-            var errorMsg: String = null
+            // errorMsg and errorOffset are set inside the while loop when a non-recoverable format
+            // error is detected. We cannot call Abort.fail inside Sync.defer, so we capture the
+            // error and surface it as Abort.fail after the Sync.defer block completes.
+            var errorMsg: String  = null
+            var errorOffset: Long = 0L
 
             var idx = 1
             while idx < count && errorMsg == null do
@@ -360,13 +383,14 @@ object ConstantPool:
 
                     case unknown =>
                         errorMsg = s"Unknown constant pool tag $unknown at index $idx in $path"
+                        errorOffset = view.position
                 end match
             end while
 
-            if errorMsg != null then Left(errorMsg)
+            if errorMsg != null then Left((errorMsg, errorOffset))
             else Right(new ConstantPool(entries, interner, path))
         }.map:
-            case Right(pool) => pool
-            case Left(msg)   => Abort.fail(TastyError.ClassfileFormatError(path, msg))
+            case Right(pool)         => pool
+            case Left((msg, offset)) => Abort.fail(TastyError.ClassfileFormatError(path, msg, offset))
 
 end ConstantPool

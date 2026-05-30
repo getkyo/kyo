@@ -168,7 +168,7 @@ class TastyHeaderTest extends Test:
             TastyHeader.read(view)
         }.map { result =>
             result match
-                case Result.Failure(TastyError.MalformedSection(_, _)) =>
+                case Result.Failure(TastyError.MalformedSection(_, _, _)) =>
                     succeed
                 case other =>
                     fail(s"Expected MalformedSection for truncated header but got: $other")

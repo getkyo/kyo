@@ -39,7 +39,8 @@ object CommentsUnpickler:
             try Right(readSync(view, addrMap))
             catch
                 case _: ArrayIndexOutOfBoundsException =>
-                    Left(TastyError.MalformedSection("Comments", "unexpected end of Comments section"))
+                    // no cursor: exception does not carry a byte offset
+                    Left(TastyError.MalformedSection("Comments", "unexpected end of Comments section", 0L))
         result match
             case Right(m)  => Sync.defer(m)
             case Left(err) => Abort.fail(err)

@@ -42,7 +42,7 @@ object SectionIndex:
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
                     val reason = if ex.getMessage != null then ex.getMessage else "unexpected end while reading section headers"
-                    Left(TastyError.MalformedSection("SectionIndex", reason))
+                    Left(TastyError.MalformedSection("SectionIndex", reason, view.position))
         result match
             case Right(idx) => Sync.defer(idx)
             case Left(err)  => Abort.fail(err)

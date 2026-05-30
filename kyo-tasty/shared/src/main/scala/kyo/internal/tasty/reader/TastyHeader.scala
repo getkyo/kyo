@@ -35,8 +35,8 @@ object TastyHeader:
         uuid: String
     )
 
-    private def truncated(using Frame): Data < Abort[TastyError] =
-        Abort.fail(TastyError.MalformedSection("header", "unexpected end of TASTy header"))
+    private def truncated(view: ByteView)(using Frame): Data < Abort[TastyError] =
+        Abort.fail(TastyError.MalformedSection("header", "unexpected end of TASTy header", view.position))
 
     /** Read the TASTy header from `view`, returning `Data` or a `TastyError`.
       *
@@ -47,7 +47,7 @@ object TastyHeader:
       */
     def read(view: ByteView)(using Frame): Data < Abort[TastyError] =
         // Step 1: check 4 magic bytes via explicit remaining guard.
-        if view.remaining < TastyFormat.MagicBytes.length then truncated
+        if view.remaining < TastyFormat.MagicBytes.length then truncated(view)
         else checkMagic(view, 0)
 
     private def checkMagic(view: ByteView, i: Int)(using Frame): Data < Abort[TastyError] =
@@ -70,7 +70,7 @@ object TastyHeader:
 
     private def readVersions(view: ByteView)(using Frame): Data < Abort[TastyError] =
         // Step 2: version triple (3 Nats); each Nat is at least 1 byte.
-        if view.remaining < 3 then truncated
+        if view.remaining < 3 then truncated(view)
         else
             val fileMajor        = Varint.readNat(view)
             val fileMinor        = Varint.readNat(view)
@@ -102,10 +102,10 @@ object TastyHeader:
         Frame
     ): Data < Abort[TastyError] =
         // Step 4: tooling version string (length Nat + length bytes).
-        if view.remaining < 1 then truncated
+        if view.remaining < 1 then truncated(view)
         else
             val toolingLength = Varint.readNat(view)
-            if view.remaining < toolingLength then truncated
+            if view.remaining < toolingLength then truncated(view)
             else
                 val toolingBytes = new Array[Byte](toolingLength)
                 var j            = 0
@@ -126,7 +126,7 @@ object TastyHeader:
         toolingVersion: String
     )(using Frame): Data < Abort[TastyError] =
         // Step 5: UUID as two big-endian uncompressed Longs (16 bytes total).
-        if view.remaining < 16 then truncated
+        if view.remaining < 16 then truncated(view)
         else
             val msb  = readUncompressedLong(view)
             val lsb  = readUncompressedLong(view)

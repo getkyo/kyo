@@ -97,7 +97,7 @@ object SnapshotReader:
     )(using Frame): Unit < (Sync & Abort[TastyError]) =
         Sync.defer:
             if bytes.length < 4 || bytes(0) != 'K' || bytes(1) != 'R' || bytes(2) != 'F' || bytes(3) != 'L' then
-                Abort.fail(TastyError.SnapshotFormatError(path, "wrong magic, expected KRFL"))
+                Abort.fail(TastyError.SnapshotFormatError(path, "wrong magic, expected KRFL", 0L))
             else
                 val fileMajor = bytes(4) & 0xff
                 val fileMinor = bytes(5) & 0xff

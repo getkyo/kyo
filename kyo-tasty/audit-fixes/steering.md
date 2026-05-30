@@ -190,3 +190,5 @@ one INV, one explanation a reviewer can hold in head as one idea."
 
 - Phase 12 audit WARN (2026-05-30): resolveExtFqn in Scala2PickleReader recurses unboundedly. Corrupt pickle with owner-cycle would StackOverflow. ROUTE TO: Phase 21e (Test scala2 subsystem) impl agent, add depth counter bounded by `entries.length` plus a malformed-pickle test that exercises the cycle.
 - Phase 12 audit NOTE: resolveExtFqn allocates one PickleCursor + string per owner level. Not hot; no action.
+- Phase 13 audit WARN (2026-05-30): T1 thin-API coverage gap remains; declaredType/declarations/typeParams/scaladoc/position/flags.contains/kind accessors still untested. ROUTE TO: Phase 21g (Test symbol subsystem) impl agent, expand SymbolApiSurfaceTest to cover the remaining accessors.
+- Phase 13 audit WARN: `makeNamed` helper duplicated verbatim across TastyAnnotationTest and TastyTypeTest. NOTE-level; consolidate in Phase 21g if convenient.

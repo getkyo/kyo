@@ -37,7 +37,7 @@ class SectionIndexTest extends Test:
             SectionIndex.read(view, names)
         }.map { result =>
             result match
-                case Result.Failure(TastyError.MalformedSection("SectionIndex", reason)) =>
+                case Result.Failure(TastyError.MalformedSection("SectionIndex", reason, _)) =>
                     assert(
                         reason.contains("nameRef=99") || reason.contains("out of range"),
                         s"Expected reason to contain 'nameRef=99' or 'out of range' but was: $reason"
@@ -62,7 +62,7 @@ class SectionIndexTest extends Test:
             SectionIndex.read(view, names)
         }.map { result =>
             result match
-                case Result.Failure(TastyError.MalformedSection("SectionIndex", _)) =>
+                case Result.Failure(TastyError.MalformedSection("SectionIndex", _, _)) =>
                     succeed
                 case other =>
                     fail(s"Expected MalformedSection but got: $other")

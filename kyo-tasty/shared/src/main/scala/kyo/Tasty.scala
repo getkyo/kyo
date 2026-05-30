@@ -201,9 +201,11 @@ object Tasty:
                             try Right(kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(argsPickle, ctx))
                             catch
                                 case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                    Left(TastyError.MalformedSection("ASTs", s"annotation arg decode failed: ${ex.getMessage}"))
+                                    // no cursor: DecodeException does not carry a byte offset
+                                    Left(TastyError.MalformedSection("ASTs", s"annotation arg decode failed: ${ex.getMessage}", 0L))
                                 case ex: ArrayIndexOutOfBoundsException =>
-                                    Left(TastyError.MalformedSection("ASTs", s"annotation arg truncated: ${ex.getMessage}"))
+                                    // no cursor: exception does not carry a byte offset
+                                    Left(TastyError.MalformedSection("ASTs", s"annotation arg truncated: ${ex.getMessage}", 0L))
                         .map:
                             case Right(t) => t
                             case Left(e)  => Abort.fail(e)
@@ -733,14 +735,18 @@ object Tasty:
                                             try Right(_bodyOnce.get())
                                             catch
                                                 case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                                    // no cursor: DecodeException does not carry a byte offset
                                                     Left(TastyError.MalformedSection(
                                                         "ASTs",
-                                                        s"body decode failed for '${name.asString}': ${ex.getMessage}"
+                                                        s"body decode failed for '${name.asString}': ${ex.getMessage}",
+                                                        0L
                                                     ))
                                                 case ex: ArrayIndexOutOfBoundsException =>
+                                                    // no cursor: exception does not carry a byte offset
                                                     Left(TastyError.MalformedSection(
                                                         "ASTs",
-                                                        s"body truncated for '${name.asString}': ${ex.getMessage}"
+                                                        s"body truncated for '${name.asString}': ${ex.getMessage}",
+                                                        0L
                                                     ))
                                                 case _: IllegalStateException =>
                                                     // Thrown when a mmap-backed ByteView is read after its arena was closed.

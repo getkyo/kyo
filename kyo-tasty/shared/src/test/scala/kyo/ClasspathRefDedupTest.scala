@@ -53,7 +53,7 @@ class ClasspathRefDedupTest extends Test:
                         val astView = view.subView(offset, offset + length)
                         AstUnpickler.readPass1(astView, names, FileAttributes.default, home, arena)
                     case Absent =>
-                        Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found"))
+                        Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
             yield result
         .flatMap:
             case Result.Failure(e) =>

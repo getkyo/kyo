@@ -54,7 +54,7 @@ object PositionsUnpickler:
                     val reason =
                         if msg != null && msg.contains("exceeds Int.MaxValue") then msg
                         else "unexpected end of Positions section"
-                    Left(TastyError.MalformedSection("Positions", reason))
+                    Left(TastyError.MalformedSection("Positions", reason, view.position))
         result match
             case Right(m)  => Sync.defer(m)
             case Left(err) => Abort.fail(err)

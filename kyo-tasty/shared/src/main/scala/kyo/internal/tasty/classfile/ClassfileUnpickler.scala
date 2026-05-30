@@ -115,7 +115,11 @@ object ClassfileUnpickler:
         // Magic
         Sync.defer(readU4(view)).map: magic =>
             if magic != ClassfileFormat.Magic then
-                Abort.fail(TastyError.ClassfileFormatError(path, s"Invalid magic: 0x${magic.toHexString} (expected 0xcafebabe)"))
+                Abort.fail(TastyError.ClassfileFormatError(
+                    path,
+                    s"Invalid magic: 0x${magic.toHexString} (expected 0xcafebabe)",
+                    view.position
+                ))
             else
                 // Version
                 Sync.defer {
@@ -128,7 +132,8 @@ object ClassfileUnpickler:
                     then
                         Abort.fail(TastyError.ClassfileFormatError(
                             path,
-                            s"Unsupported classfile version $major.$minor (minimum ${ClassfileFormat.MinMajorVersion}.${ClassfileFormat.MinMinorVersion})"
+                            s"Unsupported classfile version $major.$minor (minimum ${ClassfileFormat.MinMajorVersion}.${ClassfileFormat.MinMinorVersion})",
+                            view.position
                         ))
                     else
                         // Constant pool
