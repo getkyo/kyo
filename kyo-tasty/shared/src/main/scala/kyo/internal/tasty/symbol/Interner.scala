@@ -76,7 +76,15 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
                 // Check load factor before attempting insert.
                 if loadCounter.get() * 4 >= len * 3 then
                     // Load factor >= 0.75: grow and retry from scratch.
-                    growShard(shardRef, loadCounter, len)
+                    // Widen the synchronized window so the "observe table + grow" pair
+                    // is atomic with respect to concurrent grows on this shard.  The
+                    // re-check `shardRef.get() eq table` inside the lock ensures that
+                    // if another thread already grew the table we skip the redundant
+                    // grow; growShard itself is reentrant-safe and double-checks too.
+                    shardRef.synchronized {
+                        if shardRef.get() eq table then
+                            growShard(shardRef, loadCounter, len)
+                    }
                     return internInShard(shardRef, loadCounter, hash, bytes, offset, length)
                 end if
                 // Eagerly copy the byte slice so the Entry does not hold the parse buffer alive.

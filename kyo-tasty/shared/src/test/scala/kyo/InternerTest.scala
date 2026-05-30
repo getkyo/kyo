@@ -273,4 +273,70 @@ class InternerTest extends Test:
         succeed
     }
 
+    // Phase 07a / B12: concurrent grow-and-insert under contention preserves all entries.
+    // Interner with numShards=2 and initialShardCapacity=4 so shards grow frequently.
+    // 8 fibers each insert 1000 unique byte sequences; after all fibers complete the
+    // total unique entry count equals 8000 and every byte sequence re-interned returns
+    // the same (reference-equal) Entry as the original insert.
+    "B12/Phase-07a: concurrent grow-and-insert preserves all entries under contention" in run {
+        val interner   = new Interner(numShards = 2, initialShardCapacity = 4)
+        val fiberCount = 8
+        val perFiber   = 1000
+        val fibers     = Chunk.fill(fiberCount)(())
+        // Use an atomic counter so each fiber gets a unique ID even though all elements are ().
+        val fiberIdCounter = new java.util.concurrent.atomic.AtomicInteger(0)
+        Async.foreach(fibers, fiberCount) { _ =>
+            Sync.defer {
+                val fid = fiberIdCounter.getAndIncrement()
+                // Each fiber inserts perFiber unique sequences using its assigned ID.
+                Chunk.tabulate(perFiber) { j =>
+                    val bytes = utf8Bytes(s"b12-f$fid-$j")
+                    interner.intern(bytes, 0, bytes.length)
+                }
+            }
+        }.map { allChunks =>
+            // Flatten the results and re-intern every sequence: must get the same Entry back.
+            var total = 0
+            var k     = 0
+            while k < allChunks.length do
+                var j = 0
+                while j < allChunks(k).length do
+                    val original = allChunks(k)(j)
+                    // Re-intern via the original entry's bytes: must be reference-equal.
+                    val again = interner.intern(original.bytes, 0, original.bytes.length)
+                    assert(again eq original, s"fiber $k entry $j: re-intern returned different Entry")
+                    total += 1
+                    j += 1
+                end while
+                k += 1
+            end while
+            assert(total == fiberCount * perFiber, s"expected ${fiberCount * perFiber} total entries, got $total")
+            succeed
+        }
+    }
+
+    // Phase 07a / B12: grow during contention preserves reference equality.
+    // 4 fibers all race to intern the same byte sequence [1, 2, 3] on a single-shard
+    // interner with initialShardCapacity=2 (grows immediately under any real load).
+    // Every fiber must return the exact same Entry reference.
+    "B12/Phase-07a: grow during contention preserves reference equality for shared key" in run {
+        val interner   = new Interner(numShards = 1, initialShardCapacity = 2)
+        val sharedKey  = Array[Byte](1, 2, 3)
+        val fiberCount = 4
+        val fibers     = Chunk.fill(fiberCount)(())
+        Async.foreach(fibers, fiberCount) { _ =>
+            Sync.defer {
+                interner.intern(sharedKey, 0, sharedKey.length)
+            }
+        }.map { results =>
+            val expected = results(0)
+            var f        = 1
+            while f < fiberCount do
+                assert(results(f) eq expected, s"fiber $f returned a different Entry for the shared key")
+                f += 1
+            end while
+            succeed
+        }
+    }
+
 end InternerTest
