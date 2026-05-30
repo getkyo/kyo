@@ -24,7 +24,7 @@ object JsonRpcHttpTransport:
                         case Result.Success(structure) =>
                             // RawJsonParser.encode converts Structure.Value to standard JSON-RPC wire text;
                             // Json.encode[Structure.Value] uses kyo-schema format, not standard JSON.
-                            val jsonStr = internal.RawJsonParser.encode(structure)
+                            val jsonStr = internal.codec.RawJsonParser.encode(structure)
                             outbound.put(HttpWebSocket.Payload.Text(jsonStr))
                         case Result.Failure(err) =>
                             Log.warn(s"kyo-jsonrpc-http: encode failed ${err.message}")
@@ -57,7 +57,7 @@ object JsonRpcHttpTransport:
                                 ws.stream.foreach {
                                     case HttpWebSocket.Payload.Text(text) =>
                                         // RawJsonParser.parse converts standard JSON-RPC wire text
-                                        internal.RawJsonParser.parse(text) match
+                                        internal.codec.RawJsonParser.parse(text) match
                                             case Result.Success(sv) =>
                                                 Abort.run[JsonRpcError](codec.decode(sv)).map {
                                                     case Result.Success(env) =>

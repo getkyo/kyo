@@ -25,6 +25,13 @@ Append-only log. One entry per Stage 1/2/3 milestone.
 - Phase 01 committed: 68ba4e113 (verify PASS, 56 files staged).
 - Phase 01 audit dispatched in SLOT-B.
 - Phase 02 impl dispatched in SLOT-A.
+- Phase 02 committed: 3f66991cd (verify PASS, 4 files: 2M + 2D).
+- Phase 02 audit: 0 BLOCKER, 2 WARN, 3 NOTE (clean; WARNs route to Phase 03).
+- Phase 03 impl dispatched in SLOT-A; Phase 02 audit completed in SLOT-B.
+
+- Phase 04 prep note: current `JsonRpcEndpoint.Config` at JsonRpcEndpoint.scala:124-134 is 9-field case class with all defaults. Missing for Phase 04: `derives CanEqual`, per-field setters (kyo-http convention: bare name like `codec(c)` not `withCodec(c)`), `.default` constant, `require()` validation. After Phase 03, field types `CancellationPolicy`/`ProgressPolicy`/etc. are nested under `JsonRpcEndpoint` so directly in scope inside companion (no prefix needed).
+
+
 
 
 

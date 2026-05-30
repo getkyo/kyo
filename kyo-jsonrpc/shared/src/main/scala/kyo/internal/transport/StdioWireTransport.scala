@@ -3,7 +3,7 @@ package kyo.internal.transport
 import java.io.EOFException
 import kyo.*
 
-final private[kyo] class StdioWireTransport extends WireTransport:
+final private[kyo] class StdioWireTransport extends JsonRpcTransport.WireTransport:
 
     def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
         val line    = new String(bytes.toArray, "UTF-8")

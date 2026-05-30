@@ -84,13 +84,13 @@ class JsonRpcHttpTransportTest extends AsyncFreeSpec with NonImplicitAssertions 
                 val wsUrl = HttpUrl.parse(s"ws://${url.host}:${url.port}/ws/echo").getOrThrow
                 Abort.run[HttpException](JsonRpcHttpTransport.webSocket(wsUrl)).map {
                     case Result.Success(t) =>
-                        val req = JsonRpcEnvelope.Request(JsonRpcId.Num(1), "ping", Absent, Absent)
+                        val req = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1), "ping", Absent, Absent)
                         t.send(req).andThen {
                             t.incoming.take(1).run.map { frames =>
                                 assert(frames.size == 1)
                                 frames.head match
-                                    case JsonRpcEnvelope.Request(JsonRpcId.Num(1), "ping", _, _) => succeed
-                                    case other                                                   => fail(s"unexpected $other")
+                                    case JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1), "ping", _, _) => succeed
+                                    case other                                                            => fail(s"unexpected $other")
                             }
                         }
                     case other => fail(s"unexpected $other")

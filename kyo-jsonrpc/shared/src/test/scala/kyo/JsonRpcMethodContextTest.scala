@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class HandlerCtxTest extends JsonRpcTestBase:
+class JsonRpcMethodContextTest extends JsonRpcTestBase:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
@@ -18,7 +18,7 @@ class HandlerCtxTest extends JsonRpcTestBase:
                 }
         for
             promise <- Fiber.Promise.init[Unit, Sync]
-            ctx = HandlerCtx.forTest(promise, Present(JsonRpcId.Num(1L)), Absent, Present(sink))
+            ctx = JsonRpcMethod.Context.forTest(promise, Present(JsonRpcEnvelope.Id.Num(1L)), Absent, Present(sink))
             _ <- ctx.progress(Structure.Value.Str("p"))
             seen = captured.get()(using AllowUnsafe.embrace.danger)
         yield assert(seen == List(Structure.Value.Str("p")))
@@ -28,7 +28,7 @@ class HandlerCtxTest extends JsonRpcTestBase:
     "progress with an Absent sink is a no-op" in run {
         for
             promise <- Fiber.Promise.init[Unit, Sync]
-            ctx = HandlerCtx.forTest(promise, Absent, Absent, Absent)
+            ctx = JsonRpcMethod.Context.forTest(promise, Absent, Absent, Absent)
             _ <- ctx.progress(Structure.Value.Str("p"))
         yield succeed
     }
@@ -37,9 +37,9 @@ class HandlerCtxTest extends JsonRpcTestBase:
         val extras = Structure.Value.Str("opaque")
         for
             promise <- Fiber.Promise.init[Unit, Sync]
-            ctx = HandlerCtx.forTest(promise, Present(JsonRpcId.Str("rid")), Present(extras), Absent)
+            ctx = JsonRpcMethod.Context.forTest(promise, Present(JsonRpcEnvelope.Id.Str("rid")), Present(extras), Absent)
         yield
-            assert(ctx.requestId == Present(JsonRpcId.Str("rid")))
+            assert(ctx.requestId == Present(JsonRpcEnvelope.Id.Str("rid")))
             assert(ctx.extras == Present(extras))
         end for
     }
@@ -47,9 +47,9 @@ class HandlerCtxTest extends JsonRpcTestBase:
     "cancelled Promise is constructible and not yet completed at forTest exit" in run {
         for
             promise <- Fiber.Promise.init[Unit, Sync]
-            ctx = HandlerCtx.forTest(promise, Absent, Absent, Absent)
+            ctx = JsonRpcMethod.Context.forTest(promise, Absent, Absent, Absent)
             done <- ctx.cancelled.done
         yield assert(!done)
     }
 
-end HandlerCtxTest
+end JsonRpcMethodContextTest

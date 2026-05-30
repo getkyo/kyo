@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.JsonRpcEndpoint.IdStrategy
 import kyo.internal.CdpTypes.*
 
 /** Behavior-equivalent replacement for the deleted `CdpClient.decodeCdpMessage` tests.
@@ -98,7 +99,7 @@ class CdpClientDecoderTest extends kyo.Test:
                         Abort.run[Closed](
                             serverTransport.send(
                                 JsonRpcEnvelope.Malformed(
-                                    Present(JsonRpcId.Num(2L)),
+                                    Present(JsonRpcEnvelope.Id.Num(2L)),
                                     "error field is not a Record",
                                     Structure.Value.Str("""{"id":2,"error":"not-an-object"}""")
                                 )
@@ -164,7 +165,7 @@ class CdpClientDecoderTest extends kyo.Test:
                         Abort.run[Closed](
                             serverTransport.send(
                                 JsonRpcEnvelope.Malformed(
-                                    Present(JsonRpcId.Num(2L)),
+                                    Present(JsonRpcEnvelope.Id.Num(2L)),
                                     "error field is not a Record",
                                     Structure.Value.Str("""{"id":2,"error":"not-an-object"}""")
                                 )
@@ -264,7 +265,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // ─────────────────────────────────────────────────────────────────────────
 
     "eventWhitelist: non-whitelisted notification is silently dropped by the endpoint" in run {
-        // An unregistered notification method is handled by `UnknownMethodPolicy.minimal` which discards it.
+        // An unregistered notification method is handled by `JsonRpcEndpoint.UnknownMethodPolicy.minimal` which discards it.
         // Equivalent to the old `Exchange.Message.Skip` for a non-whitelisted event.
         Scope.run {
             val getTargetsMethod = JsonRpcMethod[CdpNoParams, GetTargetsResult, Async & Abort[JsonRpcError]](

@@ -6,7 +6,7 @@ import kyo.Schema
 import kyo.Structure
 
 private[kyo] case class JsonRpcRequest(
-    id: Maybe[JsonRpcId],
+    id: Maybe[JsonRpcEnvelope.Id],
     method: String,
     params: Maybe[Structure.Value]
 ) derives Schema, CanEqual

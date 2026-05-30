@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class ProgressPolicyTest extends JsonRpcTestBase:
+class JsonRpcEndpointProgressPolicyTest extends JsonRpcTestBase:
 
     case class TaskReq(name: String) derives Schema, CanEqual
     case class TaskResp(done: Boolean) derives Schema, CanEqual
@@ -26,13 +26,13 @@ class ProgressPolicyTest extends JsonRpcTestBase:
         `_meta`: Maybe[ProgressMeta] = Absent
     ) derives Schema, CanEqual
 
-    private val lspConfig = JsonRpcEndpoint.Config(progress = Present(ProgressPolicy.lsp))
+    private val lspConfig = JsonRpcEndpoint.Config(progress = Present(JsonRpcEndpoint.ProgressPolicy.lsp))
     private val mcpConfig = JsonRpcEndpoint.Config(
-        progress = Present(ProgressPolicy.mcp),
-        cancellation = Present(CancellationPolicy.mcp)
+        progress = Present(JsonRpcEndpoint.ProgressPolicy.mcp),
+        cancellation = Present(JsonRpcEndpoint.CancellationPolicy.mcp)
     )
 
-    private def sendProgress(ctx: HandlerCtx, v: Structure.Value)(using Frame): Unit < (Async & Abort[JsonRpcError]) =
+    private def sendProgress(ctx: JsonRpcMethod.Context, v: Structure.Value)(using Frame): Unit < (Async & Abort[JsonRpcError]) =
         Abort.run[Closed](ctx.progress(v)).unit
 
     private def mkProgress(pct: Double): Structure.Value =
@@ -452,4 +452,4 @@ class ProgressPolicyTest extends JsonRpcTestBase:
         }
     }
 
-end ProgressPolicyTest
+end JsonRpcEndpointProgressPolicyTest

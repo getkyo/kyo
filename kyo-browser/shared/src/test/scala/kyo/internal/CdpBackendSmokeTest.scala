@@ -2,6 +2,8 @@ package kyo.internal
 
 import CdpTypes.*
 import kyo.*
+import kyo.JsonRpcEndpoint.ExtrasEncoder
+import kyo.JsonRpcEndpoint.IdStrategy
 import kyo.internal.cdp.PageDownload
 
 /** Smoke tests for the Phase 01 [[CdpBackend]] runtime class.
@@ -174,8 +176,8 @@ class CdpBackendSmokeTest extends Test:
             ) { (_, ctx) =>
                 // Capture the request id to verify the drainer sent the auto-dismiss
                 ctx.requestId match
-                    case Present(JsonRpcId.Num(n)) => capturedDismissId.set(Present(n))
-                    case _                         => Kyo.unit
+                    case Present(JsonRpcEnvelope.Id.Num(n)) => capturedDismissId.set(Present(n))
+                    case _                                  => Kyo.unit
             }
             Scope.run {
                 mkBackendWithServer(Seq(handleDialogMethod)).map { (backend, serverEndpoint) =>
@@ -286,14 +288,14 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "dialog drainer issues sendUnmatched with negative JsonRpcId.Num" in run {
+    "dialog drainer issues sendUnmatched with negative JsonRpcEnvelope.Id.Num" in run {
         AtomicRef.init[Maybe[Long]](Absent).map { capturedIdRef =>
             val handleDialogMethod = JsonRpcMethod[HandleJavaScriptDialogParams, Unit, Async & Abort[JsonRpcError]](
                 "Page.handleJavaScriptDialog"
             ) { (_, ctx) =>
                 ctx.requestId match
-                    case Present(JsonRpcId.Num(n)) => capturedIdRef.set(Present(n))
-                    case _                         => Kyo.unit
+                    case Present(JsonRpcEnvelope.Id.Num(n)) => capturedIdRef.set(Present(n))
+                    case _                                  => Kyo.unit
             }
             Scope.run {
                 mkBackendWithServer(Seq(handleDialogMethod)).map { (backend, _) =>

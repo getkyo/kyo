@@ -9,18 +9,18 @@ import kyo.Maybe.Present
 private[kyo] object CancellationEngine:
 
     private def extractCancelId(
-        policy: CancellationPolicy,
+        policy: JsonRpcEndpoint.CancellationPolicy,
         params: Maybe[Structure.Value]
-    )(using Frame): Maybe[JsonRpcId] < Sync =
+    )(using Frame): Maybe[JsonRpcEnvelope.Id] < Sync =
         params match
             case Absent      => Absent
             case Present(sv) => policy.decodeParams(sv)
 
     /** Test-accessible alias for extractCancelId. */
     private[kyo] def extractCancelIdForTest(
-        policy: CancellationPolicy,
+        policy: JsonRpcEndpoint.CancellationPolicy,
         params: Maybe[Structure.Value]
-    )(using Frame): Maybe[JsonRpcId] < Sync =
+    )(using Frame): Maybe[JsonRpcEnvelope.Id] < Sync =
         extractCancelId(policy, params)
 
     /** Handles an incoming cancel notification from the remote peer.
@@ -29,8 +29,8 @@ private[kyo] object CancellationEngine:
       */
     def handleInboundCancel(
         env: JsonRpcEnvelope.Notification,
-        policy: CancellationPolicy,
-        pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry]
+        policy: JsonRpcEndpoint.CancellationPolicy,
+        pendingInbound: ConcurrentHashMap[JsonRpcEnvelope.Id, InboundEntry]
     )(using Frame): Unit < Sync =
         extractCancelId(policy, env.params).map {
             case Absent =>
@@ -78,10 +78,10 @@ private[kyo] object CancellationEngine:
       * The caller is responsible for the absent-check (step 2) and protectedMethods check (also step 2).
       */
     def buildAndEnqueueOutboundCancel(
-        id: JsonRpcId,
+        id: JsonRpcEnvelope.Id,
         reason: Maybe[String],
         info: CallerInfo,
-        policy: CancellationPolicy,
+        policy: JsonRpcEndpoint.CancellationPolicy,
         writerChannel: Channel[WriterMsg]
     )(using Frame): Unit < (Async & Abort[Closed]) =
         policy.encodeParams(id, reason).map { params =>
@@ -93,10 +93,10 @@ private[kyo] object CancellationEngine:
       * DESIGN §7 "Timeout -> cancellation auto-fire".
       */
     def handleTimeout(
-        id: JsonRpcId,
+        id: JsonRpcEnvelope.Id,
         reason: Maybe[String],
-        cancellation: Maybe[CancellationPolicy],
-        callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo],
+        cancellation: Maybe[JsonRpcEndpoint.CancellationPolicy],
+        callerRegistry: ConcurrentHashMap[JsonRpcEnvelope.Id, CallerInfo],
         writerChannel: Channel[WriterMsg]
     )(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer(Maybe(callerRegistry.get(id))).map {

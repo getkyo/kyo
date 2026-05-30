@@ -2,6 +2,9 @@ package kyo.internal
 
 import CdpTypes.*
 import kyo.*
+import kyo.JsonRpcEndpoint.ExtrasEncoder
+import kyo.JsonRpcEndpoint.IdStrategy
+import kyo.JsonRpcEndpoint.UnknownMethodPolicy
 
 /** Invariant smoke tests for Phase 01 of the kyo-browser CDP client port to kyo-jsonrpc.
   *
@@ -348,14 +351,14 @@ class JsonRpcPortInvariantsSpec extends Test:
                     "Page.handleJavaScriptDialog"
                 ) { (_, ctx) =>
                     ctx.requestId match
-                        case Present(JsonRpcId.Num(n)) => dialogIdRef.set(Present(n))
-                        case _                         => Kyo.unit
+                        case Present(JsonRpcEnvelope.Id.Num(n)) => dialogIdRef.set(Present(n))
+                        case _                                  => Kyo.unit
                 }
                 val navigateMethod = JsonRpcMethod[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
                     "Page.navigate"
                 ) { (_, ctx) =>
                     ctx.requestId match
-                        case Present(JsonRpcId.Num(n)) =>
+                        case Present(JsonRpcEnvelope.Id.Num(n)) =>
                             regularIdRef.set(Present(n)).map(_ => NavigateResult("f"))
                         case _ => NavigateResult("f")
                 }

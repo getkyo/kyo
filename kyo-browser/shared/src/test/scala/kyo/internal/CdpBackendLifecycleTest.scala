@@ -4,6 +4,7 @@ import CdpTypes.*
 import kyo.*
 import kyo.BrowserElementNotActionableException.Reason
 import kyo.BrowserIFrameInvalidException.Reason as IFrameReason
+import kyo.JsonRpcEndpoint.IdStrategy
 import kyo.internal.SharedChrome
 
 /** [[CdpBackend]] lifecycle, close, and connection tests.

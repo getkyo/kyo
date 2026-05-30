@@ -4,9 +4,9 @@ import kyo.Maybe.Absent
 
 class JsonRpcTransportTest extends JsonRpcTestBase:
 
-    val ping1 = JsonRpcEnvelope.Request(JsonRpcId.Num(1L), "ping", Absent, Absent)
-    val ping2 = JsonRpcEnvelope.Request(JsonRpcId.Num(2L), "ping", Absent, Absent)
-    val ping3 = JsonRpcEnvelope.Request(JsonRpcId.Num(3L), "ping", Absent, Absent)
+    val ping1 = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "ping", Absent, Absent)
+    val ping2 = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(2L), "ping", Absent, Absent)
+    val ping3 = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(3L), "ping", Absent, Absent)
 
     "a send on transport A is received via incoming on transport B" in run {
         for

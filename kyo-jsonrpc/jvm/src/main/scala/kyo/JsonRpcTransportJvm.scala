@@ -11,11 +11,11 @@ object JsonRpcTransportJvm:
 
     /** JVM-only UDS server transport. Binds a `ServerSocketChannel` on `sockPath`,
       * registers Scope.ensure cleanup that closes the channel and deletes the socket
-      * file, and exposes the resulting bytes through `Framer.lineDelimited` by default.
+      * file, and exposes the resulting bytes through `JsonRpcTransport.Framer.lineDelimited` by default.
       */
     def unixDomain(
         sockPath: Path,
-        framer: Framer = Framer.lineDelimited,
+        framer: JsonRpcTransport.Framer = JsonRpcTransport.Framer.lineDelimited,
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
     )(using Frame): JsonRpcTransport < (Async & Scope) =
         Sync.defer {
@@ -36,9 +36,11 @@ object JsonRpcTransportJvm:
     extension (self: JsonRpcTransport.type)
         def unixDomain(sockPath: Path)(using Frame): JsonRpcTransport < (Async & Scope) =
             JsonRpcTransportJvm.unixDomain(sockPath)
-        def unixDomain(sockPath: Path, framer: Framer)(using Frame): JsonRpcTransport < (Async & Scope) =
+        def unixDomain(sockPath: Path, framer: JsonRpcTransport.Framer)(using Frame): JsonRpcTransport < (Async & Scope) =
             JsonRpcTransportJvm.unixDomain(sockPath, framer)
-        def unixDomain(sockPath: Path, framer: Framer, codec: JsonRpcCodec)(using Frame): JsonRpcTransport < (Async & Scope) =
+        def unixDomain(sockPath: Path, framer: JsonRpcTransport.Framer, codec: JsonRpcCodec)(using
+            Frame
+        ): JsonRpcTransport < (Async & Scope) =
             JsonRpcTransportJvm.unixDomain(sockPath, framer, codec)
         def unixDomain(sockPath: Path, codec: JsonRpcCodec)(using Frame): JsonRpcTransport < (Async & Scope) =
             JsonRpcTransportJvm.unixDomain(sockPath, codec = codec)

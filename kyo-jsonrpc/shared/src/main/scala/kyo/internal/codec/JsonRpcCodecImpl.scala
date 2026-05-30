@@ -69,11 +69,11 @@ private[kyo] object JsonRpcCodecImpl:
                                 // scala.Option arm; interop with stdlib Map.get (covered by comment above match)
                                 case None => Absent
 
-                        def decodeId(v: Structure.Value): Maybe[JsonRpcId] =
+                        def decodeId(v: Structure.Value): Maybe[JsonRpcEnvelope.Id] =
                             v match
                                 case Structure.Value.Null       => Absent
-                                case Structure.Value.Integer(n) => Present(JsonRpcId.Num(n))
-                                case Structure.Value.Str(s)     => Present(JsonRpcId.Str(s))
+                                case Structure.Value.Integer(n) => Present(JsonRpcEnvelope.Id.Num(n))
+                                case Structure.Value.Str(s)     => Present(JsonRpcEnvelope.Id.Str(s))
                                 case _                          => Absent
 
                         val methodOpt = getStr("method")
@@ -189,11 +189,11 @@ private[kyo] object JsonRpcCodecImpl:
                                 case Structure.Value.Null => Absent
                                 case v                    => Present(v)
 
-                        def decodeId(v: Structure.Value): Maybe[JsonRpcId] =
+                        def decodeId(v: Structure.Value): Maybe[JsonRpcEnvelope.Id] =
                             v match
                                 case Structure.Value.Null       => Absent
-                                case Structure.Value.Integer(n) => Present(JsonRpcId.Num(n))
-                                case Structure.Value.Str(s)     => Present(JsonRpcId.Str(s))
+                                case Structure.Value.Integer(n) => Present(JsonRpcEnvelope.Id.Num(n))
+                                case Structure.Value.Str(s)     => Present(JsonRpcEnvelope.Id.Str(s))
                                 case _                          => Absent
 
                         val unknownFields = fields.filter((k, _) => !known.contains(k))

@@ -64,7 +64,7 @@ class JsonRpcTransportJvmTest extends JsonRpcTestBase:
         val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")
         val sock    = tempDir.resolve("test.sock")
         Scope.run {
-            JsonRpcTransport.unixDomain(sock, framer = Framer.contentLength).map { t =>
+            JsonRpcTransport.unixDomain(sock, framer = JsonRpcTransport.Framer.contentLength).map { t =>
                 Sync.defer {
                     val client = SocketChannel.open(UnixDomainSocketAddress.of(sock))
                     try

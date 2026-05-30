@@ -32,14 +32,52 @@ sealed trait JsonRpcMethod[+S]:
     // Stream.scala:48 sealed-protocol with framework-only abstract members
     private[kyo] def schemaOut: Schema[?]
     // Stream.scala:48 sealed-protocol with framework-only abstract members
-    private[kyo] def handle(params: Structure.Value, ctx: HandlerCtx)(using Frame): Structure.Value < (Async & Abort[JsonRpcError])
+    private[kyo] def handle(params: Structure.Value, ctx: JsonRpcMethod.Context)(using
+        Frame
+    ): Structure.Value < (Async & Abort[JsonRpcError])
 end JsonRpcMethod
 
 object JsonRpcMethod:
     enum Kind derives CanEqual:
         case Request, Notification
 
-    def apply[In: Schema, Out: Schema, S](name: String)(handler: (In, HandlerCtx) => Out < S)(
+    /** Per-request context supplied to every [[JsonRpcMethod]] handler by the endpoint.
+      *
+      * Provides access to:
+      *  - `cancelled`: a `Fiber.Promise` that is completed when the peer sends a cancellation for
+      *    the current request.
+      *  - `requestId`: the JSON-RPC id of the incoming request, or `Absent` for notifications.
+      *  - `extras`: protocol-specific extra fields from the incoming envelope, if any.
+      *  - `progress`: reports a progress notification back to the caller via `$.progress` (LSP) or
+      *    `notifications/progress` (MCP), depending on the active `ProgressPolicy`.
+      *
+      * @see [[JsonRpcMethod]]
+      * @see [[JsonRpcEndpoint.ProgressPolicy]]
+      */
+    // Hub.scala:22 smart-constructor pattern; framework creates instances via forTest or JsonRpcEndpointImpl
+    final class Context private[kyo] (
+        val cancelled: Fiber.Promise[Unit, Sync],
+        val requestId: Maybe[JsonRpcEnvelope.Id],
+        val extras: Maybe[Structure.Value],
+        private[kyo] val progressSink: Maybe[Structure.Value => Unit < (Async & Abort[Closed])]
+    ):
+        def progress(value: Structure.Value)(using Frame): Unit < (Async & Abort[Closed]) =
+            progressSink match
+                case Present(sink) => sink(value)
+                case Absent        => Sync.defer(())
+    end Context
+
+    object Context:
+        // test-only construction escape hatch consumed by JsonRpcMethodTest
+        private[kyo] def forTest(
+            cancelled: Fiber.Promise[Unit, Sync],
+            requestId: Maybe[JsonRpcEnvelope.Id],
+            extras: Maybe[Structure.Value],
+            progressSink: Maybe[Structure.Value => Unit < (Async & Abort[Closed])]
+        ): Context = new Context(cancelled, requestId, extras, progressSink)
+    end Context
+
+    def apply[In: Schema, Out: Schema, S](name: String)(handler: (In, JsonRpcMethod.Context) => Out < S)(
         using
         Frame,
         (Async & Abort[JsonRpcError]) <:< S
@@ -58,7 +96,7 @@ object JsonRpcMethod:
     ): JsonRpcMethod[S] =
         apply[In, Out, S](name)((in, _ctx) => handler(in))
 
-    def notification[In: Schema, S](name: String)(handler: (In, HandlerCtx) => Unit < S)(
+    def notification[In: Schema, S](name: String)(handler: (In, JsonRpcMethod.Context) => Unit < S)(
         using
         Frame,
         (Async & Abort[JsonRpcError]) <:< S
@@ -78,7 +116,7 @@ object JsonRpcMethod:
         name: String,
         methods: Seq[JsonRpcMethod[S]],
         params: Structure.Value,
-        ctx: HandlerCtx
+        ctx: JsonRpcMethod.Context
     )(using Frame, (Async & Abort[JsonRpcError]) <:< S): Maybe[Structure.Value < (Async & Abort[JsonRpcError])] =
         val methodMap: Map[String, JsonRpcMethod[S]] =
             methods.iterator.map(m => (m.name, m)).toMap
@@ -95,14 +133,14 @@ object JsonRpcMethod:
         val name: String,
         in: Schema[In],
         out: Schema[Out],
-        handler: (In, HandlerCtx) => Out < S,
+        handler: (In, JsonRpcMethod.Context) => Out < S,
         ev: (Async & Abort[JsonRpcError]) <:< S
     ) extends JsonRpcMethod[S]:
         val kind                              = Kind.Request
         private[kyo] val schemaIn: Schema[?]  = in
         private[kyo] val schemaOut: Schema[?] = out
 
-        private[kyo] def handle(params: Structure.Value, ctx: HandlerCtx)(using
+        private[kyo] def handle(params: Structure.Value, ctx: JsonRpcMethod.Context)(using
             fr: Frame
         ): Structure.Value < (Async & Abort[JsonRpcError]) =
             val computation: Structure.Value < (S & Abort[JsonRpcError]) =
@@ -126,14 +164,14 @@ object JsonRpcMethod:
     final private class NotificationMethod[In, S](
         val name: String,
         in: Schema[In],
-        handler: (In, HandlerCtx) => Unit < S,
+        handler: (In, JsonRpcMethod.Context) => Unit < S,
         ev: (Async & Abort[JsonRpcError]) <:< S
     ) extends JsonRpcMethod[S]:
         val kind                              = Kind.Notification
         private[kyo] val schemaIn: Schema[?]  = in
         private[kyo] val schemaOut: Schema[?] = summon[Schema[Unit]]
 
-        private[kyo] def handle(params: Structure.Value, ctx: HandlerCtx)(using
+        private[kyo] def handle(params: Structure.Value, ctx: JsonRpcMethod.Context)(using
             fr: Frame
         ): Structure.Value < (Async & Abort[JsonRpcError]) =
             val computation: Structure.Value < (S & Abort[JsonRpcError]) =

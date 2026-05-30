@@ -2,7 +2,11 @@ package kyo.internal
 
 import CdpTypes.*
 import kyo.*
+import kyo.JsonRpcEndpoint.ExtrasEncoder
+import kyo.JsonRpcEndpoint.IdStrategy
+import kyo.JsonRpcEndpoint.UnknownMethodPolicy
 import kyo.internal.cdp.PageDownload
+import kyo.internal.codec.RawJsonParser
 
 /** Runtime CDP backend built atop a [[JsonRpcEndpoint]]. Owns the per-connection
   * dispatcher tables (frame-event / download-event / dialog handlers / dialog
@@ -595,7 +599,7 @@ private[kyo] object CdpBackend:
                             endpoint.sendUnmatched(
                                 "Page.handleJavaScriptDialog",
                                 HandleJavaScriptDialogParams(accept, promptText),
-                                JsonRpcId.Num(id.toLong),
+                                JsonRpcEnvelope.Id.Num(id.toLong),
                                 extras
                             )
                         ).unit
@@ -604,8 +608,8 @@ private[kyo] object CdpBackend:
             }.unit
         }
 
-    /** Reads sessionId from HandlerCtx.extras (RI-001 path:
-      * JsonRpcEndpointImpl.scala:911-916 constructs HandlerCtx with env.extras).
+    /** Reads sessionId from JsonRpcMethod.Context.extras (RI-001 path:
+      * JsonRpcEndpointImpl.scala:911-916 constructs JsonRpcMethod.Context with env.extras).
       */
     private def readSessionIdFromExtras(extras: Maybe[Structure.Value]): Maybe[SessionId] =
         extras match

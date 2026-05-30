@@ -183,7 +183,7 @@ class MaxInFlightTest extends JsonRpcTestBase:
 
         val cfg = JsonRpcEndpoint.Config(
             requestTimeout = 100.millis,
-            cancellation = Present(CancellationPolicy.lsp)
+            cancellation = Present(JsonRpcEndpoint.CancellationPolicy.lsp)
         )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -316,8 +316,8 @@ class MaxInFlightTest extends JsonRpcTestBase:
 
         val cfg = JsonRpcEndpoint.Config(
             requestTimeout = 1.second,
-            progress = Present(ProgressPolicy.lsp),
-            cancellation = Present(CancellationPolicy.lsp),
+            progress = Present(JsonRpcEndpoint.ProgressPolicy.lsp),
+            cancellation = Present(JsonRpcEndpoint.CancellationPolicy.lsp),
             progressResetsTimeout = true
         )
 

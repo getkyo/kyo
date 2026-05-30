@@ -39,11 +39,11 @@ private[kyo] object ProgressEngine:
       * The closure captures a per-invocation monotonicity ref (per-invocation, not global).
       */
     def buildProgressSink(
-        id: JsonRpcId,
+        id: JsonRpcEnvelope.Id,
         params: Maybe[Structure.Value],
         extras: Maybe[Structure.Value],
-        progressPolicy: Maybe[ProgressPolicy],
-        pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry],
+        progressPolicy: Maybe[JsonRpcEndpoint.ProgressPolicy],
+        pendingInbound: ConcurrentHashMap[JsonRpcEnvelope.Id, InboundEntry],
         writerChannel: Channel[WriterMsg]
     )(using frame: Frame, allow: AllowUnsafe): Maybe[Structure.Value => Unit < (Async & Abort[Closed])] =
         progressPolicy match

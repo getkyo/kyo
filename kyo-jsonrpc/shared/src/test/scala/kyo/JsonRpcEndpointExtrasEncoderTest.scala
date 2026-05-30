@@ -3,14 +3,14 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class ExtrasEncoderTest extends JsonRpcTestBase:
+class JsonRpcEndpointExtrasEncoderTest extends JsonRpcTestBase:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
     "empty.resolve always yields Absent regardless of id" in run {
         for
-            a <- ExtrasEncoder.empty.resolve(JsonRpcId.Num(1L))
-            b <- ExtrasEncoder.empty.resolve(JsonRpcId.Str("x"))
+            a <- JsonRpcEndpoint.ExtrasEncoder.empty.resolve(JsonRpcEnvelope.Id.Num(1L))
+            b <- JsonRpcEndpoint.ExtrasEncoder.empty.resolve(JsonRpcEnvelope.Id.Str("x"))
         yield
             assert(a == Absent)
             assert(b == Absent)
@@ -18,10 +18,10 @@ class ExtrasEncoderTest extends JsonRpcTestBase:
 
     "const(v).resolve always yields Present(v) regardless of id" in run {
         val v   = Structure.Value.Str("payload")
-        val enc = ExtrasEncoder.const(v)
+        val enc = JsonRpcEndpoint.ExtrasEncoder.const(v)
         for
-            a <- enc.resolve(JsonRpcId.Num(1L))
-            b <- enc.resolve(JsonRpcId.Str("x"))
+            a <- enc.resolve(JsonRpcEnvelope.Id.Num(1L))
+            b <- enc.resolve(JsonRpcEnvelope.Id.Str("x"))
         yield
             assert(a == Present(v))
             assert(b == Present(v))
@@ -29,27 +29,27 @@ class ExtrasEncoderTest extends JsonRpcTestBase:
     }
 
     "apply(f).resolve forwards id to f" in run {
-        val enc = ExtrasEncoder { id =>
+        val enc = JsonRpcEndpoint.ExtrasEncoder { id =>
             Sync.defer(Present(Structure.Value.Str(id.toString)))
         }
         for
-            a <- enc.resolve(JsonRpcId.Num(7L))
-        yield assert(a == Present(Structure.Value.Str(JsonRpcId.Num(7L).toString)))
+            a <- enc.resolve(JsonRpcEnvelope.Id.Num(7L))
+        yield assert(a == Present(Structure.Value.Str(JsonRpcEnvelope.Id.Num(7L).toString)))
     }
 
     "apply(f) lifts a Sync-effectful body through .resolve" in run {
         // Unsafe: AtomicLong.Unsafe.init for in-test counter outside effect context
         val counter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
-        val enc = ExtrasEncoder { _ =>
+        val enc = JsonRpcEndpoint.ExtrasEncoder { _ =>
             Sync.Unsafe.defer(Present(Structure.Value.Integer(counter.incrementAndGet())))
         }
         for
-            a <- enc.resolve(JsonRpcId.Num(1L))
-            b <- enc.resolve(JsonRpcId.Num(2L))
+            a <- enc.resolve(JsonRpcEnvelope.Id.Num(1L))
+            b <- enc.resolve(JsonRpcEnvelope.Id.Num(2L))
         yield
             assert(a == Present(Structure.Value.Integer(1L)))
             assert(b == Present(Structure.Value.Integer(2L)))
         end for
     }
 
-end ExtrasEncoderTest
+end JsonRpcEndpointExtrasEncoderTest

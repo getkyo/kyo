@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.JsonRpcEndpoint.IdStrategy
 import kyo.internal.CdpTypes.*
 
 /** Typed CDP wrapper tests for [[CdpBackend]] companion methods.

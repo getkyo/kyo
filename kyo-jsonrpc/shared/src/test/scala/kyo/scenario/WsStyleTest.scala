@@ -146,7 +146,7 @@ class WsStyleTest extends JsonRpcTestBase:
         }
     }
 
-    "CDP-shape extras: ExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in run {
+    "CDP-shape extras: JsonRpcEndpoint.ExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in run {
         // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
         val capturedExtras = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
 
@@ -168,7 +168,7 @@ class WsStyleTest extends JsonRpcTestBase:
                     endpointA.call[CmdReq, CmdResp](
                         "execute",
                         CmdReq("doWork"),
-                        ExtrasEncoder.const(sessionExtras)
+                        JsonRpcEndpoint.ExtrasEncoder.const(sessionExtras)
                     ).map { resp =>
                         assert(resp == CmdResp("doWork"))
                         Sync.defer {

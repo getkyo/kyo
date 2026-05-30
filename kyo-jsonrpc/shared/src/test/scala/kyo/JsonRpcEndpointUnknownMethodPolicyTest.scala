@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class UnknownMethodPolicyTest extends JsonRpcTestBase:
+class JsonRpcEndpointUnknownMethodPolicyTest extends JsonRpcTestBase:
 
     case class Ping(msg: String) derives Schema, CanEqual
     case class Pong(reply: String) derives Schema, CanEqual
@@ -24,7 +24,7 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
         }
 
     "lsp policy: unknown request returns MethodNotFound code -32601" in run {
-        val lspConfig = JsonRpcEndpoint.Config(unknownMethod = UnknownMethodPolicy.lsp)
+        val lspConfig = JsonRpcEndpoint.Config(unknownMethod = JsonRpcEndpoint.UnknownMethodPolicy.lsp)
         mkEndpoints(Seq.empty, Seq.empty, configB = lspConfig).map { (a, _) =>
             Abort.run[JsonRpcError | Closed](a.call[Empty, Empty]("unknown/method", Empty())).map {
                 case Result.Failure(e: JsonRpcError) => assert(e.code == -32601)
@@ -39,7 +39,7 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
         val dollarMethod = JsonRpcMethod[Empty, Unit, Async & Abort[JsonRpcError]]("$/setTrace") {
             (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
-        val lspConfig = JsonRpcEndpoint.Config(unknownMethod = UnknownMethodPolicy.lsp)
+        val lspConfig = JsonRpcEndpoint.Config(unknownMethod = JsonRpcEndpoint.UnknownMethodPolicy.lsp)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(ta, Seq.empty, lspConfig).map { a =>
                 JsonRpcEndpoint.init(tb, Seq.empty, lspConfig).map { _ =>
@@ -56,7 +56,7 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
     "lsp policy: unknown notification not starting with dollar-slash is silently dropped" in run {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val lspConfig      = JsonRpcEndpoint.Config(unknownMethod = UnknownMethodPolicy.lsp)
+        val lspConfig      = JsonRpcEndpoint.Config(unknownMethod = JsonRpcEndpoint.UnknownMethodPolicy.lsp)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(ta, Seq.empty, lspConfig).map { a =>
                 JsonRpcEndpoint.init(tb, Seq.empty, lspConfig).map { _ =>
@@ -71,12 +71,12 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
     }
 
     "strict policy: unknown notification Reject closes engine" in run {
-        val strictConfig = JsonRpcEndpoint.Config(unknownMethod = UnknownMethodPolicy.strict)
+        val strictConfig = JsonRpcEndpoint.Config(unknownMethod = JsonRpcEndpoint.UnknownMethodPolicy.strict)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
                 JsonRpcEndpoint.init(tb, Seq.empty, strictConfig).map { b =>
                     a.notify[Empty]("unknown/event", Empty()).andThen {
-                        untilTrue(Sync.defer(b.impl.config.unknownMethod == UnknownMethodPolicy.strict)).andThen {
+                        untilTrue(Sync.defer(b.impl.config.unknownMethod == JsonRpcEndpoint.UnknownMethodPolicy.strict)).andThen {
                             Async.sleep(150.millis).andThen {
                                 Abort.run[JsonRpcError | Closed](a.call[Empty, Empty]("any/method", Empty())).map {
                                     case Result.Failure(_) => succeed
@@ -92,9 +92,9 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
     }
 
     "gate Allow: request reaches registered handler normally" in run {
-        val allowGate: MessageGate = new MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync =
-                MessageGate.Decision.Allow
+        val allowGate: JsonRpcEndpoint.MessageGate = new JsonRpcEndpoint.MessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcEndpoint.MessageGate.Decision < Sync =
+                JsonRpcEndpoint.MessageGate.Decision.Allow
 
         val pingMethod = JsonRpcMethod[Ping, Pong, Async & Abort[JsonRpcError]]("ping") {
             (req, _) => Pong("pong:" + req.msg)
@@ -109,9 +109,9 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
 
     "gate Reject for Request: caller sees error reply with gate error code" in run {
         val gateError = JsonRpcError(-32099, "gate blocked", Absent)
-        val rejectGate: MessageGate = new MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync =
-                MessageGate.Decision.Reject(gateError)
+        val rejectGate: JsonRpcEndpoint.MessageGate = new JsonRpcEndpoint.MessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcEndpoint.MessageGate.Decision < Sync =
+                JsonRpcEndpoint.MessageGate.Decision.Reject(gateError)
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
@@ -130,9 +130,9 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
     }
 
     "gate Reject for Notification: notification dropped, engine does not close" in run {
-        val rejectGate: MessageGate = new MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync =
-                MessageGate.Decision.Reject(JsonRpcError(-32000, "rejected", Absent))
+        val rejectGate: JsonRpcEndpoint.MessageGate = new JsonRpcEndpoint.MessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcEndpoint.MessageGate.Decision < Sync =
+                JsonRpcEndpoint.MessageGate.Decision.Reject(JsonRpcError(-32000, "rejected", Absent))
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
@@ -160,9 +160,9 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
     }
 
     "gate Drop for Request: call hangs until timeout with JsonRpcError" in run {
-        val dropGate: MessageGate = new MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync =
-                MessageGate.Decision.Drop
+        val dropGate: JsonRpcEndpoint.MessageGate = new JsonRpcEndpoint.MessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcEndpoint.MessageGate.Decision < Sync =
+                JsonRpcEndpoint.MessageGate.Decision.Drop
 
         val pingMethod = JsonRpcMethod[Ping, Pong, Async & Abort[JsonRpcError]]("ping") {
             (req, _) => Pong("pong")
@@ -181,15 +181,15 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
 
     "gate LSP initialize pattern: allows initialize, rejects others with ServerNotInitialized" in run {
         val serverNotInitialized = JsonRpcError(-32002, "ServerNotInitialized", Absent)
-        val initGate: MessageGate = new MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync =
+        val initGate: JsonRpcEndpoint.MessageGate = new JsonRpcEndpoint.MessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcEndpoint.MessageGate.Decision < Sync =
                 env match
                     case JsonRpcEnvelope.Request(_, "initialize", _, _) =>
-                        MessageGate.Decision.Allow
+                        JsonRpcEndpoint.MessageGate.Decision.Allow
                     case JsonRpcEnvelope.Request(_, _, _, _) =>
-                        MessageGate.Decision.Reject(serverNotInitialized)
+                        JsonRpcEndpoint.MessageGate.Decision.Reject(serverNotInitialized)
                     case _ =>
-                        MessageGate.Decision.Allow
+                        JsonRpcEndpoint.MessageGate.Decision.Allow
 
         val initMethod = JsonRpcMethod[Ping, Pong, Async & Abort[JsonRpcError]]("initialize") {
             (req, _) => Pong("initialized:" + req.msg)
@@ -209,4 +209,4 @@ class UnknownMethodPolicyTest extends JsonRpcTestBase:
         }
     }
 
-end UnknownMethodPolicyTest
+end JsonRpcEndpointUnknownMethodPolicyTest
