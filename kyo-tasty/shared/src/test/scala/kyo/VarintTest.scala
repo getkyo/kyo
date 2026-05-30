@@ -207,4 +207,20 @@ class VarintTest extends Test:
         assert(view.position == 10)
     }
 
+    // Test (Phase 21a T2-1): writeNat then readNat round-trip
+    "writeNat then readNat round-trips 1234" in run {
+        val buf = scala.collection.mutable.ArrayBuffer.empty[Byte]
+        Varint.writeNat(buf, 1234)
+        val view = viewOf(buf.toArray)
+        assert(Varint.readNat(view) == 1234)
+    }
+
+    // Test (Phase 21a T2-2): writeLongNat then readLongNat round-trip
+    "writeLongNat then readLongNat round-trips 9_999_999_999L" in run {
+        val buf = scala.collection.mutable.ArrayBuffer.empty[Byte]
+        Varint.writeLongNat(buf, 9_999_999_999L)
+        val view = viewOf(buf.toArray)
+        assert(Varint.readLongNat(view) == 9_999_999_999L)
+    }
+
 end VarintTest

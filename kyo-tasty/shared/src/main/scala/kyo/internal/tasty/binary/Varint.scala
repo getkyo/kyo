@@ -98,4 +98,49 @@ object Varint:
         x
     end readLongInt
 
+    /** Write an unsigned big-endian base-128 Nat to `out` as Int.
+      *
+      * Encodes `v` in the same big-endian base-128 format that `readNat` decodes: groups of 7 bits from most-significant to
+      * least-significant, continuation bytes have 0x80 CLEAR, the terminating (last) byte has 0x80 SET.
+      */
+    private[kyo] def writeNat(out: scala.collection.mutable.ArrayBuffer[Byte], v: Int): Unit =
+        val buf   = new Array[Byte](5)
+        var pos   = 4
+        var value = v
+        buf(pos) = (value & 0x7f | 0x80).toByte
+        value = value >>> 7
+        while value != 0 do
+            pos -= 1
+            buf(pos) = (value & 0x7f).toByte
+            value = value >>> 7
+        end while
+        var i = pos
+        while i < 5 do
+            out += buf(i)
+            i += 1
+        end while
+    end writeNat
+
+    /** Write an unsigned big-endian base-128 Nat to `out` as Long.
+      *
+      * Same encoding as `writeNat` but accepts a Long value. The terminating byte has 0x80 SET, continuation bytes have 0x80 CLEAR.
+      */
+    private[kyo] def writeLongNat(out: scala.collection.mutable.ArrayBuffer[Byte], v: Long): Unit =
+        val buf   = new Array[Byte](10)
+        var pos   = 9
+        var value = v
+        buf(pos) = ((value & 0x7fL) | 0x80L).toByte
+        value = value >>> 7
+        while value != 0L do
+            pos -= 1
+            buf(pos) = (value & 0x7fL).toByte
+            value = value >>> 7
+        end while
+        var i = pos
+        while i < 10 do
+            out += buf(i)
+            i += 1
+        end while
+    end writeLongNat
+
 end Varint
