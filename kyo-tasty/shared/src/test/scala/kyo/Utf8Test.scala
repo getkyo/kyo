@@ -32,6 +32,44 @@ class Utf8Test extends Test:
         assert(result.codePointAt(0) == 0x1f600)
     }
 
+    // Test 19 (T4): 4-byte supplementary character U+1F600 produces a surrogate pair
+    // kyo-tasty targets pure UTF-8 via StandardCharsets.UTF_8 on JVM/Native and TextDecoder
+    // on JS. All three runtimes represent U+1F600 as a two-code-unit UTF-16 sequence
+    // internally, so String.length == 2 on every platform.
+    "decode 4-byte supplementary U+1F600 returns surrogate pair of length 2" in run {
+        val bytes  = Array[Byte](0xf0.toByte, 0x9f.toByte, 0x98.toByte, 0x80.toByte)
+        val result = Utf8.decode(bytes, 0, 4)
+        assert(result.length == 2)
+        assert(result.codePointAt(0) == 0x1f600)
+    }
+
+    // Test 20 (T4): modified-UTF-8 overlong null [0xC0, 0x80] is invalid pure UTF-8.
+    // kyo-tasty uses StandardCharsets.UTF_8 (pure UTF-8), which does not accept
+    // overlong-encoded null as U+0000. Both JVM and Scala Native replace each invalid
+    // continuation byte with U+FFFD. TextDecoder on JS behaves identically. The result
+    // is therefore two replacement characters, confirming the pure-UTF-8 dialect is
+    // enforced at the replacement level rather than by rejection. Documenting this as the
+    // expected (and tested) behavior.
+    "decode modified-UTF-8 overlong null [0xC0, 0x80] produces replacement characters" in run {
+        val bytes  = Array[Byte](0xc0.toByte, 0x80.toByte)
+        val result = Utf8.decode(bytes, 0, 2)
+        // Each invalid byte is replaced by U+FFFD under pure UTF-8.
+        // The result is NOT U+0000 (which modified-UTF-8 would produce).
+        assert(result.length == 2)
+        assert(result.charAt(0) == '�')
+        assert(result.charAt(1) == '�')
+    }
+
+    // Test 21 (T4): 4-byte sequence for U+10FFFF (highest valid Unicode code point)
+    // [0xF4, 0x8F, 0xBF, 0xBF] is the canonical pure UTF-8 encoding of U+10FFFF.
+    // All platforms encode it internally as a UTF-16 surrogate pair, so String.length == 2.
+    "decode 4-byte U+10FFFF highest valid code point returns surrogate pair" in run {
+        val bytes  = Array[Byte](0xf4.toByte, 0x8f.toByte, 0xbf.toByte, 0xbf.toByte)
+        val result = Utf8.decode(bytes, 0, 4)
+        assert(result.length == 2)
+        assert(result.codePointAt(0) == 0x10ffff)
+    }
+
     // Test 18: decode with offset and length only decodes the sub-range
     "decode with offset and length only decodes the sub-range" in run {
         // Array: [0xFF, 0xE4, 0xB8, 0xAD, 0xFF], offset=1, length=3 -> "中" (U+4E2D)
