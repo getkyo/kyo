@@ -69,4 +69,35 @@ class SectionIndexTest extends Test:
         }
     }
 
+    // Test (Phase 21d T2): two-section encoding -- lookup of second section returns correct offset and length
+    "two-section encoding: get(ASTs) returns Present with correct offset and length" in run {
+        // Build a names array: names(0) = Name("NAMES"), names(1) = Name("ASTs").
+        val names = Array(Tasty.Name("NAMES"), Tasty.Name("ASTs"))
+        // Encode section table:
+        //   Section 1: nameRef=0 (1 byte), len=10 (1 byte), 10 zero payload bytes. Header at offset 0.
+        //              Payload starts at offset 2.
+        //   Section 2: nameRef=1 (1 byte), len=20 (1 byte), 20 zero payload bytes. Header at offset 12.
+        //              Payload starts at offset 14.
+        val section1Header  = encodeNat(0) ++ encodeNat(10)
+        val section1Payload = Array.fill(10)(0.toByte)
+        val section2Header  = encodeNat(1) ++ encodeNat(20)
+        val section2Payload = Array.fill(20)(0.toByte)
+        val sectionBytes    = section1Header ++ section1Payload ++ section2Header ++ section2Payload
+        val view            = ByteView(sectionBytes)
+        Abort.run[TastyError] {
+            SectionIndex.read(view, names)
+        }.map { result =>
+            result match
+                case Result.Success(index) =>
+                    index.get("ASTs") match
+                        case Present((offset, length)) =>
+                            assert(length == 20, s"Expected length=20 but got $length")
+                            assert(offset == 14, s"Expected offset=14 but got $offset")
+                        case Absent =>
+                            fail("Expected Present for ASTs section but got Absent")
+                case other =>
+                    fail(s"Expected successful SectionIndex but got: $other")
+        }
+    }
+
 end SectionIndexTest
