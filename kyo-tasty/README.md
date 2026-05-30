@@ -256,4 +256,4 @@ The skeleton build is checked in: cross-project entry, public API stubs, four ex
 ## Learn more
 
 * `DESIGN.md` is the source of truth: 25 sections covering binary format, symbol model, type ADT, parallel decode protocol, snapshot format, macro design, cross-platform considerations, prior-art analysis, and locked decisions.
-* `shared/src/main/scala/kyo/tasty/examples/` has the four worked examples in this README as standalone Scala files.
+* `kyo-tasty-examples/shared/src/main/scala/examples/` has the four worked examples in this README as standalone Scala files (sibling sbt module, depends on `kyo-tasty`).
