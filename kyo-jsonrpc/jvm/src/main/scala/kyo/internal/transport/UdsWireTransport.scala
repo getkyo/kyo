@@ -11,7 +11,7 @@ final private[kyo] class UdsWireTransport(server: ServerSocketChannel) extends J
     // subsequent accepts are dropped. Multi-client requires a per-conn map, deferred to
     // the consumer-module roadmap.
     // class construction is always wrapped in Sync.defer at the call site
-    // (JsonRpcTransportJvm.unixDomain), so Unsafe.init runs inside a deferred block.
+    // (UdsBackend.connect), so Unsafe.init runs inside a deferred block.
     private val activeChannelRef: AtomicRef.Unsafe[Maybe[SocketChannel]] =
         AtomicRef.Unsafe.init[Maybe[SocketChannel]](Absent)(using AllowUnsafe.embrace.danger)
 

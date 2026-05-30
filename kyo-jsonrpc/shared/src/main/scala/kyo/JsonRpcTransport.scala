@@ -141,4 +141,27 @@ object JsonRpcTransport:
         Sync.defer(new internal.transport.StdioWireTransport).map { wire =>
             fromWire(wire, framer, codec)
         }
+
+    /** Unix domain socket transport.
+      *
+      * On JVM, binds a `ServerSocketChannel` using the native NIO Unix-domain-socket API
+      * (`StandardProtocolFamily.UNIX`), registers a [[Scope]] cleanup that closes the
+      * channel and deletes the socket file, and exposes the connection as a
+      * [[JsonRpcTransport]].
+      *
+      * On Scala.js and Scala Native, this method immediately fails with an
+      * [[UnsupportedOperationException]] because the NIO UDS APIs are not available on
+      * those platforms.
+      *
+      * @param sockPath path to the socket file (must not already exist)
+      * @param framer   byte-stream framing strategy; defaults to [[Framer.lineDelimited]]
+      * @param codec    envelope serialisation; defaults to [[JsonRpcCodec.Strict2_0]]
+      */
+    def unixDomain(
+        sockPath: java.nio.file.Path,
+        framer: Framer = Framer.lineDelimited,
+        codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
+    )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
+        internal.transport.UdsBackend.connect(sockPath, framer, codec)
+
 end JsonRpcTransport
