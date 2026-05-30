@@ -2,7 +2,7 @@
 
 `Memory[A]` is a typed handle to an off-heap segment whose lifetime is governed by an `Arena`. You enter an `Arena.run` block, call `Memory.init[A](size)` to allocate, and read or write with `get`, `set`, `fill`, `fold`, `view`, or `copy`. Every operation is tracked in the effect row as `Arena`, so the type system enforces that allocation, access, and release all stay inside the same scope. When `Arena.run` exits, normally or on error, every segment allocated inside it is freed.
 
-Primitive element types (`Byte`, `Short`, `Int`, `Long`, `Float`, `Double`) are supported through a `Layout[A]` type class that pins down per-element byte size and the foreign-memory accessors. The API is inlined for performance and exposes a parallel `Memory.Unsafe[A]` surface (no `Arena` effect, requires `AllowUnsafe`) for hot loops. Allocation deliberately has no unsafe variant because arena tracking is required for the cleanup guarantee. The same source compiles on JVM (Java's `java.lang.foreign`) and Scala Native (a `malloc`/`free`-backed shim).
+Primitive element types (`Byte`, `Short`, `Int`, `Long`, `Float`, `Double`) are supported through a `Layout[A]` type class that pins down per-element byte size and the foreign-memory accessors. The API is inlined for performance and exposes a parallel `Memory.Unsafe[A]` surface (no `Arena` effect, requires `AllowUnsafe`) for hot loops. Allocation deliberately has no unsafe variant because arena tracking is required for the cleanup guarantee. The same source compiles on JVM (Java's `java.lang.foreign`) and Scala Native (a `calloc`/`free`/`memcpy`-backed shim).
 
 The pattern is always the same: enter `Arena.run`, allocate with `Memory.init`, read and write by element index, exit. The segment is freed when the block exits:
 
@@ -104,7 +104,7 @@ val pair: (Int, Int) < Sync =
     }
 ```
 
-A freshly initialized segment reads as zero in every slot. Setting an out-of-range index raises an `IndexOutOfBoundsException` from the underlying `MemorySegment`.
+A freshly initialized segment reads as zero in every slot. This holds on the current JVM and Native backings (Native allocates with `calloc`), but `init` does not contractually guarantee zeroed memory, so do not rely on it as a portable invariant. Use `fill` when you need a known initial value. Setting an out-of-range index raises an `IndexOutOfBoundsException` from the underlying `MemorySegment`.
 
 ### `fill`: bulk write
 
@@ -152,11 +152,11 @@ import kyo.*
 val located: (Maybe[Int], Boolean) < Sync =
     Arena.run {
         for
-            mem    <- Memory.init[Int](3)
-            _      <- mem.set(0, 1)
-            _      <- mem.set(1, 2)
-            _      <- mem.set(2, 3)
-            idx    <- mem.findIndex(_ == 2)
+            mem     <- Memory.init[Int](3)
+            _       <- mem.set(0, 1)
+            _       <- mem.set(1, 2)
+            _       <- mem.set(2, 3)
+            idx     <- mem.findIndex(_ == 2)
             missing <- mem.findIndex(_ == 99)
             any     <- mem.exists(_ >= 3)
         yield (idx, any)
@@ -246,8 +246,8 @@ val staged: Byte < Sync =
     Arena.run {
         for
             source  <- Memory.init[Byte](4)
-            _       <- source.set(0, 0xCA.toByte)
-            _       <- source.set(1, 0xFE.toByte)
+            _       <- source.set(0, 0xca.toByte)
+            _       <- source.set(1, 0xfe.toByte)
             decoded <- Memory.init[Byte](16)
             _       <- source.copyTo(decoded, 0, 8, 2)
             head    <- decoded.get(8)
@@ -270,9 +270,9 @@ This is the operation you want when staging bytes through a pre-sized output buf
 import kyo.*
 
 // Allocation is constrained by `Layout`, picked up implicitly:
-val ints   = Arena.run(Memory.init[Int](4).map(_.size))    // OK
-val longs  = Arena.run(Memory.init[Long](4).map(_.size))   // OK
-val floats = Arena.run(Memory.init[Float](4).map(_.size))  // OK
+val ints   = Arena.run(Memory.init[Int](4).map(_.size))   // OK
+val longs  = Arena.run(Memory.init[Long](4).map(_.size))  // OK
+val floats = Arena.run(Memory.init[Float](4).map(_.size)) // OK
 ```
 
 ### Shipped instances
@@ -376,8 +376,8 @@ import kyo.*
 val cloned: Int < Sync =
     Arena.run {
         for
-            mem  <- Memory.init[Int](4)
-            _    <- mem.set(0, 77)
+            mem <- Memory.init[Int](4)
+            _   <- mem.set(0, 77)
             // Unsafe.copy still returns _ < Arena because it allocates.
             dup  <- mem.unsafe.copy(0, 4)
             head <- mem.set(0, 0).andThen(dup.safe.get(0))
@@ -400,15 +400,15 @@ val staged: (Int, Byte) < Sync =
         for
             source <- Memory.init[Byte](16)
             _      <- source.fill(0x20.toByte)
-            _      <- source.set(5, 0x0A.toByte)
+            _      <- source.set(5, 0x0a.toByte)
             // Unsafe inner loop: locate the newline.
             cut <- Sync.Unsafe.defer {
-                source.unsafe.findIndex(_ == 0x0A.toByte)
+                source.unsafe.findIndex(_ == 0x0a.toByte)
             }
             target <- Memory.init[Byte](32)
-            len     = cut.getOrElse(0)
-            _      <- source.copyTo(target, 0, 0, len)
-            head   <- target.get(0)
+            len = cut.getOrElse(0)
+            _    <- source.copyTo(target, 0, 0, len)
+            head <- target.get(0)
         yield (len, head)
     }
 // (5, 0x20)
@@ -428,18 +428,18 @@ val program: Int < Sync =
         for
             readings <- Memory.init[Int](8)
             // Bulk write: every slot becomes 0
-            _        <- readings.fill(0)
+            _ <- readings.fill(0)
             // Typed point writes at element indices
-            _        <- readings.set(0, 12)
-            _        <- readings.set(1, 17)
-            _        <- readings.set(2, 23)
+            _ <- readings.set(0, 12)
+            _ <- readings.set(1, 17)
+            _ <- readings.set(2, 23)
             // Aggregate across every slot
-            sum      <- readings.fold(0)(_ + _)
+            sum <- readings.fold(0)(_ + _)
             // First index whose value crosses a threshold
-            crossed  <- readings.findIndex(_ >= 20)
+            crossed <- readings.findIndex(_ >= 20)
             // Zero-copy sub-segment over the last 3 slots
-            tail     <- readings.view(5, 3)
-            tailLen   = tail.size
+            tail <- readings.view(5, 3)
+            tailLen = tail.size
         yield sum + crossed.getOrElse(-1) + tailLen.toInt
     }
 ```
@@ -451,7 +451,7 @@ Every value (`readings`, `tail`) is allocated against the same arena and freed w
 `kyo-offheap` compiles for JVM and Scala Native from the same source under `shared/`. There is no JS target; off-heap memory is not part of the JS runtime model.
 
 - **JVM** uses `java.lang.foreign` directly. `Memory[A]` is an opaque alias for `java.lang.foreign.MemorySegment`; `Arena.run` opens a shared `java.lang.foreign.Arena`. Requires a JVM that exposes the foreign-function and memory API.
-- **Scala Native** uses a minimal `Arena`/`MemorySegment` shim under `kyo-offheap/native/` that wraps `malloc`/`free`. `Arena.close` calls `free` on each tracked segment; allocating against an already-closed arena throws `IllegalStateException`.
+- **Scala Native** uses a minimal `Arena`/`MemorySegment` shim under `kyo-offheap/native/` that wraps `calloc`/`free`/`memcpy`. `Arena.close` calls `free` on each tracked segment; allocating against an already-closed arena throws `IllegalStateException`.
 
 > **Caution:** On Scala Native, reads and writes against a segment whose arena has already closed are undefined behavior (segfault or silently corrupt data), not a managed panic. The cleanup invariant of `Arena.run` exists precisely to prevent this; do not let `Memory[A]` escape the scope.
 

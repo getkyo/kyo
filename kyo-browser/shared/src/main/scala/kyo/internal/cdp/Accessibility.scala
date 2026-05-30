@@ -169,7 +169,7 @@ private[kyo] object Accessibility:
         val role = wire.role.flatMap(_.asString).getOrElse("")
         val name = wire.name.flatMap(_.asString).getOrElse("")
         val baseProps = wire.properties.foldLeft(Dict.empty[String, String]) { (acc, prop) =>
-            prop.value.flatMap(_.asString) match
+            (prop.value.flatMap(_.asString): @unchecked) match
                 case Present(v) => acc.update(prop.name, v)
                 case Absent     => acc
         }

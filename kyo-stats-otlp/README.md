@@ -12,15 +12,17 @@ import kyo.stats.otlp.*
 ```
 -->
 
-Every example in this README that calls a low-level instrument or factory needs `AllowUnsafe.embrace.danger` in scope. The import is shown explicitly in every code block that needs it. The opt-in is a deliberate marker: the call bypasses the effect system, runs synchronously on the calling thread, ignores fiber and cancellation rules, and the project-wide convention reserves it for scripts, demos, exporter bootstrap, and the small set of bridge points where a non-Kyo runtime must drive Kyo internals. Production application code should reach `Sync` through a `KyoApp` entrypoint and let the runtime discharge effects without ever needing an `AllowUnsafe` witness.
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_SERVICE_NAME=my-service
+```
 
 ```scala
-import kyo.stats.otlp.OTLPConfig
-import kyo.AllowUnsafe.embrace.danger
-
-// With OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 set, this is Present
-val maybe: Maybe[OTLPConfig] = OTLPConfig.loadIfEnabled()
+// "kyo-stats-otlp" % "<version>"
 ```
+
+That is all that is required. No code changes are needed: the service-loader mechanism picks up the exporter automatically, and the environment variable controls whether export is active.
 
 ## Setup and activation
 
@@ -28,13 +30,13 @@ Add `kyo-stats-otlp` to the classpath of any module that already uses `kyo-core`
 
 ### Service-loader registration
 
-On JVM and Scala Native, kyo-stats-registry discovers exporter implementations through `META-INF/services/kyo.stats.internal.ExporterFactory`. The HTTP runtime independently discovers `META-INF/services/kyo.HttpFilterFactory`. Both files ship in this module's jar, so dropping the jar on the classpath is enough.
+On JVM and Scala Native, kyo-stats-registry discovers exporter implementations through `META-INF/services/kyo.stats.internal.ExporterFactory`. The HTTP runtime independently discovers `META-INF/services/kyo.HttpFilter$Factory`. Both files ship in this module's jar, so dropping the jar on the classpath is enough.
 
 On Scala.js, `META-INF/services` does not work. The module's JS-only `OTLPRegistration` object uses `@JSExportTopLevel("__kyo_otel_init")` to register both factories at module load time:
 
 ```scala doctest:expect=skipped
 // js/src/main/scala/kyo/stats/otlp/OTLPRegistration.scala
-import kyo.HttpFilterFactory
+import kyo.HttpFilter
 import kyo.stats.internal.ExporterFactory
 import kyo.stats.internal.JSServiceLoaderRegistry
 import scala.scalajs.js.annotation.JSExportTopLevel
@@ -43,8 +45,10 @@ object OTLPRegistration:
     @JSExportTopLevel("__kyo_otel_init")
     val init: Boolean =
         JSServiceLoaderRegistry.register(classOf[ExporterFactory], new OTLPExporterFactory())
-        JSServiceLoaderRegistry.register(classOf[HttpFilterFactory], new OTLPHttpFilterFactory())
+        JSServiceLoaderRegistry.register(classOf[HttpFilter.Factory], new OTLPHttpFilterFactory())
         true
+    end init
+end OTLPRegistration
 ```
 
 > **Caution:** the Scala.js linker may tree-shake `OTLPRegistration` if nothing references it. If telemetry silently never starts on JS, force a reference (`val _ = OTLPRegistration.init`) somewhere in your application's entry point.
@@ -61,7 +65,7 @@ export OTEL_SERVICE_NAME=my-service
 
 > **Caution:** export is silently disabled when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset; nothing logs and the application keeps running with the no-op exporter. If you expect telemetry and see none, verify the variable is actually exported in the process environment.
 
-## Configuration
+## Configuration via OTEL_* environment variables
 
 `OTLPConfig` is a plain case class capturing every tunable. The standard path is `OTLPConfig.loadIfEnabled()`, which reads the `OTEL_*` environment variables and returns `Absent` when the endpoint variable is unset. For tests and embedded use cases, build the value directly.
 
@@ -69,8 +73,8 @@ export OTEL_SERVICE_NAME=my-service
 
 ```scala
 import kyo.*
-import kyo.stats.otlp.OTLPConfig
 import kyo.AllowUnsafe.embrace.danger
+import kyo.stats.otlp.OTLPConfig
 
 val maybe: Maybe[OTLPConfig] = OTLPConfig.loadIfEnabled()
 
@@ -81,6 +85,7 @@ maybe match
     case Absent =>
         // OTEL_EXPORTER_OTLP_ENDPOINT not set, export disabled
         println("OTLP export disabled")
+end match
 ```
 
 `loadIfEnabled` reads `System.getenv` directly. The value is snapshotted at the call site, so changing environment variables after JVM start has no effect. Both `OTLPExporterFactory` and `OTLPHttpFilterFactory` call this independently, which means the environment is read multiple times during startup but always at startup.
@@ -139,14 +144,14 @@ val cfg = OTLPConfig(
 )
 ```
 
-## Traces
+## Exporting trace spans
 
 When OTLP export is active, kyo-stats-registry resolves `TraceExporter.get` to an `OTLPTraceExporter` instance. Application code uses the same `Stat.traceSpan` API it would use with any other exporter:
 
 ```scala
 import kyo.*
 
-val scope   = Stat.initScope("http", "server")
+val scope = Stat.initScope("http", "server")
 val handler: String < (Sync & Async) =
     scope.traceSpan("GET /hello") {
         "hi"
@@ -172,7 +177,7 @@ The consumer takes from the trigger and runs `flush`, which drains the queue, bu
 
 On JVM and Scala Native, the background fibers start in the `OTLPTraceExporter` constructor via `OTLPInitPlatform.triggerStart`. They run under `Scope.run { ... Async.never }`, so they are intentionally never interrupted. There is no public shutdown call on the exporter.
 
-> **Caution:** simply constructing an `OTLPTraceExporter` spawns long-lived fibers that live for the rest of the process. In-flight spans buffered in the channel can be lost on JVM/Native process exit because there is no graceful drain hook. If you need shutdown drain semantics, hold an explicit reference to the exporter and call its internal `shutdown(timeout)` from your own teardown path.
+> **Caution:** simply constructing an `OTLPTraceExporter` spawns long-lived fibers that live for the rest of the process. In-flight spans buffered in the channel can be lost on JVM/Native process exit because there is no graceful drain hook. There is no public shutdown method; the background fibers are parented to `Async.never` and are torn down when the JVM exits.
 
 ### Span kind and status
 
@@ -187,7 +192,7 @@ On JVM and Scala Native, the background fibers start in the `OTLPTraceExporter` 
 
 Span attributes from kyo-core's `Attributes` collection map to OTLP `KeyValue` entries, with list-typed attributes joined into a single comma-separated `stringValue`.
 
-## Metrics
+## Exporting metrics
 
 `OTLPMetricsExporter.run` starts a background loop that scrapes the global `StatsRegistry` on `metricExportInterval` and exports any metrics that have non-zero activity since the last export. Application code uses the same `Stat.initScope(...).initCounter(...)`, `initHistogram(...)`, and `initGauge(...)` APIs as without this module.
 
@@ -329,10 +334,10 @@ OTLP's `AnyValue` is a tagged union (string, int, double, bool) that this module
 ```scala
 import kyo.stats.otlp.AnyValue
 
-val s = AnyValue.string("hello")    // stringValue = Present("hello")
-val i = AnyValue.int(42L)           // intValue    = Present("42")  -- ints are wire-encoded as strings
-val d = AnyValue.double(3.14)       // doubleValue = Present(3.14)
-val b = AnyValue.boolean(true)      // boolValue   = Present(true)
+val s = AnyValue.string("hello") // stringValue = Present("hello")
+val i = AnyValue.int(42L)        // intValue    = Present("42")  -- ints are wire-encoded as strings
+val d = AnyValue.double(3.14)    // doubleValue = Present(3.14)
+val b = AnyValue.boolean(true)   // boolValue   = Present(true)
 ```
 
 > **Note:** the wire encoding is OTLP-over-HTTP/JSON, not protobuf, and `AnyValue` is encoded as a struct with at most one populated field rather than a true tagged union. Collectors that expect strict protobuf must front a translation proxy.
@@ -344,16 +349,16 @@ val b = AnyValue.boolean(true)      // boolValue   = Present(true)
 ```scala
 import kyo.stats.otlp.OTLPModel
 
-val internal = OTLPModel.SpanKindInternal    // 1
-val server   = OTLPModel.SpanKindServer      // 2
-val client   = OTLPModel.SpanKindClient      // 3
+val internal = OTLPModel.SpanKindInternal // 1
+val server   = OTLPModel.SpanKindServer   // 2
+val client   = OTLPModel.SpanKindClient   // 3
 
-val unset = OTLPModel.StatusUnset            // 0
-val ok    = OTLPModel.StatusOk               // 1
-val err   = OTLPModel.StatusError            // 2
+val unset = OTLPModel.StatusUnset // 0
+val ok    = OTLPModel.StatusOk    // 1
+val err   = OTLPModel.StatusError // 2
 
-val delta      = OTLPModel.DeltaTemporality       // 1
-val cumulative = OTLPModel.CumulativeTemporality  // 2
+val delta      = OTLPModel.DeltaTemporality      // 1
+val cumulative = OTLPModel.CumulativeTemporality // 2
 ```
 
 `OTLPTraceExporter` always emits `SpanKindInternal`; the other constants are provided for adapters and synthesized payloads.

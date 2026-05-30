@@ -4,20 +4,6 @@ Kyo's library of pure, handler-based effects. Each effect names a capability the
 
 On top of these primitives the module builds `Stream[V, S]`, a chunked, lazy sequence backed by `Emit[Chunk[V]]` underneath and connectable to `Poll`-shaped consumers through `Pipe[A, B, S]` (transforms) and `Sink[V, A, S]` (terminal folds). Dependency wiring is handled by `Layer`, which is compile-time-resolved by `Layer.init` and discharged into `Env`. Cross-cutting concerns get a handful more tools: `Local[A]` for thread-local-style context with defaults, `Aspect` for AOP-style interception with multi-shot continuations, `Memo` for memoizing pure computations, `Check` for accumulating validation failures, `Batch` for transparent N+1 grouping, and `Debug` for printing intermediate values during development.
 
-```scala
-import kyo.*
-
-case class User(id: Int, email: String)
-
-val fetch: User < Abort[String] =
-    Abort.fail("user 42 not found")
-
-val recovered: User < Any =
-    Abort.recover[String](_ => User(0, "guest@example.com"), _ => User(0, "guest@example.com"))(fetch)
-
-assert(recovered.eval == User(0, "guest@example.com"))
-```
-
 The examples below all operate on a small request-handling domain: looking up users by id, fetching their orders, validating field values, wiring a repository and configuration as dependencies. Defining it once here lets later sections introduce one capability at a time on values you have already seen.
 
 ```scala
@@ -70,9 +56,9 @@ assert(Abort.run(parseId("-1")).eval == Result.fail(ValidationError("id", "must 
 ```scala
 import kyo.*
 
-val fromEither: Int < Abort[String]    = Abort.get(Right(1))
-val fromOption: Int < Abort[Absent]    = Abort.get(Option(7))
-val fromTry: Int < Abort[Throwable]    = Abort.get(scala.util.Try("3".toInt))
+val fromEither: Int < Abort[String] = Abort.get(Right(1))
+val fromOption: Int < Abort[Absent] = Abort.get(Option(7))
+val fromTry: Int < Abort[Throwable] = Abort.get(scala.util.Try("3".toInt))
 
 assert(Abort.run(fromEither).eval == Result.succeed(1))
 assert(Abort.run(fromOption).eval == Result.succeed(7))
@@ -99,8 +85,8 @@ val recovered: Int < Any =
 val message: String < Any =
     Abort.fold[ValidationError](
         onSuccess = (n: Int) => s"got $n",
-        onFail    = (e: ValidationError) => s"bad ${e.field}: ${e.reason}",
-        onPanic   = (t: Throwable) => s"panic: ${t.getMessage}"
+        onFail = (e: ValidationError) => s"bad ${e.field}: ${e.reason}",
+        onPanic = (t: Throwable) => s"panic: ${t.getMessage}"
     )(program)
 
 assert(recovered.eval == 0)
@@ -408,7 +394,7 @@ val orders: Stream[Order, Any] =
     Stream.init(Seq(
         Order(1, 1, BigDecimal(10)),
         Order(2, 2, BigDecimal(25)),
-        Order(3, 1, BigDecimal( 5)),
+        Order(3, 1, BigDecimal(5)),
         Order(4, 3, BigDecimal(99))
     ))
 
@@ -569,9 +555,10 @@ val program: Int < Memo =
     val expensiveSquare: Int => Int < Memo = Memo((n: Int) => n * n)
     expensiveSquare(5).map { a =>
         expensiveSquare(5).map { b =>
-            a + b  // second call hits the cache
+            a + b // second call hits the cache
         }
     }
+end program
 
 assert(Memo.run(program).eval == 50)
 ```
@@ -629,6 +616,8 @@ asAbort.eval match
 When a function is called many times with different inputs and each call would issue an individual request (the classic N+1 problem: looking up users one at a time), use `Batch`. You declare a batched source once, and call sites use it as if each call were independent; the engine groups them into one bulk call and reassembles results per caller.
 
 `Batch.source(f)` takes a function `Seq[A] => (A => B < S) < S` that, given a batch of inputs, returns a per-element resolver. `Batch.sourceMap(f)` is shorter when your bulk function returns a `Map[A, B]`. `Batch.sourceSeq(f)` is the variant for `Seq[B]` aligned positionally with the inputs.
+
+> **Note:** `Batch.sourceSeq` aligns its returned `Seq[B]` positionally with the input batch, so the returned sequence must have exactly the same length as the inputs.
 
 ```scala
 import kyo.*
@@ -708,7 +697,7 @@ assert(program.eval == 12)
 
 `Debug.Param[T]` is the macro-derived parameter capture that `Debug.values` uses; `Debug.Param.derive` is the inline derivation a regular call relies on through implicits.
 
-## Effect-agnostic collection ops: the `Kyo.*` companion
+## Sequencing collections over any effect: `Kyo.*`
 
 The `Kyo` object provides sequential collection operations that work over any effect row. There is no dependency on `Sync` or `Async`: the operations sequence effects whatever they happen to be, `Abort[E]`, `Var[V]`, `Env[R]`, or any combination. It lives in kyo-prelude (kyo-kernel, actually, which kyo-prelude re-exports) and is available with a plain `import kyo.*`.
 
@@ -769,8 +758,7 @@ val repoLayer: Layer[UserRepo, Any] =
                 Order(userId * 10 + 1, userId, BigDecimal(10)),
                 Order(userId * 10 + 2, userId, BigDecimal(25)),
                 Order(userId * 10 + 3, userId, BigDecimal(99))
-            )
-    )
+            ))
 
 def handle(userId: Int): Chunk[Order] < (Env[UserRepo & Config] & Abort[ValidationError] & Check) =
     Env.use[Config] { config =>

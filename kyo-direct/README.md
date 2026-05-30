@@ -2,7 +2,7 @@
 
 `kyo-direct` lets you write effectful Kyo computations in plain imperative style. You wrap a block in `direct { ... }`, then write straight-line code; at each point where you would otherwise have a `T < S` value, you append `.now` to sequence the effect and bind its result, or `.later` to keep the effect un-sequenced for explicit composition. A macro rewrites the block into ordinary monadic `flatMap` chains over Kyo's pending type `A < S`, summing the effect rows of every `.now` site into the block's pending type. The translation is purely syntactic sugar over `flatMap`; nothing new appears at runtime.
 
-Because the block is a regular Scala expression but its terms cross effect boundaries, `kyo-direct` restricts which language constructs are legal inside it. `var`, `lazy val`, nested `class`/`trait`/`object`, `try`/`catch`, `throw`, `synchronized`, mutable field access, and `def`s that contain `.now` are all rejected at compile time with targeted error messages pointing at the proper Kyo replacement (`Atomic*`, `Abort`, `Async.memoize`, and others). Within higher-order calls on `Iterable`, `Option`, `Try`, `Either`, `Maybe`, and `Result`, a curated set of methods (`map`, `flatMap`, `filter`, `fold`, `foreach`, `collect`, `foldLeft`, `groupBy`, `partition`, others) is recognized as shift-aware: `.now` inside their lambdas is rewritten to run effects per element. Inside `Stream` lambdas and other lazy structures `.now` is rejected outright; you must either hoist the effect out or use `.later` to keep it as part of the stream's effect row.
+Because the block is a regular Scala expression but its terms cross effect boundaries, `kyo-direct` restricts which language constructs are legal inside it. `var`, `lazy val`, nested `class`/`trait`/`object`, `try`/`catch`, `throw`, `synchronized`, mutable field access, and `def`s that contain `.now` are all rejected at compile time with targeted error messages that name the proper Kyo replacement (`Atomic*`, `Abort`, `Async.memoize`, and others).
 
 ```scala
 import kyo.*
@@ -65,7 +65,7 @@ def fetchUser(id: Int): User < (Async & Abort[NotFound]) =
 
 val pair: (User, User) < (Async & Abort[NotFound]) =
     direct {
-        val first = fetchUser(1).now
+        val first  = fetchUser(1).now
         val second = fetchUser(first.id + 1).now
         (first, second)
     }
@@ -85,12 +85,19 @@ def fetchUser(id: Int): User < (Async & Abort[NotFound]) =
     if id > 0 then User(id, s"user-$id")
     else Abort.fail(NotFound(id))
 
-val combined: User < (Async & Abort[NotFound]) =
+// `.now` binds the result inline; the surrounding code sees a plain User.
+val immediate: User < (Async & Abort[NotFound]) =
     direct {
-        val a: User < (Async & Abort[NotFound]) = fetchUser(1).later
-        val b: User < (Async & Abort[NotFound]) = fetchUser(2).later
-        a.now
-        b.now
+        val user = fetchUser(1).now // User, bound here
+        user
+    }
+
+// `.later` keeps the A < S value so the surrounding code can route it.
+// The pending effect is sequenced only when .now is called on it.
+val deferred: User < (Async & Abort[NotFound]) =
+    direct {
+        val pending: User < (Async & Abort[NotFound]) = fetchUser(1).later
+        pending.now
     }
 ```
 
@@ -147,8 +154,8 @@ def expensive: Int < Async = Async.defer(42)
 val memoized: Int < Async =
     direct {
         val cached = Async.memoize(expensive).now
-        val a = cached.now
-        val b = cached.now
+        val a      = cached.now
+        val b      = cached.now
         a + b
     }
 ```
@@ -191,9 +198,9 @@ def fetch(id: Int): String < Abort[NotFound] =
 val handled: String < Any =
     direct {
         Abort.run(fetch(-1)).now match
-            case Result.Success(v)  => v
+            case Result.Success(v)            => v
             case Result.Failure(NotFound(id)) => s"missing-$id"
-            case Result.Panic(e)    => s"panic-${e.getMessage}"
+            case Result.Panic(e)              => s"panic-${e.getMessage}"
     }
 ```
 
@@ -213,9 +220,11 @@ val sumTwo: Int < (Async & Sync) =
     }
 ```
 
-### Nested type declarations
+### Nested `class` / `trait` / `object`
 
 When you reach for an inline `class` or `trait` declaration inside a `direct` block, the macro rejects it. Define the type at the enclosing scope and instantiate it inside the block.
+
+> **Note:** A `.now` inside a by-name argument is also rejected up front, because CPS sequencing cannot compose with by-name capture (left unguarded it would surface a confusing dotty-cps-async error). Bind the effect to a `val` first, then pass the value.
 
 ## Higher-order calls and lazy structures
 
@@ -285,6 +294,8 @@ val perElement: Stream[Int, Sync] < Any =
 ```
 
 A `.now` in the same lambda would fail at compile time with a diagnostic that points at both rewrites.
+
+> **Note:** The rejection is not stylistic: a `.now` evaluated lazily per stream element would run its effect outside the surrounding handlers, letting the effect escape the row. `.later` keeps the effect in the lambda so it lifts into the stream's own effect row instead.
 
 > **Caution:** The lazy-structure rule applies inside any `Stream.*` lambda regardless of the method name. Even shift-aware names like `map` are not rewritten per-element on `Stream`; the lambda is treated as deferred work.
 

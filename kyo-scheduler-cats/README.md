@@ -41,7 +41,8 @@ val threadName: String = program.unsafeRunSync()
 For applications written against `IOApp`, replace `extends IOApp` with `extends KyoSchedulerIOApp` and nothing else changes. The trait overrides `runtime` to `KyoSchedulerIORuntime.global`; `run` is defined exactly as with stock `IOApp`.
 
 ```scala
-import cats.effect.{ExitCode, IO}
+import cats.effect.ExitCode
+import cats.effect.IO
 import kyo.KyoSchedulerIOApp
 
 object Main extends KyoSchedulerIOApp:
@@ -62,12 +63,12 @@ Three things differ from the stock Cats Effect runtime:
 1. Compute and blocking are the same executor. The `IORuntime` is built with `kyo.scheduler.Scheduler.get.asExecutionContext` passed in both the compute and the blocking slot. Cats Effect's normal split (a cached blocking pool distinct from the compute pool) is collapsed, so `IO.blocking` runs on the same scheduler as `IO.cede`.
 
    ```scala
-   import cats.effect.IO
-   import kyo.KyoSchedulerIORuntime.global
+import cats.effect.IO
+import kyo.KyoSchedulerIORuntime.global
 
-   val blockingThread: String =
-       IO.blocking(Thread.currentThread().getName).unsafeRunSync()
-   // blockingThread: "kyo-..."
+val blockingThread: String =
+    IO.blocking(Thread.currentThread().getName).unsafeRunSync()
+// blockingThread: "kyo-..."
    ```
 
 2. Timers run on a fixed 2-thread `ScheduledExecutorService`. `IO.sleep` and other timer-driven combinators are dispatched by a dedicated `cats.effect.unsafe.Scheduler` whose thread pool size is hard-coded to 2 regardless of CPU count. High-frequency `IO.sleep` workloads share these two threads.

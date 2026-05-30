@@ -2,7 +2,7 @@
 
 Durable workflow engine for Kyo. Workflows are defined as composable, type-safe plans that the engine persists, coordinates across multiple executors, and recovers automatically after crashes.
 
-A `Flow` is a plan, not an execution. You describe what should happen — values to compute, inputs to wait for, side effects to perform, branches to take — and the engine handles the rest. Every step is checkpointed to a store before the next begins. If the process crashes, another executor claims the work and replays from the last checkpoint, skipping steps that already completed. Side effects in steps must be idempotent because they may re-execute on recovery.
+A `Flow` is a plan, not an execution. You describe what should happen (values to compute, inputs to wait for, side effects to perform, branches to take) and the engine handles the rest. Every step is checkpointed to a store before the next begins. If the process crashes, another executor claims the work and replays from the last checkpoint, skipping steps that already completed. Side effects in steps must be idempotent because they may re-execute on recovery.
 
 The engine coordinates multiple executors via time-limited claim leases, supports compensation handlers for saga-style rollback, provides retry and timeout per step, emits a full event audit trail, and exposes an auto-generated REST API. Workflow structure can be rendered as Mermaid, DOT, BPMN, ELK, or JSON diagrams. The module compiles across JVM, JavaScript, and Scala Native.
 
@@ -20,20 +20,20 @@ import kyo.*
 
 case class Order(item: String, qty: Int, price: Int = 10) derives Schema
 
-def sendEmail(to: String, msg: String): Unit < Sync       = ()
-def processOrder(id: String): Unit < Sync                 = ()
-def sendFollowUp(id: String): Unit < Sync                 = ()
-def notifyResult(decision: String): Unit < Sync           = ()
-def checkStatus(url: String): String < Sync               = "ready"
-def probe(endpoint: String): String < Sync                = "healthy"
-def fetch(url: String): String < Sync                     = ""
-def fetchData(url: String): String < Sync                 = ""
-def reserveInventory(order: Order): String < Sync         = "resv-1"
+def sendEmail(to: String, msg: String): Unit < Sync                      = ()
+def processOrder(id: String): Unit < Sync                                = ()
+def sendFollowUp(id: String): Unit < Sync                                = ()
+def notifyResult(decision: String): Unit < Sync                          = ()
+def checkStatus(url: String): String < Sync                              = "ready"
+def probe(endpoint: String): String < Sync                               = "healthy"
+def fetch(url: String): String < Sync                                    = ""
+def fetchData(url: String): String < Sync                                = ""
+def reserveInventory(order: Order): String < Sync                        = "resv-1"
 def cancelReservation(id: String): Unit < (Async & Abort[FlowException]) = ()
-def chargeCard(order: Order): String < Sync               = "charge-1"
-def refundCard(id: String): Unit < (Async & Abort[FlowException]) = ()
-def ship(order: Order): Unit < Sync                       = ()
-def riskyOperation(input: String): String < Sync          = "ok"
+def chargeCard(order: Order): String < Sync                              = "charge-1"
+def refundCard(id: String): Unit < (Async & Abort[FlowException])        = ()
+def ship(order: Order): Unit < Sync                                      = ()
+def riskyOperation(input: String): String < Sync                         = "ok"
 
 val validateFlow: Flow[Any, Any, Any]  = Flow.init("validate")
 val processFlow: Flow[Any, Any, Any]   = Flow.init("process")
@@ -47,8 +47,6 @@ val paymentFlow: Flow[Any, Any, Any]   = Flow.init("payment")
 ```
 -->
 
-## Outputs
-
 The simplest workflow computes a value and stores it:
 
 ```scala doctest:scope=env:greet
@@ -57,6 +55,14 @@ val flow = Flow.init("hello")
 ```
 
 `Flow.init` creates a named workflow. `.output("greeting")` computes a value, persists it under the name `"greeting"`, and makes it available to subsequent steps.
+
+Run a workflow locally for testing:
+
+```scala doctest:scope=env:greet
+val result = Flow.runLocal(flow, Record.empty)
+```
+
+## Outputs
 
 The function passed to `.output` receives a context record containing all fields produced so far. Here there are none, so we ignore it with `_`. When there are prior fields, each one is accessible by name with full type safety:
 
@@ -67,7 +73,7 @@ val flow = Flow.init("pricing")
     .output("total")(ctx => ctx.price + ctx.tax)
 ```
 
-`ctx.price` is statically typed as `Int` — accessing a field that doesn't exist is a compile error. This works through Kyo's `Record` type, which tracks fields as an intersection of `Name ~ Value` pairs. Each `.output` call adds a field to the record type:
+`ctx.price` is statically typed as `Int`: accessing a field that doesn't exist is a compile error. This works through Kyo's `Record` type, which tracks fields as an intersection of `Name ~ Value` pairs. Each `.output` call adds a field to the record type:
 
 ```scala
 // After .output("price"), the context type includes "price" ~ Int
@@ -76,15 +82,9 @@ val flow = Flow.init("pricing")
 ```
 
 The three type parameters on `Flow[In, Out, S]` track this automatically:
-- `In` — required inputs (accumulated via `.input`)
-- `Out` — produced outputs (accumulated via `.output`, `.loop`, `.dispatch`, etc.)
-- `S` — pending effect types from step computations
-
-Run a workflow locally for testing:
-
-```scala doctest:scope=env:greet
-val result = Flow.runLocal(flow, Record.empty)
-```
+- `In`: required inputs (accumulated via `.input`)
+- `Out`: produced outputs (accumulated via `.output`, `.loop`, `.dispatch`, etc.)
+- `S`: pending effect types from step computations
 
 ## Inputs
 
@@ -111,7 +111,7 @@ In production, inputs arrive via the engine's signal API or the HTTP endpoint `P
 
 ## Steps
 
-A step performs a side effect without producing a named value — HTTP calls, database writes, sending notifications:
+A step performs a side effect without producing a named value (HTTP calls, database writes, sending notifications):
 
 ```scala
 val flow = Flow.init("notify")
@@ -124,7 +124,7 @@ On replay after a crash, completed steps are skipped. Steps are tracked by their
 
 ## Sleep
 
-Sleep pauses the execution for a duration. The pause is durable — if the process restarts, the engine calculates the remaining time and resumes when it expires:
+Sleep pauses the execution for a duration. The pause is durable: if the process restarts, the engine calculates the remaining time and resumes when it expires.
 
 ```scala
 val flow = Flow.init("delayed")
@@ -133,6 +133,8 @@ val flow = Flow.init("delayed")
     .sleep("cooldown", 1.hour)
     .step("followUp")(ctx => sendFollowUp(ctx.orderId))
 ```
+
+Note: Parking (sleep, waiting for an input, or a lost claim) is not a failure. The engine signals it with a non-`Throwable` value (`FlowSuspension`), so a parked execution releases its in-memory state, never fires compensation handlers, and is resumed later from the store rather than being marked failed.
 
 ## Branching
 
@@ -148,7 +150,7 @@ val flow = Flow.init("approval")
     .step("notify")(ctx => notifyResult(ctx.decision))
 ```
 
-The type parameter `[String]` is the type of the value all branches must produce. The result is persisted under the dispatch name (`"decision"`) and accessible downstream as `ctx.decision`. Calling `.otherwise` is required — the compiler enforces this by making further chaining methods unavailable until the dispatch is closed.
+The type parameter `[String]` is the type of the value all branches must produce. The result is persisted under the dispatch name (`"decision"`) and accessible downstream as `ctx.decision`. Calling `.otherwise` is required, and the compiler enforces this by making further chaining methods unavailable until the dispatch is closed.
 
 ## Loops
 
@@ -203,7 +205,7 @@ val flow = Flow.init("batch")
 
 ### Sequential
 
-`andThen` sequences two flows — the first completes, then the second starts with access to all prior outputs:
+`andThen` sequences two flows: the first completes, then the second starts with access to all prior outputs.
 
 ```scala
 val combined = validateFlow.andThen(processFlow)
@@ -225,7 +227,7 @@ val all = Flow.gather(pricingFlow, inventoryFlow, shippingFlow)
 
 ### Racing
 
-`race` runs two flows in parallel — first to complete wins, the other is abandoned:
+`race` runs two flows in parallel. The first to complete wins and the other is abandoned.
 
 ```scala
 val fastest = Flow.race(primaryFlow, fallbackFlow)
@@ -257,7 +259,8 @@ Any output or step can specify a per-attempt timeout and a retry schedule:
 ```scala
 val flow = Flow.init("resilient")
     .input[String]("url")
-    .output("data",
+    .output(
+        "data",
         timeout = 10.seconds,
         retry = Maybe(Schedule.exponentialBackoff(1.second, 2.0, 1.minute))
     )(ctx => fetchData(ctx.url))
@@ -322,7 +325,7 @@ API methods use precise Abort union types, so you can handle exactly the errors 
 
 ```scala
 val simpleFlow = Flow.init("demo").input[Int]("x").output("doubled")(ctx => ctx.x * 2)
-val result = Flow.runLocal(simpleFlow, "x" ~ 42)
+val result     = Flow.runLocal(simpleFlow, "x" ~ 42)
 ```
 
 ### Server
@@ -390,12 +393,12 @@ The engine runs worker fibers that poll the store, claim executions via time-lim
 FlowStore.initMemory.map { store =>
     FlowEngine.init(
         store,
-        workerCount  = 4,
-        lease        = 30.seconds,
-        renewEvery   = 10.seconds,
-        batchSize    = 8,
-        pollTimeout  = 30.seconds,
-        flows        = Seq(orderFlow, shippingFlow)
+        workerCount = 4,
+        lease = 30.seconds,
+        renewEvery = 10.seconds,
+        batchSize = 8,
+        pollTimeout = 30.seconds,
+        flows = Seq(orderFlow, shippingFlow)
     )
 }
 ```
@@ -421,9 +424,9 @@ val monitorEffect =
     FlowStore.initMemory.map { store =>
         FlowEngine.init(store, orderFlow).map { engine =>
             engine.executions.describe(eid).map { detail =>
-                val _status   = detail.status    // Flow.Status
-                val _progress = detail.progress  // step-by-step node progress
-                val _inputs   = detail.inputs    // which inputs are delivered
+                val _status   = detail.status   // Flow.Status
+                val _progress = detail.progress // step-by-step node progress
+                val _inputs   = detail.inputs   // which inputs are delivered
             }
         }
     }
@@ -437,8 +440,8 @@ Every state change is recorded as a `Flow.Event`:
 FlowStore.initMemory.map { store =>
     FlowEngine.init(store, orderFlow).map { engine =>
         engine.executions.history(eid).map { page =>
-            val _events   = page.events   // Chunk[Flow.Event]
-            val _hasMore  = page.hasMore  // pagination
+            val _events  = page.events  // Chunk[Flow.Event]
+            val _hasMore = page.hasMore // pagination
         }
     }
 }
@@ -498,3 +501,5 @@ FlowStore.initMemory.map { store =>
 ```
 
 If an executor crashes, its lease expires and another executor picks up the work.
+
+Coordination rests on `claimReady` handing each ready execution to exactly one executor under a renewable lease. A step that was in flight when an executor died may run again on the executor that reclaims the lease, but a step already recorded as completed is skipped on replay. This is why step side effects must be idempotent.

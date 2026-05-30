@@ -2,17 +2,17 @@
 
 Bridge [case-app](https://github.com/alexarchambault/case-app) command-line parsing with Kyo application entrypoints. Use **`KyoCaseApp`** for single-command apps and **`KyoCommand`** for subcommands grouped via case-app's [`CommandsEntryPoint`](https://github.com/alexarchambault/case-app).
 
-Register effectful work with **`run`** after case-app parses the command line. Unlike [`KyoApp`](https://github.com/getkyo/kyo), there are no implicit `options` / `remainingArgs` accessors — parsed data is passed explicitly via overloads:
+Register effectful work with **`run`** after case-app parses the command line. Unlike [`KyoApp`](https://github.com/getkyo/kyo), there are no implicit `options` / `remainingArgs` accessors. Parsed data is passed explicitly via overloads:
 
 | Form | When to use |
 |------|-------------|
-| **`run { options => ... }`** | **Recommended** — typical CLI logic uses parsed flags and options |
+| **`run { options => ... }`** | **Recommended** for typical CLI logic using parsed flags and options |
 | `run { (options, remainingArgs) => ... }` | You also need leftover positionals ([`RemainingArgs`](https://github.com/alexarchambault/case-app/blob/main/core/shared/src/main/scala/caseapp/core/RemainingArgs.scala)) |
 | `run { ... }` | The effect does not use parsed CLI data (startup hooks, etc.) |
 
 All three overloads share one registration queue: multiple `run` blocks run in object-initialization order, and each block sees the same parse result from that `main` invocation.
 
-case-app handles help, usage, and argument parsing; this module runs your effects after parsing completes. For how to define options (annotations, defaults, subcommand metadata, etc.), see the [case-app documentation](https://alexarchambault.github.io/case-app/) — that is not repeated here.
+case-app handles help, usage, and argument parsing. This module runs your effects after parsing completes. For how to define options (annotations, defaults, subcommand metadata, etc.), see the [case-app documentation](https://alexarchambault.github.io/case-app/). That material is not repeated here.
 
 Works on JVM, Scala.js, and Scala Native.
 
@@ -30,7 +30,7 @@ You also need a case-app dependency if you use its annotations or helpers direct
 libraryDependencies += "com.github.alexarchambault" %%% "case-app" % "2.1.0"
 ```
 
-## `KyoCaseApp` — single command
+## Single command: `KyoCaseApp`
 
 Define a case class for options (see [case-app](https://alexarchambault.github.io/case-app/) for field annotations and parsers), then extend `KyoCaseApp`:
 
@@ -46,9 +46,12 @@ object Greet extends KyoCaseApp[GreetOptions]:
     run { options =>
         Console.printLine(s"Hello, ${options.name}!")
     }
+end Greet
 ```
 
-`Greet` already inherits `main(args: Array[String])` from case-app. The `run` block does not replace `main` — it registers the Kyo effects that `main` runs after parsing CLI arguments (the same relationship as `run` on `KyoApp`).
+`Greet` already inherits `main(args: Array[String])` from case-app. The `run` block does not replace `main`. It registers the Kyo effects that `main` runs after parsing CLI arguments (the same relationship as `run` on `KyoApp`).
+
+Note: at least one `run` block is required. An app that registers none does not silently do nothing: at runtime it prints `nothing to execute. Did you forget to use a run block?` and exits with code 1.
 
 Point your build at that object as the main class, for example in sbt:
 
@@ -85,18 +88,19 @@ With a packaged binary (for example after `assembly` / `nativeImage` / `scala-cl
 # Hello, Bob!
 ```
 
-You can mix overloads in one app; registration order is preserved:
+You can mix overloads in one app, and registration order is preserved:
 
 ```scala
 object Greet extends KyoCaseApp[GreetOptions]:
-    run { options => Console.printLine(s"Hello, ${options.name}!") }  // recommended
-    run { (options, remainingArgs) =>                                    // when positionals matter
+    run { options => Console.printLine(s"Hello, ${options.name}!") } // recommended
+    run { (options, remainingArgs) =>                                // when positionals matter
         Console.printLine(s"extras: ${remainingArgs.remaining.mkString(" ")}")
     }
-    run { Console.printLine("starting") }                               // no CLI params
+    run { Console.printLine("starting") } // no CLI params
+end Greet
 ```
 
-## `KyoCommand` — subcommands
+## Subcommands: `KyoCommand`
 
 Each subcommand is a **`object`** extending `KyoCommand`. Group them with case-app's `CommandsEntryPoint`:
 
@@ -116,6 +120,8 @@ final case class ListOptions(@Name("all") all: Boolean = false)
 
 object TodoApp extends CommandsEntryPoint:
 
+    // CommandsEntryPoint has no effectful setup hook, so the store is initialized
+    // outside the effect system using the Unsafe API.
     private val store =
         import AllowUnsafe.embrace.danger
         AtomicRef.Unsafe.init(Chunk.empty[Todo]).safe
@@ -131,11 +137,13 @@ object TodoApp extends CommandsEntryPoint:
             }
             for
                 todos <- store.get
-                id   = todos.map(_.id).maxOption.getOrElse(0) + 1
+                id = todos.map(_.id).maxOption.getOrElse(0) + 1
                 _ <- store.set(todos.appended(Todo(id, title, TodoStatus.Pending)))
                 _ <- Console.printLine(s"created #$id: $title")
             yield ()
+            end for
         }
+    end Create
 
     object Complete extends KyoCommand[IdOptions]:
         override def name = "complete"
@@ -144,10 +152,12 @@ object TodoApp extends CommandsEntryPoint:
             for
                 todos <- store.get
                 todo  <- todos.find(_.id == id).map(Sync.defer(_)).getOrElse(Abort.fail(new NoSuchElementException(s"no todo #$id")))
-                _ <- store.set(todos.map(t => if t.id == id then t.copy(status = TodoStatus.Completed) else t))
-                _ <- Console.printLine(s"completed #$id: ${todo.title}")
+                _     <- store.set(todos.map(t => if t.id == id then t.copy(status = TodoStatus.Completed) else t))
+                _     <- Console.printLine(s"completed #$id: ${todo.title}")
             yield ()
+            end for
         }
+    end Complete
 
     object List extends KyoCommand[ListOptions]:
         override def name = "list"
@@ -156,9 +166,10 @@ object TodoApp extends CommandsEntryPoint:
                 todos   <- store.get
                 visible <- Sync.defer(if options.all then todos else todos.filter(t => t.status ne TodoStatus.Completed))
                 _ <- if visible.isEmpty then Console.printLine("no todos")
-                     else Async.foreachDiscard(visible)(t => Console.printLine(render(t)))
+                else Async.foreachDiscard(visible)(t => Console.printLine(render(t)))
             yield ()
         }
+    end List
 
     object Delete extends KyoCommand[IdOptions]:
         override def name = "delete"
@@ -167,10 +178,12 @@ object TodoApp extends CommandsEntryPoint:
             for
                 todos <- store.get
                 todo  <- todos.find(_.id == id).map(Sync.defer(_)).getOrElse(Abort.fail(new NoSuchElementException(s"no todo #$id")))
-                _ <- store.set(todos.filterNot(_.id == id))
-                _ <- Console.printLine(s"deleted #$id: ${todo.title}")
+                _     <- store.set(todos.filterNot(_.id == id))
+                _     <- Console.printLine(s"deleted #$id: ${todo.title}")
             yield ()
+            end for
         }
+    end Delete
 
     object Start extends KyoCommand[IdOptions]:
         override def name = "start"
@@ -188,7 +201,9 @@ object TodoApp extends CommandsEntryPoint:
                         store.set(todos.map(t => if t.id == id then t.copy(status = TodoStatus.Active) else t))
                             .andThen(Console.printLine(s"started #$id: ${todo.title}"))
             yield ()
+            end for
         }
+    end Start
 
     private def render(todo: Todo): String =
         val mark =
@@ -197,6 +212,8 @@ object TodoApp extends CommandsEntryPoint:
             else if todo.status eq TodoStatus.Completed then "[x]"
             else "[?]"
         s"$mark #${todo.id} ${todo.title}"
+    end render
+end TodoApp
 ```
 
 `TodoApp` likewise inherits `main` from `CommandsEntryPoint`. Set `Compile / mainClass := Some("TodoApp")` in sbt.
@@ -246,15 +263,17 @@ The test suite includes a runnable variant of this app in [`casetest.TodoAppFixt
 
 Both provide three `run` overloads (same names, resolved by the shape of the block):
 
-- **`run { options => ... }`** — **recommended** for most commands
-- `run { (options, remainingArgs) => ... }` — when leftover positionals matter
-- `run { ... }` — effect without parsed CLI data
+- **`run { options => ... }`** (**recommended** for most commands)
+- `run { (options, remainingArgs) => ... }` (when leftover positionals matter)
+- `run { ... }` (effect without parsed CLI data)
 
 All delegate to a single `registerRun` queue so mixed overloads keep registration order.
 
-Non-throwable failures call `exitHook(1)` (defaults to `Platform.exit`; case-app reserves `exit` for its own API). Interrupt handling is shared with `KyoApp` via [`KyoAppRunner`](../kyo-core/shared/src/main/scala/kyo/internal/KyoAppRunner.scala) (SIGINT/SIGTERM on non-Windows platforms).
+## Failure and signals
+
+On failure, the behavior depends on the error type. A `Throwable` failure propagates out of `main` as a normal JVM stack-trace-and-crash. A non-`Throwable` `Abort` failure routes through `exitHook(1)`, which defaults to `Platform.exit` (case-app reserves `exit` for its own API). Interrupt handling is shared with `KyoApp` via [`KyoAppRunner`](../kyo-core/shared/src/main/scala/kyo/internal/KyoAppRunner.scala) (SIGINT/SIGTERM on non-Windows platforms).
 
 ## Related
 
-- [case-app](https://alexarchambault.github.io/case-app/) — option definitions, help, completions
-- [KyoApp](https://github.com/getkyo/kyo) — raw `args` without a CLI parser
+- [case-app](https://alexarchambault.github.io/case-app/) (option definitions, help, completions)
+- [KyoApp](https://github.com/getkyo/kyo) (raw `args` without a CLI parser)

@@ -57,7 +57,7 @@ val hexDigit: Int < Parse[Char] =
             else Result.fail(Chunk(ParseFailure(s"Expected hex digit, got $c", in.position)))
 
 val hex: Int < Abort[ParseError] =
-    Parse.runOrAbort("a")(hexDigit)  // 10
+    Parse.runOrAbort("a")(hexDigit) // 10
 ```
 
 `readOne[A](f: In => Result[Chunk[String], A])` is the convenience form for "look at exactly one token." `readWhile(f: A => Boolean)` consumes a run of matching tokens into a `Chunk[A]` without dropping the branch even if the run is empty.
@@ -90,7 +90,7 @@ val saveAndRestore: Int < Parse[Char] =
     for
         start <- Parse.position
         n     <- Parse.int
-        _     <- Parse.rewind(start)  // back to where we started
+        _     <- Parse.rewind(start) // back to where we started
     yield n
 ```
 
@@ -131,8 +131,8 @@ val signed: Int < Parse[Char] =
         Parse.int
     )
 
-val a: Int < Abort[ParseError] = Parse.runOrAbort("-7")(signed)  // -7
-val b: Int < Abort[ParseError] = Parse.runOrAbort("12")(signed)  // 12
+val a: Int < Abort[ParseError] = Parse.runOrAbort("-7")(signed) // -7
+val b: Int < Abort[ParseError] = Parse.runOrAbort("12")(signed) // 12
 ```
 
 `firstOf` is PEG-style ordered choice. Earlier parsers take precedence; there is no ambiguity detection and no "try every branch" combinator. Each branch is implicitly wrapped in `attempt`, so wrapping again is a no-op.
@@ -159,12 +159,14 @@ val csv: Chunk[Int] < Parse[Char] =
     Parse.separatedBy(Parse.int, Parse.literal(','))
 
 val xs: Chunk[Int] < Abort[ParseError] =
-    Parse.runOrAbort("1,2,3")(csv)  // Chunk(1, 2, 3)
+    Parse.runOrAbort("1,2,3")(csv) // Chunk(1, 2, 3)
 ```
 
 If no first element matches, `separatedBy` succeeds with an empty chunk; once at least one element is parsed, missing-element-after-separator drops unless `allowTrailing = true`.
 
-## Repetition
+> **Note:** By default a trailing separator is rejected (the parse fails with "Trailing separator not allowed"); pass `allowTrailing = true` to tolerate one.
+
+## Repetition: zero-or-more, exactly-n, and until-marker
 
 Zero-or-more, exactly-n, and parse-until-marker shapes.
 
@@ -232,8 +234,8 @@ val withSign: Int < Parse[Char] =
         digit <- Parse.int
     yield if sign.isDefined then -digit else digit
 
-val n: Int < Abort[ParseError] = Parse.runOrAbort("-42")(withSign)  // -42
-val m: Int < Abort[ParseError] = Parse.runOrAbort("42")(withSign)   // 42
+val n: Int < Abort[ParseError] = Parse.runOrAbort("-42")(withSign) // -42
+val m: Int < Abort[ParseError] = Parse.runOrAbort("42")(withSign)  // 42
 ```
 
 > **Note:** Each branch of `firstOf` is already wrapped in `attempt` internally. Wrapping a `firstOf` branch in `attempt` again has no effect; reach for `attempt` when you want the `Maybe[A]` value, not because you suspect the branch might consume on failure.
@@ -246,7 +248,7 @@ Try a parser, rewind on success too. Use `peek` to test what comes next without 
 val looksLikeNumber: Boolean < Parse[Char] =
     Parse.peek(Parse.int).map(_.isDefined)
 
-val b: Boolean < Abort[ParseError] = Parse.runOrAbort("42abc")(looksLikeNumber)  // true; "42abc" still unconsumed
+val b: Boolean < Abort[ParseError] = Parse.runOrAbort("42abc")(looksLikeNumber) // true; "42abc" still unconsumed
 ```
 
 `peek` is `attempt` plus a save-position / rewind. It never consumes input, even on success. That is the difference from `attempt`, which consumes on success.
@@ -274,7 +276,7 @@ val funcCall: Text < Parse[Char] =
     Parse.andIs(Parse.identifier, Parse.literal('('))
 
 val name: Text < Abort[ParseError] =
-    Parse.runOrAbort("foo(")(funcCall)  // "foo", cursor stops before '('
+    Parse.runOrAbort("foo(")(funcCall) // "foo", cursor stops before '('
 ```
 
 ## Commitment and recovery
@@ -378,8 +380,8 @@ val notOp: Char < Parse[Char] = Parse.anyNotIn("+-*/")
 Two overloads with different shapes. `literal[A](value)` matches a single token via `CanEqual` for any token type. `literal(text: Text)` matches a whole `Text` against a `Parse[Char]` input.
 
 ```scala
-val openParen: Char < Parse[Char] = Parse.literal('(')      // single Char
-val keyword: Text < Parse[Char]   = Parse.literal("def")     // whole Text
+val openParen: Char < Parse[Char] = Parse.literal('(')   // single Char
+val keyword: Text < Parse[Char]   = Parse.literal("def") // whole Text
 ```
 
 > **Caution:** The overloads have the same name but different shapes; calling `Parse.literal("def")` matches the four-character substring, while `Parse.literal('d')` matches a single `Char`. Reaching for the wrong one silently changes what is matched.
@@ -453,7 +455,7 @@ val tokens: Chunk[Int] < Parse[Char] =
     Parse.spaced(Parse.repeat(Parse.int))
 
 val xs: Chunk[Int] < Abort[ParseError] =
-    Parse.runOrAbort("  1   2   3  ")(tokens)  // Chunk(1, 2, 3)
+    Parse.runOrAbort("  1   2   3  ")(tokens) // Chunk(1, 2, 3)
 ```
 
 > **Note:** `spaced` reaches into the entire sub-computation, not just the immediate parser. Every read inside `tokens` consults the active discard predicate before consuming, so a deeply nested `int` inside a `firstOf` inside a `repeat` still skips leading whitespace. The scaladoc calls this an Aspect-like override. The predicate defaults to `(_: Char).isWhitespace`; pass a custom one to discard comments, indent markers, or other syntactic noise.
@@ -496,6 +498,8 @@ When to reach for `runResult` vs `runOrAbort`. Use `runResult` when you want to 
 ### `entireInput`
 
 Wrap a parser so that EOF must immediately follow. Without it, `runResult("12abc")(Parse.int)` succeeds with `12` and leaves `"abc"` unconsumed; with it, the same call fails with "Incomplete parse - remaining input not consumed."
+
+> **Caution:** This is the common footgun behind "why did my malformed input parse?": a bare `Parse.repeat(p)` succeeds on a partial match and silently leaves the rest of the input unconsumed unless you wrap it in `entireInput`.
 
 ```scala
 val all: Int < Abort[ParseError] =

@@ -6,19 +6,23 @@ Three patterns run through the design. First, opaque types over existing values:
 
 The module is cross-platform and ships identical public surface on JVM, Scala.js, and Scala Native.
 
+One consequence worth noting upfront: several types deliberately avoid boxing or tuple allocation, so their APIs diverge from the standard-library shape. `Dict` iteration passes separate key and value arguments instead of a `(K, V)` tuple, and `Span` omits `zip` and similar operations that would force intermediate tuples or boxing.
+
 ```scala
-import kyo.*
 import java.lang.NumberFormatException
+import kyo.*
 
 // Parse user input: typed expected failure, no exceptions leaking
 val result: Result[NumberFormatException, Int] =
     Result.catching[NumberFormatException]("42".toInt)
 
 val message: String = result match
-    case Result.Success(n)  => s"parsed: $n"
-    case Result.Failure(e)  => s"bad input: ${e.getMessage}"
-    case Result.Panic(t)    => s"unexpected: ${t.getMessage}"
+    case Result.Success(n) => s"parsed: $n"
+    case Result.Failure(e) => s"bad input: ${e.getMessage}"
+    case Result.Panic(t)   => s"unexpected: ${t.getMessage}"
 ```
+
+`Result` distinguishes a parsed value, an expected failure, and an unexpected panic in one type; the full API is covered in "Optional and fallible values" below.
 
 ## Optional and fallible values
 
@@ -35,9 +39,9 @@ case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 
 val alice = User(1, "Alice", "alice@example.com", Instant.Epoch)
 
-val some: Maybe[User] = Maybe(alice)
-val none: Maybe[User] = Maybe.empty
-val nullCheck: Maybe[String] = Maybe(null)  // Absent
+val some: Maybe[User]        = Maybe(alice)
+val none: Maybe[User]        = Maybe.empty
+val nullCheck: Maybe[String] = Maybe(null) // Absent
 ```
 
 > **Note:** `Maybe(v)` returns `Absent` whenever `v` is `null`. To wrap a value that may itself be `null` without that collapse, call `Present(v)` directly.
@@ -49,7 +53,7 @@ import kyo.*
 
 case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 
-val alice = User(1, "Alice", "alice@example.com", Instant.Epoch)
+val alice              = User(1, "Alice", "alice@example.com", Instant.Epoch)
 val found: Maybe[User] = Maybe(alice)
 
 val emails: Maybe[String] = found.map(_.email)
@@ -75,16 +79,16 @@ def lookup(id: Int): Result[NotFound, String] =
     if id == 1 then Result.succeed("Alice")
     else Result.fail(NotFound(id))
 
-val ok: Result[NotFound, String]   = lookup(1)
-val no: Result[NotFound, String]   = lookup(42)
-val boom: Result[Nothing, Int]     = Result[Int](throw new RuntimeException("kaboom"))  // Panic
+val ok: Result[NotFound, String] = lookup(1)
+val no: Result[NotFound, String] = lookup(42)
+val boom: Result[Nothing, Int]   = Result[Int](throw new RuntimeException("kaboom")) // Panic
 ```
 
 `Result.apply` wraps any expression that might throw, catching all throwables as `Panic`. `Result.catching[E <: Throwable]` narrows: it converts the named exception type to `Failure[E]` and lets everything else surface as `Panic`. Use `succeed` and `fail` for direct construction, `fromEither` and `fromTry` to bridge from the standard library, and `Result.collect` to turn a `Seq[Result[E, A]]` into a `Result[E, Seq[A]]` (first error wins).
 
 ```scala
-import kyo.*
 import java.lang.NumberFormatException
+import kyo.*
 
 val parsed: Result[NumberFormatException, Int] =
     Result.catching[NumberFormatException]("42".toInt)
@@ -103,8 +107,8 @@ val gathered: Result[NumberFormatException, Seq[Int]] =
 For inspection by case, `Result` exposes three matchable variants: `Success[A]`, `Failure[E]`, and `Panic`. `Error[E]` is the common parent of `Failure` and `Panic` for handlers that want both.
 
 ```scala
-import kyo.*
 import Result.*
+import kyo.*
 
 case class NotFound(id: Int)
 
@@ -129,11 +133,11 @@ val r: Result[NotFound, Int] = Result.succeed(42)
 val folded: String = r.fold(
     onSuccess = v => s"value=$v",
     onFailure = e => s"failure=$e",
-    onPanic   = t => s"panic=${t.getMessage}"
+    onPanic = t => s"panic=${t.getMessage}"
 )
 
 val asEither: Either[NotFound | Throwable, Int] = r.toEither
-val asMaybe:  Maybe[Int]                        = r.toMaybe
+val asMaybe: Maybe[Int]                         = r.toMaybe
 ```
 
 ### Recovering from specific errors
@@ -185,10 +189,10 @@ When you want a `Seq`-compatible collection that supports cheap slicing, use `Ch
 ```scala
 import kyo.*
 
-val items: Chunk[String] = Chunk("a", "b", "c", "d", "e")
-val tail: Chunk[String]  = items.drop(2)              // O(1)
-val pair: Chunk[String]  = items.slice(1, 3)          // O(1)
-val joined: Chunk[String] = items ++ Chunk("f", "g")  // O(1)
+val items: Chunk[String]  = Chunk("a", "b", "c", "d", "e")
+val tail: Chunk[String]   = items.drop(2)            // O(1)
+val pair: Chunk[String]   = items.slice(1, 3)        // O(1)
+val joined: Chunk[String] = items ++ Chunk("f", "g") // O(1)
 ```
 
 `Chunk` extends `Seq`, so anything taking a Scala collection works. Its companion adds factories for `Array`, `IterableOnce`, `Maybe`, and `Option` sources, plus `Chunk.empty`. `Chunk.Indexed` is a subtype that guarantees O(1) indexed access; `chunk.toIndexed` converts. Extras beyond `Seq` include `append`, `headMaybe`/`lastMaybe`, `changes` (drop consecutive duplicates), `flattenChunk`, and `dropLeft`/`dropRight`/`dropLeftAndRight`.
@@ -196,10 +200,10 @@ val joined: Chunk[String] = items ++ Chunk("f", "g")  // O(1)
 ```scala
 import kyo.*
 
-val xs: Chunk[Int]              = Chunk.from(Array(1, 1, 2, 2, 3))
-val uniq: Chunk[Int]            = xs.changes
-val first: Maybe[Int]           = xs.headMaybe
-val withTwo: Chunk[Int]         = xs.append(99)
+val xs: Chunk[Int]      = Chunk.from(Array(1, 1, 2, 2, 3))
+val uniq: Chunk[Int]    = xs.changes
+val first: Maybe[Int]   = xs.headMaybe
+val withTwo: Chunk[Int] = xs.append(99)
 ```
 
 > **Note:** `Chunk` boxes primitive types. If you need primitive-friendly storage, use `Span`.
@@ -213,9 +217,9 @@ import kyo.*
 
 case class HttpResponse(status: Int, body: Span[Byte])
 
-val bytes: Span[Byte]    = Span.from(IArray[Byte](72, 101, 108, 108, 111))
-val empty: Span[Int]     = Span.empty[Int]
-val mapped: Span[Int]    = bytes.map(b => b.toInt * 2)
+val bytes: Span[Byte] = Span.from(IArray[Byte](72, 101, 108, 108, 111))
+val empty: Span[Int]  = Span.empty[Int]
+val mapped: Span[Int] = bytes.map(b => b.toInt * 2)
 ```
 
 > **Caution:** `Span` is NOT a `Seq` and does not extend Scala's collection hierarchy. You cannot pass a `Span[A]` where a `Seq[A]` is expected. When you need `Seq` compatibility, use `Chunk`.
@@ -250,13 +254,13 @@ import kyo.*
 case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 
 val alice = User(1, "Alice", "alice@example.com", Instant.Epoch)
-val bob   = User(2, "Bob",   "bob@example.com",   Instant.Epoch)
+val bob   = User(2, "Bob", "bob@example.com", Instant.Epoch)
 
 val byId: Dict[Int, User] = Dict(1 -> alice, 2 -> bob)
 
-val a: User           = byId(1)             // throws if missing
-val maybeB: Maybe[User] = byId.get(2)       // Absent if missing
-val has: Boolean      = byId.contains(3)
+val a: User                  = byId(1)     // throws if missing
+val maybeB: Maybe[User]      = byId.get(2) // Absent if missing
+val has: Boolean             = byId.contains(3)
 val updated: Dict[Int, User] = byId.update(1, alice.copy(name = "Alicia"))
 val removed: Dict[Int, User] = byId.remove(2)
 val merged: Dict[Int, User]  = byId ++ Dict(3 -> bob)
@@ -307,12 +311,12 @@ When code talks about a length of time, reach for `Duration`. It is an opaque ty
 ```scala
 import kyo.*
 
-val short: Duration = 30.seconds
+val short: Duration  = 30.seconds
 val medium: Duration = 5.minutes
 val long: Duration   = 1.hour
 
-val z: Duration  = Duration.Zero
-val i: Duration  = Duration.Infinity
+val z: Duration = Duration.Zero
+val i: Duration = Duration.Infinity
 
 val parsed: Result[Duration.InvalidDuration, Duration] = Duration.parse("30s")
 ```
@@ -324,10 +328,10 @@ Arithmetic saturates on overflow rather than wrapping. `Duration.Infinity` is en
 ```scala
 import kyo.*
 
-val a: Duration = 5.seconds + 30.seconds   // 35 seconds
-val b: Duration = 1.hour - 30.minutes      // 30 minutes
-val c: Duration = 1.second * 60            // 60 seconds
-val clamped: Duration = Duration.Infinity + 1.day  // still Infinity
+val a: Duration       = 5.seconds + 30.seconds    // 35 seconds
+val b: Duration       = 1.hour - 30.minutes       // 30 minutes
+val c: Duration       = 1.second * 60             // 60 seconds
+val clamped: Duration = Duration.Infinity + 1.day // still Infinity
 ```
 
 `Duration` also offers unit accessors (`toNanos`, `toMillis`, `toSeconds`, ...) and conversion to `java.time.Duration` and `scala.concurrent.duration.Duration`.
@@ -339,10 +343,10 @@ For timestamps (a moment, not a span), use `Instant`. It is an opaque wrapper ov
 ```scala
 import kyo.*
 
-val now: Instant      = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
-val later: Instant    = now + 1.hour
-val earlier: Instant  = now - 30.minutes
-val gap: Duration     = later - earlier   // 1 hour 30 minutes
+val now: Instant     = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
+val later: Instant   = now + 1.hour
+val earlier: Instant = now - 30.minutes
+val gap: Duration    = later - earlier // 1 hour 30 minutes
 ```
 
 > **Note:** `instant + Duration.Infinity` returns `Instant.Max` (saturating); the inverse subtraction returns `Instant.Min`. Arithmetic does not throw on overflow.
@@ -359,14 +363,14 @@ import kyo.*
 val immediate: Schedule = Schedule.immediate
 val never: Schedule     = Schedule.never
 val every5s: Schedule   = Schedule.fixed(5.seconds)
-val backoff: Schedule   = Schedule.exponentialBackoff(
-    initial    = 100.millis,
-    factor     = 2.0,
+val backoff: Schedule = Schedule.exponentialBackoff(
+    initial = 100.millis,
+    factor = 2.0,
     maxBackoff = 10.seconds
 )
-val retry5: Schedule    = backoff.take(5)
-val firstTen: Schedule  = backoff.maxDuration(10.seconds)
-val jittery: Schedule   = backoff.jitter(0.5)
+val retry5: Schedule   = backoff.take(5)
+val firstTen: Schedule = backoff.maxDuration(10.seconds)
+val jittery: Schedule  = backoff.jitter(0.5)
 ```
 
 > **Note:** `Schedule.jitter`'s randomness is deterministic, derived from an XOR shift on a hash of the current `Instant` and duration, not a PRNG. Repeat runs with the same starting `Instant` produce identical schedules.
@@ -376,7 +380,7 @@ Other factories include `Schedule.linear(base)`, `Schedule.fibonacci(a, b)`, `Sc
 ```scala
 import kyo.*
 
-val hourly: Schedule  = Schedule.anchored(1.hour)
+val hourly: Schedule   = Schedule.anchored(1.hour)
 val daily2am: Schedule = Schedule.anchored(1.day, 2.hours)
 
 // Read the first three delays from a schedule
@@ -388,8 +392,8 @@ def take3(s: Schedule, now: Instant): List[Duration] =
                 case Absent => List(d1)
                 case Present((d2, s2)) =>
                     s2.next(now + d1 + d2) match
-                        case Absent            => List(d1, d2)
-                        case Present((d3, _))  => List(d1, d2, d3)
+                        case Absent           => List(d1, d2)
+                        case Present((d3, _)) => List(d1, d2, d3)
 ```
 
 `schedule.show` returns a string that resembles the source-level constructor call; `toString` delegates to `show`. The result is suitable for logs and debug output.
@@ -408,7 +412,7 @@ import kyo.*
 val person: Record["name" ~ String & "age" ~ Int] =
     "name" ~ "Alice" & "age" ~ 30
 
-val name: String = person.name   // selectDynamic, return type inferred
+val name: String = person.name // selectDynamic, return type inferred
 val age: Int     = person.age
 
 val withEmail = person & "email" ~ "alice@example.com"
@@ -420,7 +424,7 @@ Field access goes through `selectDynamic`, which requires `Fields.Have[F, Name]`
 import kyo.*
 
 val r: Record["user-name" ~ String] = "user-name" ~ "alice"
-val name: String = r.getField["user-name", String]("user-name")
+val name: String                    = r.getField["user-name", String]("user-name")
 ```
 
 > **Note:** Record's type parameter `F` is invariant, but an implicit `widen` conversion provides structural subtyping. After widening (`Record["a" ~ Int & "b" ~ String]` used where `Record["a" ~ Int]` is expected), the underlying dict still holds the original fields. Call `compact` if you want to actually drop them.
@@ -461,7 +465,7 @@ val renamed = rec.update("name", "Alicia")
 val optional = rec.map[Maybe]([t] => (v: t) => Maybe(v))
 
 val sameShape = Record.fromProduct(alice.copy(name = "Alicia"))
-val paired    = rec.zip(sameShape)  // each field becomes (a, b)
+val paired    = rec.zip(sameShape) // each field becomes (a, b)
 ```
 
 > **Note:** Record `==` requires `Fields.Comparable[F]` evidence that every field type has `CanEqual`. Records with non-comparable values fail to compile rather than silently allowing comparison.
@@ -498,8 +502,7 @@ val staged = Record.stage[User]([v] => (f: Field[?, v]) => f.default)
 // the field's Render for any per-field-typed work.
 val rendered =
     Record.stage[User]
-        .using[Render]
-        ([v] => (f: Field[?, v], r: Render[v]) => Maybe.empty[v])
+        .using[Render]([v] => (f: Field[?, v], r: Render[v]) => Maybe.empty[v])
 ```
 
 ### Library-author tooling
@@ -512,6 +515,8 @@ When building DSLs around records, you may need to prevent Scala from merging fi
 
 Effect handlers, heterogeneous maps, and runtime introspection all need a way to identify types after erasure. `kyo-data` provides two complementary tags: `Tag[A]` (full generic-type identity, used by every Kyo effect) and `ConcreteTag[A]` (union/intersection-aware but no generics). The companion `TypeMap[+A]` is a heterogeneous map keyed by `Tag`.
 
+`Tag` and `ConcreteTag` are siblings with overlapping names but different jobs: `Tag` handles full generic types, `ConcreteTag` handles unions and intersections but not generic types. The "Tag vs ConcreteTag" section below tells you which to reach for.
+
 ### Compile-time-derived tags
 
 When you need a type's identity at runtime (for an effect handler, a heterogeneous map, runtime dispatch), `Tag[A]` is the primary tool. The macro encodes the type structure as a string constant in the bytecode when it can; otherwise it constructs a dynamic tag at runtime. Operations include `=:=`, `=!=`, `<:<`, `>:>`, and composition with `&` / `|`.
@@ -521,8 +526,8 @@ import kyo.*
 
 case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 
-val a: Tag[User]          = Tag[User]
-val b: Tag[String | Int]  = Tag[String | Int]
+val a: Tag[User]         = Tag[User]
+val b: Tag[String | Int] = Tag[String | Int]
 
 val sameType: Boolean = a =:= Tag[User]                // true
 val isSub: Boolean    = Tag[Int] <:< Tag[Int | String] // true
@@ -565,9 +570,9 @@ Both `Tag` and `ConcreteTag` identify types at runtime. Use `Tag` for generic ty
 ```scala
 import kyo.*
 
-val empty: TypeMap[Any]            = TypeMap.empty
-val one: TypeMap[Int]              = TypeMap(42)
-val two: TypeMap[Int & String]     = one.add("hello")
+val empty: TypeMap[Any]                   = TypeMap.empty
+val one: TypeMap[Int]                     = TypeMap(42)
+val two: TypeMap[Int & String]            = one.add("hello")
 val three: TypeMap[Int & String & Double] = two.add(3.14)
 
 val i: Int    = three.get[Int]
@@ -599,11 +604,11 @@ When code needs printable output (logs, error messages, diagnostic dumps), `toSt
 ```scala
 import kyo.*
 
-val a: Text = Text("hello, ")
-val b: Text = "world"  // String widens to Text
+val a: Text  = Text("hello, ")
+val b: Text  = "world" // String widens to Text
 val ab: Text = a + b
 
-val length: Int    = ab.length
+val length: Int      = ab.length
 val rendered: String = ab.show
 ```
 
@@ -621,7 +626,7 @@ case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 val alice = User(1, "Alice", "alice@example.com", Instant.Epoch)
 
 val text: String = Render[User].asString(alice)
-val also: String = Render.asText(alice).show  // via summoned Render
+val also: String = Render.asText(alice).show // via summoned Render
 ```
 
 `Render` derives automatically for product and sum types whose components all have `Render` instances. The fallback `Render` from `LowPriorityRenders` uses `toString`. `Render.from` builds a custom instance from a function.
@@ -641,7 +646,7 @@ import kyo.*
 
 case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 
-val alice = User(1, "Alice", "alice@example.com", Instant.Epoch)
+val alice      = User(1, "Alice", "alice@example.com", Instant.Epoch)
 val line: Text = t"signed in: $alice at ${alice.signedUpAt}"
 ```
 
@@ -653,8 +658,8 @@ val line: Text = t"signed in: $alice at ${alice.signedUpAt}"
 import kyo.*
 import kyo.Ansi.*
 
-val warn: String = "kaboom".red.bold
-val info: String = "ready".green
+val warn: String  = "kaboom".red.bold
+val info: String  = "ready".green
 val clean: String = warn.stripAnsi
 ```
 
@@ -685,8 +690,8 @@ case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 case class Order(id: Int, userId: Int, total: Duration, items: Chunk[String])
 
 val signedUpAt = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
-val alice = User(1, "Alice", "alice@example.com", signedUpAt)
-val order = Order(101, 1, 5.minutes, Chunk("book", "pen"))
+val alice      = User(1, "Alice", "alice@example.com", signedUpAt)
+val order      = Order(101, 1, 5.minutes, Chunk("book", "pen"))
 
 // Optional values without wrapper allocation
 val byId: Dict[Int, User] = Dict(1 -> alice)
@@ -702,6 +707,34 @@ val deadline: Instant = signedUpAt + 7.days
 val rec = Record.fromProduct(alice)
 ```
 
+## Reading values from configuration
+
+When `kyo-config` is on the classpath, kyo-data types can be used directly as `Flag` value types. kyo-data ships the matching `Flag.Reader` instances, so no additional setup is needed.
+
+| Type | Format | Example |
+|------|--------|---------|
+| `Duration` | number + unit (optional space) | `"5s"`, `"100ms"`, `"2minutes"`, `"infinity"` |
+| `Chunk[A]` | comma-separated | `"a,b,c"` |
+| `Span[A]` | comma-separated | `"1,2,3"` |
+| `Dict[K,V]` | key=value pairs, comma-separated | `"host=localhost,port=8080"` |
+| `Instant` | ISO-8601 | `"2024-01-15T10:30:00Z"` |
+| `Text` | plain string | `"hello"` |
+| `Record[F]` | key=value pairs, validated against field schema | `"host=localhost,port=8080"` |
+
+Accepted `Duration` unit names include short forms (`ns`, `ms`, `s`, `m`, `h`, `d`) and long forms (`nanos`, `millis`, `seconds`, `minutes`, `hours`, `days`, `weeks`, `months`, `years`). The special values `"infinity"` and `"inf"` parse to `Duration.Infinity`.
+
+The `Record` reader is derived at compile time. It summons a `Flag.Reader.Scalar` for each field's value type and validates that all required fields are present. Field order in the string does not matter. Missing fields produce a clear error listing the absent names. Because collection types use commas as their own separator, element and field value types must be scalar (no commas internally).
+
+```scala doctest:expect=skipped
+import kyo.*
+
+object connection extends StaticFlag[Record["host" ~ String & "port" ~ Int & "timeout" ~ Duration]](
+        "host" ~ "localhost" & "port" ~ 5432 & "timeout" ~ Duration.fromUnits(30, Duration.Units.Seconds)
+    )
+```
+
+Configure via system property: `-Dmyapp.db.connection="host=db.prod.internal,port=5432,timeout=5s"`. Each field value is parsed by its own scalar reader.
+
 ## Call-site context and exceptions
 
 When an error happens, the most useful diagnostic is usually "where in the source did this call originate." `kyo-data` provides `Frame` (a compile-time-captured source position) and `KyoException` (a base exception that carries a `Frame` and renders with source context in development).
@@ -716,7 +749,7 @@ import kyo.*
 def report(message: String)(using frame: Frame): String =
     s"[${frame.position.fileName}:${frame.position.lineNumber}] $message"
 
-val log = report("something happened")  // frame captures this line
+val log = report("something happened") // frame captures this line
 ```
 
 `Frame.Position` is the structured accessor over location components: `fileName`, `lineNumber`, `columnNumber`, and `show`. `frame.className`, `frame.methodName`, `frame.snippet`, and `frame.snippetShort` provide the surrounding code. `frame.render` produces a syntax-highlighted source-context string, optionally annotated with detail values.
@@ -735,8 +768,8 @@ def fail(msg: String)(using frame: Frame): String =
 `Duration.InvalidDuration` is the canonical example, thrown by `Duration.parse` when the input does not parse. Catching it in user code goes through `Result`:
 
 ```scala
-import kyo.*
 import Result.*
+import kyo.*
 
 val parsed: Result[Duration.InvalidDuration, Duration] = Duration.parse("not-a-duration")
 

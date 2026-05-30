@@ -7,25 +7,29 @@ For resolvers that require effects beyond `Abort[Throwable] & Async` (`Var`, `En
 kyo-caliban is JVM-only because `caliban-core` is JVM-only.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
-import caliban.ws.WebSocketHooks
+import kyo.*
+import kyo.given
 
 case class Query(hello: String, delayed: Int < Async) derives caliban.schema.Schema.SemiAuto
 
-val api = caliban.graphQL(caliban.RootResolver(Query(
-    hello   = "world",
-    delayed = Async.sleep(50.millis).andThen(42)
-)), Nil, Nil, None)
+val api = caliban.graphQL(
+    caliban.RootResolver(Query(
+        hello = "world",
+        delayed = Async.sleep(50.millis).andThen(42)
+    )),
+    Nil,
+    Nil,
+    None
+)
 
 val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
     for
         interpreter <- Resolvers.get(api)
-        s           <- Resolvers.run(interpreter, Resolvers.Config.default, WebSocketHooks.empty[Any, caliban.CalibanError])
+        s           <- Resolvers.run(interpreter, Resolvers.Config.default, caliban.ws.WebSocketHooks.empty[Any, caliban.CalibanError])
     yield s
 ```
 
-`delayed` is an `Int < Async` and `authed` is a `User < (Abort[AuthError] & Async)`; both derive a `Schema` without any extra imports. That bridge, from Kyo effect rows into Caliban resolvers, is what kyo-caliban adds on top of Caliban.
+`delayed` is an `Int < Async`. It derives a `Schema` without any extra imports. That bridge, from Kyo effect rows into Caliban resolvers, is what kyo-caliban adds on top of Caliban.
 
 ## Quick start
 
@@ -33,12 +37,12 @@ The minimal end-to-end is three things: a Caliban schema where resolver fields m
 
 ### Define the schema
 
-Argument types derive `ArgBuilder`; record types derive `caliban.schema.Schema.SemiAuto`. Resolver fields can be plain values, plain functions, or Kyo computations whose effect row fits the default schema bridge (see the next section).
+Argument types derive `ArgBuilder`. Record types derive `caliban.schema.Schema.SemiAuto`. Resolver fields can be plain values, plain functions, or Kyo computations whose effect row fits the default schema bridge (see the next section).
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.ArgBuilder
+import kyo.runnerSchema
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -52,16 +56,16 @@ case class Query(
 ) derives caliban.schema.Schema.SemiAuto
 ```
 
-Mutations and subscriptions are ordinary Caliban shapes; only the resolver field types change.
+Mutations and subscriptions are ordinary Caliban shapes. Only the resolver field types change.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.ArgBuilder
+import kyo.runnerSchema
+import kyo.zioSchema
 
+case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
-case class NewUser(name: String) derives caliban.schema.Schema.SemiAuto, ArgBuilder
-case class Mutation(createUser: NewUser => User) derives caliban.schema.Schema.SemiAuto
+case class Mutation(createUser: AddArgs => User) derives caliban.schema.Schema.SemiAuto
 case class Subscriptions(
     ticks: zio.stream.ZStream[Any, Nothing, Int]
 ) derives caliban.schema.Schema.SemiAuto
@@ -72,9 +76,9 @@ case class Subscriptions(
 When the schema is ready, the next step is turning it into a `GraphQLInterpreter`. `Resolvers.get` lifts Caliban's `api.interpreter` (a `zio.IO`) into a Kyo effect.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.ArgBuilder
+import kyo.runnerSchema
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -86,12 +90,17 @@ case class Query(
     authed: User < (Abort[AuthError] & Async)
 ) derives caliban.schema.Schema.SemiAuto
 
-val api = caliban.graphQL(caliban.RootResolver(Query(
-    hello   = "world",
-    add     = args => args.a + args.b,
-    delayed = Async.sleep(50.millis).andThen(42),
-    authed  = User(1, "alice")
-)), Nil, Nil, None)
+val api = caliban.graphQL(
+    caliban.RootResolver(Query(
+        hello = "world",
+        add = args => args.a + args.b,
+        delayed = Async.sleep(50.millis).andThen(42),
+        authed = User(1, "alice")
+    )),
+    Nil,
+    Nil,
+    None
+)
 
 val interpreter: caliban.GraphQLInterpreter[Any, caliban.CalibanError] < (Abort[caliban.CalibanError] & Async) =
     Resolvers.get(api)
@@ -104,10 +113,10 @@ The returned effect row is the `Resolvers` effect tag, an opaque alias for `Abor
 With an interpreter in hand, a single call serves it as an HTTP endpoint. `Resolvers.run(interpreter)` returns an `HttpServer` whose lifecycle is tied to the surrounding `Scope`.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.ArgBuilder
 import caliban.ws.WebSocketHooks
+import kyo.runnerSchema
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -119,12 +128,17 @@ case class Query(
     authed: User < (Abort[AuthError] & Async)
 ) derives caliban.schema.Schema.SemiAuto
 
-val api = caliban.graphQL(caliban.RootResolver(Query(
-    hello   = "world",
-    add     = args => args.a + args.b,
-    delayed = Async.sleep(50.millis).andThen(42),
-    authed  = User(1, "alice")
-)), Nil, Nil, None)
+val api = caliban.graphQL(
+    caliban.RootResolver(Query(
+        hello = "world",
+        add = args => args.a + args.b,
+        delayed = Async.sleep(50.millis).andThen(42),
+        authed = User(1, "alice")
+    )),
+    Nil,
+    Nil,
+    None
+)
 
 val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
     for
@@ -148,9 +162,9 @@ When a resolver field's effect row is a subtype of `Abort[Throwable] & Async`, t
 Looking back at the running `Query`:
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.ArgBuilder
+import kyo.runnerSchema
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -159,8 +173,8 @@ case class AuthError(reason: String) extends Throwable(reason)
 case class Query(
     hello: String,
     add: AddArgs => Int,
-    delayed: Int < Async,                         // matches: Async <:< Abort[Throwable] & Async
-    authed: User < (Abort[AuthError] & Async)     // matches: AuthError <: Throwable
+    delayed: Int < Async,                     // matches: Async <:< Abort[Throwable] & Async
+    authed: User < (Abort[AuthError] & Async) // matches: AuthError <: Throwable
 ) derives caliban.schema.Schema.SemiAuto
 ```
 
@@ -173,8 +187,8 @@ All four fields derive without any further wiring. The bridge runs each Kyo comp
 When a resolver needs effects the default bridge cannot discharge (`Var`, `Env`, custom user effects), the bridge cannot guess how to peel them off. You provide a `CalibanRunner[S]` that discharges the extra effects per resolver invocation.
 
 ```scala
-import kyo.zioSchema
 import kyo.runnerSchema
+import kyo.zioSchema
 trait CalibanRunner[S]:
     def apply[A](v: A < S): A < (Abort[Throwable] & Async)
 ```
@@ -184,9 +198,10 @@ A `CalibanRunner` is the contract "given any computation in `S`, run it down to 
 Suppose `authed` needs more than `Abort[AuthError] & Async`: it needs a database handle from `Env` and a per-request id from `Var`. Extend the running `Query` with a new field whose effect row exceeds the default bridge:
 
 ```scala
-import kyo.zioSchema
+import caliban.schema.ArgBuilder
+import caliban.schema.SchemaDerivation
 import kyo.runnerSchema
-import caliban.schema.{ArgBuilder, SchemaDerivation}
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -205,7 +220,7 @@ case class Query(
     add: AddArgs => Int,
     delayed: Int < Async,
     authed: User < (Abort[AuthError] & Async),
-    currentUser: User < AppEnv                    // new: needs a CalibanRunner
+    currentUser: User < AppEnv // new: needs a CalibanRunner
 ) derives schema.SemiAuto
 
 val database = Database(User(1, "alice"))
@@ -217,24 +232,25 @@ val runner: CalibanRunner[AppEnv] = new CalibanRunner[AppEnv]:
 The schema side also needs to know about the `CalibanRunner`. A second `given runnerSchema` derives `Schema[R & CalibanRunner[S], A < S]` for arbitrary `S` by deferring to a `CalibanRunner[S]` provided as a ZIO service. The usual recipe is to ground your schema derivation on `SchemaDerivation[CalibanRunner[AppEnv]]`:
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.SchemaDerivation
+import kyo.runnerSchema
+import kyo.zioSchema
 
 type AppEnv = Env[Any] & Async
 object schema extends SchemaDerivation[CalibanRunner[AppEnv]]
 ```
 
-Note `derives schema.SemiAuto` on the extended `Query`, not `derives caliban.schema.Schema.SemiAuto`: the resolver row needs the `CalibanRunner[AppEnv]` requirement, which only the `schema` object's derivation carries. The earlier fields (`hello`, `add`, `delayed`, `authed`) keep deriving the same way; the `CalibanRunner`-based derivation is a strict superset of `zioSchema`.
+Note `derives schema.SemiAuto` on the extended `Query`, not `derives caliban.schema.Schema.SemiAuto`: the resolver row needs the `CalibanRunner[AppEnv]` requirement, which only the `schema` object's derivation carries. The earlier fields (`hello`, `add`, `delayed`, `authed`) keep deriving the same way. The `CalibanRunner`-based derivation is a strict superset of `zioSchema`.
 
 ### Serving a `CalibanRunner`-parameterized schema
 
 Once the schema needs a `CalibanRunner`, the no-`CalibanRunner` overload of `Resolvers.run` no longer fits. `Resolvers.run` has an overload that accepts a `CalibanRunner[R]` and injects it as a ZIO service for `runnerSchema` to find at execution time.
 
 ```scala
-import kyo.zioSchema
+import caliban.schema.ArgBuilder
+import caliban.schema.SchemaDerivation
 import kyo.runnerSchema
-import caliban.schema.{ArgBuilder, SchemaDerivation}
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -260,18 +276,23 @@ val runner: CalibanRunner[AppEnv] = new CalibanRunner[AppEnv]:
     def apply[A](v: A < AppEnv): A < (Abort[Throwable] & Async) =
         Var.run(RequestId.fresh)(Env.run(database)(v))
 
-val api = caliban.graphQL(caliban.RootResolver(Query(
-    hello       = "world",
-    add         = args => args.a + args.b,
-    delayed     = 42,
-    authed      = User(1, "alice"),
-    currentUser = Env.use[Database](_.currentUser)
-)), Nil, Nil, None)
+val api = caliban.graphQL(
+    caliban.RootResolver(Query(
+        hello = "world",
+        add = args => args.a + args.b,
+        delayed = 42,
+        authed = User(1, "alice"),
+        currentUser = Env.use[Database](_.currentUser)
+    )),
+    Nil,
+    Nil,
+    None
+)
 
 val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
     for
         interpreter <- Resolvers.get(api)
-        server      <- Resolvers.run(
+        server <- Resolvers.run(
             interpreter,
             runner,
             Resolvers.Config.default.path("graphql")
@@ -281,15 +302,15 @@ val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
 
 When you call `Resolvers.run(interpreter)` (no-`CalibanRunner` overload) on a schema whose resolvers require `CalibanRunner[S]`, you will get a compile error. When you call it on a schema whose resolvers exceed `Abort[Throwable] & Async` but don't use `CalibanRunner` derivation, you will get a missing-`Schema` derivation error. Both diagnostics point at the same fix: switch to the `CalibanRunner` overload AND base derivation on `SchemaDerivation[CalibanRunner[S]]`.
 
-> **Unlike** the no-`CalibanRunner` overload, which assumes resolver effects fit the default bridge, the `CalibanRunner` overload threads a single `CalibanRunner[R]` instance through every resolver invocation. The `CalibanRunner` is constructed once and runs per-resolver; if you need per-request state (request IDs, auth context), build it inside the `CalibanRunner.apply` body.
+> **Unlike** the no-`CalibanRunner` overload, which assumes resolver effects fit the default bridge, the `CalibanRunner` overload threads a single `CalibanRunner[R]` instance through every resolver invocation. The `CalibanRunner` is constructed once and runs per-resolver. If you need per-request state (request IDs, auth context), build it inside the `CalibanRunner.apply` body.
 
 ## Server configuration
 
-Once Quick start works, the HTTP-layer behavior is controlled by `Resolvers.Config`. Build one by chaining setters off `Config.default`; the constructor is private.
+Once Quick start works, the HTTP-layer behavior is controlled by `Resolvers.Config`. Build one by chaining setters off `Config.default`. The constructor is private.
 
 ```scala
-import kyo.zioSchema
 import kyo.runnerSchema
+import kyo.zioSchema
 val config = Resolvers.Config.default
     .path("graphql")
     .graphiql(false)
@@ -319,8 +340,8 @@ The defaults are:
 To serve queries under a route other than the default `/api/graphql`, set `path`. It is a prefix: with `config.path("graphql")`, queries go to `POST /graphql`, SSE to `POST /graphql/sse`, `@defer` to `POST /graphql/defer`, uploads to `POST /graphql/upload`, and the WebSocket to `/graphql/ws`. GraphiQL stays at the literal `/graphiql`, not under the configured path.
 
 ```scala
-import kyo.zioSchema
 import kyo.runnerSchema
+import kyo.zioSchema
 val config = Resolvers.Config.default.path("graphql")
 ```
 
@@ -329,10 +350,10 @@ val config = Resolvers.Config.default.path("graphql")
 For cross-cutting concerns (CORS, logging, response headers, auth gates that apply to every kyo-caliban request), use `filter`. It is a kyo-http `HttpFilter.Passthrough[Nothing]` applied to every kyo-caliban route.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.ArgBuilder
 import caliban.ws.WebSocketHooks
+import kyo.runnerSchema
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -353,12 +374,17 @@ val filter = new HttpFilter.Passthrough[Nothing]:
 
 val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
     for
-        interpreter <- Resolvers.get(caliban.graphQL(caliban.RootResolver(Query(
-            hello   = "world",
-            add     = args => args.a + args.b,
-            delayed = 42,
-            authed  = User(1, "alice")
-        )), Nil, Nil, None))
+        interpreter <- Resolvers.get(caliban.graphQL(
+            caliban.RootResolver(Query(
+                hello = "world",
+                add = args => args.a + args.b,
+                delayed = 42,
+                authed = User(1, "alice")
+            )),
+            Nil,
+            Nil,
+            None
+        ))
         s <- Resolvers.run(interpreter, Resolvers.Config.default.filter(filter), WebSocketHooks.empty[Any, caliban.CalibanError])
     yield s
 ```
@@ -368,8 +394,8 @@ val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
 To prevent clients from discovering the schema shape (a common production hardening step), set `enableIntrospection(false)`. The `__schema` and `__type` queries are rejected with `Introspection is disabled`.
 
 ```scala
-import kyo.zioSchema
 import kyo.runnerSchema
+import kyo.zioSchema
 val config = Resolvers.Config.default.enableIntrospection(false)
 ```
 
@@ -377,21 +403,21 @@ Related execution knobs: `skipValidation(true)` bypasses Caliban's query validat
 
 ### Disabling GraphiQL
 
-For deployments that should not expose the GraphiQL playground, set `graphiql(false)`. The `/graphiql` route is omitted entirely; requests against it return 404.
+For deployments that should not expose the GraphiQL playground, set `graphiql(false)`. The `/graphiql` route is omitted entirely. Requests against it return 404.
 
 ```scala
-import kyo.zioSchema
 import kyo.runnerSchema
+import kyo.zioSchema
 val config = Resolvers.Config.default.graphiql(false)
 ```
 
 ### Keeping WebSocket subscriptions alive
 
-When idle WebSocket subscriptions risk being dropped by intermediaries (load balancers, proxies), use `webSocketKeepAlive(d)` to set a server-side ping interval. With `Absent` (the default), the server does not send unsolicited pings; clients can still send `ping` and receive `pong`.
+When idle WebSocket subscriptions risk being dropped by intermediaries (load balancers, proxies), use `webSocketKeepAlive(d)` to set a server-side ping interval. With `Absent` (the default), the server does not send unsolicited pings. Clients can still send `ping` and receive `pong`.
 
 ```scala
-import kyo.zioSchema
 import kyo.runnerSchema
+import kyo.zioSchema
 val config = Resolvers.Config.default.webSocketKeepAlive(30.seconds)
 ```
 
@@ -413,7 +439,7 @@ The response content type and status depend on the request's `Accept` header. `A
 
 ### SSE subscriptions
 
-For clients that consume subscriptions over plain HTTP (no WebSocket), the server speaks server-sent events at `POST ${config.path}/sse`. Each subscription emission is a `next` event with the JSON payload; completion is a final `event: complete` with an empty data line.
+For clients that consume subscriptions over plain HTTP (no WebSocket), the server speaks server-sent events at `POST ${config.path}/sse`. Each subscription emission is a `next` event with the JSON payload. Completion is a final `event: complete` with an empty data line.
 
 ```
 event: next
@@ -430,12 +456,12 @@ One-shot queries (non-subscription operations) over SSE produce a single `next` 
 
 ### `@defer` multipart streaming
 
-To stream deferred fragments as they resolve (rather than waiting for the full response), the server returns a `multipart/mixed` response at `POST ${config.path}/defer`: the first part carries the initial query data; subsequent parts carry deferred fragments as they resolve.
+To stream deferred fragments as they resolve (rather than waiting for the full response), the server returns a `multipart/mixed` response at `POST ${config.path}/defer`: the first part carries the initial query data. Subsequent parts carry deferred fragments as they resolve.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.ArgBuilder
+import kyo.runnerSchema
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -448,12 +474,17 @@ case class Query(
 ) derives caliban.schema.Schema.SemiAuto
 
 val api =
-    caliban.graphQL(caliban.RootResolver(Query(
-        hello   = "world",
-        add     = args => args.a + args.b,
-        delayed = 42,
-        authed  = User(1, "alice")
-    )), Nil, Nil, None) @@ caliban.wrappers.IncrementalDelivery.defer
+    caliban.graphQL(
+        caliban.RootResolver(Query(
+            hello = "world",
+            add = args => args.a + args.b,
+            delayed = 42,
+            authed = User(1, "alice")
+        )),
+        Nil,
+        Nil,
+        None
+    ) @@ caliban.wrappers.IncrementalDelivery.defer
 ```
 
 > **Caution:** `@defer` requires the API to be wrapped with `caliban.wrappers.IncrementalDelivery.defer`. Without that wrapper, `... @defer { ... }` fragments execute eagerly and the multipart response contains a single part.
@@ -468,9 +499,11 @@ The handler installs Caliban's `Uploads` ZLayer so resolvers calling `Upload.all
 
 ### WebSocket subscriptions
 
-For long-lived bidirectional subscriptions (the most common production setup), the server speaks `graphql-transport-ws` and the legacy `graphql-ws` subprotocols at `${config.path}/ws`. The handshake picks the first subprotocol the client offers in `Sec-WebSocket-Protocol` that the server supports; if the client offers none, the server defaults to legacy `graphql-ws`.
+For long-lived bidirectional subscriptions (the most common production setup), the server speaks `graphql-transport-ws` and the legacy `graphql-ws` subprotocols at `${config.path}/ws`. The handshake picks the first subprotocol the client offers in `Sec-WebSocket-Protocol` that the server supports. If the client offers none, the server defaults to legacy `graphql-ws`.
 
 Both subprotocols support the full subscription lifecycle: `connection_init` / `connection_ack`, `subscribe` (or legacy `start`) carrying a query/mutation/subscription, streaming `next` events, `complete`, ping/pong keep-alive, and graceful close.
+
+> **Note:** Internally the `/ws` endpoint reuses caliban's own `graphql-transport-ws` state machine (`caliban.ws.Protocol`) rather than reimplementing the subprotocol. Inbound text frames decode to `GraphQLWSInput` and feed caliban's `CalibanPipe`. The output stream is consumed back into Kyo via `ZStreams.get`. The reader and writer run as concurrent fibers under `Async.race`, so whichever side finishes first interrupts the other, and that interruption cascades into caliban's subscription and keep-alive fibers.
 
 ### GraphiQL
 
@@ -481,22 +514,22 @@ When `config.graphiql == true` (the default), `GET /graphiql` returns the Graphi
 For finer control over the subscription handshake (auth, custom ack payloads, ping interception, outbound message transformation), pass a `caliban.ws.WebSocketHooks` as the trailing argument to `Resolvers.run`.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.ws.WebSocketHooks
+import kyo.runnerSchema
+import kyo.zioSchema
 ```
 
 ### Gating a connection on an auth token: `beforeInit`
 
-To gate a connection on an auth token before any subscription can start, intercept `connection_init`. The same `authed` field from the running `Query` only makes sense for an authenticated client; `beforeInit` is where you reject anonymous connections so `authed` never runs for them.
+To gate a connection on an auth token before any subscription can start, intercept `connection_init`. The same `authed` field from the running `Query` only makes sense for an authenticated client. `beforeInit` is where you reject anonymous connections so `authed` never runs for them.
 
 `beforeInit` runs when the server receives `connection_init`. It can inspect the payload (typically an auth token) and either succeed (allowing the connection) or fail (closing with code 4403).
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.ArgBuilder
 import caliban.ws.WebSocketHooks
+import kyo.runnerSchema
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -519,12 +552,17 @@ val hooks = WebSocketHooks.init[Any, caliban.CalibanError] { payload =>
 
 val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
     for
-        interpreter <- Resolvers.get(caliban.graphQL(caliban.RootResolver(Query(
-            hello   = "world",
-            add     = args => args.a + args.b,
-            delayed = 42,
-            authed  = User(1, "alice")
-        )), Nil, Nil, None))
+        interpreter <- Resolvers.get(caliban.graphQL(
+            caliban.RootResolver(Query(
+                hello = "world",
+                add = args => args.a + args.b,
+                delayed = 42,
+                authed = User(1, "alice")
+            )),
+            Nil,
+            Nil,
+            None
+        ))
         s <- Resolvers.run(interpreter, Resolvers.Config.default, hooks)
     yield s
 ```
@@ -536,9 +574,9 @@ Failed `beforeInit` closes the WebSocket with code `4403` (`graphql-transport-ws
 To return a session payload to the client after a successful connection (server version, feature flags, granted scopes), provide an `onAck` payload. It is attached to `connection_ack` so the client receives server metadata at connection time.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.ws.WebSocketHooks
+import kyo.runnerSchema
+import kyo.zioSchema
 
 val hooks = WebSocketHooks.ack[Any, caliban.CalibanError](
     zio.ZIO.succeed(caliban.ResponseValue.ObjectValue(
@@ -554,9 +592,9 @@ If `onAck` fails, caliban falls back to acking with no payload (the connection s
 To enforce that an authenticated context built by `beforeInit` is still valid (token not expired, scope still granted), run a check immediately after `connection_ack`. A failure here closes the connection with code `4401`.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.ws.WebSocketHooks
+import kyo.runnerSchema
+import kyo.zioSchema
 
 val hooks = WebSocketHooks.afterInit[Any, caliban.CalibanError](
     zio.ZIO.fail(caliban.CalibanError.ExecutionError("auth expired"))
@@ -565,13 +603,13 @@ val hooks = WebSocketHooks.afterInit[Any, caliban.CalibanError](
 
 ### Customizing pong and outbound frames: `onPing` / `onMessage`
 
-To attach server timing data to pong frames or transform every outbound subscription message (tracing IDs, redactions, envelopes), use `onPing` and `onMessage`. `onPing` lets you customize the pong response; `onMessage` runs the outbound subscription stream through a `ZPipeline`.
+To attach server timing data to pong frames or transform every outbound subscription message (tracing IDs, redactions, envelopes), use `onPing` and `onMessage`. `onPing` lets you customize the pong response. `onMessage` runs the outbound subscription stream through a `ZPipeline`.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
-import caliban.ws.WebSocketHooks
 import caliban.GraphQLWSOutput
+import caliban.ws.WebSocketHooks
+import kyo.runnerSchema
+import kyo.zioSchema
 
 val hooks = new WebSocketHooks[Any, caliban.CalibanError]:
     override def onMessage: Option[zio.stream.ZPipeline[Any, caliban.CalibanError, GraphQLWSOutput, GraphQLWSOutput]] =
@@ -585,10 +623,10 @@ val hooks = new WebSocketHooks[Any, caliban.CalibanError]:
 The snippet below brings together the full schema from the rest of this README: all four resolver fields (plain value, function argument, async computation, and an effect-raising computation), a `caliban.RootResolver`, and both the default program and a custom-config variant.
 
 ```scala
-import kyo.zioSchema
-import kyo.runnerSchema
 import caliban.schema.ArgBuilder
 import caliban.ws.WebSocketHooks
+import kyo.runnerSchema
+import kyo.zioSchema
 
 case class AddArgs(a: Int, b: Int) derives caliban.schema.Schema.SemiAuto, ArgBuilder
 case class User(id: Int, name: String) derives caliban.schema.Schema.SemiAuto
@@ -602,10 +640,10 @@ case class Query(
 ) derives caliban.schema.Schema.SemiAuto
 
 val root = caliban.RootResolver(Query(
-    hello   = "world",
-    add     = args => args.a + args.b,
+    hello = "world",
+    add = args => args.a + args.b,
     delayed = Async.sleep(50.millis).andThen(42),
-    authed  = User(1, "alice")
+    authed = User(1, "alice")
 ))
 
 // Default config: serves on /api/graphql with GraphiQL enabled.
@@ -619,7 +657,7 @@ val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
 val custom: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
     for
         interpreter <- Resolvers.get(caliban.graphQL(root, Nil, Nil, None))
-        server      <- Resolvers.run(
+        server <- Resolvers.run(
             interpreter,
             Resolvers.Config.default
                 .path("graphql")

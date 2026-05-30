@@ -54,6 +54,18 @@ Topic.run {
 
 The `Topic` effect is discharged by `run`; what remains in the row is `Async` (because Aeron polling is suspended on the fiber scheduler) and the `Abort` channels each call carries.
 
+> **Note:** Any build that hosts an embedded Aeron driver must set `fork := true` and pass four `--add-opens` flags, because Aeron's off-heap log buffers reach into JDK internals:
+> ```
+> fork := true
+> javaOptions ++= Seq(
+>   "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+>   "--add-opens=java.base/java.lang=ALL-UNNAMED",
+>   "--add-opens=java.base/java.nio=ALL-UNNAMED",
+>   "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+> )
+> ```
+> Without these, `Topic.run` fails when it launches the embedded `MediaDriver`.
+
 ### Publishing
 
 `Topic.publish` takes a URI and a `Stream[A, S]` of messages. Each chunk that flows through the input stream becomes one Aeron message frame; the publisher serializes the chunk with upickle binary, claims buffer space, and commits.
@@ -63,10 +75,13 @@ import kyo.*
 
 case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
 
-val ticks = Stream.init(Seq(
-    Tick("AAPL", 19023, 1L),
-    Tick("AAPL", 19045, 2L)
-), 4096)
+val ticks = Stream.init(
+    Seq(
+        Tick("AAPL", 19023, 1L),
+        Tick("AAPL", 19045, 2L)
+    ),
+    4096
+)
 
 Topic.run {
     Topic.publish[Tick]("aeron:ipc")(ticks)
@@ -103,16 +118,16 @@ val messages = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L))
 
 Topic.run {
     for
-        started  <- Latch.init(1)
-        fiber    <- Fiber.initUnscoped(
-                        started.release.andThen(
-                            Topic.stream[Tick]("aeron:ipc").take(messages.size).run
-                        )
-                    )
-        _        <- started.await
-        _        <- Fiber.initUnscoped(
-                        Topic.publish[Tick]("aeron:ipc")(Stream.init(messages, 4096))
-                    )
+        started <- Latch.init(1)
+        fiber <- Fiber.initUnscoped(
+            started.release.andThen(
+                Topic.stream[Tick]("aeron:ipc").take(messages.size).run
+            )
+        )
+        _ <- started.await
+        _ <- Fiber.initUnscoped(
+            Topic.publish[Tick]("aeron:ipc")(Stream.init(messages, 4096))
+        )
         received <- fiber.get
     yield received
 }
@@ -196,13 +211,13 @@ val trades = Seq(Trade("AAPL", 100, 19023L))
 
 Topic.run {
     for
-        started     <- Latch.init(2)
-        tickFiber   <- Fiber.initUnscoped(
-                           started.release.andThen(Topic.stream[Tick]("aeron:ipc").take(ticks.size).run)
-                       )
-        tradeFiber  <- Fiber.initUnscoped(
-                           started.release.andThen(Topic.stream[Trade]("aeron:ipc").take(trades.size).run)
-                       )
+        started <- Latch.init(2)
+        tickFiber <- Fiber.initUnscoped(
+            started.release.andThen(Topic.stream[Tick]("aeron:ipc").take(ticks.size).run)
+        )
+        tradeFiber <- Fiber.initUnscoped(
+            started.release.andThen(Topic.stream[Trade]("aeron:ipc").take(trades.size).run)
+        )
         _           <- started.await
         _           <- Fiber.initUnscoped(Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096)))
         _           <- Fiber.initUnscoped(Topic.publish[Trade]("aeron:ipc")(Stream.init(trades, 4096)))
@@ -232,14 +247,14 @@ val failSchedule = Schedule.fixed(1.millis).take(3)
 // and eventually fails with Backpressured.
 Topic.run {
     for
-        fiber  <- Fiber.initUnscoped(
-                      Topic.stream[Event]("aeron:ipc", failSchedule).take(1).run
-                  )
+        fiber <- Fiber.initUnscoped(
+            Topic.stream[Event]("aeron:ipc", failSchedule).take(1).run
+        )
         result <- Abort.run(
-                      Topic.publish[TickEvent]("aeron:ipc", failSchedule)(
-                          Stream.init(Seq(TickEvent(Tick("AAPL", 1, 1L))), 4096)
-                      )
-                  )
+            Topic.publish[TickEvent]("aeron:ipc", failSchedule)(
+                Stream.init(Seq(TickEvent(Tick("AAPL", 1, 1L))), 4096)
+            )
+        )
         outcome <- fiber.getResult
     yield (result.isFailure, outcome.isFailure)
 }
@@ -287,9 +302,9 @@ val failSchedule = Schedule.fixed(1.millis).take(3)
 // Subscriber with no publisher: fails after 3 retries instead of hanging.
 Topic.run {
     for
-        fiber  <- Fiber.initUnscoped(
-                      Topic.stream[Tick]("aeron:ipc", failSchedule).take(1).run
-                  )
+        fiber <- Fiber.initUnscoped(
+            Topic.stream[Tick]("aeron:ipc", failSchedule).take(1).run
+        )
         result <- fiber.getResult
     yield result.isFailure
 }
@@ -352,8 +367,8 @@ Topic.run {
 `Topic.run(driver: MediaDriver)(v)` reuses a driver you launched. Kyo opens an `Aeron` client against `driver.aeronDirectoryName()` and closes the client on exit; you remain responsible for closing the driver.
 
 ```scala
-import kyo.*
 import io.aeron.driver.MediaDriver
+import kyo.*
 
 case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
 val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
@@ -364,6 +379,7 @@ try
         Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096))
     }
 finally driver.close()
+end try
 ```
 
 Use this when one driver should outlive multiple `Topic.run` blocks (a long-running service, a test fixture that reuses one driver for many tests) or when several processes share a driver that an out-of-band script started.
@@ -373,8 +389,8 @@ Use this when one driver should outlive multiple `Topic.run` blocks (a long-runn
 `Topic.run(aeron: Aeron)(v)` reuses an `Aeron` client you opened. Kyo closes nothing; you own driver and client.
 
 ```scala
-import kyo.*
 import io.aeron.Aeron
+import kyo.*
 
 case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
 val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
@@ -385,6 +401,7 @@ try
         Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096))
     }
 finally aeron.close()
+end try
 ```
 
 This is the path when something else in the process already manages Aeron lifetime: a test harness, an embedding framework, or a service that wires Aeron at startup and tears it down at shutdown.
@@ -425,18 +442,18 @@ val ticks = Seq(
 // is created on entry and closed on exit.
 Topic.run {
     for
-        started  <- Latch.init(1)
+        started <- Latch.init(1)
         // Subscribe on shared-memory IPC; type Tick keys the Aeron stream id
         consumer <- Fiber.initUnscoped(
-                        started.release.andThen(
-                            Topic.stream[Tick]("aeron:ipc").take(ticks.size).run
-                        )
-                    )
-        _        <- started.await
+            started.release.andThen(
+                Topic.stream[Tick]("aeron:ipc").take(ticks.size).run
+            )
+        )
+        _ <- started.await
         // Publish onto the same URI; same exact type required on both ends
-        _        <- Fiber.initUnscoped(
-                        Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096))
-                    )
+        _ <- Fiber.initUnscoped(
+            Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096))
+        )
         received <- consumer.get
     yield received
 }
@@ -444,4 +461,4 @@ Topic.run {
 
 ## Known limitations
 
-`maintains message order for large batches` is `pendingUntilFixed` in the test suite. Ordering above modest batch sizes is a known-broken edge: a single Aeron frame can carry a chunk in order, but when a `Stream` is split across many frames under pressure, the reassembly path does not currently guarantee end-to-end order. For now, design around small chunks (or single-frame batches) when strict ordering matters.
+Publishing a large batch currently panics rather than delivering messages in order. The test suite marks this edge as `pendingUntilFixed`: the 200-message case raises a `Result.Panic` instead of delivering the sequence intact. A single Aeron frame can carry a small chunk in order, but the reassembly path breaks down under multi-frame pressure. Design around small, single-frame chunks when strict ordering matters.

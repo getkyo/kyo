@@ -86,7 +86,7 @@ In Kyo, `map` and `flatMap` are the same method. Both have this signature:
 
 ```scala doctest:expect=skipped
 extension [A, S](v: A < S)
-    def map    [B, S2](f: A => B < S2): B < (S & S2)
+    def map[B, S2](f: A => B < S2): B < (S & S2)
     def flatMap[B, S2](f: A => B < S2): B < (S & S2)
 ```
 
@@ -130,9 +130,9 @@ Defining a brand-new effect is therefore an advanced, rarely-needed step. The th
 ```scala doctest:scope=inherited
 val program: Int < (Abort[String] & Env[Int]) =
     for
-        v <- Abort.get(Right(42))  // introduce a value into Abort[String]'s row
-        e <- Env.get[Int]          // read the Env[Int] context value
-    yield v + e                    // use both; Kyo tracks the row in the type
+        v <- Abort.get(Right(42)) // introduce a value into Abort[String]'s row
+        e <- Env.get[Int]         // read the Env[Int] context value
+    yield v + e // use both; Kyo tracks the row in the type
 
 // run* discharges one effect at a time, narrowing the row
 val handled: Result[String, Int] < Any =
