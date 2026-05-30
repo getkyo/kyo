@@ -34,6 +34,7 @@ package kyo.internal.tasty.snapshot
   *   - `TYPES_EXTRA`: Variable-length operand data for multi-operand types.
   *   - `PARENTS`: Int arrays for class parent lists.
   *   - `MEMBERS`: Int arrays for class member lists.
+  *   - `TPARAMS_`: Type parameter records per symbol (added in minor=3).
   *   - `FILES`: Per-source-file metadata (path, mtime, size, uuid).
   *   - `BODY_BYTES`: Inline byte storage for lazy body decode.
   *   - `ERRORS`: Serialized TastyError cases accumulated during decode.
@@ -55,7 +56,7 @@ object SnapshotFormat:
 
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
-    val minorVersion: Int = 2
+    val minorVersion: Int = 3
 
     /** Size of the fixed-length file header in bytes (magic + version + flags + digest + reserved). */
     val headerSize: Int = 4 + 4 + 8 + 8 + 8
@@ -64,7 +65,8 @@ object SnapshotFormat:
     val sectionIndexEntrySize: Int = 24
 
     /** Section IDs (exactly 8 ASCII bytes, zero-padded). */
-    val sectionNames: Array[String] = Array("NAMES", "SYMBOLS", "TYPES", "TYPESEXT", "PARENTS", "MEMBERS", "FILES", "BODYBYTE", "ERRORS")
+    val sectionNames: Array[String] =
+        Array("NAMES", "SYMBOLS", "TYPES", "TYPESEXT", "PARENTS", "MEMBERS", "TPARAMS_", "FILES", "BODYBYTE", "ERRORS")
 
     val sectionNAMES: String     = "NAMES"
     val sectionSYMBOLS: String   = "SYMBOLS"
@@ -72,6 +74,7 @@ object SnapshotFormat:
     val sectionTYPEXTRA: String  = "TYPESEXT"
     val sectionPARENTS: String   = "PARENTS"
     val sectionMEMBERS: String   = "MEMBERS"
+    val sectionTPARAMS: String   = "TPARAMS_"
     val sectionFILES: String     = "FILES"
     val sectionBODYBYTES: String = "BODYBYTE"
     val sectionERRORS: String    = "ERRORS"
