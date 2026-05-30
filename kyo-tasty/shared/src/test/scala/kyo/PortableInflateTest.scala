@@ -66,4 +66,65 @@ class PortableInflateTest extends Test:
         end try
     }
 
+    // Test 5: decodeStoredBlock copies raw bytes and validates LEN ^ NLEN
+    // Buffer layout: byte0 = header (BFINAL=1 BTYPE=00 = 0x01, alignment padding auto-skipped),
+    // bytes 1-2 = LEN=3 LE, bytes 3-4 = NLEN=~3&0xFFFF=0xFFFC LE, bytes 5-7 = 'A','B','C'
+    // The test reads BFINAL+BTYPE (3 bits) first to simulate the block-loop entry, then calls
+    // decodeStoredBlock which calls alignToByte() internally before reading LEN/NLEN/data.
+    "decodeStoredBlock copies raw bytes (LEN=3, payload ABC)" in run {
+        val buf = Array(
+            0x01.toByte, // bit0=BFINAL=1, bits1-2=BTYPE=00, bits3-7=padding
+            0x03.toByte, // LEN low
+            0x00.toByte, // LEN high
+            0xfc.toByte, // NLEN low (~3 & 0xff)
+            0xff.toByte, // NLEN high (~3 >> 8 & 0xff)
+            0x41.toByte, // 'A'
+            0x42.toByte, // 'B'
+            0x43.toByte  // 'C'
+        )
+        val stream = new PortableInflate.BitStream(buf, 0L)
+        // consume BFINAL (1 bit) and BTYPE (2 bits) to simulate block-loop state
+        val _bfinal = stream.readBits(1)
+        val _btype  = stream.readBits(2)
+        val out     = new scala.collection.mutable.ArrayBuffer[Byte]()
+        PortableInflate.decodeStoredBlock(stream, out)
+        assert(
+            out.toArray.toSeq == Seq(0x41.toByte, 0x42.toByte, 0x43.toByte),
+            s"Expected [0x41,0x42,0x43] but got ${out.toArray.map(b => "0x%02x".format(b)).toSeq}"
+        )
+    }
+
+    // Test 6: decodeFixedHuffmanBlock decodes "AAA"
+    // Fixed Huffman literal code for 65 ('A'):
+    //   RFC 1951 §3.2.6: literals 0-143 use 8-bit codes starting at canonical 48 (0b00110000).
+    //   Code for 65 = 48 + 65 = 113 = 0b01110001 (MSB-first).
+    //   The decoder reads bits LSB-first via readBit(), accumulating code = (code << 1) | bit.
+    //   First bit read = MSB of the code in canonical terms, so code accumulates to 113.
+    //   Bit stream for code 113 in decoder order: bits [0,1,1,1,0,0,0,1].
+    //   Packed into a byte (bit0=LSB): 0b10001110 = 0x8E.
+    // EOB (256): 7-bit code = 0 (0b0000000), stream bits = [0,0,0,0,0,0,0], packed = 0x00.
+    // Encoding "AAA"+EOB = 3*8 + 7 = 31 bits, padded to 4 bytes: [0x8e, 0x8e, 0x8e, 0x00].
+    "decodeFixedHuffmanBlock decodes AAA" in run {
+        // Hand-computed bytes: 3x literal-65 (0x8E each) then EOB-256 (0x00 with 1 padding bit)
+        val buf = Array(
+            0x8e.toByte, // literal 'A' (bits [0,1,1,1,0,0,0,1] in stream order)
+            0x8e.toByte, // literal 'A'
+            0x8e.toByte, // literal 'A'
+            0x00.toByte  // EOB 256 (7 zero bits) + 1 padding bit
+        )
+        val stream = new PortableInflate.BitStream(buf, 0L)
+        val out    = new scala.collection.mutable.ArrayBuffer[Byte]()
+        PortableInflate.decodeFixedHuffmanBlock(stream, out)
+        assert(
+            out.toArray.toSeq == Seq(0x41.toByte, 0x41.toByte, 0x41.toByte),
+            s"Expected [0x41,0x41,0x41] ('AAA') but got ${out.toArray.map(b => "0x%02x".format(b)).toSeq}"
+        )
+    }
+
+    // Test 7 (dynamic Huffman): DEFERRED to Phase 20e / Phase 20f.
+    // A full-roundtrip test requiring the ZLIB wrapper (Phase 20e) is the most reliable way to
+    // exercise dynamic Huffman end-to-end without hand-crafting a complete dynamic header.
+    // The dynamic-Huffman decode path (decodeDynamicHuffmanBlock + decodeCodeLengths) will be
+    // covered by the "the quick brown fox" round-trip test added in Phase 20e or 20f.
+
 end PortableInflateTest
