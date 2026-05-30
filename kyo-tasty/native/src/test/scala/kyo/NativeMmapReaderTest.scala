@@ -26,6 +26,8 @@ class NativeMmapReaderTest extends Test:
         s"$dir/$name"
 
     "NativeMmapReader: read inside open Scope succeeds and returns correct first byte" in run {
+        // flow-allow: §839 case 3; direct MappedByteView readByte test in mmap context.
+        import AllowUnsafe.embrace.danger
         val path    = tmpPath("kyo-native-mmap-test-read-open.bin")
         val content = Array[Byte](0x42.toByte, 0x43.toByte, 0x44.toByte, 0x45.toByte)
         Abort.run[TastyError](
@@ -42,6 +44,8 @@ class NativeMmapReaderTest extends Test:
     }
 
     "NativeMmapReader: read after Scope closes raises IllegalStateException with 'mmap arena closed'" in run {
+        // flow-allow: §839 case 3; direct MappedByteView closed-scope test.
+        import AllowUnsafe.embrace.danger
         val path    = tmpPath("kyo-native-mmap-test-scope-exit.bin")
         val content = Array[Byte](0x01.toByte, 0x02.toByte, 0x03.toByte, 0x04.toByte)
         // Capture the view reference outside the scope so we can read after the scope exits.

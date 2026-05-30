@@ -15,6 +15,8 @@ class ByteViewTest extends Test:
 
     // Test 2: readByte advances position by 1 and returns correct byte
     "readByte advances position by 1 and returns correct byte" in run {
+        // flow-allow: §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
+        import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](0x5c.toByte, 0xa1.toByte, 0xab.toByte)
         val view  = ByteView(bytes)
         val b0    = view.readByte()
@@ -27,6 +29,8 @@ class ByteViewTest extends Test:
 
     // Test 3: readByte at end produces ArrayIndexOutOfBoundsException (or a wrapping Error on Scala.js)
     "readByte at end produces ArrayIndexOutOfBoundsException" in run {
+        // flow-allow: §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
+        import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](0x80.toByte)
         val view  = ByteView(bytes)
         view.readByte() // consume the only byte
@@ -55,6 +59,8 @@ class ByteViewTest extends Test:
 
     // Test 5: goto sets position to addr
     "goto sets position to given address" in run {
+        // flow-allow: §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
+        import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](0, 1, 2, 3, 4, 5)
         val view  = ByteView(bytes)
         view.goto(3)
@@ -66,6 +72,8 @@ class ByteViewTest extends Test:
 
     // Test 6: remaining returns end - position
     "remaining returns end minus current position" in run {
+        // flow-allow: §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
+        import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](10, 20, 30, 40, 50)
         val view  = ByteView(bytes)
         assert(view.remaining == 5)

@@ -1,5 +1,6 @@
 package kyo.internal.tasty.binary
 
+import kyo.AllowUnsafe
 import scala.scalanative.unsafe.*
 
 /** Scala Native memory-mapped ByteView backed by a POSIX mmap Ptr[Byte].
@@ -25,21 +26,21 @@ final class MappedByteView(
         checkOpen()
         ptr(at)
 
-    def readByte(): Byte =
+    def readByte()(using AllowUnsafe): Byte =
         checkOpen()
         val b = ptr(cursor)
         cursor += 1
         b
     end readByte
 
-    def readEnd(): Long =
+    def readEnd()(using AllowUnsafe): Long =
         val len = Varint.readNat(this)
         cursor + len.toLong
 
     def subView(from: Long, until: Long): MappedByteView =
         new MappedByteView(ptr, from, until, closed)
 
-    def goto(addr: Long): Unit =
+    def goto(addr: Long)(using AllowUnsafe): Unit =
         cursor = addr
 
     def remaining: Long = end - cursor

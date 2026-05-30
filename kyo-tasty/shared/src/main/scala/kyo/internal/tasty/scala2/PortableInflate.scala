@@ -1,5 +1,7 @@
 package kyo.internal.tasty.scala2
 
+import kyo.AllowUnsafe
+
 /** Pure-Scala RFC 1950 (ZLIB) inflate. No JVM dependencies. */
 object PortableInflate:
 
@@ -9,14 +11,14 @@ object PortableInflate:
     final private[kyo] class BitStream(buf: Array[Byte], var bitOffset: Long):
         def byteOffset: Long = bitOffset >> 3
 
-        def readBit(): Int =
+        def readBit()(using AllowUnsafe): Int =
             val byte = buf((bitOffset >> 3).toInt) & 0xff
             val bit  = (byte >> (bitOffset & 7).toInt) & 1
             bitOffset += 1
             bit
         end readBit
 
-        def readBits(n: Int): Int =
+        def readBits(n: Int)(using AllowUnsafe): Int =
             var result = 0
             var i      = 0
             while i < n do
@@ -25,13 +27,13 @@ object PortableInflate:
             result
         end readBits
 
-        def alignToByte(): Int =
+        def alignToByte()(using AllowUnsafe): Int =
             val rem = bitOffset & 7
             if rem != 0 then bitOffset += (8 - rem)
             (bitOffset >> 3).toInt
         end alignToByte
 
-        def readBytes(out: scala.collection.mutable.ArrayBuffer[Byte], len: Int): Unit =
+        def readBytes(out: scala.collection.mutable.ArrayBuffer[Byte], len: Int)(using AllowUnsafe): Unit =
             val start = alignToByte()
             var i     = 0
             while i < len do
@@ -47,7 +49,7 @@ object PortableInflate:
         val codeToSymbol: Array[Int],
         val bitLengthCounts: Array[Int]
     ):
-        def decodeOne(stream: BitStream): Int =
+        def decodeOne(stream: BitStream)(using AllowUnsafe): Int =
             var code   = 0
             var first  = 0
             var index  = 0
@@ -161,7 +163,7 @@ object PortableInflate:
         (distanceBase(sym), distanceExtra(sym))
 
     // RFC 1951 §3.2.4 stored (raw) block
-    private[kyo] def decodeStoredBlock(stream: BitStream, out: scala.collection.mutable.ArrayBuffer[Byte]): Unit =
+    private[kyo] def decodeStoredBlock(stream: BitStream, out: scala.collection.mutable.ArrayBuffer[Byte])(using AllowUnsafe): Unit =
         val _        = stream.alignToByte()
         val lenLow   = stream.readBits(8)
         val lenHigh  = stream.readBits(8)
@@ -185,7 +187,7 @@ object PortableInflate:
     private lazy val fixedDistanceTree: HuffmanTree = HuffmanTree.fromCodeLengths(fixedDistanceLengths)
 
     // RFC 1951 §3.2.6 fixed Huffman block
-    private[kyo] def decodeFixedHuffmanBlock(stream: BitStream, out: scala.collection.mutable.ArrayBuffer[Byte]): Unit =
+    private[kyo] def decodeFixedHuffmanBlock(stream: BitStream, out: scala.collection.mutable.ArrayBuffer[Byte])(using AllowUnsafe): Unit =
         decodeHuffmanBlock(stream, out, fixedLiteralTree, fixedDistanceTree)
 
     // Shared literal/length+distance decode loop used by both fixed and dynamic blocks
@@ -194,7 +196,7 @@ object PortableInflate:
         out: scala.collection.mutable.ArrayBuffer[Byte],
         litTree: HuffmanTree,
         distTree: HuffmanTree
-    ): Unit =
+    )(using AllowUnsafe): Unit =
         var done = false
         while !done do
             val sym = litTree.decodeOne(stream)
@@ -232,7 +234,7 @@ object PortableInflate:
     private[kyo] def decodeDynamicHuffmanBlock(
         stream: BitStream,
         out: scala.collection.mutable.ArrayBuffer[Byte]
-    ): Unit =
+    )(using AllowUnsafe): Unit =
         val hlit        = stream.readBits(5) + 257
         val hdist       = stream.readBits(5) + 1
         val hclen       = stream.readBits(4) + 4
@@ -251,7 +253,7 @@ object PortableInflate:
     end decodeDynamicHuffmanBlock
 
     // Decode a run-length encoded code-length sequence per RFC 1951 §3.2.7
-    private[kyo] def decodeCodeLengths(stream: BitStream, tree: HuffmanTree, total: Int): Array[Int] =
+    private[kyo] def decodeCodeLengths(stream: BitStream, tree: HuffmanTree, total: Int)(using AllowUnsafe): Array[Int] =
         val arr = new Array[Int](total)
         var i   = 0
         while i < total do
@@ -280,7 +282,7 @@ object PortableInflate:
 
     /** RFC 1950 ZLIB inflate: validates CMF/FLG header, dispatches DEFLATE block decoders, and verifies the Adler-32 trailer.
       */
-    def inflate(compressed: Array[Byte]): Array[Byte] =
+    def inflate(compressed: Array[Byte])(using AllowUnsafe): Array[Byte] =
         if compressed.length < 6 then
             throw new InflateException("ZLIB input too short (< 6 bytes)", 0L)
         val cmf = compressed(0) & 0xff

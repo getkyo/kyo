@@ -1,6 +1,7 @@
 package kyo.internal.tasty.binary
 
 import java.nio.MappedByteBuffer
+import kyo.AllowUnsafe
 
 /** JVM memory-mapped ByteView backed by a java.nio.MappedByteBuffer.
   *
@@ -36,7 +37,7 @@ final class MappedByteView(
         checkOpen()
         buf.get(at.toInt)
 
-    def readByte(): Byte =
+    def readByte()(using AllowUnsafe): Byte =
         checkOpen()
         if cursor > Int.MaxValue then
             throw new IllegalStateException(
@@ -48,14 +49,14 @@ final class MappedByteView(
         b
     end readByte
 
-    def readEnd(): Long =
+    def readEnd()(using AllowUnsafe): Long =
         val len = Varint.readNat(this)
         cursor + len.toLong
 
     def subView(from: Long, until: Long): MappedByteView =
         new MappedByteView(buf, from, until, closed)
 
-    def goto(addr: Long): Unit =
+    def goto(addr: Long)(using AllowUnsafe): Unit =
         cursor = addr
 
     def remaining: Long = end - cursor

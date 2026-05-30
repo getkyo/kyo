@@ -213,7 +213,7 @@ object NameUnpickler:
     end checkRef
 
     /** Read `length` bytes from `view` into a fresh `Array[Byte]`. */
-    private def readBytes(view: ByteView, length: Int): Array[Byte] =
+    private def readBytes(view: ByteView, length: Int)(using AllowUnsafe): Array[Byte] =
         val arr = new Array[Byte](length)
         var i   = 0
         while i < length do

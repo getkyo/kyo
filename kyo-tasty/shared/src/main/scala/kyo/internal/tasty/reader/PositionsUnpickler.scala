@@ -45,7 +45,7 @@ object PositionsUnpickler:
         view: ByteView,
         addrMap: IntMap[Tasty.Symbol],
         sourceFile: Maybe[String]
-    )(using Frame): Map[Tasty.Symbol, Tasty.Position] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Map[Tasty.Symbol, Tasty.Position] < (Sync & Abort[TastyError]) =
         val result =
             try Right(readSync(view, addrMap, sourceFile))
             catch
@@ -64,7 +64,7 @@ object PositionsUnpickler:
         view: ByteView,
         addrMap: IntMap[Tasty.Symbol],
         sourceFile: Maybe[String]
-    ): Map[Tasty.Symbol, Tasty.Position] =
+    )(using AllowUnsafe): Map[Tasty.Symbol, Tasty.Position] =
         // An empty section has no data at all; return an empty map immediately without trying to read.
         if view.remaining == 0 then return Map.empty
         // Read lineSizes: first a Nat giving the number of lines, then one Nat per line giving chars on that line (not counting '\n').

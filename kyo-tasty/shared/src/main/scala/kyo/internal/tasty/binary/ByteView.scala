@@ -1,5 +1,7 @@
 package kyo.internal.tasty.binary
 
+import kyo.AllowUnsafe
+
 /** A window into a byte buffer, tracking a mutable read cursor.
   *
   * ByteView is a sealed trait with two concrete cases:
@@ -15,25 +17,25 @@ sealed trait ByteView:
     def peekByte(at: Long): Byte
 
     /** Read the byte at the current cursor position and advance cursor by 1. */
-    def readByte(): Byte
+    def readByte()(using AllowUnsafe): Byte
 
     /** Read an unsigned LEB128 Nat (big-endian base-128, stop-bit on last byte) as Int. */
-    def readNat(): Int = Varint.readNat(this)
+    def readNat()(using AllowUnsafe): Int = Varint.readNat(this)
 
     /** Read a signed 2's complement big-endian base-128 Int (dotty TastyReader semantics). */
-    def readInt(): Int = Varint.readInt(this)
+    def readInt()(using AllowUnsafe): Int = Varint.readInt(this)
 
     /** Read an unsigned LEB128 Nat as Long. */
-    def readLongNat(): Long = Varint.readLongNat(this)
+    def readLongNat()(using AllowUnsafe): Long = Varint.readLongNat(this)
 
     /** Read a Nat as the payload length, then return the absolute end address (cursor + nat). */
-    def readEnd(): Long
+    def readEnd()(using AllowUnsafe): Long
 
     /** Return a sub-view sharing the same underlying bytes, with its own cursor reset to `from`. */
     def subView(from: Long, until: Long): ByteView
 
     /** Move the cursor to the given absolute position. */
-    def goto(addr: Long): Unit
+    def goto(addr: Long)(using AllowUnsafe): Unit
 
     /** Number of bytes remaining from the cursor to the end. */
     def remaining: Long
@@ -42,7 +44,7 @@ sealed trait ByteView:
     def position: Long
 
     /** Int-narrowing wrapper: Math.toIntExact(readEnd()). Use at TastyOrigin constructor sites. */
-    final def readEndInt: Int = Math.toIntExact(readEnd())
+    final def readEndInt(using AllowUnsafe): Int = Math.toIntExact(readEnd())
 
     /** Int-narrowing wrapper: Math.toIntExact(position). Use at TastyOrigin constructor sites. */
     final def positionInt: Int = Math.toIntExact(position)
@@ -51,7 +53,7 @@ sealed trait ByteView:
     final def remainingInt: Int = Math.toIntExact(remaining)
 
     /** Int-narrowing wrapper: goto(addr.toLong). */
-    final def gotoInt(addr: Int): Unit = goto(addr.toLong)
+    final def gotoInt(addr: Int)(using AllowUnsafe): Unit = goto(addr.toLong)
 
     /** Int-narrowing wrapper: subView(from.toLong, until.toLong). */
     final def subViewInt(from: Int, until: Int): ByteView = subView(from.toLong, until.toLong)
@@ -84,7 +86,7 @@ object ByteView:
 
         def peekByte(at: Long): Byte = bytes(Math.toIntExact(at))
 
-        def readByte(): Byte =
+        def readByte()(using AllowUnsafe): Byte =
             if cursor >= end then throw new ArrayIndexOutOfBoundsException(cursor)
             val b = bytes(cursor)
             cursor += 1
@@ -102,7 +104,7 @@ object ByteView:
             out
         end copyBytes
 
-        def readEnd(): Long =
+        def readEnd()(using AllowUnsafe): Long =
             val len = Varint.readNat(this)
             cursor.toLong + len
 
@@ -117,7 +119,7 @@ object ByteView:
             new Heap(bytes, fromInt, untilInt)
         end subView
 
-        def goto(addr: Long): Unit =
+        def goto(addr: Long)(using AllowUnsafe): Unit =
             cursor = Math.toIntExact(addr)
 
         def remaining: Long = (end - cursor).toLong

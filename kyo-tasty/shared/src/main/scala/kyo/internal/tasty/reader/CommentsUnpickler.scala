@@ -34,7 +34,7 @@ object CommentsUnpickler:
     def read(
         view: ByteView,
         addrMap: IntMap[Tasty.Symbol]
-    )(using Frame): Map[Tasty.Symbol, String] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Map[Tasty.Symbol, String] < (Sync & Abort[TastyError]) =
         val result =
             try Right(readSync(view, addrMap))
             catch
@@ -45,7 +45,7 @@ object CommentsUnpickler:
             case Left(err) => Abort.fail(err)
     end read
 
-    private def readSync(view: ByteView, addrMap: IntMap[Tasty.Symbol]): Map[Tasty.Symbol, String] =
+    private def readSync(view: ByteView, addrMap: IntMap[Tasty.Symbol])(using AllowUnsafe): Map[Tasty.Symbol, String] =
         val builder = Map.newBuilder[Tasty.Symbol, String]
         while view.remaining > 0 do
             val addr    = view.readNat()
@@ -69,7 +69,7 @@ object CommentsUnpickler:
     end readSync
 
     /** Skip a signed big-endian base-128 Long (continuation bit is 0x80 CLEAR; stop on 0x80 SET). */
-    private def skipLongInt(view: ByteView): Unit =
+    private def skipLongInt(view: ByteView)(using AllowUnsafe): Unit =
         var b = view.readByte() & 0xff
         while (b & 0x80) == 0 do
             b = view.readByte() & 0xff

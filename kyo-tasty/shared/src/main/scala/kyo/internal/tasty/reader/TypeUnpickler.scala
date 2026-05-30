@@ -69,7 +69,7 @@ object TypeUnpickler:
         home: ClasspathRef,
         sectionBytes: Array[Byte],
         sectionOffset: Int
-    )(using frame: Frame): (Tasty.Type, Chunk[UnresolvedRef]) < (Sync & Abort[TastyError]) =
+    )(using frame: Frame)(using AllowUnsafe): (Tasty.Type, Chunk[UnresolvedRef]) < (Sync & Abort[TastyError]) =
         val result =
             try
                 val addrCache     = new mutable.HashMap[Int, Tasty.Type]()
@@ -130,7 +130,7 @@ object TypeUnpickler:
       *
       * Handles SHAREDtype cache misses by re-decoding the referenced type from sectionBytes on demand.
       */
-    private[tasty] def readTypeForTree(view: ByteView, session: TreeTypeSession): Tasty.Type =
+    private[tasty] def readTypeForTree(view: ByteView, session: TreeTypeSession)(using AllowUnsafe): Tasty.Type =
         // flow-allow: internal frame used here because readTypeForTree is called from
         // TreeUnpickler.decodeSync, which is the OnceCell init lambda for Symbol.body.
         // The init lambda has type () => Tree and cannot accept a Frame parameter.
@@ -192,7 +192,7 @@ object TypeUnpickler:
       * @return
       *   The decoded Tasty.Type, interned in `session.arena`.
       */
-    private[kyo] def readTypeIntoSession(view: ByteView, session: DecodeSession)(using frame: Frame): Tasty.Type =
+    private[kyo] def readTypeIntoSession(view: ByteView, session: DecodeSession)(using frame: Frame)(using AllowUnsafe): Tasty.Type =
         // Pass session.liveAddrMap directly -- no per-call IntMap snapshot.
         // liveAddrMap is the mutable.HashMap being built by AstUnpickler.walkStats.
         // Locally-defined symbols accumulated so far are visible through the live map.
@@ -263,7 +263,7 @@ object TypeUnpickler:
         )
 
     /** Decode one type node. tag byte not yet consumed. Records startAddr -> result in addrCache. */
-    private def readTypeNode(view: ByteView, ctx: DecodeCtx): Tasty.Type =
+    private def readTypeNode(view: ByteView, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Type =
         val startAddr = view.positionInt
         val tag       = view.readByte() & 0xff
         val t         = decodeTag(tag, startAddr, view, ctx)
@@ -732,7 +732,7 @@ object TypeUnpickler:
     end readMethodParams
 
     /** Read type nodes until position reaches `end`. */
-    private def readTypesUntil(view: ByteView, end: Long, ctx: DecodeCtx): mutable.ArrayBuffer[Tasty.Type] =
+    private def readTypesUntil(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): mutable.ArrayBuffer[Tasty.Type] =
         val buf = new mutable.ArrayBuffer[Tasty.Type]()
         while view.position < end do
             buf += readTypeNode(view, ctx)
@@ -740,16 +740,16 @@ object TypeUnpickler:
     end readTypesUntil
 
     /** Skip to the given end position. */
-    private def skipToEnd(view: ByteView, end: Long): Unit =
+    private def skipToEnd(view: ByteView, end: Long)(using AllowUnsafe): Unit =
         view.goto(end)
 
     /** Skip exactly one type node from the current position (tag not yet consumed). */
-    private def skipOneType(view: ByteView): Unit =
+    private def skipOneType(view: ByteView)(using AllowUnsafe): Unit =
         val tag = view.readByte() & 0xff
         skipTreeBody(tag, view)
 
     /** Skip the body of a tree node whose tag has already been consumed. */
-    private def skipTreeBody(tag: Int, view: ByteView): Unit =
+    private def skipTreeBody(tag: Int, view: ByteView)(using AllowUnsafe): Unit =
         if tag >= TastyFormat.firstLengthTreeTag then
             val end = view.readEnd()
             view.goto(end)

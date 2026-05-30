@@ -516,7 +516,8 @@ object AstUnpickler:
       * Returns the decoded type if present and successful, Absent otherwise.
       */
     private def decodeOneTypeIfPresent(view: ByteView, end: Long, typeSession: TypeUnpickler.DecodeSession)(using
-        Frame
+        Frame,
+        AllowUnsafe
     ): Maybe[Tasty.Type] =
         if view.position < end then
             val nextTag = view.peekByte(view.position) & 0xff
@@ -547,7 +548,7 @@ object AstUnpickler:
         returnTypeScanView: ByteView,
         end: Long,
         typeSession: TypeUnpickler.DecodeSession
-    )(using Frame): Maybe[Tasty.Type] =
+    )(using Frame, AllowUnsafe): Maybe[Tasty.Type] =
         try
             // Skip TYPEPARAM and PARAM nodes that precede the return type.
             var skip = true
@@ -589,7 +590,7 @@ object AstUnpickler:
         parentScanView: ByteView,
         end: Long,
         typeSession: TypeUnpickler.DecodeSession
-    )(using Frame): mutable.ArrayBuffer[Tasty.Type] =
+    )(using Frame, AllowUnsafe): mutable.ArrayBuffer[Tasty.Type] =
         val collected = new mutable.ArrayBuffer[Tasty.Type]()
         // Phase 1: skip leading TYPEPARAM and PARAM nodes (class own type/term params).
         var skipParams = true
@@ -638,7 +639,7 @@ object AstUnpickler:
       *
       * STEERING CRITICAL: PRIVATEqualified (98) and PROTECTEDqualified (99) must skip their sub-AST.
       */
-    private def scanForwardAndCollectFlags(view: ByteView, end: Long): Long =
+    private def scanForwardAndCollectFlags(view: ByteView, end: Long)(using AllowUnsafe): Long =
         var flagBits = 0L
         while view.position < end do
             val pos = view.position
@@ -670,7 +671,7 @@ object AstUnpickler:
       *
       * STEERING CRITICAL: PRIVATEqualified (98) and PROTECTEDqualified (99) are category 3 (tag + sub-AST). Must skip their sub-AST.
       */
-    private def readModifiers(view: ByteView, end: Long): Long =
+    private def readModifiers(view: ByteView, end: Long)(using AllowUnsafe): Long =
         var flagBits = 0L
         while view.position < end do
             val modTag = view.readByte() & 0xff
@@ -701,7 +702,7 @@ object AstUnpickler:
             tag == TastyFormat.ANNOTATION
 
     /** Skip exactly one tree node from the current position (tag not yet consumed). */
-    private def skipTree(view: ByteView): Unit =
+    private def skipTree(view: ByteView)(using AllowUnsafe): Unit =
         val tag = (view.readByte(): Int) & 0xff
         skipTreeBody(tag, view)
 
@@ -710,7 +711,7 @@ object AstUnpickler:
       * Category rules (from TastyFormat): 1 (1-59): tag only; 2 (60-89): tag + Nat; 3 (90-109): tag + sub-AST; 4 (110-127): tag + Nat +
       * sub-AST; 5 (128-255): tag + Length + payload.
       */
-    private def skipTreeBody(tag: Int, view: ByteView): Unit =
+    private def skipTreeBody(tag: Int, view: ByteView)(using AllowUnsafe): Unit =
         if tag >= TastyFormat.firstLengthTreeTag then
             val end = view.readEnd()
             view.goto(end)

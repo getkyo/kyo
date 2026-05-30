@@ -42,7 +42,7 @@ object TreeUnpickler:
     private[kyo] def decodeAnnotationTerm(
         pickle: kyo.Chunk[Byte],
         ctx: Tasty.Annotation.DecodeContext
-    ): Tasty.Tree =
+    )(using AllowUnsafe): Tasty.Tree =
         val bytes      = pickle.toArray
         val view       = ByteView(bytes, 0, bytes.length)
         val dummyArena = TypeArena.canonical()
@@ -149,7 +149,7 @@ object TreeUnpickler:
     // ── Tree dispatch ─────────────────────────────────────────────────────────
 
     /** Read one tree node; tag byte not yet consumed. Records startAddr in treeAddrCache. */
-    private def readTree(view: ByteView, ctx: DecodeCtx): Tasty.Tree =
+    private def readTree(view: ByteView, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Tree =
         val startAddr = view.positionInt
         val tag       = view.readByte() & 0xff
         val result    = decodeTreeTag(tag, startAddr, view, ctx)
@@ -159,7 +159,7 @@ object TreeUnpickler:
     end readTree
 
     /** Read all trees until view.position >= end. */
-    private def readTreesUntil(view: ByteView, end: Long, ctx: DecodeCtx): Chunk[Tasty.Tree] =
+    private def readTreesUntil(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): Chunk[Tasty.Tree] =
         val buf = new mutable.ArrayBuffer[Tasty.Tree]()
         while view.position < end do
             // Skip standalone modifier tags that can appear between tree nodes.
@@ -176,9 +176,7 @@ object TreeUnpickler:
     end readTreesUntil
 
     /** Dispatch on the tag byte (already consumed). */
-    private def decodeTreeTag(tag: Int, startAddr: Int, view: ByteView, ctx: DecodeCtx): Tasty.Tree =
-        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the tree-decode context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    private def decodeTreeTag(tag: Int, startAddr: Int, view: ByteView, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Tree =
         tag match
 
             // ── Category 1: tag only (1-59) -- literal constants & modifiers ─────
@@ -884,7 +882,7 @@ object TreeUnpickler:
     // ── CaseDef helpers ───────────────────────────────────────────────────────
 
     /** Read consecutive CASEDEF nodes until end. */
-    private def readCaseDefs(view: ByteView, end: Long, ctx: DecodeCtx): Chunk[Tasty.Tree.CaseDef] =
+    private def readCaseDefs(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): Chunk[Tasty.Tree.CaseDef] =
         val buf = new mutable.ArrayBuffer[Tasty.Tree.CaseDef]()
         while view.position < end do
             val peek = view.peekByte(view.position) & 0xff
@@ -907,7 +905,7 @@ object TreeUnpickler:
     end readCaseDefs
 
     /** Read optional guard + mandatory body from a CASEDEF payload (after pattern has been read). */
-    private def readCaseDefGuardAndBody(view: ByteView, end: Long, ctx: DecodeCtx): (Maybe[Tasty.Tree], Tasty.Tree) =
+    private def readCaseDefGuardAndBody(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): (Maybe[Tasty.Tree], Tasty.Tree) =
         // dotty places guard then body; guard is optional.
         // Heuristic: if two trees remain, first is guard, second is body. If one, it is the body.
         if view.position >= end then
@@ -930,7 +928,7 @@ object TreeUnpickler:
         view: ByteView,
         end: Long,
         ctx: DecodeCtx
-    ): (Chunk[Tasty.Tree], Chunk[Tasty.Tree]) =
+    )(using AllowUnsafe): (Chunk[Tasty.Tree], Chunk[Tasty.Tree]) =
         val implicits = new mutable.ArrayBuffer[Tasty.Tree]()
         val patterns  = new mutable.ArrayBuffer[Tasty.Tree]()
         while view.position < end do
@@ -1019,7 +1017,7 @@ object TreeUnpickler:
     end readDefDefParamsAndTpt
 
     /** Read one clause of TYPEPARAM or PARAM nodes. */
-    private def readOneParamClause(view: ByteView, end: Long, ctx: DecodeCtx): Chunk[Tasty.Tree] =
+    private def readOneParamClause(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): Chunk[Tasty.Tree] =
         val buf = new mutable.ArrayBuffer[Tasty.Tree]()
         while view.position < end do
             val peek = view.peekByte(view.position) & 0xff
@@ -1035,12 +1033,12 @@ object TreeUnpickler:
     // ── Type decode (via TypeUnpickler.readTypeForTree) ───────────────────────
 
     /** Read one type node using the shared TreeTypeSession. */
-    private def readType(view: ByteView, ctx: DecodeCtx): Tasty.Type =
+    private def readType(view: ByteView, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Type =
         TypeUnpickler.readTypeForTree(view, ctx.typeSession)
     end readType
 
     /** Read type nodes until position reaches end. */
-    private def readTypesUntil(view: ByteView, end: Long, ctx: DecodeCtx): Chunk[Tasty.Type] =
+    private def readTypesUntil(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): Chunk[Tasty.Type] =
         val buf = new mutable.ArrayBuffer[Tasty.Type]()
         while view.position < end do
             val peek = view.peekByte(view.position) & 0xff
@@ -1070,7 +1068,7 @@ object TreeUnpickler:
       * Note: does not filter by isTreeTag because literal constants (INTconst etc.) are valid rhs trees but are also returned by isTypeTag
       * (they can appear as ConstantType in type position). Any non-modifier byte after the declared type is interpreted as the rhs tree.
       */
-    private def readOptionalRhs(view: ByteView, end: Long, ctx: DecodeCtx): Maybe[Tasty.Tree] =
+    private def readOptionalRhs(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): Maybe[Tasty.Tree] =
         skipModifierTags(view, end)
         if view.position < end then Maybe(readTree(view, ctx))
         else Maybe.Absent
@@ -1097,13 +1095,13 @@ object TreeUnpickler:
     // ── Skip helpers ──────────────────────────────────────────────────────────
 
     /** Skip exactly one tree from the current position (tag not yet consumed). */
-    private def skipOneTree(view: ByteView): Unit =
+    private def skipOneTree(view: ByteView)(using AllowUnsafe): Unit =
         val tag = view.readByte() & 0xff
         skipTreeBody(tag, view)
     end skipOneTree
 
     /** Skip the body of a tree node whose tag byte has already been consumed. */
-    private def skipTreeBody(tag: Int, view: ByteView): Unit =
+    private def skipTreeBody(tag: Int, view: ByteView)(using AllowUnsafe): Unit =
         if tag >= TastyFormat.firstLengthTreeTag then
             val end = view.readEnd()
             view.goto(end)
@@ -1117,7 +1115,7 @@ object TreeUnpickler:
         // else category 1: nothing to skip
 
     /** Skip any modifier tags (category 1, 1-59) and qualified-modifier sub-trees at current position. */
-    private def skipModifierTags(view: ByteView, end: Long): Unit =
+    private def skipModifierTags(view: ByteView, end: Long)(using AllowUnsafe): Unit =
         while view.position < end do
             val peek = view.peekByte(view.position) & 0xff
             if isModifierTag(peek) then

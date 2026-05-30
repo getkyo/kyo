@@ -45,12 +45,12 @@ object TastyHeader:
       * `Abort.fail(TastyError.CorruptedFile(...))` if magic bytes mismatch. `Abort.fail(TastyError.UnsupportedVersion(...))` if the version
       * is not compatible. `Abort.fail(TastyError.MalformedSection(...))` if the header is truncated.
       */
-    def read(view: ByteView)(using Frame): Data < Abort[TastyError] =
+    def read(view: ByteView)(using Frame, AllowUnsafe): Data < Abort[TastyError] =
         // Step 1: check 4 magic bytes via explicit remaining guard.
         if view.remaining < TastyFormat.MagicBytes.length then truncated(view)
         else checkMagic(view, 0)
 
-    private def checkMagic(view: ByteView, i: Int)(using Frame): Data < Abort[TastyError] =
+    private def checkMagic(view: ByteView, i: Int)(using Frame, AllowUnsafe): Data < Abort[TastyError] =
         if i >= TastyFormat.MagicBytes.length then readVersions(view)
         else
             val expected = TastyFormat.MagicBytes(i)
@@ -68,7 +68,7 @@ object TastyHeader:
         end if
     end checkMagic
 
-    private def readVersions(view: ByteView)(using Frame): Data < Abort[TastyError] =
+    private def readVersions(view: ByteView)(using Frame, AllowUnsafe): Data < Abort[TastyError] =
         // Step 2: version triple (3 Nats); each Nat is at least 1 byte.
         if view.remaining < 3 then truncated(view)
         else
@@ -99,7 +99,8 @@ object TastyHeader:
     end readVersions
 
     private def readTooling(view: ByteView, fileMajor: Int, fileMinor: Int, fileExperimental: Int)(using
-        Frame
+        Frame,
+        AllowUnsafe
     ): Data < Abort[TastyError] =
         // Step 4: tooling version string (length Nat + length bytes).
         if view.remaining < 1 then truncated(view)
@@ -124,7 +125,7 @@ object TastyHeader:
         fileMinor: Int,
         fileExperimental: Int,
         toolingVersion: String
-    )(using Frame): Data < Abort[TastyError] =
+    )(using Frame, AllowUnsafe): Data < Abort[TastyError] =
         // Step 5: UUID as two big-endian uncompressed Longs (16 bytes total).
         if view.remaining < 16 then truncated(view)
         else
@@ -136,7 +137,7 @@ object TastyHeader:
     end readUuid
 
     /** Read 8 bytes big-endian as a Long (verbatim from TastyReader.readUncompressedLong). */
-    private def readUncompressedLong(view: ByteView): Long =
+    private def readUncompressedLong(view: ByteView)(using AllowUnsafe): Long =
         var x = 0L
         var k = 0
         while k < 8 do

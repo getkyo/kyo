@@ -98,6 +98,8 @@ class InflateHookTest extends Test:
     // T5 JS delegation: JS InflateHook delegates to PortableInflate. Output must be byte-equal
     // to a direct PortableInflate.inflate call on the same input. Pins T5, INV-024.
     "T5 JS delegation: JS InflateHook output is byte-equal to direct PortableInflate.inflate" taggedAs jsOnly in run {
+        // flow-allow: §839 case 3; direct PortableInflate.inflate call for JS delegation test, single-threaded.
+        import AllowUnsafe.embrace.danger
         val directResult =
             try PortableInflate.inflate(zlibCompressed)
             catch

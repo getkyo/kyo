@@ -285,7 +285,7 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         path: String,
         isMethods: Boolean
-    )(using Frame): Chunk[MemberInfo] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[MemberInfo] < (Sync & Abort[TastyError]) =
         Sync.defer(readU2(view)).map: count =>
             readMemberList(view, pool, path, count, Chunk.empty, isMethods)
 
@@ -296,7 +296,7 @@ object ClassfileUnpickler:
         remaining: Int,
         acc: Chunk[MemberInfo],
         isMethods: Boolean
-    )(using Frame): Chunk[MemberInfo] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[MemberInfo] < (Sync & Abort[TastyError]) =
         if remaining == 0 then acc
         else
             readOneMemberInfo(view, pool, path, isMethods).map: info =>
@@ -307,7 +307,7 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         path: String,
         isMethods: Boolean
-    )(using Frame): MemberInfo < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): MemberInfo < (Sync & Abort[TastyError]) =
         Sync.defer {
             val accessFlags = readU2(view)
             val nameIdx     = readU2(view)
@@ -338,7 +338,10 @@ object ClassfileUnpickler:
         visibleAnnBytes: Maybe[Array[Byte]],
         invisibleAnnBytes: Maybe[Array[Byte]],
         paramNames: Chunk[String]
-    )(using Frame): (Maybe[Int], Chunk[Int], Maybe[Array[Byte]], Maybe[Array[Byte]], Chunk[String]) < (Sync & Abort[TastyError]) =
+    )(using
+        Frame,
+        AllowUnsafe
+    ): (Maybe[Int], Chunk[Int], Maybe[Array[Byte]], Maybe[Array[Byte]], Chunk[String]) < (Sync & Abort[TastyError]) =
         if remaining == 0 then (sigIdx, exceptionIdxs, visibleAnnBytes, invisibleAnnBytes, paramNames)
         else
             Sync.defer {
@@ -478,7 +481,7 @@ object ClassfileUnpickler:
         view: ByteView,
         pool: ConstantPool,
         path: String
-    )(using Frame): ClassAttributes < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassAttributes < (Sync & Abort[TastyError]) =
         Sync.defer(readU2(view)).map: count =>
             readClassAttrList(
                 view,
@@ -524,7 +527,7 @@ object ClassfileUnpickler:
         permittedSubclassIdxs: Chunk[Int],
         visibleTypeAnnBytes: Maybe[Array[Byte]],
         invisibleTypeAnnBytes: Maybe[Array[Byte]]
-    )(using Frame): ClassAttributes < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassAttributes < (Sync & Abort[TastyError]) =
         if remaining == 0 then
             ClassAttributes(
                 sigIdx,
@@ -978,7 +981,7 @@ object ClassfileUnpickler:
         view: ByteView,
         pool: ConstantPool,
         path: String
-    )(using Frame): Chunk[(Int, Int, Maybe[Int])] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[(Int, Int, Maybe[Int])] < (Sync & Abort[TastyError]) =
         Sync.defer(readU2(view)).map: numComponents =>
             readRecordComponentList(view, pool, path, numComponents, 0, Chunk.empty)
 
@@ -989,7 +992,7 @@ object ClassfileUnpickler:
         total: Int,
         idx: Int,
         acc: Chunk[(Int, Int, Maybe[Int])]
-    )(using Frame): Chunk[(Int, Int, Maybe[Int])] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[(Int, Int, Maybe[Int])] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             Sync.defer {
@@ -1014,7 +1017,7 @@ object ClassfileUnpickler:
         path: String,
         remaining: Int,
         sigIdx: Maybe[Int]
-    )(using Frame): Maybe[Int] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Maybe[Int] < (Sync & Abort[TastyError]) =
         if remaining == 0 then sigIdx
         else
             Sync.defer {
@@ -1751,7 +1754,7 @@ object ClassfileUnpickler:
       */
     private def readBootstrapMethodsData(
         view: ByteView
-    )(using Frame): Chunk[Chunk[Int]] < Sync =
+    )(using Frame, AllowUnsafe): Chunk[Chunk[Int]] < Sync =
         Sync.defer {
             val n   = readU2(view)
             var bsm = Chunk.empty[Chunk[Int]]
@@ -1778,7 +1781,7 @@ object ClassfileUnpickler:
     private def readMethodParameterNames(
         view: ByteView,
         pool: ConstantPool
-    )(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[String] < (Sync & Abort[TastyError]) =
         Sync.defer(readU1(view)).map: count =>
             readMethodParamList(view, pool, count, 0, Chunk.empty)
 
@@ -1788,7 +1791,7 @@ object ClassfileUnpickler:
         total: Int,
         idx: Int,
         acc: Chunk[String]
-    )(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[String] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             Sync.defer {
@@ -1810,7 +1813,7 @@ object ClassfileUnpickler:
       * All target_type codes are handled; unknown codes skip 0 bytes of target_info and let the annotation type_index parse proceed
       * normally (graceful degradation).
       */
-    private def skipTypeAnnotationTargetAndPath(view: ByteView): Unit =
+    private def skipTypeAnnotationTargetAndPath(view: ByteView)(using AllowUnsafe): Unit =
         val targetType = readU1(view) & 0xff
         // JVMS Table 4.7.20-A: target_info union size by target_type code
         targetType match
@@ -1893,7 +1896,7 @@ object ClassfileUnpickler:
     // -------------------------------------------------------------------------
 
     /** Capture `count` bytes from `view` into a fresh Array[Byte]. */
-    private def captureBytes(view: ByteView, count: Int): Array[Byte] =
+    private def captureBytes(view: ByteView, count: Int)(using AllowUnsafe): Array[Byte] =
         view match
             case h: ByteView.Heap =>
                 val start = h.positionInt
@@ -1908,7 +1911,7 @@ object ClassfileUnpickler:
                 out
     end captureBytes
 
-    private def skipBytes(view: ByteView, count: Int): Unit =
+    private def skipBytes(view: ByteView, count: Int)(using AllowUnsafe): Unit =
         var i = 0
         while i < count do
             discard(view.readByte())

@@ -216,7 +216,8 @@ object Tasty:
                     if argsPickle.isEmpty then
                         Sync.defer(Tree.Unknown(-1, 0))
                     else
-                        Sync.defer:
+                        // flow-allow: §839 case 3; decodeAnnotationTerm is a pure-compute tree decode with no shared state.
+                        Sync.Unsafe.defer:
                             val result: Tree < Abort[TastyError] =
                                 try kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(argsPickle, ctx)
                                 catch

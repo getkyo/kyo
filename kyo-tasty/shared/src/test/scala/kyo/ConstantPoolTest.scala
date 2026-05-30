@@ -25,12 +25,12 @@ class ConstantPoolTest extends Test:
         private var cursor: Long = 0L
 
         def peekByte(at: Long): Byte = data(at.toInt)
-        def readByte(): Byte =
+        def readByte()(using AllowUnsafe): Byte =
             val b = data(cursor.toInt)
             cursor += 1
             b
         end readByte
-        def readEnd(): Long =
+        def readEnd()(using AllowUnsafe): Long =
             val len = readNat()
             cursor + len.toLong
         def subView(from: Long, until: Long): ByteView =
@@ -38,9 +38,9 @@ class ConstantPoolTest extends Test:
             s.goto(from)
             s
         end subView
-        def goto(addr: Long): Unit = cursor = addr
-        def remaining: Long        = data.length.toLong - cursor
-        def position: Long         = cursor
+        def goto(addr: Long)(using AllowUnsafe): Unit = cursor = addr
+        def remaining: Long                           = data.length.toLong - cursor
+        def position: Long                            = cursor
     end HeapMappedStub
 
     /** Build a minimal constant pool byte stream with one UTF-8 entry encoding the given string.

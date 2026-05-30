@@ -1,5 +1,7 @@
 package kyo.internal.tasty.binary
 
+import kyo.AllowUnsafe
+
 /** Thrown when a varint continuation run exceeds the allowed byte count for the target type. */
 class MalformedVarintException(val byteOffset: Long, msg: String) extends RuntimeException(msg)
 
@@ -27,7 +29,7 @@ object Varint:
       * stopping at the byte where 0x80 is SET (the terminating byte). Throws MalformedVarintException if more than 5 continuation bytes are
       * consumed (Int overflow guard).
       */
-    def readNat(view: ByteView): Int =
+    def readNat(view: ByteView)(using AllowUnsafe): Int =
         var b     = 0
         var x     = 0
         var bytes = 0
@@ -48,7 +50,7 @@ object Varint:
       * Verbatim from TastyReader.readLongNat: var b = 0L; var x = 0L while { b = bytes(bp); x = (x << 7) | (b & 0x7f); bp += 1; (b & 0x80) ==
       * 0 } () x. Throws MalformedVarintException if more than 10 continuation bytes are consumed (Long overflow guard).
       */
-    def readLongNat(view: ByteView): Long =
+    def readLongNat(view: ByteView)(using AllowUnsafe): Long =
         var b     = 0L
         var x     = 0L
         var bytes = 0
@@ -76,7 +78,7 @@ object Varint:
       * which is the continuation bit), then sign-extends as a Byte by shifting right arithmetically. This propagates bit 6 into all higher
       * positions of the Long accumulator.
       */
-    def readInt(view: ByteView): Int =
+    def readInt(view: ByteView)(using AllowUnsafe): Int =
         var b       = view.readByte() & 0xff
         var x: Long = ((b << 1).toByte >> 1).toLong
         while (b & 0x80) == 0 do
@@ -89,7 +91,7 @@ object Varint:
       *
       * Same 2's complement semantics as readInt but accumulates into Long. Verbatim from TastyReader.readLongInt.
       */
-    def readLongInt(view: ByteView): Long =
+    def readLongInt(view: ByteView)(using AllowUnsafe): Long =
         var b       = view.readByte() & 0xff
         var x: Long = ((b << 1).toByte >> 1).toLong
         while (b & 0x80) == 0 do
@@ -103,7 +105,7 @@ object Varint:
       * Encodes `v` in the same big-endian base-128 format that `readNat` decodes: groups of 7 bits from most-significant to
       * least-significant, continuation bytes have 0x80 CLEAR, the terminating (last) byte has 0x80 SET.
       */
-    private[kyo] def writeNat(out: scala.collection.mutable.ArrayBuffer[Byte], v: Int): Unit =
+    private[kyo] def writeNat(out: scala.collection.mutable.ArrayBuffer[Byte], v: Int)(using AllowUnsafe): Unit =
         val buf   = new Array[Byte](5)
         var pos   = 4
         var value = v
@@ -125,7 +127,7 @@ object Varint:
       *
       * Same encoding as `writeNat` but accepts a Long value. The terminating byte has 0x80 SET, continuation bytes have 0x80 CLEAR.
       */
-    private[kyo] def writeLongNat(out: scala.collection.mutable.ArrayBuffer[Byte], v: Long): Unit =
+    private[kyo] def writeLongNat(out: scala.collection.mutable.ArrayBuffer[Byte], v: Long)(using AllowUnsafe): Unit =
         val buf   = new Array[Byte](10)
         var pos   = 9
         var value = v

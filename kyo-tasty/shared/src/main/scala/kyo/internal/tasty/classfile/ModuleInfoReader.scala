@@ -61,7 +61,7 @@ object ModuleInfoReader:
     private def checkHeader(
         view: ByteView,
         path: String
-    )(using Frame): Unit < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Unit < (Sync & Abort[TastyError]) =
         val magic = readU4(view)
         if magic != ClassfileFormat.Magic then
             Abort.fail(TastyError.ClassfileFormatError(
@@ -88,7 +88,7 @@ object ModuleInfoReader:
       *
       * Advances the view cursor to just before the class-level attributes_count field.
       */
-    private def skipClassStructure(view: ByteView): Unit =
+    private def skipClassStructure(view: ByteView)(using AllowUnsafe): Unit =
         // Skip access_flags (u2), this_class (u2), super_class (u2)
         discard(readU2(view))
         discard(readU2(view))
@@ -114,7 +114,7 @@ object ModuleInfoReader:
     end skipClassStructure
 
     /** Skip a field_info or method_info (access_flags u2, name u2, desc u2, attributes_count u2, then attributes). */
-    private def skipMember(view: ByteView): Unit =
+    private def skipMember(view: ByteView)(using AllowUnsafe): Unit =
         discard(readU2(view)) // access_flags
         discard(readU2(view)) // name_index
         discard(readU2(view)) // descriptor_index
@@ -127,7 +127,7 @@ object ModuleInfoReader:
     end skipMember
 
     /** Skip one attribute_info: name_index (u2), attribute_length (u4), then skip attribute_length bytes. */
-    private def skipAttribute(view: ByteView): Unit =
+    private def skipAttribute(view: ByteView)(using AllowUnsafe): Unit =
         discard(readU2(view)) // attribute_name_index
         val len = readU4(view)
         var i   = 0
@@ -143,7 +143,7 @@ object ModuleInfoReader:
         pool: ConstantPool,
         path: String,
         attrCount: Int
-    )(using Frame): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
         // We need to iterate over attributes and, for "Module", call decodeModuleAttribute.
         // Because this is an effectful loop, we convert to a Kyo-effect-based approach:
         // read attribute names one by one; when we hit "Module", decode it and return.
@@ -159,7 +159,7 @@ object ModuleInfoReader:
         total: Int,
         idx: Int,
         found: Maybe[Tasty.ModuleDescriptor]
-    )(using Frame): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
         if idx >= total then
             found match
                 case Present(desc) => desc
@@ -201,7 +201,7 @@ object ModuleInfoReader:
         view: ByteView,
         pool: ConstantPool,
         path: String
-    )(using Frame): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
         // module_name_index: CONSTANT_Module -> points to CONSTANT_Utf8 with module name (e.g., "java.base")
         val moduleNameIdx = readU2(view)
         val moduleFlags   = readU2(view)
@@ -263,7 +263,7 @@ object ModuleInfoReader:
         total: Int,
         idx: Int,
         acc: Chunk[Tasty.ModuleRequires]
-    )(using Frame): Chunk[Tasty.ModuleRequires] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.ModuleRequires] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val requiresIdx    = readU2(view)
@@ -284,7 +284,7 @@ object ModuleInfoReader:
         total: Int,
         idx: Int,
         acc: Chunk[Tasty.ModuleExports]
-    )(using Frame): Chunk[Tasty.ModuleExports] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.ModuleExports] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val exportsIdx   = readU2(view)
@@ -303,7 +303,7 @@ object ModuleInfoReader:
         total: Int,
         idx: Int,
         acc: Chunk[Tasty.ModuleOpens]
-    )(using Frame): Chunk[Tasty.ModuleOpens] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.ModuleOpens] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val opensIdx   = readU2(view)
@@ -322,7 +322,7 @@ object ModuleInfoReader:
         total: Int,
         idx: Int,
         acc: Chunk[String]
-    )(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[String] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val usesIdx = readU2(view)
@@ -337,7 +337,7 @@ object ModuleInfoReader:
         total: Int,
         idx: Int,
         acc: Chunk[Tasty.ModuleProvides]
-    )(using Frame): Chunk[Tasty.ModuleProvides] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.ModuleProvides] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val providesIdx       = readU2(view)
@@ -355,7 +355,7 @@ object ModuleInfoReader:
         total: Int,
         idx: Int,
         acc: Chunk[String]
-    )(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[String] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val moduleIdx = readU2(view)
@@ -370,7 +370,7 @@ object ModuleInfoReader:
         total: Int,
         idx: Int,
         acc: Chunk[String]
-    )(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[String] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val classIdx = readU2(view)
