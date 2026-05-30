@@ -97,4 +97,44 @@ class TastyErrorTest extends Test:
         end match
     }
 
+    // Test 4: SymbolNotFound carries FQN
+    //
+    // Given: TastyError.SymbolNotFound("missing.X") constructed directly (no call sites
+    //        in core library; see phase-14b-decisions.md D1).
+    //        Also: an empty classpath via Tasty.Classpath.fromPickles(Seq.empty).
+    // When:  (a) fqn field is read from the constructed value.
+    //        (b) lookupClass("missing.X") is called on the empty classpath.
+    // Then:  (a) fqn == "missing.X".
+    //        (b) Result.Success(Maybe.Absent) -- missing symbol is a soft-fail, not SymbolNotFound.
+    // Pins:  T3.
+    "SymbolNotFound carries fqn field and empty classpath lookup returns Absent" in run {
+        val err: TastyError.SymbolNotFound = TastyError.SymbolNotFound("missing.X")
+        assert(err.fqn == "missing.X", s"Expected fqn 'missing.X' but got: ${err.fqn}")
+        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+            val internalCp = Tasty.Classpath.unwrap(cp)
+            Abort.run[TastyError](internalCp.lookupClass("missing.X")).map: result =>
+                result match
+                    case Result.Success(Maybe.Absent) =>
+                        succeed
+                    case Result.Success(Maybe.Present(sym)) =>
+                        fail(s"Expected Absent but got Present($sym)")
+                    case Result.Failure(e) =>
+                        fail(s"Expected Success(Absent) but got Failure($e)")
+                    case Result.Panic(t) =>
+                        throw t
+    }
+
+    // Test 5: ParameterizedTypeNotAllowed carries tag
+    //
+    // Given: TastyError.ParameterizedTypeNotAllowed("APPLIEDtype") constructed directly
+    //        (no call sites in core library; see phase-14b-decisions.md D2).
+    // When:  tag field is read from the constructed value.
+    // Then:  tag == "APPLIEDtype".
+    // Pins:  T3.
+    "ParameterizedTypeNotAllowed carries tag field" in run {
+        val err: TastyError.ParameterizedTypeNotAllowed = TastyError.ParameterizedTypeNotAllowed("APPLIEDtype")
+        assert(err.tag == "APPLIEDtype", s"Expected tag 'APPLIEDtype' but got: ${err.tag}")
+        succeed
+    }
+
 end TastyErrorTest

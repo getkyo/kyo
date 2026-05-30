@@ -192,3 +192,4 @@ one INV, one explanation a reviewer can hold in head as one idea."
 - Phase 12 audit NOTE: resolveExtFqn allocates one PickleCursor + string per owner level. Not hot; no action.
 - Phase 13 audit WARN (2026-05-30): T1 thin-API coverage gap remains; declaredType/declarations/typeParams/scaladoc/position/flags.contains/kind accessors still untested. ROUTE TO: Phase 21g (Test symbol subsystem) impl agent, expand SymbolApiSurfaceTest to cover the remaining accessors.
 - Phase 13 audit WARN: `makeNamed` helper duplicated verbatim across TastyAnnotationTest and TastyTypeTest. NOTE-level; consolidate in Phase 21g if convenient.
+- Phase 14a audit WARN (2026-05-30): CommentsUnpickler.read at line ~41-43 passes 0L to MalformedSection but `view` IS in scope at the catch. One-line fix: replace 0L with `view.position`. ROUTE: address inline before Phase 15 (post Phase 14b commit), or fold into a brief debt commit.
