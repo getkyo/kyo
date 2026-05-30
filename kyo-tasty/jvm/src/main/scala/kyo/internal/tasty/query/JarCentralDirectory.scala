@@ -487,7 +487,9 @@ private[kyo] object JarCentralDirectory:
                 val recordSize = 46 + nameLen + extraLen + commentLen
 
                 if pos + recordSize > cenSize then
-                    pos = cenSize // truncated record, stop
+                    throw new java.io.IOException(
+                        s"$jarPath: truncated CEN record at $pos: declared size $recordSize exceeds remaining ${cenSize - pos}"
+                    )
                 else
                     // Resolve Zip64 extra field if sentinel values are present
                     val needsZip64 = compSize == 0xffffffffL || uncompSize == 0xffffffffL || lfhOffset == 0xffffffffL

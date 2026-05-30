@@ -577,4 +577,42 @@ class JarCentralDirectoryTest extends Test:
                 throw t
     }
 
+    // Phase 04c - B11: parseCenRecordsAll raises IOException on truncated CEN record.
+    //
+    // A truncated CEN record is one where the declared record size (46 + nameLen + extraLen + commentLen)
+    // exceeds the number of bytes remaining in the CEN buffer from the current position.
+    //
+    // We craft a minimal CEN buffer (100 bytes) containing a single CEN record whose nameLen field
+    // declares 1000 bytes, making recordSize = 46 + 1000 = 1046, far beyond the 100-byte buffer.
+    // parseCenRecordsAll must throw IOException rather than silently stopping.
+    // Pins: B11, INV-012.
+    "P04c-T1: parseCenRecordsAll raises IOException on truncated CEN record" taggedAs jvmOnly in run {
+        // Build a 100-byte CEN buffer with one record whose nameLen = 1000.
+        val cenBuf = new Array[Byte](100)
+        // Write CEN signature 0x02014b50 at offset 0 (little-endian).
+        cenBuf(0) = 0x50
+        cenBuf(1) = 0x4b
+        cenBuf(2) = 0x01
+        cenBuf(3) = 0x02
+        // nameLen at offset 28 = 1000 (0x03E8, little-endian).
+        cenBuf(28) = 0xe8.toByte
+        cenBuf(29) = 0x03
+        // extraLen and commentLen at offsets 30 and 32 remain 0.
+        // All other fields remain 0 (valid for our purposes: method=0, sizes=0, lfhOffset=0).
+
+        Sync.defer {
+            val ex = intercept[java.io.IOException] {
+                kyo.internal.tasty.query.JarCentralDirectory.parseCenRecordsAll(
+                    "synthetic.jar",
+                    cenBuf,
+                    cenBuf.length
+                )
+            }
+            assert(
+                ex.getMessage.contains("truncated CEN record"),
+                s"Expected message containing 'truncated CEN record' but got: ${ex.getMessage}"
+            )
+        }
+    }
+
 end JarCentralDirectoryTest
