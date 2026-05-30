@@ -233,6 +233,101 @@ class ConstantPoolTest extends Test:
                         fail(s"Unexpected error type: $other")
     }
 
+    // Test T2-1: entry() on an out-of-range index yields a structured ClassfileFormatError.
+    "entry at an out-of-range index yields structured ClassfileFormatError containing index and 'out of bounds'" in run {
+        // Given: a pool with 4 real entries (count=5); entry[1]=Utf8("a"), [2]=Utf8("b"), [3]=Utf8("c"), [4]=Utf8("d").
+        // When: utf8(99) is called (index 99 is far out of range).
+        // Then: Abort[TastyError.ClassfileFormatError] with message containing "99" and "out of bounds" (case-insensitive).
+        // Pins: T2 out-of-range coverage.
+        val entries = Array("a", "b", "c", "d")
+        // Build: u2 count=5, then 4x (u1 tag=1, u2 len, u1* bytes)
+        val bufs      = entries.map(_.getBytes("UTF-8"))
+        val totalSize = 2 + bufs.foldLeft(0)((acc, b) => acc + 1 + 2 + b.length)
+        val buf       = new Array[Byte](totalSize)
+        buf(0) = 0
+        buf(1) = 5 // count=5 => slots 1..4
+        var pos = 2
+        bufs.foreach: bs =>
+            buf(pos) = ClassfileFormat.CONSTANT_Utf8.toByte
+            buf(pos + 1) = ((bs.length >> 8) & 0xff).toByte
+            buf(pos + 2) = (bs.length & 0xff).toByte
+            var i = 0
+            while i < bs.length do
+                buf(pos + 3 + i) = bs(i)
+                i += 1
+            pos += 1 + 2 + bs.length
+        val view = ByteView(buf)
+        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+            case Result.Failure(err) => fail(s"Read failed: $err")
+            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Success(pool) =>
+                Abort.run(pool.utf8(99)).map:
+                    case Result.Success(s) =>
+                        fail(s"Expected failure but utf8(99) returned '$s'")
+                    case Result.Panic(ex) =>
+                        fail(s"Expected Failure but got Panic: $ex")
+                    case Result.Failure(TastyError.ClassfileFormatError(_, msg, _)) =>
+                        assert(msg.contains("99"), s"Error message should contain index 99: $msg")
+                        assert(
+                            msg.toLowerCase.contains("out of bounds") || msg.toLowerCase.contains("out of range"),
+                            s"Error message should mention 'out of bounds' or 'out of range': $msg"
+                        )
+                    case Result.Failure(other) =>
+                        fail(s"Unexpected error type: $other")
+    }
+
+    // Test T2-2: ClassRef resolution via nameIdx returns the Utf8 string.
+    "ClassRef at slot 5 with nameIdx=6 resolves to the Utf8 string at slot 6" in run {
+        // Given: pool with 6 entries: slots 1..4 = Utf8 padding, slot 5 = ClassRef(nameIdx=6), slot 6 = Utf8("scala/Int").
+        // When: classRef(5) is called.
+        // Then: returns "scala/Int".
+        // Pins: T2 ClassRef resolution.
+        val padding = Array("x", "y", "z", "w")
+        val target  = "scala/Int"
+        val padBufs = padding.map(_.getBytes("UTF-8"))
+        val tgtBuf  = target.getBytes("UTF-8")
+        // Layout: u2 count=7, entries[1..4]=Utf8 padding, entry[5]=ClassRef(nameIdx=6), entry[6]=Utf8("scala/Int")
+        // entry[5]: u1 tag=7, u2 nameIdx=6  -> 3 bytes
+        // entry[6]: u1 tag=1, u2 len, u1* bytes -> 1+2+tgtBuf.length bytes
+        val totalSize = 2 + padBufs.foldLeft(0)((acc, b) => acc + 1 + 2 + b.length) + 3 + (1 + 2 + tgtBuf.length)
+        val buf       = new Array[Byte](totalSize)
+        buf(0) = 0
+        buf(1) = 7 // count=7 => slots 1..6
+        var pos = 2
+        padBufs.foreach: bs =>
+            buf(pos) = ClassfileFormat.CONSTANT_Utf8.toByte
+            buf(pos + 1) = ((bs.length >> 8) & 0xff).toByte
+            buf(pos + 2) = (bs.length & 0xff).toByte
+            var i = 0
+            while i < bs.length do
+                buf(pos + 3 + i) = bs(i)
+                i += 1
+            pos += 1 + 2 + bs.length
+        // entry[5]: ClassRef(nameIdx=6)
+        buf(pos) = ClassfileFormat.CONSTANT_Class.toByte
+        buf(pos + 1) = 0
+        buf(pos + 2) = 6
+        pos += 3
+        // entry[6]: Utf8("scala/Int")
+        buf(pos) = ClassfileFormat.CONSTANT_Utf8.toByte
+        buf(pos + 1) = ((tgtBuf.length >> 8) & 0xff).toByte
+        buf(pos + 2) = (tgtBuf.length & 0xff).toByte
+        var i = 0
+        while i < tgtBuf.length do
+            buf(pos + 3 + i) = tgtBuf(i)
+            i += 1
+        val view = ByteView(buf)
+        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+            case Result.Failure(err) => fail(s"Read failed: $err")
+            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Success(pool) =>
+                Abort.run(pool.classRef(5)).map:
+                    case Result.Success(name) =>
+                        assert(name == "scala/Int", s"Expected 'scala/Int' but got '$name'")
+                    case other =>
+                        fail(s"Expected classRef(5)='scala/Int', got $other")
+    }
+
     // Test B5-4: entry() rejects Long/Double Hole slot with structured error.
     "utf8 at a Long/Double Hole slot yields structured error" in run {
         // Given: pool with entry[1]=Long(42L); slot 2 is the Hole.
