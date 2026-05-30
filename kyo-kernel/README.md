@@ -27,16 +27,16 @@ Everything below is the kernel API that makes this pattern work.
 
 ## The pending type
 
-`A < S` is the substrate. The type parameter `A` is the value the computation will produce; `S` is an intersection of effects it may perform on the way. The same operations work whether `S` is empty (`Any`) or rich with many effects.
+The type parameter `A` is the value the computation will produce; `S` is an intersection of effects it may perform on the way. The same operations work whether `S` is empty (`Any`) or rich with many effects.
 
-### The pending type `<[+A, -S]`
+### Plain value or suspended computation
 
 When you write `Greeting < (Greet & Locale)`, the runtime value is either a plain `Greeting` (already done) or a suspended `Kyo` description of the work that remains. The branching is invisible at the API level: every operation on a pending value handles both cases.
 
 ```scala
 import kyo.*
 
-val plain: Int < Any = 42   // pure value, lifts automatically
+val plain: Int < Any = 42 // pure value, lifts automatically
 
 assert(plain.eval == 42)
 ```
@@ -63,7 +63,7 @@ assert(initials(Visitor("Ada", "en")).eval == "A")
 ```scala
 import kyo.*
 
-val first: Unit < Any  = println("greeting")
+val first: Unit < Any    = println("greeting")
 val logged: String < Any = first.andThen("done")
 
 assert(logged.eval == "done")
@@ -79,7 +79,7 @@ When inference produces `A < S1 < S2` (a pending of a pending), `flatten` collap
 import kyo.*
 
 val nested: (Int < Any) < Any = Kyo.lift[Int < Any, Any](Kyo.lift(42))
-val flat:   Int < Any         = nested.flatten
+val flat: Int < Any           = nested.flatten
 
 assert(flat.eval == 42)
 ```
@@ -314,12 +314,13 @@ def greet(v: Visitor): Greeting < Greet =
 
 def runGreet[A, S](v: A < (Greet & S)): A < S =
     ArrowEffect.handle(Tag[Greet], v):
-        [C] => (visitor, cont) =>
-            val out = visitor.language match
-                case "en" => Greeting.Hello
-                case "de" => Greeting.GoodMorning
-                case _    => Greeting.GoodEvening
-            cont(out)
+        [C] =>
+            (visitor, cont) =>
+                val out = visitor.language match
+                    case "en" => Greeting.Hello
+                    case "de" => Greeting.GoodMorning
+                    case _    => Greeting.GoodEvening
+                cont(out)
 
 assert(runGreet(greet(Visitor("Ada", "en"))).eval == Greeting.Hello)
 assert(runGreet(greet(Visitor("Lina", "de"))).eval == Greeting.GoodMorning)
@@ -374,8 +375,9 @@ val twice =
 
 // Stateful handler: thread a counter across calls.
 val ran = ArrowEffect.handleLoop(Tag[E], 0, twice)(
-    [C] => (input, state, cont) =>
-        Loop.continue(state + 1, cont((input + state).toString))
+    [C] =>
+        (input, state, cont) =>
+            Loop.continue(state + 1, cont((input + state).toString))
 )
 
 assert(ran.eval == ("42", "44"))
@@ -436,10 +438,10 @@ import kyo.*
 
 // Loop.forever has a return type of Nothing < S; use it for servers / workers.
 val worker: Nothing < Any = Loop.forever:
-    Kyo.unit   // do one unit of work
+    Kyo.unit // do one unit of work
 ```
 
-> **Caution:** `Loop.repeat(n)(run)` runs the body `n + 1` times, not `n` times. The implementation is `if i > n then () else loop(i + 1)(run)`. Reader expectation is "repeat n means n iterations." If you need exactly `n` iterations, use `Loop.indexed` and `Loop.done` at `i == n`, or pass `n - 1` to `Loop.repeat`.
+> **Caution:** `Loop.repeat(n)(run)` runs the body `n + 1` times, not `n` times. The body runs for `i` in `0..n` inclusive because the loop seeds at `loop(0)` and exits only when `i > n`; that is n+1 iterations. Reader expectation is "repeat n means n iterations." If you need exactly `n` iterations, use `Loop.indexed` and `Loop.done` at `i == n`, or pass `n - 1` to `Loop.repeat`.
 
 ### The iteration outcome: `continue`, `done`, `Outcome`
 
@@ -570,7 +572,7 @@ val (errors, names) =
         else Right(v.name)
     .eval
 assert(errors == List("too short: Bo"))
-assert(names  == List("Ada", "Lina"))
+assert(names == List("Ada", "Lina"))
 
 // scanLeft: history of accumulator values.
 val sizes: List[Int] < Any =
@@ -617,7 +619,7 @@ val maybeSkipped: Maybe[String] < Any =
 assert(maybeSkipped.eval == Absent)
 ```
 
-`Kyo.lift(v)` is an explicit zero-cost lift of a plain value, useful when inference in an if/else needs a nudge. `Kyo.unit` is `().pure[Any]` written succinctly.
+`Kyo.lift(v)` is an explicit, allocation-free lift of a plain value, useful when inference in an if/else needs a nudge. `Kyo.unit` is `().pure[Any]` written succinctly.
 
 ### Map-specific: `filterKeys`
 
@@ -656,7 +658,8 @@ import kyo.kernel.*
 
 sealed trait Locale extends ContextEffect[String]
 
-// Derive an Isolate for a ContextEffect: state is the context value, no transform needed.
+// Deriving for a lone ContextEffect yields the identity isolate: derivation skips
+// ContextEffects (their state rides along via Context copying at the boundary).
 val isolate: Isolate[Locale, Any, Any] = Isolate.derive[Locale, Any, Any]
 ```
 
@@ -670,21 +673,7 @@ Each phase has a specific job: `capture` obtains the state that will be managed,
 
 ### `use` and `andThen`: ergonomics and composition
 
-When a kyo-prelude operation like `Async.parallel` needs to find its isolation strategy implicitly, `isolate.use { ... }` makes the `Isolate` available as a `given` for the block:
-
-```scala
-// From scaladoc: composing explicit strategies for a parallel operation.
-// (Requires kyo-prelude for Var.isolate.update and Emit.isolate.merge.)
-//
-//   val isolate =
-//       Var.isolate.update[Int]
-//           .andThen(Emit.isolate.merge[String])
-//
-//   isolate.use:
-//       Async.parallel(parallelism)(tasks)
-```
-
-`andThen` composes two isolates: `Remove` effects union, `Keep` effects intersect, `Restore` effects union.
+When a kyo-prelude operation like `Async.parallel` needs to find its isolation strategy implicitly, `isolate.use { ... }` makes the `Isolate` available as a `given` for the block. `andThen` composes two isolates: `Remove` effects union, `Keep` effects intersect, `Restore` effects union.
 
 ### Summoning and deriving instances
 
@@ -713,8 +702,8 @@ enum Greeting:
 
 case class Visitor(name: String, language: String)
 
-sealed trait Greet   extends ArrowEffect[Const[Visitor], Const[Greeting]]
-sealed trait Locale  extends ContextEffect[String]
+sealed trait Greet  extends ArrowEffect[Const[Visitor], Const[Greeting]]
+sealed trait Locale extends ContextEffect[String]
 
 // Suspend: request a greeting for one visitor; both effects appear in the row.
 def greet(v: Visitor): Greeting < (Greet & Locale) =
@@ -727,13 +716,13 @@ def greetAll(vs: List[Visitor]): List[Greeting] < (Greet & Locale) =
 // Handle: interpret Greet by consulting Locale for each visitor.
 def runGreet[A, S](v: A < (Greet & S)): A < (Locale & S) =
     ArrowEffect.handle(Tag[Greet], v):
-        [C] => (visitor, cont) =>
-            ContextEffect.suspend(Tag[Locale], default = "en").map: lang =>
-                cont(lang match
-                    case "en" => Greeting.Hello
-                    case "de" => Greeting.GoodMorning
-                    case _    => Greeting.GoodEvening
-                )
+        [C] =>
+            (visitor, cont) =>
+                ContextEffect.suspend(Tag[Locale], default = "en").map: lang =>
+                    cont(lang match
+                        case "en" => Greeting.Hello
+                        case "de" => Greeting.GoodMorning
+                        case _    => Greeting.GoodEvening)
 
 // Compose: handle Greet, install a Locale, then run.
 val visitors = List(Visitor("Ada", "en"), Visitor("Lina", "de"))

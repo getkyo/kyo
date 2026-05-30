@@ -1309,6 +1309,20 @@ lazy val `root-readme` =
             doctestSources := Seq((ThisBuild / baseDirectory).value / "README.md")
         )
 
+// Validates kyo-doctest's own README. kyo-doctest disables KyoDoctestPlugin on itself (a module
+// cannot doctest the very library that implements doctest), so a separate project, like root-readme,
+// validates that README against the kyo-doctest classpath.
+lazy val `kyo-doctest-readme` =
+    project
+        .in(file("target/kyo-doctest-readme"))
+        .disablePlugins(MimaPlugin)
+        .dependsOn(`kyo-doctest`.jvm)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-doctest" / "README.md")
+        )
+
 lazy val `openssl-native-settings` = Seq(
     nativeConfig ~= { c =>
         val isMac = System.getProperty("os.name").toLowerCase.contains("mac")
@@ -1370,6 +1384,9 @@ lazy val `sbt-kyo-doctest` = (project in file("sbt-kyo-doctest"))
         scalaVersion       := "2.12.20",
         crossScalaVersions := Seq("2.12.20"),
         sbtPlugin          := true,
+        // scalafmt-dynamic powers the `doctestFormat` task (rewrite-in-place of README scala
+        // blocks using the repo's .scalafmt.conf). Pinned to the .scalafmt.conf version.
+        libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.9.6",
         scriptedLaunchOpts := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value

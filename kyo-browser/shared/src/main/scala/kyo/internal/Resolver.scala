@@ -138,7 +138,7 @@ private[kyo] object Resolver:
                                                     val indexed: Chunk[(Int, String)] = Chunk.from(props.result.flatMap { d =>
                                                         d.name.toIntOption match
                                                             case Some(i) =>
-                                                                d.value.flatMap(_.objectId) match
+                                                                (d.value.flatMap(_.objectId): @unchecked) match
                                                                     case Present(oid) => Seq((i, oid))
                                                                     case Absent       => Seq.empty
                                                             case None => Seq.empty

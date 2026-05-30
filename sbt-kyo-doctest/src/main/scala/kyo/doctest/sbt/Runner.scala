@@ -111,9 +111,10 @@ object Runner {
 
             report.foreach { r =>
                 log.info(
-                    s"doctest: total=${r.totalBlocks} compiled=${r.compiled} cacheHits=${r.cacheHits} failures=${r.failureCount}"
+                    s"doctest: total=${r.totalBlocks} compiled=${r.compiled} cacheHits=${r.cacheHits} warnings=${r.warnings} failures=${r.failureCount}"
                 )
-                val summary     = s"total=${r.totalBlocks} compiled=${r.compiled} cacheHits=${r.cacheHits} failures=${r.failureCount}"
+                val summary =
+                    s"total=${r.totalBlocks} compiled=${r.compiled} cacheHits=${r.cacheHits} warnings=${r.warnings} failures=${r.failureCount}"
                 val summaryFile = new File(effectiveCacheDir, "last-summary.txt")
                 NioFiles.writeString(summaryFile.toPath, summary, StandardCharsets.UTF_8)
             }
@@ -146,6 +147,7 @@ private[sbt] case class ParsedReport(
     totalBlocks: Int,
     cacheHits: Int,
     compiled: Int,
+    warnings: Int,
     failureCount: Int
 )
 
@@ -181,8 +183,9 @@ private[sbt] object ConfigJson {
             val total    = extractInt(json, "totalBlocks").getOrElse(0)
             val hits     = extractInt(json, "cacheHits").getOrElse(0)
             val compiled = extractInt(json, "compiled").getOrElse(0)
+            val warnings = extractInt(json, "warnings").getOrElse(0)
             val failures = extractArrayLength(json, "failures")
-            Some(ParsedReport(total, hits, compiled, failures))
+            Some(ParsedReport(total, hits, compiled, warnings, failures))
         } catch {
             case _: Exception => None
         }

@@ -229,6 +229,11 @@ object KyoDoctestPlugin extends AutoPlugin {
             val predef      = doctestPredef.value
             val freshDriver = doctestFreshDriver.value
             val forkOpts    = doctestForkJavaOptions.value
+            val scalafmtCfg = (LocalRootProject / baseDirectory).value / ".scalafmt.conf"
+            // Auto-format the markdown blocks in place before validating, so doc examples stay in the
+            // codebase's scalafmt style without a separate command. No-op when no .scalafmt.conf is
+            // present; blocks that fail to parse (or carry a bare `noformat` fence token) are left as-is.
+            Formatter.run(sources, scalafmtCfg, log)
             Runner.run(
                 sources = sources,
                 classpath = classpath,

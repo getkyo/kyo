@@ -18,7 +18,7 @@ private[kyo] object Orchestrator:
     sealed private[internal] trait BlockOutcome derives CanEqual
     private[internal] object BlockOutcome:
         case class Skipped(block: Block, fromCache: Boolean)                  extends BlockOutcome
-        case class Success(block: Block, fromCache: Boolean)                  extends BlockOutcome
+        case class Success(block: Block, fromCache: Boolean, warnings: Int)   extends BlockOutcome
         case class Failure(block: Block, message: String, fromCache: Boolean) extends BlockOutcome
     end BlockOutcome
 
@@ -118,9 +118,12 @@ private[kyo] object Orchestrator:
         scalacOpts: Chunk[String]
     )(using Frame): Chunk[BlockOutcome] < (Sync & Async) =
         // Use the first block in the unit as the representative for the cache key.
-        // For env-grouped units all blocks share one compile result.
+        // For env-grouped units all blocks share one compile result, so the cache key must reflect
+        // EVERY block in the unit, not just the first: appending the remaining blocks' bodies to the
+        // scope closure makes editing any block (not only blocks(0)) invalidate the entry. For
+        // isolated/inherited/nested units `drop(1)` is empty, so their keys are unchanged.
         val firstWrapped = unit.blocks(0)
-        val scopeClosure = firstWrapped.setupBlocks.map(_.body)
+        val scopeClosure = firstWrapped.setupBlocks.map(_.body) ++ unit.blocks.drop(1).map(_.block.body)
         cache.lookup(firstWrapped.block, scopeClosure, fingerprint, scalaVer, scalacOpts).flatMap {
             case Maybe.Present(entry) =>
                 // Cache hit: build outcomes from stored result, no compile needed.
@@ -155,7 +158,7 @@ private[kyo] object Orchestrator:
                 result match
                     case _: Driver.Outcome.Failed =>
                         // Expected failure; compile did fail: success.
-                        BlockOutcome.Success(block, fromCache)
+                        BlockOutcome.Success(block, fromCache, 0)
                     case Driver.Outcome.Ok(_) =>
                         // Expected compile failure but compiled clean: report failure.
                         val msg = "expected compile failure but compiled clean"
@@ -164,7 +167,8 @@ private[kyo] object Orchestrator:
             case Block.Expectation.Warns =>
                 result match
                     case Driver.Outcome.Ok(warnings) if warnings.nonEmpty =>
-                        BlockOutcome.Success(block, fromCache)
+                        // The warning is the expected outcome here, so it is not counted as a warning to fix.
+                        BlockOutcome.Success(block, fromCache, 0)
                     case Driver.Outcome.Ok(_) =>
                         val msg = "expected at least one compiler warning but none were emitted"
                         BlockOutcome.Failure(block, msg, fromCache)
@@ -174,8 +178,8 @@ private[kyo] object Orchestrator:
 
             case Block.Expectation.Compiles | Block.Expectation.Runs | Block.Expectation.Crashes =>
                 result match
-                    case Driver.Outcome.Ok(_) =>
-                        BlockOutcome.Success(block, fromCache)
+                    case Driver.Outcome.Ok(warnings) =>
+                        BlockOutcome.Success(block, fromCache, warnings.size)
                     case Driver.Outcome.Failed(errors, _) =>
                         // Translate diagnostic positions back to README lines.
                         val msgs = errors.map { d =>
@@ -195,20 +199,22 @@ private[kyo] object Orchestrator:
         totalBlocks: Int,
         cacheHits: Int,
         compiled: Int,
+        warnings: Int,
         failures: List[Doctest.Failure]
     )
 
     // Assembles the final Report from all per-block outcomes and link-validation failures.
     private def buildReport(outcomes: Chunk[BlockOutcome], linkFailures: Chunk[Doctest.Failure]): Doctest.Report =
-        val acc = outcomes.toSeq.foldLeft(ReportAcc(0, 0, 0, Nil)) { (a, outcome) =>
+        val acc = outcomes.toSeq.foldLeft(ReportAcc(0, 0, 0, 0, Nil)) { (a, outcome) =>
             outcome match
                 case BlockOutcome.Skipped(_, _) =>
                     // Skipped blocks are not counted as cache hits or compiled.
                     a.copy(totalBlocks = a.totalBlocks + 1)
 
-                case BlockOutcome.Success(_, fromCache) =>
-                    if fromCache then a.copy(totalBlocks = a.totalBlocks + 1, cacheHits = a.cacheHits + 1)
-                    else a.copy(totalBlocks = a.totalBlocks + 1, compiled = a.compiled + 1)
+                case BlockOutcome.Success(_, fromCache, warnings) =>
+                    if fromCache then
+                        a.copy(totalBlocks = a.totalBlocks + 1, cacheHits = a.cacheHits + 1, warnings = a.warnings + warnings)
+                    else a.copy(totalBlocks = a.totalBlocks + 1, compiled = a.compiled + 1, warnings = a.warnings + warnings)
 
                 case BlockOutcome.Failure(block, message, fromCache) =>
                     val failure = Doctest.Failure(block.file, block.lineStart, message)
@@ -218,7 +224,7 @@ private[kyo] object Orchestrator:
                         a.copy(totalBlocks = a.totalBlocks + 1, compiled = a.compiled + 1, failures = a.failures :+ failure)
                     end if
         }
-        Doctest.Report(acc.totalBlocks, acc.cacheHits, acc.compiled, Chunk.from(acc.failures) ++ linkFailures)
+        Doctest.Report(acc.totalBlocks, acc.cacheHits, acc.compiled, acc.warnings, Chunk.from(acc.failures) ++ linkFailures)
     end buildReport
 
 end Orchestrator

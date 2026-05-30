@@ -62,7 +62,7 @@ val c      = myPool { workThatExpectsMyPool() }
 
 > **Caution:** once the bridge is active, the `Executor` passed to `FuturePool(executor)` is ignored. Every `FuturePool` (including pools constructed with a custom executor) runs on Kyo's worker pool. If your code relies on a specific executor for thread affinity, isolation, or per-pool sizing, that contract no longer holds with the flag set.
 
-### `fork` and `tryFork` move to Kyo
+### `fork`/`tryFork`: a Kyo `Task` bridged to a Twitter `Future`
 
 Code that uses the active scheduler's `fork` directly (typically through Finagle's `ForkingScheduler` API) submits work to Kyo and gets full `Local`-context propagation and interrupt forwarding:
 
@@ -78,6 +78,8 @@ val f: Future[Int] = sched.fork { Future.value(computeOnKyo()) }
 At fork time the bridge calls `Local.save()` and snapshots the caller's Twitter `Local` context. When the task runs on a Kyo worker, the bridge restores the captured `Local`s before calling the body and reinstates the worker's prior `Local` state in a `finally` block. Existing code that reads `Local` values inside `fork` keeps the semantics it had on Finagle's default scheduler.
 
 The forked task also installs an interrupt handler so `Future.raise` on the returned promise propagates into the running computation. Without this, Finagle interrupts on forked work would be silently dropped.
+
+> **Note:** The forked unit is a single object that is both the returned `Future` (a Twitter `Promise`) and Kyo's schedulable `Task`. Because they are the same object, `Future.raise` on the result wires straight through `setInterruptHandler` into the in-flight computation, and `become` connects the promise to the body's eventual `Future`.
 
 `tryFork` is the admission-control variant. It checks Kyo's scheduler for overload before scheduling; when overloaded it returns `Future.None` instead of submitting the task:
 

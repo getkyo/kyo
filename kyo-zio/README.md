@@ -3,7 +3,10 @@
 <!-- doctest:setup
 ```scala
 import kyo.*
-import zio.{ZIO, Cause, Exit, ZLayer}
+import zio.Cause
+import zio.Exit
+import zio.ZIO
+import zio.ZLayer
 import zio.stream.ZStream
 
 case class UserId(value: Long)
@@ -89,11 +92,11 @@ Discharge other Kyo effects (`Sync`, `Env`, `Memo`, `Scope`, ...) before calling
 // Will not compile: "ZIO environments are not supported yet."
 // val bad: Int < (Env[Int] & Async) = ZIOs.get(ZIO.service[Int])
 
-val provided: ZIO[Any, Nothing, Int] = ZIO.service[Int].provide(ZLayer.succeed(42))
+val provided: ZIO[Any, Nothing, Int]     = ZIO.service[Int].provide(ZLayer.succeed(42))
 val good: Int < (Abort[Nothing] & Async) = ZIOs.get(provided)
 ```
 
-> **Note:** The rejection is a hard `compiletime.error`, not a runtime check or a TODO. The scaladoc for the overload still calls it a "placeholder," but the compile-time message is what you actually see.
+> **Note:** To move a ZIO that genuinely needs an environment across the boundary, route it through `ZLayers.get` instead of eliminating `R` by hand. Layer interop is the supported path for ZIO environments.
 
 ### Failure ordering at the boundary
 
@@ -116,7 +119,7 @@ val result: Result[RuntimeException, Any] < Async = Abort.run(kyoFirst)
 
 `ZIOs.run` uses `Fiber.initUnscoped` internally, so the lifted Kyo computation is not cancelled by an enclosing `Scope.run` on the ZIO side. It is cancelled only by ZIO-side interruption flowing through `ZIO.asyncInterrupt`. Cancellation in the other direction (Kyo cancelling a `ZIOs.get`) calls `f.unsafe.interrupt` on the ZIO fiber.
 
-## Streams
+## Streaming interop (ZStream)
 
 `ZStreams.get` and `ZStreams.run` apply the same `get`/`run` shape to `zio.stream.ZStream` and `kyo.Stream`. Use them when the carrier is a stream of chunks instead of a single value.
 
@@ -168,12 +171,12 @@ val collected: ZIO[Any, Nothing, zio.Chunk[Int]] = asZioStream.runCollect
 `get` and `run` compose cleanly. A round trip leaves elements intact:
 
 ```scala
-val original: ZStream[Any, Nothing, Int]      = ZStream.fromIterable(List(1, 2, 3, 4, 5))
+val original: ZStream[Any, Nothing, Int]        = ZStream.fromIterable(List(1, 2, 3, 4, 5))
 val viaKyo: Stream[Int, Abort[Nothing] & Async] = ZStreams.get(original)
-val backToZio: ZStream[Any, Nothing, Int]     = ZStreams.run(viaKyo)
+val backToZio: ZStream[Any, Nothing, Int]       = ZStreams.run(viaKyo)
 ```
 
-## Layers
+## Dependency layers (ZLayer)
 
 `ZLayers.get` and `ZLayers.run` apply the same shape to dependency provision. A `ZLayer` becomes a `kyo.Layer`; a Kyo layer becomes a `ZLayer`.
 
@@ -233,8 +236,8 @@ Four extension methods make the boundary's translation table explicit. They are 
 ```scala
 import kyo.ZIOs.*
 
-val r1: Result[String, Int] = Exit.succeed(42).toResult        // Result.Success(42)
-val r2: Result[String, Int] = Exit.fail("boom").toResult       // Result.Failure("boom")
+val r1: Result[String, Int] = Exit.succeed(42).toResult  // Result.Success(42)
+val r2: Result[String, Int] = Exit.fail("boom").toResult // Result.Failure("boom")
 
 val e1: Exit[String, Int] = Result.succeed(42).toExit          // Exit.Success(42)
 val e2: Exit[String, Int] = Result.fail("boom").toExit         // Exit.Failure(...)
@@ -258,7 +261,7 @@ val e3: Exit[String, Int] = Result.Panic(new Exception).toExit // Exit.Die(...)
 ```scala
 import kyo.ZIOs.*
 
-val both: Cause[String] = Cause.Both(Cause.fail("left"), Cause.fail("right"))
+val both: Cause[String]             = Cause.Both(Cause.fail("left"), Cause.fail("right"))
 val collapsed: Result.Error[String] = both.toError
 // collapsed is Result.Failure("left"); the right branch is dropped.
 ```
@@ -270,7 +273,7 @@ The reverse direction is total:
 ```scala
 import kyo.ZIOs.*
 
-val asCause1: Cause[String] = Result.Failure("boom").toCause  // Cause.fail("boom")
+val asCause1: Cause[String] = Result.Failure("boom").toCause           // Cause.fail("boom")
 val asCause2: Cause[String] = Result.Panic(new Exception("x")).toCause // Cause.die(...)
 ```
 

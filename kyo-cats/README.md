@@ -2,7 +2,7 @@
 
 Kyo's interop module for Cats Effect. Two directions, two methods: `Cats.get` lifts a `cats.effect.IO[A]` into a Kyo computation so it can be sequenced and composed alongside `Abort` and `Async`, and `Cats.run` interprets a Kyo computation back into a `cats.effect.IO[A]` so a Cats-Effect-based program can drive it. Cancellation propagates both ways: interrupting the Kyo side cancels the underlying Cats `IO`, and cancelling the Cats fiber interrupts the Kyo fiber.
 
-The interop uses Cats Effect's `IORuntime.global` to schedule lifted `IO` actions, and Kyo's own scheduler for the Kyo side, so the two runtimes coexist rather than one wrapping the other. `Cats.run` only accepts computations whose pending row is `Abort[Throwable] & Async`; any other effects must be handled first. The module is published for JVM and Scala.js.
+The interop uses Cats Effect's `IORuntime.global` to schedule lifted `IO` actions, and Kyo's own scheduler for the Kyo side, so the two runtimes coexist rather than one wrapping the other. `Cats.run` only accepts computations whose pending row is `Abort[Throwable] & Async`. Any other effects must be handled first. The module is published for JVM and Scala.js.
 
 A quick taste: lift a Cats `IO` value and sequence it with Kyo:
 
@@ -14,8 +14,8 @@ val fetchName: CatsIO[String] = CatsIO.pure("Alice")
 // Lift into Kyo; compose with native Kyo work in one for-comprehension.
 val greeting: String < (Abort[Nothing] & Async) =
     for
-        name   <- Cats.get(fetchName)
-        upper  <- Sync.defer(name.toUpperCase)
+        name  <- Cats.get(fetchName)
+        upper <- Sync.defer(name.toUpperCase)
     yield s"Hello, $upper"
 ```
 
@@ -132,6 +132,7 @@ val kyoFirst: Result[Throwable, Unit] < Async =
     val a = Abort.fail(kyoFailure)
     val b = Cats.get(CatsIO.raiseError(catsFailure))
     Abort.run[Throwable](a.map(_ => b))
+end kyoFirst
 // kyoFirst yields Result.Failure(kyoFailure)
 
 // Cats failure first: it surfaces as Panic and the Kyo Abort.fail never runs.
@@ -139,6 +140,7 @@ val catsFirst: Result[Throwable, Unit] < Async =
     val a = Cats.get(CatsIO.raiseError(catsFailure))
     val b = Abort.fail(kyoFailure)
     Abort.run[Throwable](a.map(_ => b))
+end catsFirst
 // catsFirst yields Result.Panic(catsFailure)
 ```
 

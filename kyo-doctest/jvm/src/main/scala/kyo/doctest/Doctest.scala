@@ -52,6 +52,10 @@ object Doctest:
       *   Number of blocks whose result was served from cache (not recompiled).
       * @param compiled
       *   Number of blocks that were actually sent to the compiler.
+      * @param warnings
+      *   Number of blocks that compiled but emitted at least one compiler warning. Blocks marked `doctest:expect=warns`
+      *   are not counted (their warning is the expected outcome). A non-zero count means some README examples teach a
+      *   warning-producing pattern and should be fixed.
       * @param failures
       *   Per-block failure details. Empty on full success.
       */
@@ -59,6 +63,7 @@ object Doctest:
         totalBlocks: Int,
         cacheHits: Int,
         compiled: Int,
+        warnings: Int,
         failures: Chunk[Failure]
     ) derives CanEqual
 

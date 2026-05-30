@@ -2,18 +2,15 @@
 
 `kyo-scheduler` is a standalone work-stealing task scheduler for the JVM with adaptive concurrency control. You plug it in wherever you would use a `java.util.concurrent.ExecutorService` or `scala.concurrent.ExecutionContext`, and it handles the things a normal pool will not: it watches its own queuing delays and rejects new work when the system is overloaded, it samples per-thread CPU time to detect threads stuck in blocking syscalls and grows the pool to compensate, and it shrinks the pool back down when scheduling delays recover. Tasks run for a bounded time slice before being re-queued so no single task starves the others. The scheduler can be used on its own (the rest of Kyo is not required) and a single JVM-wide instance is available as `Scheduler.get`.
 
-Internally each worker owns a priority queue and steals from busier peers when idle. A dedicated background thread samples user-mode CPU time across all workers to decide which ones are blocked, an "admission" regulator probes the queue with timing tasks and lowers the accept rate when queuing delay rises, and a "concurrency" regulator probes OS scheduling jitter (similar to jHiccup) and resizes the worker pool accordingly. JS and Native ship a reduced surface that shares the same `Task` and `Scheduler.schedule` API but defers to the platform's event loop.
 
-The module is cross-built for Scala 2.13 and 3 on the JVM, Scala.js, and Scala Native. The JVM and Native builds expose the full work-stealing, admission, concurrency-regulation, and monitoring surface; the JS build exposes a reduced API backed by `MacrotaskExecutor`.
 
 ```scala
-import kyo.scheduler.{Scheduler, Task}
+import kyo.scheduler.Scheduler
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
-val s = Scheduler.get
-
-s.schedule(Task {
-    println(s"Hello from worker thread: ${Thread.currentThread.getName}")
-})
+implicit val ec: ExecutionContext = Scheduler.get.asExecutionContext
+val f: Future[Int]                = Future(42)
 ```
 
 ## Getting started
@@ -23,11 +20,11 @@ The shortest useful program is "submit a `Task` to the shared scheduler". Everyt
 ```scala
 case class Request(userId: String, payload: Array[Byte])
 
-def handle(req: Request): Unit = {
+def handle(req: Request): Unit =
     // CPU work plus a bit of I/O
     val sum = req.payload.foldLeft(0)(_ + _)
     println(s"user=${req.userId} sum=$sum")
-}
+end handle
 ```
 
 ### Submitting a task
@@ -35,14 +32,14 @@ def handle(req: Request): Unit = {
 The shared scheduler is `Scheduler.get`. Wrap any block of code in `Task(...)` and hand it to `schedule`:
 
 ```scala
-import kyo.scheduler.{Scheduler, Task}
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 
 case class Request(userId: String, payload: Array[Byte])
 
-def handle(req: Request): Unit = {
+def handle(req: Request): Unit =
     val sum = req.payload.foldLeft(0)(_ + _)
     println(s"user=${req.userId} sum=$sum")
-}
 
 val req = Request("u-42", Array[Byte](1, 2, 3, 4))
 Scheduler.get.schedule(Task(handle(req)))
@@ -53,8 +50,9 @@ Scheduler.get.schedule(Task(handle(req)))
 ```scala
 import kyo.scheduler.Task
 
-val fromBlock: Task    = Task(println("a"))
-val fromRunnable: Task = Task(new Runnable { def run() = println("b") })
+val fromBlock: Task = Task(println("a"))
+val fromRunnable: Task = Task(new Runnable:
+    def run() = println("b"))
 val highPriority: Task = Task(println("c"), runtime = 0)
 ```
 
@@ -66,14 +64,15 @@ Many libraries want a `java.util.concurrent.Executor`, a `java.util.concurrent.E
 
 ```scala
 import kyo.scheduler.Scheduler
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 case class Request(userId: String, payload: Array[Byte])
 
 val s = Scheduler.get
 
-val exec   = s.asExecutor            // java.util.concurrent.Executor
-val execSv = s.asExecutorService     // java.util.concurrent.ExecutorService
+val exec                          = s.asExecutor        // java.util.concurrent.Executor
+val execSv                        = s.asExecutorService // java.util.concurrent.ExecutorService
 implicit val ec: ExecutionContext = s.asExecutionContext
 
 val req = Request("u-7", Array.emptyByteArray)
@@ -97,25 +96,27 @@ The default `Task(=> Unit)` builder runs the body to completion and reports `Tas
 The worker calls `run` with three arguments: the millisecond time it started this slice, an `InternalClock` for low-overhead time reads, and a deadline (also in millis) past which the worker would like the task to yield. A typical iterative task checks the deadline (or calls `shouldPreempt()`) on every iteration:
 
 ```scala
-import kyo.scheduler.{Scheduler, Task, InternalClock}
+import kyo.scheduler.InternalClock
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 
 case class Request(userId: String, payload: Array[Byte])
 
-class HashRequest(req: Request) extends Task {
-    private var i: Int  = 0
+class HashRequest(req: Request) extends Task:
+    private var i: Int   = 0
     private var sum: Int = 0
-    private val n: Int  = req.payload.length
+    private val n: Int   = req.payload.length
 
-    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = {
-        while (i < n) {
+    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
+        while i < n do
             sum = sum * 31 + req.payload(i)
             i += 1
-            if (clock.currentMillis() >= deadline) return Task.Preempted
-        }
+            if clock.currentMillis() >= deadline then return Task.Preempted
+        end while
         println(s"user=${req.userId} hash=$sum")
         Task.Done
-    }
-}
+    end run
+end HashRequest
 
 Scheduler.get.schedule(new HashRequest(Request("u-1", Array.fill(1024)(1.toByte))))
 ```
@@ -131,18 +132,18 @@ A custom `Task` has three hooks the worker uses for preemption:
 - `addRuntime(v: Int): Unit` adds to the task's accumulated runtime, shifting its priority lower. The worker updates this between time slices.
 
 ```scala
-import kyo.scheduler.{Task, InternalClock}
+import kyo.scheduler.InternalClock
+import kyo.scheduler.Task
 
-class CountUp(target: Int) extends Task {
+class CountUp(target: Int) extends Task:
     private var n = 0
-    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = {
-        while (n < target) {
+    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
+        while n < target do
             n += 1
-            if (shouldPreempt()) return Task.Preempted
-        }
+            if shouldPreempt() then return Task.Preempted
         Task.Done
-    }
-}
+    end run
+end CountUp
 ```
 
 ### Opting in to interruption
@@ -150,15 +151,15 @@ class CountUp(target: Int) extends Task {
 When a task wraps code you wrote and you know it is safe to break out of with `Thread.interrupt()`, you can let the blocking monitor (see [Adaptive concurrency and blocking compensation](#adaptive-concurrency-and-blocking-compensation)) deliver an interrupt to a worker stuck in a blocking syscall. Plain tasks default to `false` because arbitrary user code is not safe to interrupt mid-flight, so opting in is explicit per task by overriding `needsInterrupt()`:
 
 ```scala
-import kyo.scheduler.{Task, InternalClock}
+import kyo.scheduler.InternalClock
+import kyo.scheduler.Task
 
-class Interruptible(body: => Unit) extends Task {
+class Interruptible(body: => Unit) extends Task:
     override def needsInterrupt(): Boolean = true
-    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = {
+    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         body
         Task.Done
-    }
-}
+end Interruptible
 ```
 
 The Kyo runtime overrides this on its own `IOTask` to wire interruption to fiber cancellation, so generic user-supplied tasks must opt in explicitly.
@@ -178,15 +179,16 @@ There are three rejection variants. They differ only in how they pick the sampli
 Use `reject()` for one-off tasks where consistent decisions across calls do not matter, and where you want a fresh decision on every retry:
 
 ```scala
-import kyo.scheduler.{Scheduler, Task}
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 
 def handleAnonymous(): Unit = println("served")
 
-if (Scheduler.get.reject()) {
+if Scheduler.get.reject() then
     println("503 overloaded")
-} else {
+else
     Scheduler.get.schedule(Task(handleAnonymous()))
-}
+end if
 ```
 
 ### Keyed rejection (sticky within a rotation window)
@@ -194,7 +196,8 @@ if (Scheduler.get.reject()) {
 For requests that have an identifier, `reject(key)` returns the same answer for the same key throughout a rotation window (default 60 minutes), then a new window starts and the same key may flip to admitted. This is what you want for per-user fairness: under pressure the system stably sheds the same subset of users instead of randomly punishing everyone, and the window rotation prevents any individual user from being locked out indefinitely.
 
 ```scala
-import kyo.scheduler.{Scheduler, Task}
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 
 case class Request(userId: String, payload: Array[Byte])
 
@@ -203,11 +206,11 @@ def handle(req: Request): Unit     = println(s"handled user=${req.userId}")
 
 val req = Request("u-42", Array.emptyByteArray)
 
-if (Scheduler.get.reject(req.userId)) {
+if Scheduler.get.reject(req.userId) then
     respond503(req)
-} else {
+else
     Scheduler.get.schedule(Task(handle(req)))
-}
+end if
 ```
 
 > **Caution:** `reject(key)` is sticky within the rotation window. A naive retry loop with the same key will not get a different answer until the window rolls. If your retry budget is shorter than the window (it usually is), the retry will keep getting rejected. Use `reject()` (random) if you want a fresh decision per call, or accept the rejection and let the caller back off.
@@ -223,8 +226,9 @@ Both forms read the same admission percentage. Use `reject()` for traffic withou
 For diagnostics or custom load-shedding logic, the `Admission` regulator exposes the live percentage:
 
 ```scala
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 import kyo.scheduler.regulator.Admission
-import kyo.scheduler.{Scheduler, Task}
 
 // Construct your own admission instance for diagnostics, or read it via Status (see Monitoring).
 val pct: Int = Admission.defaultConfig.collectWindow // configuration, not the live percent
@@ -262,6 +266,8 @@ Scheduler.get.notifyInterrupt()
 
 `Scheduler.Config` is a flat `case class` with eleven fields. The standard way to get a configured `Config` is `Scheduler.Config.default`, which reads each field from a `-Dkyo.scheduler.*` system property (with a built-in default) at first access.
 
+> **Caution:** Every `kyo.scheduler.*` property is read exactly once into a `val` when the scheduler class loads. Setting the property afterward (including `System.setProperty` mid-run) has no effect until the process restarts, and a malformed value throws at class-load time, crashing the process before it serves any traffic.
+
 ### Scheduler-wide config
 
 ```scala
@@ -295,7 +301,9 @@ The fields are:
 The two regulators have their own `regulator.Config` for tuning: `collectWindow`, `collectInterval`, `regulateInterval`, `jitterUpperThreshold`, `jitterLowerThreshold`, `loadAvgTarget`, and `stepExp`. Defaults are `Admission.defaultConfig` and `Concurrency.defaultConfig`, again populated from `-Dkyo.scheduler.admission*` and `-Dkyo.scheduler.concurrency*` system properties.
 
 ```scala
-import kyo.scheduler.regulator.{Admission, Concurrency, Config}
+import kyo.scheduler.regulator.Admission
+import kyo.scheduler.regulator.Concurrency
+import kyo.scheduler.regulator.Config
 
 val admissionCfg: Config   = Admission.defaultConfig
 val concurrencyCfg: Config = Concurrency.defaultConfig
@@ -327,7 +335,8 @@ Re-read the warning at the top of [Getting started](#getting-started) before doi
 When you want blocking calls inside tasks to scale further than the worker count would normally allow, set `virtualizeWorkers = true` (or `-Dkyo.scheduler.virtualizeWorkers=true`) so that the worker pool is wired as a virtual-thread scheduler. Worker threads become carrier threads for virtual threads, so that a blocking call inside a task unmounts the virtual thread instead of pinning the carrier. This is implemented in `util.LoomSupport.tryVirtualize`, which is also callable directly if you want the same effect on a custom executor:
 
 ```scala
-import java.util.concurrent.{Executor, Executors}
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 
@@ -345,8 +354,8 @@ When you need to see what the scheduler is doing under load (which workers are b
 ```scala
 import kyo.scheduler.Scheduler
 
-val s    = Scheduler.get
-val now  = s.status()
+val s   = Scheduler.get
+val now = s.status()
 println(s"workers ${now.currentWorkers}, load ${now.loadAvg}")
 println(s"admission ${now.admission.admissionPercent}%")
 Thread.sleep(1000)
@@ -372,7 +381,8 @@ println(Printer(s.status()))
 Set `enableTopJMX = true` in `Scheduler.Config` (or `-Dkyo.scheduler.enableTopJMX=true`) and the scheduler registers the `kyo.scheduler:type=Top` MBean (`top.TopMBean`) backed by `top.Reporter`. `top.Client` connects to a running JVM over RMI/JMX and streams `Status` deltas:
 
 ```scala
-import kyo.scheduler.top.{Client, Printer}
+import kyo.scheduler.top.Client
+import kyo.scheduler.top.Printer
 import scala.concurrent.duration.*
 
 Client.run(host = "localhost", port = 1099, interval = 1.second) { delta =>
@@ -395,7 +405,8 @@ Two questions the scheduler answers at runtime: "can I drain pending work right 
 When you are inside a task and about to do something expensive (or block on external I/O) and want the rest of your worker's queue to get a chance to run first, call `flush()`. It drains and re-submits all pending tasks on the **current worker's** queue. It does nothing from a non-worker thread because it has no global queue to drain; the alternative would be to walk every worker's deque from the outside, which would invalidate the work-stealing guarantees the scheduler relies on.
 
 ```scala
-import kyo.scheduler.{Scheduler, Task}
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 
 Scheduler.get.schedule(Task {
     // Inside a worker. Drain the current worker's queue before doing something expensive.
@@ -432,9 +443,8 @@ import kyo.scheduler.util.Singleton
 
 class MyService
 
-object MyService extends Singleton[MyService] {
+object MyService extends Singleton[MyService]:
     override protected def init() = new MyService
-}
 
 val one = MyService.get
 val two = MyService.get
@@ -452,21 +462,23 @@ assert(one eq two)
 The JS build replaces the work-stealing pool with `MacrotaskExecutor`. `schedule(Task)` enqueues the task as a macrotask and re-enqueues it while `run` returns `Task.Preempted`. There is one thread, so there is no work stealing, no admission regulator, and no concurrency regulator. The API shape is preserved so cross-platform code compiles:
 
 ```scala
-import kyo.scheduler.{Scheduler, Task}
-import scala.concurrent.{ExecutionContext, Future}
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 val s = Scheduler.get
 
 s.schedule(Task(println("ran")))
 
 implicit val ec: ExecutionContext = s.asExecutionContext
-val f = Future(42)
+val f                             = Future(42)
 
 // These are always false / no-op on JS
-val maybe: Boolean = s.reject()                // false
-val ignored       = s.reject("user-1")          // false
-s.flush()                                       // no-op
-s.notifyInterrupt()                             // no-op
+val maybe: Boolean = s.reject()         // false
+val ignored        = s.reject("user-1") // false
+s.flush() // no-op
+s.notifyInterrupt() // no-op
 ```
 
 > **Caution:** `reject()`, `reject(String)`, and `reject(Int)` always return `false` on Scala.js. Cross-platform code that relies on admission decisions needs an explicit JS fallback (e.g. an in-process rate limiter).
@@ -477,15 +489,15 @@ Native compiles the JVM source directly via the `jvm-native/` source tree, so th
 
 ## Extending the scheduler
 
-`regulator.Regulator` is the abstract base class for the built-in `Admission` and `Concurrency` regulators. It implements the closed-loop control logic (moving-jitter window, step escalation, periodic probe scheduling) and exposes `probe()` and `update(diff: Int)` as the two hooks subclasses fill in. It is not currently a public extension point: the `InternalTimer` it requires is `private[kyo]`, so subclassing from outside the `kyo.scheduler` package is not supported.
+`regulator.Regulator` is a public abstract base class for the built-in `Admission` and `Concurrency` regulators. It implements the closed-loop control logic (moving-jitter window, step escalation, periodic probe scheduling) and exposes two hooks a subclass fills in: `probe()` to collect a performance measurement and `update(diff: Int)` to apply a regulation adjustment. One packaging constraint applies: `Regulator` requires an `InternalTimer` to schedule its probes, and `InternalTimer` is `private[kyo]`, so a custom subclass must live in the `kyo.scheduler` package (or be driven by a timer you supply via a separate mechanism).
 
 ### Thread factories
 
 When you build your own executor and want its threads to behave like the scheduler's own (daemon, prefixed so they show up grouped in a stack trace, numbered sequentially), use `util.Threads.apply(name)`. It returns a `ThreadFactory` that creates daemon threads named `name-1`, `name-2`, and so on. A second overload accepts a custom `Runnable => Thread` constructor for cases where you need a non-standard `Thread` subclass:
 
 ```scala
-import kyo.scheduler.util.Threads
 import java.util.concurrent.Executors
+import kyo.scheduler.util.Threads
 
 val tf   = Threads("my-pool")
 val exec = Executors.newCachedThreadPool(tf)
@@ -508,7 +520,9 @@ Run `kyo.scheduler.util.SelfCheck` as a main class to use the defaults end to en
 A small RPC-style request handler that uses every major surface introduced above. It pulls the shared scheduler, applies per-user keyed rejection, runs the work as a cooperatively-preempting `Task`, exposes the scheduler over JMX, prints a delta-formatted status snapshot every second, and shuts down cleanly on exit.
 
 ```scala
-import kyo.scheduler.{Scheduler, Task, InternalClock}
+import kyo.scheduler.InternalClock
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 import kyo.scheduler.top.Printer
 import scala.concurrent.duration.*
 
@@ -517,55 +531,57 @@ case class Request(userId: String, payload: Array[Byte])
 // 1. Build a scheduler with JMX and console reporting enabled.
 val cfg = Scheduler.Config.default.copy(
     enableTopJMX = true,
-    enableTopConsoleMs = 0          // we will print ourselves
+    enableTopConsoleMs = 0 // we will print ourselves
 )
 val s = new Scheduler(config = cfg)
 
 // 2. Cooperatively-preempting hash task.
-class HashRequest(req: Request) extends Task {
+class HashRequest(req: Request) extends Task:
     override def needsInterrupt(): Boolean = true
-    private var i = 0
-    private var h = 0
-    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = {
+    private var i                          = 0
+    private var h                          = 0
+    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         val n = req.payload.length
-        while (i < n) {
+        while i < n do
             h = h * 31 + req.payload(i)
             i += 1
-            if (shouldPreempt()) return Task.Preempted
-        }
+            if shouldPreempt() then return Task.Preempted
+        end while
         println(s"hash(user=${req.userId}) = $h")
         Task.Done
-    }
-}
+    end run
+end HashRequest
 
 // 3. API boundary: per-user keyed rejection, then submit.
 def submit(req: Request): Boolean =
-    if (s.reject(req.userId)) {
+    if s.reject(req.userId) then
         println(s"503 for user=${req.userId}")
         false
-    } else {
+    else
         s.schedule(new HashRequest(req))
         true
-    }
 
 // 4. Periodic monitoring printout.
-val monitor = new Thread(() => {
-    var last = s.status()
-    while (!Thread.currentThread().isInterrupted) {
-        Thread.sleep(1000)
-        val now = s.status()
-        println(Printer(now - last))
-        last = now
-    }
-}, "monitor")
+val monitor = new Thread(
+    () =>
+        var last = s.status()
+        while !Thread.currentThread().isInterrupted do
+            Thread.sleep(1000)
+            val now = s.status()
+            println(Printer(now - last))
+            last =
+                now
+        end while
+    ,
+    "monitor"
+)
 monitor.setDaemon(true)
 monitor.start()
 
 // 5. Drive some traffic.
-for (id <- 1 to 5_000) {
+for id <- 1 to 5_000 do
     val req = Request(userId = s"u-${id % 50}", payload = Array.fill(2048)(id.toByte))
     val _   = submit(req)
-}
 
 // 6. Graceful shutdown.
 sys.addShutdownHook {

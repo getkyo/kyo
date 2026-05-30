@@ -17,19 +17,23 @@ That snippet is the entire usable surface of this module. The rest of this docum
 
 When Pekko boots the actor system it reads the `executor` value, reflectively instantiates `kyo.scheduler.KyoExecutorServiceConfigurator`, and asks it for an `ExecutorService`. The configurator returns `Scheduler.get.asExecutorService`, so every actor mailbox dispatched by the default dispatcher runs on Kyo's scheduler threads from that point on.
 
+> **Caution:** Because the class is named as a string and loaded reflectively, a typo in the `executor` value or a missing dependency is not caught at compile time. It surfaces as a failure when the `ActorSystem` starts.
+
 The only observable effect at runtime is the thread the actor's `receive` block runs on. A trivial echo actor that reports `Thread.currentThread().getName` makes the wiring visible.
 
 ```scala
 import com.typesafe.config.ConfigFactory
-import org.apache.pekko.actor.{Actor, ActorSystem, Props}
+import org.apache.pekko.actor.Actor
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.actor.Props
 import org.apache.pekko.pattern.ask
 import org.apache.pekko.util.Timeout
 import scala.concurrent.Await
 import scala.concurrent.duration.*
 
 val system = ActorSystem(
-  "KyoApp",
-  ConfigFactory.parseString("""
+    "KyoApp",
+    ConfigFactory.parseString("""
     pekko.actor.default-dispatcher {
       type     = "Dispatcher"
       executor = "kyo.scheduler.KyoExecutorServiceConfigurator"
@@ -37,18 +41,19 @@ val system = ActorSystem(
   """)
 )
 
-val echo = system.actorOf(Props(new Actor {
-  def receive = { case _ => sender() ! Thread.currentThread().getName }
-}))
+val echo = system.actorOf(Props(new Actor:
+    def receive = { case _ => sender() ! Thread.currentThread().getName }))
 
 implicit val timeout: Timeout = Timeout(5.seconds)
-val threadName = Await.result((echo ? "ping").mapTo[String], 5.seconds)
+val threadName                = Await.result((echo ? "ping").mapTo[String], 5.seconds)
 assert(threadName.contains("kyo"))
 ```
 
 The thread-name assertion is the same check the module's own test uses to verify the integration is live.
 
 > **Note:** `KyoExecutorServiceConfigurator` calls `Scheduler.get`, the JVM-wide scheduler singleton, so all actor systems in the process share one scheduler instance and one thread pool with any other Kyo code running in the same JVM.
+
+> **Note:** Because the scheduler is a JVM-wide singleton, its `ExecutorService` adapter makes `shutdown`/`shutdownNow` no-ops. `isShutdown`/`isTerminated`/`awaitTermination` always report not-terminated. Shutting down the `ActorSystem` does not shut down Kyo's scheduler; the scheduler is designed to outlive any single actor system in the process.
 
 > **Unlike** Pekko's built-in dispatcher types, this configurator ignores the `ThreadFactory` Pekko passes to `createExecutorServiceFactory`. Threads are owned by Kyo's scheduler and named accordingly, so per-dispatcher thread-name settings in `application.conf` have no effect.
 
@@ -71,19 +76,21 @@ import kyo.scheduler.Scheduler
 import org.apache.pekko.actor.ActorRef
 
 def submit(work: ActorRef, payload: String): Boolean =
-  if Scheduler.get.reject() then
-    false
-  else
-    work ! payload
-    true
+    if Scheduler.get.reject() then
+        false
+    else
+        work ! payload
+        true
 ```
 
 The keyed form `Scheduler.get.reject(key)` lets the admission regulator shed traffic per-tenant or per-route when one key's traffic dominates. Pass a stable identifier (user id, route name) so the regulator can correlate decisions over time.
 
 > **Caution:** `reject()` is advisory: it tells you the scheduler is loaded, it does not stop you from sending the message. If you ignore the return value, the message is enqueued and the load-shedding intent is lost.
 
+Application code can also run its own `Future`s on the same Kyo pool via `Scheduler.get.asExecutionContext`, so actors and application futures share one adaptive pool and admission control covers both.
+
 For the full behavior model (how `reject` decides, how the admission regulator adapts over time), see the `kyo.scheduler.regulator.Admission` documentation in the `kyo-scheduler` module.
 
-## Versions
+## Pekko version
 
-The module pins `org.apache.pekko` `pekko-actor` to `1.4.0`. Downstream applications that depend on a different Pekko major version must align their Pekko dependency before adding this module, or Pekko's reflective load of `KyoExecutorServiceConfigurator` will fail at actor-system startup with a binary-incompatibility error.
+The module pins `org.apache.pekko` `pekko-actor` to `1.4.0`. Downstream applications on a different Pekko major version must align their dependency before adding this module. Because the configurator is loaded reflectively at `ActorSystem` startup (see the Caution above), a version mismatch is not a compile error; it appears as a startup failure when the actor system first initializes.

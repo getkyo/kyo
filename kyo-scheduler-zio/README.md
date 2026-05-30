@@ -2,7 +2,7 @@
 
 `kyo-scheduler-zio` swaps ZIO's default executor for Kyo's adaptive scheduler so ZIO fibers run on the same work-stealing pool Kyo uses. Two entry points cover the integration: extend `KyoSchedulerZIOAppDefault` to launch a `ZIOAppDefault` whose runtime is preconfigured, or use `KyoSchedulerZIORuntime.default` directly to obtain a ready-to-use `Runtime[Any]` for embedding ZIO into an existing application. Both routes wire the Kyo scheduler in as ZIO's `Executor` and `BlockingExecutor`, so every effect (regular or blocking) executes on Kyo's pool.
 
-Once installed the integration is invisible from the call site: existing ZIO code (`ZIO.succeed`, `.fork`, `.flatMap`, layers, services) runs unchanged, just on threads whose names start with `kyo`. The module is small by design; the central type the reader will actually name is `KyoSchedulerZIORuntime` (or, more often, the `KyoSchedulerZIOAppDefault` trait), not anything from the underlying scheduler.
+Once installed the integration is invisible from the call site: existing ZIO code (`ZIO.succeed`, `.fork`, `.flatMap`, layers, services) runs unchanged, just on threads whose names start with `kyo`. The module is small by design; the central type the reader will actually name is `KyoSchedulerZIORuntime` (or, more often, the `KyoSchedulerZIOAppDefault` trait), not anything from the underlying scheduler. Sources live under `shared/`, so the module compiles for the JVM and Scala Native. There is no Scala.js target.
 
 ```scala
 import kyo.*
@@ -22,7 +22,8 @@ When you would otherwise write `extends ZIOAppDefault`, write `extends KyoSchedu
 
 ```scala
 import kyo.*
-import zio.{ZIO, Console}
+import zio.Console
+import zio.ZIO
 
 object MyApp extends KyoSchedulerZIOAppDefault:
     def run =
@@ -31,6 +32,7 @@ object MyApp extends KyoSchedulerZIOAppDefault:
             n <- ZIO.succeed(40 + 2)
             _ <- Console.printLine(s"answer: $n")
         yield ()
+end MyApp
 ```
 
 > **Note:** `KyoSchedulerZIOAppDefault` overrides `runtime` on `ZIOAppDefault`. If a downstream subclass overrides `runtime` again, it must compose with this one (calling back into `KyoSchedulerZIORuntime.default`) or the Kyo wiring is lost.
@@ -41,7 +43,8 @@ When ZIO is one component of a larger application (or you need a ZIO runtime fro
 
 ```scala
 import kyo.*
-import zio.{ZIO, Unsafe}
+import zio.Unsafe
+import zio.ZIO
 
 val n: Int =
     Unsafe.unsafe { implicit u =>
@@ -60,11 +63,12 @@ Threads owned by the Kyo scheduler have names that start with `kyo`. A one-line 
 
 ```scala
 import kyo.*
-import zio.{ZIO, Unsafe}
+import zio.Unsafe
+import zio.ZIO
 
 val installed: Boolean =
     Unsafe.unsafe { implicit u =>
-        val io = ZIO.succeed(Thread.currentThread().getName()).fork.flatMap(_.join)
+        val io     = ZIO.succeed(Thread.currentThread().getName()).fork.flatMap(_.join)
         val thread = KyoSchedulerZIORuntime.default.unsafe.run(io).getOrThrow()
         thread.contains("kyo")
     }
@@ -83,9 +87,10 @@ object Verify extends KyoSchedulerZIOAppDefault:
             ZIO.fail("Not using Kyo Scheduler").unless(thread.contains("kyo")) *>
                 ZIO.logInfo(thread)
         }
+end Verify
 ```
 
-## What the bridge does (and does not) bridge
+## What the bridge covers (and what it does not)
 
 The wiring is intentionally narrow: ZIO's `Executor` and `BlockingExecutor` are both replaced with one Kyo-backed executor, and that is the entire scope of the integration. Knowing what is NOT bridged avoids surprises in tooling and capacity planning.
 
@@ -107,4 +112,4 @@ The executor's `submit` schedules the runnable on the Kyo scheduler and returns 
 
 The executor pulls `kyo.scheduler.Scheduler.get`, the process-wide singleton, so ZIO shares the pool with any Kyo code running in the same JVM. Tuning the Kyo scheduler (parallelism, thread factory) affects ZIO throughput, and conversely a heavy ZIO workload influences any Kyo computations on the same node.
 
-> **Note:** `KyoSchedulerZIORuntime.layer` itself is `private[kyo]`. There is no public `ZLayer` for composing the Kyo executor into a custom `Runtime` you assemble yourself; the two supported entry points are `KyoSchedulerZIORuntime.default` and `KyoSchedulerZIOAppDefault`.
+> **Note:** `KyoSchedulerZIORuntime.layer` itself is `private[kyo]`. There is no public `ZLayer` for composing the Kyo executor into a custom `Runtime` you assemble yourself; the two supported entry points are `KyoSchedulerZIORuntime.default` and `KyoSchedulerZIOAppDefault`. The executor is built into ZIO's global scope (`layer.build(Scope.global)`), so it lives for the whole process and is never finalized.
