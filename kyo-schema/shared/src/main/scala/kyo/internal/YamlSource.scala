@@ -15,55 +15,59 @@ private[kyo] object YamlSource:
     end line
 
     def indent(source: String, pos: Int): Int =
-        var i = pos
-        var n = 0
-        while i < source.length && source.charAt(i) == ' ' do
-            n += 1
-            i += 1
-        n
+        @tailrec def loop(i: Int, n: Int): Int =
+            if i < source.length && source.charAt(i) == ' ' then loop(i + 1, n + 1)
+            else n
+        loop(pos, 0)
     end indent
 
     def lineNumber(source: String, position: Int): Int =
-        var line = 1
-        var i    = 0
-        while i < position do
-            if source.charAt(i) == '\n' then line += 1
-            i += 1
-        line
+        @tailrec def loop(i: Int, line: Int): Int =
+            if i >= position then line
+            else loop(i + 1, if source.charAt(i) == '\n' then line + 1 else line)
+        loop(0, 1)
     end lineNumber
 
     def skipBlankAndCommentLines(source: String, pos: Int): Int =
-        var current = pos
-        var done    = false
-        while !done && current < source.length do
-            val start = current
-            while current < source.length && source.charAt(current).isWhitespace && source.charAt(current) != '\n' do current += 1
-            val blankOrComment =
-                current >= source.length ||
-                    source.charAt(current) == '\n' ||
-                    source.charAt(current) == '#'
-            if blankOrComment then
-                current = lineEnd(source, start)
-                if current < source.length && source.charAt(current) == '\n' then current += 1
+        @tailrec def lineContentStart(current: Int): Int =
+            if current < source.length && source.charAt(current).isWhitespace && source.charAt(current) != '\n' then
+                lineContentStart(current + 1)
+            else current
+        end lineContentStart
+
+        @tailrec def loop(current: Int): Int =
+            if current >= source.length then current
             else
-                current = start
-                done = true
+                val start   = current
+                val content = lineContentStart(current)
+                val blankOrComment =
+                    content >= source.length ||
+                        source.charAt(content) == '\n' ||
+                        source.charAt(content) == '#'
+                if blankOrComment then
+                    val next = lineEnd(source, start)
+                    loop(if next < source.length && source.charAt(next) == '\n' then next + 1 else next)
+                else start
+                end if
             end if
-        end while
-        current
+        end loop
+
+        loop(pos)
     end skipBlankAndCommentLines
 
     def skipFlowWhitespace(source: String, pos: Int): Int =
-        var current = pos
-        var done    = false
-        while !done && current < source.length do
-            val ch = source.charAt(current)
-            if ch.isWhitespace then current += 1
-            else if ch == '#' then current = lineEnd(source, current)
-            else done = true
+        @tailrec def loop(current: Int): Int =
+            if current >= source.length then current
+            else
+                val ch = source.charAt(current)
+                if ch.isWhitespace then loop(current + 1)
+                else if ch == '#' then loop(lineEnd(source, current))
+                else current
+                end if
             end if
-        end while
-        current
+        end loop
+
+        loop(pos)
     end skipFlowWhitespace
 
     def stripComment(s: String): String =
@@ -85,11 +89,18 @@ private[kyo] object YamlSource:
     end stripComment
 
     def trimmedRange(source: String, start: Int, stop: Int): (Int, Int) =
-        var from = start
-        var to   = stop
-        while from < to && source.charAt(from).isWhitespace do from += 1
-        while to > from && source.charAt(to - 1).isWhitespace do to -= 1
-        (from, to)
+        @tailrec def trimStart(from: Int): Int =
+            if from < stop && source.charAt(from).isWhitespace then trimStart(from + 1)
+            else from
+        end trimStart
+
+        @tailrec def trimEnd(from: Int, to: Int): Int =
+            if to > from && source.charAt(to - 1).isWhitespace then trimEnd(from, to - 1)
+            else to
+        end trimEnd
+
+        val from = trimStart(start)
+        (from, trimEnd(from, stop))
     end trimmedRange
 
     def quotedScalar(source: String, start: Int, stop: Int): Boolean =
@@ -100,9 +111,14 @@ private[kyo] object YamlSource:
     end quotedScalar
 
     def propertyToken(text: String): (String, String) =
-        var end = 0
-        while end < text.length && !text.charAt(end).isWhitespace do end += 1
-        (text.substring(0, end), text.substring(end).trim)
+        @tailrec def tokenEnd(i: Int): Int =
+            if i < text.length && !text.charAt(i).isWhitespace then tokenEnd(i + 1)
+            else i
+        end tokenEnd
+
+        val end        = tokenEnd(0)
+        val (from, to) = trimmedRange(text, end, text.length)
+        (text.substring(0, end), text.substring(from, to))
     end propertyToken
 
     def foldFlowScalarText(text: String): String =
@@ -203,15 +219,18 @@ private[kyo] object YamlSource:
     end flowMappingSeparator
 
     def flowMappingSeparator(source: String, start: Int, stop: Int): Int =
-        var current = start
-        var colon   = findTopLevel(source, ':', current, stop)
-        while colon >= 0 do
-            val (keyStart, keyEnd) = trimmedRange(source, start, colon)
-            if colon == stop - 1 || source.charAt(colon + 1).isWhitespace || quotedScalar(source, keyStart, keyEnd) then return colon
-            current = colon + 1
-            colon = findTopLevel(source, ':', current, stop)
-        end while
-        -1
+        @tailrec def loop(current: Int): Int =
+            val colon = findTopLevel(source, ':', current, stop)
+            if colon < 0 then -1
+            else
+                val (keyStart, keyEnd) = trimmedRange(source, start, colon)
+                if colon == stop - 1 || source.charAt(colon + 1).isWhitespace || quotedScalar(source, keyStart, keyEnd) then colon
+                else loop(colon + 1)
+                end if
+            end if
+        end loop
+
+        loop(start)
     end flowMappingSeparator
 
     def findTopLevel(s: String, target: Char): Int =
