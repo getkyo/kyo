@@ -248,7 +248,12 @@ object Tasty:
         annotations: Chunk[JavaAnnotation],
         enclosingMethod: Maybe[(Symbol, Name)],
         accessFlags: Int,
-        recordComponents: Chunk[(Name, Type)]
+        recordComponents: Chunk[(Name, Type)],
+        bootstrapMethods: Chunk[Chunk[Int]],
+        nestHost: Maybe[Symbol],
+        nestMembers: Chunk[Symbol],
+        paramNames: Chunk[(Name, Chunk[Name])],
+        runtimeTypeAnnotations: Chunk[JavaAnnotation]
     )
 
     final case class JavaAnnotation(annotationClass: Symbol, values: Map[Name, JavaAnnotation.Value])
@@ -533,6 +538,9 @@ object Tasty:
             new kyo.internal.tasty.symbol.SingleAssign
         private[kyo] val _position: kyo.internal.tasty.symbol.SingleAssign[Maybe[Position]] =
             new kyo.internal.tasty.symbol.SingleAssign
+        // PermittedSubclasses attribute: populated by ClassfileUnpickler for sealed Java classes.
+        private[kyo] val _permittedSubclasses: kyo.internal.tasty.symbol.SingleAssign[Maybe[Chunk[Symbol]]] =
+            new kyo.internal.tasty.symbol.SingleAssign
 
         // Cached full name: computed once on first call to fullName, then returned from the cell.
         // OnceCell's race-and-discard semantics are acceptable here: init() is a pure owner-chain walk
@@ -678,6 +686,14 @@ object Tasty:
 
         // Java-specific side door.
         def javaSpecific: Maybe[JavaMetadata] = javaMetadata
+
+        /** Permitted subclasses of this sealed Java class, populated from the PermittedSubclasses classfile attribute.
+          *
+          * Returns Maybe.Present containing the subclass symbols when the attribute was present, or Maybe.Absent when not (non-sealed class
+          * or attribute not yet decoded). Requires AllowUnsafe because it reads a write-once SingleAssign slot.
+          */
+        def permittedSubclasses(using AllowUnsafe): Maybe[Chunk[Symbol]] =
+            if _permittedSubclasses.isSet then _permittedSubclasses.get() else Maybe.Absent
 
         /** The body tree of this symbol, decoded lazily from the TASTy body byte slice.
           *

@@ -70,4 +70,21 @@ object ClassfileFormat:
     val AttrScalaSig: String = "ScalaSig"
     val AttrScala: String    = "Scala"
 
+    // JVM 11+ nest-based access control (JVMS §4.7.28 / §4.7.29)
+    val AttrNestHost: String    = "NestHost"
+    val AttrNestMembers: String = "NestMembers"
+
+    // JVM 17+ sealed-class permitted subclasses (JVMS §4.7.31)
+    val AttrPermittedSubclasses: String = "PermittedSubclasses"
+
+    // JVM 8+ method parameter names and access flags (JVMS §4.7.24)
+    val AttrMethodParameters: String = "MethodParameters"
+
+    // JVM 8+ bootstrap methods table for invokedynamic (JVMS §4.7.23)
+    val AttrBootstrapMethods: String = "BootstrapMethods"
+
+    // JVM 8+ runtime-visible/invisible type annotations (JVMS §4.7.20 / §4.7.21)
+    val AttrRuntimeVisibleTypeAnnotations: String   = "RuntimeVisibleTypeAnnotations"
+    val AttrRuntimeInvisibleTypeAnnotations: String = "RuntimeInvisibleTypeAnnotations"
+
 end ClassfileFormat

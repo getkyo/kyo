@@ -272,7 +272,9 @@ object ClassfileUnpickler:
         signatureIdx: Maybe[Int],
         exceptionIdxs: Chunk[Int],
         visibleAnnotationBytes: Maybe[Array[Byte]],
-        invisibleAnnotationBytes: Maybe[Array[Byte]]
+        invisibleAnnotationBytes: Maybe[Array[Byte]],
+        // MethodParameters attribute (method-level only; empty for fields)
+        paramNames: Chunk[String]
     )
 
     private def readMemberInfos(
@@ -318,9 +320,10 @@ object ClassfileUnpickler:
                 Maybe.empty,
                 Chunk.empty,
                 Maybe.empty,
-                Maybe.empty
-            ).map: (sigIdx, exceptionIdxs, visAnn, invisAnn) =>
-                MemberInfo(accessFlags, nameIdx, descIdx, sigIdx, exceptionIdxs, visAnn, invisAnn)
+                Maybe.empty,
+                Chunk.empty
+            ).map: (sigIdx, exceptionIdxs, visAnn, invisAnn, params) =>
+                MemberInfo(accessFlags, nameIdx, descIdx, sigIdx, exceptionIdxs, visAnn, invisAnn, params)
 
     private def readMemberAttributes(
         view: ByteView,
@@ -330,9 +333,10 @@ object ClassfileUnpickler:
         sigIdx: Maybe[Int],
         exceptionIdxs: Chunk[Int],
         visibleAnnBytes: Maybe[Array[Byte]],
-        invisibleAnnBytes: Maybe[Array[Byte]]
-    )(using Frame): (Maybe[Int], Chunk[Int], Maybe[Array[Byte]], Maybe[Array[Byte]]) < (Sync & Abort[TastyError]) =
-        if remaining == 0 then (sigIdx, exceptionIdxs, visibleAnnBytes, invisibleAnnBytes)
+        invisibleAnnBytes: Maybe[Array[Byte]],
+        paramNames: Chunk[String]
+    )(using Frame): (Maybe[Int], Chunk[Int], Maybe[Array[Byte]], Maybe[Array[Byte]], Chunk[String]) < (Sync & Abort[TastyError]) =
+        if remaining == 0 then (sigIdx, exceptionIdxs, visibleAnnBytes, invisibleAnnBytes, paramNames)
         else
             Sync.defer {
                 val nameIdx = readU2(view)
@@ -352,7 +356,8 @@ object ClassfileUnpickler:
                                     Present(i),
                                     exceptionIdxs,
                                     visibleAnnBytes,
-                                    invisibleAnnBytes
+                                    invisibleAnnBytes,
+                                    paramNames
                                 )
 
                         case ClassfileFormat.AttrExceptions =>
@@ -373,7 +378,8 @@ object ClassfileUnpickler:
                                     sigIdx,
                                     idxs,
                                     visibleAnnBytes,
-                                    invisibleAnnBytes
+                                    invisibleAnnBytes,
+                                    paramNames
                                 )
 
                         case ClassfileFormat.AttrRuntimeVisibleAnnotations =>
@@ -390,7 +396,8 @@ object ClassfileUnpickler:
                                     sigIdx,
                                     exceptionIdxs,
                                     Present(bytes),
-                                    invisibleAnnBytes
+                                    invisibleAnnBytes,
+                                    paramNames
                                 )
 
                         case ClassfileFormat.AttrRuntimeInvisibleAnnotations =>
@@ -406,7 +413,23 @@ object ClassfileUnpickler:
                                     sigIdx,
                                     exceptionIdxs,
                                     visibleAnnBytes,
-                                    Present(bytes)
+                                    Present(bytes),
+                                    paramNames
+                                )
+
+                        case ClassfileFormat.AttrMethodParameters =>
+                            // JVMS §4.7.24: u1 parameters_count, then for each: u2 name_index, u2 access_flags
+                            readMethodParameterNames(view, pool).map: names =>
+                                readMemberAttributes(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    exceptionIdxs,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes,
+                                    names
                                 )
 
                         case _ =>
@@ -419,7 +442,8 @@ object ClassfileUnpickler:
                                     sigIdx,
                                     exceptionIdxs,
                                     visibleAnnBytes,
-                                    invisibleAnnBytes
+                                    invisibleAnnBytes,
+                                    paramNames
                                 )
 
     // -------------------------------------------------------------------------
@@ -437,7 +461,14 @@ object ClassfileUnpickler:
         invisibleAnnotationBytes: Maybe[Array[Byte]],
         // Scala 2 pickle attribute bytes: ScalaSig (compact-encoded) or Scala (ZLIB-compressed)
         scalaSigBytes: Maybe[Array[Byte]],
-        scalaAttrBytes: Maybe[Array[Byte]]
+        scalaAttrBytes: Maybe[Array[Byte]],
+        // Additional attribute payloads: BootstrapMethods, NestHost, NestMembers, PermittedSubclasses, type annotations
+        bootstrapMethodsData: Chunk[Chunk[Int]],
+        nestHostIdx: Maybe[Int],
+        nestMemberIdxs: Chunk[Int],
+        permittedSubclassIdxs: Chunk[Int],
+        visibleTypeAnnotationBytes: Maybe[Array[Byte]],
+        invisibleTypeAnnotationBytes: Maybe[Array[Byte]]
     )
 
     private def readClassAttributes(
@@ -460,6 +491,12 @@ object ClassfileUnpickler:
                 Maybe.empty,
                 Maybe.empty,
                 Maybe.empty,
+                Maybe.empty,
+                Chunk.empty,
+                Maybe.empty,
+                Chunk.empty,
+                Chunk.empty,
+                Maybe.empty,
                 Maybe.empty
             )
 
@@ -477,7 +514,13 @@ object ClassfileUnpickler:
         visibleAnnBytes: Maybe[Array[Byte]],
         invisibleAnnBytes: Maybe[Array[Byte]],
         scalaSigBytes: Maybe[Array[Byte]],
-        scalaAttrBytes: Maybe[Array[Byte]]
+        scalaAttrBytes: Maybe[Array[Byte]],
+        bootstrapMethodsData: Chunk[Chunk[Int]],
+        nestHostIdx: Maybe[Int],
+        nestMemberIdxs: Chunk[Int],
+        permittedSubclassIdxs: Chunk[Int],
+        visibleTypeAnnBytes: Maybe[Array[Byte]],
+        invisibleTypeAnnBytes: Maybe[Array[Byte]]
     )(using Frame): ClassAttributes < (Sync & Abort[TastyError]) =
         if remaining == 0 then
             ClassAttributes(
@@ -490,7 +533,13 @@ object ClassfileUnpickler:
                 visibleAnnBytes,
                 invisibleAnnBytes,
                 scalaSigBytes,
-                scalaAttrBytes
+                scalaAttrBytes,
+                bootstrapMethodsData,
+                nestHostIdx,
+                nestMemberIdxs,
+                permittedSubclassIdxs,
+                visibleTypeAnnBytes,
+                invisibleTypeAnnBytes
             )
         else
             Sync.defer {
@@ -516,7 +565,13 @@ object ClassfileUnpickler:
                                     visibleAnnBytes,
                                     invisibleAnnBytes,
                                     scalaSigBytes,
-                                    scalaAttrBytes
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
                                 )
 
                         case ClassfileFormat.AttrInnerClasses =>
@@ -548,7 +603,13 @@ object ClassfileUnpickler:
                                     visibleAnnBytes,
                                     invisibleAnnBytes,
                                     scalaSigBytes,
-                                    scalaAttrBytes
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
                                 )
 
                         case ClassfileFormat.AttrEnclosingMethod =>
@@ -572,7 +633,13 @@ object ClassfileUnpickler:
                                     visibleAnnBytes,
                                     invisibleAnnBytes,
                                     scalaSigBytes,
-                                    scalaAttrBytes
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
                                 )
 
                         case ClassfileFormat.AttrRecord =>
@@ -593,7 +660,13 @@ object ClassfileUnpickler:
                                     visibleAnnBytes,
                                     invisibleAnnBytes,
                                     scalaSigBytes,
-                                    scalaAttrBytes
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
                                 )
 
                         case ClassfileFormat.AttrRuntimeVisibleAnnotations =>
@@ -612,7 +685,13 @@ object ClassfileUnpickler:
                                     Present(bytes),
                                     invisibleAnnBytes,
                                     scalaSigBytes,
-                                    scalaAttrBytes
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
                                 )
 
                         case ClassfileFormat.AttrRuntimeInvisibleAnnotations =>
@@ -631,7 +710,13 @@ object ClassfileUnpickler:
                                     visibleAnnBytes,
                                     Present(bytes),
                                     scalaSigBytes,
-                                    scalaAttrBytes
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
                                 )
 
                         case ClassfileFormat.AttrScalaSig =>
@@ -651,7 +736,13 @@ object ClassfileUnpickler:
                                     visibleAnnBytes,
                                     invisibleAnnBytes,
                                     Present(bytes),
-                                    scalaAttrBytes
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
                                 )
 
                         case ClassfileFormat.AttrScala =>
@@ -671,6 +762,182 @@ object ClassfileUnpickler:
                                     visibleAnnBytes,
                                     invisibleAnnBytes,
                                     scalaSigBytes,
+                                    Present(bytes),
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
+                                )
+
+                        case ClassfileFormat.AttrBootstrapMethods =>
+                            // JVMS §4.7.23: u2 num_bootstrap_methods, each: u2 bootstrap_method_ref, u2 num_bootstrap_arguments, u2[n]
+                            readBootstrapMethodsData(view).map: bsmData =>
+                                readClassAttrList(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    innerClasses,
+                                    enclosingClassIdx,
+                                    enclosingMethodIdx,
+                                    hasRecord,
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes,
+                                    scalaSigBytes,
+                                    scalaAttrBytes,
+                                    bsmData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
+                                )
+
+                        case ClassfileFormat.AttrNestHost =>
+                            // JVMS §4.7.28: u2 host_class_index
+                            Sync.defer(readU2(view)).map: idx =>
+                                readClassAttrList(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    innerClasses,
+                                    enclosingClassIdx,
+                                    enclosingMethodIdx,
+                                    hasRecord,
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes,
+                                    scalaSigBytes,
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    Present(idx),
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
+                                )
+
+                        case ClassfileFormat.AttrNestMembers =>
+                            // JVMS §4.7.29: u2 number_of_classes, u2[n] classes
+                            Sync.defer {
+                                val n    = readU2(view)
+                                var idxs = Chunk.empty[Int]
+                                var k    = 0
+                                while k < n do
+                                    idxs = idxs.appended(readU2(view))
+                                    k += 1
+                                idxs
+                            }.map: idxs =>
+                                readClassAttrList(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    innerClasses,
+                                    enclosingClassIdx,
+                                    enclosingMethodIdx,
+                                    hasRecord,
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes,
+                                    scalaSigBytes,
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    idxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
+                                )
+
+                        case ClassfileFormat.AttrPermittedSubclasses =>
+                            // JVMS §4.7.31: u2 number_of_classes, u2[n] classes
+                            Sync.defer {
+                                val n    = readU2(view)
+                                var idxs = Chunk.empty[Int]
+                                var k    = 0
+                                while k < n do
+                                    idxs = idxs.appended(readU2(view))
+                                    k += 1
+                                idxs
+                            }.map: idxs =>
+                                readClassAttrList(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    innerClasses,
+                                    enclosingClassIdx,
+                                    enclosingMethodIdx,
+                                    hasRecord,
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes,
+                                    scalaSigBytes,
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    idxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
+                                )
+
+                        case ClassfileFormat.AttrRuntimeVisibleTypeAnnotations =>
+                            Sync.defer(captureBytes(view, attrLen)).map: bytes =>
+                                readClassAttrList(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    innerClasses,
+                                    enclosingClassIdx,
+                                    enclosingMethodIdx,
+                                    hasRecord,
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes,
+                                    scalaSigBytes,
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    Present(bytes),
+                                    invisibleTypeAnnBytes
+                                )
+
+                        case ClassfileFormat.AttrRuntimeInvisibleTypeAnnotations =>
+                            Sync.defer(captureBytes(view, attrLen)).map: bytes =>
+                                readClassAttrList(
+                                    view,
+                                    pool,
+                                    path,
+                                    remaining - 1,
+                                    sigIdx,
+                                    innerClasses,
+                                    enclosingClassIdx,
+                                    enclosingMethodIdx,
+                                    hasRecord,
+                                    recordComponents,
+                                    visibleAnnBytes,
+                                    invisibleAnnBytes,
+                                    scalaSigBytes,
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
                                     Present(bytes)
                                 )
 
@@ -690,7 +957,13 @@ object ClassfileUnpickler:
                                     visibleAnnBytes,
                                     invisibleAnnBytes,
                                     scalaSigBytes,
-                                    scalaAttrBytes
+                                    scalaAttrBytes,
+                                    bootstrapMethodsData,
+                                    nestHostIdx,
+                                    nestMemberIdxs,
+                                    permittedSubclassIdxs,
+                                    visibleTypeAnnBytes,
+                                    invisibleTypeAnnBytes
                                 )
 
     /** Parse Record attribute components.
@@ -802,60 +1075,88 @@ object ClassfileUnpickler:
                         // Decode class-level annotations
                         decodeAnnotations(pool, interner, home, classAttrs.visibleAnnotationBytes, classAttrs.invisibleAnnotationBytes).map:
                             classAnnotations =>
-                                val classMetadata = Tasty.JavaMetadata(
-                                    throwsTypes = Chunk.empty,
-                                    annotations = classAnnotations,
-                                    enclosingMethod = enclosingMethodMaybe,
-                                    accessFlags = accessFlags,
-                                    recordComponents = recordComps
-                                )
-
-                                val classSym = SymbolFactory.makeSymbol(
-                                    kind,
-                                    classFlags,
-                                    Tasty.Name(symName),
-                                    symOwner,
-                                    home,
-                                    Tasty.Symbol.JavaOrigin,
-                                    Present(classMetadata)
-                                )
-
-                                // Parse class-level Signature attribute to extract type parameters.
-                                parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map: classTypeParams =>
-                                    // Build member symbols (returns pairs of (Symbol, DeclaredType))
-                                    buildMemberSymbols(pool, interner, home, path, classSym, fieldInfos, isMethods = false).map:
-                                        fieldPairs =>
-                                            buildMemberSymbols(
-                                                pool,
-                                                interner,
-                                                home,
-                                                path,
-                                                classSym,
-                                                methodInfos,
-                                                isMethods = true
-                                            ).map: methodPairs =>
-                                                val allPairs   = fieldPairs ++ methodPairs
-                                                val allSymbols = allPairs.map(_._1)
-                                                val memberTypes = allPairs.foldLeft(Map.empty[Tasty.Symbol, Tasty.Type]):
-                                                    case (acc, (sym, tpe)) => acc + (sym -> tpe)
-                                                val javaResult = ClassfileResult(
-                                                    classSym,
-                                                    parents,
-                                                    innerTable,
-                                                    allSymbols,
-                                                    classTypeParams,
-                                                    arena,
-                                                    memberTypes
-                                                )
-                                                // Dispatch to Scala2PickleReader if a ScalaSig or Scala attribute is present.
-                                                mergeScala2Pickle(
-                                                    javaResult,
-                                                    interner,
-                                                    arena,
-                                                    home,
-                                                    classAttrs.scalaSigBytes,
-                                                    classAttrs.scalaAttrBytes
-                                                )
+                                // Decode type annotations (RuntimeVisibleTypeAnnotations / RuntimeInvisibleTypeAnnotations)
+                                decodeTypeAnnotations(classAttrs.visibleTypeAnnotationBytes, pool, interner, home).map: visibleTypeAnns =>
+                                    decodeTypeAnnotations(classAttrs.invisibleTypeAnnotationBytes, pool, interner, home).map:
+                                        invisibleTypeAnns =>
+                                            val allTypeAnns = visibleTypeAnns ++ invisibleTypeAnns
+                                            // Resolve NestHost symbol if present
+                                            resolveOptionalClassSymbol(pool, home, classAttrs.nestHostIdx).map: nestHostSym =>
+                                                // Resolve NestMembers symbols
+                                                resolveClassSymbolList(pool, home, classAttrs.nestMemberIdxs).map: nestMemberSyms =>
+                                                    // Resolve PermittedSubclasses symbols
+                                                    resolveClassSymbolList(pool, home, classAttrs.permittedSubclassIdxs).map:
+                                                        permittedSubSym =>
+                                                            val classMetadata = Tasty.JavaMetadata(
+                                                                throwsTypes = Chunk.empty,
+                                                                annotations = classAnnotations,
+                                                                enclosingMethod = enclosingMethodMaybe,
+                                                                accessFlags = accessFlags,
+                                                                recordComponents = recordComps,
+                                                                bootstrapMethods = classAttrs.bootstrapMethodsData,
+                                                                nestHost = nestHostSym,
+                                                                nestMembers = nestMemberSyms,
+                                                                paramNames = Chunk.empty,
+                                                                runtimeTypeAnnotations = allTypeAnns
+                                                            )
+                                                            val classSym = SymbolFactory.makeSymbol(
+                                                                kind,
+                                                                classFlags,
+                                                                Tasty.Name(symName),
+                                                                symOwner,
+                                                                home,
+                                                                Tasty.Symbol.JavaOrigin,
+                                                                Present(classMetadata)
+                                                            )
+                                                            // Wire _permittedSubclasses on the class symbol if the attribute was present.
+                                                            if permittedSubSym.nonEmpty then
+                                                                import AllowUnsafe.embrace.danger
+                                                                classSym._permittedSubclasses.set(Present(permittedSubSym))
+                                                            // Parse class-level Signature attribute to extract type parameters.
+                                                            parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map:
+                                                                classTypeParams =>
+                                                                    // Build member symbols (returns pairs of (Symbol, DeclaredType))
+                                                                    buildMemberSymbols(
+                                                                        pool,
+                                                                        interner,
+                                                                        home,
+                                                                        path,
+                                                                        classSym,
+                                                                        fieldInfos,
+                                                                        isMethods = false
+                                                                    ).map: fieldPairs =>
+                                                                        buildMemberSymbols(
+                                                                            pool,
+                                                                            interner,
+                                                                            home,
+                                                                            path,
+                                                                            classSym,
+                                                                            methodInfos,
+                                                                            isMethods = true
+                                                                        ).map: methodPairs =>
+                                                                            val allPairs   = fieldPairs ++ methodPairs
+                                                                            val allSymbols = allPairs.map(_._1)
+                                                                            val memberTypes =
+                                                                                allPairs.foldLeft(Map.empty[Tasty.Symbol, Tasty.Type]):
+                                                                                    case (acc, (sym, tpe)) => acc + (sym -> tpe)
+                                                                            val javaResult = ClassfileResult(
+                                                                                classSym,
+                                                                                parents,
+                                                                                innerTable,
+                                                                                allSymbols,
+                                                                                classTypeParams,
+                                                                                arena,
+                                                                                memberTypes
+                                                                            )
+                                                                            // Dispatch to Scala2PickleReader if a ScalaSig or Scala attribute is present.
+                                                                            mergeScala2Pickle(
+                                                                                javaResult,
+                                                                                interner,
+                                                                                arena,
+                                                                                home,
+                                                                                classAttrs.scalaSigBytes,
+                                                                                classAttrs.scalaAttrBytes
+                                                                            )
     end buildResult
 
     /** If Scala 2 pickle bytes are present, add Flag.Scala2 to the class symbol and merge the decoded symbols into the result.
@@ -1284,12 +1585,25 @@ object ClassfileUnpickler:
                     resolveThrowsTypes(pool, path, info.exceptionIdxs).map: throwsTypes =>
                         decodeAnnotations(pool, interner, home, info.visibleAnnotationBytes, info.invisibleAnnotationBytes).map:
                             memberAnnotations =>
+                                // Wrap MethodParameters as paramNames entry: (methodName -> paramName chunk)
+                                val paramNamesEntry: Chunk[(Tasty.Name, Chunk[Tasty.Name])] =
+                                    if info.paramNames.isEmpty then Chunk.empty
+                                    else
+                                        Chunk((
+                                            Tasty.Name(memberName),
+                                            info.paramNames.map(Tasty.Name(_))
+                                        ))
                                 val metadata = Tasty.JavaMetadata(
                                     throwsTypes = throwsTypes,
                                     annotations = memberAnnotations,
                                     enclosingMethod = Absent,
                                     accessFlags = accessFlags,
-                                    recordComponents = Chunk.empty
+                                    recordComponents = Chunk.empty,
+                                    bootstrapMethods = Chunk.empty,
+                                    nestHost = Absent,
+                                    nestMembers = Chunk.empty,
+                                    paramNames = paramNamesEntry,
+                                    runtimeTypeAnnotations = Chunk.empty
                                 )
 
                                 val nameBytes = memberName.getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -1359,6 +1673,52 @@ object ClassfileUnpickler:
                             buildInnerClassList(pool, path, innerClasses, i + 1, acc + (innerBN -> (outerBN, simpleName)))
             end if
 
+    /** Resolve a Maybe[Int] class-pool index to a Maybe[Symbol], used for NestHost. */
+    private def resolveOptionalClassSymbol(
+        pool: ConstantPool,
+        home: ClasspathRef,
+        idx: Maybe[Int]
+    )(using Frame): Maybe[Tasty.Symbol] < (Sync & Abort[TastyError]) =
+        idx match
+            case Absent => Absent
+            case Present(i) =>
+                pool.classRef(i).map: binaryName =>
+                    Present(makeUnresolvedSymbol(binaryName, 0, home))
+
+    /** Resolve a Chunk[Int] of class-pool indices to a Chunk[Symbol], used for NestMembers and PermittedSubclasses. */
+    private def resolveClassSymbolList(
+        pool: ConstantPool,
+        home: ClasspathRef,
+        idxs: Chunk[Int]
+    )(using Frame): Chunk[Tasty.Symbol] < (Sync & Abort[TastyError]) =
+        resolveClassSymbolListRec(pool, home, idxs, 0, Chunk.empty)
+
+    private def resolveClassSymbolListRec(
+        pool: ConstantPool,
+        home: ClasspathRef,
+        idxs: Chunk[Int],
+        i: Int,
+        acc: Chunk[Tasty.Symbol]
+    )(using Frame): Chunk[Tasty.Symbol] < (Sync & Abort[TastyError]) =
+        if i >= idxs.length then acc
+        else
+            pool.classRef(idxs(i)).map: binaryName =>
+                resolveClassSymbolListRec(pool, home, idxs, i + 1, acc.appended(makeUnresolvedSymbol(binaryName, 0, home)))
+
+    /** Decode a Maybe[Array[Byte]] type-annotation attribute body.
+      *
+      * Returns Chunk.empty when the bytes are Absent (attribute not present).
+      */
+    private def decodeTypeAnnotations(
+        bytes: Maybe[Array[Byte]],
+        pool: ConstantPool,
+        interner: Interner,
+        home: ClasspathRef
+    )(using Frame): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+        bytes match
+            case Absent        => Chunk.empty
+            case Present(data) => decodeTypeAnnotations(data, pool, interner, home)
+
     private def resolveOptionalClassRef(
         pool: ConstantPool,
         path: String,
@@ -1374,6 +1734,153 @@ object ClassfileUnpickler:
     )(using Frame): String < (Sync & Abort[TastyError]) =
         if idx == 0 then ""
         else pool.utf8(idx)
+
+    // -------------------------------------------------------------------------
+    // Attribute helpers: BootstrapMethods, NestHost, NestMembers, type annotations
+    // -------------------------------------------------------------------------
+
+    /** Parse BootstrapMethods attribute body (JVMS §4.7.23).
+      *
+      * Returns a Chunk where each entry is a Chunk of u2 indices: [bootstrap_method_ref, arg0, arg1, ...].
+      */
+    private def readBootstrapMethodsData(
+        view: ByteView
+    )(using Frame): Chunk[Chunk[Int]] < Sync =
+        Sync.defer {
+            val n   = readU2(view)
+            var bsm = Chunk.empty[Chunk[Int]]
+            var i   = 0
+            while i < n do
+                val methodRef = readU2(view)
+                val argCount  = readU2(view)
+                var entry     = Chunk.empty[Int]
+                entry = entry.appended(methodRef)
+                var j = 0
+                while j < argCount do
+                    entry = entry.appended(readU2(view))
+                    j += 1
+                bsm = bsm.appended(entry)
+                i += 1
+            end while
+            bsm
+        }
+
+    /** Parse MethodParameters attribute body (JVMS §4.7.24).
+      *
+      * Returns a Chunk of parameter name strings (empty string for unnamed parameters, i.e. name_index == 0).
+      */
+    private def readMethodParameterNames(
+        view: ByteView,
+        pool: ConstantPool
+    )(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+        Sync.defer(readU1(view)).map: count =>
+            readMethodParamList(view, pool, count, 0, Chunk.empty)
+
+    private def readMethodParamList(
+        view: ByteView,
+        pool: ConstantPool,
+        total: Int,
+        idx: Int,
+        acc: Chunk[String]
+    )(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+        if idx >= total then acc
+        else
+            Sync.defer {
+                val nameIdx = readU2(view)
+                discard(readU2(view)) // access_flags: not needed
+                nameIdx
+            }.map: nameIdx =>
+                if nameIdx == 0 then
+                    readMethodParamList(view, pool, total, idx + 1, acc.appended(""))
+                else
+                    pool.utf8(nameIdx).map: name =>
+                        readMethodParamList(view, pool, total, idx + 1, acc.appended(name))
+
+    /** Skip the target_info union from a type_annotation (JVMS §4.7.20 Table 4.7.20-A/B).
+      *
+      * After reading the u1 target_type, reads and discards the variable-length target_info union. Also reads and discards the target_path
+      * (type_path). Leaves the view positioned at the start of the annotation type_index.
+      *
+      * All target_type codes are handled; unknown codes skip 0 bytes of target_info and let the annotation type_index parse proceed
+      * normally (graceful degradation).
+      */
+    private def skipTypeAnnotationTargetAndPath(view: ByteView): Unit =
+        val targetType = readU1(view) & 0xff
+        // JVMS Table 4.7.20-A: target_info union size by target_type code
+        targetType match
+            case 0x00 | 0x01 =>
+                // type_parameter_target: u1 type_parameter_index
+                discard(readU1(view))
+            case 0x10 =>
+                // supertype_target: u2 supertype_index
+                discard(readU2(view))
+            case 0x11 | 0x12 =>
+                // type_parameter_bound_target: u1 type_parameter_index, u1 bound_index
+                discard(readU1(view))
+                discard(readU1(view))
+            case 0x13 | 0x14 | 0x15 =>
+                // empty_target: no fields
+                ()
+            case 0x16 =>
+                // formal_parameter_target: u1 formal_parameter_index
+                discard(readU1(view))
+            case 0x17 =>
+                // throws_target: u2 throws_type_index
+                discard(readU2(view))
+            case 0x40 | 0x41 =>
+                // localvar_target: u2 table_length, then 3×u2 per entry
+                val tableLen = readU2(view)
+                skipBytes(view, tableLen * 6)
+            case 0x42 =>
+                // catch_target: u2 exception_table_index
+                discard(readU2(view))
+            case 0x43 | 0x44 | 0x45 | 0x46 =>
+                // offset_target: u2 offset
+                discard(readU2(view))
+            case 0x47 | 0x48 | 0x49 | 0x4a | 0x4b =>
+                // type_argument_target: u2 offset, u1 type_argument_index
+                discard(readU2(view))
+                discard(readU1(view))
+            case _ =>
+                // Unknown target type: no target_info bytes consumed; graceful degradation
+                ()
+        end match
+        // type_path: u1 path_length, then 2 bytes per path entry
+        val pathLen = readU1(view) & 0xff
+        skipBytes(view, pathLen * 2)
+    end skipTypeAnnotationTargetAndPath
+
+    /** Decode a RuntimeVisibleTypeAnnotations or RuntimeInvisibleTypeAnnotations attribute body.
+      *
+      * The attribute body starts with u2 num_annotations. Each type_annotation starts with target_info (variable length) + target_path
+      * (variable), then the regular annotation structure (type_index + element_value_pairs). We skip target_info/target_path and decode the
+      * annotation using JavaAnnotationUnpickler.readOneAnnotation (reusing pool-resident strings).
+      */
+    private def decodeTypeAnnotations(
+        bytes: Array[Byte],
+        pool: ConstantPool,
+        interner: Interner,
+        home: ClasspathRef
+    )(using Frame): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+        val typeAnnView = ByteView(bytes)
+        Sync.defer(readU2(typeAnnView)).map: count =>
+            decodeTypeAnnotationList(typeAnnView, pool, interner, home, count, 0, Chunk.empty)
+    end decodeTypeAnnotations
+
+    private def decodeTypeAnnotationList(
+        view: ByteView,
+        pool: ConstantPool,
+        interner: Interner,
+        home: ClasspathRef,
+        total: Int,
+        idx: Int,
+        acc: Chunk[Tasty.JavaAnnotation]
+    )(using Frame): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+        if idx >= total then acc
+        else
+            Sync.defer(skipTypeAnnotationTargetAndPath(view)).map: _ =>
+                JavaAnnotationUnpickler.readOneAnnotation(view, pool, interner, home, depth = 0).map: ann =>
+                    decodeTypeAnnotationList(view, pool, interner, home, total, idx + 1, acc.appended(ann))
 
     // -------------------------------------------------------------------------
     // Byte helpers

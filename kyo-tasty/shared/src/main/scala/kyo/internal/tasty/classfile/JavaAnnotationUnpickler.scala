@@ -57,7 +57,7 @@ object JavaAnnotationUnpickler:
             readOneAnnotation(view, pool, interner, home, depth).map: ann =>
                 readAnnotationList(view, pool, interner, home, total, idx + 1, acc.appended(ann), depth)
 
-    private def readOneAnnotation(
+    private[classfile] def readOneAnnotation(
         view: ByteView,
         pool: ConstantPool,
         interner: Interner,

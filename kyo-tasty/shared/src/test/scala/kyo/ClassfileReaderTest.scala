@@ -215,4 +215,192 @@ class ClassfileReaderTest extends Test:
             )
     }
 
+    // -------------------------------------------------------------------------
+    // Test 13 (M8/INV-008): BootstrapMethods attribute is parsed and exposed
+    // -------------------------------------------------------------------------
+    "M8: BootstrapMethods attribute is parsed into metadata.bootstrapMethods" taggedAs jvmOnly in run {
+        // java.util.function.Function uses BootstrapMethods for lambda-compose default methods
+        readClass("java/util/function/Function.class").map: result =>
+            val md = result.classSymbol.javaSpecific.getOrElse(fail("Expected javaSpecific Present"))
+            assert(
+                md.bootstrapMethods.nonEmpty,
+                "Expected at least one BootstrapMethods entry in java/util/function/Function.class"
+            )
+            // Each entry is a Chunk of ints: [methodRef, arg0, arg1, ...]
+            val firstEntry = md.bootstrapMethods.head
+            assert(firstEntry.nonEmpty, "Expected non-empty first BootstrapMethods entry (methodRef + args)")
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 14 (M8/INV-008): NestHost attribute is parsed and exposed
+    // -------------------------------------------------------------------------
+    "M8: NestHost attribute is parsed into metadata.nestHost for an inner class" taggedAs jvmOnly in run {
+        // java.util.HashMap$Node is an inner class of HashMap; has NestHost = java/util/HashMap
+        readClass("java/util/HashMap$Node.class").map: result =>
+            val md = result.classSymbol.javaSpecific.getOrElse(fail("Expected javaSpecific Present"))
+            assert(
+                md.nestHost.isDefined,
+                "Expected nestHost to be Present for java/util/HashMap$Node.class"
+            )
+            val hostName = md.nestHost.get.name.asString
+            assert(
+                hostName == "HashMap" || hostName.contains("HashMap"),
+                s"Expected NestHost name to contain 'HashMap', got '$hostName'"
+            )
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 15 (M8/INV-008): NestMembers attribute is parsed and exposed
+    // -------------------------------------------------------------------------
+    "M8: NestMembers attribute is parsed into metadata.nestMembers for an outer class" taggedAs jvmOnly in run {
+        // java.util.HashMap has inner classes; NestMembers lists them
+        readClass("java/util/HashMap.class").map: result =>
+            val md = result.classSymbol.javaSpecific.getOrElse(fail("Expected javaSpecific Present"))
+            assert(
+                md.nestMembers.nonEmpty,
+                "Expected non-empty nestMembers in java/util/HashMap.class"
+            )
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 16 (M8/INV-008): PermittedSubclasses attribute is parsed and exposed
+    // -------------------------------------------------------------------------
+    "M8: PermittedSubclasses attribute is parsed for a sealed interface" taggedAs jvmOnly in run {
+        // java.lang.constant.ClassDesc is a sealed interface (JDK 12+) with known permitted subclasses
+        readClass("java/lang/constant/ClassDesc.class").map: result =>
+            val md = result.classSymbol.javaSpecific.getOrElse(fail("Expected javaSpecific Present"))
+            // Symbol._permittedSubclasses slot
+            val permitted = result.classSymbol.permittedSubclasses
+            assert(
+                permitted.isDefined,
+                "Expected _permittedSubclasses to be Present for java/lang/constant/ClassDesc.class"
+            )
+            val subs = permitted.get
+            assert(
+                subs.nonEmpty,
+                s"Expected non-empty permittedSubclasses for ClassDesc, got empty"
+            )
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 17 (M8/INV-008): MethodParameters attribute is parsed and exposed
+    // -------------------------------------------------------------------------
+    "M8: MethodParameters attribute is parsed into method symbol metadata.paramNames" taggedAs jvmOnly in run {
+        // java.lang.module.ModuleDescriptor$Requires$Modifier has MethodParameters in its constructor
+        readClass("java/lang/module/ModuleDescriptor$Requires$Modifier.class").map: result =>
+            val methodsWithParams = result.symbols.filter: sym =>
+                sym.kind == Tasty.SymbolKind.Method &&
+                    sym.javaSpecific.exists(_.paramNames.nonEmpty)
+            assert(
+                methodsWithParams.nonEmpty,
+                "Expected at least one method with non-empty paramNames in ModuleDescriptor$Requires$Modifier"
+            )
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 18 (M8/INV-008): RuntimeTypeAnnotations attribute is parsed and exposed
+    // -------------------------------------------------------------------------
+    "M8: RuntimeVisibleTypeAnnotations attribute is decoded into metadata.runtimeTypeAnnotations" taggedAs jvmOnly in run {
+        // Build a synthetic classfile with RuntimeVisibleTypeAnnotations attribute on the class.
+        // Classfile structure: magic, version, minimal pool, flags, this/super, 0 interfaces,
+        // 0 fields, 0 methods, 1 attribute (RuntimeVisibleTypeAnnotations).
+        //
+        // RuntimeVisibleTypeAnnotations body: u2 num_annotations=1,
+        //   then one type_annotation:
+        //     target_type=0x13 (empty_target, CLASS_EXTENDS), type_path(0 entries),
+        //     then annotation: type_index=ref-to-pool-Utf8-"Ljava/lang/Deprecated;", u2 pairs=0.
+        //
+        // Constant pool:
+        //   #1 = Utf8  "SyntheticTypeAnn"         (class name)
+        //   #2 = Class #1                          (CONSTANT_Class for this)
+        //   #3 = Utf8  "java/lang/Object"
+        //   #4 = Class #3                          (CONSTANT_Class for super)
+        //   #5 = Utf8  "RuntimeVisibleTypeAnnotations"
+        //   #6 = Utf8  "Ljava/lang/Deprecated;"   (annotation type descriptor)
+        val attrName = "RuntimeVisibleTypeAnnotations".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val clsName  = "SyntheticTypeAnn".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val supName  = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val annDesc  = "Ljava/lang/Deprecated;".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        import java.io.ByteArrayOutputStream
+        import java.io.DataOutputStream
+        val buf = new ByteArrayOutputStream()
+        val out = new DataOutputStream(buf)
+        // magic
+        out.writeInt(0xcafebabe)
+        // minor=0, major=65 (Java 21)
+        out.writeShort(0)
+        out.writeShort(65)
+        // constant_pool_count = 7 (entries 1..6)
+        out.writeShort(7)
+        // #1 Utf8 "SyntheticTypeAnn"
+        out.writeByte(1)
+        out.writeShort(clsName.length)
+        out.write(clsName)
+        // #2 Class -> #1
+        out.writeByte(7)
+        out.writeShort(1)
+        // #3 Utf8 "java/lang/Object"
+        out.writeByte(1)
+        out.writeShort(supName.length)
+        out.write(supName)
+        // #4 Class -> #3
+        out.writeByte(7)
+        out.writeShort(3)
+        // #5 Utf8 "RuntimeVisibleTypeAnnotations"
+        out.writeByte(1)
+        out.writeShort(attrName.length)
+        out.write(attrName)
+        // #6 Utf8 "Ljava/lang/Deprecated;"
+        out.writeByte(1)
+        out.writeShort(annDesc.length)
+        out.write(annDesc)
+        // access_flags = ACC_PUBLIC (0x0001)
+        out.writeShort(0x0001)
+        // this_class = #2
+        out.writeShort(2)
+        // super_class = #4
+        out.writeShort(4)
+        // interfaces_count = 0
+        out.writeShort(0)
+        // fields_count = 0
+        out.writeShort(0)
+        // methods_count = 0
+        out.writeShort(0)
+        // attributes_count = 1
+        out.writeShort(1)
+        // Attribute: name_index=#5, length=?
+        // RuntimeVisibleTypeAnnotations body:
+        //   u2 num_annotations=1,
+        //   type_annotation:
+        //     u1 target_type=0x13 (empty_target)  -> no additional target_info bytes
+        //     type_path: u1 path_length=0
+        //     annotation: u2 type_index=#6, u2 num_element_value_pairs=0
+        val typeAnnBody = Array[Byte](
+            0x00,
+            0x01,        // num_annotations=1
+            0x13.toByte, // target_type=0x13 (CLASS_EXTENDS empty_target)
+            0x00.toByte, // type_path length=0
+            0x00,
+            0x06, // type_index=#6
+            0x00,
+            0x00 // num_element_value_pairs=0
+        )
+        out.writeShort(5) // attribute_name_index=#5
+        out.writeInt(typeAnnBody.length)
+        out.write(typeAnnBody)
+        out.flush()
+        val bytes = buf.toByteArray
+        ClassfileUnpickler.read(bytes, interner, new TypeArena, new ClasspathRef).map: result =>
+            val md = result.classSymbol.javaSpecific.getOrElse(fail("Expected javaSpecific Present"))
+            assert(
+                md.runtimeTypeAnnotations.nonEmpty,
+                s"Expected non-empty runtimeTypeAnnotations from synthetic classfile, got empty"
+            )
+            val ann = md.runtimeTypeAnnotations.head
+            assert(
+                ann.annotationClass.name.asString.contains("Deprecated"),
+                s"Expected annotation class containing 'Deprecated', got ${ann.annotationClass.name.asString}"
+            )
+    }
+
 end ClassfileReaderTest
