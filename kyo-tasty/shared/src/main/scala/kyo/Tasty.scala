@@ -1153,6 +1153,13 @@ object Tasty:
           *
           * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns. After close, returns
           * whatever heap state is there (closed-state enforcement is Symbol.body only).
+          *
+          * Example:
+          * {{{
+          *   import kyo.AllowUnsafe.embrace.danger
+          *   val sym = cp.findClass("scala.Predef")
+          *   sym.isPresent == true
+          * }}}
           */
         def findClass(fqn: String)(using AllowUnsafe): Maybe[Symbol] = cp.pureClass(fqn)
 
@@ -1165,12 +1172,26 @@ object Tasty:
         /** All package symbols in this classpath.
           *
           * Pure accessor: reads from the immutable packages Chunk in Ready state. Valid after `open` returns.
+          *
+          * Example:
+          * {{{
+          *   import kyo.AllowUnsafe.embrace.danger
+          *   val pkgs = cp.packages
+          *   pkgs.nonEmpty == true
+          * }}}
           */
         def packages(using AllowUnsafe): Chunk[Symbol] = cp.purePackages
 
         /** All top-level class symbols (not packages) in this classpath.
           *
           * Pure accessor: reads from the immutable topLevelClasses Chunk in Ready state. Valid after `open` returns.
+          *
+          * Example:
+          * {{{
+          *   import kyo.AllowUnsafe.embrace.danger
+          *   val classes = cp.topLevelClasses
+          *   classes.nonEmpty == true
+          * }}}
           */
         def topLevelClasses(using AllowUnsafe): Chunk[Symbol] = cp.pureTopLevelClasses
 

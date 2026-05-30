@@ -265,6 +265,96 @@ class TastyTest extends Test:
         Future.successful(succeed)
     }
 
+    // ── Phase 25a doctest source-text invariant tests (L6) ──────────────────
+
+    "Name.apply scaladoc carries a doctest fenced block" in {
+        // L6: every public API entry point must have a {{{ ... }}} doctest example.
+        // Given: source Tasty.scala read as String, lines split.
+        // When: locate the scaladoc block on Name.apply and scan for {{{ and n.asString == "scala.Predef".
+        // Then: both patterns are present in the Name object scaladoc region.
+        val lines    = TestResourceLoader.readText("kyo/Tasty.scala").split("\n")
+        val startIdx = lines.indexWhere(_.contains("object Name:"))
+        assert(startIdx >= 0, "Could not find 'object Name:' in Tasty.scala")
+        val endIdx = lines.indexWhere(_.contains("end Name"), startIdx + 1)
+        assert(endIdx > startIdx, "Could not find 'end Name' after object Name in Tasty.scala")
+        val region = lines.slice(startIdx, endIdx + 1).mkString("\n")
+        assert(region.contains("{{{"), "Name.apply scaladoc: missing opening {{{ in doctest block")
+        assert(region.contains("}}}"), "Name.apply scaladoc: missing closing }}} in doctest block")
+        assert(region.contains("n.asString"), s"Name.apply scaladoc: missing 'n.asString' in doctest body")
+        Future.successful(succeed)
+    }
+
+    "Flags.empty scaladoc carries a doctest fenced block" in {
+        // L6: Flags.empty must have a {{{ ... }}} doctest example.
+        // Given: source Tasty.scala read as String, lines split.
+        // When: locate the scaladoc block on Flags.empty and scan for {{{ and bits == 0L.
+        // Then: both patterns present in the Flags object scaladoc region.
+        val lines    = TestResourceLoader.readText("kyo/Tasty.scala").split("\n")
+        val startIdx = lines.indexWhere(_.contains("object Flags:"))
+        assert(startIdx >= 0, "Could not find 'object Flags:' in Tasty.scala")
+        val endIdx = lines.indexWhere(_.contains("end Flags"), startIdx + 1)
+        assert(endIdx > startIdx, "Could not find 'end Flags' after object Flags in Tasty.scala")
+        val region = lines.slice(startIdx, endIdx + 1).mkString("\n")
+        assert(region.contains("{{{"), "Flags.empty scaladoc: missing opening {{{ in doctest block")
+        assert(region.contains("}}}"), "Flags.empty scaladoc: missing closing }}} in doctest block")
+        assert(
+            region.contains("Tasty.Flags.empty.bits == 0L"),
+            s"Flags.empty scaladoc: missing 'Tasty.Flags.empty.bits == 0L' in doctest body"
+        )
+        Future.successful(succeed)
+    }
+
+    "Classpath.findClass scaladoc carries a doctest fenced block" in {
+        // L6: Classpath.findClass must have a {{{ ... }}} doctest example.
+        // Given: source Tasty.scala read as String.
+        // When: scan for the findClass scaladoc and its {{{ block.
+        // Then: block is present and contains the expected expression.
+        val src          = TestResourceLoader.readText("kyo/Tasty.scala")
+        val findClassIdx = src.indexOf("def findClass(fqn: String)(using AllowUnsafe)")
+        assert(findClassIdx >= 0, "Could not find 'def findClass' in Tasty.scala")
+        val docRegionStart = src.lastIndexOf("/**", findClassIdx)
+        assert(docRegionStart >= 0, "findClass: no preceding scaladoc block found")
+        val docRegion = src.substring(docRegionStart, findClassIdx + 50)
+        assert(docRegion.contains("{{{"), "findClass scaladoc: missing opening {{{ in doctest block")
+        assert(docRegion.contains("}}}"), "findClass scaladoc: missing closing }}} in doctest block")
+        assert(docRegion.contains("findClass("), s"findClass scaladoc: missing 'findClass(' in doctest body")
+        Future.successful(succeed)
+    }
+
+    "Classpath.topLevelClasses scaladoc carries a doctest fenced block" in {
+        // L6: Classpath.topLevelClasses must have a {{{ ... }}} doctest example.
+        // Given: source Tasty.scala read as String.
+        // When: scan for the topLevelClasses scaladoc and its {{{ block.
+        // Then: block is present and contains the expected expression.
+        val src    = TestResourceLoader.readText("kyo/Tasty.scala")
+        val tlcIdx = src.indexOf("def topLevelClasses(using AllowUnsafe)")
+        assert(tlcIdx >= 0, "Could not find 'def topLevelClasses' in Tasty.scala")
+        val docRegionStart = src.lastIndexOf("/**", tlcIdx)
+        assert(docRegionStart >= 0, "topLevelClasses: no preceding scaladoc block found")
+        val docRegion = src.substring(docRegionStart, tlcIdx + 50)
+        assert(docRegion.contains("{{{"), "topLevelClasses scaladoc: missing opening {{{ in doctest block")
+        assert(docRegion.contains("}}}"), "topLevelClasses scaladoc: missing closing }}} in doctest block")
+        assert(docRegion.contains("topLevelClasses"), s"topLevelClasses scaladoc: missing 'topLevelClasses' in doctest body")
+        Future.successful(succeed)
+    }
+
+    "Classpath.packages scaladoc carries a doctest fenced block" in {
+        // L6: Classpath.packages must have a {{{ ... }}} doctest example.
+        // Given: source Tasty.scala read as String.
+        // When: scan for the packages scaladoc and its {{{ block.
+        // Then: block is present and contains the expected expression.
+        val src    = TestResourceLoader.readText("kyo/Tasty.scala")
+        val pkgIdx = src.indexOf("def packages(using AllowUnsafe)")
+        assert(pkgIdx >= 0, "Could not find 'def packages' in Tasty.scala")
+        val docRegionStart = src.lastIndexOf("/**", pkgIdx)
+        assert(docRegionStart >= 0, "packages: no preceding scaladoc block found")
+        val docRegion = src.substring(docRegionStart, pkgIdx + 50)
+        assert(docRegion.contains("{{{"), "packages scaladoc: missing opening {{{ in doctest block")
+        assert(docRegion.contains("}}}"), "packages scaladoc: missing closing }}} in doctest block")
+        assert(docRegion.contains("packages"), s"packages scaladoc: missing 'packages' in doctest body")
+        Future.successful(succeed)
+    }
+
     /** Count non-overlapping occurrences of `needle` in `haystack`. */
     private def countOccurrences(haystack: String, needle: String): Int =
         var count = 0
