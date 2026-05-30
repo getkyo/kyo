@@ -237,4 +237,60 @@ class Scala2PickleTest extends Test:
             assert(hasAnyRefParent, s"Expected AnyRef parent placeholder; got: ${parents.map(_.show).mkString(", ")}")
     }
 
+    // -------------------------------------------------------------------------
+    // Test 8: EXTref decodes to Unresolved symbol with correct FQN
+    // -------------------------------------------------------------------------
+
+    "Test 8: EXTref decodes to Unresolved symbol with FQN com.example.Foo" in run {
+        // Pickle layout (entry indices):
+        //   0: TERMname "com"
+        //   1: TERMname "example"
+        //   2: EXTref nameRef=1 (no owner) -> "example" (root EXTref for package part)
+        //   3: TERMname "Foo"
+        //   4: EXTref nameRef=3 ownerRef=2 -> "example.Foo"
+        //
+        // This test uses a 4-entry layout: ownerRef points to a TERMname directly (common for single-package owners).
+        //   0: TERMname "com.example"   (owner package as a single name)
+        //   1: EXTref ownerEntry=0       (owner EXTref: nameRef=0, no owner)
+        //   2: TERMname "Foo"
+        //   3: EXTref nameRef=2 ownerRef=1 -> resolves to "com.example.Foo"
+        val ownerNameEntry = entry(Scala2PickleReader.TERMname, nameData("com.example"))
+        val ownerExtEntry  = entry(Scala2PickleReader.EXTref, nat(0))           // nameRef=0, no ownerRef
+        val fooNameEntry   = entry(Scala2PickleReader.TERMname, nameData("Foo"))
+        val fooExtEntry    = entry(Scala2PickleReader.EXTref, nat(2) ++ nat(1)) // nameRef=2, ownerRef=1
+        val pickleBytes    = buildPickle(ownerNameEntry, ownerExtEntry, fooNameEntry, fooExtEntry)
+        readPickleDirect(pickleBytes).map: result =>
+            val unresolved = result.symbols.filter(_.kind == Tasty.SymbolKind.Unresolved)
+            assert(unresolved.nonEmpty, s"Expected Unresolved symbols; got kinds: ${result.symbols.map(_.kind).mkString(", ")}")
+            val fooSym = unresolved.find(_.name.asString == "com.example.Foo")
+            assert(fooSym.isDefined, s"Expected symbol with FQN 'com.example.Foo'; got: ${unresolved.map(_.name.asString).mkString(", ")}")
+            assert(fooSym.get.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2 on EXTref symbol")
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 9: EXTMODCLASSref appends $ and decodes to Unresolved symbol
+    // -------------------------------------------------------------------------
+
+    "Test 9: EXTMODCLASSref appends $ and decodes to Unresolved symbol with FQN com.example.Foo$" in run {
+        // Layout (same owner chain as Test 8 but entry 3 is EXTMODCLASSref):
+        //   0: TERMname "com.example"
+        //   1: EXTref nameRef=0 (no owner) -> "com.example"
+        //   2: TERMname "Foo"
+        //   3: EXTMODCLASSref nameRef=2 ownerRef=1 -> "com.example.Foo$"
+        val ownerNameEntry = entry(Scala2PickleReader.TERMname, nameData("com.example"))
+        val ownerExtEntry  = entry(Scala2PickleReader.EXTref, nat(0))
+        val fooNameEntry   = entry(Scala2PickleReader.TERMname, nameData("Foo"))
+        val fooModEntry    = entry(Scala2PickleReader.EXTMODCLASSref, nat(2) ++ nat(1))
+        val pickleBytes    = buildPickle(ownerNameEntry, ownerExtEntry, fooNameEntry, fooModEntry)
+        readPickleDirect(pickleBytes).map: result =>
+            val unresolved = result.symbols.filter(_.kind == Tasty.SymbolKind.Unresolved)
+            assert(unresolved.nonEmpty, s"Expected Unresolved symbols; got kinds: ${result.symbols.map(_.kind).mkString(", ")}")
+            val modSym = unresolved.find(_.name.asString == "com.example.Foo$")
+            assert(
+                modSym.isDefined,
+                s"Expected symbol with FQN 'com.example.Foo$$'; got: ${unresolved.map(_.name.asString).mkString(", ")}"
+            )
+            assert(modSym.get.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2 on EXTMODCLASSref symbol")
+    }
+
 end Scala2PickleTest

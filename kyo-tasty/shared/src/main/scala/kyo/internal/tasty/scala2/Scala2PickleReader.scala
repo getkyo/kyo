@@ -275,6 +275,12 @@ object Scala2PickleReader:
                 case TYPEsym =>
                     val sym = decodeTypeSym(entry.data, i, nameTable, scala2Flags, home, interner)
                     symbols = symbols.appended(sym)
+                case EXTref =>
+                    val sym = decodeExtRef(entry.data, i, nameTable, entries, scala2Flags, home, interner)
+                    symbols = symbols.appended(sym)
+                case EXTMODCLASSref =>
+                    val sym = decodeExtModClassRef(entry.data, i, nameTable, entries, scala2Flags, home, interner)
+                    symbols = symbols.appended(sym)
                 case _ => ()
         }
 
@@ -426,6 +432,96 @@ object Scala2PickleReader:
         val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags)
         makePickleSym(Tasty.SymbolKind.AbstractType, flags, symName, home, interner)
     end decodeTypeSym
+
+    /** EXTref data layout: nameRef(nat) [ownerRef(nat)]
+      *
+      * Decodes a reference to an external symbol. The nameRef indexes a TERMname/TYPEname entry in the pickle table. The optional ownerRef
+      * indexes another entry (typically EXTref or EXTMODCLASSref) whose FQN forms the qualifier. The resulting symbol has
+      * SymbolKind.Unresolved since it refers to a symbol defined in another compilation unit.
+      */
+    private def decodeExtRef(
+        data: Array[Byte],
+        idx: Int,
+        nameTable: scala.collection.mutable.HashMap[Int, String],
+        entries: Chunk[PickleEntry],
+        baseFlags: Tasty.Flags,
+        home: ClasspathRef,
+        interner: Interner
+    ): Tasty.Symbol =
+        val c           = new PickleCursor(data, 0)
+        val nameRef     = if c.remaining > 0 then c.readNat() else 0
+        val ownerRefOpt = if c.remaining > 0 then Present(c.readNat()) else Absent
+        val symName     = nameTable.getOrElse(nameRef, s"<extref$idx>")
+        val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries)).filter(_.nonEmpty)
+        val fqn         = ownerFqn.fold(symName)(q => q + "." + symName)
+        val sym         = makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
+        // flow-allow: §839 case 3 (pickle decode orchestration init path)
+        // Unsafe: SingleAssign.set is unsafe-tier; AllowUnsafe embraced at fresh-symbol population boundary.
+        import AllowUnsafe.embrace.danger
+        sym._declaredType.set(Tasty.Type.Named(sym))
+        sym
+    end decodeExtRef
+
+    /** EXTMODCLASSref data layout: nameRef(nat) [ownerRef(nat)]
+      *
+      * Like EXTref but represents a module class (the class companion of an object). The name is canonicalized to end with `$` to match
+      * Scala 2 module-class JVM naming. The resulting symbol has SymbolKind.Unresolved.
+      */
+    private def decodeExtModClassRef(
+        data: Array[Byte],
+        idx: Int,
+        nameTable: scala.collection.mutable.HashMap[Int, String],
+        entries: Chunk[PickleEntry],
+        baseFlags: Tasty.Flags,
+        home: ClasspathRef,
+        interner: Interner
+    ): Tasty.Symbol =
+        val c               = new PickleCursor(data, 0)
+        val nameRef         = if c.remaining > 0 then c.readNat() else 0
+        val ownerRefOpt     = if c.remaining > 0 then Present(c.readNat()) else Absent
+        val rawName         = nameTable.getOrElse(nameRef, s"<extmodclassref$idx>")
+        val moduleClassName = if rawName.endsWith("$") then rawName else rawName + "$"
+        val ownerFqn        = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries)).filter(_.nonEmpty)
+        val fqn             = ownerFqn.fold(moduleClassName)(q => q + "." + moduleClassName)
+        val sym             = makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
+        // flow-allow: §839 case 3 (pickle decode orchestration init path)
+        // Unsafe: SingleAssign.set is unsafe-tier; AllowUnsafe embraced at fresh-symbol population boundary.
+        import AllowUnsafe.embrace.danger
+        sym._declaredType.set(Tasty.Type.Named(sym))
+        sym
+    end decodeExtModClassRef
+
+    /** Resolve the FQN string for an EXTref or EXTMODCLASSref owner entry index.
+      *
+      * The ownerRef of an EXTref typically points to another EXTref or EXTMODCLASSref entry forming a chain (e.g. a package owner), or it
+      * may point to a TERMname/TYPEname entry directly for root-level names. This method reads the owner entry's data and reconstructs its
+      * FQN without allocating new symbols. Returns empty string for unrecognized or missing entries.
+      */
+    private def resolveExtFqn(
+        entryIdx: Int,
+        nameTable: scala.collection.mutable.HashMap[Int, String],
+        entries: Chunk[PickleEntry]
+    ): String =
+        // If the entry is itself a name entry, return its value directly.
+        Maybe.fromOption(nameTable.get(entryIdx)) match
+            case Present(name) => name
+            case Absent =>
+                if entryIdx < 0 || entryIdx >= entries.length then ""
+                else
+                    val refEntry = entries(entryIdx)
+                    if refEntry.tag == EXTref || refEntry.tag == EXTMODCLASSref then
+                        val c           = new PickleCursor(refEntry.data, 0)
+                        val nameRef     = if c.remaining > 0 then c.readNat() else 0
+                        val ownerRefOpt = if c.remaining > 0 then Present(c.readNat()) else Absent
+                        val rawName     = nameTable.getOrElse(nameRef, "")
+                        val leafName =
+                            if refEntry.tag == EXTMODCLASSref && !rawName.endsWith("$") then rawName + "$"
+                            else rawName
+                        val ownerFqn = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries)).filter(_.nonEmpty)
+                        ownerFqn.fold(leafName)(q => q + "." + leafName)
+                    else ""
+                    end if
+    end resolveExtFqn
 
     // -------------------------------------------------------------------------
     // Helpers
