@@ -41,6 +41,65 @@ object PortableInflate:
         end readBytes
     end BitStream
 
-    // Placeholder for the full inflate; subsequent phases add Huffman, blocks, ZLIB wrapper.
+    /** Canonical Huffman tree built from code-length arrays per RFC 1951 §3.2.2. */
+    final private[kyo] class HuffmanTree private (
+        val maxBits: Int,
+        val codeToSymbol: Array[Int],
+        val bitLengthCounts: Array[Int]
+    ):
+        def decodeOne(stream: BitStream): Int =
+            var code   = 0
+            var first  = 0
+            var index  = 0
+            var len    = 1
+            var result = -1
+            while len <= maxBits && result < 0 do
+                code = (code << 1) | stream.readBit()
+                val count = bitLengthCounts(len)
+                if code - count < first then
+                    result = codeToSymbol(index + (code - first))
+                else
+                    index += count
+                    first = (first + count) << 1
+                    len += 1
+                end if
+            end while
+            if result >= 0 then result
+            else throw new InflateException(s"invalid Huffman code at bit ${stream.bitOffset}", stream.byteOffset)
+        end decodeOne
+    end HuffmanTree
+
+    /** Companion for building a HuffmanTree from code-length arrays per RFC 1951 §3.2.2. */
+    private[kyo] object HuffmanTree:
+        def fromCodeLengths(lengths: Array[Int]): HuffmanTree =
+            val maxBits         = lengths.max
+            val bitLengthCounts = new Array[Int](maxBits + 1)
+            var i               = 0
+            while i < lengths.length do
+                bitLengthCounts(lengths(i)) += 1
+                i += 1
+            bitLengthCounts(0) = 0
+            val codeToSymbol = new Array[Int](lengths.length)
+            val offsets      = new Array[Int](maxBits + 1)
+            var sum          = 0
+            var len          = 1
+            while len <= maxBits do
+                offsets(len) = sum
+                sum += bitLengthCounts(len)
+                len += 1
+            end while
+            var sym = 0
+            while sym < lengths.length do
+                val l = lengths(sym)
+                if l != 0 then
+                    codeToSymbol(offsets(l)) = sym
+                    offsets(l) += 1
+                sym += 1
+            end while
+            new HuffmanTree(maxBits, codeToSymbol, bitLengthCounts)
+        end fromCodeLengths
+    end HuffmanTree
+
+    // Placeholder for the full inflate; subsequent phases add blocks, ZLIB wrapper.
 
 end PortableInflate
