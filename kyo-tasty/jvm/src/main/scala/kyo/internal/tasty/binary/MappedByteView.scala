@@ -32,29 +32,34 @@ final class MappedByteView(
     private def checkOpen(): Unit =
         if closed.get() then throw new IllegalStateException("mmap arena closed")
 
-    def peekByte(at: Int): Byte =
+    def peekByte(at: Long): Byte =
         checkOpen()
-        buf.get(at)
+        buf.get(at.toInt)
 
     def readByte(): Byte =
         checkOpen()
+        if cursor > Int.MaxValue then
+            throw new IllegalStateException(
+                s"MappedByteView cursor $cursor exceeds Int.MaxValue; mmap segment overflow"
+            )
+        end if
         val b = buf.get(cursor.toInt)
         cursor += 1
         b
     end readByte
 
-    def readEnd(): Int =
+    def readEnd(): Long =
         val len = Varint.readNat(this)
-        cursor.toInt + len
+        cursor + len.toLong
 
-    def subView(from: Int, until: Int): MappedByteView =
-        new MappedByteView(buf, from.toLong, until.toLong, closed)
+    def subView(from: Long, until: Long): MappedByteView =
+        new MappedByteView(buf, from, until, closed)
 
-    def goto(addr: Int): Unit =
-        cursor = addr.toLong
+    def goto(addr: Long): Unit =
+        cursor = addr
 
-    def remaining: Int = (end - cursor).toInt
+    def remaining: Long = end - cursor
 
-    def position: Int = cursor.toInt
+    def position: Long = cursor
 
 end MappedByteView

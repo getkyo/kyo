@@ -1383,7 +1383,7 @@ object ClassfileUnpickler:
     private def captureBytes(view: ByteView, count: Int): Array[Byte] =
         view match
             case h: ByteView.Heap =>
-                val start = h.position
+                val start = h.positionInt
                 skipBytes(view, count)
                 h.copyBytes(start, start + count)
             case _: ByteView.Mapped =>

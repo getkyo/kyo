@@ -51,9 +51,9 @@ object SectionIndex:
     private def readSync(view: ByteView, names: Array[Tasty.Name])(using AllowUnsafe): SectionIndex =
         val builder = Map.newBuilder[String, (Int, Int)]
         while view.remaining > 0 do
-            val nameRef    = view.readNat() // 0-based index into names
-            val sectionLen = view.readNat() // byte count of payload
-            val offset     = view.position  // payload starts here
+            val nameRef    = view.readNat()   // 0-based index into names
+            val sectionLen = view.readNat()   // byte count of payload
+            val offset     = view.positionInt // payload starts here
             if nameRef < 0 || nameRef >= names.length then
                 throw new ArrayIndexOutOfBoundsException(
                     s"SectionIndex: nameRef=$nameRef out of range (names.length=${names.length}) at byte ${view.position}"

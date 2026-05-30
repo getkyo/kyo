@@ -206,7 +206,7 @@ object ConstantPool:
                 tag match
                     case ClassfileFormat.CONSTANT_Utf8 =>
                         val len = readU2(view)
-                        val off = view.position
+                        val off = view.positionInt
                         // Advance cursor past the UTF-8 bytes
                         var i = 0
                         while i < len do

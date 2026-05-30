@@ -21,9 +21,9 @@ final class MappedByteView(
     private def checkOpen(): Unit =
         if closed.get() then throw new IllegalStateException("mmap arena closed")
 
-    def peekByte(at: Int): Byte =
+    def peekByte(at: Long): Byte =
         checkOpen()
-        ptr(at.toLong)
+        ptr(at)
 
     def readByte(): Byte =
         checkOpen()
@@ -32,18 +32,18 @@ final class MappedByteView(
         b
     end readByte
 
-    def readEnd(): Int =
+    def readEnd(): Long =
         val len = Varint.readNat(this)
-        cursor.toInt + len
+        cursor + len.toLong
 
-    def subView(from: Int, until: Int): MappedByteView =
-        new MappedByteView(ptr, from.toLong, until.toLong, closed)
+    def subView(from: Long, until: Long): MappedByteView =
+        new MappedByteView(ptr, from, until, closed)
 
-    def goto(addr: Int): Unit =
-        cursor = addr.toLong
+    def goto(addr: Long): Unit =
+        cursor = addr
 
-    def remaining: Int = (end - cursor).toInt
+    def remaining: Long = end - cursor
 
-    def position: Int = cursor.toInt
+    def position: Long = cursor
 
 end MappedByteView

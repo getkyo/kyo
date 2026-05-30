@@ -129,8 +129,8 @@ object AstUnpickler:
         ownerStack.append(root)
         allSymbols += root
 
-        val sectionOffset = view.position
-        val sectionEnd    = sectionOffset + view.remaining
+        val sectionOffset = view.positionInt
+        val sectionEnd    = view.position + view.remaining
         val sectionBytes  = view.allBytes
         // Phase 1: collect symbols. The typeSession holds the live addrMap so type decode can find
         // locally-defined symbols as the walk progresses. Cross-file refs produce UnresolvedRef entries.
@@ -202,7 +202,7 @@ object AstUnpickler:
       */
     private def walkStats(
         view: ByteView,
-        end: Int,
+        end: Long,
         names: Array[Tasty.Name],
         sectionBytes: Array[Byte],
         sectionOffset: Int,
@@ -216,7 +216,7 @@ object AstUnpickler:
         typeBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Type]
     ): Unit =
         while view.position < end do
-            val nodeAddr = view.position
+            val nodeAddr = view.positionInt
             val tag      = view.readByte() & 0xff
             tag match
                 case TastyFormat.PACKAGE =>
@@ -227,7 +227,14 @@ object AstUnpickler:
                     // Decode the innermost simple name from the path.
                     val pkgName = extractPackageName(view, names)
                     val owner   = currentOwner(ownerStack)
-                    val origin  = new Tasty.Symbol.TastyOrigin(view.position, payloadEnd, sectionBytes, names, sectionOffset, null)
+                    val origin = new Tasty.Symbol.TastyOrigin(
+                        view.positionInt,
+                        Math.toIntExact(payloadEnd),
+                        sectionBytes,
+                        names,
+                        sectionOffset,
+                        null
+                    )
                     val sym = InternalSymbol.makeSymbol(
                         Tasty.SymbolKind.Package,
                         Tasty.Flags.empty,
@@ -270,8 +277,15 @@ object AstUnpickler:
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val kind     = InternalSymbolKind.fromValdefFlags(flagBits)
                     val flags    = new Tasty.Flags(flagBits)
-                    val origin   = new Tasty.Symbol.TastyOrigin(payloadBody, payloadEnd, sectionBytes, names, sectionOffset, null)
-                    val sym      = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
+                    val origin = new Tasty.Symbol.TastyOrigin(
+                        Math.toIntExact(payloadBody),
+                        Math.toIntExact(payloadEnd),
+                        sectionBytes,
+                        names,
+                        sectionOffset,
+                        null
+                    )
+                    val sym = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     valTpe match
@@ -287,8 +301,15 @@ object AstUnpickler:
                     val payloadBody = view.position
                     val flagBits    = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags       = new Tasty.Flags(flagBits)
-                    val origin      = new Tasty.Symbol.TastyOrigin(payloadBody, payloadEnd, sectionBytes, names, sectionOffset, null)
-                    val sym         = InternalSymbol.makeSymbol(Tasty.SymbolKind.Method, flags, symName, owner, home, origin, Absent)
+                    val origin = new Tasty.Symbol.TastyOrigin(
+                        Math.toIntExact(payloadBody),
+                        Math.toIntExact(payloadEnd),
+                        sectionBytes,
+                        names,
+                        sectionOffset,
+                        null
+                    )
+                    val sym = InternalSymbol.makeSymbol(Tasty.SymbolKind.Method, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     // Recurse into DEFDEF body to discover type params and value params.
@@ -353,7 +374,14 @@ object AstUnpickler:
                         val kind     = InternalSymbolKind.fromTypedefTemplateFlags(flagBits)
                         val flags    = new Tasty.Flags(flagBits)
                         val origin =
-                            new Tasty.Symbol.TastyOrigin(templateBodyStart, templatePayloadEnd, sectionBytes, names, sectionOffset, null)
+                            new Tasty.Symbol.TastyOrigin(
+                                Math.toIntExact(templateBodyStart),
+                                Math.toIntExact(templatePayloadEnd),
+                                sectionBytes,
+                                names,
+                                sectionOffset,
+                                null
+                            )
                         val sym = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
@@ -397,8 +425,15 @@ object AstUnpickler:
                         val kind     = InternalSymbolKind.fromTypedefTypeFlagsAndBody(flagBits, nextTag)
                         val flags    = new Tasty.Flags(flagBits)
                         // Type-level TYPEDEF has no body to decode; bodyStart == bodyEnd == payloadEnd sentinel.
-                        val origin = new Tasty.Symbol.TastyOrigin(payloadEnd, payloadEnd, sectionBytes, names, sectionOffset, null)
-                        val sym    = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
+                        val origin = new Tasty.Symbol.TastyOrigin(
+                            Math.toIntExact(payloadEnd),
+                            Math.toIntExact(payloadEnd),
+                            sectionBytes,
+                            names,
+                            sectionOffset,
+                            null
+                        )
+                        val sym = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
                         typeLevelTpe match
@@ -416,8 +451,15 @@ object AstUnpickler:
                     val tpBounds = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
                     val flagBits = readModifiers(view, payloadEnd)
                     val flags    = new Tasty.Flags(flagBits)
-                    val origin   = new Tasty.Symbol.TastyOrigin(payloadEnd, payloadEnd, sectionBytes, names, sectionOffset, null)
-                    val sym      = InternalSymbol.makeSymbol(Tasty.SymbolKind.TypeParam, flags, symName, owner, home, origin, Absent)
+                    val origin = new Tasty.Symbol.TastyOrigin(
+                        Math.toIntExact(payloadEnd),
+                        Math.toIntExact(payloadEnd),
+                        sectionBytes,
+                        names,
+                        sectionOffset,
+                        null
+                    )
+                    val sym = InternalSymbol.makeSymbol(Tasty.SymbolKind.TypeParam, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     tpBounds match
@@ -434,8 +476,15 @@ object AstUnpickler:
                     val paramTpe = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags    = new Tasty.Flags(flagBits)
-                    val origin   = new Tasty.Symbol.TastyOrigin(payloadEnd, payloadEnd, sectionBytes, names, sectionOffset, null)
-                    val sym      = InternalSymbol.makeSymbol(Tasty.SymbolKind.Parameter, flags, symName, owner, home, origin, Absent)
+                    val origin = new Tasty.Symbol.TastyOrigin(
+                        Math.toIntExact(payloadEnd),
+                        Math.toIntExact(payloadEnd),
+                        sectionBytes,
+                        names,
+                        sectionOffset,
+                        null
+                    )
+                    val sym = InternalSymbol.makeSymbol(Tasty.SymbolKind.Parameter, flags, symName, owner, home, origin, Absent)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     paramTpe match
@@ -465,7 +514,7 @@ object AstUnpickler:
       *
       * Returns the decoded type if present and successful, Absent otherwise.
       */
-    private def decodeOneTypeIfPresent(view: ByteView, end: Int, typeSession: TypeUnpickler.DecodeSession): Maybe[Tasty.Type] =
+    private def decodeOneTypeIfPresent(view: ByteView, end: Long, typeSession: TypeUnpickler.DecodeSession): Maybe[Tasty.Type] =
         if view.position < end then
             val nextTag = view.peekByte(view.position) & 0xff
             if !isModifierTag(nextTag) then
@@ -493,7 +542,7 @@ object AstUnpickler:
       */
     private def readDefDefReturnType(
         returnTypeScanView: ByteView,
-        end: Int,
+        end: Long,
         typeSession: TypeUnpickler.DecodeSession
     ): Maybe[Tasty.Type] =
         try
@@ -535,7 +584,7 @@ object AstUnpickler:
       */
     private def decodeTemplateParents(
         parentScanView: ByteView,
-        end: Int,
+        end: Long,
         typeSession: TypeUnpickler.DecodeSession
     ): mutable.ArrayBuffer[Tasty.Type] =
         val collected = new mutable.ArrayBuffer[Tasty.Type]()
@@ -586,7 +635,7 @@ object AstUnpickler:
       *
       * STEERING CRITICAL: PRIVATEqualified (98) and PROTECTEDqualified (99) must skip their sub-AST.
       */
-    private def scanForwardAndCollectFlags(view: ByteView, end: Int): Long =
+    private def scanForwardAndCollectFlags(view: ByteView, end: Long): Long =
         var flagBits = 0L
         while view.position < end do
             val pos = view.position
@@ -618,7 +667,7 @@ object AstUnpickler:
       *
       * STEERING CRITICAL: PRIVATEqualified (98) and PROTECTEDqualified (99) are category 3 (tag + sub-AST). Must skip their sub-AST.
       */
-    private def readModifiers(view: ByteView, end: Int): Long =
+    private def readModifiers(view: ByteView, end: Long): Long =
         var flagBits = 0L
         while view.position < end do
             val modTag = view.readByte() & 0xff

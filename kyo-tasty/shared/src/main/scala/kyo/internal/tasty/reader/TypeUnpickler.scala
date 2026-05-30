@@ -250,7 +250,7 @@ object TypeUnpickler:
 
     /** Decode one type node. tag byte not yet consumed. Records startAddr -> result in addrCache. */
     private def readTypeNode(view: ByteView, ctx: DecodeCtx): Tasty.Type =
-        val startAddr = view.position
+        val startAddr = view.positionInt
         val tag       = view.readByte() & 0xff
         val t         = decodeTag(tag, startAddr, view, ctx)
         val interned  = ctx.arena.intern(t)
@@ -436,13 +436,14 @@ object TypeUnpickler:
                 // consumers can decode it into a Tree via TreeUnpickler. The term spans from the
                 // current cursor up to `end`. When sectionBytes is unavailable (the rare cached
                 // re-decode path), fall back to an empty slice + no decode context.
-                val termStart = view.position
+                val termStart = view.positionInt
+                val endInt    = Math.toIntExact(end)
                 skipToEnd(view, end)
                 val annotation =
                     if ctx.sectionBytes == null then
                         Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home)), Chunk.empty)
                     else
-                        val pickle = Chunk.from(java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, end))
+                        val pickle = Chunk.from(java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, endInt))
                         val annCtx = new Tasty.Annotation.DecodeContext(
                             ctx.names,
                             ctx.addrMap,
@@ -631,7 +632,7 @@ object TypeUnpickler:
       */
     private def readTypeLambdaParams(
         view: ByteView,
-        end: Int,
+        end: Long,
         ctx: DecodeCtx
     ): mutable.ArrayBuffer[Tasty.Symbol] =
         val resultStart = view.position
@@ -670,7 +671,7 @@ object TypeUnpickler:
       */
     private def readMethodParams(
         view: ByteView,
-        end: Int,
+        end: Long,
         ctx: DecodeCtx
     ): mutable.ArrayBuffer[Tasty.Symbol] =
         val resultStart = view.position
@@ -706,7 +707,7 @@ object TypeUnpickler:
     end readMethodParams
 
     /** Read type nodes until position reaches `end`. */
-    private def readTypesUntil(view: ByteView, end: Int, ctx: DecodeCtx): mutable.ArrayBuffer[Tasty.Type] =
+    private def readTypesUntil(view: ByteView, end: Long, ctx: DecodeCtx): mutable.ArrayBuffer[Tasty.Type] =
         val buf = new mutable.ArrayBuffer[Tasty.Type]()
         while view.position < end do
             buf += readTypeNode(view, ctx)
@@ -714,7 +715,7 @@ object TypeUnpickler:
     end readTypesUntil
 
     /** Skip to the given end position. */
-    private def skipToEnd(view: ByteView, end: Int): Unit =
+    private def skipToEnd(view: ByteView, end: Long): Unit =
         view.goto(end)
 
     /** Skip exactly one type node from the current position (tag not yet consumed). */

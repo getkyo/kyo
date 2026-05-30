@@ -96,7 +96,7 @@ object AttributeUnpickler:
                     // Forward-compatible: skip known-category unknowns, fail on truly unknown.
                     if TastyFormat.isBooleanAttrTag(unknown) then ()                       // no payload
                     else if TastyFormat.isStringAttrTag(unknown) then view.readNat(): Unit // skip Utf8Ref
-                    else throw new UnknownTagException(unknown, view.position)
+                    else throw new UnknownTagException(unknown, view.positionInt)
             end match
         end while
         FileAttributes(explicitNulls, captureChecked, isJava, isOutline, scala2StandardLibrary, sourceFile)
