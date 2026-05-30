@@ -115,7 +115,7 @@ object AstUnpickler:
         attrs: FileAttributes,
         home: ClasspathRef,
         arena: TypeArena
-    ): Pass1Result =
+    )(using Frame): Pass1Result =
         val addrMap         = new mutable.HashMap[Int, Tasty.Symbol]()
         val allSymbols      = new mutable.ArrayBuffer[Tasty.Symbol]()
         val ownerStack      = new mutable.ArrayDeque[Tasty.Symbol]()
@@ -214,7 +214,7 @@ object AstUnpickler:
         typeSession: TypeUnpickler.DecodeSession,
         parentsBySymbol: mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Type]],
         typeBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Type]
-    ): Unit =
+    )(using Frame): Unit =
         while view.position < end do
             val nodeAddr = view.positionInt
             val tag      = view.readByte() & 0xff
@@ -514,7 +514,9 @@ object AstUnpickler:
       *
       * Returns the decoded type if present and successful, Absent otherwise.
       */
-    private def decodeOneTypeIfPresent(view: ByteView, end: Long, typeSession: TypeUnpickler.DecodeSession): Maybe[Tasty.Type] =
+    private def decodeOneTypeIfPresent(view: ByteView, end: Long, typeSession: TypeUnpickler.DecodeSession)(using
+        Frame
+    ): Maybe[Tasty.Type] =
         if view.position < end then
             val nextTag = view.peekByte(view.position) & 0xff
             if !isModifierTag(nextTag) then
@@ -544,7 +546,7 @@ object AstUnpickler:
         returnTypeScanView: ByteView,
         end: Long,
         typeSession: TypeUnpickler.DecodeSession
-    ): Maybe[Tasty.Type] =
+    )(using Frame): Maybe[Tasty.Type] =
         try
             // Skip TYPEPARAM and PARAM nodes that precede the return type.
             var skip = true
@@ -586,7 +588,7 @@ object AstUnpickler:
         parentScanView: ByteView,
         end: Long,
         typeSession: TypeUnpickler.DecodeSession
-    ): mutable.ArrayBuffer[Tasty.Type] =
+    )(using Frame): mutable.ArrayBuffer[Tasty.Type] =
         val collected = new mutable.ArrayBuffer[Tasty.Type]()
         // Phase 1: skip leading TYPEPARAM and PARAM nodes (class own type/term params).
         var skipParams = true

@@ -66,7 +66,7 @@ object TypeUnpickler:
         home: ClasspathRef,
         sectionBytes: Array[Byte],
         sectionOffset: Int
-    )(using Frame): (Tasty.Type, Chunk[UnresolvedRef]) < (Sync & Abort[TastyError]) =
+    )(using frame: Frame): (Tasty.Type, Chunk[UnresolvedRef]) < (Sync & Abort[TastyError]) =
         val result =
             try
                 val addrCache     = new mutable.HashMap[Int, Tasty.Type]()
@@ -84,7 +84,8 @@ object TypeUnpickler:
                         binderAddrMap,
                         placeholders,
                         sectionBytes,
-                        sectionOffset
+                        sectionOffset,
+                        frame
                     )
                 val t = readTypeNode(view, ctx)
                 Right((t, Chunk.from(placeholders)))
@@ -127,7 +128,12 @@ object TypeUnpickler:
       * Handles SHAREDtype cache misses by re-decoding the referenced type from sectionBytes on demand.
       */
     private[tasty] def readTypeForTree(view: ByteView, session: TreeTypeSession): Tasty.Type =
-        val peek = view.peekByte(view.position) & 0xff
+        // flow-allow: internal frame used here because readTypeForTree is called from
+        // TreeUnpickler.decodeSync, which is the OnceCell init lambda for Symbol.body.
+        // The init lambda has type () => Tree and cannot accept a Frame parameter.
+        // This is the one legitimate flow-allow site; all other decode paths propagate a real Frame.
+        val callFrame = Frame.internal
+        val peek      = view.peekByte(view.position) & 0xff
         if peek == TastyFormat.SHAREDtype then
             discard(view.readByte()) // consume SHAREDtype tag
             val addr    = view.readNat()
@@ -147,7 +153,8 @@ object TypeUnpickler:
                         session.binderAddrMap,
                         session.placeholders,
                         session.sectionBytes,
-                        session.sectionOffset
+                        session.sectionOffset,
+                        callFrame
                     )
                     readTypeNode(forkView, forkCtx)
                 }
@@ -163,7 +170,8 @@ object TypeUnpickler:
                 session.binderAddrMap,
                 session.placeholders,
                 session.sectionBytes,
-                session.sectionOffset
+                session.sectionOffset,
+                callFrame
             )
             readTypeNode(view, ctx)
         end if
@@ -181,7 +189,7 @@ object TypeUnpickler:
       * @return
       *   The decoded Tasty.Type, interned in `session.arena`.
       */
-    private[kyo] def readTypeIntoSession(view: ByteView, session: DecodeSession): Tasty.Type =
+    private[kyo] def readTypeIntoSession(view: ByteView, session: DecodeSession)(using frame: Frame): Tasty.Type =
         // Pass session.liveAddrMap directly -- no per-call IntMap snapshot.
         // liveAddrMap is the mutable.HashMap being built by AstUnpickler.walkStats.
         // Locally-defined symbols accumulated so far are visible through the live map.
@@ -197,7 +205,8 @@ object TypeUnpickler:
             session.binderAddrMap,
             session.placeholders,
             null,
-            0
+            0,
+            frame
         )
         readTypeNode(view, ctx)
     end readTypeIntoSession
@@ -224,6 +233,7 @@ object TypeUnpickler:
     // Pass null when decoding from a live DecodeSession (Pass 1) where addrCache is always pre-populated.
     // addrMap accepts any scala.collection.Map so pass1 can pass liveAddrMap (mutable.HashMap) directly
     // without snapshotting into an IntMap on every type-node decode call.
+    // frame: call-site Frame, used for Log.warn in the unknown-tag fallback branch.
     final private class DecodeCtx(
         val names: Array[Tasty.Name],
         val addrMap: scala.collection.Map[Int, Tasty.Symbol],
@@ -234,7 +244,8 @@ object TypeUnpickler:
         val binderAddrMap: mutable.HashMap[Int, Chunk[Tasty.Symbol]],
         val placeholders: mutable.ArrayBuffer[UnresolvedRef],
         val sectionBytes: Array[Byte],
-        val sectionOffset: Int
+        val sectionOffset: Int,
+        val frame: Frame
     )
 
     private def makeUnresolvedSym(fqn: String, home: ClasspathRef): Tasty.Symbol =
@@ -293,7 +304,8 @@ object TypeUnpickler:
                                 ctx.binderAddrMap,
                                 ctx.placeholders,
                                 ctx.sectionBytes,
-                                ctx.sectionOffset
+                                ctx.sectionOffset,
+                                ctx.frame
                             )
                             val t = readTypeNode(forkView, forkCtx)
                             ctx.addrCache(absRef) = t
@@ -590,13 +602,23 @@ object TypeUnpickler:
                 Tasty.Type.Repeated(elem)
 
             case other if other >= TastyFormat.firstLengthTreeTag =>
-                // Unknown category 5 node: skip and return a placeholder.
+                // Unknown category 5 node: log a warning, skip and return a placeholder.
+                // AllowUnsafe is already in scope; evalOrThrow executes the Sync computation synchronously.
+                given Frame = ctx.frame
+                Sync.Unsafe.evalOrThrow(Log.warn(
+                    s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt} in ${ctx.home}"
+                ))
                 val end = view.readEnd()
                 view.goto(end)
                 Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other", ctx.home))
 
             case other =>
-                // Unknown category 1-4 node: skip body and return placeholder.
+                // Unknown category 1-4 node: log a warning, skip body and return placeholder.
+                // AllowUnsafe is already in scope; evalOrThrow executes the Sync computation synchronously.
+                given Frame = ctx.frame
+                Sync.Unsafe.evalOrThrow(Log.warn(
+                    s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt} in ${ctx.home}"
+                ))
                 skipTreeBody(other, view)
                 Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other", ctx.home))
 

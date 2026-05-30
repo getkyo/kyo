@@ -505,4 +505,56 @@ class TypeUnpicklerTest extends Test:
         }
     }
 
+    // Test M7-1: unknown category-5 tag (250) fires a warn-level log via Log.live.unsafe.warn.
+    // Pins INV-004, M7.
+    "unknown category-5 TASTy type tag fires a warn-level log" in {
+        // cat5 encoding: tag byte + length Nat + payload. Length = 0 → Nat(0) = (0 | 0x80).toByte = 0x80.
+        val bytes                          = Array(250.toByte, 0x80.toByte)
+        val output                         = new StringBuilder
+        var decodedType: Maybe[Tasty.Type] = Absent
+        scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
+            override def write(b: Int): Unit = output.append(b.toChar))):
+            import AllowUnsafe.embrace.danger
+            Sync.Unsafe.evalOrThrow:
+                Abort.run[TastyError](decodeType(bytes)).map {
+                    case Result.Success((t, _)) => decodedType = Present(t)
+                    case Result.Failure(_)      => ()
+                    case Result.Panic(t)        => throw t
+                }
+        val logged = output.toString
+        assert(
+            logged.contains("unknown TASTy type tag 250"),
+            s"Expected warn message containing 'unknown TASTy type tag 250' but got: $logged"
+        )
+        decodedType match
+            case Present(Tasty.Type.Named(sym)) =>
+                assert(
+                    sym.name.asString == "unknown-type-tag-250",
+                    s"Expected unresolved sym name 'unknown-type-tag-250' but got '${sym.name.asString}'"
+                )
+            case other => fail(s"Expected Present(Named(unresolved)) but got $other")
+        end match
+    }
+
+    // Test M7-2: a known category-1 tag (UNITconst) does NOT fire any log output.
+    // Pins INV-004 negative path.
+    "known TASTy type tag does not emit a warn-level log" in {
+        // UNITconst = category 1: single tag byte, no payload.
+        val bytes  = Array(TastyFormat.UNITconst.toByte)
+        val output = new StringBuilder
+        scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
+            override def write(b: Int): Unit = output.append(b.toChar))):
+            import AllowUnsafe.embrace.danger
+            Sync.Unsafe.evalOrThrow:
+                Abort.run[TastyError](decodeType(bytes)).map {
+                    case Result.Success((_, _)) => ()
+                    case Result.Failure(e)      => ()
+                    case Result.Panic(t)        => throw t
+                }
+        assert(
+            output.isEmpty,
+            s"Expected no log output for known tag but got: ${output.toString}"
+        )
+    }
+
 end TypeUnpicklerTest
