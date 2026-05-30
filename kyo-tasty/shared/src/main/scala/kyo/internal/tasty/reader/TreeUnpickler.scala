@@ -425,9 +425,27 @@ object TreeUnpickler:
                 end if
 
             case TastyFormat.IMPORT =>
-                val end = view.readEnd()
+                val end  = view.readEnd()
+                val qual = readTree(view, ctx)
+                val sels = readImportSelectors(view, end, ctx)
                 view.goto(end)
-                Tasty.Tree.Unknown(TastyFormat.IMPORT, Math.toIntExact(end - startAddr))
+                Tasty.Tree.Import(qual, sels)
+
+            case TastyFormat.EXPORT =>
+                val end  = view.readEnd()
+                val qual = readTree(view, ctx)
+                val sels = readImportSelectors(view, end, ctx)
+                view.goto(end)
+                Tasty.Tree.Export(qual, sels)
+
+            case TastyFormat.ANNOTATION =>
+                val end       = view.readEnd()
+                val annotType = readTree(view, ctx)
+                val arg =
+                    if view.position < end then readTree(view, ctx)
+                    else Tasty.Tree.Unknown(0, 0)
+                view.goto(end)
+                Tasty.Tree.AnnotationNode(annotType, arg)
 
             case TastyFormat.TYPEPARAM =>
                 val end     = view.readEnd()
@@ -926,6 +944,40 @@ object TreeUnpickler:
         end while
         (Chunk.from(implicits.toSeq), Chunk.from(patterns.toSeq))
     end readUnapplyParts
+
+    // ── Import/Export selector helpers ───────────────────────────────────────
+
+    /** Read import selectors from an IMPORT or EXPORT payload (after qual has been read).
+      *
+      * Selectors are encoded as IMPORTED nameRef (RENAMED nameRef)? sequences, where IMPORTED and RENAMED are category-2 tags. Each
+      * selector is returned as a Tree.Ident built from the imported name. Wildcards and omit-selectors that dotty may emit as bare IMPORTED
+      * with a wildcard name are handled the same way.
+      */
+    private def readImportSelectors(view: ByteView, end: Long, ctx: DecodeCtx): Chunk[Tasty.Tree] =
+        import AllowUnsafe.embrace.danger
+        val buf = new scala.collection.mutable.ArrayBuffer[Tasty.Tree]()
+        while view.position < end do
+            val peek = view.peekByte(view.position) & 0xff
+            if peek == TastyFormat.IMPORTED then
+                discard(view.readByte())
+                val nameRef = view.readNat()
+                val name    = nameFromRef(nameRef, ctx)
+                buf += Tasty.Tree.Ident(name, Tasty.Type.Named(makeUnresolvedSym(name.asString, ctx.home)))
+                // Check for optional RENAMED
+                if view.position < end && (view.peekByte(view.position) & 0xff) == TastyFormat.RENAMED then
+                    discard(view.readByte())
+                    discard(view.readNat()) // skip renamed-to name
+            else if isModifierTag(peek) then
+                discard(view.readByte())
+                if peek == TastyFormat.PRIVATEqualified || peek == TastyFormat.PROTECTEDqualified then
+                    skipOneTree(view)
+            else
+                // Unexpected content; skip by reading a full tree to maintain cursor integrity.
+                discard(readTree(view, ctx))
+            end if
+        end while
+        Chunk.from(buf.toSeq)
+    end readImportSelectors
 
     // ── DefDef helpers ────────────────────────────────────────────────────────
 

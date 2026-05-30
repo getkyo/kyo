@@ -600,6 +600,15 @@ object Tasty:
         /** Owner-qualified selection (SELECTin tag): qualifier + name + owner. */
         final case class SelectIn(qual: Tree, name: Name, owner: Tree) extends Tree
 
+        /** Import statement (IMPORT tag): qualifier expression and selector trees. */
+        final case class Import(qual: Tree, selectors: Chunk[Tree]) extends Tree
+
+        /** Export clause (EXPORT tag): qualifier expression and selector trees. */
+        final case class Export(qual: Tree, selectors: Chunk[Tree]) extends Tree
+
+        /** In-tree annotation node (ANNOTATION tag): annotation class type tree and annotation argument tree. */
+        final case class AnnotationNode(annotType: Tree, arg: Tree) extends Tree
+
         /** Unknown tag -- encountered a tag not covered by this ADT version. */
         final case class Unknown(tag: Int, length: Int) extends Tree
     end Tree

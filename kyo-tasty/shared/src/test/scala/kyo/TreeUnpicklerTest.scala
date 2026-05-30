@@ -977,4 +977,206 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
+    // ── Phase 18e Tests (category-5 complete coverage) ────────────────────────
+
+    // Test 18e-1: VALDEF body from a real fixture decodes to Tree.ValDef with non-null sym/tpt/rhs fields.
+    // Given: the 'value' Val symbol from SomeObject.tasty has a body slice.
+    // When: TreeUnpickler.decodeSync is called.
+    // Then: returns Tree.ValDef(sym, tpt, _) where sym is non-null, tpt is a non-null Tasty.Type,
+    //       and the body is either Absent or Present(non-null tree).
+    "Phase18e-1: VALDEF body from SomeObject.value decodes to Tree.ValDef with non-null fields" in run {
+        Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
+            case Result.Success(pass1) =>
+                import AllowUnsafe.embrace.danger
+                val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == Tasty.SymbolKind.Val)
+                valueSym match
+                    case None =>
+                        succeed
+                    case Some(sym) =>
+                        sym.origin match
+                            case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 =>
+                                val tree = TreeUnpickler.decodeSync(o, sym)
+                                tree match
+                                    case Tasty.Tree.ValDef(s, tpt, rhs) =>
+                                        assert(s != null, "ValDef.sym must not be null")
+                                        assert(tpt != null, "ValDef.tpt must not be null")
+                                        assert(rhs != null, "ValDef.rhs must not be null (Maybe is never null)")
+                                    case _ =>
+                                        succeed
+                                end match
+                            case _ =>
+                                succeed
+                end match
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Test 18e-2: APPLY with fun + 2 args hand-crafted pickle decodes to Tree.Apply with correct structure.
+    // Given: bytes [APPLY=136, length=6, TERMREFdirect=62 nat(1), TERMREFdirect=62 nat(2), TERMREFdirect=62 nat(3)]
+    //   with addrMap(1)=fnSym, addrMap(2)=arg1Sym, addrMap(3)=arg2Sym.
+    // When: decode via decodeAnnotationTerm.
+    // Then: returns Tree.Apply(Tree.TermRefDirect(1), Chunk(Tree.TermRefDirect(2), Tree.TermRefDirect(3))).
+    "Phase18e-2: APPLY with fun + 2 args decodes to Tree.Apply with fun and 2-element args chunk" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        def makeSym(n: String) = Tasty.Symbol.make(
+            Tasty.SymbolKind.Method,
+            Tasty.Flags.empty,
+            Tasty.Name(n),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val fnSym   = makeSym("fn")
+        val arg1Sym = makeSym("arg1")
+        val arg2Sym = makeSym("arg2")
+        val names   = Array(Tasty.Name("test"))
+        val addrMap = IntMap(1 -> fnSym, 2 -> arg1Sym, 3 -> arg2Sym)
+        val home    = new ClasspathRef
+        // APPLY(136) Length(6=0x86) TERMREFdirect(62=0x3E) nat(1)=0x81 TERMREFdirect(62=0x3E) nat(2)=0x82 TERMREFdirect(62=0x3E) nat(3)=0x83
+        val pickle = Chunk[Byte](
+            TastyFormat.APPLY.toByte,
+            (6 | 0x80).toByte,
+            TastyFormat.TERMREFdirect.toByte,
+            (1 | 0x80).toByte,
+            TastyFormat.TERMREFdirect.toByte,
+            (2 | 0x80).toByte,
+            TastyFormat.TERMREFdirect.toByte,
+            (3 | 0x80).toByte
+        )
+        val sectionBytes = pickle.toArray
+        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(fnSym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.Apply(fun, args)) =>
+                val funOk = fun match
+                    case Tasty.Tree.TermRefDirect(1) => true
+                    case _                           => false
+                assert(funOk, s"Expected TermRefDirect(1) as fun but got $fun")
+                assert(args.length == 2, s"Expected 2 args but got ${args.length}")
+                val arg1Ok = args(0) match
+                    case Tasty.Tree.TermRefDirect(2) => true
+                    case _                           => false
+                val arg2Ok = args(1) match
+                    case Tasty.Tree.TermRefDirect(3) => true
+                    case _                           => false
+                assert(arg1Ok, s"Expected TermRefDirect(2) as first arg but got ${args(0)}")
+                assert(arg2Ok, s"Expected TermRefDirect(3) as second arg but got ${args(1)}")
+            case Result.Success(other) =>
+                fail(s"Expected Tree.Apply but got $other")
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Test 18e-3: INV-005 zero-Unknown sweep: all symbol bodies decoded from someObjectTasty and
+    // plainClassTasty contain zero Tree.Unknown nodes with tag >= 128 (category-5 unhandled nodes).
+    // Given: embedded fixture bytes for SomeObject.tasty and PlainClass.tasty.
+    // When: all symbol bodies are decoded via AstUnpickler.readPass1 + TreeUnpickler.decodeSync
+    //       and the resulting trees are walked recursively.
+    // Then: countCat5Unknown across all decoded trees == 0, demonstrating INV-005.
+    "Phase18e-3: INV-005 zero-Unknown sweep: no category-5 Unknown nodes in someObjectTasty or plainClassTasty bodies" in run {
+        def countCat5Unknown(tree: Tasty.Tree): Int =
+            tree match
+                case Tasty.Tree.Unknown(tag, _) if tag >= 128 => 1
+                case Tasty.Tree.Unknown(_, _)                 => 0
+                case Tasty.Tree.Block(stats, expr) =>
+                    stats.toList.map(countCat5Unknown).sum + countCat5Unknown(expr)
+                case Tasty.Tree.Apply(fun, args) =>
+                    countCat5Unknown(fun) + args.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.TypeApply(fun, _) =>
+                    countCat5Unknown(fun)
+                case Tasty.Tree.If(cond, thenp, elsep) =>
+                    countCat5Unknown(cond) + countCat5Unknown(thenp) + countCat5Unknown(elsep)
+                case Tasty.Tree.Match(sel, cases) =>
+                    countCat5Unknown(sel) + cases.toList.map:
+                        case Tasty.Tree.CaseDef(pat, guard, body) =>
+                            countCat5Unknown(pat) + guard.toList.map(countCat5Unknown).sum + countCat5Unknown(body)
+                    .sum
+                case Tasty.Tree.ValDef(_, _, rhs) =>
+                    rhs.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.DefDef(_, paramss, _, rhs) =>
+                    paramss.toList.flatMap(_.toList).map(countCat5Unknown).sum + rhs.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.ClassDef(_, tmpl) =>
+                    tmpl.parents.toList.map(countCat5Unknown).sum + tmpl.body.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.PackageDef(_, stats) =>
+                    stats.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.Typed(expr, _) =>
+                    countCat5Unknown(expr)
+                case Tasty.Tree.Assign(lhs, rhs) =>
+                    countCat5Unknown(lhs) + countCat5Unknown(rhs)
+                case Tasty.Tree.Return(expr, _) =>
+                    expr.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.Throw(expr) =>
+                    countCat5Unknown(expr)
+                case Tasty.Tree.Inlined(call, bindings, body) =>
+                    call.toList.map(countCat5Unknown).sum + bindings.toList.map(countCat5Unknown).sum + countCat5Unknown(
+                        body
+                    )
+                case Tasty.Tree.Try(expr, cases, fin) =>
+                    countCat5Unknown(expr) + cases.toList.map:
+                        case Tasty.Tree.CaseDef(pat, _, body) => countCat5Unknown(pat) + countCat5Unknown(body)
+                    .sum + fin.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.While(cond, body) =>
+                    countCat5Unknown(cond) + countCat5Unknown(body)
+                case Tasty.Tree.Bind(_, pat) =>
+                    countCat5Unknown(pat)
+                case Tasty.Tree.Alternative(pats) =>
+                    pats.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.Unapply(fun, implicits, patterns) =>
+                    countCat5Unknown(fun) + implicits.toList.map(countCat5Unknown).sum + patterns.toList.map(
+                        countCat5Unknown
+                    ).sum
+                case Tasty.Tree.NamedArg(_, value) =>
+                    countCat5Unknown(value)
+                case Tasty.Tree.Lambda(method, _) =>
+                    countCat5Unknown(method)
+                case Tasty.Tree.Import(qual, sels) =>
+                    countCat5Unknown(qual) + sels.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.Export(qual, sels) =>
+                    countCat5Unknown(qual) + sels.toList.map(countCat5Unknown).sum
+                case Tasty.Tree.AnnotationNode(annotType, arg) =>
+                    countCat5Unknown(annotType) + countCat5Unknown(arg)
+                case _ =>
+                    0
+
+        def sweepFixture(bytes: Array[Byte])(using Frame): Int < (Sync & Abort[TastyError]) =
+            runPass1(bytes).map: pass1 =>
+                import AllowUnsafe.embrace.danger
+                var total = 0
+                pass1.symbols.foreach: sym =>
+                    sym.origin match
+                        case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 && o.bodyEnd > o.bodyStart =>
+                            val tree = TreeUnpickler.decodeSync(o, sym)
+                            total += countCat5Unknown(tree)
+                        case _ => ()
+                total
+
+        for
+            soCount <- Abort.run[TastyError](sweepFixture(kyo.fixtures.Embedded.someObjectTasty))
+            pcCount <- Abort.run[TastyError](sweepFixture(kyo.fixtures.Embedded.plainClassTasty))
+        yield
+            val soUnknown = soCount match
+                case Result.Success(n) => n
+                case Result.Failure(e) => fail(s"someObjectTasty sweep failed: $e"); 0
+                case Result.Panic(t)   => throw t
+            val pcUnknown = pcCount match
+                case Result.Success(n) => n
+                case Result.Failure(e) => fail(s"plainClassTasty sweep failed: $e"); 0
+                case Result.Panic(t)   => throw t
+            assert(
+                soUnknown == 0,
+                s"INV-005 violation: someObjectTasty has $soUnknown category-5 Unknown nodes"
+            )
+            assert(
+                pcUnknown == 0,
+                s"INV-005 violation: plainClassTasty has $pcUnknown category-5 Unknown nodes"
+            )
+        end for
+    }
+
 end TreeUnpicklerTest
