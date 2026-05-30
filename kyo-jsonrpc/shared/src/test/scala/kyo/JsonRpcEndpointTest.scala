@@ -469,6 +469,49 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
         assert(cfg.unknownMethod == JsonRpcEndpoint.UnknownMethodPolicy.minimal)
     }
 
+    "Config.default equals Config()" in run {
+        assert(JsonRpcEndpoint.Config.default == JsonRpcEndpoint.Config())
+    }
+
+    "Config.default == Config.default (CanEqual derivation)" in run {
+        val a = JsonRpcEndpoint.Config.default
+        val b = JsonRpcEndpoint.Config.default
+        assert(a == b)
+    }
+
+    "Config fluent setter codec round-trips" in run {
+        val cfg = JsonRpcEndpoint.Config.default.codec(JsonRpcCodec.Cdp)
+        assert(cfg.codec eq JsonRpcCodec.Cdp)
+    }
+
+    "Config fluent setter idStrategy round-trips" in run {
+        val cfg = JsonRpcEndpoint.Config.default.idStrategy(JsonRpcEndpoint.IdStrategy.SequentialInt)
+        assert(cfg.idStrategy == JsonRpcEndpoint.IdStrategy.SequentialInt)
+    }
+
+    "Config fluent setter maxInFlight wraps in Present" in run {
+        val cfg = JsonRpcEndpoint.Config.default.maxInFlight(10)
+        assert(cfg.maxInFlight == Present(10))
+    }
+
+    "Config.require throws on maxInFlight <= 0" in run {
+        assert(
+            try
+                JsonRpcEndpoint.Config.require(JsonRpcEndpoint.Config.default.maxInFlight(0)); false
+            catch case e: IllegalArgumentException => e.getMessage.contains("maxInFlight")
+        )
+    }
+
+    "Config.require accepts Duration.Zero requestTimeout" in run {
+        JsonRpcEndpoint.Config.require(JsonRpcEndpoint.Config.default.requestTimeout(Duration.Zero))
+        succeed
+    }
+
+    "Config.require accepts Duration.Infinity requestTimeout" in run {
+        JsonRpcEndpoint.Config.require(JsonRpcEndpoint.Config.default.requestTimeout(Duration.Infinity))
+        succeed
+    }
+
     "Config() default plus LSP-shaped timeout emits no cancel" in run {
         val seen = AtomicRef.Unsafe.init[Chunk[JsonRpcEnvelope]](Chunk.empty)(using AllowUnsafe.embrace.danger)
         val slow = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("slow") { (_, _) => Async.sleep(2.seconds) }

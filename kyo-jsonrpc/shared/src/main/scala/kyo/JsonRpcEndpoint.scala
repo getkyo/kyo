@@ -385,14 +385,16 @@ object JsonRpcEndpoint:
 
     /** Configuration for a [[JsonRpcEndpoint]].
       *
-      * Pass to [[JsonRpcEndpoint.init]] to control codec, cancellation, progress reporting,
-      * unknown-method handling, message gating, concurrency limits, request timeouts, and
-      * id-allocation strategy.
+      * Start from [[Config.default]] and override individual fields using the fluent builder
+      * methods. Pass the result to [[JsonRpcEndpoint.init]].
       *
-      * All fields have sensible defaults; construct with `Config()` for standard JSON-RPC 2.0
-      * behaviour or override individual fields as needed.
+      * Controls codec selection, cancellation protocol, progress reporting, unknown-method
+      * handling, message gating, concurrency limits, request timeouts, and id-allocation
+      * strategy.
       *
       * @see [[JsonRpcEndpoint.init]]
+      * @see [[Config.default]]
+      * @see [[Config.require]]
       */
     final case class Config(
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
@@ -404,13 +406,37 @@ object JsonRpcEndpoint:
         requestTimeout: Duration = Duration.Infinity,
         idStrategy: IdStrategy = IdStrategy.SequentialLong,
         progressResetsTimeout: Boolean = false
-    )
+    ) derives CanEqual:
+        def codec(c: JsonRpcCodec): Config                = copy(codec = c)
+        def cancellation(p: CancellationPolicy): Config   = copy(cancellation = Present(p))
+        def progress(p: ProgressPolicy): Config           = copy(progress = Present(p))
+        def unknownMethod(p: UnknownMethodPolicy): Config = copy(unknownMethod = p)
+        def gate(g: MessageGate): Config                  = copy(gate = Present(g))
+        def maxInFlight(n: Int): Config                   = copy(maxInFlight = Present(n))
+        def requestTimeout(d: Duration): Config           = copy(requestTimeout = d)
+        def idStrategy(s: IdStrategy): Config             = copy(idStrategy = s)
+        def progressResetsTimeout(b: Boolean): Config     = copy(progressResetsTimeout = b)
+    end Config
+
+    object Config:
+        val default: Config = Config()
+
+        def require(c: Config): Unit =
+            c.maxInFlight match
+                case Present(n) if n <= 0 =>
+                    throw new IllegalArgumentException(s"maxInFlight must be > 0, got $n")
+                case _ => ()
+            end match
+        end require
+    end Config
 
     def init(
         transport: JsonRpcTransport,
         methods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]],
-        config: Config = Config()
+        config: Config = Config.default
     )(using Frame): JsonRpcEndpoint < (Sync & Async & Scope) =
+        Config.require(config)
         internal.engine.JsonRpcEndpointImpl.init(transport, methods, config).map(new JsonRpcEndpoint(_))
+    end init
 
 end JsonRpcEndpoint
