@@ -452,7 +452,7 @@ object Scala2PickleReader:
         val nameRef     = if c.remaining > 0 then c.readNat() else 0
         val ownerRefOpt = if c.remaining > 0 then Present(c.readNat()) else Absent
         val symName     = nameTable.getOrElse(nameRef, s"<extref$idx>")
-        val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries)).filter(_.nonEmpty)
+        val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn         = ownerFqn.fold(symName)(q => q + "." + symName)
         val sym         = makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
         // flow-allow: §839 case 3 (pickle decode orchestration init path)
@@ -481,7 +481,7 @@ object Scala2PickleReader:
         val ownerRefOpt     = if c.remaining > 0 then Present(c.readNat()) else Absent
         val rawName         = nameTable.getOrElse(nameRef, s"<extmodclassref$idx>")
         val moduleClassName = if rawName.endsWith("$") then rawName else rawName + "$"
-        val ownerFqn        = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries)).filter(_.nonEmpty)
+        val ownerFqn        = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn             = ownerFqn.fold(moduleClassName)(q => q + "." + moduleClassName)
         val sym             = makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
         // flow-allow: §839 case 3 (pickle decode orchestration init path)
@@ -496,31 +496,38 @@ object Scala2PickleReader:
       * The ownerRef of an EXTref typically points to another EXTref or EXTMODCLASSref entry forming a chain (e.g. a package owner), or it
       * may point to a TERMname/TYPEname entry directly for root-level names. This method reads the owner entry's data and reconstructs its
       * FQN without allocating new symbols. Returns empty string for unrecognized or missing entries.
+      *
+      * The visited parameter tracks entry indices already on the current resolution path. If entryIdx is already in visited, a cycle is
+      * detected and empty string is returned to prevent unbounded recursion on malformed pickle data.
       */
     private def resolveExtFqn(
         entryIdx: Int,
         nameTable: scala.collection.mutable.HashMap[Int, String],
-        entries: Chunk[PickleEntry]
+        entries: Chunk[PickleEntry],
+        visited: Set[Int]
     ): String =
-        // If the entry is itself a name entry, return its value directly.
-        Maybe.fromOption(nameTable.get(entryIdx)) match
-            case Present(name) => name
-            case Absent =>
-                if entryIdx < 0 || entryIdx >= entries.length then ""
-                else
-                    val refEntry = entries(entryIdx)
-                    if refEntry.tag == EXTref || refEntry.tag == EXTMODCLASSref then
-                        val c           = new PickleCursor(refEntry.data, 0)
-                        val nameRef     = if c.remaining > 0 then c.readNat() else 0
-                        val ownerRefOpt = if c.remaining > 0 then Present(c.readNat()) else Absent
-                        val rawName     = nameTable.getOrElse(nameRef, "")
-                        val leafName =
-                            if refEntry.tag == EXTMODCLASSref && !rawName.endsWith("$") then rawName + "$"
-                            else rawName
-                        val ownerFqn = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries)).filter(_.nonEmpty)
-                        ownerFqn.fold(leafName)(q => q + "." + leafName)
-                    else ""
-                    end if
+        if visited.contains(entryIdx) then ""
+        else
+            // If the entry is itself a name entry, return its value directly.
+            Maybe.fromOption(nameTable.get(entryIdx)) match
+                case Present(name) => name
+                case Absent =>
+                    if entryIdx < 0 || entryIdx >= entries.length then ""
+                    else
+                        val refEntry = entries(entryIdx)
+                        if refEntry.tag == EXTref || refEntry.tag == EXTMODCLASSref then
+                            val c           = new PickleCursor(refEntry.data, 0)
+                            val nameRef     = if c.remaining > 0 then c.readNat() else 0
+                            val ownerRefOpt = if c.remaining > 0 then Present(c.readNat()) else Absent
+                            val rawName     = nameTable.getOrElse(nameRef, "")
+                            val leafName =
+                                if refEntry.tag == EXTMODCLASSref && !rawName.endsWith("$") then rawName + "$"
+                                else rawName
+                            val nextVisited = visited + entryIdx
+                            val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, nextVisited)).filter(_.nonEmpty)
+                            ownerFqn.fold(leafName)(q => q + "." + leafName)
+                        else ""
+                        end if
     end resolveExtFqn
 
     // -------------------------------------------------------------------------

@@ -292,4 +292,36 @@ class Scala2PickleTest extends Test:
             assert(modSym.get.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2 on EXTMODCLASSref symbol")
     }
 
+    // -------------------------------------------------------------------------
+    // Test 10: EXTref owner-cycle does not StackOverflow; resolves to a finite FQN
+    // -------------------------------------------------------------------------
+
+    "Test 10: malformed EXTref owner-cycle terminates safely without StackOverflow" in run {
+        // Pickle layout (entry indices):
+        //   0: TERMname "Foo"
+        //   1: EXTref nameRef=0 ownerRef=1  <- self-cycle: ownerRef points to itself
+        //
+        // resolveExtFqn is called with entryIdx=1 and visited=Set.empty.
+        //   - Entry 1 is an EXTref, not in visited. It reads ownerRef=1.
+        //   - nextVisited = Set(1). Recursive call: resolveExtFqn(1, ..., Set(1)).
+        //   - visited.contains(1) is true -> returns "".
+        //   - ownerFqn is Absent (filtered empty), so leafName "Foo" is used.
+        //   - The owner resolution returns "Foo".
+        // The outer decodeExtRef then builds fqn = "Foo" + "." + "Foo" = "Foo.Foo".
+        // The key property tested: the computation terminates (no StackOverflow).
+        val fooNameEntry = entry(Scala2PickleReader.TERMname, nameData("Foo"))
+        val cyclicExtRef = entry(Scala2PickleReader.EXTref, nat(0) ++ nat(1)) // nameRef=0, ownerRef=1 (self)
+        val pickleBytes  = buildPickle(fooNameEntry, cyclicExtRef)
+        readPickleDirect(pickleBytes).map: result =>
+            val unresolved = result.symbols.filter(_.kind == Tasty.SymbolKind.Unresolved)
+            assert(unresolved.nonEmpty, s"Expected at least one Unresolved symbol; got: ${result.symbols.map(_.kind).mkString(", ")}")
+            // The cycle is detected after one recursion step; the FQN is finite (not an infinite string).
+            // Concretely it resolves to "Foo.Foo" (owner "Foo" prepended once before cycle cutoff).
+            val fooSym = unresolved.find(_.name.asString == "Foo.Foo")
+            assert(
+                fooSym.isDefined,
+                s"Expected symbol with finite FQN 'Foo.Foo' (cycle cut after one step); got: ${unresolved.map(_.name.asString).mkString(", ")}"
+            )
+    }
+
 end Scala2PickleTest
