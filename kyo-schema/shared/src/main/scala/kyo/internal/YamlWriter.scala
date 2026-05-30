@@ -223,7 +223,8 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
                 out.append(value)
                 false
             case Scalar.Quoted(value) =>
-                appendQuoted(value)
+                if jsonCompatibleFlow then appendDoubleQuoted(value)
+                else appendQuoted(value)
                 false
             case Scalar.Literal(value) =>
                 appendLiteral(value, contentIndent)
@@ -393,6 +394,7 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
                 if next > start then writeIndent(contentIndent)
                 appendChars(start, next)
                 out.append('\n')
+                if config.multilineStyle == MultilineStyle.Folded && next < end then out.append('\n')
                 appendLines(next + 1)
         end appendLines
 

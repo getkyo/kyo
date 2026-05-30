@@ -1,8 +1,23 @@
 package kyo.internal
 
 import kyo.*
+import scala.annotation.tailrec
 
 private[kyo] object YamlDocuments:
+
+    def requiresSplit(input: String): Boolean =
+        @tailrec def loop(start: Int): Boolean =
+            if start >= input.length then false
+            else
+                val lineEnd = YamlSource.lineEnd(input, start)
+                val stop =
+                    if lineEnd > start && input.charAt(lineEnd - 1) == '\r' then lineEnd - 1
+                    else lineEnd
+                marker(input, start, stop) match
+                    case Present(_) => true
+                    case Absent     => loop(if lineEnd < input.length then lineEnd + 1 else input.length)
+        loop(0)
+    end requiresSplit
 
     def split(input: String): Chunk[String] =
         val docs          = Chunk.newBuilder[String]

@@ -84,6 +84,9 @@ object Yaml:
       * syntax and tags. Profiles in the companion provide named starting points for common tradeoffs: readability, compactness, smaller
       * payloads, and fast downstream processing.
       *
+      * The companion `Yaml.encode` and `Yaml.encodeBytes` helpers use a contextual `WriterConfig`, while generic
+      * `Schema.encodeString[Yaml]` and codec-polymorphic paths use the contextual `Yaml` instance's writer configuration.
+      *
       * IMPORTANT: `ScalarQuoting.WhenNeeded` can emit plain strings such as `true` or `0x3A` without quotes. Use the default
       * `QuoteAmbiguous` behavior when encoded YAML should decode back to strings under the YAML Core schema.
       */
@@ -279,17 +282,27 @@ object Yaml:
             case Present(index) =>
                 selectDocument(input, index).flatMap(doc => decode[A](doc, config.copy(documentIndex = Absent)))
             case Absent =>
-                val docs = splitDocuments(input)
-                if docs.size == 1 then decodeBytes(Span.from(docs(0).getBytes(StandardCharsets.UTF_8)), config)
-                else if docs.isEmpty && input.trim.isEmpty then decodeBytes(Span.from(input.getBytes(StandardCharsets.UTF_8)), config)
+                if !internal.YamlDocuments.requiresSplit(input) then
+                    decodePreparedString(
+                        input,
+                        config.maxDepth,
+                        config.maxCollectionSize,
+                        config.yamlVersion
+                    )
                 else
-                    Result.fail(ParseException(
-                        Yaml(),
-                        "",
-                        "Unexpected content after YAML document end",
-                        Nil,
-                        0
-                    ))
+                    val docs = splitDocuments(input)
+                    if docs.size == 1 then decodePreparedString(docs(0), config.maxDepth, config.maxCollectionSize, config.yamlVersion)
+                    else if docs.isEmpty && input.trim.isEmpty then
+                        decodePreparedString(input, config.maxDepth, config.maxCollectionSize, config.yamlVersion)
+                    else
+                        Result.fail(ParseException(
+                            Yaml(),
+                            "",
+                            "Unexpected content after YAML document end",
+                            Nil,
+                            0
+                        ))
+                    end if
                 end if
         end match
     end decode
@@ -336,6 +349,19 @@ object Yaml:
         }
     end decodePreparedBytes
 
+    private def decodePreparedString[A](
+        input: String,
+        maxDepth: Int,
+        maxCollectionSize: Int,
+        yamlVersion: SpecVersion
+    )(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        Result.catching[DecodeException] {
+            val reader = internal.YamlReader(input, yamlVersion)
+            reader.resetLimits(maxDepth, maxCollectionSize)
+            schema.readFrom(reader)
+        }
+    end decodePreparedString
+
     /** Decodes one document from a YAML stream into a value of type A. */
     def decode[A](
         input: String,
@@ -374,11 +400,26 @@ object Yaml:
 
     /** Decodes every document in an explicit YAML stream. */
     def decodeAll[A](
+        input: String
+    )(using yaml: Yaml, schema: Schema[A], config: ReaderConfig, frame: Frame): Result[DecodeException, Chunk[A]] =
+        decodeAll(input, config)
+    end decodeAll
+
+    /** Decodes every document in an explicit YAML stream with explicit limits. */
+    def decodeAll[A](
         input: String,
-        maxDepth: Int = DefaultMaxDepth,
-        maxCollectionSize: Int = DefaultMaxCollectionSize
+        maxDepth: Int,
+        maxCollectionSize: Int
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, Chunk[A]] =
-        parseEach(input)(doc => decode[A](doc, maxDepth, maxCollectionSize))
+        decodeAll(input, ReaderConfig(maxDepth, maxCollectionSize))
+    end decodeAll
+
+    /** Decodes every document in an explicit YAML stream using explicit configuration. */
+    def decodeAll[A](
+        input: String,
+        config: ReaderConfig
+    )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, Chunk[A]] =
+        parseEach(input)(doc => decode[A](doc, config.copy(documentIndex = Absent)))
     end decodeAll
 
     private def parseEach[A](input: String)(parseOne: String => Result[DecodeException, A])(using

@@ -134,6 +134,19 @@ class YamlTest extends Test:
             assert(Yaml.decodeAll[MTPerson](yaml) == Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25))))
         }
 
+        "decodeAll uses contextual reader config" in {
+            given Yaml.ReaderConfig = Yaml.ReaderConfig.Default.copy(yamlVersion = Yaml.SpecVersion.Yaml11)
+
+            val yaml =
+                """---
+                  |NO
+                  |---
+                  |yes
+                  |""".stripMargin
+
+            assert(Yaml.decodeAll[Boolean](yaml) == Result.succeed(Chunk(false, true)))
+        }
+
         "decode targets a document by zero-based index" in {
             val yaml =
                 """---

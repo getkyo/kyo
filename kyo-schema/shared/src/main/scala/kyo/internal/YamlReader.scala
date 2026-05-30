@@ -8,6 +8,7 @@ import scala.collection.mutable.ArrayBuffer
 
 final class YamlReader private (
     private var source: String,
+    private val sourceLineOffset: Int,
     private val yamlVersion: Yaml.SpecVersion,
     private var events: Array[YamlReader.Event],
     private var pos: Int,
@@ -26,6 +27,7 @@ final class YamlReader private (
     private var sourceFrames: List[SourceFrame] = Nil
     private var _lastFieldName: String          = ""
     private var _lastFieldBytes: Array[Byte]    = Array.emptyByteArray
+    private var lastFieldBytesValid: Boolean    = false
     private var fieldValues: Array[AnyRef]      = new Array[AnyRef](16)
     private var fieldDepth: Int                 = 0
 
@@ -134,8 +136,7 @@ final class YamlReader private (
         delegate match
             case Present(reader) =>
                 reader.fieldParse()
-                _lastFieldName = reader.lastFieldName()
-                _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
+                setLastFieldName(reader.lastFieldName())
                 clearFinishedDelegate()
             case Absent
                 if sourceFrames.headOption.exists(f => f.isInstanceOf[SourceMappingFrame] || f.isInstanceOf[SourceFlowMappingFrame]) =>
@@ -143,28 +144,54 @@ final class YamlReader private (
             case Absent =>
                 currentAliasOr { reader =>
                     reader.fieldParse()
-                    _lastFieldName = reader.lastFieldName()
-                    _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
+                    setLastFieldName(reader.lastFieldName())
                 } {
                     peek match
                         case Scalar(value, _, _) =>
                             pos += 1
-                            _lastFieldName = value
-                            _lastFieldBytes = value.getBytes(StandardCharsets.UTF_8)
+                            setLastFieldName(value)
                         case other => expected("field name", other)
                 }
     end fieldParse
 
     override def matchField(nameBytes: Array[Byte]): Boolean =
+        if lastFieldBytesValid then matchFieldBytes(nameBytes)
+        else matchFieldString(nameBytes)
+    end matchField
+
+    private def setLastFieldName(value: String): Unit =
+        _lastFieldName = value
+        lastFieldBytesValid = false
+    end setLastFieldName
+
+    private def matchFieldBytes(nameBytes: Array[Byte]): Boolean =
         if nameBytes.length != _lastFieldBytes.length then false
         else
-            var i = 0
-            while i < nameBytes.length do
-                if nameBytes(i) != _lastFieldBytes(i) then return false
-                i += 1
-            end while
-            true
-    end matchField
+            @tailrec def loop(i: Int): Boolean =
+                if i >= nameBytes.length then true
+                else if nameBytes(i) != _lastFieldBytes(i) then false
+                else loop(i + 1)
+            loop(0)
+        end if
+    end matchFieldBytes
+
+    private def matchFieldString(nameBytes: Array[Byte]): Boolean =
+        @tailrec def loop(i: Int): Boolean =
+            if i >= _lastFieldName.length then i == nameBytes.length
+            else if i >= nameBytes.length then false
+            else
+                val ch = _lastFieldName.charAt(i)
+                if ch >= 0x80 then
+                    _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
+                    lastFieldBytesValid = true
+                    matchFieldBytes(nameBytes)
+                else if nameBytes(i) != ch.toByte then false
+                else loop(i + 1)
+                end if
+            end if
+        end loop
+        loop(0)
+    end matchFieldString
 
     override def lastFieldName(): String = _lastFieldName
 
@@ -433,7 +460,7 @@ final class YamlReader private (
         initSourcePosition()
         if sourcePos != 0 then skipSourceBlankAndCommentLines()
         val start = sourcePos
-        if sourcePos >= source.length then sourceChild("\n")
+        if sourcePos >= source.length then sourceChild("\n", lineNumberAt(sourcePos))
         else
             if sourceStartsFlowCollection then captureSourceRootFlow()
             else
@@ -445,7 +472,7 @@ final class YamlReader private (
                     val _ = readSourceScalar()
                 end if
             end if
-            sourceChild(source.substring(start, sourcePos))
+            sourceChild(source.substring(start, sourcePos), lineNumberAt(start))
         end if
     end captureSourceRootValue
 
@@ -707,8 +734,8 @@ final class YamlReader private (
                 if expansion.depth > maxDepth then throw LimitExceededException("Nesting depth", expansion.depth, maxDepth)
                 advance
                 val reader = anchor.source match
-                    case Present(source) => sourceChild(source)
-                    case Absent          => child(anchor.start, anchor.end)
+                    case Present(SourceAnchor(source, line)) => sourceChild(source, line)
+                    case Absent                              => child(anchor.start, anchor.end)
                 reader.resetLimits(maxDepth, maxCollectionSize)
                 delegate = Maybe(reader)
                 delegateDepth = 0
@@ -718,13 +745,17 @@ final class YamlReader private (
     end startAliasReader
 
     private def child(start: Int, stop: Int): YamlReader =
-        val reader = new YamlReader("", yamlVersion, events, start, stop, anchors, expansion, allowSourcePull = false)
+        val reader = new YamlReader("", 0, yamlVersion, events, start, stop, anchors, expansion, allowSourcePull = false)
         reader.resetLimits(maxDepth, maxCollectionSize)
         reader
     end child
 
     private def sourceChild(input: String): YamlReader =
-        val reader = new YamlReader(input, yamlVersion, null, 0, 0, anchors, expansion, allowSourcePull)
+        sourceChild(input, 1)
+    end sourceChild
+
+    private def sourceChild(input: String, lineNumber: Int): YamlReader =
+        val reader = new YamlReader(input, math.max(0, lineNumber - 1), yamlVersion, null, 0, 0, anchors, expansion, allowSourcePull)
         reader.resetLimits(math.max(0, maxDepth - sourceFrames.size), maxCollectionSize)
         reader
     end sourceChild
@@ -865,13 +896,12 @@ final class YamlReader private (
                 val lineEnd  = sourceLineEnd(keyStart)
                 val colon    = findSourceTopLevel(keyStart, lineEnd, ':')
                 if colon < 0 then error("Expected YAML mapping field")
-                _lastFieldName = unquoteSourceKey(keyStart, colon)
-                _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
+                setLastFieldName(unquoteSourceKey(keyStart, colon))
                 sourcePos = colon + 1
                 val restStart = sourcePos
                 val rest      = readSourceRestOfLineFrom(restStart)
                 val value     = sourceCaptureMappingValue(f, rest, lineNumberAt(lineStart))
-                delegate = Maybe(sourceChild(value))
+                delegate = Maybe(sourceChild(value.text, value.line))
                 delegateDepth = 0
             case (f: SourceFlowMappingFrame) :: _ =>
                 sourceFlowFieldParse(f)
@@ -900,38 +930,37 @@ final class YamlReader private (
         val entryEnd   = sourceFlowEntryEnd('}')
         val separator  = findSourceFlowMappingSeparator(entryStart, entryEnd)
         if separator < 0 then
-            _lastFieldName = sourceTrimmedSubstring(entryStart, entryEnd)
-            _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
-            delegate = Maybe(sourceChild("\n"))
+            setLastFieldName(sourceTrimmedSubstring(entryStart, entryEnd))
+            delegate = Maybe(sourceChild("\n", lineNumberAt(entryStart)))
         else
-            _lastFieldName = unquoteSourceKey(entryStart, separator)
-            _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
+            setLastFieldName(unquoteSourceKey(entryStart, separator))
             val value = normalizeSourceFlowValue(separator + 1, entryEnd)
-            delegate = Maybe(sourceChild(value + "\n"))
+            delegate = Maybe(sourceChild(value + "\n", lineNumberAt(separator + 1)))
         end if
         delegateDepth = 0
         sourcePos = entryEnd
     end sourceFlowFieldParse
 
-    private def sourceCaptureMappingValue(frame: SourceMappingFrame, rest: String, lineNumber: Int): String =
+    private def sourceCaptureMappingValue(frame: SourceMappingFrame, rest: String, lineNumber: Int): SourceValue =
         val trimmed = stripSourceComment(rest).trim
         if trimmed.nonEmpty then
             val (anchor, _, valueText) = sourceProperties(trimmed)
             val tailStart              = sourcePos
             val tailEnd                = captureFollowingIndentedBlock(frame.indent)
             if valueText.isEmpty && tailEnd > tailStart then
-                val value = preserveSourceLine(normalizeBlock(tailStart, tailEnd, frame.indent + 2), lineNumberAt(tailStart))
-                anchor.foreach(registerSourceAnchor(_, value))
-                value
+                val value     = normalizeBlock(tailStart, tailEnd, frame.indent + 2)
+                val valueLine = lineNumberAt(tailStart)
+                anchor.foreach(registerSourceAnchor(_, value, valueLine))
+                SourceValue(value, valueLine)
             else if tailEnd > tailStart then
-                preserveSourceLine(trimmed + "\n" + normalizeBlock(tailStart, tailEnd, frame.indent), lineNumber)
-            else preserveSourceLine(trimmed + "\n", lineNumber)
+                SourceValue(trimmed + "\n" + normalizeBlock(tailStart, tailEnd, frame.indent), lineNumber)
+            else SourceValue(trimmed + "\n", lineNumber)
             end if
         else
             val start = sourcePos
             val end   = captureNestedBlock(frame.indent, includeIndentlessSequence = true)
-            if end > start then preserveSourceLine(normalizeBlock(start, end, frame.indent + 2), lineNumberAt(start))
-            else "\n"
+            if end > start then SourceValue(normalizeBlock(start, end, frame.indent + 2), lineNumberAt(start))
+            else SourceValue("\n", lineNumber)
         end if
     end sourceCaptureMappingValue
 
@@ -952,15 +981,15 @@ final class YamlReader private (
                 val captured =
                     if tailEnd > tailStart then trimmed + "\n" + normalizeBlock(tailStart, tailEnd, frame.indent + 2)
                     else trimmed + "\n"
-                preserveSourceLine(captured, lineNumber)
+                SourceValue(captured, lineNumber)
             else
                 val start = sourcePos
                 val end   = captureNestedBlock(frame.indent, includeIndentlessSequence = false)
                 val captured =
                     if end > start then normalizeBlock(start, end, frame.indent + 2)
                     else "\n"
-                preserveSourceLine(captured, lineNumber)
-        delegate = Maybe(sourceChild(value))
+                SourceValue(captured, if end > start then lineNumberAt(start) else lineNumber)
+        delegate = Maybe(sourceChild(value.text, value.line))
         delegateDepth = 0
     end sourceCaptureSequenceElement
 
@@ -993,7 +1022,7 @@ final class YamlReader private (
         val stop  = sourceFlowEntryEnd(']')
         val value = normalizeSourceFlowValue(start, stop)
         sourcePos = stop
-        delegate = Maybe(sourceChild(value + "\n"))
+        delegate = Maybe(sourceChild(value + "\n", lineNumberAt(start)))
         delegateDepth = 0
     end sourceCaptureSequenceElement
 
@@ -1093,7 +1122,7 @@ final class YamlReader private (
                     (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.Plain, mark))
             end match
         end result
-        anchor.foreach(registerSourceAnchor(_, source.substring(scalarStart, sourcePos)))
+        anchor.foreach(registerSourceAnchor(_, source.substring(scalarStart, sourcePos), lineNumberAt(scalarStart)))
         result
     end readSourceScalar
 
@@ -1149,20 +1178,29 @@ final class YamlReader private (
     end readSourceBlockScalar
 
     private def inferredSourceBlockScalarIndent(parentIndent: Int): Int =
-        var i = sourcePos
-        while i < source.length do
-            var indent = 0
-            while i < source.length && source.charAt(i) == ' ' do
-                indent += 1
-                i += 1
-            end while
-            val lineStart = i
-            while i < source.length && source.charAt(i) != '\n' do i += 1
-            val line = source.substring(lineStart, i)
-            if line.trim.nonEmpty then return indent
-            if i < source.length && source.charAt(i) == '\n' then i += 1
-        end while
-        parentIndent + 1
+        @tailrec def skipSpaces(i: Int, indent: Int): (Int, Int) =
+            if i < source.length && source.charAt(i) == ' ' then skipSpaces(i + 1, indent + 1)
+            else (i, indent)
+        end skipSpaces
+
+        @tailrec def lineHasText(i: Int, stop: Int): Boolean =
+            if i >= stop then false
+            else if source.charAt(i).isWhitespace then lineHasText(i + 1, stop)
+            else true
+        end lineHasText
+
+        @tailrec def loop(i: Int): Int =
+            if i >= source.length then parentIndent + 1
+            else
+                val (contentStart, indent) = skipSpaces(i, 0)
+                val stop                   = sourceLineEnd(contentStart)
+                if lineHasText(contentStart, stop) then indent
+                else loop(if stop < source.length then stop + 1 else source.length)
+                end if
+            end if
+        end loop
+
+        loop(sourcePos)
     end inferredSourceBlockScalarIndent
 
     private def readSourceQuotedScalar(valueText: String, indent: Int, quote: Char): String =
@@ -1199,9 +1237,19 @@ final class YamlReader private (
     end readSourceQuotedScalar
 
     private def readSourcePlainScalar(valueText: String, indent: Int): String =
+        val _ = readSourceRestOfLine()
+        if sourcePos >= source.length then valueText
+        else
+            val text = currentSourceLine()
+            val n    = currentSourceIndent()
+            if text.trim.nonEmpty && n <= indent then valueText
+            else readSourcePlainScalarContinuation(valueText, indent)
+        end if
+    end readSourcePlainScalar
+
+    private def readSourcePlainScalarContinuation(valueText: String, indent: Int): String =
         val lines = scala.collection.mutable.ListBuffer.empty[SourceScalarLine]
         lines += SourceScalarLine(valueText, false)
-        val _    = readSourceRestOfLine()
         var done = false
         while !done && sourcePos < source.length do
             val text = currentSourceLine()
@@ -1215,7 +1263,7 @@ final class YamlReader private (
             end if
         end while
         foldSourceScalarLines(lines.toList)
-    end readSourcePlainScalar
+    end readSourcePlainScalarContinuation
 
     private def readSourceContinuationText(indent: Int): String =
         var removed = 0
@@ -1227,25 +1275,26 @@ final class YamlReader private (
 
     private def closingSourceQuoteIndex(text: String, quote: Char): Maybe[Int] =
         if quote == '\'' then
-            var i = 0
-            while i < text.length do
-                if text.charAt(i) == '\'' then
-                    if i + 1 < text.length && text.charAt(i + 1) == '\'' then i += 2
-                    else return Maybe(i)
-                else i += 1
-            end while
-            Absent
+            @tailrec def loop(i: Int): Maybe[Int] =
+                if i >= text.length then Absent
+                else if text.charAt(i) == '\'' then
+                    if i + 1 < text.length && text.charAt(i + 1) == '\'' then loop(i + 2)
+                    else Maybe(i)
+                else loop(i + 1)
+            loop(0)
         else
-            var i      = 0
-            var escape = false
-            while i < text.length do
-                val ch = text.charAt(i)
-                if escape then escape = false
-                else if ch == '\\' then escape = true
-                else if ch == '"' then return Maybe(i)
-                i += 1
-            end while
-            Absent
+            @tailrec def loop(i: Int, escape: Boolean): Maybe[Int] =
+                if i >= text.length then Absent
+                else
+                    val ch = text.charAt(i)
+                    if escape then loop(i + 1, escape = false)
+                    else if ch == '\\' then loop(i + 1, escape = true)
+                    else if ch == '"' then Maybe(i)
+                    else loop(i + 1, escape = false)
+                    end if
+                end if
+            end loop
+            loop(0, escape = false)
         end if
     end closingSourceQuoteIndex
 
@@ -1454,21 +1503,8 @@ final class YamlReader private (
     end currentSourceLineNumber
 
     private def lineNumberAt(position: Int): Int =
-        YamlSource.lineNumber(source, position)
+        sourceLineOffset + YamlSource.lineNumber(source, position)
     end lineNumberAt
-
-    private def preserveSourceLine(value: String, lineNumber: Int): String =
-        if lineNumber <= 1 then value
-        else
-            val out = new StringBuilder(value.length + lineNumber)
-            var i   = 1
-            while i < lineNumber do
-                out.append('\n')
-                i += 1
-            out.append(value)
-            out.toString
-        end if
-    end preserveSourceLine
 
     private def readSourceRestOfLine(): String =
         val start = sourcePos
@@ -1593,9 +1629,9 @@ final class YamlReader private (
         YamlSource.propertyToken(text)
     end sourcePropertyToken
 
-    private def registerSourceAnchor(name: String, value: String): Unit =
+    private def registerSourceAnchor(name: String, value: String, lineNumber: Int): Unit =
         val (values, maxDepth) = sourceAnchorStats(value)
-        anchors(name) = Anchor(0, 0, values, maxDepth, Maybe(value))
+        anchors(name) = Anchor(0, 0, values, maxDepth, Maybe(SourceAnchor(value, lineNumber)))
     end registerSourceAnchor
 
     private def sourceAnchorStats(value: String): (Int, Int) =
@@ -1887,7 +1923,7 @@ object YamlReader:
     end NodeEnd
 
     final private case class Built(events: Array[Event], anchors: scala.collection.mutable.Map[String, Anchor])
-    final private case class Anchor(start: Int, end: Int, values: Int, maxDepth: Int, source: Maybe[String])
+    final private case class Anchor(start: Int, end: Int, values: Int, maxDepth: Int, source: Maybe[SourceAnchor])
     final private class Expansion:
         var values: Int = 0
         var depth: Int  = 0
@@ -1911,6 +1947,8 @@ object YamlReader:
     final private case class SourceScalarLine(text: String, moreIndented: Boolean):
         def isBlank: Boolean = text.isEmpty
     end SourceScalarLine
+    final private case class SourceValue(text: String, line: Int)
+    final private case class SourceAnchor(text: String, line: Int)
 
     private enum ScalarValue derives CanEqual:
         case Null
@@ -2095,6 +2133,7 @@ object YamlReader:
     def apply(input: Span[Byte], yamlVersion: Yaml.SpecVersion)(using Frame): YamlReader =
         new YamlReader(
             String(input.toArray, StandardCharsets.UTF_8),
+            0,
             yamlVersion,
             null,
             0,
@@ -2108,5 +2147,5 @@ object YamlReader:
         apply(input, Yaml.SpecVersion.Yaml12)
 
     def apply(input: String, yamlVersion: Yaml.SpecVersion)(using Frame): YamlReader =
-        new YamlReader(input, yamlVersion, null, 0, 0, scala.collection.mutable.Map.empty, Expansion(), allowSourcePull = true)
+        new YamlReader(input, 0, yamlVersion, null, 0, 0, scala.collection.mutable.Map.empty, Expansion(), allowSourcePull = true)
 end YamlReader

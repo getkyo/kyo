@@ -258,6 +258,29 @@ class YamlWriterTest extends Test:
             end match
         }
 
+        "preserves multiline string values when folded style is configured" in {
+            val config = Yaml.WriterConfig.Readable.copy(multilineStyle = Yaml.WriterConfig.MultilineStyle.Folded)
+            val value  = "line one\nline two\n"
+            val yaml   = Yaml.encode(value, config)
+
+            assert(yaml == ">\n  line one\n\n  line two\n")
+            assert(Yaml.decode[String](yaml) == Result.succeed(value))
+        }
+
+        "uses double quoted string values in JSON-compatible flow output" in {
+            val config = Yaml.WriterConfig.Fast.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
+            val yaml   = Yaml.encode(Map("greeting" -> "hello world"), config)
+
+            assert(yaml == """{"greeting":"hello world"}""")
+            assert(Yaml.decode[Map[String, String]](yaml) == Result.succeed(Map("greeting" -> "hello world")))
+        }
+
+        "codec-generic schema encoding uses the contextual Yaml writer config" in {
+            given Yaml = Yaml(Yaml.WriterConfig.Small)
+
+            assert(Schema[MTPerson].encodeString[Yaml](MTPerson("Alice", 30)) == "{name: Alice, age: 30}")
+        }
+
         "releases writers after string and byte results for reuse" in {
             val first = YamlWriter()
             first.string("alpha")
