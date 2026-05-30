@@ -581,6 +581,24 @@ class YamlTest extends Test:
             end match
         }
 
+        "isNil reads root source nulls without parsing later malformed content" in {
+            List("null", "~", "!!null ignored").foreach { value =>
+                val reader = kyo.internal.YamlReader(s"$value\nlater: [unterminated")
+
+                assert(reader.isNil())
+            }
+
+            val empty = kyo.internal.YamlReader("\n")
+            assert(empty.isNil())
+        }
+
+        "isNil preserves non-null source scalars for later reads" in {
+            val reader = kyo.internal.YamlReader("Alice\nlater: [unterminated")
+
+            assert(!reader.isNil())
+            assert(reader.string() == "Alice")
+        }
+
         "skip advances the current sequence element without parsing later malformed content" in {
             val reader =
                 kyo.internal.YamlReader(

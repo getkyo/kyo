@@ -268,15 +268,44 @@ final class YamlReader private (
         withDelegate(_.isNil()) {
             if allowSourcePull && !prepared && sourceFrames.nonEmpty then false
             else
-                currentAliasOr(_.isNil()) {
-                    peek match
-                        case Scalar(value, meta, _) if resolveScalar(value, meta) == ScalarValue.Null =>
-                            pos += 1
-                            true
-                        case _ => false
-                }
+                trySourceNil() match
+                    case Present(value) => value
+                    case Absent =>
+                        currentAliasOr(_.isNil()) {
+                            peek match
+                                case Scalar(value, meta, _) if resolveScalar(value, meta) == ScalarValue.Null =>
+                                    pos += 1
+                                    true
+                                case _ => false
+                        }
         }
     end isNil
+
+    private def trySourceNil(): Maybe[Boolean] =
+        if !allowSourcePull || prepared || sourceFrames.nonEmpty || source.isEmpty then Absent
+        else
+            initSourcePosition()
+            if sourcePos >= source.length then Maybe(true)
+            else
+                val start   = sourcePos
+                val line    = currentSourceLine()
+                val trimmed = line.trim
+                if trimmed.startsWith("*") ||
+                    sourceStartsFlowCollection ||
+                    sourceStartsSequenceEntryAtIndent() ||
+                    isSourceBlockMappingLine(line)
+                then Absent
+                else
+                    val (value, meta) = readSourceScalar()
+                    if resolveScalar(value, meta) == ScalarValue.Null then Maybe(true)
+                    else
+                        sourcePos = start
+                        Maybe(false)
+                    end if
+                end if
+            end if
+        end if
+    end trySourceNil
 
     def skip(): Unit =
         delegate match
