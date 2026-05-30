@@ -223,3 +223,4 @@ one INV, one explanation a reviewer can hold in head as one idea."
 - Phase 20d audit NOTE: `val _ = stream.alignToByte()` could be a bare statement call (drop `val _`). ROUTE: Phase 21d cleanup.
 - Phase 20e audit NOTE (2026-05-30): PortableInflate has no test for CM != 8 or FDICT-set inputs (the throw arms). ROUTE: Phase 21d cleanup — add negative-path tests.
 - Phase 20f audit NOTE (2026-05-30): INV-017 parity is implicit (each platform matches the same hardcoded reference constant) rather than a three-way runtime comparison. Future improvement: add an explicit cross-platform parity sweep test. ROUTE: Phase 23a/23b.
+- Phase 21f audit NOTE (2026-05-30): Native InflateHook DataFormatException arm has no targeted test. A test injecting a valid ZLIB header with corrupted DEFLATE payload would close the gap. ROUTE: Phase 22 edge tests (likely 22a or 22c).
