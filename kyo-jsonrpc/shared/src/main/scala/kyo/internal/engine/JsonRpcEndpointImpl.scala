@@ -1,8 +1,8 @@
-package kyo
-package internal
+package kyo.internal.engine
 
 // ConcurrentHashMap follows kyo.Exchange pending-map precedent (kyo-core/shared Exchange.scala:3); cross-platform via JS/Native JDK shim
 import java.util.concurrent.ConcurrentHashMap
+import kyo.*
 
 private[kyo] case class OutboundReq(
     method: String,

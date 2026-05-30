@@ -1,4 +1,3 @@
-// PUBLIC config-policy type referenced by JsonRpcEndpoint.Config.progress field
 package kyo
 
 import kyo.Maybe
@@ -7,6 +6,22 @@ import kyo.Maybe.Present
 import kyo.Structure
 import kyo.Sync
 
+/** Configures how the endpoint reports and receives progress notifications during long-running
+  * requests.
+  *
+  * A `ProgressPolicy` captures the method name and a set of token-extraction and parameter
+  * encoding/decoding functions specific to each protocol dialect.
+  *
+  * Two preset policies are provided:
+  *  - [[ProgressPolicy.lsp]]: LSP `$/progress` with `workDoneToken` in request params.
+  *  - [[ProgressPolicy.mcp]]: MCP `notifications/progress` with `_meta.progressToken`; enforces
+  *    monotonic progress values.
+  *
+  * Set via [[JsonRpcEndpoint.Config.progress]].
+  *
+  * @see [[JsonRpcEndpoint.Config]]
+  * @see [[HandlerCtx]]
+  */
 final case class ProgressPolicy(
     progressMethod: String,
     extractInboundToken: Structure.Value => (Maybe[Structure.Value] < Sync),

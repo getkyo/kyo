@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.internal.transport
 
 import java.nio.ByteBuffer
 import java.nio.channels.ServerSocketChannel

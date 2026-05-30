@@ -1,6 +1,7 @@
-package kyo.internal
+package kyo.internal.transport
 
 import kyo.*
+import kyo.internal.codec.RawJsonParser
 
 final private[kyo] class WireTransportAdapter(
     wire: WireTransport,

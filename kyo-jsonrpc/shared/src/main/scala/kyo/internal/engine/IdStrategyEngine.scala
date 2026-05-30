@@ -1,5 +1,4 @@
-// kyo-jsonrpc/shared/src/main/scala/kyo/internal/IdStrategyEngine.scala
-package kyo.internal
+package kyo.internal.engine
 
 import kyo.*
 

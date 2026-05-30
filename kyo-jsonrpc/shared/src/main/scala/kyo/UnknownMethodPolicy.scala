@@ -1,6 +1,17 @@
-// PUBLIC config-policy type referenced by JsonRpcEndpoint.Config.unknownMethod field with three documented presets
 package kyo
 
+/** Controls how the endpoint responds to incoming requests and notifications for methods
+  * that have no registered handler.
+  *
+  * Three preset values cover the most common cases:
+  *  - [[UnknownMethodPolicy.minimal]]: reply `MethodNotFound` on requests, silently drop notifications.
+  *  - [[UnknownMethodPolicy.lsp]]: same as `minimal` but also allows `$/`-prefixed LSP meta-methods.
+  *  - [[UnknownMethodPolicy.strict]]: reply `MethodNotFound` on requests, reject unknown notifications.
+  *
+  * Set via [[JsonRpcEndpoint.Config.unknownMethod]].
+  *
+  * @see [[JsonRpcEndpoint.Config]]
+  */
 // Hub.scala:22 smart-constructor pattern; users select .minimal / .lsp / .strict
 final case class UnknownMethodPolicy private[kyo] (
     onUnknownRequest: UnknownMethodPolicy.UnknownAction,

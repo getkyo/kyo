@@ -645,7 +645,7 @@ class CancellationPolicyTest extends JsonRpcTestBase:
                 }(using f)
         val policy = CancellationPolicy("x.cancel", CancellationPolicy.lsp.encodeParams, decoder, false, Absent, Set.empty)
         val params = Present(Structure.Value.Record(Chunk("target" -> Structure.Value.Str("abc"))))
-        internal.CancellationEngine.extractCancelIdForTest(policy, params).map { result =>
+        internal.engine.CancellationEngine.extractCancelIdForTest(policy, params).map { result =>
             assert(result == Present(JsonRpcId.Str("abc")))
         }
     }

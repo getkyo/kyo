@@ -1,4 +1,3 @@
-// PUBLIC config-policy type referenced by JsonRpcEndpoint.Config.cancellation field
 package kyo
 
 import kyo.Maybe
@@ -7,6 +6,21 @@ import kyo.Maybe.Present
 import kyo.Structure
 import kyo.Sync
 
+/** Configures how the endpoint sends and receives request cancellation notifications.
+  *
+  * A `CancellationPolicy` specifies the method name, parameter encoding/decoding, whether the
+  * cancelled request still expects a reply, and which methods are protected from cancellation.
+  *
+  * Two preset policies cover the major protocols:
+  *  - [[CancellationPolicy.lsp]]: LSP `$/cancelRequest` with `{"id": ...}` params; cancelled
+  *    requests still produce a `MethodNotFound` reply.
+  *  - [[CancellationPolicy.mcp]]: MCP `notifications/cancelled` with `{"requestId": ...}`; no
+  *    reply is expected for cancelled requests; `initialize` is protected.
+  *
+  * Set via [[JsonRpcEndpoint.Config.cancellation]].
+  *
+  * @see [[JsonRpcEndpoint.Config]]
+  */
 final case class CancellationPolicy(
     cancelMethod: String,
     encodeParams: CancellationPolicy.ParamsEncoder,

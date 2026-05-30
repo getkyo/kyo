@@ -27,7 +27,7 @@ object JsonRpcTransportJvm:
                 Files.deleteIfExists(sockPath)
                 ()
             }).andThen {
-                Sync.defer(new internal.UdsWireTransport(channel)).map { wire =>
+                Sync.defer(new internal.transport.UdsWireTransport(channel)).map { wire =>
                     JsonRpcTransport.fromWire(wire, framer, codec)
                 }
             }

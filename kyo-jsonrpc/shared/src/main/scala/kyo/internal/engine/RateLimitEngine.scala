@@ -1,5 +1,6 @@
-package kyo
-package internal
+package kyo.internal.engine
+
+import kyo.*
 
 private[kyo] object RateLimitEngine:
 

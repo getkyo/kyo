@@ -30,8 +30,8 @@ class WireTransportTest extends JsonRpcTestBase:
                     aToBChan.stream()
                 def close(using Frame): Unit < Async =
                     bToAChan.close.andThen(aToBChan.close).unit
-            transportA   = new internal.WireTransportAdapter(wireA, Framer.lineDelimited, JsonRpcCodec.Strict2_0)
-            transportB   = new internal.WireTransportAdapter(wireB, Framer.lineDelimited, JsonRpcCodec.Strict2_0)
+            transportA   = new internal.transport.WireTransportAdapter(wireA, Framer.lineDelimited, JsonRpcCodec.Strict2_0)
+            transportB   = new internal.transport.WireTransportAdapter(wireB, Framer.lineDelimited, JsonRpcCodec.Strict2_0)
             sentEnvelope = JsonRpcEnvelope.Request(JsonRpcId.Num(1L), "ping", Absent, Absent)
             receiverFiber <- Fiber.initUnscoped(Abort.run[Closed](transportB.incoming.take(1).run))
             _             <- transportA.send(sentEnvelope)

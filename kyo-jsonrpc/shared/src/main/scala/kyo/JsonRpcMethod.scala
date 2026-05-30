@@ -1,4 +1,3 @@
-// PUBLIC method-binding surface built by user and passed to JsonRpcEndpoint.init
 package kyo
 
 import kyo.Abort
@@ -11,6 +10,20 @@ import kyo.Result
 import kyo.Schema
 import kyo.Structure
 
+/** Describes a single JSON-RPC method binding: a name, a kind (Request or Notification),
+  * and a typed handler function.
+  *
+  * Use the companion factories to construct instances:
+  *  - [[JsonRpcMethod.apply]] for request/response methods.
+  *  - [[JsonRpcMethod.notification]] for fire-and-forget notifications.
+  *
+  * The handler type parameter `S` captures the effect set required by the handler. The
+  * framework constrains `S` to include at minimum `Async & Abort[JsonRpcError]`. Pass the
+  * resulting `JsonRpcMethod` to `JsonRpcEndpoint.init`.
+  *
+  * @tparam S the effect set of the handler; must satisfy `(Async & Abort[JsonRpcError]) <:< S`
+  * @see JsonRpcEndpoint
+  */
 sealed trait JsonRpcMethod[+S]:
     def name: String
     def kind: JsonRpcMethod.Kind

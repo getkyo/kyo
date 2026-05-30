@@ -1,4 +1,3 @@
-// PUBLIC handler-context receiver consumed by user JsonRpcMethod handlers
 package kyo
 
 import kyo.Async
@@ -10,6 +9,19 @@ import kyo.Maybe.Present
 import kyo.Structure
 import kyo.Sync
 
+/** Per-request context supplied to every [[JsonRpcMethod]] handler by the endpoint.
+  *
+  * Provides access to:
+  *  - `cancelled`: a `Fiber.Promise` that is completed when the peer sends a cancellation for
+  *    the current request.
+  *  - `requestId`: the JSON-RPC id of the incoming request, or `Absent` for notifications.
+  *  - `extras`: protocol-specific extra fields from the incoming envelope, if any.
+  *  - `progress`: reports a progress notification back to the caller via `$.progress` (LSP) or
+  *    `notifications/progress` (MCP), depending on the active `ProgressPolicy`.
+  *
+  * @see [[JsonRpcMethod]]
+  * @see [[ProgressPolicy]]
+  */
 // Hub.scala:22 smart-constructor pattern; framework creates instances via forTest or JsonRpcEndpointImpl
 final class HandlerCtx private[kyo] (
     val cancelled: Fiber.Promise[Unit, Sync],

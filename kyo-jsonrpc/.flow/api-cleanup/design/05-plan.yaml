@@ -1,0 +1,449 @@
+campaign:
+  subject: "kyo-jsonrpc API cleanup"
+  module: kyo-jsonrpc
+  prefix: JsonRpc
+  template: kyo-http
+  baseline_commit: "7aeb6ca44d0cef2c6a0c3959c28a47abebb2642f"
+  crossPlatforms: [jvm, js, native]
+
+phases:
+  - id: 1
+    name: "Internal subpackage reorg, banner sweep, scaladoc adds"
+    scope: "Move every shared-internal file into one of four subpackages (codec, transport, framing, engine). Standardize package declarations to single-line form. Strip PUBLIC banner comments. Add or expand scaladoc on every public type that lacks one. No semantic changes."
+    files_modified:
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/CancellationEngine.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/CancellationEngine.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/FramerImpl.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/framing/FramerImpl.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/IdStrategyEngine.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/IdStrategyEngine.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/InMemoryTransport.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/transport/InMemoryTransport.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/JsonRpcCodecImpl.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/codec/JsonRpcCodecImpl.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/JsonRpcEndpointImpl.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/JsonRpcEndpointImpl.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/JsonRpcRequest.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/codec/JsonRpcRequest.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/ProgressEngine.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/ProgressEngine.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/RateLimitEngine.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/RateLimitEngine.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/RawJsonParser.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/codec/RawJsonParser.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/StdioWireTransport.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/transport/StdioWireTransport.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/WireTransportAdapter.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/transport/WireTransportAdapter.scala
+      - path: kyo-jsonrpc/jvm/src/main/scala/kyo/internal/UdsWireTransport.scala
+        action: move-to-subpackage
+        new_path: kyo-jsonrpc/jvm/src/main/scala/kyo/internal/transport/UdsWireTransport.scala
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEndpoint.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcTransport.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcMethod.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcError.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEnvelope.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcCodec.scala
+        action: edit
+    estimated_loc: 131
+    estimated_wall_clock_min: 45
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-jsonrpcJVM/Test/compile'"
+    convention_sweep:
+      - em-dash
+      - AllowUnsafe
+      - Option-vs-Maybe
+      - semicolons
+      - asInstanceOf
+      - default-params
+      - Frame.internal
+      - java.util.concurrent
+      - llm-tells
+    blocked_by: []
+
+  - id: 2
+    name: "Merge JsonRpcResponse into JsonRpcEnvelope"
+    scope: "Lift success/failure factories from JsonRpcResponse onto the JsonRpcEnvelope companion. Delete JsonRpcResponse.scala and its test file. Migrate six cases into JsonRpcEnvelopeTest. Update internal references in JsonRpcEndpointImpl and JsonRpcCodecImpl."
+    files_modified:
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEnvelope.scala
+        action: edit
+        public_type:
+          name: kyo.JsonRpcEnvelope
+          kind: enum
+          visibility: public
+          tier: A
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcResponse.scala
+        action: delete
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcResponseTest.scala
+        action: delete
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEnvelopeTest.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/JsonRpcEndpointImpl.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/codec/JsonRpcCodecImpl.scala
+        action: edit
+    estimated_loc: 6
+    estimated_wall_clock_min: 30
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-jsonrpcJVM/Test/compile' 'kyo-jsonrpcJVM/testOnly kyo.JsonRpcEnvelopeTest'"
+    convention_sweep:
+      - em-dash
+      - AllowUnsafe
+      - Option-vs-Maybe
+      - semicolons
+      - asInstanceOf
+      - default-params
+      - Frame.internal
+      - java.util.concurrent
+      - llm-tells
+    blocked_by: [1]
+
+  - id: 3
+    name: "NEST 11 types under owning companions"
+    scope: "Delete 10 standalone policy/seam source files. Absorb their bodies into the owning companion (JsonRpcEndpoint, JsonRpcTransport, JsonRpcMethod, JsonRpcEnvelope). Update every reference in kyo-jsonrpc internals, kyo-jsonrpc-http, and kyo-browser. Rename 10 test files to reflect new dotted paths. Inline CancellationPolicy ParamsEncoder/ParamsDecoder type aliases at use sites."
+    files_modified:
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/IdStrategy.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcEndpoint.IdStrategy
+          kind: enum
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/UnknownMethodPolicy.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcEndpoint.UnknownMethodPolicy
+          kind: case-class
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/MessageGate.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcEndpoint.MessageGate
+          kind: trait
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/CancellationPolicy.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcEndpoint.CancellationPolicy
+          kind: case-class
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/ProgressPolicy.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcEndpoint.ProgressPolicy
+          kind: case-class
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/ExtrasEncoder.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcEndpoint.ExtrasEncoder
+          kind: opaque
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/Framer.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcTransport.Framer
+          kind: trait
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/WireTransport.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcTransport.WireTransport
+          kind: trait
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/HandlerCtx.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcMethod.Context
+          kind: case-class
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcId.scala
+        action: delete
+        public_type:
+          name: kyo.JsonRpcEnvelope.Id
+          kind: enum
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEndpoint.scala
+        action: edit
+        public_type:
+          name: kyo.JsonRpcEndpoint
+          kind: trait
+          visibility: public
+          tier: A
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcTransport.scala
+        action: edit
+        public_type:
+          name: kyo.JsonRpcTransport
+          kind: trait
+          visibility: public
+          tier: A
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcMethod.scala
+        action: edit
+        public_type:
+          name: kyo.JsonRpcMethod
+          kind: trait
+          visibility: public
+          tier: A
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEnvelope.scala
+        action: edit
+        public_type:
+          name: kyo.JsonRpcEnvelope
+          kind: enum
+          visibility: public
+          tier: A
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/JsonRpcEndpointImpl.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/CancellationEngine.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/IdStrategyEngine.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/ProgressEngine.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/codec/JsonRpcCodecImpl.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/codec/JsonRpcRequest.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/transport/StdioWireTransport.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/transport/WireTransportAdapter.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/internal/framing/FramerImpl.scala
+        action: edit
+      - path: kyo-jsonrpc/jvm/src/main/scala/kyo/internal/transport/UdsWireTransport.scala
+        action: edit
+      - path: kyo-jsonrpc-http/src/main/scala/kyo/JsonRpcHttpTransport.scala
+        action: edit
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/IdStrategyTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointIdStrategyTest.scala
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/UnknownMethodPolicyTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointUnknownMethodPolicyTest.scala
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/MessageGateTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointMessageGateTest.scala
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/CancellationPolicyTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointCancellationPolicyTest.scala
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/ProgressPolicyTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointProgressPolicyTest.scala
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/ExtrasEncoderTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointExtrasEncoderTest.scala
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/FramerTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcTransportFramerTest.scala
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/WireTransportTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcTransportWireTransportTest.scala
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/HandlerCtxTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcMethodContextTest.scala
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcIdTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEnvelopeIdTest.scala
+      - path: kyo-browser/shared/src/main/scala/kyo/internal/CdpBackend.scala
+        action: edit
+      - path: kyo-browser/shared/src/test/scala/kyo/internal/CdpBackendTest.scala
+        action: edit
+      - path: kyo-browser/shared/src/test/scala/kyo/internal/CdpBackendSmokeTest.scala
+        action: edit
+      - path: kyo-browser/shared/src/test/scala/kyo/internal/CdpBackendLifecycleTest.scala
+        action: edit
+      - path: kyo-browser/shared/src/test/scala/kyo/internal/CdpClientDecoderTest.scala
+        action: edit
+      - path: kyo-browser/shared/src/test/scala/kyo/internal/JsonRpcPortInvariantsSpec.scala
+        action: edit
+    estimated_loc: 75
+    estimated_wall_clock_min: 180
+    verification_strategy: module
+    verification_command: "sbt 'kyo-jsonrpcJVM/Test/compile' 'kyo-jsonrpc-httpJVM/Test/compile' 'kyo-browserJVM/Test/compile' 'kyo-jsonrpcJVM/test'"
+    convention_sweep:
+      - em-dash
+      - AllowUnsafe
+      - Option-vs-Maybe
+      - semicolons
+      - asInstanceOf
+      - default-params
+      - Frame.internal
+      - java.util.concurrent
+      - llm-tells
+    blocked_by: [2]
+
+  - id: 4
+    name: "Config alignment: fluent setters, default, require, CanEqual"
+    scope: "Apply five mechanical Config deltas in alignment with HttpServerConfig: drop primary-constructor defaults, add nine fluent setters, add Config.default constant, add two require guards on maxInFlight and requestTimeout, add derives CanEqual, update JsonRpcEndpoint.init default to config = Config.default. Add tests for fluent-setter round-trip, default equality, require throws, and CanEqual derivation."
+    files_modified:
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEndpoint.scala
+        action: edit
+        public_type:
+          name: kyo.JsonRpcEndpoint.Config
+          kind: case-class
+          visibility: public
+          tier: B
+          module_prefix_compliant: true
+          derives:
+            - CanEqual
+      - path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcEndpointTest.scala
+        action: edit
+    estimated_loc: 70
+    estimated_wall_clock_min: 60
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-jsonrpcJVM/Test/compile' 'kyo-jsonrpcJVM/testOnly kyo.JsonRpcEndpointTest'"
+    convention_sweep:
+      - em-dash
+      - AllowUnsafe
+      - Option-vs-Maybe
+      - semicolons
+      - asInstanceOf
+      - default-params
+      - Frame.internal
+      - java.util.concurrent
+      - llm-tells
+    blocked_by: [3]
+
+  - id: 5
+    name: "Drop Sync from JsonRpcEndpoint.init effect row"
+    scope: "Single-line change: replace the return type of JsonRpcEndpoint.init from JsonRpcEndpoint < (Sync & Async & Scope) to JsonRpcEndpoint < (Async & Scope). Sync is subsumed by Async; the change aligns with the JsonRpcTransport factory family."
+    files_modified:
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcEndpoint.scala
+        action: edit
+        public_type:
+          name: kyo.JsonRpcEndpoint
+          kind: trait
+          visibility: public
+          tier: A
+          module_prefix_compliant: true
+          derives: []
+    estimated_loc: 0
+    estimated_wall_clock_min: 15
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-jsonrpcJVM/Test/compile' 'kyo-jsonrpcJVM/testOnly kyo.JsonRpcEndpointTest'"
+    convention_sweep:
+      - em-dash
+      - AllowUnsafe
+      - Option-vs-Maybe
+      - semicolons
+      - asInstanceOf
+      - default-params
+      - Frame.internal
+      - java.util.concurrent
+      - llm-tells
+    blocked_by: [4]
+
+  - id: 6
+    name: "Cross-platform UDS fold-in"
+    scope: "Delete JsonRpcTransportJvm.scala. Add unixDomain factory to the shared JsonRpcTransport companion delegating to internal.transport.UdsBackend.open. Create three platform UdsBackend files: JVM with real UnixDomainSocketAddress + ServerSocketChannel body lifted from the deleted JVM file; Native and JS abort stubs returning UnsupportedOperationException. Relocate JsonRpcTransportJvmTest to shared with platform-aware cancel-on-abort."
+    files_modified:
+      - path: kyo-jsonrpc/jvm/src/main/scala/kyo/JsonRpcTransportJvm.scala
+        action: delete
+      - path: kyo-jsonrpc/jvm/src/main/scala/kyo/internal/transport/UdsBackend.scala
+        action: create
+      - path: kyo-jsonrpc/native/src/main/scala/kyo/internal/transport/UdsBackend.scala
+        action: create
+      - path: kyo-jsonrpc/js/src/main/scala/kyo/internal/transport/UdsBackend.scala
+        action: create
+      - path: kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcTransport.scala
+        action: edit
+        public_type:
+          name: kyo.JsonRpcTransport
+          kind: trait
+          visibility: public
+          tier: A
+          module_prefix_compliant: true
+          derives: []
+      - path: kyo-jsonrpc/jvm/src/test/scala/kyo/JsonRpcTransportJvmTest.scala
+        action: rename
+        new_path: kyo-jsonrpc/shared/src/test/scala/kyo/JsonRpcTransportUnixTest.scala
+    estimated_loc: 9
+    estimated_wall_clock_min: 60
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-jsonrpcJVM/Test/compile' 'kyo-jsonrpcJVM/testOnly kyo.JsonRpcTransportTest kyo.JsonRpcTransportUnixTest'"
+    convention_sweep:
+      - em-dash
+      - AllowUnsafe
+      - Option-vs-Maybe
+      - semicolons
+      - asInstanceOf
+      - default-params
+      - Frame.internal
+      - java.util.concurrent
+      - llm-tells
+    blocked_by: [5]
+
+  - id: 7
+    name: "Final cross-platform green run"
+    scope: "Sequential green-gate run across JVM, JS, and Native. Certifies that the cumulative state of Phases 1-6 builds and tests pass on all three platforms. No source changes expected; any platform-specific fix-ups remain in this phase's commit."
+    files_modified: []
+    estimated_loc: 0
+    estimated_wall_clock_min: 90
+    verification_strategy: cross-platform-full
+    verification_command: "sbt 'kyo-jsonrpcJVM/test' 'kyo-jsonrpc-httpJVM/test' 'kyo-browserJVM/test' 'kyo-jsonrpcJS/test' 'kyo-jsonrpc-httpJS/test' 'kyo-browserJS/test' 'kyo-jsonrpcNative/test' 'kyo-jsonrpc-httpNative/test' 'kyo-browserNative/test'"
+    convention_sweep:
+      - em-dash
+      - AllowUnsafe
+      - Option-vs-Maybe
+      - semicolons
+      - asInstanceOf
+      - default-params
+      - Frame.internal
+      - java.util.concurrent
+      - llm-tells
+    blocked_by: [6]

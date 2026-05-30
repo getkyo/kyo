@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.internal.codec
 
 import kyo.*
 import kyo.Maybe

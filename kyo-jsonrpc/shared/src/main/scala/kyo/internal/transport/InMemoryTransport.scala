@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.internal.transport
 
 import kyo.*
 

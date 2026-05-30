@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.IdStrategyEngine
+import kyo.internal.engine.IdStrategyEngine
 
 class IdStrategyTest extends JsonRpcTestBase:
 

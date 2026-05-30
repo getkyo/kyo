@@ -85,7 +85,7 @@ class JsonRpcTransportTest extends JsonRpcTestBase:
             }.map { case (out, _) =>
                 val line = out.stdOut.trim
                 assert(line.nonEmpty)
-                val parsed = internal.RawJsonParser.parse(line)
+                val parsed = internal.codec.RawJsonParser.parse(line)
                 assert(parsed.isSuccess)
             }
         }

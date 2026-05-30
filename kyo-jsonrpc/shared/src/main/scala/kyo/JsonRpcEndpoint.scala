@@ -1,10 +1,26 @@
-// PUBLIC primary user-facing endpoint surface
 package kyo
 
 import kyo.Stream
 
+/** A live JSON-RPC 2.0 endpoint managing bidirectional communication over a [[JsonRpcTransport]].
+  *
+  * Obtain an instance via [[JsonRpcEndpoint.init]], which starts the inbound dispatch loop and
+  * attaches the outbound sender. Calling code interacts with the peer through the typed methods
+  * on this class:
+  *  - [[call]]: send a request and await the typed response.
+  *  - [[notify]]: send a fire-and-forget notification.
+  *  - [[callWithProgress]]: send a request and receive incremental progress notifications.
+  *  - [[callPartialResults]]: send a request and stream partial results as a `Stream[T, ...]`.
+  *  - [[cancel]]: send a cancellation notification for an in-flight request.
+  *  - [[close]] / [[closeNow]]: tear down the endpoint.
+  *
+  * The endpoint is `Scope`-managed; it closes automatically when the enclosing `Scope` exits.
+  *
+  * @see [[JsonRpcEndpoint.init]]
+  * @see [[JsonRpcTransport]]
+  */
 // Hub.scala:22 smart-constructor pattern; init through JsonRpcEndpoint.init
-final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.JsonRpcEndpointImpl):
+final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.engine.JsonRpcEndpointImpl):
 
     def call[In: Schema, Out: Schema](
         method: String,
@@ -78,6 +94,14 @@ end JsonRpcEndpoint
 
 object JsonRpcEndpoint:
 
+    /** Represents an in-flight request that supports progress reporting.
+      *
+      * Returned by [[JsonRpcEndpoint.callWithProgress]]. Provides:
+      *  - `id`: the assigned request id, usable with [[JsonRpcEndpoint.cancel]].
+      *  - `result`: the final typed response, available as `Out < (Async & Abort[...])`.
+      *  - `progress`: a `Stream` of progress `Structure.Value` notifications from the peer.
+      *  - `cancel`: cancels the in-flight request by sending a cancellation notification.
+      */
     // Hub.scala:22 smart-constructor pattern; Pending built only by JsonRpcEndpointImpl.callWithProgress
     final class Pending[Out] private[kyo] (
         val id: JsonRpcId,
@@ -86,6 +110,17 @@ object JsonRpcEndpoint:
         val cancel: Unit < (Async & Abort[Closed])
     )
 
+    /** Configuration for a [[JsonRpcEndpoint]].
+      *
+      * Pass to [[JsonRpcEndpoint.init]] to control codec, cancellation, progress reporting,
+      * unknown-method handling, message gating, concurrency limits, request timeouts, and
+      * id-allocation strategy.
+      *
+      * All fields have sensible defaults; construct with `Config()` for standard JSON-RPC 2.0
+      * behaviour or override individual fields as needed.
+      *
+      * @see [[JsonRpcEndpoint.init]]
+      */
     final case class Config(
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
         cancellation: Maybe[CancellationPolicy] = Absent,
@@ -103,6 +138,6 @@ object JsonRpcEndpoint:
         methods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]],
         config: Config = Config()
     )(using Frame): JsonRpcEndpoint < (Sync & Async & Scope) =
-        internal.JsonRpcEndpointImpl.init(transport, methods, config).map(new JsonRpcEndpoint(_))
+        internal.engine.JsonRpcEndpointImpl.init(transport, methods, config).map(new JsonRpcEndpoint(_))
 
 end JsonRpcEndpoint

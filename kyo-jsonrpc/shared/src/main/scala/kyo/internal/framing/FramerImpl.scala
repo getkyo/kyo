@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.internal.framing
 
 import kyo.*
 

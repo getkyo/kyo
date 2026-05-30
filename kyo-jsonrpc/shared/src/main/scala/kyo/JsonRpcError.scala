@@ -1,4 +1,3 @@
-// PUBLIC error-channel ADT appearing in JsonRpcEndpoint Abort rows and user error matching
 package kyo
 
 import kyo.Frame
@@ -8,6 +7,20 @@ import kyo.Maybe.Present
 import kyo.Schema
 import kyo.Structure
 
+/** A JSON-RPC 2.0 error object (§5.1).
+  *
+  * Carries a numeric `code`, a human-readable `message`, and an optional `data` value.
+  * Predefined constants and smart constructors in the companion cover the standard JSON-RPC
+  * and LSP error codes.
+  *
+  * Appears in the `Abort[JsonRpcError]` effect row of `JsonRpcEndpoint.call` and handler
+  * return types.
+  *
+  * @param code    integer error code (negative values are reserved by JSON-RPC 2.0 §5.1)
+  * @param message short description of the error
+  * @param data    optional additional information, protocol-defined
+  * @see [[JsonRpcEndpoint]]
+  */
 case class JsonRpcError(code: Int, message: String, data: Maybe[Structure.Value]) derives Schema, CanEqual
 
 object JsonRpcError:

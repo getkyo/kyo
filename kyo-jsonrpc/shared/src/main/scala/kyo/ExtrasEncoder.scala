@@ -1,6 +1,18 @@
-// PUBLIC opaque-type for the JsonRpcEndpoint.call/notify extras parameter
 package kyo
 
+/** Opaque function type that attaches protocol-specific extra fields to outbound envelopes.
+  *
+  * Passed to `JsonRpcEndpoint.call`, `notify`, and `sendUnmatched` as the `extras` parameter.
+  * The function receives the assigned request id and returns an optional `Structure.Value` map
+  * that is merged into the outgoing envelope's `extras` field.
+  *
+  * Use the companion factories:
+  *  - [[ExtrasEncoder.empty]]: no extras on every call.
+  *  - [[ExtrasEncoder.const]]: attach the same extras value to every call.
+  *  - [[ExtrasEncoder.apply]]: full control with a per-id function.
+  *
+  * @see [[JsonRpcEndpoint]]
+  */
 opaque type ExtrasEncoder = JsonRpcId => Maybe[Structure.Value] < Sync
 
 object ExtrasEncoder:

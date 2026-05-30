@@ -1,9 +1,25 @@
-// PUBLIC framer preset library for byte-stream transports (line-delimited stdio, Content-Length envelopes)
 package kyo
 
 import kyo.Stream
 import kyo.Sync
 
+/** Encodes and decodes byte-stream boundaries for JSON-RPC messages carried over a byte-level
+  * transport.
+  *
+  * A `Framer` controls how raw bytes are split into discrete message frames on the wire:
+  *  - `frame`: wraps a single encoded message for transmission (e.g., appends `\n` or a
+  *    `Content-Length` header).
+  *  - `parse`: converts a raw byte stream into a stream of complete message frames.
+  *
+  * Two preset framers are provided:
+  *  - [[Framer.lineDelimited]]: newline-delimited framing, suitable for stdio transports.
+  *  - [[Framer.contentLength]]: `Content-Length` header framing used by LSP over stdio.
+  *
+  * Pass the chosen framer to [[JsonRpcTransport.fromWire]] or [[JsonRpcTransport.stdio]].
+  *
+  * @see [[JsonRpcTransport.fromWire]]
+  * @see [[WireTransport]]
+  */
 trait Framer:
     def frame(bytes: Chunk[Byte])(using Frame): Chunk[Byte] < Sync
     def parse(stream: Stream[Chunk[Byte], Async & Abort[Closed]])(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]]
@@ -19,7 +35,7 @@ object Framer:
             Sync.defer(bytes :+ '\n'.toByte)
 
         def parse(stream: Stream[Chunk[Byte], Async & Abort[Closed]])(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
-            internal.FramerImpl.parseLineDelimited(stream)
+            internal.framing.FramerImpl.parseLineDelimited(stream)
 
     /** Content-Length envelope framing: `Content-Length: N\r\n\r\n<N bytes>`. Tolerant
       * of `\n\n` on parse, strict `\r\n\r\n` on emit. Header errors raise
@@ -33,5 +49,5 @@ object Framer:
             }
 
         def parse(stream: Stream[Chunk[Byte], Async & Abort[Closed]])(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
-            internal.FramerImpl.parseContentLength(stream)
+            internal.framing.FramerImpl.parseContentLength(stream)
 end Framer
