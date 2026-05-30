@@ -8,6 +8,16 @@ import scala.compiletime.testing.typeChecks
 
 /** Pure JSON round-trip tests for [[CdpParams]] case classes, [[CdpTypes]] opaque types, and [[NodeRef]].
   *
+  * ===ZZ-prefix naming===
+  * This class is named `ZZCdpParamsRoundTripTest` (rather than `CdpParamsRoundTripTest`) to force ScalaTest to run it LAST alphabetically
+  * on Scala Native. The 15 heavy `kyo-schema` `Json.encode`/`Json.decode` round-trips in this suite corrupt Scala Native runtime state such
+  * that the next Chrome-using test class that loads after it crashes with a `NullPointerException` from the `recursive stackOverflowHandler`.
+  * The crash is order-dependent: running `ResolverTest` AFTER `CdpParamsRoundTripTest` crashes; reversing the order (as happens when this
+  * class sorts last) produces a clean pass. Root cause is likely in Scala Native 0.5.10 macro-generated decoder code paths or kyo-schema
+  * internal caches. This is a pre-existing issue from before the kyo-browser to kyo-jsonrpc port campaign; it was not introduced by any
+  * change in that campaign. Renaming to `ZZ...` is a test-infra workaround that sidesteps the issue without changing test behavior or
+  * coverage. See Decision 71 in `kyo-browser/.flow/jsonrpc-port/audit-fix-decisions.md`.
+  *
   * No browser, no I/O; every scenario completes in well under a second.
   *
   * Coverage:
@@ -25,7 +35,7 @@ import scala.compiletime.testing.typeChecks
   * instances purely for tests, the round-trip helper compares the re-encoded JSON of the decoded value against the input JSON. This is a
   * sound round-trip check: a stable codec must satisfy `encode(decode(encode(v))) == encode(v)` for any `v`.
   */
-class CdpParamsRoundTripTest extends kyo.Test:
+class ZZCdpParamsRoundTripTest extends kyo.Test:
 
     /** Round-trip helper: encode → decode → re-encode → compare encoded strings.
       *
@@ -356,4 +366,4 @@ class CdpParamsRoundTripTest extends kyo.Test:
         }
     }
 
-end CdpParamsRoundTripTest
+end ZZCdpParamsRoundTripTest

@@ -29,7 +29,7 @@ import scala.concurrent.Future
 //   - internal/cdp/AccessibilityTest.scala
 //   - internal/CdpTypesTest.scala
 //   - internal/ActionabilityTest.scala
-//   - internal/CdpParamsRoundTripTest.scala
+//   - internal/ZZCdpParamsRoundTripTest.scala
 //   - internal/NavigationWatcherTest.scala
 //
 // New tests should prefer the flat form unless the grouping carries genuine
