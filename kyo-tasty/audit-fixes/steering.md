@@ -185,3 +185,8 @@ one INV, one explanation a reviewer can hold in head as one idea."
   prefix-matching test file.
 - Test code is never written in the plan; the scenario substance is
   the contract impl reads against.
+
+## Audit feedback ledger (append-only)
+
+- Phase 12 audit WARN (2026-05-30): resolveExtFqn in Scala2PickleReader recurses unboundedly. Corrupt pickle with owner-cycle would StackOverflow. ROUTE TO: Phase 21e (Test scala2 subsystem) impl agent, add depth counter bounded by `entries.length` plus a malformed-pickle test that exercises the cycle.
+- Phase 12 audit NOTE: resolveExtFqn allocates one PickleCursor + string per owner level. Not hot; no action.

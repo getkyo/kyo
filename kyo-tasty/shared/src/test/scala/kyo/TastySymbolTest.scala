@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
@@ -158,6 +159,119 @@ class TastySymbolTest extends Test:
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
                     throw t
+    }
+
+    // Helpers for synthetic-symbol tests (no classpath I/O, cross-platform).
+
+    /** Build a root sentinel Package symbol (empty name, null owner). */
+    private def makeRoot(): Tasty.Symbol =
+        Tasty.Symbol.make(
+            Tasty.SymbolKind.Package,
+            Tasty.Flags.empty,
+            Tasty.Name(""),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+
+    /** Build a Package symbol owned by `owner`. */
+    private def makePkg(name: String, owner: Tasty.Symbol): Tasty.Symbol =
+        Tasty.Symbol.make(
+            Tasty.SymbolKind.Package,
+            Tasty.Flags.empty,
+            Tasty.Name(name),
+            owner,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+
+    /** Build a Class symbol owned by `owner`. */
+    private def makeClass(name: String, owner: Tasty.Symbol): Tasty.Symbol =
+        Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name(name),
+            owner,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+
+    /** Build a Module (object) symbol owned by `owner`, with the given simple name. */
+    private def makeModule(name: String, owner: Tasty.Symbol): Tasty.Symbol =
+        Tasty.Symbol.make(
+            Tasty.SymbolKind.Object,
+            new Tasty.Flags(Tasty.Flag.Module.bit),
+            Tasty.Name(name),
+            owner,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+
+    // Test 1 (INV: T1, Symbol.binaryName): nested Scala class produces JVM binary name with '$' separator.
+    // Given: synthetic Symbol tree com.example.Outer.Inner where Outer and Inner have SymbolKind.Class.
+    // When: sym.binaryName evaluated.
+    // Then: returns "com/example/Outer$Inner".
+    // Pins: T1 (binaryName nested-class coverage).
+    "Symbol.binaryName nested class returns com/example/Outer$Inner" in {
+        val root  = makeRoot()
+        val com   = makePkg("com", root)
+        val ex    = makePkg("example", com)
+        val outer = makeClass("Outer", ex)
+        val inner = makeClass("Inner", outer)
+        assert(
+            inner.binaryName == "com/example/Outer$Inner",
+            s"Expected 'com/example/Outer$$Inner' but got '${inner.binaryName}'"
+        )
+    }
+
+    // Test 2 (INV: T1, Symbol.binaryName): top-level Scala class produces JVM binary name with '/' separators only.
+    // Given: synthetic Symbol tree com.example.Foo where Foo has SymbolKind.Class.
+    // When: sym.binaryName evaluated.
+    // Then: returns "com/example/Foo".
+    // Pins: T1 (binaryName top-level coverage).
+    "Symbol.binaryName top-level class returns com/example/Foo" in {
+        val root = makeRoot()
+        val com  = makePkg("com", root)
+        val ex   = makePkg("example", com)
+        val foo  = makeClass("Foo", ex)
+        assert(
+            foo.binaryName == "com/example/Foo",
+            s"Expected 'com/example/Foo' but got '${foo.binaryName}'"
+        )
+    }
+
+    // Test 3 (INV: T1, Symbol.isPackageObject): Module symbol named "package" returns true.
+    // Given: synthetic Module Symbol with name "package" and Flag.Module set, owned by a Package.
+    // When: sym.isPackageObject (using AllowUnsafe).
+    // Then: returns true.
+    // Pins: T1 (isPackageObject true branch).
+    "Symbol.isPackageObject returns true for Module named package" in {
+        val root   = makeRoot()
+        val pkg    = makePkg("com.example", root)
+        val pkgObj = makeModule("package", pkg)
+        assert(
+            pkgObj.isPackageObject,
+            "Expected isPackageObject == true for Module symbol named 'package'"
+        )
+    }
+
+    // Test 4 (INV: T1, Symbol.isPackageObject): Class symbol named "Foo" returns false.
+    // Given: synthetic Class Symbol with name "Foo" (no Module flag).
+    // When: sym.isPackageObject (using AllowUnsafe).
+    // Then: returns false.
+    // Pins: T1 (isPackageObject false branch).
+    "Symbol.isPackageObject returns false for class named Foo" in {
+        val root = makeRoot()
+        val pkg  = makePkg("com.example", root)
+        val foo  = makeClass("Foo", pkg)
+        assert(
+            !foo.isPackageObject,
+            "Expected isPackageObject == false for Class symbol named 'Foo'"
+        )
     }
 
 end TastySymbolTest
