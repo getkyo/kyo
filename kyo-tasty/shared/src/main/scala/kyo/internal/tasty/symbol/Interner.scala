@@ -1,9 +1,9 @@
 package kyo.internal.tasty.symbol
 
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.AllowUnsafe
+import kyo.AtomicInt
+import kyo.AtomicRef
 import kyo.internal.tasty.binary.Utf8
 
 /** A sharded intern table that maps byte sequences to canonical `Entry` objects.
@@ -12,38 +12,31 @@ import kyo.internal.tasty.binary.Utf8
   * same `Entry` reference (referential equality). This invariant means that reference equality on interned entries IS byte-level equality.
   *
   * The table uses `numShards` shards (must be a power of 2, default 32). Each shard is a two-level structure:
-  *   - Outer `AtomicReference` holds the current `AtomicReferenceArray[Entry]` (swapped atomically on grow, which is rare)
+  *   - Outer `AtomicRef.Unsafe` holds the current `AtomicReferenceArray[Entry]` (swapped atomically on grow, which is rare)
   *   - Inner `AtomicReferenceArray[Entry]` supports per-slot CAS inserts (no full-table copy per insert)
   *
   * This eliminates the O(N) `Arrays.copyOf(table, table.length)` per insert that previously generated ~46 GB of cumulative
   * `Interner$Entry[]` allocation per cold load. Inserts now use a single per-slot CAS on the `AtomicReferenceArray`.
   *
-  * Load factor is tracked per shard via an `AtomicInteger` counter incremented on each successful CAS insert.
+  * Load factor is tracked per shard via an `AtomicInt.Unsafe` counter incremented on each successful CAS insert.
   *
   * Thread safety: concurrent `intern` calls for the same byte sequence are guaranteed to return the same `Entry` object.
   */
-final class Interner(numShards: Int, initialShardCapacity: Int):
-    require((numShards & (numShards - 1)) == 0, "numShards must be a power of 2")
-    require((initialShardCapacity & (initialShardCapacity - 1)) == 0, "initialShardCapacity must be a power of 2")
-    require(initialShardCapacity >= 1, "initialShardCapacity must be at least 1")
-
-    private[kyo] val growCount: AtomicInteger =
-        new AtomicInteger(0)
-
-    // Two-level indirection: outer AtomicReference for grows (rare, swaps whole sub-table),
+final class Interner private (
+    private val numShards: Int,
+    private val initialShardCapacity: Int,
+    private[kyo] val growCount: AtomicInt.Unsafe,
+    // Two-level indirection: outer AtomicRef.Unsafe for grows (rare, swaps whole sub-table),
     // inner AtomicReferenceArray for per-slot CAS inserts (no full-table copy per insert).
-    private val shards: Array[AtomicReference[AtomicReferenceArray[Interner.Entry]]] =
-        Array.tabulate(numShards)(_ =>
-            new AtomicReference(
-                new AtomicReferenceArray[Interner.Entry](initialShardCapacity)
-            )
-        )
-
+    private val shards: Array[AtomicRef.Unsafe[AtomicReferenceArray[Interner.Entry]]],
+    // Per-shard grow locks: separate monitor objects used for the synchronized grow window.
+    // (AtomicRef.Unsafe is opaque outside its definition scope and does not expose AnyRef.synchronized.)
+    private val shardLocks: Array[AnyRef],
     // Per-shard load counters: incremented on each successful CAS insert.
     // The counter is never reset on grow because items remain present after rehashing.
     // A slightly stale read is acceptable: it only means we might grow one slot late.
-    private[kyo] val shardLoadCounters: Array[AtomicInteger] =
-        Array.fill(numShards)(new AtomicInteger(0))
+    private[kyo] val shardLoadCounters: Array[AtomicInt.Unsafe]
+):
 
     /** Intern the byte slice `bytes[offset .. offset+length)`, returning a canonical `Entry`. */
     def intern(bytes: Array[Byte], offset: Int, length: Int)(using AllowUnsafe): Interner.Entry =
@@ -54,13 +47,14 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
         end if
         val hash     = computeHash(bytes, offset, length)
         val shardIdx = hash & (numShards - 1)
-        internInShard(shards(shardIdx), shardLoadCounters(shardIdx), hash, bytes, offset, length)
+        internInShard(shards(shardIdx), shardLocks(shardIdx), shardLoadCounters(shardIdx), hash, bytes, offset, length)
     end intern
 
     @scala.annotation.tailrec
     private def internInShard(
-        shardRef: AtomicReference[AtomicReferenceArray[Interner.Entry]],
-        loadCounter: AtomicInteger,
+        shardRef: AtomicRef.Unsafe[AtomicReferenceArray[Interner.Entry]],
+        shardLock: AnyRef,
+        loadCounter: AtomicInt.Unsafe,
         hash: Int,
         bytes: Array[Byte],
         offset: Int,
@@ -82,11 +76,11 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
                     // re-check `shardRef.get() eq table` inside the lock ensures that
                     // if another thread already grew the table we skip the redundant
                     // grow; growShard itself is reentrant-safe and double-checks too.
-                    shardRef.synchronized {
+                    shardLock.synchronized {
                         if shardRef.get() eq table then
-                            growShard(shardRef, loadCounter, len)
+                            growShard(shardRef, shardLock, loadCounter, len)
                     }
-                    return internInShard(shardRef, loadCounter, hash, bytes, offset, length)
+                    return internInShard(shardRef, shardLock, loadCounter, hash, bytes, offset, length)
                 end if
                 // Eagerly copy the byte slice so the Entry does not hold the parse buffer alive.
                 val copiedBytes = java.util.Arrays.copyOfRange(bytes, offset, offset + length)
@@ -106,13 +100,14 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
     end internInShard
 
     private def growShard(
-        shardRef: AtomicReference[AtomicReferenceArray[Interner.Entry]],
-        loadCounter: AtomicInteger,
+        shardRef: AtomicRef.Unsafe[AtomicReferenceArray[Interner.Entry]],
+        shardLock: AnyRef,
+        loadCounter: AtomicInt.Unsafe,
         observedLen: Int
-    ): Unit =
-        // Serialize grows per shard via the shardRef monitor.
+    )(using AllowUnsafe): Unit =
+        // Serialize grows per shard via the shardLock monitor.
         // After acquiring the lock, recheck whether another thread already grew.
-        shardRef.synchronized {
+        shardLock.synchronized {
             val current = shardRef.get()
             if current.length() == observedLen then
                 growCount.incrementAndGet(): Unit
@@ -165,11 +160,24 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
     end computeHash
 
     /** Return the number of filled slots in shard `idx`. Package-accessible; for testing only. */
-    private[kyo] def shardSize(idx: Int): Int = shardLoadCounters(idx).get()
+    private[kyo] def shardSize(idx: Int)(using AllowUnsafe): Int = shardLoadCounters(idx).get()
 
 end Interner
 
 object Interner:
+
+    def init(numShards: Int, initialShardCapacity: Int)(using AllowUnsafe): Interner =
+        require((numShards & (numShards - 1)) == 0, "numShards must be a power of 2")
+        require((initialShardCapacity & (initialShardCapacity - 1)) == 0, "initialShardCapacity must be a power of 2")
+        require(initialShardCapacity >= 1, "initialShardCapacity must be at least 1")
+        val growCount = AtomicInt.Unsafe.init(0)
+        val shards = Array.fill(numShards)(
+            AtomicRef.Unsafe.init[AtomicReferenceArray[Interner.Entry]](new AtomicReferenceArray(initialShardCapacity))
+        )
+        val shardLocks = Array.fill(numShards)(new AnyRef)
+        val counters   = Array.fill(numShards)(AtomicInt.Unsafe.init(0))
+        new Interner(numShards, initialShardCapacity, growCount, shards, shardLocks, counters)
+    end init
 
     /** A single interned byte-sequence entry.
       *

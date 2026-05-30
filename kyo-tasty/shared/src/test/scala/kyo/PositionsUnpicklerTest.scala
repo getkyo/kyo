@@ -151,7 +151,7 @@ class PositionsUnpicklerTest extends Test:
     // classfiles have no TASTy Positions section; ClassfileUnpickler sets _position to Absent.
     "PositionsUnpickler: Java classfile symbol always has position == Absent" taggedAs jvmOnly in run {
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
-        val interner   = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner   = Interner.init(numShards = 32, initialShardCapacity = 16)
         val arena      = new TypeArena
         val home       = ClasspathRef.init()
         Abort.run[TastyError]:

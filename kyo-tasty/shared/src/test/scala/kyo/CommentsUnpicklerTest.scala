@@ -215,7 +215,7 @@ class CommentsUnpicklerTest extends Test:
     // classfile symbols.
     "CommentsUnpickler: Java classfile symbol always has scaladoc == Absent" taggedAs jvmOnly in run {
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
-        val interner   = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner   = Interner.init(numShards = 32, initialShardCapacity = 16)
         val arena      = new TypeArena
         val home       = ClasspathRef.init()
         Abort.run[TastyError]:

@@ -68,7 +68,7 @@ class TreeUnpicklerTest extends Test:
 
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val view     = ByteView(bytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val home     = ClasspathRef.init()
         val arena    = TypeArena.canonical()
         for

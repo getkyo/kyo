@@ -11,7 +11,7 @@ class SectionIndexTest extends Test:
 
     /** Build a names array with `n` entries, each named "name0", "name1", etc. */
     private def makeNames(n: Int): Array[Tasty.Name] =
-        val interner = new Interner(numShards = 4, initialShardCapacity = 8)
+        val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
         Array.tabulate(n) { i =>
             val s     = s"name$i"
             val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)

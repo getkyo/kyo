@@ -15,7 +15,7 @@ class JavaAnnotationUnpicklerTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val interner = new Interner(numShards = 4, initialShardCapacity = 8)
+    private val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
 
     /** Build a constant pool byte stream from a sequence of string literals.
       *

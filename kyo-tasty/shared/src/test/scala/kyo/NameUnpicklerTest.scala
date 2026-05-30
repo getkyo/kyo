@@ -36,7 +36,7 @@ class NameUnpicklerTest extends Test:
     "loading PlainClass.tasty produces a non-empty name array" in run {
         val bytes    = loadFixture()
         val view     = ByteView(bytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError] {
             skipHeader(view).andThen {
                 NameUnpickler.read(view, interner)
@@ -57,7 +57,7 @@ class NameUnpicklerTest extends Test:
     "PlainClass fixture: name 'PlainClass' appears in the decoded name array" in run {
         val bytes    = loadFixture()
         val view     = ByteView(bytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError] {
             skipHeader(view).andThen {
                 NameUnpickler.read(view, interner)
@@ -77,7 +77,7 @@ class NameUnpicklerTest extends Test:
     "PlainClass fixture: a QUALIFIED name entry decodes to a dotted string" in run {
         val bytes    = loadFixture()
         val view     = ByteView(bytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError] {
             skipHeader(view).andThen {
                 NameUnpickler.read(view, interner)
@@ -113,7 +113,7 @@ class NameUnpicklerTest extends Test:
             0x65.toByte  // 'e' -- only 2 of 5 bytes provided, then end of array
         )
         val view     = ByteView(nameTableBytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError] {
             NameUnpickler.read(view, interner)
         }.map { result =>
@@ -129,7 +129,7 @@ class NameUnpicklerTest extends Test:
     "interning the same byte sequence twice gives reference-equal underlying entries" in run {
         val bytes    = loadFixture()
         val view     = ByteView(bytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError] {
             skipHeader(view).andThen {
                 NameUnpickler.read(view, interner)
@@ -180,7 +180,7 @@ class NameUnpicklerTest extends Test:
             0xff.toByte  // trailing 0xFF -- must NOT be interpreted as a new entry
         )
         val view     = ByteView(bytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError] {
             NameUnpickler.read(view, interner)
         }.map { result =>
@@ -239,7 +239,7 @@ class NameUnpicklerTest extends Test:
             0x80.toByte  // selector NAT = 0 (0 | 0x80)
         )
         val view     = ByteView(nameTableBytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError] {
             NameUnpickler.read(view, interner)
         }.map { result =>

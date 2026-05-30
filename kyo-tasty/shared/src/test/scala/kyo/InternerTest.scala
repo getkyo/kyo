@@ -11,7 +11,7 @@ class InternerTest extends Test:
 
     // Test 1: two intern calls for the same byte sequence return reference-equal Name instances.
     "two intern calls for the same bytes return reference-equal Name instances" in run {
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val bytes    = utf8Bytes("hello")
         val n1       = interner.intern(bytes, 0, bytes.length)
         val n2       = interner.intern(bytes, 0, bytes.length)
@@ -20,7 +20,7 @@ class InternerTest extends Test:
 
     // Test 2: two intern calls for different byte sequences return non-equal Name instances.
     "two intern calls for different bytes return non-equal Name instances" in run {
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val b1       = utf8Bytes("hello")
         val b2       = utf8Bytes("world")
         val n1       = interner.intern(b1, 0, b1.length)
@@ -34,7 +34,7 @@ class InternerTest extends Test:
         // so "kyo" lands in shard 0 and "foo" lands in shard 1. Computed statically:
         //   FNV-1a("kyo") = 1444849266 -> & 1 = 0 (shard 0)
         //   FNV-1a("foo") = 703823575  -> & 1 = 1 (shard 1)
-        val interner = new Interner(numShards = 2, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 2, initialShardCapacity = 16)
         val bKyo     = utf8Bytes("kyo")
         val bFoo     = utf8Bytes("foo")
         val nKyo     = interner.intern(bKyo, 0, bKyo.length)
@@ -48,7 +48,7 @@ class InternerTest extends Test:
 
     // Test 4: Name.asString returns the correct UTF-8 decoded string.
     "Name.asString returns the correct decoded string" in run {
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val s        = "PlainClass"
         val bytes    = utf8Bytes(s)
         val entry    = interner.intern(bytes, 0, bytes.length)
@@ -59,7 +59,7 @@ class InternerTest extends Test:
 
     // Test 5: Name.asString called twice returns the same (reference-equal) String (OnceCell caching).
     "Name.asString called twice returns the same String reference (OnceCell caching)" in run {
-        val interner         = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner         = Interner.init(numShards = 32, initialShardCapacity = 16)
         val bytes            = utf8Bytes("cached")
         val entry            = interner.intern(bytes, 0, bytes.length)
         val name: Tasty.Name = Tasty.Name.wrap(entry)
@@ -70,7 +70,7 @@ class InternerTest extends Test:
 
     // Test 6: CanEqual[Name, Name] holds for two names with the same bytes.
     "CanEqual[Name, Name]: two names interned from the same bytes are equal" in run {
-        val interner       = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner       = Interner.init(numShards = 32, initialShardCapacity = 16)
         val bytes          = utf8Bytes("equal")
         val n1: Tasty.Name = Tasty.Name.wrap(interner.intern(bytes, 0, bytes.length))
         val n2: Tasty.Name = Tasty.Name.wrap(interner.intern(bytes, 0, bytes.length))
@@ -84,7 +84,7 @@ class InternerTest extends Test:
     // across 4 shards (~250 avg per shard), well below the per-shard threshold, so no
     // grow events are expected.
     "T-P6-1: pre-sized Interner with initialShardCapacity=512 interns 1000 entries with growCount==0" in run {
-        val interner = new Interner(numShards = 4, initialShardCapacity = 512)
+        val interner = Interner.init(numShards = 4, initialShardCapacity = 512)
         var i        = 0
         while i < 1000 do
             val bytes = utf8Bytes(s"entry-$i")
@@ -98,8 +98,8 @@ class InternerTest extends Test:
     // Two Interners with different initial capacities each return reference-equal Entry
     // objects for the same interned byte sequence (within each Interner).
     "T-P6-2: pre-sized and small Interners both return reference-equal Entry for same bytes" in run {
-        val smallInterner = new Interner(numShards = 4, initialShardCapacity = 16)
-        val largeInterner = new Interner(numShards = 4, initialShardCapacity = 256)
+        val smallInterner = Interner.init(numShards = 4, initialShardCapacity = 16)
+        val largeInterner = Interner.init(numShards = 4, initialShardCapacity = 256)
         // Verify identity semantics for a set of byte sequences in both Interners.
         val seqs = Array("alpha", "beta", "gamma", "delta", "epsilon")
         var idx  = 0
@@ -123,7 +123,7 @@ class InternerTest extends Test:
     // confirm growCount == 0. Then intern additional entries until at least one shard
     // exceeds its threshold and confirm growCount > 0.
     "T-P6-3: filling below load threshold avoids resize; exceeding it triggers grow" in run {
-        val interner       = new Interner(numShards = 4, initialShardCapacity = 256)
+        val interner       = Interner.init(numShards = 4, initialShardCapacity = 256)
         val belowThreshold = 760 // 4 * 190 = 760, safely below 4 * 192 = 768
         var i              = 0
         while i < belowThreshold do
@@ -149,7 +149,7 @@ class InternerTest extends Test:
     // 64 * 3 / 4 = 48. Insert 4 * 47 = 188 entries spread across shards (below all per-shard
     // thresholds) and confirm no grows. Then insert additional entries until a grow fires.
     "T-P6-4: growCount==0 below threshold, grows when threshold exceeded (cap=64 numShards=4)" in run {
-        val interner = new Interner(numShards = 4, initialShardCapacity = 64)
+        val interner = Interner.init(numShards = 4, initialShardCapacity = 64)
         // Insert entries, steering them to specific shards to stay below 75% in each.
         // Use a generous count well under the minimum threshold across 4 shards.
         var i = 0
@@ -173,7 +173,7 @@ class InternerTest extends Test:
     // T-P6-5: 8 concurrent fibers each intern 1000 unique sequences plus a set of shared keys.
     // All fibers that intern a shared key must get back the same (reference-equal) Entry instance.
     "T-P6-5: concurrent interns from 8 fibers preserve reference-equality for shared keys" in run {
-        val interner    = new Interner(numShards = 16, initialShardCapacity = 256)
+        val interner    = Interner.init(numShards = 16, initialShardCapacity = 256)
         val sharedCount = 50
         val sharedKeys  = Array.tabulate(sharedCount)(i => utf8Bytes(s"shared-key-$i"))
         // Each fiber: intern 1000 unique keys + all shared keys; collect the Entry for each shared key.
@@ -221,7 +221,7 @@ class InternerTest extends Test:
     // Case 1: offset + length > bytes.length (4+2=6 > 5). computeHash itself throws a JVM
     // ArrayIndexOutOfBoundsException at bytes(5) before reaching bytesEqual.
     "B10/INV-010: intern throws ArrayIndexOutOfBoundsException when offset + length > bytes.length" in run {
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val bytes    = Array[Byte](10, 20, 30, 40, 50) // length = 5
         intercept[ArrayIndexOutOfBoundsException](interner.intern(bytes, 4, 2))
         succeed
@@ -231,7 +231,7 @@ class InternerTest extends Test:
     // probe. For a fresh interner with no prior entries the slot is empty and intern proceeds to
     // copyOfRange which also throws; either way AIOOBE is the contract.
     "B10: intern throws ArrayIndexOutOfBoundsException for negative offset" in run {
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val bytes    = Array[Byte](1, 2, 3, 4, 5)
         intercept[ArrayIndexOutOfBoundsException](interner.intern(bytes, -1, 3))
         succeed
@@ -251,7 +251,7 @@ class InternerTest extends Test:
         // fact that FNV-1a("") = seed constant. We intern the empty slice on a dedicated
         // pre-seeder interner first (to confirm hash), then plant the same hash in our test
         // interner by interning the empty slice directly.
-        val interner  = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner  = Interner.init(numShards = 32, initialShardCapacity = 16)
         val seedBytes = Array[Byte]() // empty -> hash = FNV seed masked = 0x011c9dc5
         interner.intern(seedBytes, 0, 0) // plant entry with hash=0x011c9dc5 in shard 5
         val bytes     = Array[Byte](1, 2, 3, 4, 5)
@@ -266,7 +266,7 @@ class InternerTest extends Test:
     // Case 4: guard allows valid bounds - zero-length intern at a mid-array offset succeeds.
     // offset=2, length=0 => offset+length=2 <= 5, all guard conditions false, no throw.
     "B10: zero-length intern with valid offset succeeds (guard allows valid bounds)" in run {
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val bytes    = Array[Byte](1, 2, 3, 4, 5)
         val entry    = interner.intern(bytes, 2, 0)
         assert(entry ne null)
@@ -279,7 +279,7 @@ class InternerTest extends Test:
     // total unique entry count equals 8000 and every byte sequence re-interned returns
     // the same (reference-equal) Entry as the original insert.
     "B12/Phase-07a: concurrent grow-and-insert preserves all entries under contention" in run {
-        val interner   = new Interner(numShards = 2, initialShardCapacity = 4)
+        val interner   = Interner.init(numShards = 2, initialShardCapacity = 4)
         val fiberCount = 8
         val perFiber   = 1000
         val fibers     = Chunk.fill(fiberCount)(())
@@ -320,7 +320,7 @@ class InternerTest extends Test:
     // interner with initialShardCapacity=2 (grows immediately under any real load).
     // Every fiber must return the exact same Entry reference.
     "B12/Phase-07a: grow during contention preserves reference equality for shared key" in run {
-        val interner   = new Interner(numShards = 1, initialShardCapacity = 2)
+        val interner   = Interner.init(numShards = 1, initialShardCapacity = 2)
         val sharedKey  = Array[Byte](1, 2, 3)
         val fiberCount = 4
         val fibers     = Chunk.fill(fiberCount)(())

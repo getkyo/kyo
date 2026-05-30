@@ -13,7 +13,7 @@ class TastyErrorTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def makeName(s: String): Tasty.Name =
-        val interner = new Interner(numShards = 4, initialShardCapacity = 8)
+        val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
         val bytes    = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         Tasty.Name.wrap(interner.intern(bytes, 0, bytes.length))
     end makeName
@@ -57,7 +57,7 @@ class TastyErrorTest extends Test:
     //        Exact offset 3L documented in phase-14a-decisions.md.
     // Pins:  INV-006.
     "ClassfileFormatError captures constant-pool decode position" in run {
-        val interner = new Interner(numShards = 4, initialShardCapacity = 8)
+        val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
         val bytes: Array[Byte] = Array(
             0x00.toByte,
             0x02.toByte, // cp_count = 2 (one entry at index 1)

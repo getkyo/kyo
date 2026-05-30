@@ -78,7 +78,7 @@ class AttributeUnpicklerTest extends Test:
     "SOURCEFILEattr decodes to Present(sourceFileName) when present" in run {
         import AllowUnsafe.embrace.danger
         // Build a names array with "Foo.scala" at index 0.
-        val interner                 = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner                 = Interner.init(numShards = 32, initialShardCapacity = 16)
         val nameStr                  = "Foo.scala"
         val nameBytes                = nameStr.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val entry                    = interner.intern(nameBytes, 0, nameBytes.length)

@@ -156,7 +156,6 @@ object ClasspathOrchestrator:
         // Heuristic: 128 entries per shard accommodates classpaths up to ~12K entries (75% load).
         // This avoids the per-cold-load pre-walk cost that exceeds the resize savings on small classpaths.
         val sizeHint = 128
-        val interner = new Interner(numShards = numShards, initialShardCapacity = sizeHint)
 
         // Timing instrumentation: snapshot nanoTime at each stage boundary.
         // AtomicLong used so decoder fibers can record t_decodeEnd from any thread.
@@ -165,91 +164,93 @@ object ClasspathOrchestrator:
         val t_decodeEnd = new java.util.concurrent.atomic.AtomicLong(0L)
         val t_mergeEnd  = new java.util.concurrent.atomic.AtomicLong(0L)
 
-        Scope.run:
-            Channel.initUnscoped[(String, String)](entryCap, Access.MultiProducerMultiConsumer).flatMap: entryCh =>
-                Channel.initUnscoped[DecodeResult](resultCap, Access.MultiProducerMultiConsumer).flatMap: resultCh =>
-                    // Scope.ensure registrations guarantee channels close on ANY exit (success, abort, interrupt).
-                    // Uses close (not closeAwaitEmpty) so that on abort the signal is immediate: interrupted
-                    // consumers are no longer draining, and closeAwaitEmpty would block forever waiting for them.
-                    // streamUntilClosed handles the Closed signal correctly on any exit path.
-                    Scope.ensure(entryCh.close.unit).andThen:
-                        Scope.ensure(resultCh.close.unit).andThen:
-                            val producerStage = Async.foreach(Chunk.from(roots), rootCount): root =>
-                                TastyStat.scope.traceSpan(
-                                    "walkRoot",
-                                    Attributes.empty.add("root", root)
-                                )(walkRoot(root, entryCh, source))
+        Sync.Unsafe.defer(Interner.init(numShards = numShards, initialShardCapacity = sizeHint)).flatMap { interner =>
+            Scope.run:
+                Channel.initUnscoped[(String, String)](entryCap, Access.MultiProducerMultiConsumer).flatMap: entryCh =>
+                    Channel.initUnscoped[DecodeResult](resultCap, Access.MultiProducerMultiConsumer).flatMap: resultCh =>
+                        // Scope.ensure registrations guarantee channels close on ANY exit (success, abort, interrupt).
+                        // Uses close (not closeAwaitEmpty) so that on abort the signal is immediate: interrupted
+                        // consumers are no longer draining, and closeAwaitEmpty would block forever waiting for them.
+                        // streamUntilClosed handles the Closed signal correctly on any exit path.
+                        Scope.ensure(entryCh.close.unit).andThen:
+                            Scope.ensure(resultCh.close.unit).andThen:
+                                val producerStage = Async.foreach(Chunk.from(roots), rootCount): root =>
+                                    TastyStat.scope.traceSpan(
+                                        "walkRoot",
+                                        Attributes.empty.add("root", root)
+                                    )(walkRoot(root, entryCh, source))
 
-                            val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency): _ =>
-                                TastyStat.scope.traceSpan("decoder") {
-                                    entryCh.streamUntilClosed().foreach: (entryPath, kind) =>
-                                        decodeOneEntry(entryPath, kind, interner, source, cp, strict).flatMap: result =>
-                                            // If resultCh closed early (strict-mode abort), silently discard
-                                            Abort.run[Closed](resultCh.put(result)).unit
-                                }
+                                val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency): _ =>
+                                    TastyStat.scope.traceSpan("decoder") {
+                                        entryCh.streamUntilClosed().foreach: (entryPath, kind) =>
+                                            decodeOneEntry(entryPath, kind, interner, source, cp, strict).flatMap: result =>
+                                                // If resultCh closed early (strict-mode abort), silently discard
+                                                Abort.run[Closed](resultCh.put(result)).unit
+                                    }
 
-                            val mergerStage: Unit < (Async & Abort[TastyError]) =
-                                TastyStat.scope.traceSpan("merger") {
-                                    resultCh.streamUntilClosed().foreach: result =>
-                                        Sync.defer(mergeOneInto(mergeState, result))
-                                }
+                                val mergerStage: Unit < (Async & Abort[TastyError]) =
+                                    TastyStat.scope.traceSpan("merger") {
+                                        resultCh.streamUntilClosed().foreach: result =>
+                                            Sync.defer(mergeOneInto(mergeState, result))
+                                    }
 
-                            // Producer closes entryCh after all puts complete (closeAwaitEmpty so decoders drain buffer).
-                            val producerWithClose: Unit < (Abort[TastyError] & Async) =
-                                producerStage
-                                    .andThen(Sync.defer(t_listEnd.set(java.lang.System.nanoTime())))
-                                    .andThen(entryCh.closeAwaitEmpty.unit)
-                            // Decoders close resultCh after all puts complete.
-                            val decoderWithClose: Unit < (Abort[TastyError] & Async) =
-                                decoderStage
-                                    .andThen(Sync.defer(t_decodeEnd.set(java.lang.System.nanoTime())))
-                                    .andThen(resultCh.closeAwaitEmpty.unit)
-                            // Merger records its end time after draining resultCh.
-                            val mergerWithTiming: Unit < (Async & Abort[TastyError]) =
-                                mergerStage.andThen(Sync.defer(t_mergeEnd.set(java.lang.System.nanoTime())))
+                                // Producer closes entryCh after all puts complete (closeAwaitEmpty so decoders drain buffer).
+                                val producerWithClose: Unit < (Abort[TastyError] & Async) =
+                                    producerStage
+                                        .andThen(Sync.defer(t_listEnd.set(java.lang.System.nanoTime())))
+                                        .andThen(entryCh.closeAwaitEmpty.unit)
+                                // Decoders close resultCh after all puts complete.
+                                val decoderWithClose: Unit < (Abort[TastyError] & Async) =
+                                    decoderStage
+                                        .andThen(Sync.defer(t_decodeEnd.set(java.lang.System.nanoTime())))
+                                        .andThen(resultCh.closeAwaitEmpty.unit)
+                                // Merger records its end time after draining resultCh.
+                                val mergerWithTiming: Unit < (Async & Abort[TastyError]) =
+                                    mergerStage.andThen(Sync.defer(t_mergeEnd.set(java.lang.System.nanoTime())))
 
-                            // Async.foreach with concurrency=3 and 3 items runs all 3 stages concurrently.
-                            // Unlike Async.gather, Async.foreach propagates the first Abort failure and
-                            // interrupts the other fibers (including a stuck merger) via IOPromise.interrupts.
-                            val stages: Chunk[Unit < (Abort[TastyError] & Async)] =
-                                Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
-                            Async.foreach(stages, 3): stage =>
-                                stage
-                            .andThen(finalizeMerge(mergeState, source, strict, cp))
-                                .andThen:
-                                    if timingEnabled then
-                                        Sync.Unsafe.defer:
-                                            val t_end       = java.lang.System.nanoTime()
-                                            val t0          = t_start.get()
-                                            val tList       = t_listEnd.get()
-                                            val tDec        = t_decodeEnd.get()
-                                            val tMrg        = t_mergeEnd.get()
-                                            val listMs      = if tList > 0 then (tList - t0) / 1_000_000L else -1L
-                                            val decodeMs    = if tDec > 0 then (tDec - t0) / 1_000_000L else -1L
-                                            val mergeMs     = if tMrg > 0 then (tMrg - t0) / 1_000_000L else -1L
-                                            val totalMs     = (t_end - t0) / 1_000_000L
-                                            val finalizeMs  = if tMrg > 0 then (t_end - tMrg) / 1_000_000L else -1L
-                                            val jars        = TastyPerfStats.jarOpens.get()
-                                            val entries     = TastyPerfStats.entryReads.get()
-                                            val bytesRaw    = TastyPerfStats.bytesRead.get()
-                                            val bytesMB     = bytesRaw / (1024L * 1024L)
-                                            val constructMs = TastyPerfStats.jarConstructNs.get() / 1_000_000L
-                                            val readMs      = TastyPerfStats.jarReadNs.get() / 1_000_000L
-                                            val headerMs    = TastyPerfStats.tastyHeaderNs.get() / 1_000_000L
-                                            val namesMs     = TastyPerfStats.nameUnpicklerNs.get() / 1_000_000L
-                                            val sectionMs   = TastyPerfStats.sectionIndexNs.get() / 1_000_000L
-                                            val attrMs      = TastyPerfStats.attributeUnpicklerNs.get() / 1_000_000L
-                                            val astMs       = TastyPerfStats.astPass1Ns.get() / 1_000_000L
-                                            val posMs       = TastyPerfStats.positionsUnpicklerNs.get() / 1_000_000L
-                                            val commentsMs  = TastyPerfStats.commentsUnpicklerNs.get() / 1_000_000L
-                                            java.lang.System.err.println(
-                                                s"[kyo-tasty] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars (construct=${constructMs}ms read=${readMs}ms) entries=$entries bytes=${bytesMB}MB"
-                                            )
-                                            java.lang.System.err.println(
-                                                s"[kyo-tasty]   decode-breakdown: header=${headerMs}ms names=${namesMs}ms section=${sectionMs}ms attr=${attrMs}ms ast=${astMs}ms pos=${posMs}ms comments=${commentsMs}ms"
-                                            )
-                                    else
-                                        Kyo.unit
+                                // Async.foreach with concurrency=3 and 3 items runs all 3 stages concurrently.
+                                // Unlike Async.gather, Async.foreach propagates the first Abort failure and
+                                // interrupts the other fibers (including a stuck merger) via IOPromise.interrupts.
+                                val stages: Chunk[Unit < (Abort[TastyError] & Async)] =
+                                    Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
+                                Async.foreach(stages, 3): stage =>
+                                    stage
+                                .andThen(finalizeMerge(mergeState, source, strict, cp))
+                                    .andThen:
+                                        if timingEnabled then
+                                            Sync.Unsafe.defer:
+                                                val t_end       = java.lang.System.nanoTime()
+                                                val t0          = t_start.get()
+                                                val tList       = t_listEnd.get()
+                                                val tDec        = t_decodeEnd.get()
+                                                val tMrg        = t_mergeEnd.get()
+                                                val listMs      = if tList > 0 then (tList - t0) / 1_000_000L else -1L
+                                                val decodeMs    = if tDec > 0 then (tDec - t0) / 1_000_000L else -1L
+                                                val mergeMs     = if tMrg > 0 then (tMrg - t0) / 1_000_000L else -1L
+                                                val totalMs     = (t_end - t0) / 1_000_000L
+                                                val finalizeMs  = if tMrg > 0 then (t_end - tMrg) / 1_000_000L else -1L
+                                                val jars        = TastyPerfStats.jarOpens.get()
+                                                val entries     = TastyPerfStats.entryReads.get()
+                                                val bytesRaw    = TastyPerfStats.bytesRead.get()
+                                                val bytesMB     = bytesRaw / (1024L * 1024L)
+                                                val constructMs = TastyPerfStats.jarConstructNs.get() / 1_000_000L
+                                                val readMs      = TastyPerfStats.jarReadNs.get() / 1_000_000L
+                                                val headerMs    = TastyPerfStats.tastyHeaderNs.get() / 1_000_000L
+                                                val namesMs     = TastyPerfStats.nameUnpicklerNs.get() / 1_000_000L
+                                                val sectionMs   = TastyPerfStats.sectionIndexNs.get() / 1_000_000L
+                                                val attrMs      = TastyPerfStats.attributeUnpicklerNs.get() / 1_000_000L
+                                                val astMs       = TastyPerfStats.astPass1Ns.get() / 1_000_000L
+                                                val posMs       = TastyPerfStats.positionsUnpicklerNs.get() / 1_000_000L
+                                                val commentsMs  = TastyPerfStats.commentsUnpicklerNs.get() / 1_000_000L
+                                                java.lang.System.err.println(
+                                                    s"[kyo-tasty] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars (construct=${constructMs}ms read=${readMs}ms) entries=$entries bytes=${bytesMB}MB"
+                                                )
+                                                java.lang.System.err.println(
+                                                    s"[kyo-tasty]   decode-breakdown: header=${headerMs}ms names=${namesMs}ms section=${sectionMs}ms attr=${attrMs}ms ast=${astMs}ms pos=${posMs}ms comments=${commentsMs}ms"
+                                                )
+                                        else
+                                            Kyo.unit
+        }
     end runPhaseAB
 
     /** Walk a single root, putting (entryPath, kind) pairs into entryCh.

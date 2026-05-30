@@ -25,7 +25,7 @@ class UnifiedModelTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+    private val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
 
     /** Load JDK class bytes by binary path. JVM-only. */
     private def loadJdkClass(binaryPath: String): Array[Byte] =

@@ -167,7 +167,7 @@ class SymbolResolutionTest extends Test:
     // Helper: decode a TASTy byte array using AstUnpickler.readPass1 and return Pass1Result.
     private def decodeBytes(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val view     = ByteView(bytes)
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val home     = kyo.internal.tasty.query.ClasspathRef.init()
         val arena    = new TypeArena
         for

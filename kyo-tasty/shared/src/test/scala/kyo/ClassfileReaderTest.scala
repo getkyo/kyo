@@ -22,7 +22,7 @@ class ClassfileReaderTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+    private val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
 
     /** Load raw bytes for a JVM class by binary path. Only works on JVM. */
     private def loadClassBytes(binaryPath: String): Array[Byte] =

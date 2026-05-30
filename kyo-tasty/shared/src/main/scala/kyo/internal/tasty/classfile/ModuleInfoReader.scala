@@ -34,10 +34,10 @@ object ModuleInfoReader:
       * `Interner` or share one across multiple reads.
       */
     def read(bytes: Array[Byte])(using Frame): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
-        val view     = ByteView(bytes)
-        val path     = "<module-info.class>"
-        val interner = new Interner(numShards = 16, initialShardCapacity = 16)
-        readFrom(view, interner, path)
+        val view = ByteView(bytes)
+        val path = "<module-info.class>"
+        Sync.Unsafe.defer(Interner.init(numShards = 16, initialShardCapacity = 16)).flatMap: interner =>
+            readFrom(view, interner, path)
     end read
 
     /** Read from an existing ByteView with a given interner and path label. For internal use by tests and ClasspathOrchestrator. */

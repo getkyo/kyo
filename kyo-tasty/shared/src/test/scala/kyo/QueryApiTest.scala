@@ -599,7 +599,7 @@ class QueryApiTest extends Test:
     // java.lang.Record; sym.typeParams is empty (non-generic); sym.declarations is non-empty.
     "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" taggedAs jvmOnly in run {
         val bytes    = kyo.fixtures.Embedded.arrayRecordClass
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val home     = ClasspathRef.init()
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, interner, new TypeArena, home).flatMap: cr =>
@@ -848,7 +848,7 @@ class QueryApiTest extends Test:
     // declaredType should be Type.Array(Type.Named(intSym)).
     "Phase 5: Java classfile field declaredType returns Array type for int[] values" taggedAs jvmOnly in run {
         val bytes    = kyo.fixtures.Embedded.arrayRecordClass
-        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         val home     = ClasspathRef.init()
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, interner, new TypeArena, home).flatMap: cr =>

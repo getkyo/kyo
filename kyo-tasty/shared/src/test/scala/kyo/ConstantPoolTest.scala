@@ -12,7 +12,9 @@ import kyo.internal.tasty.symbol.Interner
   */
 class ConstantPoolTest extends Test:
 
-    private val interner = new Interner(numShards = 4, initialShardCapacity = 8)
+    import AllowUnsafe.embrace.danger
+
+    private val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
 
     /** Minimal in-memory ByteView.Mapped stub backed by an Array[Byte].
       *

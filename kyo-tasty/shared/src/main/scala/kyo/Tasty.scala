@@ -34,7 +34,11 @@ object Tasty:
     // ── Names and flags ─────────────────────────────────────────────────────
 
     // A module-level interner used by Name.apply(String) so the public API stays unchanged.
-    private val globalInterner: Interner = new Interner(numShards = 32, initialShardCapacity = 512)
+    private val globalInterner: Interner =
+        // flow-allow: §839 case 3: module-load Interner construction (single global value at class init)
+        import AllowUnsafe.embrace.danger
+        Interner.init(numShards = 32, initialShardCapacity = 512)
+    end globalInterner
 
     /** An interned name backed by a byte sequence.
       *
