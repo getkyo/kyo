@@ -496,6 +496,16 @@ class YamlTest extends Test:
             assert(count == 7)
         }
 
+        "reader can pull a flow sequence prefix without parsing later malformed content" in {
+            val reader = kyo.internal.YamlReader("[1, [unterminated")
+
+            val size = reader.arrayStart()
+
+            assert(size == -1)
+            assert(reader.hasNextElement())
+            assert(reader.int() == 1)
+        }
+
         "skip advances the current sequence element without parsing later malformed content" in {
             val reader =
                 kyo.internal.YamlReader(
