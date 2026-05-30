@@ -510,6 +510,56 @@ class YamlTest extends Test:
             assert(captured.int() == 1)
         }
 
+        "captureValue advances root source by one scalar node" in {
+            val reader = kyo.internal.YamlReader("Alice\nBob\n")
+
+            val first = reader.captureValue()
+            assert(first.string() == "Alice")
+
+            val second = reader.captureValue()
+            assert(second.string() == "Bob")
+        }
+
+        "captureValue advances root source by one flow collection" in {
+            val reader = kyo.internal.YamlReader("[1]\n[2]\n")
+
+            val first = reader.captureValue()
+            discard(first.arrayStart())
+            assert(first.hasNextElement())
+            assert(first.int() == 1)
+            first.arrayEnd()
+
+            val second = reader.captureValue()
+            discard(second.arrayStart())
+            assert(second.hasNextElement())
+            assert(second.int() == 2)
+            second.arrayEnd()
+            succeed
+        }
+
+        "captureValue advances root source by one block collection" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """name: Alice
+                      |[2]
+                      |""".stripMargin
+                )
+
+            val first = reader.captureValue()
+            discard(first.objectStart())
+            first.fieldParse()
+            assert(first.matchField("name".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            assert(first.string() == "Alice")
+            first.objectEnd()
+
+            val second = reader.captureValue()
+            discard(second.arrayStart())
+            assert(second.hasNextElement())
+            assert(second.int() == 2)
+            second.arrayEnd()
+            succeed
+        }
+
         "reader can pull a flow sequence prefix without parsing later malformed content" in {
             val reader = kyo.internal.YamlReader("[1, [unterminated")
 

@@ -415,10 +415,7 @@ final class YamlReader private (
                             case Absent => error("Expected captured YAML value")
                         end match
                     case Nil if allowSourcePull && !prepared && source.nonEmpty =>
-                        initSourcePosition()
-                        val start = sourcePos
-                        sourcePos = source.length
-                        sourceChild(source.substring(start))
+                        captureSourceRootValue()
                     case _ =>
                         withDelegate(_.captureValue()) {
                             prepare()
@@ -430,6 +427,88 @@ final class YamlReader private (
                 end match
         end match
     end captureValue
+
+    private def captureSourceRootValue(): YamlReader =
+        initSourcePosition()
+        if sourcePos != 0 then skipSourceBlankAndCommentLines()
+        val start = sourcePos
+        if sourcePos >= source.length then sourceChild("\n")
+        else
+            if sourceStartsFlowCollection then captureSourceRootFlow()
+            else
+                val indent = currentSourceIndent()
+                val line   = currentSourceLine()
+                if sourceStartsSequenceEntryAtIndent() then captureSourceRootBlockSequence(indent)
+                else if isSourceBlockMappingLine(line) then captureSourceRootBlockMapping(indent)
+                else
+                    val _ = readSourceScalar()
+                end if
+            end if
+            sourceChild(source.substring(start, sourcePos))
+        end if
+    end captureSourceRootValue
+
+    private def captureSourceRootFlow(): Unit =
+        var i      = sourcePos + currentSourceIndent()
+        var depth  = 0
+        var single = false
+        var double = false
+        var escape = false
+        while i < source.length do
+            val ch = source.charAt(i)
+            if escape then escape = false
+            else if double && ch == '\\' then escape = true
+            else if !double && ch == '\'' then single = !single
+            else if !single && ch == '"' then double = !double
+            else if !single && !double then
+                ch match
+                    case '[' | '{' =>
+                        depth += 1
+                    case ']' =>
+                        depth -= 1
+                        if depth == 0 then
+                            sourcePos = i + 1
+                            return
+                    case '}' =>
+                        depth -= 1
+                        if depth == 0 then
+                            sourcePos = i + 1
+                            return
+                    case _ => ()
+                end match
+            end if
+            i += 1
+        end while
+        sourcePos = source.length
+    end captureSourceRootFlow
+
+    private def captureSourceRootBlockSequence(indent: Int): Unit =
+        var done = false
+        while !done && sourcePos < source.length do
+            val line    = currentSourceLine()
+            val trimmed = line.trim
+            val n       = currentSourceIndent()
+            if trimmed.isEmpty || trimmed.startsWith("#") then
+                val _ = readSourceRestOfLine()
+            else if (n == indent && sourceStartsSequenceEntryAtIndent()) || n > indent then skipSourceNodeLine(indent)
+            else done = true
+            end if
+        end while
+    end captureSourceRootBlockSequence
+
+    private def captureSourceRootBlockMapping(indent: Int): Unit =
+        var done = false
+        while !done && sourcePos < source.length do
+            val line    = currentSourceLine()
+            val trimmed = line.trim
+            val n       = currentSourceIndent()
+            if trimmed.isEmpty || trimmed.startsWith("#") then
+                val _ = readSourceRestOfLine()
+            else if (n == indent && isSourceBlockMappingLine(line)) || n > indent then skipSourceNodeLine(indent)
+            else done = true
+            end if
+        end while
+    end captureSourceRootBlockMapping
 
     private def scalarValue(): ScalarValue =
         withDelegate(_.scalarValue()) {
