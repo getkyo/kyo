@@ -195,13 +195,12 @@ object TreeUnpickler:
 
             case TastyFormat.TERMREFdirect =>
                 val addr = view.readNat()
-                val sym  = ctx.addrMap.getOrElse(addr, makeUnresolvedSym(s"termref@$addr", ctx.home))
-                Tasty.Tree.Ident(sym.name, Tasty.Type.Named(sym))
+                Tasty.Tree.TermRefDirect(addr)
 
             case TastyFormat.TERMREFpkg =>
                 val nameRef = view.readNat()
                 val name    = nameFromRef(nameRef, ctx)
-                Tasty.Tree.Ident(name, Tasty.Type.Named(makeUnresolvedSym(name.asString, ctx.home)))
+                Tasty.Tree.TermRefPkg(name)
 
             case TastyFormat.BYTEconst =>
                 Tasty.Tree.Literal(Tasty.Constant.ByteConst(view.readNat().toByte))
@@ -225,9 +224,17 @@ object TreeUnpickler:
                 val addr = view.readNat()
                 Tasty.Tree.Shared(addr)
 
-            // These category-2 tags are not term trees; skip Nat and return Unknown.
-            case TastyFormat.TYPEREFdirect | TastyFormat.TYPEREFpkg | TastyFormat.RECthis |
-                TastyFormat.IMPORTED | TastyFormat.RENAMED =>
+            case TastyFormat.TYPEREFdirect =>
+                val addr = view.readNat()
+                Tasty.Tree.TypeRefDirect(addr)
+
+            case TastyFormat.TYPEREFpkg =>
+                val nameRef = view.readNat()
+                val name    = nameFromRef(nameRef, ctx)
+                Tasty.Tree.TypeRefPkg(name)
+
+            // These category-2 tags have no structured representation; skip Nat and return Unknown.
+            case TastyFormat.RECthis | TastyFormat.IMPORTED | TastyFormat.RENAMED =>
                 discard(view.readNat())
                 Tasty.Tree.Unknown(tag, 0)
 
@@ -278,8 +285,12 @@ object TreeUnpickler:
                 val arg = readTree(view, ctx)
                 Tasty.Tree.ByNameType(arg)
 
+            case TastyFormat.SINGLETONtpt =>
+                val inner = readTree(view, ctx)
+                Tasty.Tree.SingletonTpt(inner)
+
             // Other category-3 type-position nodes; skip sub-tree.
-            case TastyFormat.BYNAMEtpt | TastyFormat.SINGLETONtpt | TastyFormat.BOUNDED | TastyFormat.EXPLICITtpt =>
+            case TastyFormat.BYNAMEtpt | TastyFormat.BOUNDED | TastyFormat.EXPLICITtpt =>
                 skipOneTree(view)
                 Tasty.Tree.Unknown(tag, 0)
 
@@ -311,11 +322,10 @@ object TreeUnpickler:
                 )
 
             case TastyFormat.TERMREFsymbol =>
-                // TERMREFsymbol addr qualifier_Type
+                // TERMREFsymbol addr qualifier_Tree
                 val addr = view.readNat()
-                discard(readType(view, ctx)) // consume qualifier type
-                val sym = ctx.addrMap.getOrElse(addr, makeUnresolvedSym(s"termrefsym@$addr", ctx.home))
-                Tasty.Tree.Ident(sym.name, Tasty.Type.Named(sym))
+                val qual = readTree(view, ctx)
+                Tasty.Tree.TermRefSymbol(addr, qual)
 
             case TastyFormat.TERMREF =>
                 // TERMREF nameRef prefix_Type
@@ -330,8 +340,28 @@ object TreeUnpickler:
                 val name    = nameFromRef(nameRef, ctx)
                 Tasty.Tree.NamedArg(name, value)
 
-            // Type-position category 4 nodes; skip and return Unknown.
-            case TastyFormat.IDENTtpt | TastyFormat.SELECTtpt | TastyFormat.TYPEREFsymbol | TastyFormat.TYPEREF =>
+            case TastyFormat.IDENTtpt =>
+                // IDENTtpt nameRef tpe_Tree
+                val nameRef = view.readNat()
+                val tpe     = readType(view, ctx)
+                val name    = nameFromRef(nameRef, ctx)
+                Tasty.Tree.IdentTpt(name, tpe)
+
+            case TastyFormat.SELECTtpt =>
+                // SELECTtpt nameRef qualifier_Tree
+                val nameRef = view.readNat()
+                val qual    = readTree(view, ctx)
+                val name    = nameFromRef(nameRef, ctx)
+                Tasty.Tree.SelectTpt(qual, name)
+
+            case TastyFormat.TYPEREFsymbol =>
+                // TYPEREFsymbol addr qualifier_Tree
+                val addr = view.readNat()
+                val qual = readTree(view, ctx)
+                Tasty.Tree.TypeRefSymbol(addr, qual)
+
+            // TYPEREF: type-position tag; skip and return Unknown.
+            case TastyFormat.TYPEREF =>
                 discard(view.readNat())
                 skipOneTree(view)
                 Tasty.Tree.Unknown(tag, 0)
@@ -675,6 +705,16 @@ object TreeUnpickler:
                 val arg = readTree(view, ctx)
                 view.goto(end)
                 Tasty.Tree.FlexibleType(arg)
+
+            case TastyFormat.SELECTin =>
+                // SELECTin nameRef qualifier_Tree owner_Tree
+                val end     = view.readEnd()
+                val nameRef = view.readNat()
+                val qual    = readTree(view, ctx)
+                val owner   = readTree(view, ctx)
+                view.goto(end)
+                val name = nameFromRef(nameRef, ctx)
+                Tasty.Tree.SelectIn(qual, name, owner)
 
             // All remaining category-5 nodes: skip and return Unknown.
             case other if other >= TastyFormat.firstLengthTreeTag =>

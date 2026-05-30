@@ -570,6 +570,36 @@ object Tasty:
         /** Flexible (Java-nullable) type (FLEXIBLEtype tag). */
         final case class FlexibleType(arg: Tree) extends Tree
 
+        /** Type-position identifier (IDENTtpt tag): nameRef + type. */
+        final case class IdentTpt(name: Name, tpe: Type) extends Tree
+
+        /** Type-position selection (SELECTtpt tag): qualifier + name. */
+        final case class SelectTpt(qual: Tree, name: Name) extends Tree
+
+        /** Singleton type (SINGLETONtpt tag): ref tree. */
+        final case class SingletonTpt(tpe: Tree) extends Tree
+
+        /** Package-level term reference (TERMREFpkg tag): package name only. */
+        final case class TermRefPkg(name: Name) extends Tree
+
+        /** Package-level type reference (TYPEREFpkg tag): package name only. */
+        final case class TypeRefPkg(name: Name) extends Tree
+
+        /** Symbol-addressed term reference (TERMREFsymbol tag): addr + qualifier. */
+        final case class TermRefSymbol(addr: Int, qual: Tree) extends Tree
+
+        /** Symbol-addressed type reference (TYPEREFsymbol tag): addr + qualifier. */
+        final case class TypeRefSymbol(addr: Int, qual: Tree) extends Tree
+
+        /** Direct-address term reference (TERMREFdirect tag): symbol address. */
+        final case class TermRefDirect(addr: Int) extends Tree
+
+        /** Direct-address type reference (TYPEREFdirect tag): symbol address. */
+        final case class TypeRefDirect(addr: Int) extends Tree
+
+        /** Owner-qualified selection (SELECTin tag): qualifier + name + owner. */
+        final case class SelectIn(qual: Tree, name: Name, owner: Tree) extends Tree
+
         /** Unknown tag -- encountered a tag not covered by this ADT version. */
         final case class Unknown(tag: Int, length: Int) extends Tree
     end Tree
