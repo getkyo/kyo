@@ -94,9 +94,9 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     }
 
     "gate Allow: request reaches registered handler normally" in run {
-        val allowGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
-                JsonRpcHandler.MessageGate.Decision.Allow
+        val allowGate: JsonRpcMessageGate = new JsonRpcMessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
+                JsonRpcMessageGate.Decision.Allow
 
         val pingMethod = JsonRpcRoute[Ping, Pong]("ping") {
             (req, _) => Pong("pong:" + req.msg)
@@ -111,9 +111,13 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
     "gate Reject for Request: caller sees error reply with gate error code" in run {
         val gateError = JsonRpcImplementationError(-32099, "gate blocked")
-        val rejectGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
-                JsonRpcHandler.MessageGate.Decision.Reject(gateError)
+        val rejectGate: JsonRpcMessageGate = new JsonRpcMessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
+                env match
+                    case JsonRpcRequest(id, _, _, _) =>
+                        JsonRpcMessageGate.Decision.Reject(JsonRpcResponse.failure(id, gateError))
+                    case _ =>
+                        JsonRpcMessageGate.Decision.Drop
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
@@ -132,9 +136,17 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     }
 
     "gate Reject for Notification: notification dropped, engine does not close" in run {
-        val rejectGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
-                JsonRpcHandler.MessageGate.Decision.Reject(JsonRpcImplementationError(-32000, "rejected"))
+        val rejectGate: JsonRpcMessageGate = new JsonRpcMessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
+                env match
+                    case _: JsonRpcNotification =>
+                        // For notifications (no id) Reject is logged and message is dropped silently.
+                        JsonRpcMessageGate.Decision.Reject(
+                            JsonRpcResponse(JsonRpcId.Num(0L), Absent, Present(JsonRpcImplementationError(-32000, "rejected")), Absent)
+                        )
+                    case _ =>
+                        // Allow all other messages (requests) through so they can fail with MethodNotFound.
+                        JsonRpcMessageGate.Decision.Allow
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
@@ -162,9 +174,9 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     }
 
     "gate Drop for Request: call hangs until timeout with JsonRpcError" in run {
-        val dropGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
-                JsonRpcHandler.MessageGate.Decision.Drop
+        val dropGate: JsonRpcMessageGate = new JsonRpcMessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
+                JsonRpcMessageGate.Decision.Drop
 
         val pingMethod = JsonRpcRoute[Ping, Pong]("ping") {
             (req, _) => Pong("pong")
@@ -183,15 +195,15 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
     "gate LSP initialize pattern: allows initialize, rejects others with ServerNotInitialized" in run {
         val serverNotInitialized = JsonRpcImplementationError(-32002, "ServerNotInitialized")
-        val initGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
+        val initGate: JsonRpcMessageGate = new JsonRpcMessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 env match
                     case JsonRpcRequest(_, "initialize", _, _) =>
-                        JsonRpcHandler.MessageGate.Decision.Allow
-                    case JsonRpcRequest(_, _, _, _) =>
-                        JsonRpcHandler.MessageGate.Decision.Reject(serverNotInitialized)
+                        JsonRpcMessageGate.Decision.Allow
+                    case JsonRpcRequest(id, _, _, _) =>
+                        JsonRpcMessageGate.Decision.Reject(JsonRpcResponse.failure(id, serverNotInitialized))
                     case _ =>
-                        JsonRpcHandler.MessageGate.Decision.Allow
+                        JsonRpcMessageGate.Decision.Allow
 
         val initMethod = JsonRpcRoute[Ping, Pong]("initialize") {
             (req, _) => Pong("initialized:" + req.msg)

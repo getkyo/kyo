@@ -687,4 +687,52 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
+    // STEER-1: .error[E2] wire-up - domain errors registered with .error produce the declared code and message on the wire.
+    "STEER-1: route .error[E2] maps domain error abort to declared wire code and message" in run {
+        // JsonRpcCustomError is the concrete catchall application error type.
+        // We provide an explicit Schema[JsonRpcCustomError] by delegating to the Schema[JsonRpcError] since
+        // JsonRpcCustomError extends JsonRpcError and the hand-rolled schema projects to (code, message, data).
+        given Schema[JsonRpcCustomError] = summon[Schema[JsonRpcError]].asInstanceOf[Schema[JsonRpcCustomError]]
+
+        val originalError = JsonRpcCustomError(-31999, "original domain message")
+
+        // Register a mapping: any JsonRpcCustomError abort is remapped to code -32099 with message "My error".
+        // The engine uses ErrorMapping.matches() to detect the abort type at runtime (STEER-1).
+        val route = JsonRpcRoute[AddReq, AddResp]("failWith") { (_, _) =>
+            Abort.fail(originalError)
+        }.error[JsonRpcCustomError](-32099, "My error")
+
+        mkEndpoints(Seq.empty, Seq(route)).map { (a, _) =>
+            Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("failWith", AddReq(1, 2))).map {
+                case Result.Failure(e: JsonRpcError) =>
+                    // Code is exactly the mapping's code (-32099), not the original error's code (-31999).
+                    // Message contains the mapping's label ("My error") as part of the CustomError format.
+                    assert(e.code == -32099, s"expected code -32099 from error mapping, got ${e.code}")
+                    assert(e.message.contains("My error"), s"expected message to contain 'My error' from mapping, got '${e.message}'")
+                case other => fail(s"expected JsonRpcError from error mapping, got $other")
+            }
+        }
+    }
+
+    // STEER-2: JsonRpcResponse.Halt short-circuit - the wire response IS the wrapped response.
+    "STEER-2: handler Abort.fail(JsonRpcResponse.halt(resp)) sends resp directly over the wire" in run {
+        val haltError = JsonRpcCustomError(-32777, "short-circuited")
+        val route = JsonRpcRoute[AddReq, AddResp]("haltMethod") { (_, ctx) =>
+            ctx.requestId match
+                case Present(id) =>
+                    val resp = JsonRpcResponse.failure(id, haltError)
+                    JsonRpcResponse.halt(resp)
+                case Absent =>
+                    Abort.fail(JsonRpcInternalError(JsonRpcInternalError.Operation.Other, new RuntimeException("no id")))
+        }
+
+        mkEndpoints(Seq.empty, Seq(route)).map { (a, _) =>
+            Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("haltMethod", AddReq(0, 0))).map {
+                case Result.Failure(e: JsonRpcError) =>
+                    assert(e.code == -32777, s"expected wire code -32777 from halt response, got ${e.code}")
+                case other => fail(s"expected JsonRpcError with code -32777 from halt, got $other")
+            }
+        }
+    }
+
 end JsonRpcHandlerTest

@@ -144,12 +144,13 @@ object JsonRpcHandler:
         /** Dispatches `params` to the named route held by this handler. Returns Absent for unknown names.
           * Mirrors `JsonRpcRoute.dispatch` but operates on the handler's registered method map directly.
           * For Notification kind the inner result is `Structure.Value.Null` after the handler completes.
+          * The effect row includes `Abort[JsonRpcResponse.Halt]` so callers can detect short-circuit responses.
           */
         def dispatch(
             name: String,
             params: Structure.Value,
             ctx: JsonRpcRoute.Context
-        )(using Frame): Maybe[Structure.Value < (Async & Abort[JsonRpcError])]
+        )(using Frame): Maybe[Structure.Value < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])]
 
         /** Returns the safe opaque-type wrapper for this unsafe handler instance. */
         final def safe: JsonRpcHandler = this
@@ -233,30 +234,6 @@ object JsonRpcHandler:
             dollarPrefixOverride = false
         )
     end UnknownMethodPolicy
-
-    /** A pre-dispatch hook that can allow, reject, or drop incoming envelopes before routing.
-      *
-      * Implement `beforeDispatch` to apply cross-cutting concerns such as authentication, rate
-      * limiting, or protocol-specific pre-validation. The three possible outcomes are modelled by
-      * [[MessageGate.Decision]]:
-      *  - `Allow`: pass the message to the handler.
-      *  - `Reject`: reply with a `JsonRpcError` and discard the message.
-      *  - `Drop`: silently discard the message.
-      *
-      * Set via [[JsonRpcHandler.Config.gate]].
-      *
-      * @see [[JsonRpcHandler.Config]]
-      */
-    trait MessageGate:
-        def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync
-
-    object MessageGate:
-        enum Decision derives CanEqual:
-            case Allow
-            case Reject(error: JsonRpcError)
-            case Drop
-        end Decision
-    end MessageGate
 
     /** Configures how the endpoint sends and receives request cancellation notifications.
       *
@@ -457,7 +434,7 @@ object JsonRpcHandler:
         cancellation: Maybe[CancellationPolicy] = Absent,
         progress: Maybe[ProgressPolicy] = Absent,
         unknownMethod: UnknownMethodPolicy = UnknownMethodPolicy.minimal,
-        gate: Maybe[MessageGate] = Absent,
+        gate: Maybe[JsonRpcMessageGate] = Absent,
         maxInFlight: Maybe[Int] = Absent,
         requestTimeout: Duration = Duration.Infinity,
         idStrategy: IdStrategy = IdStrategy.SequentialLong,
@@ -467,7 +444,7 @@ object JsonRpcHandler:
         def cancellation(p: CancellationPolicy): Config   = copy(cancellation = Present(p))
         def progress(p: ProgressPolicy): Config           = copy(progress = Present(p))
         def unknownMethod(p: UnknownMethodPolicy): Config = copy(unknownMethod = p)
-        def gate(g: MessageGate): Config                  = copy(gate = Present(g))
+        def gate(g: JsonRpcMessageGate): Config           = copy(gate = Present(g))
         def maxInFlight(n: Int): Config                   = copy(maxInFlight = Present(n))
         def requestTimeout(d: Duration): Config           = copy(requestTimeout = d)
         def idStrategy(s: IdStrategy): Config             = copy(idStrategy = s)
@@ -476,6 +453,32 @@ object JsonRpcHandler:
 
     object Config:
         val default: Config = Config()
+
+        /** Preset for Language Server Protocol (LSP) sessions.
+          *
+          * Wires matched cancellation and progress policies for the LSP dialect in one step.
+          * Equivalent to `Config.default.cancellation(CancellationPolicy.lsp).progress(ProgressPolicy.lsp)`.
+          */
+        val lsp: Config = Config.default
+            .cancellation(CancellationPolicy.lsp)
+            .progress(ProgressPolicy.lsp)
+
+        /** Preset for Model Context Protocol (MCP) sessions.
+          *
+          * Wires matched cancellation and progress policies for the MCP dialect in one step, and
+          * additionally sets [[UnknownMethodPolicy.minimal]] (the default).
+          * Equivalent to:
+          * {{{
+          * Config.default
+          *   .cancellation(CancellationPolicy.mcp)
+          *   .progress(ProgressPolicy.mcp)
+          *   .unknownMethod(UnknownMethodPolicy.minimal)
+          * }}}
+          */
+        val mcp: Config = Config.default
+            .cancellation(CancellationPolicy.mcp)
+            .progress(ProgressPolicy.mcp)
+            .unknownMethod(UnknownMethodPolicy.minimal)
 
         def require(c: Config): Unit =
             c.maxInFlight match
@@ -486,6 +489,21 @@ object JsonRpcHandler:
         end require
     end Config
 
+    // --- Scoped init methods (Scope-managed; handler closes when Scope exits) ---
+    // Mirrors HttpServer.init at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:71-91.
+
+    /** Initialises a handler using `routes` and `Config.default`, releasing it when the `Scope` exits. */
+    def init(transport: JsonRpcTransport, routes: JsonRpcRoute[?, ?, ?]*)(using Frame): JsonRpcHandler < (Async & Scope) =
+        init(transport, routes, Config.default)
+
+    /** Initialises a handler using `routes` and the supplied `config`, releasing it when the `Scope` exits. */
+    def init(
+        transport: JsonRpcTransport,
+        config: Config
+    )(routes: JsonRpcRoute[?, ?, ?]*)(using Frame): JsonRpcHandler < (Async & Scope) =
+        init(transport, routes, config)
+
+    /** Initialises a handler from a `Seq` of routes and optional config, releasing it when the `Scope` exits. */
     def init(
         transport: JsonRpcTransport,
         methods: Seq[JsonRpcRoute[?, ?, ?]],
@@ -497,6 +515,35 @@ object JsonRpcHandler:
         )(_.closeNow)
     end init
 
+    /** Initialises a handler and immediately applies `f` to it, releasing the handler when the `Scope` exits.
+      * Mirrors `HttpServer.initWith` at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:80-91.
+      */
+    def initWith[A, S](transport: JsonRpcTransport, routes: JsonRpcRoute[?, ?, ?]*)(f: JsonRpcHandler => A < S)(using
+        Frame
+    ): A < (S & Async & Scope) =
+        init(transport, routes*).map(f)
+
+    /** Initialises a handler with `config` and immediately applies `f`, releasing the handler when the `Scope` exits. */
+    def initWith[A, S](transport: JsonRpcTransport, config: Config)(routes: JsonRpcRoute[?, ?, ?]*)(f: JsonRpcHandler => A < S)(using
+        Frame
+    ): A < (S & Async & Scope) =
+        init(transport, config)(routes*).map(f)
+
+    // --- Unscoped init methods (caller is responsible for closing) ---
+    // Mirrors HttpServer.initUnscoped at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:95-140.
+
+    /** Initialises a handler using `routes` and `Config.default` without a managed `Scope`. */
+    def initUnscoped(transport: JsonRpcTransport, routes: JsonRpcRoute[?, ?, ?]*)(using Frame): JsonRpcHandler < Async =
+        initUnscoped(transport, routes, Config.default)
+
+    /** Initialises a handler using `routes` and the supplied `config` without a managed `Scope`. */
+    def initUnscoped(
+        transport: JsonRpcTransport,
+        config: Config
+    )(routes: JsonRpcRoute[?, ?, ?]*)(using Frame): JsonRpcHandler < Async =
+        initUnscoped(transport, routes, config)
+
+    /** Initialises a handler from a `Seq` of routes without a managed `Scope`. */
     def initUnscoped(
         transport: JsonRpcTransport,
         methods: Seq[JsonRpcRoute[?, ?, ?]],
@@ -505,5 +552,22 @@ object JsonRpcHandler:
         Config.require(config)
         internal.engine.JsonRpcEndpointImpl.initEngine(transport, methods, config).map(_.safe)
     end initUnscoped
+
+    /** Initialises an unscoped handler and immediately applies `f`.
+      * Mirrors `HttpServer.initUnscopedWith` at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:129-140.
+      */
+    def initUnscopedWith[A, S](transport: JsonRpcTransport, routes: JsonRpcRoute[?, ?, ?]*)(f: JsonRpcHandler => A < S)(using
+        Frame
+    ): A < (S & Async) =
+        initUnscoped(transport, routes*).map(f)
+
+    /** Initialises an unscoped handler with `config` and immediately applies `f`. */
+    def initUnscopedWith[A, S](
+        transport: JsonRpcTransport,
+        config: Config
+    )(routes: JsonRpcRoute[?, ?, ?]*)(f: JsonRpcHandler => A < S)(using
+        Frame
+    ): A < (S & Async) =
+        initUnscoped(transport, config)(routes*).map(f)
 
 end JsonRpcHandler

@@ -34,7 +34,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 (n, _) => s"$n done"
             }
             val params = Structure.encode[Int](42)
-            Abort.run[JsonRpcError](method.handle(params, ctx)).map: result =>
+            Abort.run[JsonRpcError | JsonRpcResponse.Halt](method.handle(params, ctx)).map: result =>
                 assert(result == Result.Success(Structure.Value.Str("42 done")))
     }
 
@@ -45,7 +45,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 (_, _) => Abort.fail(err)
             }
             val params = Structure.encode[Int](1)
-            Abort.run[JsonRpcError](method.handle(params, ctx)).map: result =>
+            Abort.run[JsonRpcError | JsonRpcResponse.Halt](method.handle(params, ctx)).map: result =>
                 assert(result == Result.Failure(err))
     }
 
@@ -55,9 +55,9 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 (_, _) => Sync.defer(throw new RuntimeException("boom"))
             }
             val params = Structure.encode[Int](1)
-            Abort.run[JsonRpcError](method.handle(params, ctx)).map: result =>
+            Abort.run[JsonRpcError | JsonRpcResponse.Halt](method.handle(params, ctx)).map: result =>
                 result match
-                    case Result.Failure(err) =>
+                    case Result.Failure(err: JsonRpcHandlerPanicError) =>
                         assert(err.code == -32603)
                         assert(err.isInstanceOf[JsonRpcHandlerPanicError])
                     case other =>
@@ -73,9 +73,9 @@ class JsonRpcRouteTest extends JsonRpcTest:
                     "ok"
             }
             val badParams = Structure.Value.Str("not an int")
-            Abort.run[JsonRpcError](method.handle(badParams, ctx)).map: result =>
+            Abort.run[JsonRpcError | JsonRpcResponse.Halt](method.handle(badParams, ctx)).map: result =>
                 result match
-                    case Result.Failure(err) =>
+                    case Result.Failure(err: JsonRpcError) =>
                         assert(err.code == -32602)
                         assert(!handlerCalled)
                     case other =>
@@ -89,7 +89,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
             }
             assert(method.kind == JsonRpcRoute.Kind.Notification)
             val params = Structure.encode[Int](1)
-            Abort.run[JsonRpcError](method.handle(params, ctx)).map: result =>
+            Abort.run[JsonRpcError | JsonRpcResponse.Halt](method.handle(params, ctx)).map: result =>
                 assert(result == Result.Success(Structure.Value.Null))
     }
 
@@ -101,7 +101,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 (_, c) => observed = c.extras
             }
             val params = Structure.encode[Int](1)
-            Abort.run[JsonRpcError](method.handle(params, ctx)).map: _ =>
+            Abort.run[JsonRpcError | JsonRpcResponse.Halt](method.handle(params, ctx)).map: _ =>
                 assert(observed == Present(extrasValue))
     }
 
@@ -118,8 +118,8 @@ class JsonRpcRouteTest extends JsonRpcTest:
             val route2                                                  = JsonRpcRoute[Int, String]("m")((n, _) => handler(n))
             val params                                                  = Structure.encode[Int](7)
             for
-                r1 <- Abort.run[JsonRpcError](route1.handle(params, ctx))
-                r2 <- Abort.run[JsonRpcError](route2.handle(params, ctx))
+                r1 <- Abort.run[JsonRpcError | JsonRpcResponse.Halt](route1.handle(params, ctx))
+                r2 <- Abort.run[JsonRpcError | JsonRpcResponse.Halt](route2.handle(params, ctx))
             yield assert(r1 == r2)
             end for
     }
@@ -136,10 +136,13 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 )
             JsonRpcRoute.dispatch("add", Seq(addM), params, ctx) match
                 case Present(comp) =>
-                    comp.map { sv =>
-                        Structure.decode[AddResp](sv) match
-                            case Result.Success(r) => assert(r == AddResp(5))
-                            case other             => fail(s"decode failed $other")
+                    Abort.run[JsonRpcError | JsonRpcResponse.Halt](comp).map { sv =>
+                        sv match
+                            case Result.Success(v) =>
+                                Structure.decode[AddResp](v) match
+                                    case Result.Success(r) => assert(r == AddResp(5))
+                                    case other             => fail(s"decode failed $other")
+                            case other => fail(s"expected Success, got $other")
                     }
                 case Absent => fail("expected Present")
             end match
@@ -173,9 +176,12 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 )
             JsonRpcRoute.dispatch("log", Seq(logM), params, ctx) match
                 case Present(comp) =>
-                    comp.map { sv =>
-                        assert(sv == Structure.Value.Null)
-                        assert(counter.get()(using AllowUnsafe.embrace.danger) == 1)
+                    Abort.run[JsonRpcError | JsonRpcResponse.Halt](comp).map { sv =>
+                        sv match
+                            case Result.Success(v) =>
+                                assert(v == Structure.Value.Null)
+                                assert(counter.get()(using AllowUnsafe.embrace.danger) == 1)
+                            case other => fail(s"expected Success, got $other")
                     }
                 case Absent => fail("expected Present")
             end match
@@ -196,16 +202,17 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 )
             JsonRpcRoute.dispatch("err", Seq(m), params, ctx) match
                 case Present(comp) =>
-                    Abort.run[JsonRpcError](comp).map {
-                        case Result.Failure(err) => assert(err.code == -32602)
-                        case other               => fail(s"expected Failure, got $other")
+                    Abort.run[JsonRpcError | JsonRpcResponse.Halt](comp).map {
+                        case Result.Failure(err: JsonRpcError) => assert(err.code == -32602)
+                        case other                             => fail(s"expected Failure, got $other")
                     }
                 case Absent => fail("expected Present")
             end match
         }
     }
 
-    "JsonRpcResponse.Halt aborts with the wrapped response" in run {
+    // STEER-2: Halt short-circuit propagates the wrapped response instead of panicking.
+    "JsonRpcResponse.Halt aborts with the wrapped response directly (STEER-2)" in run {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val id       = JsonRpcId(1L)
             val response = JsonRpcResponse.success(id, Structure.Value.Str("early"))
@@ -213,12 +220,12 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 JsonRpcResponse.halt(response)
             }
             val params = Structure.encode[Int](1)
-            Abort.run[JsonRpcError](method.handle(params, ctx)).map: result =>
+            Abort.run[JsonRpcError | JsonRpcResponse.Halt](method.handle(params, ctx)).map: result =>
                 result match
-                    case Result.Failure(err: JsonRpcHandlerPanicError) =>
-                        assert(err.code == -32603)
+                    case Result.Failure(JsonRpcResponse.Halt(resp)) =>
+                        assert(resp == response)
                     case other =>
-                        fail(s"Expected Failure from Halt, got: $other")
+                        fail(s"Expected Halt with wrapped response, got: $other")
     }
 
     ".error accumulates error mappings on the route" in run {
@@ -231,7 +238,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
             assert(withError.errorMappings(0).matches(AddReq(1, 2)))
             assert(!withError.errorMappings(0).matches(AddResp(3)))
             val params = Structure.encode(AddReq(2, 3))
-            Abort.run[JsonRpcError](withError.handle(params, ctx)).map: result =>
+            Abort.run[JsonRpcError | JsonRpcResponse.Halt](withError.handle(params, ctx)).map: result =>
                 assert(result == Result.Success(Structure.encode(AddResp(5))))
     }
 

@@ -56,9 +56,11 @@ sealed trait JsonRpcRoute[In, Out, +E]:
     private[kyo] def schemaOut: Schema[?]
     private[kyo] def errorMappings: Chunk[JsonRpcRoute.ErrorMapping[?]]
     // Stream.scala:48 sealed-protocol with framework-only abstract members
+    // Returns Abort[JsonRpcError | JsonRpcResponse.Halt] so the engine can detect Halt short-circuits
+    // and send the wrapped response directly (STEER-2).
     private[kyo] def handle(params: Structure.Value, ctx: JsonRpcRoute.Context)(using
         Frame
-    ): Structure.Value < (Async & Abort[JsonRpcError])
+    ): Structure.Value < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])
 end JsonRpcRoute
 
 object JsonRpcRoute:
@@ -142,7 +144,7 @@ object JsonRpcRoute:
         routes: Seq[JsonRpcRoute[?, ?, ?]],
         params: Structure.Value,
         ctx: JsonRpcRoute.Context
-    )(using Frame): Maybe[Structure.Value < (Async & Abort[JsonRpcError])] =
+    )(using Frame): Maybe[Structure.Value < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])] =
         val routeMap: Map[String, JsonRpcRoute[?, ?, ?]] =
             routes.iterator.map(m => (m.name, m)).toMap
         // Map.get returns scala.Option; match arms are interop, not kyo code
@@ -169,23 +171,26 @@ object JsonRpcRoute:
 
         private[kyo] def handle(params: Structure.Value, ctx: JsonRpcRoute.Context)(using
             fr: Frame
-        ): Structure.Value < (Async & Abort[JsonRpcError]) =
+        ): Structure.Value < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt]) =
             Structure.decode[In](params)(using schemaIn, fr) match
                 case Result.Success(decoded) =>
                     Abort.run[JsonRpcError | JsonRpcResponse.Halt](handler(decoded, ctx)).map:
                         case Result.Success(result) =>
                             Structure.encode[Out](result)(using out, fr)
+                        case Result.Failure(halt: JsonRpcResponse.Halt) =>
+                            // STEER-2: propagate Halt so the engine emits the wrapped response directly.
+                            // Mirrors HttpResponse.Halt propagation in kyo-http filter handling.
+                            Abort.fail(halt)
                         case Result.Failure(err: JsonRpcError) =>
-                            Abort.fail(err)
-                        case Result.Failure(_: JsonRpcResponse.Halt) =>
-                            // Halt used in a request route handler is not meaningful without a
-                            // gate id; surface as a handler panic to expose the misuse.
-                            Abort.fail(JsonRpcHandlerPanicError(
-                                name,
-                                new IllegalStateException(
-                                    s"JsonRpcResponse.Halt used in request route '$name' without a gate id"
-                                )
-                            )(using fr))
+                            // STEER-1: check error mappings before propagating the error.
+                            // If any registered mapping matches the aborted value, emit a
+                            // JsonRpcCustomError with the mapping's code and label, making
+                            // .error[E2](code, message) functional.
+                            errorMappings.iterator.find(_.matches(err)) match
+                                case Some(mapping) =>
+                                    Abort.fail(JsonRpcCustomError(mapping.code, mapping.message)(using fr))
+                                case None =>
+                                    Abort.fail(err)
                         case Result.Panic(t) =>
                             Abort.fail(JsonRpcHandlerPanicError(name, t)(using fr))
                 case Result.Failure(e) =>
@@ -216,21 +221,23 @@ object JsonRpcRoute:
 
         private[kyo] def handle(params: Structure.Value, ctx: JsonRpcRoute.Context)(using
             fr: Frame
-        ): Structure.Value < (Async & Abort[JsonRpcError]) =
+        ): Structure.Value < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt]) =
             Structure.decode[In](params)(using in, fr) match
                 case Result.Success(decoded) =>
                     Abort.run[JsonRpcError | JsonRpcResponse.Halt](handler(decoded, ctx)).map:
                         case Result.Success(_) =>
                             (Structure.Value.Null: Structure.Value)
+                        case Result.Failure(halt: JsonRpcResponse.Halt) =>
+                            // STEER-2: propagate Halt for notification routes; the engine drops the
+                            // notification without sending a reply (notifications have no id).
+                            Abort.fail(halt)
                         case Result.Failure(err: JsonRpcError) =>
-                            Abort.fail(err)
-                        case Result.Failure(_: JsonRpcResponse.Halt) =>
-                            Abort.fail(JsonRpcHandlerPanicError(
-                                name,
-                                new IllegalStateException(
-                                    s"JsonRpcResponse.Halt used in notification route '$name' without a gate id"
-                                )
-                            )(using fr))
+                            // STEER-1: check error mappings before propagating.
+                            errorMappings.iterator.find(_.matches(err)) match
+                                case Some(mapping) =>
+                                    Abort.fail(JsonRpcCustomError(mapping.code, mapping.message)(using fr))
+                                case None =>
+                                    Abort.fail(err)
                         case Result.Panic(t) =>
                             Abort.fail(JsonRpcHandlerPanicError(name, t)(using fr))
                 case Result.Failure(e) =>

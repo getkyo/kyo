@@ -25,7 +25,7 @@ sealed private[kyo] trait InboundEntry
 private[kyo] object InboundEntry:
     case class Running(
         method: String,
-        handler: Fiber[Structure.Value, Abort[JsonRpcError]],
+        handler: Fiber[Structure.Value, Abort[JsonRpcError | JsonRpcResponse.Halt]],
         cancelled: Fiber.Promise[Unit, Sync]
     ) extends InboundEntry
 
@@ -665,7 +665,7 @@ final class JsonRpcEndpointImpl private[kyo] (
         name: String,
         params: Structure.Value,
         ctx: JsonRpcRoute.Context
-    )(using Frame): Maybe[Structure.Value < (Async & Abort[JsonRpcError])] =
+    )(using Frame): Maybe[Structure.Value < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])] =
         // stdlib Map.get() returns scala.Option; match arms are interop at protocol dispatch boundary
         methodMap.get(name) match
             // scala.Option arm; interop with Map.get
@@ -996,16 +996,16 @@ object JsonRpcEndpointImpl:
                                                                         dispatchNotification
                                                                     case Present(g) =>
                                                                         g.beforeDispatch(env)(using frame).map {
-                                                                            case JsonRpcHandler.MessageGate.Decision.Allow =>
+                                                                            case JsonRpcMessageGate.Decision.Allow =>
                                                                                 dispatchNotification
-                                                                            case JsonRpcHandler.MessageGate.Decision.Reject(_) =>
+                                                                            case JsonRpcMessageGate.Decision.Reject(_) =>
                                                                                 // Notifications have no id: log WARN, drop silently (no wire response)
                                                                                 Log.warn(
                                                                                     s"kyo-jsonrpc: gate rejected notification method '$method'"
                                                                                 ).andThen(
                                                                                     Exchange.Message.Skip
                                                                                 )
-                                                                            case JsonRpcHandler.MessageGate.Decision.Drop =>
+                                                                            case JsonRpcMessageGate.Decision.Drop =>
                                                                                 Exchange.Message.Skip
                                                                         }
                                                                 end match
@@ -1059,7 +1059,10 @@ object JsonRpcEndpointImpl:
                                                                                     Absent,
                                                                                     extras
                                                                                 )
-                                                                            case Result.Failure(e) =>
+                                                                            case Result.Failure(halt: JsonRpcResponse.Halt) =>
+                                                                                // STEER-2: handler short-circuited with Halt; emit the wrapped response directly.
+                                                                                halt.response
+                                                                            case Result.Failure(e: JsonRpcError) =>
                                                                                 JsonRpcResponse(id, Absent, Present(e), extras)
                                                                             case Result.Panic(t) =>
                                                                                 JsonRpcResponse(
@@ -1173,11 +1176,10 @@ object JsonRpcEndpointImpl:
                                                         dispatchRequest
                                                     case Present(g) =>
                                                         g.beforeDispatch(env2)(using frame).map {
-                                                            case JsonRpcHandler.MessageGate.Decision.Allow =>
+                                                            case JsonRpcMessageGate.Decision.Allow =>
                                                                 dispatchRequest
-                                                            case JsonRpcHandler.MessageGate.Decision.Reject(err) =>
-                                                                // Request has an id: send error response so caller is not left hanging
-                                                                val response = JsonRpcResponse(id, Absent, Present(err), Absent)
+                                                            case JsonRpcMessageGate.Decision.Reject(response) =>
+                                                                // Request has an id: send the gate-supplied response so caller is not left hanging
                                                                 // Unsafe: offer to writerChannel inside gate decision handler
                                                                 // unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                                 Sync.Unsafe.defer {
@@ -1187,7 +1189,7 @@ object JsonRpcEndpointImpl:
                                                                     discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
                                                                     // format: on
                                                                 }.andThen(Exchange.Message.Skip)
-                                                            case JsonRpcHandler.MessageGate.Decision.Drop =>
+                                                            case JsonRpcMessageGate.Decision.Drop =>
                                                                 Exchange.Message.Skip
                                                         }
                                                 end match

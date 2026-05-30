@@ -86,15 +86,15 @@ class HttpStyleTest extends JsonRpcTest:
         val serverNotInitialized = JsonRpcImplementationError(-32002, "Server not initialized")
         var initialized          = false
 
-        val lspInitGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
+        val lspInitGate: JsonRpcMessageGate = new JsonRpcMessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 env match
                     case JsonRpcRequest(_, "initialize", _, _) =>
-                        JsonRpcHandler.MessageGate.Decision.Allow
-                    case JsonRpcRequest(_, _, _, _) if !initialized =>
-                        JsonRpcHandler.MessageGate.Decision.Reject(serverNotInitialized)
+                        JsonRpcMessageGate.Decision.Allow
+                    case JsonRpcRequest(id, _, _, _) if !initialized =>
+                        JsonRpcMessageGate.Decision.Reject(JsonRpcResponse.failure(id, serverNotInitialized))
                     case _ =>
-                        JsonRpcHandler.MessageGate.Decision.Allow
+                        JsonRpcMessageGate.Decision.Allow
 
         val initMethod = JsonRpcRoute[InitReq, InitResp]("initialize") {
             (req, _) =>

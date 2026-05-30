@@ -15,10 +15,10 @@ import kyo.Structure
   *  - [[JsonRpcMalformedMessage]]: a message that could not be decoded; carries the raw value
   *    and a reason string for logging.
   *
-  * Consumed by [[JsonRpcTransport]] and [[JsonRpcHandler.MessageGate]] implementations.
+  * Consumed by [[JsonRpcTransport]] and [[JsonRpcMessageGate]] implementations.
   *
   * @see [[JsonRpcTransport]]
-  * @see [[JsonRpcHandler.MessageGate]]
+  * @see [[JsonRpcMessageGate]]
   */
 sealed trait JsonRpcEnvelope derives CanEqual
 
