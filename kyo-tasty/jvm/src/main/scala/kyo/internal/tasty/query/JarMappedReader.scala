@@ -149,13 +149,23 @@ object JarMappedReader:
         val raf = new RandomAccessFile(jarPath, "r")
         try
             val channel = raf.getChannel
-            val size    = channel.size()
-            if size == 0 then throw new java.io.IOException(s"$jarPath: empty file")
-            val mbb    = channel.map(FileChannel.MapMode.READ_ONLY, 0L, size)
+            // Unsafe: var + null hold the MappedByteBuffer across the inner try / finally so the
+            // value is still accessible after `channel.close()` runs; Java NIO interop, no shared state.
+            var mbb: MappedByteBuffer = null
+            try
+                val size = channel.size()
+                if size == 0 then throw new java.io.IOException(s"$jarPath: empty file")
+                mbb = channel.map(FileChannel.MapMode.READ_ONLY, 0L, size)
+            catch
+                case ex: java.io.IOException =>
+                    throw new java.io.IOException(s"map failed for $jarPath: ${ex.getMessage}", ex)
+            finally
+                channel.close()
+            end try
             val entMap = JarCentralDirectory.parseAllEntries(jarPath, mbb)
             new JarMappedReader(jarPath, mbb, entMap)
         finally
-            // Closing RAF also closes the channel; the MappedByteBuffer remains valid.
+            // Closing RAF also closes the channel (if not already closed above); the MappedByteBuffer remains valid.
             raf.close()
         end try
     end open

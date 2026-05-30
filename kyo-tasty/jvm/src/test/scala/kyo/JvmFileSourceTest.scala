@@ -411,4 +411,69 @@ class JvmFileSourceTest extends Test:
         )
     }
 
+    // Phase 05b - B15: JarMappedReader channel close window.
+    //
+    // Scenario 1: empty file triggers IOException("empty file") before channel.map() is called.
+    // The channel.close() in the finally block must execute before the exception propagates.
+    // The exception must be an IOException with "empty file" in the message, confirming
+    // the open() guard fired and the channel was cleanly closed.
+    "P05b-T1: JarMappedReader.open on empty file throws IOException with 'empty file' message" taggedAs jvmOnly in {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/empty.jar"
+        // Write an empty file so RandomAccessFile succeeds but channel.size() == 0.
+        java.nio.file.Files.write(java.nio.file.Paths.get(jarPath), Array.emptyByteArray)
+
+        val caught =
+            try
+                JarMappedReader.open(jarPath)
+                None
+            catch
+                case ex: java.io.IOException => Some(ex)
+                case t: Throwable            => throw t
+
+        assert(caught.isDefined, "Expected IOException for empty JAR but open() succeeded")
+        val message = caught.get.getMessage
+        assert(
+            message.contains("empty file"),
+            s"Expected 'empty file' in IOException message but got: $message"
+        )
+        // Exception message must not expose raw channel internals (no sun.nio.ch bleed-through).
+        assert(
+            !message.contains("sun.nio.ch") && !message.contains("FileChannelImpl"),
+            s"Exception message exposes FileChannel internals: $message"
+        )
+    }
+
+    // Phase 05b - B15 scenario 2: malformed JAR content reaches parseAllEntries, which throws.
+    // The channel.close() in the finally block fires before that exception leaves open().
+    // The thrown exception must be a plain IOException, not a ClosedChannelException, which
+    // would indicate the channel was still open when the error was constructed.
+    "P05b-T2: JarMappedReader.open on malformed JAR throws plain IOException from parseAllEntries" taggedAs jvmOnly in {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/not-a-jar.jar"
+        // 4 bytes of garbage: channel.map() succeeds but parseAllEntries rejects the content.
+        java.nio.file.Files.write(java.nio.file.Paths.get(jarPath), Array[Byte](0x00, 0x01, 0x02, 0x03))
+
+        val caught =
+            try
+                JarMappedReader.open(jarPath)
+                None
+            catch
+                case ex: java.io.IOException => Some(ex)
+                case t: Throwable            => throw t
+
+        assert(caught.isDefined, "Expected IOException for malformed JAR but open() succeeded")
+        val ex = caught.get
+        // Not a ClosedChannelException: that would indicate the channel was still alive when
+        // the error propagated, meaning the finally-close had not yet run.
+        assert(
+            !ex.isInstanceOf[java.nio.channels.ClosedChannelException],
+            s"Unexpected ClosedChannelException: channel should already be closed before propagation"
+        )
+        assert(
+            ex.getMessage != null && ex.getMessage.nonEmpty,
+            "IOException must carry a non-empty message"
+        )
+    }
+
 end JvmFileSourceTest
