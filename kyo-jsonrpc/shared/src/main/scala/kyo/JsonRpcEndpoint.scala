@@ -434,7 +434,7 @@ object JsonRpcEndpoint:
         transport: JsonRpcTransport,
         methods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]],
         config: Config = Config.default
-    )(using Frame): JsonRpcEndpoint < (Sync & Async & Scope) =
+    )(using Frame): JsonRpcEndpoint < (Async & Scope) =
         Config.require(config)
         internal.engine.JsonRpcEndpointImpl.init(transport, methods, config).map(new JsonRpcEndpoint(_))
     end init
