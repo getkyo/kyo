@@ -1,40 +1,14 @@
 package kyo
 
-import kyo.internal.tasty.query.ClasspathRef
-
 /** Tests for Tasty.Annotation public API surface.
   *
   * Phase 13 (INV: T1). Covers the synthetic Annotation.apply factory and Annotation.unapply extractor.
+  *
+  * makeNamed is inherited from TastyTestSupport (Phase 21g deduplication).
   */
-class TastyAnnotationTest extends Test:
+class TastyAnnotationTest extends Test with TastyTestSupport:
 
     import AllowUnsafe.embrace.danger
-
-    /** Build a synthetic Named type for the given dotted FQN. */
-    private def makeNamed(fqn: String): Tasty.Type.Named =
-        val parts = fqn.split("\\.").toList
-        val root = Tasty.Symbol.make(
-            Tasty.SymbolKind.Package,
-            Tasty.Flags.empty,
-            Tasty.Name(""),
-            null,
-            new ClasspathRef,
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
-        val finalSym = parts.foldLeft(root) { (owner, part) =>
-            Tasty.Symbol.make(
-                Tasty.SymbolKind.Class,
-                Tasty.Flags.empty,
-                Tasty.Name(part),
-                owner,
-                new ClasspathRef,
-                Tasty.Symbol.TastyOrigin.empty,
-                Absent
-            )
-        }
-        Tasty.Type.Named(finalSym)
-    end makeNamed
 
     // Test 6 (INV: T1, Annotation): synthetic factory and unapply extractor work correctly.
     // Given: deprecatedSym with fullName "scala.deprecated"; a = Annotation.apply(Named(deprecatedSym), Chunk.empty).

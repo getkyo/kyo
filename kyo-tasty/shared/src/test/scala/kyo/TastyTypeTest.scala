@@ -1,40 +1,14 @@
 package kyo
 
-import kyo.internal.tasty.query.ClasspathRef
-
 /** Tests for Tasty.Type public API surface.
   *
   * Phase 13 (INV: T1). Covers Type.show for Applied types.
+  *
+  * makeNamed is inherited from TastyTestSupport (Phase 21g deduplication).
   */
-class TastyTypeTest extends Test:
+class TastyTypeTest extends Test with TastyTestSupport:
 
     import AllowUnsafe.embrace.danger
-
-    /** Build a synthetic Named type for the given dotted FQN. */
-    private def makeNamed(fqn: String): Tasty.Type.Named =
-        val parts = fqn.split("\\.").toList
-        val root = Tasty.Symbol.make(
-            Tasty.SymbolKind.Package,
-            Tasty.Flags.empty,
-            Tasty.Name(""),
-            null,
-            new ClasspathRef,
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
-        val finalSym = parts.foldLeft(root) { (owner, part) =>
-            Tasty.Symbol.make(
-                Tasty.SymbolKind.Class,
-                Tasty.Flags.empty,
-                Tasty.Name(part),
-                owner,
-                new ClasspathRef,
-                Tasty.Symbol.TastyOrigin.empty,
-                Absent
-            )
-        }
-        Tasty.Type.Named(finalSym)
-    end makeNamed
 
     // Test 5 (INV: T1, Type.show): Applied(scala.List, scala.Int) shows as "scala.List[scala.Int]".
     // Given: listSym with fullName "scala.List", intSym with fullName "scala.Int".

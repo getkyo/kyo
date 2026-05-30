@@ -274,4 +274,184 @@ class TastySymbolTest extends Test:
         )
     }
 
+    // Test 5 (T2, Symbol.make): Symbol.make produces Symbol with correct kind, name, and owner.
+    // Given: root sentinel Package; sym = Symbol.make(SymbolKind.Class, Flags.empty, Name("Foo"), root, ...).
+    // When: read sym.kind, sym.name.asString, sym.owner.
+    // Then: kind == SymbolKind.Class; name.asString == "Foo"; owner eq root.
+    // Pins: T2.
+    "Symbol.make produces Symbol with correct kind name and owner" in {
+        val root = makeRoot()
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Foo"),
+            root,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        assert(
+            sym.kind == Tasty.SymbolKind.Class,
+            s"Expected kind Class but got ${sym.kind}"
+        )
+        assert(
+            sym.name.asString == "Foo",
+            s"Expected name 'Foo' but got '${sym.name.asString}'"
+        )
+        assert(
+            sym.owner eq root,
+            "Expected owner to be the root sentinel symbol"
+        )
+    }
+
+    // Phase 13 T1 gap: declaredType throws for Package symbols.
+    // Given: synthetic Package symbol.
+    // When: sym.declaredType (using AllowUnsafe).
+    // Then: throws IllegalArgumentException (documented in Symbol.declaredType scaladoc).
+    // Pins: T1 (declaredType Package guard).
+    "Symbol.declaredType throws IllegalArgumentException for Package symbols" in {
+        val root   = makeRoot()
+        val pkg    = makePkg("scala", root)
+        var thrown = false
+        try
+            pkg.declaredType
+            ()
+        catch
+            case _: IllegalArgumentException =>
+                thrown = true
+        end try
+        assert(thrown, "Expected IllegalArgumentException for Package.declaredType but nothing was thrown")
+    }
+
+    // Phase 13 T1 gap: declarations returns empty Chunk for a fresh synthetic symbol (no classpath).
+    // Given: synthetic Class symbol; _declarations slot never assigned.
+    // When: sym.declarations is read while _declarations.isSet == false... however declarations calls
+    // _declarations.get() directly (no isSet guard), so accessing an unset slot throws ISE.
+    // This test documents the behavior: unset slot throws ISE, which is the correct protocol --
+    // production callers only read declarations after classpath open assigns the slot.
+    // We verify via the fixture classpath instead so we get a real (empty) value.
+    // Given: fixture classpath containing PlainClass.tasty; look up PlainClass symbol.
+    // When: sym.declarations.
+    // Then: returns a Chunk (possibly empty or containing synthetic members).
+    // Pins: T1 (declarations accessor coverage).
+    "Symbol.declarations returns Chunk for fixture class" in run {
+        Scope.run:
+            Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
+                cp.findClass("kyo.fixtures.PlainClass") match
+                    case Present(sym) => Kyo.lift(sym.declarations)
+                    case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
+                case Result.Success(decls) =>
+                    assert(
+                        decls != null,
+                        "Expected non-null Chunk from declarations"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 13 T1 gap: typeParams returns Chunk for fixture class.
+    // Given: fixture classpath containing PlainClass.tasty; AllowUnsafe in scope.
+    // When: sym.typeParams.
+    // Then: returns a Chunk (PlainClass has no type params so it is empty).
+    // Pins: T1 (typeParams accessor coverage).
+    "Symbol.typeParams returns Chunk for fixture class" in run {
+        Scope.run:
+            Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
+                cp.findClass("kyo.fixtures.PlainClass") match
+                    case Present(sym) => Kyo.lift(sym.typeParams)
+                    case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
+                case Result.Success(tps) =>
+                    assert(
+                        tps != null,
+                        "Expected non-null Chunk from typeParams"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Phase 13 T1 gap: scaladoc returns Absent for a synthetic symbol (no Comments section).
+    // Given: synthetic Class symbol built without a classpath.
+    // When: sym.scaladoc (using AllowUnsafe).
+    // Then: returns Absent (no scaladoc on a synthetic symbol; _scaladoc slot is unset).
+    // Pins: T1 (scaladoc Absent branch).
+    "Symbol.scaladoc returns Absent for synthetic symbol" in {
+        val root = makeRoot()
+        val sym  = makeClass("SyntheticFoo", root)
+        sym.scaladoc match
+            case Absent => succeed
+            case Present(doc) =>
+                fail(s"Expected Absent for synthetic symbol scaladoc but got Present($doc)")
+        end match
+    }
+
+    // Phase 13 T1 gap: position returns Absent for a synthetic symbol (no Positions section).
+    // Given: synthetic Class symbol built without a classpath.
+    // When: sym.position (using AllowUnsafe).
+    // Then: returns Absent (no position data on a synthetic symbol; _position slot is unset).
+    // Pins: T1 (position Absent branch).
+    "Symbol.position returns Absent for synthetic symbol" in {
+        val root = makeRoot()
+        val sym  = makeClass("SyntheticFoo", root)
+        sym.position match
+            case Absent     => succeed
+            case Present(p) => fail(s"Expected Absent for synthetic symbol position but got Present($p)")
+    }
+
+    // Phase 13 T1 gap: flags.contains tests.
+    // Given: Module symbol built with Flag.Module set.
+    // When: sym.flags.contains(Flag.Module) and sym.flags.contains(Flag.Final).
+    // Then: contains Module == true; contains Final == false.
+    // Pins: T1 (Flags.contains coverage).
+    "Symbol.flags.contains returns true for set flag and false for unset flag" in {
+        val root = makeRoot()
+        val sym  = makeModule("Foo", root)
+        assert(
+            sym.flags.contains(Tasty.Flag.Module),
+            "Expected flags.contains(Module) == true for module symbol"
+        )
+        assert(
+            !sym.flags.contains(Tasty.Flag.Final),
+            "Expected flags.contains(Final) == false for module symbol with only Module flag"
+        )
+    }
+
+    // Phase 13 T1 gap: kind accessor on each major SymbolKind.
+    // Given: synthetic symbols with each of Class, Trait, Object, Package, Method, Field kinds.
+    // When: sym.kind read.
+    // Then: returns the expected SymbolKind.
+    // Pins: T1 (kind accessor coverage).
+    "Symbol.kind returns the kind passed to Symbol.make" in {
+        val root = makeRoot()
+        val kindCases: List[(String, Tasty.SymbolKind)] = List(
+            ("ClassSym", Tasty.SymbolKind.Class),
+            ("TraitSym", Tasty.SymbolKind.Trait),
+            ("ObjSym", Tasty.SymbolKind.Object),
+            ("MethodSym", Tasty.SymbolKind.Method),
+            ("FieldSym", Tasty.SymbolKind.Field),
+            ("ValSym", Tasty.SymbolKind.Val),
+            ("VarSym", Tasty.SymbolKind.Var)
+        )
+        val mismatches = kindCases.flatMap { (name, expectedKind) =>
+            val sym = Tasty.Symbol.make(
+                expectedKind,
+                Tasty.Flags.empty,
+                Tasty.Name(name),
+                root,
+                new ClasspathRef,
+                Tasty.Symbol.TastyOrigin.empty,
+                Absent
+            )
+            if sym.kind == expectedKind then None
+            else Some(s"'$name': expected $expectedKind but got ${sym.kind}")
+        }
+        assert(
+            mismatches.isEmpty,
+            s"SymbolKind mismatches: ${mismatches.mkString("; ")}"
+        )
+    }
+
 end TastySymbolTest

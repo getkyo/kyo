@@ -115,4 +115,21 @@ class OnceCellTest extends Test:
         }
     }
 
+    // Test 7 (T2, OnceCell): cell holding a null reference returns null on first and second get.
+    // The plan draft used null.asInstanceOf[String] which is banned (no-casts rule). Instead we
+    // use OnceCell[String | Null] whose init lambda returns null directly; Scala 3 treats null as
+    // a valid inhabitant of String | Null, so no cast is required.
+    // Given: OnceCell[String | Null](() => null) with AllowUnsafe.
+    // When: cell.get() called twice.
+    // Then: first call returns null; second call returns null (cached, init not re-run).
+    // Pins: T2.
+    "OnceCellTest T2: cell with null init returns null on first and subsequent get" in {
+        import AllowUnsafe.embrace.danger
+        val cell: OnceCell[String | Null] = new OnceCell[String | Null](() => null)
+        val first                         = cell.get()
+        val second                        = cell.get()
+        assert(first == null, s"Expected null on first get but got $first")
+        assert(second == null, s"Expected null on second get but got $second")
+    }
+
 end OnceCellTest
