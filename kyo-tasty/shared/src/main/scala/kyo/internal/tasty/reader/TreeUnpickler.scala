@@ -739,6 +739,9 @@ object TreeUnpickler:
             case TastyFormat.CONTRAVARIANT => Tasty.Flag.ContraVariant
             case TastyFormat.INVISIBLE     => Tasty.Flag.Invisible
             case TastyFormat.INTO          => Tasty.Flag.Into
+            case TastyFormat.OBJECT        => Tasty.Flag.Module
+            case TastyFormat.TRAIT         => Tasty.Flag.Trait
+            case TastyFormat.ENUM          => Tasty.Flag.Enum
             case other =>
                 throw new DecodeException(s"unknown category-1 modifier tag $other", view.position.toLong)
         Tasty.Tree.Modifier(flag)

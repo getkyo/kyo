@@ -599,6 +599,74 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
+    // Test 18a-debt-1 through 18a-debt-3 (M1 category 1, BLOCKER from Phase 18a audit):
+    // OBJECT(19), TRAIT(20), ENUM(21) are category-1 tags that appear inside every TYPEDEF
+    // payload for class-like symbols. Before remediation, decoding any real class body would
+    // throw "unknown category-1 modifier tag $n". These tests pin the fix.
+
+    "Phase18a-debt-1: OBJECT byte decodes to Tree.Modifier(Flag.Module)" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Dummy"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val pickle = Chunk(TastyFormat.OBJECT.toByte)
+        val decodeCtx =
+            new Tasty.Annotation.DecodeContext(Array(Tasty.Name("dummy")), IntMap.empty[Tasty.Symbol], new ClasspathRef, pickle.toArray, 0)
+        val ann = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Module.bit => succeed
+            case other => fail(s"Expected Modifier(Module), got: $other")
+    }
+
+    "Phase18a-debt-2: TRAIT byte decodes to Tree.Modifier(Flag.Trait)" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Dummy"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val pickle = Chunk(TastyFormat.TRAIT.toByte)
+        val decodeCtx =
+            new Tasty.Annotation.DecodeContext(Array(Tasty.Name("dummy")), IntMap.empty[Tasty.Symbol], new ClasspathRef, pickle.toArray, 0)
+        val ann = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Trait.bit => succeed
+            case other => fail(s"Expected Modifier(Trait), got: $other")
+    }
+
+    "Phase18a-debt-3: ENUM byte decodes to Tree.Modifier(Flag.Enum)" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Dummy"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val pickle = Chunk(TastyFormat.ENUM.toByte)
+        val decodeCtx =
+            new Tasty.Annotation.DecodeContext(Array(Tasty.Name("dummy")), IntMap.empty[Tasty.Symbol], new ClasspathRef, pickle.toArray, 0)
+        val ann = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Enum.bit => succeed
+            case other => fail(s"Expected Modifier(Enum), got: $other")
+    }
+
     // ── Phase 18b Tests (M1, category-2 tags) ────────────────────────────────
 
     // Test 18b-1 (M1 category 2): SHAREDtype byte + nat(42) decodes to Tree.Shared(42).
