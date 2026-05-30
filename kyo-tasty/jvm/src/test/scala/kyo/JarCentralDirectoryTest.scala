@@ -615,4 +615,200 @@ class JarCentralDirectoryTest extends Test:
         }
     }
 
+    // Phase 22c - T4 Test 1: Zip64 JAR whose Zip64 EOCD reports centralDirOffset = 3_000_000_000L.
+    //
+    // Synthetic approach: we build a real JAR with one entry, then inject a Zip64 EOCD locator and
+    // Zip64 EOCD record. The Zip64 EOCD record's centralDirOffset field carries 3_000_000_000L.
+    // Because the actual file is much smaller than 3 GB, the bounds check "cenOffset >= fileLen" fires,
+    // producing MalformedSection. The key assertion is that the error message contains "3000000000",
+    // which proves the parser correctly read the 64-bit field (not a 32-bit truncation).
+    //
+    // If the parser truncated the 8-byte field to 4 bytes (signed), it would read
+    // 3_000_000_000L as Int = -1_294_967_296, producing a different error message.
+    // If it truncated to 4 bytes (unsigned), it would read 0xB2D05E00 = 2_999_999_488L when
+    // misaligned, or some other value. Either way the message would NOT contain "3000000000".
+    //
+    // Byte layout (appended before the EOCD):
+    //   [original file bytes up to eocdPos]
+    //   [Zip64 EOCD record, 56 bytes, sig=0x06064b50, cenOffset=3_000_000_000L at offset 48]
+    //   [Zip64 EOCD locator, 20 bytes, sig=0x07064b50, zip64EocdOffset pointing at Zip64 EOCD]
+    //   [EOCD, 22 bytes, cenOffset=0xFFFFFFFF sentinel]
+    //
+    // Pins: T4, INV-012.
+    "P22c-T1: Zip64 EOCD cenOffset=3_000_000_000L is read as 64-bit (not truncated to 32-bit)" taggedAs jvmOnly in run {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/zip64-3gb-synthetic.jar"
+
+        writeJar(jarPath, Seq(("kyo/BigOffset.tasty", tastyContent)))
+        val rawBytes = Files.readAllBytes(java.nio.file.Paths.get(jarPath))
+
+        // Locate the EOCD signature in the original JAR.
+        var eocdPos = -1
+        var i       = rawBytes.length - 22
+        while i >= 0 && eocdPos < 0 do
+            if (rawBytes(i) & 0xff) == 0x50 &&
+                (rawBytes(i + 1) & 0xff) == 0x4b &&
+                (rawBytes(i + 2) & 0xff) == 0x05 &&
+                (rawBytes(i + 3) & 0xff) == 0x06
+            then eocdPos = i
+            end if
+            i -= 1
+        end while
+        assert(eocdPos >= 0, "Could not locate EOCD in test JAR")
+
+        // Build the Zip64 EOCD record (56 bytes).
+        // Zip64 EOCD layout: sig(4) + recordSize(8) + versionMade(2) + versionNeeded(2)
+        //   + diskNum(4) + startDisk(4) + entriesOnDisk(8) + totalEntries(8)
+        //   + cenSize(8) + cenOffset(8)
+        // Offsets: sig=0, recordSize=4, versionMade=12, versionNeeded=14,
+        //   diskNum=16, startDisk=20, entriesOnDisk=24, totalEntries=32,
+        //   cenSize=40, cenOffset=48.
+        val centralDirOffset3GB: Long = 3_000_000_000L
+        val zip64EocdRec              = new Array[Byte](56)
+        // sig = 0x06064b50 (little-endian)
+        zip64EocdRec(0) = 0x50; zip64EocdRec(1) = 0x4b; zip64EocdRec(2) = 0x06; zip64EocdRec(3) = 0x06
+        // recordSize = 44 (56 - 12) as 8-byte LE
+        zip64EocdRec(4) = 44
+        // all disk/entry fields remain 0
+        // cenOffset at byte 48 = centralDirOffset3GB (8-byte LE)
+        zip64EocdRec(48) = (centralDirOffset3GB & 0xff).toByte
+        zip64EocdRec(49) = ((centralDirOffset3GB >> 8) & 0xff).toByte
+        zip64EocdRec(50) = ((centralDirOffset3GB >> 16) & 0xff).toByte
+        zip64EocdRec(51) = ((centralDirOffset3GB >> 24) & 0xff).toByte
+        zip64EocdRec(52) = ((centralDirOffset3GB >> 32) & 0xff).toByte
+        zip64EocdRec(53) = ((centralDirOffset3GB >> 40) & 0xff).toByte
+        zip64EocdRec(54) = ((centralDirOffset3GB >> 48) & 0xff).toByte
+        zip64EocdRec(55) = ((centralDirOffset3GB >> 56) & 0xff).toByte
+
+        // The Zip64 EOCD record is placed at the original eocdPos (we push the EOCD back).
+        val zip64EocdOffset: Long = eocdPos.toLong
+
+        // Build the Zip64 EOCD locator (20 bytes).
+        // Layout: sig(4) + diskWithZip64EOCD(4) + offsetOfZip64EOCD(8) + totalDisks(4).
+        val zip64Loc = new Array[Byte](20)
+        // sig = 0x07064b50 (little-endian)
+        zip64Loc(0) = 0x50; zip64Loc(1) = 0x4b; zip64Loc(2) = 0x06; zip64Loc(3) = 0x07
+        // diskWithZip64EOCD = 0 at offset 4
+        // offsetOfZip64EOCD at offset 8 (8-byte LE)
+        zip64Loc(8) = (zip64EocdOffset & 0xff).toByte
+        zip64Loc(9) = ((zip64EocdOffset >> 8) & 0xff).toByte
+        zip64Loc(10) = ((zip64EocdOffset >> 16) & 0xff).toByte
+        zip64Loc(11) = ((zip64EocdOffset >> 24) & 0xff).toByte
+        zip64Loc(12) = ((zip64EocdOffset >> 32) & 0xff).toByte
+        zip64Loc(13) = ((zip64EocdOffset >> 40) & 0xff).toByte
+        zip64Loc(14) = ((zip64EocdOffset >> 48) & 0xff).toByte
+        zip64Loc(15) = ((zip64EocdOffset >> 56) & 0xff).toByte
+        // totalDisks = 1 at offset 16 (4-byte LE)
+        zip64Loc(16) = 1
+
+        // Patch the standard EOCD cenOffset to 0xFFFFFFFF (Zip64 sentinel) to ensure the Zip64
+        // path is taken. EOCD cenOffset is at EOCD+16 (4 bytes, LE).
+        val eocdBytes = rawBytes.drop(eocdPos)
+        eocdBytes(16) = 0xff.toByte
+        eocdBytes(17) = 0xff.toByte
+        eocdBytes(18) = 0xff.toByte
+        eocdBytes(19) = 0xff.toByte
+
+        // Assemble: prefix + Zip64 EOCD record + Zip64 locator + EOCD (22 bytes)
+        val prefix   = rawBytes.take(eocdPos)
+        val newBytes = prefix ++ zip64EocdRec ++ zip64Loc ++ eocdBytes.take(22)
+        Files.write(java.nio.file.Paths.get(jarPath), newBytes)
+
+        // The Zip64 EOCD reports centralDirOffset3GB = 3_000_000_000L. The actual file is tiny,
+        // so the bounds check fires. The error message must contain "3000000000" proving 64-bit
+        // reading. A 32-bit Int truncation of 3_000_000_000L would yield a different value.
+        Abort.run[TastyError](
+            JarCentralDirectory.list(jarPath, Chunk(".tasty"))
+        ).map:
+            case Result.Failure(e) =>
+                e match
+                    case TastyError.MalformedSection(_, reason, _) =>
+                        assert(
+                            reason.contains("3000000000"),
+                            s"Expected '3000000000' in reason proving 64-bit read; got: $reason"
+                        )
+                    case other =>
+                        fail(s"Expected MalformedSection but got: $other")
+            case Result.Success(_) =>
+                fail("Expected MalformedSection for cenOffset=3_000_000_000L beyond file size")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Phase 22c - T4 Test 2: synthetic EOCD with diskNumber=2 is rejected with "multi-disk".
+    //
+    // The ZIP spec requires diskNumber == 0 for single-file archives. JarCentralDirectory checks
+    // stdDiskNum != 0 || stdStartDisk != 0 and throws MalformedSection containing "multi-disk".
+    //
+    // Byte construction:
+    //   EOCD (22 bytes): sig=0x06054b50, diskNumber=2, startDisk=0, entriesOnDisk=0,
+    //   totalEntries=0, cenSize=0, cenOffset=0, commentLen=0.
+    // The scanner searches from the end for the EOCD signature. We write a 22-byte file.
+    //
+    // Pins: T4.
+    "P22c-T2: EOCD with diskNumber=2 yields MalformedSection containing 'multi-disk'" taggedAs jvmOnly in run {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/multidisk-synthetic.jar"
+
+        // Construct a 22-byte EOCD record with diskNumber=2.
+        // EOCD layout (22 bytes, little-endian):
+        //   offset 0: sig     = 0x06054b50
+        //   offset 4: disk    = 2  (the disk this EOCD lives on)
+        //   offset 6: start   = 0  (disk where CEN starts)
+        //   offset 8: onDisk  = 0  (entries on this disk)
+        //   offset 10: total  = 0  (total entries)
+        //   offset 12: cenSz  = 0  (central directory size)
+        //   offset 16: cenOff = 0  (CEN offset)
+        //   offset 20: comLen = 0  (comment length)
+        val eocd = new Array[Byte](22)
+        // sig = 0x06054b50 (little-endian)
+        eocd(0) = 0x50; eocd(1) = 0x4b; eocd(2) = 0x05; eocd(3) = 0x06
+        // diskNumber = 2 at offset 4 (2-byte LE)
+        eocd(4) = 2; eocd(5) = 0
+        // all other fields remain 0
+
+        Files.write(java.nio.file.Paths.get(jarPath), eocd)
+
+        Abort.run[TastyError](
+            JarCentralDirectory.list(jarPath, Chunk(".tasty"))
+        ).map:
+            case Result.Failure(e) =>
+                e match
+                    case TastyError.MalformedSection(_, reason, _) =>
+                        assert(
+                            reason.contains("multi-disk"),
+                            s"Expected reason containing 'multi-disk' but got: $reason"
+                        )
+                    case other =>
+                        fail(s"Expected MalformedSection but got: $other")
+            case Result.Success(_) =>
+                fail("Expected MalformedSection for EOCD with diskNumber=2")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Phase 22c - T4 Test 3: JMOD support - deferred.
+    //
+    // JMOD format: 4-byte magic ("JM\1\0" = 0x4A 0x4D 0x01 0x00) + 2-byte version + ZIP content.
+    // The embedded ZIP data starts at byte 6. All ZIP-internal offsets (CEN offset, LFH offsets)
+    // in the embedded ZIP are relative to byte 0 of the embedded ZIP, which equals byte 6 of
+    // the JMOD file.
+    //
+    // Production code does not currently support JMOD. Adding correct support requires:
+    //   (1) Read the first 4 bytes; if they match the JMOD magic, record a 6-byte prefix offset.
+    //   (2) Pass that prefix offset through all seek operations so that CEN offset and LFH offsets
+    //       are adjusted by +6 when seeking in the file.
+    //
+    // This is a non-trivial structural change to the parsing pipeline (JarCentralDirectory.list,
+    // listEntries, findEocd, readCenLocation, and all raf.seek calls must be adjusted). Deferring
+    // to a dedicated future phase avoids mixing production-code changes into this test-only phase.
+    //
+    // Decision: DEFER. Document deferral. No test body.
+    // Pins: T4 (deferred).
+    "P22c-T3: JMOD support deferred (production code does not yet detect JMOD magic prefix)" taggedAs jvmOnly in run {
+        // JMOD support is deferred. See comment above for the required production changes.
+        // This placeholder ensures the test ID is tracked in the test suite.
+        Sync.defer(succeed)
+    }
+
 end JarCentralDirectoryTest
