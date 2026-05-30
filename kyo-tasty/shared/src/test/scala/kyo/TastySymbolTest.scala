@@ -439,6 +439,24 @@ class TastySymbolTest extends Test:
         )
     }
 
+    // Test (T4, deeply nested inner class binaryName): 5-level class ladder produces '$'-separated binary name with no package prefix.
+    // Given: synthetic Symbol chain root -> A -> B -> C -> D -> E where all non-root symbols have SymbolKind.Class.
+    // When: eSym.binaryName evaluated.
+    // Then: returns "A$B$C$D$E" (all separators are '$' because every preceding kind is Class).
+    // Pins: T4 (binaryName deeply nested inner class edge).
+    "T4: deeply nested inner class binaryName returns A$B$C$D$E" in {
+        val root = makeRoot()
+        val aSym = makeClass("A", root)
+        val bSym = makeClass("B", aSym)
+        val cSym = makeClass("C", bSym)
+        val dSym = makeClass("D", cSym)
+        val eSym = makeClass("E", dSym)
+        assert(
+            eSym.binaryName == "A$B$C$D$E",
+            s"Expected 'A$$B$$C$$D$$E' but got '${eSym.binaryName}'"
+        )
+    }
+
     // Phase 13 T1 gap: kind accessor on each major SymbolKind.
     // Given: synthetic symbols with each of Class, Trait, Object, Package, Method, Field kinds.
     // When: sym.kind read.
