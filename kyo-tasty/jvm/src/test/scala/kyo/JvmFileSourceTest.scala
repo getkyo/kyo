@@ -308,4 +308,50 @@ class JvmFileSourceTest extends Test:
         )
     }
 
+    // Phase 04a - INV-012 Test 3: 64-bit LFH offset guard rejects lfhOffset > Int.MaxValue.
+    //
+    // We construct a synthetic JarEntry with lfhOffset = Int.MaxValue.toLong + 1L and then
+    // ask JarMappedReader to read it. The bounds check at the start of readEntry must detect
+    // that the offset exceeds the mmap range and throw IOException with "exceeds 2GB".
+    //
+    // We cannot literally create a 2GB+ JAR in a unit test, so we verify the defensive guard
+    // directly by patching a JarMappedReader's entry map to carry an oversized lfhOffset.
+    // This pins the B2 invariant: no silent Int truncation of the LFH offset field.
+    "P04a-T3: JarMappedReader.readEntry rejects lfhOffset > Int.MaxValue with IOException" taggedAs jvmOnly in {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/big-offset.jar"
+        writeJar(jarPath, Seq(("kyo/BigOffset.tasty", knownBytes1)))
+
+        // Open the reader to get a valid mbb, then inject an oversized lfhOffset via reflection.
+        val reader = JarMappedReader.open(jarPath)
+
+        // Replace the entry in the internal map with one carrying lfhOffset = Int.MaxValue + 1L.
+        // Access entries map via reflection (private field).
+        val entriesField = reader.getClass.getDeclaredField("entries")
+        entriesField.setAccessible(true)
+        val entriesMap = entriesField
+            .get(reader)
+            .asInstanceOf[java.util.HashMap[String, kyo.internal.tasty.query.JarCentralDirectory.JarEntry]]
+        val original  = entriesMap.get("kyo/BigOffset.tasty")
+        val oversized = original.copy(lfhOffset = Int.MaxValue.toLong + 1L)
+        entriesMap.put("kyo/BigOffset.tasty", oversized)
+
+        val caught =
+            try
+                reader.readEntry("kyo/BigOffset.tasty")
+                None
+            catch
+                case ex: java.io.IOException => Some(ex.getMessage)
+                case _: Throwable            => None
+
+        assert(
+            caught.isDefined,
+            "Expected IOException for lfhOffset > Int.MaxValue but readEntry succeeded"
+        )
+        assert(
+            caught.exists(_.contains("exceeds 2GB")),
+            s"Expected message containing 'exceeds 2GB' but got: ${caught.getOrElse("")}"
+        )
+    }
+
 end JvmFileSourceTest

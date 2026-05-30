@@ -137,8 +137,19 @@ private[kyo] object JarCentralDirectory:
         if cenOffset < 0 || cenOffset >= fileLen then
             throw new java.io.IOException(s"$jarPath: CEN offset $cenOffset out of range [0, $fileLen)")
 
-        val cenSize = (eocdOffset - cenOffset).toInt.max(0)
+        val cenSizeLong = (eocdOffset - cenOffset).max(0L)
+        if cenSizeLong > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath: central directory size $cenSizeLong exceeds 2GB; Zip64 required"
+            )
+        end if
+        val cenSize = cenSizeLong.toInt
         val cenBuf  = new Array[Byte](cenSize)
+        if cenOffset > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath: cenOffset $cenOffset exceeds 2GB mmap range; Zip64 required"
+            )
+        end if
         buf.position(cenOffset.toInt)
         buf.get(cenBuf)
 
@@ -171,7 +182,13 @@ private[kyo] object JarCentralDirectory:
         end if
 
         // Read entire central directory into memory
-        val cenSize = (eocdOffset - cenOffset).toInt.max(0)
+        val cenSizeLong0 = (eocdOffset - cenOffset).max(0L)
+        if cenSizeLong0 > Int.MaxValue then
+            throw new TastyErrorWrapper(
+                TastyError.MalformedSection("jar", s"$jarPath: central directory size $cenSizeLong0 exceeds 2GB; Zip64 required")
+            )
+        end if
+        val cenSize = cenSizeLong0.toInt
         val cenBuf  = new Array[Byte](cenSize)
         raf.seek(cenOffset)
         raf.readFully(cenBuf)
@@ -185,8 +202,9 @@ private[kyo] object JarCentralDirectory:
       * Returns (eocdOffset, eocdBuf) where eocdBuf is the 22-byte fixed EOCD data.
       */
     private def findEocd(jarPath: String, raf: RandomAccessFile, fileLen: Long): (Long, Array[Byte]) =
-        // Scan up to EOCD_MAX_SCAN bytes from the end
-        val scanLen = EOCD_MAX_SCAN.min(fileLen.toInt)
+        // Scan up to EOCD_MAX_SCAN bytes from the end. EOCD_MAX_SCAN is 65557, always < Int.MaxValue,
+        // so the .min result is safe as Int without truncating fileLen first.
+        val scanLen = EOCD_MAX_SCAN.toLong.min(fileLen).toInt
         val scanBuf = new Array[Byte](scanLen)
         raf.seek(fileLen - scanLen)
         raf.readFully(scanBuf)
@@ -342,7 +360,13 @@ private[kyo] object JarCentralDirectory:
             )
         end if
 
-        val cenSize = (eocdOffset - cenOffset).toInt.max(0)
+        val cenSizeLong1 = (eocdOffset - cenOffset).max(0L)
+        if cenSizeLong1 > Int.MaxValue then
+            throw new TastyErrorWrapper(
+                TastyError.MalformedSection("jar", s"$jarPath: central directory size $cenSizeLong1 exceeds 2GB; Zip64 required")
+            )
+        end if
+        val cenSize = cenSizeLong1.toInt
         val cenBuf  = new Array[Byte](cenSize)
         raf.seek(cenOffset)
         raf.readFully(cenBuf)
@@ -521,9 +545,16 @@ private[kyo] object JarCentralDirectory:
         buf: ByteBuffer,
         fileLen: Long
     ): (Long, Long, Long, Boolean) =
-        val scanLen = EOCD_MAX_SCAN.min(fileLen.toInt)
-        val scanBuf = new Array[Byte](scanLen)
-        buf.position((fileLen - scanLen).toInt)
+        // EOCD_MAX_SCAN is 65557, always < Int.MaxValue, so the result is safe as Int.
+        val scanLen         = EOCD_MAX_SCAN.toLong.min(fileLen).toInt
+        val scanBuf         = new Array[Byte](scanLen)
+        val scanStartOffset = fileLen - scanLen
+        if scanStartOffset > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath: EOCD scan start offset $scanStartOffset exceeds 2GB mmap range; Zip64 required"
+            )
+        end if
+        buf.position(scanStartOffset.toInt)
         buf.get(scanBuf)
 
         var i = scanLen - EOCD_FIXED_SIZE
@@ -557,6 +588,11 @@ private[kyo] object JarCentralDirectory:
         val locOffset = eocdOffset - ZIP64_LOC_SIZE
         if locOffset >= 0 then
             val locBuf = new Array[Byte](ZIP64_LOC_SIZE)
+            if locOffset > Int.MaxValue then
+                throw new java.io.IOException(
+                    s"$jarPath: Zip64 locator offset $locOffset exceeds 2GB mmap range; Zip64 required"
+                )
+            end if
             buf.position(locOffset.toInt)
             buf.get(locBuf)
             if readInt32LE(locBuf, 0) == SIG_ZIP64_LOC then
@@ -567,6 +603,11 @@ private[kyo] object JarCentralDirectory:
                 val zip64EocdOffset = readUInt64LE(locBuf, 8)
                 if zip64EocdOffset >= 0 && zip64EocdOffset < fileLen then
                     val zip64Buf = new Array[Byte](ZIP64_EOCD_FIXED_SIZE)
+                    if zip64EocdOffset > Int.MaxValue then
+                        throw new java.io.IOException(
+                            s"$jarPath: Zip64 EOCD offset $zip64EocdOffset exceeds 2GB mmap range; Zip64 required"
+                        )
+                    end if
                     buf.position(zip64EocdOffset.toInt)
                     buf.get(zip64Buf)
                     if readInt32LE(zip64Buf, 0) == SIG_ZIP64_EOCD then

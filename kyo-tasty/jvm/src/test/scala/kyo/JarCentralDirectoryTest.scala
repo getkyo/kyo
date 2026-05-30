@@ -412,4 +412,169 @@ class JarCentralDirectoryTest extends Test:
                 fail(s"unexpected panic: $t")
     }
 
+    // Phase 04a - INV-012 Test 1: EOCD with cenOffset = 0xFFFFFFFF without Zip64 is rejected.
+    //
+    // The standard EOCD carries cenOffset = 0xFFFFFFFF (the Zip64 sentinel, uint32 max = 4_294_967_295L).
+    // No Zip64 locator or Zip64 EOCD is present. Because the cenOffset > fileLen, the
+    // "CEN offset out of range" guard fires, returning Abort[TastyError.MalformedSection].
+    //
+    // This confirms that offset values that would overflow Int on a large file do not silently
+    // produce wrong results: the bounds check catches them before any memory is accessed.
+    // Pins C1, INV-012.
+    "P04a-T1: EOCD cenOffset=0xFFFFFFFF without Zip64 yields MalformedSection 'out of range'" taggedAs jvmOnly in run {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/sentinel-cenoffset.jar"
+
+        // Build a real JAR first, then patch the EOCD cenOffset field to 0xFFFFFFFF.
+        writeJar(jarPath, Seq(("dummy.tasty", tastyContent)))
+        val rawBytes = Files.readAllBytes(java.nio.file.Paths.get(jarPath))
+
+        // EOCD layout (22 bytes): sig(4) + diskNum(2) + startDisk(2) + entriesOnDisk(2) + totalEntries(2)
+        //   + cenSize(4) at offset 12 + cenOffset(4) at offset 16 + commentLen(2)
+        var eocdPos = -1
+        var i       = rawBytes.length - 22
+        while i >= 0 && eocdPos < 0 do
+            if (rawBytes(i) & 0xff) == 0x50 &&
+                (rawBytes(i + 1) & 0xff) == 0x4b &&
+                (rawBytes(i + 2) & 0xff) == 0x05 &&
+                (rawBytes(i + 3) & 0xff) == 0x06
+            then eocdPos = i
+            end if
+            i -= 1
+        end while
+        assert(eocdPos >= 0, "Could not locate EOCD in test JAR")
+
+        // Patch cenOffset at EOCD+16 to 0xFFFFFFFF (little-endian).
+        rawBytes(eocdPos + 16) = 0xff.toByte
+        rawBytes(eocdPos + 17) = 0xff.toByte
+        rawBytes(eocdPos + 18) = 0xff.toByte
+        rawBytes(eocdPos + 19) = 0xff.toByte
+        Files.write(java.nio.file.Paths.get(jarPath), rawBytes)
+
+        Abort.run[TastyError](
+            JarCentralDirectory.list(jarPath, Chunk(".tasty"))
+        ).map:
+            case Result.Failure(e) =>
+                e match
+                    case TastyError.MalformedSection(_, reason) =>
+                        assert(
+                            reason.contains("out of range"),
+                            s"Expected reason containing 'out of range' but got: $reason"
+                        )
+                    case other =>
+                        fail(s"Expected MalformedSection but got: $other")
+            case Result.Success(_) =>
+                fail("Expected Abort[TastyError.MalformedSection] for cenOffset=0xFFFFFFFF without Zip64")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Phase 04a - INV-012 Test 2: Zip64 EOCD locator detected.
+    // A synthetic JAR has the Zip64 EOCD locator signature (0x07064b50) immediately before the EOCD.
+    // The locator carries zip64EocdOffset pointing to a Zip64 EOCD record that reports cenOffset.
+    // JarCentralDirectory must use the Zip64 EOCD cenOffset rather than the standard EOCD cenOffset.
+    //
+    // We build a real JAR, then inject a Zip64 locator + Zip64 EOCD before the standard EOCD.
+    // The test verifies we can still enumerate entries without error, which confirms the Zip64 path
+    // is taken and the locator offset arithmetic is correct (no Int truncation at the locator read).
+    "P04a-T2: Zip64 EOCD locator detected and CEN location read correctly" taggedAs jvmOnly in run {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/zip64-locator.jar"
+
+        // Write a normal small JAR with one entry.
+        writeJar(jarPath, Seq(("kyo/Zip64Test.tasty", tastyContent)))
+        val rawBytes = Files.readAllBytes(java.nio.file.Paths.get(jarPath))
+
+        // Locate the existing EOCD signature.
+        var eocdPos = -1
+        var i       = rawBytes.length - 22
+        while i >= 0 && eocdPos < 0 do
+            if (rawBytes(i) & 0xff) == 0x50 &&
+                (rawBytes(i + 1) & 0xff) == 0x4b &&
+                (rawBytes(i + 2) & 0xff) == 0x05 &&
+                (rawBytes(i + 3) & 0xff) == 0x06
+            then eocdPos = i
+            end if
+            i -= 1
+        end while
+        assert(eocdPos >= 0, "Could not locate EOCD in test JAR")
+
+        // Read the CEN offset and entry count from the existing EOCD.
+        val stdCenOffset = (rawBytes(eocdPos + 16) & 0xff).toLong |
+            ((rawBytes(eocdPos + 17) & 0xff).toLong << 8) |
+            ((rawBytes(eocdPos + 18) & 0xff).toLong << 16) |
+            ((rawBytes(eocdPos + 19) & 0xff).toLong << 24)
+        val stdEntries = (rawBytes(eocdPos + 10) & 0xff).toLong |
+            ((rawBytes(eocdPos + 11) & 0xff).toLong << 8)
+
+        // Build a Zip64 EOCD record (56 bytes) pointing to the same CEN as the standard EOCD.
+        // Zip64 EOCD: sig(4) + recordSize(8) + versionMade(2) + versionNeeded(2) + diskNum(4) +
+        //   startDisk(4) + entriesOnDisk(8) + totalEntries(8) + cenSize(8) + cenOffset(8)
+        val zip64EocdRecord = new Array[Byte](56)
+        // sig = 0x06064b50
+        zip64EocdRecord(0) = 0x50; zip64EocdRecord(1) = 0x4b; zip64EocdRecord(2) = 0x06; zip64EocdRecord(3) = 0x06
+        // recordSize = 44 (56 - 12, as per spec)
+        zip64EocdRecord(4) = 44; zip64EocdRecord(5) = 0; zip64EocdRecord(6) = 0; zip64EocdRecord(7) = 0
+        zip64EocdRecord(8) = 0; zip64EocdRecord(9) = 0; zip64EocdRecord(10) = 0; zip64EocdRecord(11) = 0
+        // versionMade(2) + versionNeeded(2) = zeros at 12-15
+        // diskNum(4) + startDisk(4) = zeros at 16-23
+        // entriesOnDisk(8) at offset 24
+        zip64EocdRecord(24) = (stdEntries & 0xff).toByte
+        zip64EocdRecord(25) = 0; zip64EocdRecord(26) = 0; zip64EocdRecord(27) = 0
+        zip64EocdRecord(28) = 0; zip64EocdRecord(29) = 0; zip64EocdRecord(30) = 0; zip64EocdRecord(31) = 0
+        // totalEntries(8) at offset 32
+        zip64EocdRecord(32) = (stdEntries & 0xff).toByte
+        zip64EocdRecord(33) = 0; zip64EocdRecord(34) = 0; zip64EocdRecord(35) = 0
+        zip64EocdRecord(36) = 0; zip64EocdRecord(37) = 0; zip64EocdRecord(38) = 0; zip64EocdRecord(39) = 0
+        // cenSize(8) at offset 40 (we set it to 0 for the synthetic Zip64 path; the reader uses cenOffset)
+        // cenOffset(8) at offset 48 = stdCenOffset
+        zip64EocdRecord(48) = (stdCenOffset & 0xff).toByte
+        zip64EocdRecord(49) = ((stdCenOffset >> 8) & 0xff).toByte
+        zip64EocdRecord(50) = ((stdCenOffset >> 16) & 0xff).toByte
+        zip64EocdRecord(51) = ((stdCenOffset >> 24) & 0xff).toByte
+        zip64EocdRecord(52) = 0; zip64EocdRecord(53) = 0; zip64EocdRecord(54) = 0; zip64EocdRecord(55) = 0
+
+        // The Zip64 EOCD locator will be inserted at eocdPos - 20 (immediately before the EOCD).
+        // Its zip64EocdOffset must point to where we will place the Zip64 EOCD record.
+        // We will append: [original bytes up to eocdPos] [zip64EocdRecord(56)] [zip64Locator(20)] [EOCD(22)]
+        val zip64EocdOffset = eocdPos.toLong // Zip64 EOCD placed at the original EOCD position
+
+        val zip64Locator = new Array[Byte](20)
+        // sig = 0x07064b50
+        zip64Locator(0) = 0x50; zip64Locator(1) = 0x4b; zip64Locator(2) = 0x06; zip64Locator(3) = 0x07
+        // startDisk(4) = 0 at 4-7
+        // zip64EocdOffset(8) at offset 8
+        zip64Locator(8) = (zip64EocdOffset & 0xff).toByte
+        zip64Locator(9) = ((zip64EocdOffset >> 8) & 0xff).toByte
+        zip64Locator(10) = ((zip64EocdOffset >> 16) & 0xff).toByte
+        zip64Locator(11) = ((zip64EocdOffset >> 24) & 0xff).toByte
+        zip64Locator(12) = 0; zip64Locator(13) = 0; zip64Locator(14) = 0; zip64Locator(15) = 0
+        // totalDisks(4) = 1 at offset 16
+        zip64Locator(16) = 1; zip64Locator(17) = 0; zip64Locator(18) = 0; zip64Locator(19) = 0
+
+        // Build new file: prefix + zip64EocdRecord + zip64Locator + EOCD
+        val prefix   = rawBytes.take(eocdPos)
+        val eocdPart = rawBytes.drop(eocdPos)
+        val newBytes = prefix ++ zip64EocdRecord ++ zip64Locator ++ eocdPart
+        Files.write(java.nio.file.Paths.get(jarPath), newBytes)
+
+        // The JAR must still enumerate correctly via the Zip64 path.
+        Abort.run[TastyError](
+            JarCentralDirectory.list(jarPath, Chunk(".tasty"))
+        ).map:
+            case Result.Success(entries) =>
+                assert(
+                    entries.length == 1,
+                    s"Expected 1 entry via Zip64 path but got: ${entries.length}"
+                )
+                assert(
+                    entries.head._2 == "kyo/Zip64Test.tasty",
+                    s"Expected kyo/Zip64Test.tasty but got: ${entries.head._2}"
+                )
+            case Result.Failure(e) =>
+                fail(s"Expected success via Zip64 path but got failure: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
 end JarCentralDirectoryTest

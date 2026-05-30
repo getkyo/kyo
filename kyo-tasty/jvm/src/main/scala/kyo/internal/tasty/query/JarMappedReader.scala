@@ -48,6 +48,11 @@ final private[kyo] class JarMappedReader(
         //
         // We must read nameLen + extraLen from the LFH to locate the actual data start because
         // the LFH extra field length can differ from the CEN extra field length.
+        if entry.lfhOffset > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: LFH offset ${entry.lfhOffset} exceeds 2GB mmap range; Zip64 required"
+            )
+        end if
         buf.position(entry.lfhOffset.toInt)
         val sig = buf.getInt()
         if sig != 0x04034b50 then
@@ -58,19 +63,43 @@ final private[kyo] class JarMappedReader(
 
         // Skip version(2) + gpFlag(2) + method(2) + modTime(2) + modDate(2) + crc(4) + compSize(4) + uncompSize(4) = 22 bytes
         // We are at offset +4 after reading sig; skip 22 more to reach nameLen at +26.
-        buf.position(entry.lfhOffset.toInt + 26)
+        val lfhBase26 = entry.lfhOffset + 26L
+        if lfhBase26 > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: LFH offset + 26 ($lfhBase26) exceeds 2GB mmap range; Zip64 required"
+            )
+        end if
+        buf.position(lfhBase26.toInt)
         val nameLen  = buf.getShort() & 0xffff
         val extraLen = buf.getShort() & 0xffff
 
-        val dataOffset = entry.lfhOffset.toInt + 30 + nameLen + extraLen
+        val dataOffset: Long = entry.lfhOffset + 30L + nameLen.toLong + extraLen.toLong
+        if dataOffset < 0L || dataOffset > buf.limit().toLong then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: LFH dataOffset $dataOffset out of range (limit=${buf.limit()})"
+            )
+        end if
+        if entry.compSize > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: compressed size ${entry.compSize} exceeds Int.MaxValue; cannot allocate array"
+            )
+        end if
+        if entry.uncompSize > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: uncompressed size ${entry.uncompSize} exceeds Int.MaxValue; cannot allocate array"
+            )
+        end if
         val compSize   = entry.compSize.toInt
         val uncompSize = entry.uncompSize.toInt
 
+        // dataOffset is Long; ByteBuffer.position(int) only accepts Int.
+        // The bounds check above (dataOffset > buf.limit()) ensures dataOffset fits in Int here.
+        val dataOffsetInt = dataOffset.toInt
         entry.method match
             case 0 =>
                 // STORED: data is verbatim; copy directly from the mapped region into a heap array
                 val out = new Array[Byte](uncompSize)
-                buf.position(dataOffset)
+                buf.position(dataOffsetInt)
                 buf.get(out)
                 out
             case 8 =>
@@ -78,7 +107,7 @@ final private[kyo] class JarMappedReader(
                 // Use buf.slice(dataOffset, compSize) to get a ByteBuffer view that shares the
                 // mapped memory -- no heap copy of the compressed bytes.
                 // Inflater.setInput(ByteBuffer) (JDK 11+) feeds the mapped region directly.
-                val compSlice = buf.slice(dataOffset, compSize)
+                val compSlice = buf.slice(dataOffsetInt, compSize)
                 val inflater  = new Inflater(true)
                 try
                     inflater.setInput(compSlice)
