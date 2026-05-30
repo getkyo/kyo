@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.Writer
 
-final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
+final class YamlWriter private (private var config: Yaml.WriterConfig) extends Writer:
     import Yaml.WriterConfig.*
 
     sealed private trait Frame
@@ -16,9 +16,13 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
         case Plain(value: String)
         case Quoted(value: String)
         case Literal(value: String)
+        case Tagged(tag: String, scalar: Scalar)
+        case FloatValue(value: Float)
+        case DoubleValue(value: Double)
     end Scalar
 
     private val out                       = new StringBuilder
+    private var numericBuffer             = new Array[Byte](32)
     private var stack: List[Frame]        = Nil
     private var pendingField: Boolean     = false
     private var released: Boolean         = false
@@ -77,19 +81,33 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
     def duration(value: java.time.Duration): Unit = writeScalar(Scalar.Quoted(value.toString))
 
     def result(): Span[Byte] =
-        Span.from(resultString.getBytes(StandardCharsets.UTF_8))
+        val bytes = finishString().getBytes(StandardCharsets.UTF_8)
+        release()
+        Span.fromUnsafe(bytes)
+    end result
 
     override def resultString: String =
+        val result = finishString()
+        release()
+        result
+    end resultString
+
+    private def finishString(): String =
         if !released && shouldAppendTrailingNewline then out.append('\n')
-        val result = withDocumentMarkers(out.toString)
+        withDocumentMarkers(out.toString)
+    end finishString
+
+    private def release(): Unit =
+        val cacheable = out.capacity <= YamlWriter.MaxCachedOutputCapacity
         out.clear()
         stack = Nil
         pendingField = false
         lastWriteWasLine = false
         flowDepth = 0
         released = true
-        result
-    end resultString
+        if cacheable then YamlWriter.cache.set(this)
+        else YamlWriter.cache.set(null)
+    end release
 
     private def startMapping(size: Int): Unit =
         if size == 0 then
@@ -206,6 +224,16 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
             case Scalar.Literal(value) =>
                 appendLiteral(value, contentIndent)
                 true
+            case Scalar.Tagged(tag, scalar) =>
+                out.append(tag)
+                out.append(' ')
+                appendScalar(scalar, contentIndent)
+            case Scalar.FloatValue(value) =>
+                appendFloat(value)
+                false
+            case Scalar.DoubleValue(value) =>
+                appendDouble(value)
+                false
     end appendScalar
 
     private def stringScalar(value: String): Scalar =
@@ -216,18 +244,46 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
     end stringScalar
 
     private def floatScalar(value: Float): Scalar =
-        if value.isNaN then specialFloat("NaN", ".nan")
-        else if value == Float.PositiveInfinity then specialFloat("Infinity", ".inf")
-        else if value == Float.NegativeInfinity then specialFloat("-Infinity", "-.inf")
-        else Scalar.Plain(value.toString)
+        if value.isNaN then specialFloat(".nan")
+        else if value == Float.PositiveInfinity then specialFloat(".inf")
+        else if value == Float.NegativeInfinity then specialFloat("-.inf")
+        else Scalar.FloatValue(value)
     end floatScalar
 
     private def doubleScalar(value: Double): Scalar =
-        if value.isNaN then specialFloat("NaN", ".nan")
-        else if value == Double.PositiveInfinity then specialFloat("Infinity", ".inf")
-        else if value == Double.NegativeInfinity then specialFloat("-Infinity", "-.inf")
-        else Scalar.Plain(value.toString)
+        if value.isNaN then specialFloat(".nan")
+        else if value == Double.PositiveInfinity then specialFloat(".inf")
+        else if value == Double.NegativeInfinity then specialFloat("-.inf")
+        else Scalar.DoubleValue(value)
     end doubleScalar
+
+    private def appendFloat(value: Float): Unit =
+        val written = Ryu.RyuFloat.write(value, numericBuffer, 0, numericBuffer.length)
+        val end =
+            if written < 0 then
+                numericBuffer = java.util.Arrays.copyOf(numericBuffer, -written)
+                Ryu.RyuFloat.write(value, numericBuffer, 0, numericBuffer.length)
+            else written
+        appendAsciiBytes(numericBuffer, end)
+    end appendFloat
+
+    private def appendDouble(value: Double): Unit =
+        val written = Ryu.RyuDouble.write(value, numericBuffer, 0, numericBuffer.length)
+        val end =
+            if written < 0 then
+                numericBuffer = java.util.Arrays.copyOf(numericBuffer, -written)
+                Ryu.RyuDouble.write(value, numericBuffer, 0, numericBuffer.length)
+            else written
+        appendAsciiBytes(numericBuffer, end)
+    end appendDouble
+
+    private def appendAsciiBytes(bytes: Array[Byte], end: Int): Unit =
+        var i = 0
+        while i < end do
+            out.append(bytes(i).toChar)
+            i += 1
+        end while
+    end appendAsciiBytes
 
     private def currentIndent: Int =
         stack match
@@ -394,10 +450,10 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
         if frame.first then frame.first = false
         else appendFlowSeparator()
 
-    private def specialFloat(quoted: String, yaml: String): Scalar =
+    private def specialFloat(yaml: String): Scalar =
         config.specialFloatStyle match
-            case SpecialFloatStyle.QuotedJsonCompatible => Scalar.Quoted(quoted)
-            case SpecialFloatStyle.YamlCore             => Scalar.Plain(yaml)
+            case SpecialFloatStyle.TaggedYamlCore => Scalar.Tagged("!!float", Scalar.Quoted(yaml))
+            case SpecialFloatStyle.YamlCore       => Scalar.Plain(yaml)
 
     private def indentSize: Int =
         math.max(1, config.indent)
@@ -419,6 +475,18 @@ final class YamlWriter private (config: Yaml.WriterConfig) extends Writer:
 end YamlWriter
 
 object YamlWriter:
-    def apply(): YamlWriter                          = new YamlWriter(Yaml.WriterConfig.Default)
-    def apply(config: Yaml.WriterConfig): YamlWriter = new YamlWriter(config)
+    final private val MaxCachedOutputCapacity = 262144
+    private[internal] val cache               = new ThreadLocal[YamlWriter]
+
+    def apply(): YamlWriter = apply(Yaml.WriterConfig.Default)
+
+    def apply(config: Yaml.WriterConfig): YamlWriter =
+        val cached = cache.get()
+        if cached == null then new YamlWriter(config)
+        else
+            cache.set(null)
+            cached.config = config
+            cached
+        end if
+    end apply
 end YamlWriter

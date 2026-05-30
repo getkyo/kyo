@@ -78,10 +78,11 @@ object Yaml:
       * profile favors readable, round-trip-friendly block YAML: collections use indentation, ambiguous strings are quoted, and multiline
       * strings use block scalars.
       *
-      * The config can also select flow output for compact documents, JSON-compatible flow output for speed-oriented processing, quote and
+      * The config can also select flow output for compact documents, JSON-like flow output for speed-oriented processing, quote and
       * multiline scalar styles, document markers, indentation width, trailing newline behavior, special floating-point rendering, and the
-      * YAML version used when deciding which strings are ambiguous. Profiles in the companion provide named starting points for common
-      * tradeoffs: readability, compactness, smaller payloads, and fast downstream processing.
+      * YAML version used when deciding which strings are ambiguous. YAML-specific values such as non-finite floats may still use YAML
+      * syntax and tags. Profiles in the companion provide named starting points for common tradeoffs: readability, compactness, smaller
+      * payloads, and fast downstream processing.
       *
       * IMPORTANT: `ScalarQuoting.WhenNeeded` can emit plain strings such as `true` or `0x3A` without quotes. Use the default
       * `QuoteAmbiguous` behavior when encoded YAML should decode back to strings under the YAML Core schema.
@@ -130,7 +131,7 @@ object Yaml:
         end DocumentMarkers
 
         enum SpecialFloatStyle derives CanEqual:
-            case YamlCore, QuotedJsonCompatible
+            case YamlCore, TaggedYamlCore
         end SpecialFloatStyle
 
         val Readable: WriterConfig = WriterConfig()
@@ -152,7 +153,7 @@ object Yaml:
                 sequenceMappingStyle = SequenceMappingStyle.Compact,
                 scalarQuoting = ScalarQuoting.QuoteAllStrings,
                 multilineStyle = MultilineStyle.DoubleQuoted,
-                specialFloatStyle = SpecialFloatStyle.QuotedJsonCompatible,
+                specialFloatStyle = SpecialFloatStyle.TaggedYamlCore,
                 trailingNewline = false
             )
 
