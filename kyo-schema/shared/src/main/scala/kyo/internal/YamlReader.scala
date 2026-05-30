@@ -1439,22 +1439,11 @@ final class YamlReader private (
     end skipSourceIgnorable
 
     private def skipSourceBlankAndCommentLines(): Unit =
-        var done = false
-        while !done && sourcePos < source.length do
-            val trimmed = currentSourceLine().trim
-            if trimmed.isEmpty || trimmed.startsWith("#") then
-                val _ = readSourceRestOfLine()
-            else done = true
-        end while
+        sourcePos = YamlSource.skipBlankAndCommentLines(source, sourcePos)
     end skipSourceBlankAndCommentLines
 
     private def currentSourceIndent(): Int =
-        var i = sourcePos
-        var n = 0
-        while i < source.length && source.charAt(i) == ' ' do
-            n += 1
-            i += 1
-        n
+        YamlSource.indent(source, sourcePos)
     end currentSourceIndent
 
     private def consumeSourceIndent(n: Int): Unit =
@@ -1465,10 +1454,7 @@ final class YamlReader private (
     end consumeSourceIndent
 
     private def currentSourceLine(): String =
-        val end = source.indexOf('\n', sourcePos) match
-            case -1 => source.length
-            case n  => n
-        source.substring(sourcePos, end)
+        YamlSource.line(source, sourcePos)
     end currentSourceLine
 
     private def currentSourceLineNumber(): Int =
@@ -1476,12 +1462,7 @@ final class YamlReader private (
     end currentSourceLineNumber
 
     private def lineNumberAt(position: Int): Int =
-        var line = 1
-        var i    = 0
-        while i < position do
-            if source.charAt(i) == '\n' then line += 1
-            i += 1
-        line
+        YamlSource.lineNumber(source, position)
     end lineNumberAt
 
     private def preserveSourceLine(value: String, lineNumber: Int): String =
@@ -1503,7 +1484,7 @@ final class YamlReader private (
     end readSourceRestOfLine
 
     private def readSourceRestOfLineFrom(start: Int): String =
-        while sourcePos < source.length && source.charAt(sourcePos) != '\n' do sourcePos += 1
+        sourcePos = YamlSource.lineEnd(source, sourcePos)
         val out = source.substring(start, sourcePos)
         if sourcePos < source.length && source.charAt(sourcePos) == '\n' then sourcePos += 1
         out
@@ -1516,72 +1497,31 @@ final class YamlReader private (
     end isSourceBlockMappingLine
 
     private def sourceStartsSequenceEntryAtIndent(): Boolean =
-        val indent = currentSourceIndent()
-        val idx    = sourcePos + indent
-        idx < source.length && source.charAt(idx) == '-' && (
-            idx + 1 >= source.length ||
-                source.charAt(idx + 1) == ' ' ||
-                source.charAt(idx + 1) == '\n' ||
-                source.charAt(idx + 1) == '\r'
-        )
+        YamlSource.startsSequenceEntryAtIndent(source, sourcePos)
     end sourceStartsSequenceEntryAtIndent
 
     private def sourceStartsFlowCollection: Boolean =
-        val indent = currentSourceIndent()
-        val idx    = sourcePos + indent
-        idx < source.length && (source.charAt(idx) == '[' || source.charAt(idx) == '{')
+        YamlSource.startsFlowCollection(source, sourcePos)
     end sourceStartsFlowCollection
 
     private def sourceStartsFlowSequence: Boolean =
-        val indent = currentSourceIndent()
-        val idx    = sourcePos + indent
-        idx < source.length && source.charAt(idx) == '['
+        YamlSource.startsFlowSequence(source, sourcePos)
     end sourceStartsFlowSequence
 
     private def sourceStartsFlowMapping: Boolean =
-        val indent = currentSourceIndent()
-        val idx    = sourcePos + indent
-        idx < source.length && source.charAt(idx) == '{'
+        YamlSource.startsFlowMapping(source, sourcePos)
     end sourceStartsFlowMapping
 
     private def skipSourceFlowWhitespace(): Unit =
-        var done = false
-        while !done && sourcePos < source.length do
-            val ch = source.charAt(sourcePos)
-            if ch.isWhitespace then sourcePos += 1
-            else if ch == '#' then
-                while sourcePos < source.length && source.charAt(sourcePos) != '\n' do sourcePos += 1
-            else done = true
-            end if
-        end while
+        sourcePos = YamlSource.skipFlowWhitespace(source, sourcePos)
     end skipSourceFlowWhitespace
 
     private def sourceIsDocumentMarker(marker: String): Boolean =
-        val lineText = currentSourceLine()
-        currentSourceIndent() == 0 && lineText.startsWith(marker) && (
-            lineText.length == marker.length ||
-                lineText.charAt(marker.length).isWhitespace ||
-                lineText.charAt(marker.length) == '#'
-        )
+        YamlSource.isDocumentMarker(source, sourcePos, marker)
     end sourceIsDocumentMarker
 
     private def stripSourceComment(s: String): String =
-        var i      = 0
-        var single = false
-        var double = false
-        var escape = false
-        while i < s.length do
-            val ch = s.charAt(i)
-            if escape then escape = false
-            else if double && ch == '\\' then escape = true
-            else if !double && ch == '\'' then single = !single
-            else if !single && ch == '"' then double = !double
-            else if !single && !double && ch == '#' && (i == 0 || s.charAt(i - 1).isWhitespace) then
-                return s.substring(0, i)
-            end if
-            i += 1
-        end while
-        s
+        YamlSource.stripComment(s)
     end stripSourceComment
 
     private def unquoteSourceKey(text: String): String =
@@ -1593,18 +1533,11 @@ final class YamlReader private (
     end unquoteSourceKey
 
     private def trimmedSourceRange(start: Int, stop: Int): (Int, Int) =
-        var from = start
-        var to   = stop
-        while from < to && source.charAt(from).isWhitespace do from += 1
-        while to > from && source.charAt(to - 1).isWhitespace do to -= 1
-        (from, to)
+        YamlSource.trimmedRange(source, start, stop)
     end trimmedSourceRange
 
     private def sourceQuotedScalar(start: Int, stop: Int): Boolean =
-        stop > start + 1 && (
-            source.charAt(start) == '\'' && source.charAt(stop - 1) == '\'' ||
-                source.charAt(start) == '"' && source.charAt(stop - 1) == '"'
-        )
+        YamlSource.quotedScalar(source, start, stop)
     end sourceQuotedScalar
 
     private def sourceProperties(text: String): (Maybe[String], Maybe[String], String) =
@@ -1630,10 +1563,7 @@ final class YamlReader private (
     end sourceProperties
 
     private def sourcePropertyToken(text: String): (String, String) =
-        val end = text.indexWhere(_.isWhitespace) match
-            case -1 => text.length
-            case n  => n
-        (text.substring(0, end), text.substring(end).trim)
+        YamlSource.propertyToken(text)
     end sourcePropertyToken
 
     private def registerSourceAnchor(name: String, value: String): Unit =
@@ -1796,27 +1726,7 @@ final class YamlReader private (
     end sourceAnchorStats
 
     private def findSourceTopLevel(s: String, target: Char): Int =
-        var i      = 0
-        var depth  = 0
-        var single = false
-        var double = false
-        var escape = false
-        while i < s.length do
-            val ch = s.charAt(i)
-            if escape then escape = false
-            else if double && ch == '\\' then escape = true
-            else if !double && ch == '\'' then single = !single
-            else if !single && ch == '"' then double = !double
-            else if !single && !double then
-                ch match
-                    case '[' | '{'                      => depth += 1
-                    case ']' | '}'                      => depth -= 1
-                    case c if c == target && depth == 0 => return i
-                    case _                              => ()
-            end if
-            i += 1
-        end while
-        -1
+        YamlSource.findTopLevel(s, target)
     end findSourceTopLevel
 
     private def prepare(): Unit =
