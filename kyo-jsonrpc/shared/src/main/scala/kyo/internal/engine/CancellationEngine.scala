@@ -9,7 +9,7 @@ import kyo.Maybe.Present
 private[kyo] object CancellationEngine:
 
     private def extractCancelId(
-        policy: JsonRpcHandler.CancellationPolicy,
+        policy: JsonRpcCancellationPolicy,
         params: Maybe[Structure.Value]
     )(using Frame): Maybe[JsonRpcId] < Sync =
         params match
@@ -18,7 +18,7 @@ private[kyo] object CancellationEngine:
 
     /** Test-accessible alias for extractCancelId. */
     private[kyo] def extractCancelIdForTest(
-        policy: JsonRpcHandler.CancellationPolicy,
+        policy: JsonRpcCancellationPolicy,
         params: Maybe[Structure.Value]
     )(using Frame): Maybe[JsonRpcId] < Sync =
         extractCancelId(policy, params)
@@ -29,7 +29,7 @@ private[kyo] object CancellationEngine:
       */
     def handleInboundCancel(
         env: JsonRpcNotification,
-        policy: JsonRpcHandler.CancellationPolicy,
+        policy: JsonRpcCancellationPolicy,
         pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry]
     )(using Frame): Unit < Sync =
         extractCancelId(policy, env.params).map {
@@ -81,7 +81,7 @@ private[kyo] object CancellationEngine:
         id: JsonRpcId,
         reason: Maybe[String],
         info: CallerInfo,
-        policy: JsonRpcHandler.CancellationPolicy,
+        policy: JsonRpcCancellationPolicy,
         writerChannel: Channel[WriterMsg]
     )(using Frame): Unit < (Async & Abort[Closed]) =
         policy.encodeParams(id, reason).map { params =>
@@ -95,7 +95,7 @@ private[kyo] object CancellationEngine:
     def handleTimeout(
         id: JsonRpcId,
         reason: Maybe[String],
-        cancellation: Maybe[JsonRpcHandler.CancellationPolicy],
+        cancellation: Maybe[JsonRpcCancellationPolicy],
         callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo],
         writerChannel: Channel[WriterMsg]
     )(using Frame): Unit < (Async & Abort[Closed]) =

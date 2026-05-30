@@ -27,4 +27,9 @@ end JsonRpcCodec
 object JsonRpcCodec:
     val Strict2_0: JsonRpcCodec = internal.codec.JsonRpcCodecImpl.Strict2_0
     val Cdp: JsonRpcCodec       = internal.codec.JsonRpcCodecImpl.Cdp
+
+    /** The default codec: strict JSON-RPC 2.0 encoding.
+      * Matches the value used by [[JsonRpcHandler.Config.default]].
+      */
+    val default: JsonRpcCodec = Strict2_0
 end JsonRpcCodec

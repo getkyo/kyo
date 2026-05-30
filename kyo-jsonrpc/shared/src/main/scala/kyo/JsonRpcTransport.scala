@@ -12,7 +12,7 @@ import kyo.Stream
   *
   * Pre-built factories in the companion cover the most common cases:
   *  - [[JsonRpcTransport.inMemory]]: paired in-memory channels for testing.
-  *  - [[JsonRpcTransport.fromWire]]: wraps a [[JsonRpcTransport.WireTransport]] + [[JsonRpcTransport.Framer]] + [[JsonRpcCodec]].
+  *  - [[JsonRpcTransport.fromWire]]: wraps a [[JsonRpcWireTransport]] + [[JsonRpcFramer]] + [[JsonRpcCodec]].
   *  - [[JsonRpcTransport.stdio]]: line-delimited stdin/stdout transport for CLI servers.
   *
   * @see [[JsonRpcHandler]]
@@ -25,80 +25,20 @@ end JsonRpcTransport
 
 object JsonRpcTransport:
 
-    /** Byte-level transport abstraction for carrying framed JSON-RPC messages over a byte stream.
-      *
-      * `WireTransport` is the lower-level seam below [[JsonRpcTransport]]. Implement this trait to
-      * integrate a custom byte-stream connection (e.g., a TCP socket, a pipe, or a test double).
-      * Pass the implementation to [[JsonRpcTransport.fromWire]] together with a [[JsonRpcTransport.Framer]] to
-      * produce an envelope-level `JsonRpcTransport`.
-      *
-      * A no-op [[WireTransport.empty]] is provided for tests that do not need real I/O.
-      *
-      * @see [[JsonRpcTransport.fromWire]]
-      * @see [[JsonRpcTransport.Framer]]
-      */
-    trait WireTransport:
-        def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed])
-        def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]]
-        def close(using Frame): Unit < Async
-    end WireTransport
+    // --- Backward-compat type aliases for the 2 hoisted types (Phase G) ---
+    // These allow existing callers using the qualified form to continue compiling.
 
-    object WireTransport:
-        /** No-op wire transport for tests: send drops bytes, incoming is empty, close is no-op. */
-        val empty: WireTransport = new WireTransport:
-            def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) = Kyo.unit
-            def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]]     = Stream.empty
-            def close(using Frame): Unit < Async                                      = Kyo.unit
-    end WireTransport
+    /** @see [[JsonRpcWireTransport]] */
+    type WireTransport = JsonRpcWireTransport
 
-    /** Encodes and decodes byte-stream boundaries for JSON-RPC messages carried over a byte-level
-      * transport.
-      *
-      * A `Framer` controls how raw bytes are split into discrete message frames on the wire:
-      *  - `frame`: wraps a single encoded message for transmission (e.g., appends `\n` or a
-      *    `Content-Length` header).
-      *  - `parse`: converts a raw byte stream into a stream of complete message frames.
-      *
-      * Two preset framers are provided:
-      *  - [[Framer.lineDelimited]]: newline-delimited framing, suitable for stdio transports.
-      *  - [[Framer.contentLength]]: `Content-Length` header framing used by LSP over stdio.
-      *
-      * Pass the chosen framer to [[JsonRpcTransport.fromWire]] or [[JsonRpcTransport.stdio]].
-      *
-      * @see [[JsonRpcTransport.fromWire]]
-      * @see [[JsonRpcTransport.WireTransport]]
-      */
-    trait Framer:
-        def frame(bytes: Chunk[Byte])(using Frame): Chunk[Byte] < Sync
-        def parse(stream: Stream[Chunk[Byte], Async & Abort[Closed]])(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]]
-    end Framer
+    /** @see [[JsonRpcWireTransport]] */
+    val WireTransport: JsonRpcWireTransport.type = JsonRpcWireTransport
 
-    object Framer:
+    /** @see [[JsonRpcFramer]] */
+    type Framer = JsonRpcFramer
 
-        /** One frame per LF-terminated segment. Trailing CR before LF is stripped.
-          * Empty lines are skipped. EOF closes the stream without flushing a partial line.
-          */
-        val lineDelimited: Framer = new Framer:
-            def frame(bytes: Chunk[Byte])(using Frame): Chunk[Byte] < Sync =
-                Sync.defer(bytes :+ '\n'.toByte)
-
-            def parse(stream: Stream[Chunk[Byte], Async & Abort[Closed]])(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
-                internal.framing.FramerImpl.parseLineDelimited(stream)
-
-        /** Content-Length envelope framing: `Content-Length: N\r\n\r\n<N bytes>`. Tolerant
-          * of `\n\n` on parse, strict `\r\n\r\n` on emit. Header errors raise
-          * `Abort.fail(JsonRpcError.parseError(reason))`.
-          */
-        val contentLength: Framer = new Framer:
-            def frame(bytes: Chunk[Byte])(using Frame): Chunk[Byte] < Sync =
-                Sync.defer {
-                    val header = s"Content-Length: ${bytes.length}\r\n\r\n".getBytes("UTF-8")
-                    Chunk.from(header) ++ bytes
-                }
-
-            def parse(stream: Stream[Chunk[Byte], Async & Abort[Closed]])(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
-                internal.framing.FramerImpl.parseContentLength(stream)
-    end Framer
+    /** @see [[JsonRpcFramer]] */
+    val Framer: JsonRpcFramer.type = JsonRpcFramer
 
     /** Pair of cross-wired in-memory transports for tests.
       *
@@ -125,8 +65,8 @@ object JsonRpcTransport:
       * outbound envelopes pass through `codec.encode` and `framer.frame`.
       */
     def fromWire(
-        wire: WireTransport,
-        framer: Framer,
+        wire: JsonRpcWireTransport,
+        framer: JsonRpcFramer,
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
     )(using Frame): JsonRpcTransport < (Async & Scope) =
         Sync.defer(new internal.transport.WireTransportAdapter(wire, framer, codec))
@@ -135,7 +75,7 @@ object JsonRpcTransport:
       * and writes `Console.printLine`. EOF on stdin closes `incoming`. One envelope per line.
       */
     def stdio(
-        framer: Framer = Framer.lineDelimited,
+        framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
     )(using Frame): JsonRpcTransport < (Async & Scope) =
         Sync.defer(new internal.transport.StdioWireTransport).map { wire =>
@@ -154,12 +94,12 @@ object JsonRpcTransport:
       * those platforms.
       *
       * @param sockPath path to the socket file (must not already exist)
-      * @param framer   byte-stream framing strategy; defaults to [[Framer.lineDelimited]]
+      * @param framer   byte-stream framing strategy; defaults to [[JsonRpcFramer.lineDelimited]]
       * @param codec    envelope serialisation; defaults to [[JsonRpcCodec.Strict2_0]]
       */
     def unixDomain(
         sockPath: java.nio.file.Path,
-        framer: Framer = Framer.lineDelimited,
+        framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         internal.transport.UdsBackend.connect(sockPath, framer, codec)

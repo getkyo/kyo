@@ -35,14 +35,14 @@ object JsonRpcHandler:
         def call[In: Schema, Out: Schema](
             method: String,
             params: In,
-            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+            extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
             self.callUnsafe[In, Out](method, params, extras)
 
         def notify[In: Schema](
             method: String,
             params: In,
-            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+            extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): Unit < (Async & Abort[Closed]) =
             self.notifyUnsafe[In](method, params, extras)
 
@@ -50,21 +50,21 @@ object JsonRpcHandler:
             method: String,
             params: In,
             id: JsonRpcId,
-            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+            extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): Unit < (Async & Abort[Closed]) =
             self.sendUnmatchedUnsafe[In](method, params, id, extras)
 
         def callWithProgress[In: Schema, Out: Schema](
             method: String,
             params: In,
-            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+            extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
             self.callWithProgressUnsafe[In, Out](method, params, extras)
 
         def callPartialResults[In: Schema, T: Schema: Tag](
             method: String,
             params: In,
-            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+            extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
             self.callPartialResultsUnsafe[In, T](method, params, extras)
 
@@ -102,32 +102,32 @@ object JsonRpcHandler:
         def callUnsafe[In: Schema, Out: Schema](
             method: String,
             params: In,
-            extras: JsonRpcHandler.ExtrasEncoder
+            extras: JsonRpcExtrasEncoder
         )(using Frame): Out < (Async & Abort[JsonRpcError | Closed])
 
         def notifyUnsafe[In: Schema](
             method: String,
             params: In,
-            extras: JsonRpcHandler.ExtrasEncoder
+            extras: JsonRpcExtrasEncoder
         )(using Frame): Unit < (Async & Abort[Closed])
 
         def sendUnmatchedUnsafe[In: Schema](
             method: String,
             params: In,
             id: JsonRpcId,
-            extras: JsonRpcHandler.ExtrasEncoder
+            extras: JsonRpcExtrasEncoder
         )(using Frame): Unit < (Async & Abort[Closed])
 
         def callWithProgressUnsafe[In: Schema, Out: Schema](
             method: String,
             params: In,
-            extras: JsonRpcHandler.ExtrasEncoder
+            extras: JsonRpcExtrasEncoder
         )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed])
 
         def callPartialResultsUnsafe[In: Schema, T: Schema: Tag](
             method: String,
             params: In,
-            extras: JsonRpcHandler.ExtrasEncoder
+            extras: JsonRpcExtrasEncoder
         )(using Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]]
 
         def subscribeProgressUnsafe(token: Structure.Value)(using Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync
@@ -165,256 +165,45 @@ object JsonRpcHandler:
       *  - `cancel`: cancels the in-flight request by sending a cancellation notification.
       */
     // Hub.scala:22 smart-constructor pattern; Pending built only by JsonRpcEndpointImpl.callWithProgress
-    final class Pending[Out] private[kyo] (
+    final class Pending[+Out] private[kyo] (
         val id: JsonRpcId,
         val result: Out < (Async & Abort[JsonRpcError | Closed]),
         val progress: Stream[Structure.Value, Async],
         val cancel: Unit < (Async & Abort[Closed])
     )
 
-    /** Selects how the endpoint allocates [[JsonRpcId]] values for outbound requests.
-      *
-      * Three strategies are available:
-      *  - [[IdStrategy.SequentialLong]]: monotonically increasing `Long` ids starting at 1.
-      *  - [[IdStrategy.SequentialInt]]: monotonically increasing `Int` ids (wraps at `Int.MaxValue`).
-      *  - [[IdStrategy.Custom]]: caller-supplied generator; use when interoperating with peers that
-      *    require string ids or specific id formats.
-      *
-      * Set via [[JsonRpcHandler.Config.idStrategy]].
-      *
-      * @see [[JsonRpcHandler.Config]]
-      */
-    enum IdStrategy derives CanEqual:
-        case SequentialLong
-        case SequentialInt
-        case Custom(next: () => JsonRpcId < Sync)
-    end IdStrategy
+    // --- Backward-compat type aliases for the 5 hoisted types (Phase G) ---
+    // These allow existing callers using qualified form to continue compiling.
 
-    /** Controls how the endpoint responds to incoming requests and notifications for methods
-      * that have no registered handler.
-      *
-      * Three preset values cover the most common cases:
-      *  - [[UnknownMethodPolicy.minimal]]: reply `MethodNotFound` on requests, silently drop notifications.
-      *  - [[UnknownMethodPolicy.lsp]]: same as `minimal` but also allows `$/`-prefixed LSP meta-methods.
-      *  - [[UnknownMethodPolicy.strict]]: reply `MethodNotFound` on requests, reject unknown notifications.
-      *
-      * Set via [[JsonRpcHandler.Config.unknownMethod]].
-      *
-      * @see [[JsonRpcHandler.Config]]
-      */
-    // Hub.scala:22 smart-constructor pattern; users select .minimal / .lsp / .strict
-    final case class UnknownMethodPolicy private[kyo] (
-        onUnknownRequest: UnknownMethodPolicy.UnknownAction,
-        onUnknownNotification: UnknownMethodPolicy.UnknownAction,
-        dollarPrefixOverride: Boolean
-    ) derives CanEqual
+    /** @see [[JsonRpcIdStrategy]] */
+    type IdStrategy = JsonRpcIdStrategy
 
-    object UnknownMethodPolicy:
-        enum UnknownAction derives CanEqual:
-            case ReplyMethodNotFound
-            case Drop
-            case Reject
-        end UnknownAction
+    /** @see [[JsonRpcIdStrategy]] */
+    val IdStrategy: JsonRpcIdStrategy.type = JsonRpcIdStrategy
 
-        val minimal: UnknownMethodPolicy = UnknownMethodPolicy(
-            onUnknownRequest = UnknownAction.ReplyMethodNotFound,
-            onUnknownNotification = UnknownAction.Drop,
-            dollarPrefixOverride = false
-        )
+    /** @see [[JsonRpcUnknownMethodPolicy]] */
+    type UnknownMethodPolicy = JsonRpcUnknownMethodPolicy
 
-        val lsp: UnknownMethodPolicy = UnknownMethodPolicy(
-            onUnknownRequest = UnknownAction.ReplyMethodNotFound,
-            onUnknownNotification = UnknownAction.Drop,
-            dollarPrefixOverride = true
-        )
+    /** @see [[JsonRpcUnknownMethodPolicy]] */
+    val UnknownMethodPolicy: JsonRpcUnknownMethodPolicy.type = JsonRpcUnknownMethodPolicy
 
-        val strict: UnknownMethodPolicy = UnknownMethodPolicy(
-            onUnknownRequest = UnknownAction.ReplyMethodNotFound,
-            onUnknownNotification = UnknownAction.Reject,
-            dollarPrefixOverride = false
-        )
-    end UnknownMethodPolicy
+    /** @see [[JsonRpcCancellationPolicy]] */
+    type CancellationPolicy = JsonRpcCancellationPolicy
 
-    /** Configures how the endpoint sends and receives request cancellation notifications.
-      *
-      * A `CancellationPolicy` specifies the method name, parameter encoding/decoding, whether the
-      * cancelled request still expects a reply, and which methods are protected from cancellation.
-      *
-      * Two preset policies cover the major protocols:
-      *  - [[CancellationPolicy.lsp]]: LSP `$/cancelRequest` with `{"id": ...}` params; cancelled
-      *    requests still produce a `MethodNotFound` reply.
-      *  - [[CancellationPolicy.mcp]]: MCP `notifications/cancelled` with `{"requestId": ...}`; no
-      *    reply is expected for cancelled requests; `initialize` is protected.
-      *
-      * Set via [[JsonRpcHandler.Config.cancellation]].
-      *
-      * @see [[JsonRpcHandler.Config]]
-      */
-    final case class CancellationPolicy(
-        cancelMethod: String,
-        encodeParams: CancellationPolicy.ParamsEncoder,
-        decodeParams: CancellationPolicy.ParamsDecoder,
-        expectReplyForCancelledRequest: Boolean,
-        cancelledError: Maybe[JsonRpcError],
-        protectedMethods: Set[String]
-    ) derives CanEqual
+    /** @see [[JsonRpcCancellationPolicy]] */
+    val CancellationPolicy: JsonRpcCancellationPolicy.type = JsonRpcCancellationPolicy
 
-    object CancellationPolicy:
-        private type ParamsEncoder = (JsonRpcId, Maybe[String]) => Frame ?=> Structure.Value < Sync
-        private type ParamsDecoder = Structure.Value => Frame ?=> Maybe[JsonRpcId] < Sync
+    /** @see [[JsonRpcProgressPolicy]] */
+    type ProgressPolicy = JsonRpcProgressPolicy
 
-        private case class LspCancelParams(id: JsonRpcId) derives Schema, CanEqual
-        private case class McpCancelParams(requestId: JsonRpcId, reason: Maybe[String]) derives Schema, CanEqual
+    /** @see [[JsonRpcProgressPolicy]] */
+    val ProgressPolicy: JsonRpcProgressPolicy.type = JsonRpcProgressPolicy
 
-        // annotation pins the private ParamsEncoder type so the lambda matches the case-class constructor field type
-        private val lspEncoder: ParamsEncoder =
-            (id, _) =>
-                f ?=>
-                    Sync.defer(Structure.encode(LspCancelParams(id)))(using f)
+    /** @see [[JsonRpcExtrasEncoder]] */
+    type ExtrasEncoder = JsonRpcExtrasEncoder
 
-        // annotation pins the private ParamsEncoder type so the lambda matches the case-class constructor field type
-        private val mcpEncoder: ParamsEncoder =
-            (id, reason) =>
-                f ?=>
-                    Sync.defer(Structure.encode(McpCancelParams(id, reason)))(using f)
-
-        // annotation pins the private ParamsDecoder type so the lambda matches the case-class constructor field type
-        private val lspDecoder: ParamsDecoder =
-            sv =>
-                f ?=>
-                    Sync.defer {
-                        Structure.decode[LspCancelParams](sv)(using summon[Schema[LspCancelParams]], f) match
-                            case Result.Success(p) => Present(p.id)
-                            case _                 => Absent
-                    }(using f)
-
-        // annotation pins the private ParamsDecoder type so the lambda matches the case-class constructor field type
-        private val mcpDecoder: ParamsDecoder =
-            sv =>
-                f ?=>
-                    Sync.defer {
-                        Structure.decode[McpCancelParams](sv)(using summon[Schema[McpCancelParams]], f) match
-                            case Result.Success(p) => Present(p.requestId)
-                            case _                 => Absent
-                    }(using f)
-
-        val lsp: CancellationPolicy = CancellationPolicy(
-            cancelMethod = "$/cancelRequest",
-            encodeParams = lspEncoder,
-            decodeParams = lspDecoder,
-            expectReplyForCancelledRequest = true,
-            cancelledError = Present(JsonRpcCustomError(-32800, "Request cancelled")(using Frame.internal)),
-            protectedMethods = Set.empty
-        )
-
-        val mcp: CancellationPolicy = CancellationPolicy(
-            cancelMethod = "notifications/cancelled",
-            encodeParams = mcpEncoder,
-            decodeParams = mcpDecoder,
-            expectReplyForCancelledRequest = false,
-            cancelledError = Absent,
-            protectedMethods = Set("initialize")
-        )
-    end CancellationPolicy
-
-    /** Configures how the endpoint reports and receives progress notifications during long-running
-      * requests.
-      *
-      * A `ProgressPolicy` captures the method name and a set of token-extraction and parameter
-      * encoding/decoding functions specific to each protocol dialect.
-      *
-      * Two preset policies are provided:
-      *  - [[ProgressPolicy.lsp]]: LSP `$/progress` with `workDoneToken` in request params.
-      *  - [[ProgressPolicy.mcp]]: MCP `notifications/progress` with `_meta.progressToken`; enforces
-      *    monotonic progress values.
-      *
-      * Set via [[JsonRpcHandler.Config.progress]].
-      *
-      * @see [[JsonRpcHandler.Config]]
-      * @see [[JsonRpcRoute.Context]]
-      */
-    final case class ProgressPolicy(
-        progressMethod: String,
-        extractInboundToken: Structure.Value => (Maybe[Structure.Value] < Sync),
-        extractRequestToken: Structure.Value => (Maybe[Structure.Value] < Sync),
-        stampOutboundToken: (Structure.Value, Structure.Value) => (Structure.Value < Sync),
-        encodeProgressParams: (Structure.Value, Structure.Value) => (Structure.Value < Sync),
-        extractProgressValue: Structure.Value => (Maybe[Structure.Value] < Sync),
-        enforceMonotonic: Boolean
-    ) derives CanEqual
-
-    object ProgressPolicy:
-        import Structure.Value.Record
-
-        // Field lookup in a Record; Absent for non-records or missing keys.
-        private inline def field(v: Structure.Value, name: String): Maybe[Structure.Value] =
-            v match
-                case Record(fields) =>
-                    Maybe.fromOption(fields.iterator.collectFirst { case (k, x) if k == name => x })
-                case _ => Absent
-
-        // Merge two Records: b's keys win on collision (last-write-wins via Chunk concatenation).
-        private inline def merge(a: Structure.Value, b: Structure.Value): Structure.Value =
-            (a, b) match
-                case (Record(af), Record(bf)) => Record(af ++ bf)
-                case (Record(_), other)       => other
-                case (_, Record(bf))          => Record(bf)
-                case (_, other)               => other
-
-        val lsp: ProgressPolicy = ProgressPolicy(
-            progressMethod = "$/progress",
-            extractInboundToken = p => field(p, "token"),
-            extractRequestToken = p => field(p, "workDoneToken"),
-            stampOutboundToken = (p, t) => merge(p, Record(Chunk("workDoneToken" -> t))),
-            encodeProgressParams = (t, v) => Record(Chunk("token" -> t, "value" -> v)),
-            extractProgressValue = p => field(p, "value"),
-            enforceMonotonic = false
-        )
-
-        val mcp: ProgressPolicy = ProgressPolicy(
-            progressMethod = "notifications/progress",
-            extractInboundToken = p => field(p, "progressToken"),
-            extractRequestToken = p =>
-                field(p, "_meta").map(meta => field(meta, "progressToken")).getOrElse(Absent),
-            stampOutboundToken = (p, t) =>
-                val existingMeta = field(p, "_meta").getOrElse(Record(Chunk.empty))
-                val newMeta      = merge(existingMeta, Record(Chunk("progressToken" -> t)))
-                merge(p, Record(Chunk("_meta" -> newMeta)))
-            ,
-            encodeProgressParams = (t, v) =>
-                merge(Record(Chunk("progressToken" -> t)), v),
-            extractProgressValue = p => Present(p),
-            enforceMonotonic = true
-        )
-    end ProgressPolicy
-
-    /** Opaque function type that attaches protocol-specific extra fields to outbound envelopes.
-      *
-      * Passed to `JsonRpcHandler.call`, `notify`, and `sendUnmatched` as the `extras` parameter.
-      * The function receives the assigned request id and returns an optional `Structure.Value` map
-      * that is merged into the outgoing envelope's `extras` field.
-      *
-      * Use the companion factories:
-      *  - [[ExtrasEncoder.empty]]: no extras on every call.
-      *  - [[ExtrasEncoder.const]]: attach the same extras value to every call.
-      *  - [[ExtrasEncoder.apply]]: full control with a per-id function.
-      *
-      * @see [[JsonRpcHandler]]
-      */
-    opaque type ExtrasEncoder = JsonRpcId => Maybe[Structure.Value] < Sync
-
-    object ExtrasEncoder:
-        def apply(f: JsonRpcId => Maybe[Structure.Value] < Sync): ExtrasEncoder = f
-
-        val empty: ExtrasEncoder = (_: JsonRpcId) => Absent
-
-        def const(extras: Structure.Value): ExtrasEncoder =
-            (_: JsonRpcId) => Present(extras)
-
-        // opaque-type companion carve-out (FLOW Decision #30 (b))
-        extension (self: ExtrasEncoder)
-            def resolve(id: JsonRpcId)(using Frame): Maybe[Structure.Value] < Sync = self(id)
-    end ExtrasEncoder
+    /** @see [[JsonRpcExtrasEncoder]] */
+    val ExtrasEncoder: JsonRpcExtrasEncoder.type = JsonRpcExtrasEncoder
 
     /** Configuration for a [[JsonRpcHandler]].
       *
@@ -431,24 +220,24 @@ object JsonRpcHandler:
       */
     final case class Config(
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0,
-        cancellation: Maybe[CancellationPolicy] = Absent,
-        progress: Maybe[ProgressPolicy] = Absent,
-        unknownMethod: UnknownMethodPolicy = UnknownMethodPolicy.minimal,
+        cancellation: Maybe[JsonRpcCancellationPolicy] = Absent,
+        progress: Maybe[JsonRpcProgressPolicy] = Absent,
+        unknownMethod: JsonRpcUnknownMethodPolicy = JsonRpcUnknownMethodPolicy.minimal,
         gate: Maybe[JsonRpcMessageGate] = Absent,
         maxInFlight: Maybe[Int] = Absent,
         requestTimeout: Duration = Duration.Infinity,
-        idStrategy: IdStrategy = IdStrategy.SequentialLong,
+        idStrategy: JsonRpcIdStrategy = JsonRpcIdStrategy.SequentialLong,
         progressResetsTimeout: Boolean = false
     ) derives CanEqual:
-        def codec(c: JsonRpcCodec): Config                = copy(codec = c)
-        def cancellation(p: CancellationPolicy): Config   = copy(cancellation = Present(p))
-        def progress(p: ProgressPolicy): Config           = copy(progress = Present(p))
-        def unknownMethod(p: UnknownMethodPolicy): Config = copy(unknownMethod = p)
-        def gate(g: JsonRpcMessageGate): Config           = copy(gate = Present(g))
-        def maxInFlight(n: Int): Config                   = copy(maxInFlight = Present(n))
-        def requestTimeout(d: Duration): Config           = copy(requestTimeout = d)
-        def idStrategy(s: IdStrategy): Config             = copy(idStrategy = s)
-        def progressResetsTimeout(b: Boolean): Config     = copy(progressResetsTimeout = b)
+        def codec(c: JsonRpcCodec): Config                       = copy(codec = c)
+        def cancellation(p: JsonRpcCancellationPolicy): Config   = copy(cancellation = Present(p))
+        def progress(p: JsonRpcProgressPolicy): Config           = copy(progress = Present(p))
+        def unknownMethod(p: JsonRpcUnknownMethodPolicy): Config = copy(unknownMethod = p)
+        def gate(g: JsonRpcMessageGate): Config                  = copy(gate = Present(g))
+        def maxInFlight(n: Int): Config                          = copy(maxInFlight = Present(n))
+        def requestTimeout(d: Duration): Config                  = copy(requestTimeout = d)
+        def idStrategy(s: JsonRpcIdStrategy): Config             = copy(idStrategy = s)
+        def progressResetsTimeout(b: Boolean): Config            = copy(progressResetsTimeout = b)
     end Config
 
     object Config:
@@ -457,28 +246,28 @@ object JsonRpcHandler:
         /** Preset for Language Server Protocol (LSP) sessions.
           *
           * Wires matched cancellation and progress policies for the LSP dialect in one step.
-          * Equivalent to `Config.default.cancellation(CancellationPolicy.lsp).progress(ProgressPolicy.lsp)`.
+          * Equivalent to `Config.default.cancellation(JsonRpcCancellationPolicy.lsp).progress(JsonRpcProgressPolicy.lsp)`.
           */
         val lsp: Config = Config.default
-            .cancellation(CancellationPolicy.lsp)
-            .progress(ProgressPolicy.lsp)
+            .cancellation(JsonRpcCancellationPolicy.lsp)
+            .progress(JsonRpcProgressPolicy.lsp)
 
         /** Preset for Model Context Protocol (MCP) sessions.
           *
           * Wires matched cancellation and progress policies for the MCP dialect in one step, and
-          * additionally sets [[UnknownMethodPolicy.minimal]] (the default).
+          * additionally sets [[JsonRpcUnknownMethodPolicy.minimal]] (the default).
           * Equivalent to:
           * {{{
           * Config.default
-          *   .cancellation(CancellationPolicy.mcp)
-          *   .progress(ProgressPolicy.mcp)
-          *   .unknownMethod(UnknownMethodPolicy.minimal)
+          *   .cancellation(JsonRpcCancellationPolicy.mcp)
+          *   .progress(JsonRpcProgressPolicy.mcp)
+          *   .unknownMethod(JsonRpcUnknownMethodPolicy.minimal)
           * }}}
           */
         val mcp: Config = Config.default
-            .cancellation(CancellationPolicy.mcp)
-            .progress(ProgressPolicy.mcp)
-            .unknownMethod(UnknownMethodPolicy.minimal)
+            .cancellation(JsonRpcCancellationPolicy.mcp)
+            .progress(JsonRpcProgressPolicy.mcp)
+            .unknownMethod(JsonRpcUnknownMethodPolicy.minimal)
 
         def require(c: Config): Unit =
             c.maxInFlight match

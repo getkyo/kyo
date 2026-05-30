@@ -5,7 +5,7 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import kyo.*
 
-final private[kyo] class UdsWireTransport(server: ServerSocketChannel) extends JsonRpcTransport.WireTransport:
+final private[kyo] class UdsWireTransport(server: ServerSocketChannel) extends JsonRpcWireTransport:
 
     // Single client-at-a-time MVP: the first accepted connection wires send/incoming;
     // subsequent accepts are dropped. Multi-client requires a per-conn map, deferred to

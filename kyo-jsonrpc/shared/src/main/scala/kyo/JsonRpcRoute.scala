@@ -86,7 +86,7 @@ object JsonRpcRoute:
       *    `notifications/progress` (MCP), depending on the active `ProgressPolicy`.
       *
       * @see [[JsonRpcRoute]]
-      * @see [[JsonRpcHandler.ProgressPolicy]]
+      * @see [[JsonRpcProgressPolicy]]
       */
     // Hub.scala:22 smart-constructor pattern; framework creates instances via forTest or JsonRpcEndpointImpl
     final class Context private[kyo] (
@@ -117,14 +117,22 @@ object JsonRpcRoute:
       *
       * Mirrors the `HttpRoute.handler` approach at
       * kyo-http/shared/src/main/scala/kyo/HttpRoute.scala:95.
+      *
+      * Symmetric with [[notification]].
       */
-    def apply[In: Schema, Out: Schema](name: String)(
+    def request[In: Schema, Out: Schema](name: String)(
         handler: (In, JsonRpcRoute.Context) => Out < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])
     )(using Frame): JsonRpcRoute[In, Out, Nothing] =
         val capturedSchemaIn: Schema[In]   = summon[Schema[In]]
         val capturedSchemaOut: Schema[Out] = summon[Schema[Out]]
         new RequestRoute[In, Out, Nothing](name, capturedSchemaIn, capturedSchemaOut, handler, Chunk.empty)
-    end apply
+    end request
+
+    /** Alias for [[request]] for backward compatibility. */
+    inline def apply[In: Schema, Out: Schema](name: String)(
+        handler: (In, JsonRpcRoute.Context) => Out < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])
+    )(using Frame): JsonRpcRoute[In, Out, Nothing] =
+        request[In, Out](name)(handler)
 
     def notification[In: Schema](name: String)(
         handler: (In, JsonRpcRoute.Context) => Unit < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])

@@ -4,8 +4,8 @@ import kyo.*
 import kyo.internal.codec.RawJsonParser
 
 final private[kyo] class WireTransportAdapter(
-    wire: JsonRpcTransport.WireTransport,
-    framer: JsonRpcTransport.Framer,
+    wire: JsonRpcWireTransport,
+    framer: JsonRpcFramer,
     codec: JsonRpcCodec
 ) extends JsonRpcTransport:
 

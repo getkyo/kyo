@@ -10,7 +10,7 @@ private[kyo] case class OutboundReq(
     // Unsafe: completed inside Exchange encode callback (Sync context, no Frame available)
     idSignal: Promise.Unsafe[JsonRpcId, Any],
     abortSignal: Fiber.Promise[JsonRpcError, Any],
-    extras: JsonRpcHandler.ExtrasEncoder
+    extras: JsonRpcExtrasEncoder
 )
 
 private[kyo] case class CallerInfo(
@@ -55,10 +55,10 @@ final class JsonRpcEndpointImpl private[kyo] (
     private val drainSignal: AtomicRef[Fiber.Promise[Unit, Any]],
     private val codec: JsonRpcCodec,
     private[kyo] val methodMap: Map[String, JsonRpcRoute[?, ?, ?]],
-    private val unknownPolicy: JsonRpcHandler.UnknownMethodPolicy,
+    private val unknownPolicy: JsonRpcUnknownMethodPolicy,
     private[kyo] val config: JsonRpcHandler.Config,
     private[kyo] val initFrame: Frame,
-    private val progressPolicy: Maybe[JsonRpcHandler.ProgressPolicy],
+    private val progressPolicy: Maybe[JsonRpcProgressPolicy],
     private[kyo] val progressStreams: ConcurrentHashMap[Structure.Value, Channel[Structure.Value]],
     private[kyo] val outboundIdToToken: ConcurrentHashMap[JsonRpcId, Structure.Value],
     private val meter: Maybe[Meter],
@@ -69,7 +69,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     def callUnsafe[In: Schema, Out: Schema](
         method: String,
         params: In,
-        extras: JsonRpcHandler.ExtrasEncoder
+        extras: JsonRpcExtrasEncoder
     )(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
         RateLimitEngine.maxInFlightGuard(meter) {
             Fiber.Promise.init[JsonRpcError, Any].map { abortSignal =>
@@ -165,7 +165,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     private def callEncoded[Out: Schema](
         method: String,
         encodedParams: Maybe[Structure.Value],
-        extras: JsonRpcHandler.ExtrasEncoder,
+        extras: JsonRpcExtrasEncoder,
         // AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); used as a mutable deadline cell shared between call and monitor fibers
         deadlineRef: Maybe[java.util.concurrent.atomic.AtomicLong]
     )(using frame: Frame): (Fiber.Promise[JsonRpcId, Any], Out < (Async & Abort[JsonRpcError | Closed])) =
@@ -344,7 +344,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     def notifyUnsafe[In: Schema](
         method: String,
         params: In,
-        extras: JsonRpcHandler.ExtrasEncoder
+        extras: JsonRpcExtrasEncoder
     )(using Frame): Unit < (Async & Abort[Closed]) =
         val sentinelId    = JsonRpcId(-1L)
         val encodedParams = Present(Structure.encode[In](params))
@@ -358,7 +358,7 @@ final class JsonRpcEndpointImpl private[kyo] (
         method: String,
         params: In,
         id: JsonRpcId,
-        extras: JsonRpcHandler.ExtrasEncoder
+        extras: JsonRpcExtrasEncoder
     )(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer(Structure.encode[In](params)).map { encodedParams =>
             extras.resolve(id).map { extrasVal =>
@@ -371,7 +371,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     def callWithProgressUnsafe[In: Schema, Out: Schema](
         method: String,
         params: In,
-        extras: JsonRpcHandler.ExtrasEncoder
+        extras: JsonRpcExtrasEncoder
     )(using frame: Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
         progressPolicy match
             case Absent =>
@@ -452,7 +452,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     def callPartialResultsUnsafe[In: Schema, T: Schema: Tag](
         method: String,
         params: In,
-        extras: JsonRpcHandler.ExtrasEncoder
+        extras: JsonRpcExtrasEncoder
     )(using frame: Frame, tagEmitChunkT: Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
         progressPolicy match
             case Absent =>
@@ -965,11 +965,11 @@ object JsonRpcEndpointImpl:
                                                                                 Exchange.Message.Skip
                                                                             else
                                                                                 config.unknownMethod.onUnknownNotification match
-                                                                                    case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.Drop =>
+                                                                                    case JsonRpcUnknownMethodPolicy.UnknownAction.Drop =>
                                                                                         Exchange.Message.Skip
-                                                                                    case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
+                                                                                    case JsonRpcUnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
                                                                                         Exchange.Message.Skip
-                                                                                    case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.Reject =>
+                                                                                    case JsonRpcUnknownMethodPolicy.UnknownAction.Reject =>
                                                                                         Log.warn(
                                                                                             s"kyo-jsonrpc: unknown notification method '$method' rejected"
                                                                                         ).andThen {
@@ -1117,7 +1117,7 @@ object JsonRpcEndpointImpl:
                                                         case None =>
                                                             // Step 3: unknown-method dispatch for requests
                                                             config.unknownMethod.onUnknownRequest match
-                                                                case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
+                                                                case JsonRpcUnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
                                                                     val response = JsonRpcResponse(
                                                                         id,
                                                                         Absent,
@@ -1136,9 +1136,9 @@ object JsonRpcEndpointImpl:
                                                                         discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
                                                                         // format: on
                                                                     }.andThen(Exchange.Message.Skip)
-                                                                case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.Drop =>
+                                                                case JsonRpcUnknownMethodPolicy.UnknownAction.Drop =>
                                                                     Exchange.Message.Skip
-                                                                case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.Reject =>
+                                                                case JsonRpcUnknownMethodPolicy.UnknownAction.Reject =>
                                                                     // Reject for a Request: send MethodNotFound first (so caller is unblocked), then close.
                                                                     val response = JsonRpcResponse(
                                                                         id,
