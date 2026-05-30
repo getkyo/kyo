@@ -147,13 +147,13 @@ object JvmFileSource extends FileSource:
       * references. The Scope effect is introduced here and discharged by the enclosing Scope.run in ClasspathOrchestrator.
       */
     override def withReadBatch[A, S](body: A < S)(using Frame): A < (S & Sync & Scope) =
-        Sync.defer:
-            val pool = new JarMappedReaderPool()
-            activePool.set(pool)
-            pool
-        .flatMap: pool =>
-            Scope.ensure(Sync.defer(pool.closeAll()).andThen(Sync.defer(activePool.set(null)))).andThen:
-                body
+        Scope.acquireRelease(
+            Sync.defer:
+                val pool = new JarMappedReaderPool()
+                activePool.set(pool)
+                pool
+        )(pool => Sync.defer(pool.closeAll()).andThen(Sync.defer(activePool.set(null)))).flatMap: _ =>
+            body
 
     /** Lazy JRT filesystem handle. Returns null if JRT filesystem is unavailable. */
     private lazy val jrtFileSystem: java.nio.file.FileSystem =

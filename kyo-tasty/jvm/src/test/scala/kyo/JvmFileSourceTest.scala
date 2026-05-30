@@ -308,6 +308,63 @@ class JvmFileSourceTest extends Test:
         )
     }
 
+    // Phase 05a - B14: withReadBatch pool registration is atomic via Scope.acquireRelease.
+    //
+    // Scenario 1 (normal exit): withReadBatch installs pool, body succeeds, Scope.run
+    // completes, release fires, activePool returns to null.
+    //
+    // Scenario 2 (Abort failure): withReadBatch installs pool, body raises Abort[TastyError],
+    // Scope.run's release still fires: pool.closeAll() is called and activePool is reset to
+    // null. This pins B14: no partial-registration window can strand a live pool regardless
+    // of how the body exits.
+    //
+    // Both scenarios verify via reflection that activePool is null after Scope.run.
+    "P05a-T1: withReadBatch releases pool and clears activePool after successful body" taggedAs jvmOnly in run {
+        val activePoolField = JvmFileSource.getClass.getDeclaredField("kyo$internal$tasty$query$JvmFileSource$$$activePool")
+        activePoolField.setAccessible(true)
+
+        Scope.run(
+            JvmFileSource.withReadBatch(Sync.defer(42))
+        ).map: result =>
+            assert(result == 42, s"Expected body result 42, got $result")
+            val poolAfter = activePoolField.get(JvmFileSource)
+                .asInstanceOf[java.util.concurrent.atomic.AtomicReference[?]]
+                .get()
+            assert(
+                poolAfter == null,
+                s"Expected activePool to be null after Scope.run but got: $poolAfter"
+            )
+    }
+
+    "P05a-T2: withReadBatch releases pool and clears activePool when body raises Abort failure" taggedAs jvmOnly in run {
+        val activePoolField = JvmFileSource.getClass.getDeclaredField("kyo$internal$tasty$query$JvmFileSource$$$activePool")
+        activePoolField.setAccessible(true)
+
+        val failBody: Int < (Sync & Scope & Abort[TastyError]) =
+            JvmFileSource.withReadBatch(
+                Abort.fail[TastyError](TastyError.FileNotFound("B14-test-failure"))
+            )
+
+        Abort.run[TastyError](
+            Scope.run(failBody)
+        ).map: result =>
+            result match
+                case Result.Failure(TastyError.FileNotFound(msg)) =>
+                    assert(
+                        msg.contains("B14-test-failure"),
+                        s"Expected B14-test-failure in message but got: $msg"
+                    )
+                    val poolAfter = activePoolField.get(JvmFileSource)
+                        .asInstanceOf[java.util.concurrent.atomic.AtomicReference[?]]
+                        .get()
+                    assert(
+                        poolAfter == null,
+                        s"Expected activePool to be null after failed body but got: $poolAfter"
+                    )
+                case other =>
+                    fail(s"Expected Failure(TastyError.FileNotFound) but got: $other")
+    }
+
     // Phase 04a - INV-012 Test 3: 64-bit LFH offset guard rejects lfhOffset > Int.MaxValue.
     //
     // We construct a synthetic JarEntry with lfhOffset = Int.MaxValue.toLong + 1L and then
