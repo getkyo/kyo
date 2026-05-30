@@ -751,13 +751,12 @@ enum TastyError:
     case CorruptedFile(path: String, at: Long, reason: String)
     case UnsupportedVersion(found: Tasty.Version, supported: Tasty.Version)
     case InconsistentClasspath(file: String, expectedUuid: UUID, foundUuid: UUID)
-    case MalformedSection(name: String, reason: String)
+    case MalformedSection(name: String, reason: String, byteOffset: Long)
     case SymbolNotFound(fqn: String)
-    case ClassfileFormatError(path: String, reason: String)
-    case ParameterizedTypeNotAllowed(tag: String)
+    case ClassfileFormatError(path: String, reason: String, byteOffset: Long)
     case ClasspathClosed
     case ClasspathBuilding   // defense-in-depth; never observable in correct usage
-    case SnapshotFormatError(path: String, reason: String)
+    case SnapshotFormatError(path: String, reason: String, byteOffset: Long)
     case SnapshotVersionMismatch(found: Tasty.Version, supported: Tasty.Version)
     case NotImplemented(feature: String)         // v1 stub for deferred features (e.g., tree body decode)
 end TastyError

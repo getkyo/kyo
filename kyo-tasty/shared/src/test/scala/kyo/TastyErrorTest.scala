@@ -124,17 +124,4 @@ class TastyErrorTest extends Test:
                         throw t
     }
 
-    // Test 5: ParameterizedTypeNotAllowed carries tag
-    //
-    // Given: TastyError.ParameterizedTypeNotAllowed("APPLIEDtype") constructed directly
-    //        (no call sites in core library; see phase-14b-decisions.md D2).
-    // When:  tag field is read from the constructed value.
-    // Then:  tag == "APPLIEDtype".
-    // Pins:  T3.
-    "ParameterizedTypeNotAllowed carries tag field" in run {
-        val err: TastyError.ParameterizedTypeNotAllowed = TastyError.ParameterizedTypeNotAllowed("APPLIEDtype")
-        assert(err.tag == "APPLIEDtype", s"Expected tag 'APPLIEDtype' but got: ${err.tag}")
-        succeed
-    }
-
 end TastyErrorTest

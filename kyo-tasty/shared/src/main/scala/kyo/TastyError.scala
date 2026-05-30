@@ -12,7 +12,6 @@ enum TastyError derives CanEqual:
     case MalformedSection(name: String, reason: String, byteOffset: Long)
     case SymbolNotFound(fqn: String)
     case ClassfileFormatError(path: String, reason: String, byteOffset: Long)
-    case ParameterizedTypeNotAllowed(tag: String)
     case ClasspathClosed
     case ClasspathBuilding
     case SnapshotFormatError(path: String, reason: String, byteOffset: Long)
