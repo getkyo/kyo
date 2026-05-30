@@ -11,7 +11,7 @@ private[kyo] object CancellationEngine:
     private def extractCancelId(
         policy: JsonRpcHandler.CancellationPolicy,
         params: Maybe[Structure.Value]
-    )(using Frame): Maybe[JsonRpcEnvelope.Id] < Sync =
+    )(using Frame): Maybe[JsonRpcId] < Sync =
         params match
             case Absent      => Absent
             case Present(sv) => policy.decodeParams(sv)
@@ -20,7 +20,7 @@ private[kyo] object CancellationEngine:
     private[kyo] def extractCancelIdForTest(
         policy: JsonRpcHandler.CancellationPolicy,
         params: Maybe[Structure.Value]
-    )(using Frame): Maybe[JsonRpcEnvelope.Id] < Sync =
+    )(using Frame): Maybe[JsonRpcId] < Sync =
         extractCancelId(policy, params)
 
     /** Handles an incoming cancel notification from the remote peer.
@@ -28,9 +28,9 @@ private[kyo] object CancellationEngine:
       * Implements the CAS sequence from DESIGN §6.5.
       */
     def handleInboundCancel(
-        env: JsonRpcEnvelope.Notification,
+        env: JsonRpcNotification,
         policy: JsonRpcHandler.CancellationPolicy,
-        pendingInbound: ConcurrentHashMap[JsonRpcEnvelope.Id, InboundEntry]
+        pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry]
     )(using Frame): Unit < Sync =
         extractCancelId(policy, env.params).map {
             case Absent =>
@@ -78,14 +78,14 @@ private[kyo] object CancellationEngine:
       * The caller is responsible for the absent-check (step 2) and protectedMethods check (also step 2).
       */
     def buildAndEnqueueOutboundCancel(
-        id: JsonRpcEnvelope.Id,
+        id: JsonRpcId,
         reason: Maybe[String],
         info: CallerInfo,
         policy: JsonRpcHandler.CancellationPolicy,
         writerChannel: Channel[WriterMsg]
     )(using Frame): Unit < (Async & Abort[Closed]) =
         policy.encodeParams(id, reason).map { params =>
-            val cancelEnv = JsonRpcEnvelope.Notification(policy.cancelMethod, Present(params), info.extras)
+            val cancelEnv = JsonRpcNotification(policy.cancelMethod, Present(params), info.extras)
             writerChannel.put(WriterMsg.SendEnvelope(cancelEnv))
         }
 
@@ -93,10 +93,10 @@ private[kyo] object CancellationEngine:
       * DESIGN §7 "Timeout -> cancellation auto-fire".
       */
     def handleTimeout(
-        id: JsonRpcEnvelope.Id,
+        id: JsonRpcId,
         reason: Maybe[String],
         cancellation: Maybe[JsonRpcHandler.CancellationPolicy],
-        callerRegistry: ConcurrentHashMap[JsonRpcEnvelope.Id, CallerInfo],
+        callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo],
         writerChannel: Channel[WriterMsg]
     )(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer(Maybe(callerRegistry.get(id))).map {

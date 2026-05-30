@@ -599,7 +599,7 @@ private[kyo] object CdpBackend:
                             endpoint.sendUnmatched(
                                 "Page.handleJavaScriptDialog",
                                 HandleJavaScriptDialogParams(accept, promptText),
-                                JsonRpcEnvelope.Id.Num(id.toLong),
+                                JsonRpcId(id.toLong),
                                 extras
                             )
                         ).unit

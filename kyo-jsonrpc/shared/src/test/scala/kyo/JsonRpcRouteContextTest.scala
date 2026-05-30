@@ -18,7 +18,7 @@ class JsonRpcRouteContextTest extends JsonRpcTest:
                 }
         for
             promise <- Fiber.Promise.init[Unit, Sync]
-            ctx = JsonRpcRoute.Context.forTest(promise, Present(JsonRpcEnvelope.Id.Num(1L)), Absent, Present(sink))
+            ctx = JsonRpcRoute.Context.forTest(promise, Present(JsonRpcId.Num(1L)), Absent, Present(sink))
             _ <- ctx.progress(Structure.Value.Str("p"))
             seen = captured.get()(using AllowUnsafe.embrace.danger)
         yield assert(seen == List(Structure.Value.Str("p")))
@@ -37,9 +37,9 @@ class JsonRpcRouteContextTest extends JsonRpcTest:
         val extras = Structure.Value.Str("opaque")
         for
             promise <- Fiber.Promise.init[Unit, Sync]
-            ctx = JsonRpcRoute.Context.forTest(promise, Present(JsonRpcEnvelope.Id.Str("rid")), Present(extras), Absent)
+            ctx = JsonRpcRoute.Context.forTest(promise, Present(JsonRpcId.Str("rid")), Present(extras), Absent)
         yield
-            assert(ctx.requestId == Present(JsonRpcEnvelope.Id.Str("rid")))
+            assert(ctx.requestId == Present(JsonRpcId.Str("rid")))
             assert(ctx.extras == Present(extras))
         end for
     }

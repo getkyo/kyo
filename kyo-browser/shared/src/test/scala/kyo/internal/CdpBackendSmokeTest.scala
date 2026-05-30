@@ -176,8 +176,8 @@ class CdpBackendSmokeTest extends Test:
             ) { (_, ctx) =>
                 // Capture the request id to verify the drainer sent the auto-dismiss
                 ctx.requestId match
-                    case Present(JsonRpcEnvelope.Id.Num(n)) => capturedDismissId.set(Present(n))
-                    case _                                  => Kyo.unit
+                    case Present(JsonRpcId.Num(n)) => capturedDismissId.set(Present(n))
+                    case _                         => Kyo.unit
             }
             Scope.run {
                 mkBackendWithServer(Seq(handleDialogMethod)).map { (backend, serverEndpoint) =>
@@ -288,14 +288,14 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "dialog drainer issues sendUnmatched with negative JsonRpcEnvelope.Id.Num" in run {
+    "dialog drainer issues sendUnmatched with negative JsonRpcId.Num" in run {
         AtomicRef.init[Maybe[Long]](Absent).map { capturedIdRef =>
             val handleDialogMethod = JsonRpcRoute[HandleJavaScriptDialogParams, Unit, Async & Abort[JsonRpcError]](
                 "Page.handleJavaScriptDialog"
             ) { (_, ctx) =>
                 ctx.requestId match
-                    case Present(JsonRpcEnvelope.Id.Num(n)) => capturedIdRef.set(Present(n))
-                    case _                                  => Kyo.unit
+                    case Present(JsonRpcId.Num(n)) => capturedIdRef.set(Present(n))
+                    case _                         => Kyo.unit
             }
             Scope.run {
                 mkBackendWithServer(Seq(handleDialogMethod)).map { (backend, _) =>

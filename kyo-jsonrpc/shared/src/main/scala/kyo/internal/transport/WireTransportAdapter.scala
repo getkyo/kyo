@@ -31,9 +31,9 @@ final private[kyo] class WireTransportAdapter(
             RawJsonParser.parse(jsonStr) match
                 case Result.Success(structureValue) => codec.decode(structureValue)
                 case Result.Failure(_) =>
-                    Sync.defer(JsonRpcEnvelope.Malformed(Absent, "json parse failed", Structure.Value.Str(jsonStr)))
+                    Sync.defer(JsonRpcMalformedMessage(Absent, "json parse failed", Structure.Value.Str(jsonStr)))
                 case Result.Panic(t) =>
-                    Sync.defer(JsonRpcEnvelope.Malformed(Absent, s"json parse panic: ${t.getMessage}", Structure.Value.Null))
+                    Sync.defer(JsonRpcMalformedMessage(Absent, s"json parse panic: ${t.getMessage}", Structure.Value.Null))
             end match
         }
 

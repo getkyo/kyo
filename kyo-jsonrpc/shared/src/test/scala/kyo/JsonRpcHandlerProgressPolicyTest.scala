@@ -231,7 +231,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                     endpointA.call[TaskReq, TaskResp]("task", TaskReq("t")).map { resp =>
                         assert(resp == TaskResp(true))
                         val notifs = capA.sentList.collect {
-                            case n: JsonRpcEnvelope.Notification => n
+                            case n: JsonRpcNotification => n
                         }
                         assert(notifs.isEmpty, s"expected no progress notifications, got $notifs")
                     }
@@ -323,15 +323,15 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                         pending.result.map { _ =>
                             untilTrue(Sync.defer(handlerDone.get()(using AllowUnsafe.embrace.danger))).andThen {
                                 val notifsBefore = capA.sentList.count {
-                                    case n: JsonRpcEnvelope.Notification if n.method == "$/progress" => true
-                                    case _                                                           => false
+                                    case n: JsonRpcNotification if n.method == "$/progress" => true
+                                    case _                                                  => false
                                 }
                                 sinkRef.get()(using AllowUnsafe.embrace.danger) match
                                     case Present(sink) =>
                                         Abort.run[Closed](sink(mkReport("late"))).map { _ =>
                                             val notifsAfter = capA.sentList.count {
-                                                case n: JsonRpcEnvelope.Notification if n.method == "$/progress" => true
-                                                case _                                                           => false
+                                                case n: JsonRpcNotification if n.method == "$/progress" => true
+                                                case _                                                  => false
                                             }
                                             assert(
                                                 notifsAfter == notifsBefore,
@@ -394,7 +394,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
                             val progressNotifs = capB.sentList.collect {
-                                case n: JsonRpcEnvelope.Notification if n.method == "$/progress" => n
+                                case n: JsonRpcNotification if n.method == "$/progress" => n
                             }
                             assert(progressNotifs.nonEmpty, "expected at least one progress notification on the wire")
                         }
@@ -420,8 +420,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
                             val notifCount = capB.sentList.count {
-                                case n: JsonRpcEnvelope.Notification if n.method == "notifications/progress" => true
-                                case _                                                                       => false
+                                case n: JsonRpcNotification if n.method == "notifications/progress" => true
+                                case _                                                              => false
                             }
                             assert(notifCount == 1, s"MCP monotonicity: expected 1 notification, got $notifCount")
                         }

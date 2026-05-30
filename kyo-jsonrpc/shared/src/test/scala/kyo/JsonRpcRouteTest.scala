@@ -21,7 +21,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
     case class LogMsg(text: String) derives Schema, CanEqual
 
     private def makeCtx(
-        requestId: Maybe[JsonRpcEnvelope.Id],
+        requestId: Maybe[JsonRpcId],
         extras: Maybe[Structure.Value],
         progressSink: Maybe[Structure.Value => Unit < (Async & Abort[Closed])]
     ): JsonRpcRoute.Context < Sync =

@@ -32,7 +32,7 @@ class JsonRpcTransportWireTransportTest extends JsonRpcTest:
                     bToAChan.close.andThen(aToBChan.close).unit
             transportA   = new internal.transport.WireTransportAdapter(wireA, JsonRpcTransport.Framer.lineDelimited, JsonRpcCodec.Strict2_0)
             transportB   = new internal.transport.WireTransportAdapter(wireB, JsonRpcTransport.Framer.lineDelimited, JsonRpcCodec.Strict2_0)
-            sentEnvelope = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "ping", Absent, Absent)
+            sentEnvelope = JsonRpcRequest(JsonRpcId.Num(1L), "ping", Absent, Absent)
             receiverFiber <- Fiber.initUnscoped(Abort.run[Closed](transportB.incoming.take(1).run))
             _             <- transportA.send(sentEnvelope)
             received      <- receiverFiber.get
@@ -40,8 +40,8 @@ class JsonRpcTransportWireTransportTest extends JsonRpcTest:
             case Result.Success(chunk) =>
                 assert(chunk.size == 1)
                 chunk.head match
-                    case JsonRpcEnvelope.Request(id, method, _, _) =>
-                        assert(id == JsonRpcEnvelope.Id.Num(1L) && method == "ping")
+                    case JsonRpcRequest(id, method, _, _) =>
+                        assert(id == JsonRpcId.Num(1L) && method == "ping")
                     case other =>
                         fail(s"unexpected envelope: $other")
                 end match

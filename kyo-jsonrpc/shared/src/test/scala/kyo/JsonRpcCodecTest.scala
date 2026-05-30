@@ -24,7 +24,7 @@ class JsonRpcCodecTest extends JsonRpcTest:
             case Result.Panic(t)   => fail(s"expected success but got panic: $t")
 
     "Strict2_0 encodes a request with jsonrpc id method and no params key" in run {
-        val env = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "m", Absent, Absent)
+        val env = JsonRpcRequest(JsonRpcId.Num(1L), "m", Absent, Absent)
         Abort.run[JsonRpcError](JsonRpcCodec.Strict2_0.encode(env)).map: result =>
             val sv = getSuccess(result)
             sv match
@@ -40,25 +40,25 @@ class JsonRpcCodecTest extends JsonRpcTest:
     }
 
     "Strict2_0 decodes the encoded request back to the original envelope" in run {
-        val env = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "m", Absent, Absent)
+        val env = JsonRpcRequest(JsonRpcId.Num(1L), "m", Absent, Absent)
         Abort.run[JsonRpcError](JsonRpcCodec.Strict2_0.encode(env)).flatMap: encResult =>
             val sv = getSuccess(encResult)
             JsonRpcCodec.Strict2_0.decode(sv).map: decoded =>
-                assert(decoded == JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "m", Absent, Absent))
+                assert(decoded == JsonRpcRequest(JsonRpcId.Num(1L), "m", Absent, Absent))
     }
 
-    "JsonRpcEnvelope.Id.Num encodes to Integer not a wrapper Record" in run {
-        val sv = Structure.encode[JsonRpcEnvelope.Id](JsonRpcEnvelope.Id.Num(1L))
+    "JsonRpcId.Num encodes to Integer not a wrapper Record" in run {
+        val sv = Structure.encode[JsonRpcId](JsonRpcId.Num(1L))
         assert(sv == Integer(1L))
     }
 
-    "JsonRpcEnvelope.Id.Str encodes to Str not a wrapper Record" in run {
-        val sv = Structure.encode[JsonRpcEnvelope.Id](JsonRpcEnvelope.Id.Str("req-1"))
+    "JsonRpcId.Str encodes to Str not a wrapper Record" in run {
+        val sv = Structure.encode[JsonRpcId](JsonRpcId.Str("req-1"))
         assert(sv == Str("req-1"))
     }
 
     "Strict2_0 notification has no id key" in run {
-        val env = JsonRpcEnvelope.Notification("ping", Absent, Absent)
+        val env = JsonRpcNotification("ping", Absent, Absent)
         Abort.run[JsonRpcError](JsonRpcCodec.Strict2_0.encode(env)).map: result =>
             val sv = getSuccess(result)
             sv match
@@ -71,7 +71,7 @@ class JsonRpcCodecTest extends JsonRpcTest:
     }
 
     "Strict2_0 encodes success response with result but no error key" in run {
-        val env = JsonRpcEnvelope.Response(JsonRpcEnvelope.Id.Num(1L), Present(Str("ok")), Absent, Absent)
+        val env = JsonRpcResponse(JsonRpcId.Num(1L), Present(Str("ok")), Absent, Absent)
         Abort.run[JsonRpcError](JsonRpcCodec.Strict2_0.encode(env)).map: result =>
             val sv = getSuccess(result)
             sv match
@@ -94,7 +94,7 @@ class JsonRpcCodecTest extends JsonRpcTest:
             ))
         ))
         JsonRpcCodec.Strict2_0.decode(raw).map: decoded =>
-            assert(decoded.isInstanceOf[JsonRpcEnvelope.Malformed])
+            assert(decoded.isInstanceOf[JsonRpcMalformedMessage])
     }
 
     "Strict2_0 decodes id null on wire as Maybe JsonRpcId Absent" in run {
@@ -108,16 +108,16 @@ class JsonRpcCodecTest extends JsonRpcTest:
         ))
         JsonRpcCodec.Strict2_0.decode(raw).map: decoded =>
             decoded match
-                case JsonRpcEnvelope.Malformed(_, _, _) => succeed
+                case JsonRpcMalformedMessage(_, _, _) => succeed
                 case other => fail(
-                        s"expected Malformed (null-id Response cannot be represented as Response, JsonRpcEnvelope.Response.id has type JsonRpcId not Maybe), got: $other"
+                        s"expected Malformed (null-id Response cannot be represented as Response, JsonRpcResponse.id has type JsonRpcId not Maybe), got: $other"
                     )
             end match
     }
 
     "Cdp encode stamps extras at top level without jsonrpc field" in run {
         val extras = Present(Record(Chunk("sessionId" -> Str("s1"))))
-        val env    = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(2L), "m", Absent, extras)
+        val env    = JsonRpcRequest(JsonRpcId.Num(2L), "m", Absent, extras)
         Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(env)).map: result =>
             val sv = getSuccess(result)
             sv match
@@ -131,7 +131,7 @@ class JsonRpcCodecTest extends JsonRpcTest:
 
     "Cdp encode fails with invalidRequest when extras contains reserved key" in run {
         val badExtras = Present(Record(Chunk("method" -> Str("hijack"))))
-        val env       = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "legit", Absent, badExtras)
+        val env       = JsonRpcRequest(JsonRpcId.Num(1L), "legit", Absent, badExtras)
         Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(env)).map: result =>
             result match
                 case Result.Failure(e) => assert(e.code == -32600)
@@ -146,8 +146,8 @@ class JsonRpcCodecTest extends JsonRpcTest:
             "sessionId" -> Str("abc123")
         ))
         JsonRpcCodec.Cdp.decode(raw).map: decoded =>
-            assert(decoded == JsonRpcEnvelope.Request(
-                JsonRpcEnvelope.Id.Num(2L),
+            assert(decoded == JsonRpcRequest(
+                JsonRpcId.Num(2L),
                 "Page.navigate",
                 Present(Record(Chunk("url" -> Str("https://example.com")))),
                 Present(Record(Chunk("sessionId" -> Str("abc123"))))
@@ -157,12 +157,12 @@ class JsonRpcCodecTest extends JsonRpcTest:
     "Strict2_0 decodes unclassifiable envelope as Malformed" in run {
         val raw = Record(Chunk("foo" -> Str("bar")))
         JsonRpcCodec.Strict2_0.decode(raw).map: decoded =>
-            assert(decoded.isInstanceOf[JsonRpcEnvelope.Malformed])
+            assert(decoded.isInstanceOf[JsonRpcMalformedMessage])
     }
 
     "extras Absent versus Present Null are distinct on the wire" in run {
-        val envAbsent = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "m", Absent, Absent)
-        val envNull   = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "m", Absent, Present(Null))
+        val envAbsent = JsonRpcRequest(JsonRpcId.Num(1L), "m", Absent, Absent)
+        val envNull   = JsonRpcRequest(JsonRpcId.Num(1L), "m", Absent, Present(Null))
         Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(envAbsent)).flatMap: rAbsent =>
             Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(envNull)).map: rNull =>
                 val vAbsent = getSuccess(rAbsent)
@@ -183,7 +183,7 @@ class JsonRpcCodecTest extends JsonRpcTest:
     }
 
     "Cdp omits jsonrpc field and Strict2_0 always includes it" in run {
-        val env = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "m", Absent, Absent)
+        val env = JsonRpcRequest(JsonRpcId.Num(1L), "m", Absent, Absent)
         Abort.run[JsonRpcError](JsonRpcCodec.Strict2_0.encode(env)).flatMap: rStrict =>
             Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(env)).map: rCdp =>
                 val vStrict = getSuccess(rStrict)
@@ -203,7 +203,7 @@ class JsonRpcCodecTest extends JsonRpcTest:
             "error"   -> Structure.Value.Str("stringy")
         ))
         JsonRpcCodec.Strict2_0.decode(raw).map {
-            case JsonRpcEnvelope.Malformed(Present(JsonRpcEnvelope.Id.Num(42)), reason, _) =>
+            case JsonRpcMalformedMessage(Present(JsonRpcId.Num(42)), reason, _) =>
                 assert(reason.nonEmpty)
             case other => fail(s"expected Malformed-with-id, got $other")
         }
@@ -216,8 +216,8 @@ class JsonRpcCodecTest extends JsonRpcTest:
             "error"  -> Structure.Value.Str("boom")
         ))
         JsonRpcCodec.Cdp.decode(raw).map {
-            case JsonRpcEnvelope.Malformed(Present(JsonRpcEnvelope.Id.Num(99)), _, _) => succeed
-            case other                                                                => fail(s"expected Malformed-with-id, got $other")
+            case JsonRpcMalformedMessage(Present(JsonRpcId.Num(99)), _, _) => succeed
+            case other                                                     => fail(s"expected Malformed-with-id, got $other")
         }
     }
 
@@ -227,7 +227,7 @@ class JsonRpcCodecTest extends JsonRpcTest:
             "error" -> Structure.Value.Str("stringy error")
         ))
         JsonRpcCodec.Cdp.decode(raw).map {
-            case JsonRpcEnvelope.Malformed(Present(JsonRpcEnvelope.Id.Num(7)), reason, _) =>
+            case JsonRpcMalformedMessage(Present(JsonRpcId.Num(7)), reason, _) =>
                 assert(reason.nonEmpty)
             case other => fail(s"expected Malformed-with-id for non-Record error, got $other")
         }
@@ -235,7 +235,7 @@ class JsonRpcCodecTest extends JsonRpcTest:
 
     "Malformed for non-Record carries Absent id" in run {
         JsonRpcCodec.Strict2_0.decode(Structure.Value.Str("not a record")).map {
-            case JsonRpcEnvelope.Malformed(Absent, reason, _) =>
+            case JsonRpcMalformedMessage(Absent, reason, _) =>
                 assert(reason == "expected a Record")
             case other => fail(s"expected Malformed(Absent, ...), got $other")
         }

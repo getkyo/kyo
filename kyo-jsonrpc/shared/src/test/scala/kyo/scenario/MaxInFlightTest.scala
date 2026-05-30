@@ -202,8 +202,8 @@ class MaxInFlightTest extends JsonRpcTest:
                         // delivers it asynchronously; wait until it appears in the capturing transport.
                         untilTrue(Sync.defer {
                             capA.sentList.exists {
-                                case JsonRpcEnvelope.Notification("$/cancelRequest", _, _) => true
-                                case _                                                     => false
+                                case JsonRpcNotification("$/cancelRequest", _, _) => true
+                                case _                                            => false
                             }
                         }).andThen(succeed)
                     }
@@ -232,8 +232,8 @@ class MaxInFlightTest extends JsonRpcTest:
                     ).map { result =>
                         val cancelNotifications =
                             capA.sentList.count {
-                                case _: JsonRpcEnvelope.Notification => true
-                                case _                               => false
+                                case _: JsonRpcNotification => true
+                                case _                      => false
                             }
                         result match
                             case Result.Failure(e: JsonRpcError) =>

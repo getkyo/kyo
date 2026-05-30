@@ -27,7 +27,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
         val gate = new JsonRpcHandler.MessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
                 Sync.defer(JsonRpcHandler.MessageGate.Decision.Drop)
-        val env = JsonRpcEnvelope.Notification("ping", Absent, Absent)
+        val env = JsonRpcNotification("ping", Absent, Absent)
         gate.beforeDispatch(env).map: dec =>
             assert(dec == JsonRpcHandler.MessageGate.Decision.Drop)
     }
@@ -36,7 +36,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
         val gate = new JsonRpcHandler.MessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
                 Sync.defer(JsonRpcHandler.MessageGate.Decision.Allow)
-        val env = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "ping", Absent, Absent)
+        val env = JsonRpcRequest(JsonRpcId.Num(1L), "ping", Absent, Absent)
         gate.beforeDispatch(env).map: dec =>
             assert(dec == JsonRpcHandler.MessageGate.Decision.Allow)
     }

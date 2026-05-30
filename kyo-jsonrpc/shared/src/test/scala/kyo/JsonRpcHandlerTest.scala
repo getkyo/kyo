@@ -245,7 +245,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             (req, _) => Async.sleep(3.seconds).andThen(AddResp(req.a + req.b))
         }
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
-        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcEnvelope.Id]](Absent)(using AllowUnsafe.embrace.danger)
+        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val captureEncoder = JsonRpcHandler.ExtrasEncoder(id =>
             Sync.defer {
                 capturedId.set(Present(id))(using AllowUnsafe.embrace.danger)
@@ -281,7 +281,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     "late reply for cancelled outbound call is silently dropped" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
-        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcEnvelope.Id]](Absent)(using AllowUnsafe.embrace.danger)
+        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val captureEncoder = JsonRpcHandler.ExtrasEncoder(id =>
             Sync.defer {
                 capturedId.set(Present(id))(using AllowUnsafe.embrace.danger)
@@ -313,7 +313,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                                                 // Simulate a late response for the already-cancelled id: the peer
                                                 // sends a success response after the caller gave up. The endpoint
                                                 // must silently drop it and NOT complete any live call.
-                                                val lateReply = JsonRpcEnvelope.Response(
+                                                val lateReply = JsonRpcResponse(
                                                     id,
                                                     Present(Structure.encode(AddResp(42))),
                                                     Absent,
@@ -361,7 +361,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     "IdStrategy.SequentialLong produces ids Num(1), Num(2), Num(3)" in run {
         // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
-        val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope.Id])(using AllowUnsafe.embrace.danger)
+        val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
         val capture = JsonRpcHandler.ExtrasEncoder(id =>
             Sync.defer { ids.getAndUpdate(id :: _)(using AllowUnsafe.embrace.danger); Absent }
         )
@@ -373,7 +373,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                 a.call[AddReq, AddResp]("add", AddReq(2, 0), capture).andThen {
                     a.call[AddReq, AddResp]("add", AddReq(3, 0), capture).map { _ =>
                         val collected = Chunk.from(ids.get()(using AllowUnsafe.embrace.danger).reverse)
-                        assert(collected == Chunk(JsonRpcEnvelope.Id.Num(1L), JsonRpcEnvelope.Id.Num(2L), JsonRpcEnvelope.Id.Num(3L)))
+                        assert(collected == Chunk(JsonRpcId.Num(1L), JsonRpcId.Num(2L), JsonRpcId.Num(3L)))
                     }
                 }
             }
@@ -382,7 +382,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     "IdStrategy.SequentialInt produces ids Num(1), Num(2), Num(3)" in run {
         // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
-        val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope.Id])(using AllowUnsafe.embrace.danger)
+        val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
         val capture = JsonRpcHandler.ExtrasEncoder(id =>
             Sync.defer { ids.getAndUpdate(id :: _)(using AllowUnsafe.embrace.danger); Absent }
         )
@@ -397,7 +397,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                             a.call[AddReq, AddResp]("add", AddReq(3, 0), capture).map { _ =>
                                 val collected = Chunk.from(ids.get()(using AllowUnsafe.embrace.danger).reverse)
                                 assert(
-                                    collected == Chunk(JsonRpcEnvelope.Id.Num(1L), JsonRpcEnvelope.Id.Num(2L), JsonRpcEnvelope.Id.Num(3L))
+                                    collected == Chunk(JsonRpcId.Num(1L), JsonRpcId.Num(2L), JsonRpcId.Num(3L))
                                 )
                             }
                         }
@@ -440,10 +440,10 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         // Unsafe: AtomicLong.Unsafe.init for id generation
         val counter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
         val customStrategy = JsonRpcHandler.IdStrategy.Custom(() =>
-            Sync.defer(JsonRpcEnvelope.Id.Num(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
+            Sync.defer(JsonRpcId.Num(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         )
         // Unsafe: AtomicRef.Unsafe.init for concurrent id collection (replaces ConcurrentHashMap)
-        val collectedIds = AtomicRef.Unsafe.init(Map.empty[JsonRpcEnvelope.Id, Boolean])(using AllowUnsafe.embrace.danger)
+        val collectedIds = AtomicRef.Unsafe.init(Map.empty[JsonRpcId, Boolean])(using AllowUnsafe.embrace.danger)
         val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -531,8 +531,8 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     )))).andThen {
                         Async.sleep(500.millis).andThen {
                             val envs = seen.get()(using AllowUnsafe.embrace.danger)
-                            assert(envs.exists { case JsonRpcEnvelope.Request(_, "slow", _, _) => true; case _ => false })
-                            assert(!envs.exists { case JsonRpcEnvelope.Notification("$/cancelRequest", _, _) => true; case _ => false })
+                            assert(envs.exists { case JsonRpcRequest(_, "slow", _, _) => true; case _ => false })
+                            assert(!envs.exists { case JsonRpcNotification("$/cancelRequest", _, _) => true; case _ => false })
                         }
                     }
                 }
@@ -547,7 +547,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         val bothFieldsCodec = new JsonRpcCodec:
             def encode(env: JsonRpcEnvelope)(using Frame): Structure.Value < (Sync & Abort[JsonRpcError]) =
                 env match
-                    case JsonRpcEnvelope.Response(id, Present(r), Present(e), _) =>
+                    case JsonRpcResponse(id, Present(r), Present(e), _) =>
                         Sync.defer(Structure.Value.Record(Chunk(
                             "jsonrpc" -> Structure.Value.Str("2.0"),
                             "id"      -> Structure.encode(id),
@@ -568,8 +568,8 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                         // tb.send triggers ta.incoming; bothFieldsCodec encodes both result+error on the wire;
                         // Strict2_0.decode sees both fields and emits Malformed(Present(Num(1)), ...).
                         // The Malformed-with-id branch completes abortSignal with invalidRequest("malformed response: ...").
-                        Abort.run[Closed](tb.send(JsonRpcEnvelope.Response(
-                            JsonRpcEnvelope.Id.Num(1),
+                        Abort.run[Closed](tb.send(JsonRpcResponse(
+                            JsonRpcId.Num(1),
                             Present(Structure.Value.Record(Chunk.empty)),
                             Present(JsonRpcError.invalidRequest("x")),
                             Absent
@@ -646,10 +646,10 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                 def close(using Frame) = tb.close
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tbWrap, Seq.empty).map { _ =>
-                    a.sendUnmatched("Page.handleJavaScriptDialog", DialogParams(true), JsonRpcEnvelope.Id.Num(-1)).andThen {
+                    a.sendUnmatched("Page.handleJavaScriptDialog", DialogParams(true), JsonRpcId.Num(-1)).andThen {
                         untilTrue(Sync.defer(seen.get()(using AllowUnsafe.embrace.danger).exists {
-                            case JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(-1), "Page.handleJavaScriptDialog", _, _) => true
-                            case _                                                                                        => false
+                            case JsonRpcRequest(JsonRpcId.Num(-1), "Page.handleJavaScriptDialog", _, _) => true
+                            case _                                                                      => false
                         })).andThen(succeed)
                     }
                 }
@@ -662,7 +662,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty).map { _ =>
                     Kyo.foreachDiscard(1 to 5) { i =>
-                        a.sendUnmatched("noop", (), JsonRpcEnvelope.Id.Num(i.toLong))
+                        a.sendUnmatched("noop", (), JsonRpcId.Num(i.toLong))
                     }.andThen {
                         Async.timeout(200.millis)(a.awaitDrain).map(_ => succeed)
                     }
@@ -676,7 +676,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty).map { _ =>
                     val start = java.lang.System.currentTimeMillis
-                    a.sendUnmatched("noop", (), JsonRpcEnvelope.Id.Num(1)).andThen(a.awaitDrain).map { _ =>
+                    a.sendUnmatched("noop", (), JsonRpcId.Num(1)).andThen(a.awaitDrain).map { _ =>
                         val elapsed = java.lang.System.currentTimeMillis - start
                         assert(elapsed < 100)
                     }

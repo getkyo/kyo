@@ -351,14 +351,14 @@ class JsonRpcPortInvariantsSpec extends Test:
                     "Page.handleJavaScriptDialog"
                 ) { (_, ctx) =>
                     ctx.requestId match
-                        case Present(JsonRpcEnvelope.Id.Num(n)) => dialogIdRef.set(Present(n))
-                        case _                                  => Kyo.unit
+                        case Present(JsonRpcId.Num(n)) => dialogIdRef.set(Present(n))
+                        case _                         => Kyo.unit
                 }
                 val navigateMethod = JsonRpcRoute[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
                     "Page.navigate"
                 ) { (_, ctx) =>
                     ctx.requestId match
-                        case Present(JsonRpcEnvelope.Id.Num(n)) =>
+                        case Present(JsonRpcId.Num(n)) =>
                             regularIdRef.set(Present(n)).map(_ => NavigateResult("f"))
                         case _ => NavigateResult("f")
                 }

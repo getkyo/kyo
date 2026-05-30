@@ -8,7 +8,7 @@ private[kyo] case class OutboundReq(
     method: String,
     encodedParams: Maybe[Structure.Value],
     // Unsafe: completed inside Exchange encode callback (Sync context, no Frame available)
-    idSignal: Promise.Unsafe[JsonRpcEnvelope.Id, Any],
+    idSignal: Promise.Unsafe[JsonRpcId, Any],
     abortSignal: Fiber.Promise[JsonRpcError, Any],
     extras: JsonRpcHandler.ExtrasEncoder
 )
@@ -39,13 +39,13 @@ end InboundEntry
 
 sealed private[kyo] trait WriterMsg
 private[kyo] object WriterMsg:
-    case class SendEnvelope(env: JsonRpcEnvelope)                                extends WriterMsg
-    case class SuppressIfCancelled(id: JsonRpcEnvelope.Id, env: JsonRpcEnvelope) extends WriterMsg
+    case class SendEnvelope(env: JsonRpcEnvelope)                       extends WriterMsg
+    case class SuppressIfCancelled(id: JsonRpcId, env: JsonRpcEnvelope) extends WriterMsg
 end WriterMsg
 
 final class JsonRpcEndpointImpl private[kyo] (
-    private[kyo] val callerRegistry: ConcurrentHashMap[JsonRpcEnvelope.Id, CallerInfo],
-    private[kyo] val pendingInbound: ConcurrentHashMap[JsonRpcEnvelope.Id, InboundEntry],
+    private[kyo] val callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo],
+    private[kyo] val pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry],
     private val writerChannel: Channel[WriterMsg],
     private val exchange: Exchange[OutboundReq, Structure.Value, Nothing, JsonRpcError],
     private val transport: JsonRpcTransport,
@@ -59,7 +59,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     private[kyo] val initFrame: Frame,
     private val progressPolicy: Maybe[JsonRpcHandler.ProgressPolicy],
     private[kyo] val progressStreams: ConcurrentHashMap[Structure.Value, Channel[Structure.Value]],
-    private[kyo] val outboundIdToToken: ConcurrentHashMap[JsonRpcEnvelope.Id, Structure.Value],
+    private[kyo] val outboundIdToToken: ConcurrentHashMap[JsonRpcId, Structure.Value],
     private val meter: Maybe[Meter],
     // AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); ConcurrentHashMap follows Exchange precedent; cross-platform via JS/Native JDK shim
     private[kyo] val tokenToDeadline: ConcurrentHashMap[Structure.Value, java.util.concurrent.atomic.AtomicLong]
@@ -75,7 +75,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                 // Unsafe: Promise.Unsafe.init for idSignal so it can be read from the encode callback
                 // unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                 Sync.Unsafe.defer {
-                    val idSignal      = Promise.Unsafe.init[JsonRpcEnvelope.Id, Any]()
+                    val idSignal      = Promise.Unsafe.init[JsonRpcId, Any]()
                     val encodedParams = Present(Structure.encode[In](params))
                     val req           = OutboundReq(method, encodedParams, idSignal, abortSignal, extras)
                     inFlight.getAndIncrement.map { prev =>
@@ -165,10 +165,10 @@ final class JsonRpcEndpointImpl private[kyo] (
         extras: JsonRpcHandler.ExtrasEncoder,
         // AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); used as a mutable deadline cell shared between call and monitor fibers
         deadlineRef: Maybe[java.util.concurrent.atomic.AtomicLong]
-    )(using frame: Frame): (Fiber.Promise[JsonRpcEnvelope.Id, Any], Out < (Async & Abort[JsonRpcError | Closed])) =
+    )(using frame: Frame): (Fiber.Promise[JsonRpcId, Any], Out < (Async & Abort[JsonRpcError | Closed])) =
         // Unsafe: Promise.Unsafe.init so idSignal is accessible before the call runs
         // Promise Unsafe init constructs a state cell readable from Sync-only Exchange callbacks; no safe Promise equivalent
-        val idSignalUnsafe = Promise.Unsafe.init[JsonRpcEnvelope.Id, Any]()(using AllowUnsafe.embrace.danger)
+        val idSignalUnsafe = Promise.Unsafe.init[JsonRpcId, Any]()(using AllowUnsafe.embrace.danger)
         val idSignal       = idSignalUnsafe
         val idPromise      = idSignalUnsafe.safe
         val callEffect: Out < (Async & Abort[JsonRpcError | Closed]) =
@@ -276,9 +276,9 @@ final class JsonRpcEndpointImpl private[kyo] (
                                                             Sync.Unsafe.defer {
                                                                 idSignal.poll() match
                                                                     case Maybe.Present(Result.Success(rawId)) =>
-                                                                        Present(rawId.eval: JsonRpcEnvelope.Id)
+                                                                        Present(rawId.eval: JsonRpcId)
                                                                     case _ => Absent
-                                                            }.map { (idOpt: Maybe[JsonRpcEnvelope.Id]) =>
+                                                            }.map { (idOpt: Maybe[JsonRpcId]) =>
                                                                 idOpt match
                                                                     case Present(id) =>
                                                                         CancellationEngine.handleTimeout(
@@ -341,10 +341,10 @@ final class JsonRpcEndpointImpl private[kyo] (
         params: In,
         extras: JsonRpcHandler.ExtrasEncoder
     )(using Frame): Unit < (Async & Abort[Closed]) =
-        val sentinelId    = JsonRpcEnvelope.Id.Num(-1L)
+        val sentinelId    = JsonRpcId(-1L)
         val encodedParams = Present(Structure.encode[In](params))
         extras.resolve(sentinelId).map { extrasVal =>
-            val env = JsonRpcEnvelope.Notification(method, encodedParams, extrasVal)
+            val env = JsonRpcNotification(method, encodedParams, extrasVal)
             writerChannel.put(WriterMsg.SendEnvelope(env))
         }
     end notify
@@ -352,12 +352,12 @@ final class JsonRpcEndpointImpl private[kyo] (
     def sendUnmatched[In: Schema](
         method: String,
         params: In,
-        id: JsonRpcEnvelope.Id,
+        id: JsonRpcId,
         extras: JsonRpcHandler.ExtrasEncoder
     )(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer(Structure.encode[In](params)).map { encodedParams =>
             extras.resolve(id).map { extrasVal =>
-                val env = JsonRpcEnvelope.Request(id, method, Present(encodedParams), extrasVal)
+                val env = JsonRpcRequest(id, method, Present(encodedParams), extrasVal)
                 writerChannel.put(WriterMsg.SendEnvelope(env))
             }
         }
@@ -576,7 +576,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                     discard(ch.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
         }
 
-    def cancel(id: JsonRpcEnvelope.Id, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed]) =
+    def cancel(id: JsonRpcId, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer(Maybe(callerRegistry.get(id))).map {
             case Absent =>
                 Log.warn(s"kyo-jsonrpc: cancel for unknown or already-completed id $id, no-op")
@@ -737,11 +737,11 @@ object JsonRpcEndpointImpl:
         config: JsonRpcHandler.Config
     )(using frame: Frame): JsonRpcEndpointImpl < (Sync & Async) =
         // Unsafe: ConcurrentHashMap mirrors Exchange's own internal pattern
-        val callerRegistry = new ConcurrentHashMap[JsonRpcEnvelope.Id, CallerInfo]()
-        val pendingInbound = new ConcurrentHashMap[JsonRpcEnvelope.Id, InboundEntry]()
+        val callerRegistry = new ConcurrentHashMap[JsonRpcId, CallerInfo]()
+        val pendingInbound = new ConcurrentHashMap[JsonRpcId, InboundEntry]()
         // Unsafe: ConcurrentHashMap for progress streams, reverse id-to-token map, and deadline refs
         val progressStreams   = new ConcurrentHashMap[Structure.Value, Channel[Structure.Value]]()
-        val outboundIdToToken = new ConcurrentHashMap[JsonRpcEnvelope.Id, Structure.Value]()
+        val outboundIdToToken = new ConcurrentHashMap[JsonRpcId, Structure.Value]()
         // AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); ConcurrentHashMap follows Exchange precedent; cross-platform via JS/Native JDK shim
         val tokenToDeadline = new ConcurrentHashMap[Structure.Value, java.util.concurrent.atomic.AtomicLong]()
         val methodMap       = methods.map(m => m.name -> m).toMap
@@ -774,7 +774,7 @@ object JsonRpcEndpointImpl:
 
                     // Encode callback: runs in Sync-only context inside Exchange.apply.
                     // Uses Kyo effect chaining (returns < Sync).
-                    val encodeCallback: (JsonRpcEnvelope.Id, OutboundReq) => String < Sync =
+                    val encodeCallback: (JsonRpcId, OutboundReq) => String < Sync =
                         (id, req) =>
                             // Resolve extras with the now-known id; frame captured from initEngine
                             req.extras.resolve(id)(using frame).map { extrasVal =>
@@ -791,7 +791,7 @@ object JsonRpcEndpointImpl:
                                     req.idSignal.completeDiscard(Result.succeed(id))(using AllowUnsafe.embrace.danger)
                                 }.andThen {
                                     // Build envelope and encode to JSON
-                                    val env = JsonRpcEnvelope.Request(id, req.method, req.encodedParams, extrasVal)
+                                    val env = JsonRpcRequest(id, req.method, req.encodedParams, extrasVal)
                                     Abort.run[JsonRpcError](config.codec.encode(env)(using frame)).map {
                                         case Result.Success(sv) => Json.encode[Structure.Value](sv)
                                         case _                  => ""
@@ -840,14 +840,14 @@ object JsonRpcEndpointImpl:
 
                     // Decode callback: runs in Sync-only context inside Exchange's reader loop.
                     // May use Kyo effects (returns < Sync). Must NOT park.
-                    val decodeCallback: String => Exchange.Message[JsonRpcEnvelope.Id, Structure.Value, Nothing] < Sync =
+                    val decodeCallback: String => Exchange.Message[JsonRpcId, Structure.Value, Nothing] < Sync =
                         wire =>
                             Json.decode[Structure.Value](wire) match
                                 case Result.Success(sv) =>
                                     config.codec.decode(sv)(using frame).map { parsedEnvelope =>
                                         parsedEnvelope match
 
-                                            case env @ JsonRpcEnvelope.Notification(method, params, _) =>
+                                            case env @ JsonRpcNotification(method, params, _) =>
                                                 // Step 1a: cancellation policy intercept
                                                 config.cancellation match
                                                     case Present(policy) if method == policy.cancelMethod =>
@@ -897,7 +897,7 @@ object JsonRpcEndpointImpl:
                                                                 // Step 2: gate intercept (before method dispatch)
                                                                 def dispatchNotification
                                                                     : Exchange.Message[
-                                                                        JsonRpcEnvelope.Id,
+                                                                        JsonRpcId,
                                                                         Structure.Value,
                                                                         Nothing
                                                                     ] < Sync =
@@ -982,9 +982,9 @@ object JsonRpcEndpointImpl:
                                                                         }
                                                                 end match
 
-                                            case env2 @ JsonRpcEnvelope.Request(id, method, params, extras) =>
+                                            case env2 @ JsonRpcRequest(id, method, params, extras) =>
                                                 // Step 2: gate intercept (before method dispatch)
-                                                def dispatchRequest: Exchange.Message[JsonRpcEnvelope.Id, Structure.Value, Nothing] < Sync =
+                                                def dispatchRequest: Exchange.Message[JsonRpcId, Structure.Value, Nothing] < Sync =
                                                     // stdlib Map.get() returns scala.Option; match arms are interop at protocol dispatch boundary
                                                     methodMap.get(method) match
                                                         // scala.Option arm; interop with methodMap.get (covered by comment above match)
@@ -1025,16 +1025,16 @@ object JsonRpcEndpointImpl:
                                                                     fiber.unsafe.onComplete { result =>
                                                                         val responseEnvelope = result match
                                                                             case Result.Success(sv) =>
-                                                                                JsonRpcEnvelope.Response(
+                                                                                JsonRpcResponse(
                                                                                     id,
                                                                                     Present(sv.eval(using frame)),
                                                                                     Absent,
                                                                                     extras
                                                                                 )
                                                                             case Result.Failure(e) =>
-                                                                                JsonRpcEnvelope.Response(id, Absent, Present(e), extras)
+                                                                                JsonRpcResponse(id, Absent, Present(e), extras)
                                                                             case Result.Panic(t) =>
-                                                                                JsonRpcEnvelope.Response(
+                                                                                JsonRpcResponse(
                                                                                     id,
                                                                                     Absent,
                                                                                     Present(
@@ -1090,7 +1090,7 @@ object JsonRpcEndpointImpl:
                                                             // Step 3: unknown-method dispatch for requests
                                                             config.unknownMethod.onUnknownRequest match
                                                                 case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
-                                                                    val response = JsonRpcEnvelope.Response(
+                                                                    val response = JsonRpcResponse(
                                                                         id,
                                                                         Absent,
                                                                         Present(JsonRpcError.methodNotFound(method)(using frame)),
@@ -1109,7 +1109,7 @@ object JsonRpcEndpointImpl:
                                                                     Exchange.Message.Skip
                                                                 case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.Reject =>
                                                                     // Reject for a Request: send MethodNotFound first (so caller is unblocked), then close.
-                                                                    val response = JsonRpcEnvelope.Response(
+                                                                    val response = JsonRpcResponse(
                                                                         id,
                                                                         Absent,
                                                                         Present(JsonRpcError.methodNotFound(method)(using frame)),
@@ -1144,7 +1144,7 @@ object JsonRpcEndpointImpl:
                                                                 dispatchRequest
                                                             case JsonRpcHandler.MessageGate.Decision.Reject(err) =>
                                                                 // Request has an id: send error response so caller is not left hanging
-                                                                val response = JsonRpcEnvelope.Response(id, Absent, Present(err), Absent)
+                                                                val response = JsonRpcResponse(id, Absent, Present(err), Absent)
                                                                 // Unsafe: offer to writerChannel inside gate decision handler
                                                                 // unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                                 Sync.Unsafe.defer {
@@ -1159,7 +1159,7 @@ object JsonRpcEndpointImpl:
                                                         }
                                                 end match
 
-                                            case JsonRpcEnvelope.Response(id, result, error, _) =>
+                                            case JsonRpcResponse(id, result, error, _) =>
                                                 error match
                                                     case Present(e) =>
                                                         // Unsafe: complete abortSignal inside Exchange decode callback so raceFirst selects the abort arm.
@@ -1203,7 +1203,7 @@ object JsonRpcEndpointImpl:
                                                                     )
                                                         }
 
-                                            case JsonRpcEnvelope.Malformed(Present(id), reason, _) =>
+                                            case JsonRpcMalformedMessage(Present(id), reason, _) =>
                                                 // unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                 Sync.Unsafe.defer {
                                                     Maybe(callerRegistry.get(id)) match
@@ -1216,7 +1216,7 @@ object JsonRpcEndpointImpl:
                                                         case Absent =>
                                                             ()
                                                 }.andThen(Exchange.Message.Skip)
-                                            case JsonRpcEnvelope.Malformed(Absent, _, _) =>
+                                            case JsonRpcMalformedMessage(Absent, _, _) =>
                                                 Exchange.Message.Skip
                                     }
                                 case Result.Failure(_) =>
@@ -1224,7 +1224,7 @@ object JsonRpcEndpointImpl:
                                 case Result.Panic(_) =>
                                     Exchange.Message.Skip
 
-                    Exchange.initUnscoped[JsonRpcEnvelope.Id, OutboundReq, Structure.Value, String, Nothing, JsonRpcError](
+                    Exchange.initUnscoped[JsonRpcId, OutboundReq, Structure.Value, String, Nothing, JsonRpcError](
                         nextId = nextIdFn(),
                         encode = encodeCallback,
                         send = sendCallback,

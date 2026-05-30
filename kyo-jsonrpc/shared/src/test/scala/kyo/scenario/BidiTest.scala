@@ -54,7 +54,7 @@ class BidiTest extends JsonRpcTest:
 
     "LSP bidi cancel: A cancels call to B; B handler observes cancelled; reply carries -32800; response IS on transport" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
-        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcEnvelope.Id]](Absent)(using AllowUnsafe.embrace.danger)
+        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
 
         val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
             (req, ctx) =>
@@ -85,8 +85,8 @@ class BidiTest extends JsonRpcTest:
                                                 assert(e.code == -32800, s"expected -32800, got ${e.code}")
                                                 untilTrue(Sync.defer {
                                                     capB.sentList.exists {
-                                                        case JsonRpcEnvelope.Response(rid, _, _, _) => rid == id
-                                                        case _                                      => false
+                                                        case JsonRpcResponse(rid, _, _, _) => rid == id
+                                                        case _                             => false
                                                     }
                                                 }).andThen(succeed)
                                             case other => fail(s"expected -32800, got $other")
@@ -103,7 +103,7 @@ class BidiTest extends JsonRpcTest:
 
     "MCP bidi cancel: A cancels call to B; B handler is interrupted; NO response frame on transport" in run {
         // Unsafe: AtomicRef.Unsafe.init for id and promise capture across fibers
-        val capturedId   = AtomicRef.Unsafe.init[Maybe[JsonRpcEnvelope.Id]](Absent)(using AllowUnsafe.embrace.danger)
+        val capturedId   = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val handlerReady = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
         val handlerDone  = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
 
@@ -154,8 +154,8 @@ class BidiTest extends JsonRpcTest:
                                                         untilTrue(doneP.done).andThen {
                                                             Sync.defer {
                                                                 val noReply = capB.sentList.forall {
-                                                                    case JsonRpcEnvelope.Response(rid, _, _, _) => rid != id
-                                                                    case _                                      => true
+                                                                    case JsonRpcResponse(rid, _, _, _) => rid != id
+                                                                    case _                             => true
                                                                 }
                                                                 assert(noReply, "MCP cancel must produce no response frame on transport")
                                                             }

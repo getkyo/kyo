@@ -82,7 +82,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // ─────────────────────────────────────────────────────────────────────────
 
     "CDP error-response pipeline: malformed-envelope response surfaces as BrowserProtocolErrorException" in run {
-        // A `JsonRpcEnvelope.Malformed(Present(id), reason, raw)` sent directly on the server transport
+        // A `JsonRpcMalformedMessage(Present(id), reason, raw)` sent directly on the server transport
         // triggers `JsonRpcError.invalidRequest("malformed response: <reason>")` at the pending caller.
         // Equivalent to the old fallback path for `{"id": 2, "error": "not-an-object"}`.
         Scope.run {
@@ -98,8 +98,8 @@ class CdpClientDecoderTest extends kyo.Test:
                         // The client endpoint routes Malformed(Present(id), ...) to the pending caller as invalidRequest.
                         Abort.run[Closed](
                             serverTransport.send(
-                                JsonRpcEnvelope.Malformed(
-                                    Present(JsonRpcEnvelope.Id.Num(2L)),
+                                JsonRpcMalformedMessage(
+                                    Present(JsonRpcId.Num(2L)),
                                     "error field is not a Record",
                                     Structure.Value.Str("""{"id":2,"error":"not-an-object"}""")
                                 )
@@ -164,8 +164,8 @@ class CdpClientDecoderTest extends kyo.Test:
                     Async.delay(50.millis)(Kyo.unit).andThen {
                         Abort.run[Closed](
                             serverTransport.send(
-                                JsonRpcEnvelope.Malformed(
-                                    Present(JsonRpcEnvelope.Id.Num(2L)),
+                                JsonRpcMalformedMessage(
+                                    Present(JsonRpcId.Num(2L)),
                                     "error field is not a Record",
                                     Structure.Value.Str("""{"id":2,"error":"not-an-object"}""")
                                 )
@@ -200,7 +200,7 @@ class CdpClientDecoderTest extends kyo.Test:
                     Async.delay(50.millis)(Kyo.unit).andThen {
                         Abort.run[Closed](
                             serverTransport.send(
-                                JsonRpcEnvelope.Malformed(
+                                JsonRpcMalformedMessage(
                                     Absent,
                                     "expected a Record",
                                     Structure.Value.Sequence(Chunk(
@@ -240,7 +240,7 @@ class CdpClientDecoderTest extends kyo.Test:
                     Async.delay(50.millis)(Kyo.unit).andThen {
                         Abort.run[Closed](
                             serverTransport.send(
-                                JsonRpcEnvelope.Malformed(
+                                JsonRpcMalformedMessage(
                                     Absent,
                                     "json parse failed",
                                     Structure.Value.Str("not-json")
@@ -277,7 +277,7 @@ class CdpClientDecoderTest extends kyo.Test:
                     // Inject a notification for an unregistered method via the server transport.
                     Abort.run[Closed](
                         serverTransport.send(
-                            JsonRpcEnvelope.Notification(
+                            JsonRpcNotification(
                                 method = "NotAWhitelistedEvent",
                                 params = Absent,
                                 extras = Absent

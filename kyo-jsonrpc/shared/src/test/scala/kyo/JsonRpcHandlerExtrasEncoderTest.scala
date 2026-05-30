@@ -9,8 +9,8 @@ class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
 
     "empty.resolve always yields Absent regardless of id" in run {
         for
-            a <- JsonRpcHandler.ExtrasEncoder.empty.resolve(JsonRpcEnvelope.Id.Num(1L))
-            b <- JsonRpcHandler.ExtrasEncoder.empty.resolve(JsonRpcEnvelope.Id.Str("x"))
+            a <- JsonRpcHandler.ExtrasEncoder.empty.resolve(JsonRpcId.Num(1L))
+            b <- JsonRpcHandler.ExtrasEncoder.empty.resolve(JsonRpcId.Str("x"))
         yield
             assert(a == Absent)
             assert(b == Absent)
@@ -20,8 +20,8 @@ class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
         val v   = Structure.Value.Str("payload")
         val enc = JsonRpcHandler.ExtrasEncoder.const(v)
         for
-            a <- enc.resolve(JsonRpcEnvelope.Id.Num(1L))
-            b <- enc.resolve(JsonRpcEnvelope.Id.Str("x"))
+            a <- enc.resolve(JsonRpcId.Num(1L))
+            b <- enc.resolve(JsonRpcId.Str("x"))
         yield
             assert(a == Present(v))
             assert(b == Present(v))
@@ -33,8 +33,8 @@ class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
             Sync.defer(Present(Structure.Value.Str(id.toString)))
         }
         for
-            a <- enc.resolve(JsonRpcEnvelope.Id.Num(7L))
-        yield assert(a == Present(Structure.Value.Str(JsonRpcEnvelope.Id.Num(7L).toString)))
+            a <- enc.resolve(JsonRpcId.Num(7L))
+        yield assert(a == Present(Structure.Value.Str(JsonRpcId.Num(7L).toString)))
     }
 
     "apply(f) lifts a Sync-effectful body through .resolve" in run {
@@ -44,8 +44,8 @@ class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
             Sync.Unsafe.defer(Present(Structure.Value.Integer(counter.incrementAndGet())))
         }
         for
-            a <- enc.resolve(JsonRpcEnvelope.Id.Num(1L))
-            b <- enc.resolve(JsonRpcEnvelope.Id.Num(2L))
+            a <- enc.resolve(JsonRpcId.Num(1L))
+            b <- enc.resolve(JsonRpcId.Num(2L))
         yield
             assert(a == Present(Structure.Value.Integer(1L)))
             assert(b == Present(Structure.Value.Integer(2L)))

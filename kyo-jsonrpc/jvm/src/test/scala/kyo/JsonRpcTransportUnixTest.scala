@@ -41,8 +41,8 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
                     t.incoming.take(1).run.map { frames =>
                         assert(frames.size == 1)
                         frames.head match
-                            case JsonRpcEnvelope.Notification("ping", _, _) => succeed
-                            case other                                      => fail(s"unexpected $other")
+                            case JsonRpcNotification("ping", _, _) => succeed
+                            case other                             => fail(s"unexpected $other")
                     }
                 }
             }
@@ -77,8 +77,8 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
                     t.incoming.take(1).run.map { frames =>
                         assert(frames.size == 1)
                         frames.head match
-                            case JsonRpcEnvelope.Notification("p", _, _) => succeed
-                            case other                                   => fail(s"unexpected $other")
+                            case JsonRpcNotification("p", _, _) => succeed
+                            case other                          => fail(s"unexpected $other")
                     }
                 }
             }

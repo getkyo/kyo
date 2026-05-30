@@ -69,7 +69,7 @@ class HttpStyleTest extends JsonRpcTest:
                             untilTrue(Sync.defer(handlerRan.get()(using AllowUnsafe.embrace.danger) == 1)).andThen {
                                 Sync.defer {
                                     val responses = capA.sentList.collect {
-                                        case r: JsonRpcEnvelope.Response => r
+                                        case r: JsonRpcResponse => r
                                     }
                                     assert(responses.isEmpty, s"expected zero response frames from server, got ${responses.size}")
                                     assert(handlerRan.get()(using AllowUnsafe.embrace.danger) == 1, "handler should have run exactly once")
@@ -89,9 +89,9 @@ class HttpStyleTest extends JsonRpcTest:
         val lspInitGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
                 env match
-                    case JsonRpcEnvelope.Request(_, "initialize", _, _) =>
+                    case JsonRpcRequest(_, "initialize", _, _) =>
                         JsonRpcHandler.MessageGate.Decision.Allow
-                    case JsonRpcEnvelope.Request(_, _, _, _) if !initialized =>
+                    case JsonRpcRequest(_, _, _, _) if !initialized =>
                         JsonRpcHandler.MessageGate.Decision.Reject(serverNotInitialized)
                     case _ =>
                         JsonRpcHandler.MessageGate.Decision.Allow

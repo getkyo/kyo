@@ -44,7 +44,7 @@ final class JsonRpcHandler private[kyo] (private[kyo] val impl: internal.engine.
     def sendUnmatched[In: Schema](
         method: String,
         params: In,
-        id: JsonRpcEnvelope.Id,
+        id: JsonRpcId,
         extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
     )(using Frame): Unit < (Async & Abort[Closed]) =
         impl.sendUnmatched[In](method, params, id, extras)
@@ -69,7 +69,7 @@ final class JsonRpcHandler private[kyo] (private[kyo] val impl: internal.engine.
     def unsubscribeProgress(token: Structure.Value)(using Frame): Unit < Async =
         impl.unsubscribeProgress(token)
 
-    def cancel(id: JsonRpcEnvelope.Id, reason: Maybe[String] = Absent)(using Frame): Unit < (Async & Abort[Closed]) =
+    def cancel(id: JsonRpcId, reason: Maybe[String] = Absent)(using Frame): Unit < (Async & Abort[Closed]) =
         impl.cancel(id, reason)
 
     def awaitDrain(using Frame): Unit < Async = impl.awaitDrain
@@ -109,13 +109,13 @@ object JsonRpcHandler:
       */
     // Hub.scala:22 smart-constructor pattern; Pending built only by JsonRpcEndpointImpl.callWithProgress
     final class Pending[Out] private[kyo] (
-        val id: JsonRpcEnvelope.Id,
+        val id: JsonRpcId,
         val result: Out < (Async & Abort[JsonRpcError | Closed]),
         val progress: Stream[Structure.Value, Async],
         val cancel: Unit < (Async & Abort[Closed])
     )
 
-    /** Selects how the endpoint allocates [[JsonRpcEnvelope.Id]] values for outbound requests.
+    /** Selects how the endpoint allocates [[JsonRpcId]] values for outbound requests.
       *
       * Three strategies are available:
       *  - [[IdStrategy.SequentialLong]]: monotonically increasing `Long` ids starting at 1.
@@ -130,7 +130,7 @@ object JsonRpcHandler:
     enum IdStrategy derives CanEqual:
         case SequentialLong
         case SequentialInt
-        case Custom(next: () => JsonRpcEnvelope.Id < Sync)
+        case Custom(next: () => JsonRpcId < Sync)
     end IdStrategy
 
     /** Controls how the endpoint responds to incoming requests and notifications for methods
@@ -227,11 +227,11 @@ object JsonRpcHandler:
     ) derives CanEqual
 
     object CancellationPolicy:
-        private type ParamsEncoder = (JsonRpcEnvelope.Id, Maybe[String]) => Frame ?=> Structure.Value < Sync
-        private type ParamsDecoder = Structure.Value => Frame ?=> Maybe[JsonRpcEnvelope.Id] < Sync
+        private type ParamsEncoder = (JsonRpcId, Maybe[String]) => Frame ?=> Structure.Value < Sync
+        private type ParamsDecoder = Structure.Value => Frame ?=> Maybe[JsonRpcId] < Sync
 
-        private case class LspCancelParams(id: JsonRpcEnvelope.Id) derives Schema, CanEqual
-        private case class McpCancelParams(requestId: JsonRpcEnvelope.Id, reason: Maybe[String]) derives Schema, CanEqual
+        private case class LspCancelParams(id: JsonRpcId) derives Schema, CanEqual
+        private case class McpCancelParams(requestId: JsonRpcId, reason: Maybe[String]) derives Schema, CanEqual
 
         // annotation pins the private ParamsEncoder type so the lambda matches the case-class constructor field type
         private val lspEncoder: ParamsEncoder =
@@ -368,19 +368,19 @@ object JsonRpcHandler:
       *
       * @see [[JsonRpcHandler]]
       */
-    opaque type ExtrasEncoder = JsonRpcEnvelope.Id => Maybe[Structure.Value] < Sync
+    opaque type ExtrasEncoder = JsonRpcId => Maybe[Structure.Value] < Sync
 
     object ExtrasEncoder:
-        def apply(f: JsonRpcEnvelope.Id => Maybe[Structure.Value] < Sync): ExtrasEncoder = f
+        def apply(f: JsonRpcId => Maybe[Structure.Value] < Sync): ExtrasEncoder = f
 
-        val empty: ExtrasEncoder = (_: JsonRpcEnvelope.Id) => Absent
+        val empty: ExtrasEncoder = (_: JsonRpcId) => Absent
 
         def const(extras: Structure.Value): ExtrasEncoder =
-            (_: JsonRpcEnvelope.Id) => Present(extras)
+            (_: JsonRpcId) => Present(extras)
 
         // opaque-type companion carve-out (FLOW Decision #30 (b))
         extension (self: ExtrasEncoder)
-            def resolve(id: JsonRpcEnvelope.Id)(using Frame): Maybe[Structure.Value] < Sync = self(id)
+            def resolve(id: JsonRpcId)(using Frame): Maybe[Structure.Value] < Sync = self(id)
     end ExtrasEncoder
 
     /** Configuration for a [[JsonRpcHandler]].

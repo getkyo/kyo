@@ -4,9 +4,9 @@ import kyo.Maybe.Absent
 
 class JsonRpcTransportTest extends JsonRpcTest:
 
-    val ping1 = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(1L), "ping", Absent, Absent)
-    val ping2 = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(2L), "ping", Absent, Absent)
-    val ping3 = JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(3L), "ping", Absent, Absent)
+    val ping1 = JsonRpcRequest(JsonRpcId.Num(1L), "ping", Absent, Absent)
+    val ping2 = JsonRpcRequest(JsonRpcId.Num(2L), "ping", Absent, Absent)
+    val ping3 = JsonRpcRequest(JsonRpcId.Num(3L), "ping", Absent, Absent)
 
     "a send on transport A is received via incoming on transport B" in run {
         for
@@ -75,7 +75,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
             Console.withOut {
                 for
                     transport <- JsonRpcTransport.stdio()
-                    notification = JsonRpcEnvelope.Notification(
+                    notification = JsonRpcNotification(
                         "log",
                         Maybe.Present(Structure.Value.Record(Chunk("text" -> Structure.Value.Str("hi")))),
                         Absent
@@ -105,7 +105,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
                 case Result.Success(chunk) =>
                     assert(chunk.size == 1)
                     chunk.head match
-                        case JsonRpcEnvelope.Notification(method, _, _) =>
+                        case JsonRpcNotification(method, _, _) =>
                             assert(method == "ping")
                         case other =>
                             fail(s"unexpected envelope: $other")

@@ -57,7 +57,7 @@ object JsonRpcRoute:
     // Hub.scala:22 smart-constructor pattern; framework creates instances via forTest or JsonRpcEndpointImpl
     final class Context private[kyo] (
         val cancelled: Fiber.Promise[Unit, Sync],
-        val requestId: Maybe[JsonRpcEnvelope.Id],
+        val requestId: Maybe[JsonRpcId],
         val extras: Maybe[Structure.Value],
         private[kyo] val progressSink: Maybe[Structure.Value => Unit < (Async & Abort[Closed])]
     ):
@@ -71,7 +71,7 @@ object JsonRpcRoute:
         // test-only construction escape hatch consumed by JsonRpcRouteTest
         private[kyo] def forTest(
             cancelled: Fiber.Promise[Unit, Sync],
-            requestId: Maybe[JsonRpcEnvelope.Id],
+            requestId: Maybe[JsonRpcId],
             extras: Maybe[Structure.Value],
             progressSink: Maybe[Structure.Value => Unit < (Async & Abort[Closed])]
         ): Context = new Context(cancelled, requestId, extras, progressSink)

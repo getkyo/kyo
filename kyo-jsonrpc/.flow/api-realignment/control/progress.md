@@ -13,3 +13,10 @@
 - Phase 01 impl dispatched (sonnet).
 - Phase 02 caller-impact (rg --type scala): JsonRpcEnvelope.Request=12, .Response=9, .Notification=15, .Malformed=9, .Id=27. Total deduped likely 30-40 files. Id is dominant.
 
+- Phase 01 committed: 8bec7d882 (0 BLOCKER, 0 WARN, 3 NOTE).
+- Phase 02 impl dispatched in SLOT-A.
+- Phase 01 audit dispatched in SLOT-B — clean.
+- Phase 02 impl complete: sealed trait JsonRpcEnvelope + 4 top-level case classes (same file, Scala 3 sealed constraint) + JsonRpcId opaque type (separate file). kyo-jsonrpc [success], kyo-jsonrpc-http [success], kyo-browser [success]. 179/179 tests green. 9/9 convention checks = 0 hits. Decisions: phases/phase-02/decisions.md.
+
+- Phase 03 caller-impact (rg --type scala): JsonRpcError reference sites=34, JsonRpcError.internalError sites=5, JsonRpcError pattern-match sites=11, JsonRpcError(code, ...) constructor literals=22. Phase 03 is the largest phase: ~50 reference updates across the construction sites + 11 pattern-match migrations. Special focus: the 5 internalError sites need to be RECLASSIFIED to specific leaves (Configuration / Lifecycle / Transport / HandlerPanic) — not all mapped to the InternalError catchall. The `CdpBackend.scala:65-71` string-prefix-match site also migrates to typed pattern matches.
+

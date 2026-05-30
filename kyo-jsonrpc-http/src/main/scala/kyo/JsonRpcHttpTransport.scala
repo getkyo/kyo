@@ -65,7 +65,7 @@ object JsonRpcHttpTransport:
                                                     case Result.Failure(err) =>
                                                         Abort.run[Closed](
                                                             inbound.put(
-                                                                JsonRpcEnvelope.Malformed(Absent, err.message, sv)
+                                                                JsonRpcMalformedMessage(Absent, err.message, sv)
                                                             )
                                                         ).unit
                                                     case Result.Panic(t) =>
@@ -74,7 +74,7 @@ object JsonRpcHttpTransport:
                                             case Result.Failure(e) =>
                                                 Abort.run[Closed](
                                                     inbound.put(
-                                                        JsonRpcEnvelope.Malformed(
+                                                        JsonRpcMalformedMessage(
                                                             Absent,
                                                             s"json parse: ${e.getMessage}",
                                                             Structure.Value.Str(text)

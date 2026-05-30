@@ -184,9 +184,9 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         val initGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
                 env match
-                    case JsonRpcEnvelope.Request(_, "initialize", _, _) =>
+                    case JsonRpcRequest(_, "initialize", _, _) =>
                         JsonRpcHandler.MessageGate.Decision.Allow
-                    case JsonRpcEnvelope.Request(_, _, _, _) =>
+                    case JsonRpcRequest(_, _, _, _) =>
                         JsonRpcHandler.MessageGate.Decision.Reject(serverNotInitialized)
                     case _ =>
                         JsonRpcHandler.MessageGate.Decision.Allow
