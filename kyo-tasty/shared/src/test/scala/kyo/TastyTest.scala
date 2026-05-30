@@ -1,7 +1,5 @@
 package kyo
 
-import java.nio.file.Files
-import java.nio.file.Paths
 import scala.concurrent.Future
 
 /** Doc-consistency tests enforcing INV-019, INV-020, INV-026 (Phase 01 produced_invariants).
@@ -12,19 +10,11 @@ import scala.concurrent.Future
   */
 class TastyTest extends Test:
 
-    /** Resolve a path relative to the build root.
-      *
-      * sbt cross-project sets user.dir to the platform sub-directory (e.g. kyo-tasty/jvm). We walk two levels up from that to reach the
-      * repository root, then append the given relative path.
-      */
-    private def buildPath(relative: String): java.nio.file.Path =
-        Paths.get(java.lang.System.getProperty("user.dir")).getParent.getParent.resolve(relative)
-
     "README rename consistency" in {
         // INV-020, INV-026: kyo-reflect / Reflect. / ReflectError / .kyo-reflect-cache must be gone from both docs,
         // except the one explicit historical-reference in DESIGN.md section 22 decision #7 (line ~1477).
-        val readme = Files.readString(buildPath("kyo-tasty/README.md"))
-        val design = Files.readString(buildPath("kyo-tasty/DESIGN.md"))
+        val readme = TestResourceLoader.readText("README.md")
+        val design = TestResourceLoader.readText("DESIGN.md")
 
         // README: zero occurrences of any old-module pattern
         val readmeKyoReflect   = countOccurrences(readme, "kyo-reflect")
@@ -59,7 +49,7 @@ class TastyTest extends Test:
     "DESIGN section split" in {
         // L7: Section 1 must be split into Goals (concise) and Performance targets (separate heading).
         // The plan after-block says '## 1. Goals' and '## 1a. Performance targets' each appear once.
-        val design = Files.readString(buildPath("kyo-tasty/DESIGN.md"))
+        val design = TestResourceLoader.readText("DESIGN.md")
         val headerLines = design.split("\n").zipWithIndex
             .filter { case (line, _) => line.startsWith("## ") }
             .take(100) // scan only leading headers to bound the check
@@ -96,8 +86,7 @@ class TastyTest extends Test:
         val phaseMetaPattern: Regex = """// Phase [0-9A-Z]""".r
 
         // Site 1 and 2: Tasty.scala windows
-        val tastyPath  = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
-        val tastyLines = Files.readString(tastyPath).split("\n")
+        val tastyLines = TestResourceLoader.readText("kyo/Tasty.scala").split("\n")
 
         // Window around former line 78 (0-indexed 77): lines 72..87
         val window1 = tastyLines.slice(72, 88)
@@ -113,8 +102,7 @@ class TastyTest extends Test:
         assert(w2Hits.isEmpty, s"Tasty.scala lines 1006-1022: found phase-metadata comment(s): ${w2Hits.map { case (l, i) => s"line ${1006 + i}: $l" }.mkString(", ")}")
 
         // Site 3: ClassfileUnpickler.scala window around line 19 (0-indexed 18): lines 13..28
-        val clsPath  = buildPath("kyo-tasty/shared/src/main/scala/kyo/internal/tasty/classfile/ClassfileUnpickler.scala")
-        val clsLines = Files.readString(clsPath).split("\n")
+        val clsLines = TestResourceLoader.readText("kyo/internal/tasty/classfile/ClassfileUnpickler.scala").split("\n")
         val window3  = clsLines.slice(13, 29)
         val w3Hits   = window3.zipWithIndex.filter { case (line, _) => phaseMetaPattern.findFirstIn(line).isDefined }
         assert(
@@ -131,7 +119,7 @@ class TastyTest extends Test:
         // INV-020, L6: README must contain at least one fenced scala block with 'import kyo.Tasty.*'
         // and zero fenced blocks containing 'Reflect.' or 'ReflectError'.
         // Doctest compilation is verified by sbt's doctest infrastructure; this test verifies the source structure.
-        val readme = Files.readString(buildPath("kyo-tasty/README.md"))
+        val readme = TestResourceLoader.readText("README.md")
 
         // Extract all fenced scala block bodies
         val scalaBlockPattern = """(?s)```scala\n(.*?)```""".r
@@ -161,8 +149,7 @@ class TastyTest extends Test:
         // Given: source Tasty.scala read as String.
         // When: regex search counts occurrences of def (accessor)(using AllowUnsafe).
         // Then: count equals 10.
-        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
-        val src       = Files.readString(tastyPath)
+        val src = TestResourceLoader.readText("kyo/Tasty.scala")
         val pattern =
             """def (fullName|isPackageObject|scaladoc|position|declaredType|parents|typeParams|declarations|companion|asString)\(using AllowUnsafe\)""".r
         val count = pattern.findAllIn(src).length
@@ -176,8 +163,7 @@ class TastyTest extends Test:
         // When: substring scan for import AllowUnsafe.embrace.danger on lines within the 10 accessor bodies.
         // Then: count is 0.
         // Note: import danger may remain in Symbol.body and computeFullName/computeBinaryName/show (§839 case 3 non-accessor sites).
-        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
-        val lines     = Files.readString(tastyPath).split("\n")
+        val lines = TestResourceLoader.readText("kyo/Tasty.scala").split("\n")
         // The 10 accessor defs (after Phase 02a) are single-line or short-body forms.
         // The key invariant: no line in the range covering accessor bodies has BOTH a (using AllowUnsafe) accessor def
         // AND an import danger on the SAME body line. We verify that none of the 10 accessor signatures are
@@ -205,9 +191,8 @@ class TastyTest extends Test:
         // Given: source Tasty.scala read as String, lines split.
         // When: extract lines in Symbol.body (from 'def body(using Frame)' through 'end body').
         // Then: count of 'import AllowUnsafe.embrace.danger' in those lines is 0.
-        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
-        val lines     = Files.readString(tastyPath).split("\n")
-        val startIdx  = lines.indexWhere(_.contains("def body(using Frame): Tree < (Sync & Abort[TastyError])"))
+        val lines    = TestResourceLoader.readText("kyo/Tasty.scala").split("\n")
+        val startIdx = lines.indexWhere(_.contains("def body(using Frame): Tree < (Sync & Abort[TastyError])"))
         assert(startIdx >= 0, "Could not find 'def body(using Frame)' in Tasty.scala")
         val endIdx = lines.indexWhere(l => l.trim == "end body", startIdx + 1)
         assert(endIdx > startIdx, "Could not find 'end body' after def body in Tasty.scala")
@@ -225,9 +210,8 @@ class TastyTest extends Test:
         // Given: source Tasty.scala read as String, lines split.
         // When: extract lines in Symbol.body (from 'def body(using Frame)' through 'end body').
         // Then: count of 'Sync.Unsafe.defer' is at least 1.
-        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
-        val lines     = Files.readString(tastyPath).split("\n")
-        val startIdx  = lines.indexWhere(_.contains("def body(using Frame): Tree < (Sync & Abort[TastyError])"))
+        val lines    = TestResourceLoader.readText("kyo/Tasty.scala").split("\n")
+        val startIdx = lines.indexWhere(_.contains("def body(using Frame): Tree < (Sync & Abort[TastyError])"))
         assert(startIdx >= 0, "Could not find 'def body(using Frame)' in Tasty.scala")
         val endIdx = lines.indexWhere(l => l.trim == "end body", startIdx + 1)
         assert(endIdx > startIdx, "Could not find 'end body' after def body in Tasty.scala")
@@ -248,8 +232,7 @@ class TastyTest extends Test:
         // Given: source Tasty.scala read as String, lines split.
         // When: locate the one-arg open overload by its signature and read its body line.
         // Then: the body line contains the literal substring `open(roots, strict = false)`.
-        val tastyPath = buildPath("kyo-tasty/shared/src/main/scala/kyo/Tasty.scala")
-        val lines     = Files.readString(tastyPath).split("\n")
+        val lines = TestResourceLoader.readText("kyo/Tasty.scala").split("\n")
         // Find the one-arg overload: `def open(roots: Seq[String])(using Frame)` without a second param.
         val sigPattern = """^\s+def open\(roots: Seq\[String\]\)\(using Frame\)""".r
         val sigIdx     = lines.indexWhere(l => sigPattern.findFirstIn(l).isDefined)

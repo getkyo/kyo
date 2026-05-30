@@ -1,22 +1,11 @@
 package kyo
 
-import java.nio.file.Files
-import java.nio.file.Paths
-
 class OnceCellTest extends Test:
-
-    /** Resolve a path relative to the build root.
-      *
-      * sbt cross-project sets user.dir to the platform sub-directory (e.g. kyo-tasty/jvm). Walking two levels up reaches the repository
-      * root.
-      */
-    private def buildPath(relative: String): java.nio.file.Path =
-        Paths.get(java.lang.System.getProperty("user.dir")).getParent.getParent.resolve(relative)
 
     // Test 1 (A3): canonical // Unsafe: comments present before each asInstanceOf call, pins A3.
     "OnceCellTest: canonical // Unsafe: comments present before each asInstanceOf call" in {
-        val onceCellSrc = Files.readString(
-            buildPath("kyo-tasty/shared/src/main/scala/kyo/internal/tasty/symbol/OnceCell.scala")
+        val onceCellSrc = TestResourceLoader.readText(
+            "kyo/internal/tasty/symbol/OnceCell.scala"
         )
         val lines = onceCellSrc.split("\n").toVector
 

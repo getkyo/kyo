@@ -65,3 +65,53 @@ Phase 03a placed `class VarintTest` inside `ByteViewTest.scala`. The plan declar
 ## Fix 03a-V2: Tautological assertion replaced with position check
 
 The assertion `assert(result >= 0L || result < 0L)` on the "readLongNat accepts exactly 10-byte encoding without throwing" test was a tautology (any Long satisfies it). Replaced with `assert(view.position == 10)`, which verifies that all 10 bytes of the encoding were consumed, confirming the decoder completed the full 10-byte path without throwing and advanced the cursor correctly.
+
+## Fix 03a-JS1: JS-link failure from java.nio.file in shared test sources
+
+### Problem
+`kyo-tasty/shared/src/test/scala/kyo/TastyTest.scala` and `OnceCellTest.scala` used
+`java.nio.file.Files.readString` and `java.nio.file.Paths` to read source files and documentation
+for source-text invariant checks. `java.nio.file` is absent on Scala.js, causing
+`kyo-tastyJS/Test/fastLinkJS` to fail with "Referring to non-existent class java.nio.file.Files".
+
+### Affected files
+- `kyo-tasty/shared/src/test/scala/kyo/TastyTest.scala` (9 callsites)
+- `kyo-tasty/shared/src/test/scala/kyo/OnceCellTest.scala` (1 callsite)
+
+### Fix
+
+Replaced all `java.nio.file` usage with a call to `TestResourceLoader.readText(resourcePath)`,
+which already had platform-specific implementations (JVM / JS / Native) in
+`kyo-tasty/{jvm,js,native}/src/test/scala/kyo/TestResourceLoader.scala`.
+
+Added `readText(resourcePath: String): String` to each platform implementation:
+- JVM: `scala.io.Source.fromResource(resourcePath)` via the test classloader (resources are
+  copied into the managed resource directory by the sbt `resourceGenerators` task below).
+- JS and Native: delegates to a generated `EmbeddedText.get(resourcePath)` object, because
+  `java.lang.Class.getResourceAsStream` and `ClassLoader` are not available on those platforms
+  (confirmed by the existing `Embedded.scala` comment and Scala.js 1.21 linker behavior).
+
+Two sbt tasks added to `kyo-tasty` cross project settings in `build.sbt`:
+
+1. `Test / resourceGenerators` (all platforms, primarily used by JVM): copies 5 files
+   (`README.md`, `DESIGN.md`, `kyo/Tasty.scala`, `kyo/internal/tasty/classfile/ClassfileUnpickler.scala`,
+   `kyo/internal/tasty/symbol/OnceCell.scala`) from their live source paths into the managed
+   resource directory so `scala.io.Source.fromResource` resolves them on the JVM classpath.
+
+2. `Test / sourceGenerators` (JS and Native platforms only): generates
+   `EmbeddedText.scala` in the managed sources directory via `kyoTastyEmbeddedTextGenerator`.
+   Content is chunked at 60KB per string literal to stay under the JVM class-file constant-pool
+   limit (the build tooling itself is JVM-based). The generated object has a single `get` method
+   with a match expression mapping resource path keys to embedded string values.
+
+Resource path keys used (same across all platforms):
+- `"README.md"` for `kyo-tasty/README.md`
+- `"DESIGN.md"` for `kyo-tasty/DESIGN.md`
+- `"kyo/Tasty.scala"` for `kyo-tasty/shared/src/main/scala/kyo/Tasty.scala`
+- `"kyo/internal/tasty/classfile/ClassfileUnpickler.scala"`
+- `"kyo/internal/tasty/symbol/OnceCell.scala"`
+
+### Verification
+- JVM: 319 tests pass (`kyo-tasty/test`)
+- JS: `kyo-tastyJS/Test/fastLinkJS` PASS (no linker errors)
+- Native: `kyo-tastyNative/Test/compile` PASS

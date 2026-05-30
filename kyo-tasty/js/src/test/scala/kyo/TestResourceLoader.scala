@@ -1,6 +1,6 @@
 package kyo
 
-/** JS implementation: serves known fixture bytes from Embedded; throws for unknown paths. */
+/** JS implementation: serves known fixture bytes from Embedded; reads text from classpath resources. */
 object TestResourceLoader:
 
     def loadBytes(resourcePath: String): Array[Byte] =
@@ -15,5 +15,8 @@ object TestResourceLoader:
             case p if p.endsWith("FixtureClasses$package.tasty") => kyo.fixtures.Embedded.fixtureClassesPackageTasty
             case other =>
                 throw new RuntimeException(s"JS: fixture not embedded: $other; add to Embedded.scala")
+
+    def readText(resourcePath: String): String =
+        EmbeddedText.get(resourcePath)
 
 end TestResourceLoader
