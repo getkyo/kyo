@@ -526,4 +526,77 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
+    // ── Phase 18a Tests (M1, category-1 modifiers) ────────────────────────────
+
+    // Test 18a-1 (M1 category 1): PRIVATE tag decodes to Modifier(Private).
+    // Given: an annotation pickle containing only the PRIVATE byte (tag 6).
+    // When: annotation.args is evaluated via decodeAnnotationTerm.
+    // Then: returns Tree.Modifier(Flag.Private).
+    "Phase18a-1: PRIVATE byte decodes to Tree.Modifier(Flag.Private)" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Dummy"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val names        = Array(Tasty.Name("dummy"))
+        val addrMap      = IntMap.empty[Tasty.Symbol]
+        val home         = new ClasspathRef
+        val pickle       = Chunk(TastyFormat.PRIVATE.toByte)
+        val sectionBytes = pickle.toArray
+        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Private.bit =>
+                succeed
+            case Result.Success(other) =>
+                fail(s"Expected Tree.Modifier(Flag.Private) but got $other")
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Test 18a-2 (M1 category 1 negative): unknown category-1 tag throws.
+    // Given: an annotation pickle containing byte 50 (below firstASTtag=60, not a recognised modifier).
+    // When: annotation.args is evaluated.
+    // Then: returns Result.Failure(TastyError.MalformedSection("ASTs", reason, _)) containing
+    //       "unknown category-1 modifier tag 50".
+    "Phase18a-2: unrecognised category-1 byte yields Failure(MalformedSection)" in run {
+        import scala.collection.immutable.IntMap
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Dummy"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val names   = Array(Tasty.Name("dummy"))
+        val addrMap = IntMap.empty[Tasty.Symbol]
+        val home    = new ClasspathRef
+        // Tag 50 is below firstASTtag (60) but is not assigned to any modifier or constant.
+        val unknownTag: Byte = 50.toByte
+        val pickle           = Chunk(unknownTag)
+        val sectionBytes     = pickle.toArray
+        val decodeCtx        = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
+        val ann              = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Failure(TastyError.MalformedSection("ASTs", reason, _))
+                if reason.contains("unknown category-1 modifier tag 50") =>
+                succeed
+            case Result.Failure(e) =>
+                fail(s"Expected MalformedSection with 'unknown category-1 modifier tag 50' but got: $e")
+            case Result.Success(other) =>
+                fail(s"Expected failure but got success: $other")
+            case Result.Panic(t) =>
+                throw t
+    }
+
 end TreeUnpicklerTest

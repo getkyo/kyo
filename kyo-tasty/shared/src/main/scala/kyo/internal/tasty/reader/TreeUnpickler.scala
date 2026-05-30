@@ -21,8 +21,13 @@ import scala.collection.mutable
   */
 object TreeUnpickler:
 
-    /** Thrown on malformed or unsupported TASTy body content. */
-    final class DecodeException(msg: String) extends RuntimeException(msg)
+    /** Thrown on malformed or unsupported TASTy body content.
+      *
+      * @param byteOffset
+      *   byte position in the ASTs section where the error was detected; 0L when the position is unavailable (e.g. when thrown from a
+      *   context that does not hold a ByteView cursor).
+      */
+    final class DecodeException(msg: String, val byteOffset: Long) extends RuntimeException(msg)
 
     /** Decode a single Term tree from raw annotation pickle bytes.
       *
@@ -70,7 +75,8 @@ object TreeUnpickler:
             case null =>
                 val b = origin.sectionBytes
                 if b == null || b.isEmpty then
-                    throw new DecodeException("body bytes not available (snapshot-loaded symbol)")
+                    // No cursor: the symbol has no body bytes to position into.
+                    throw new DecodeException("body bytes not available (snapshot-loaded symbol)", 0L)
                 end if
                 (ByteView(b, origin.bodyStart, origin.bodyEnd), b)
         val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
@@ -433,7 +439,7 @@ object TreeUnpickler:
                 val trees = readTreesUntil(view, end, ctx)
                 view.goto(end)
                 if trees.isEmpty then
-                    throw new DecodeException(s"BLOCK at $startAddr has empty payload")
+                    throw new DecodeException(s"BLOCK at $startAddr has empty payload", startAddr.toLong)
                 val stats = trees.dropRight(1)
                 val expr  = trees.last
                 Tasty.Tree.Block(stats, expr)
@@ -592,13 +598,67 @@ object TreeUnpickler:
                 view.goto(end)
                 Tasty.Tree.Unknown(other, Math.toIntExact(end - startAddr))
 
-            // Unknown category 1-4 tags: skip body.
+            // Category 1 modifier tags (tag in [1, firstASTtag)): decode as Modifier.
+            case other if other < TastyFormat.firstASTtag =>
+                decodeCategoryOneModifier(other, view)
+
+            // Unknown category 2-4 tags: skip body.
             case other =>
                 skipTreeBody(other, view)
                 Tasty.Tree.Unknown(other, 0)
 
         end match
     end decodeTreeTag
+
+    /** Decode a TASTy category-1 modifier tag (single-byte, no payload) into a Tree.Modifier.
+      *
+      * Called when the tag byte is in [1, firstASTtag) and was not matched by an earlier specific arm (the category-1 constant tags
+      * UNITconst/FALSEconst/TRUEconst/NULLconst are handled by dedicated arms before this dispatch reaches).
+      *
+      * Throws DecodeException for any category-1 byte that is not a recognised modifier flag.
+      */
+    private def decodeCategoryOneModifier(tag: Int, view: ByteView): Tasty.Tree =
+        val flag: Tasty.Flag = tag match
+            case TastyFormat.PRIVATE       => Tasty.Flag.Private
+            case TastyFormat.PROTECTED     => Tasty.Flag.Protected
+            case TastyFormat.ABSTRACT      => Tasty.Flag.Abstract
+            case TastyFormat.FINAL         => Tasty.Flag.Final
+            case TastyFormat.SEALED        => Tasty.Flag.Sealed
+            case TastyFormat.CASE          => Tasty.Flag.Case
+            case TastyFormat.IMPLICIT      => Tasty.Flag.Implicit
+            case TastyFormat.GIVEN         => Tasty.Flag.Given
+            case TastyFormat.LAZY          => Tasty.Flag.Lazy
+            case TastyFormat.OVERRIDE      => Tasty.Flag.Override
+            case TastyFormat.INLINE        => Tasty.Flag.Inline
+            case TastyFormat.MACRO         => Tasty.Flag.Macro
+            case TastyFormat.OPAQUE        => Tasty.Flag.Opaque
+            case TastyFormat.OPEN          => Tasty.Flag.Open
+            case TastyFormat.TRANSPARENT   => Tasty.Flag.Transparent
+            case TastyFormat.INFIX         => Tasty.Flag.Infix
+            case TastyFormat.ERASED        => Tasty.Flag.Erased
+            case TastyFormat.TRACKED       => Tasty.Flag.Tracked
+            case TastyFormat.SYNTHETIC     => Tasty.Flag.Synthetic
+            case TastyFormat.ARTIFACT      => Tasty.Flag.Artifact
+            case TastyFormat.STABLE        => Tasty.Flag.Stable
+            case TastyFormat.STATIC        => Tasty.Flag.Static
+            case TastyFormat.MUTABLE       => Tasty.Flag.Mutable
+            case TastyFormat.FIELDaccessor => Tasty.Flag.FieldAccessor
+            case TastyFormat.CASEaccessor  => Tasty.Flag.CaseAccessor
+            case TastyFormat.PARAMsetter   => Tasty.Flag.PARAMsetter
+            case TastyFormat.PARAMalias    => Tasty.Flag.PARAMalias
+            case TastyFormat.EXPORTED      => Tasty.Flag.Exported
+            case TastyFormat.LOCAL         => Tasty.Flag.Local
+            case TastyFormat.HASDEFAULT    => Tasty.Flag.HasDefault
+            case TastyFormat.EXTENSION     => Tasty.Flag.Extension
+            case TastyFormat.INLINEPROXY   => Tasty.Flag.InlineProxy
+            case TastyFormat.COVARIANT     => Tasty.Flag.CoVariant
+            case TastyFormat.CONTRAVARIANT => Tasty.Flag.ContraVariant
+            case TastyFormat.INVISIBLE     => Tasty.Flag.Invisible
+            case TastyFormat.INTO          => Tasty.Flag.Into
+            case other =>
+                throw new DecodeException(s"unknown category-1 modifier tag $other", view.position.toLong)
+        Tasty.Tree.Modifier(flag)
+    end decodeCategoryOneModifier
 
     // ── Template decode ───────────────────────────────────────────────────────
 

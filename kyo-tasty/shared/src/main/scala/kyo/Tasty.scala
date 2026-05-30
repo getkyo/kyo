@@ -217,11 +217,10 @@ object Tasty:
                                 try kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(argsPickle, ctx)
                                 catch
                                     case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                        // no cursor available from DecodeException
                                         Abort.fail(TastyError.MalformedSection(
                                             "ASTs",
                                             s"annotation arg decode failed: ${ex.getMessage}",
-                                            0L
+                                            ex.byteOffset
                                         ))
                                     case ex: ArrayIndexOutOfBoundsException =>
                                         // no cursor available from AIOOBE
@@ -532,6 +531,9 @@ object Tasty:
         /** Annotated tree (ANNOTATEDtpt/ANNOTATEDtype). */
         final case class Annotated(expr: Tree, annotation: Tree) extends Tree
 
+        /** TASTy category-1 modifier tag (single-byte, no payload; tag in range [1, 59]). */
+        final case class Modifier(flag: Flag) extends Tree
+
         /** Unknown tag -- encountered a tag not covered by this ADT version. */
         final case class Unknown(tag: Int, length: Int) extends Tree
     end Tree
@@ -581,8 +583,10 @@ object Tasty:
                 import AllowUnsafe.embrace.danger
                 origin match
                     case Tasty.Symbol.JavaOrigin =>
+                        // No cursor: Java symbols have no TASTy body to read.
                         throw new kyo.internal.tasty.reader.TreeUnpickler.DecodeException(
-                            "body not available for Java symbols"
+                            "body not available for Java symbols",
+                            0L
                         )
                     case o: Tasty.Symbol.TastyOrigin =>
                         kyo.internal.tasty.reader.TreeUnpickler.decodeSync(o, this)
@@ -753,11 +757,10 @@ object Tasty:
                                             try Right(_bodyOnce.get())
                                             catch
                                                 case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                                    // no cursor: DecodeException does not carry a byte offset
                                                     Left(TastyError.MalformedSection(
                                                         "ASTs",
                                                         s"body decode failed for '${name.asString}': ${ex.getMessage}",
-                                                        0L
+                                                        ex.byteOffset
                                                     ))
                                                 case ex: ArrayIndexOutOfBoundsException =>
                                                     // no cursor: exception does not carry a byte offset

@@ -81,6 +81,9 @@ object TastyFormat:
     final val SUBMATCH: Int      = 48
     final val INTO: Int          = 49
 
+    // firstASTtag: first tag in category 2 (tag + Nat). Tags below this value are category 1 (single-byte, no payload).
+    final val firstASTtag: Int = 60
+
     // Category 2: tag + Nat (60-89)
     final val SHAREDterm: Int    = 60
     final val SHAREDtype: Int    = 61
