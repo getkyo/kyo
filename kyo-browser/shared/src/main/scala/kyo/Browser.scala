@@ -296,7 +296,7 @@ object Browser:
     ): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
         // Browser.run(url) already wraps its body in Scope.run; runShared inherits that absorption.
         // configLocal propagation mirrors Browser.run(launch, session): Present(sc) overrides via withConfig; Absent inherits outer Local.
-        val body = SharedChrome.init.map(url => Browser.run(url)(f))
+        val body = SharedChrome.withUrl(url => Browser.run(url)(f))
         session match
             case Absent      => body
             case Present(sc) => withConfig(sc)(body)
