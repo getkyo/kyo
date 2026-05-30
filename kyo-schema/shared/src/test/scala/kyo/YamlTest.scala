@@ -19,6 +19,7 @@ final case class YamlValueHolder(
 ) derives CanEqual
 final case class YamlCountOnly(count: Int) derives CanEqual
 final case class YamlAnchoredCount(value: YamlCountOnly) derives CanEqual
+final case class YamlScalarAlias(first: String, second: String) derives CanEqual
 final case class YamlUnicodeField(café: Int) derives CanEqual
 
 class YamlTest extends Test:
@@ -538,6 +539,15 @@ class YamlTest extends Test:
                   |""".stripMargin
 
             assert(Yaml.decode[YamlAnchoredCount](yaml) == Result.succeed(YamlAnchoredCount(YamlCountOnly(7))))
+        }
+
+        "reader registers inline scalar anchors without building an event tape" in {
+            val yaml =
+                """first: &name Alice
+                  |second: *name
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlScalarAlias](yaml) == Result.succeed(YamlScalarAlias("Alice", "Alice")))
         }
 
         "skip advances the current sequence element without parsing later malformed content" in {

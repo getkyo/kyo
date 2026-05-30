@@ -932,21 +932,25 @@ final class YamlReader private (
         val (anchor, tag, valueText) = sourceProperties(stripped)
         val mark                     = Yaml.Mark(scalarStart + column, lineNumber, column)
 
-        sourceBlockScalarHeader(valueText) match
-            case Present((style, chomp, explicitIndent)) =>
-                val _     = readSourceRestOfLine()
-                val value = readSourceBlockScalar(column, explicitIndent, style, chomp)
-                (value, Yaml.ScalarMeta(anchor, tag, style, mark))
-            case Absent if valueText.startsWith("'") =>
-                val value = readSourceQuotedScalar(valueText, column, '\'').replace("''", "'")
-                (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.SingleQuoted, mark))
-            case Absent if valueText.startsWith("\"") =>
-                val value = unescapeSourceDoubleQuoted(readSourceQuotedScalar(valueText, column, '"'), mark.index)
-                (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.DoubleQuoted, mark))
-            case Absent =>
-                val value = readSourcePlainScalar(valueText, column)
-                (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.Plain, mark))
-        end match
+        val result =
+            sourceBlockScalarHeader(valueText) match
+                case Present((style, chomp, explicitIndent)) =>
+                    val _     = readSourceRestOfLine()
+                    val value = readSourceBlockScalar(column, explicitIndent, style, chomp)
+                    (value, Yaml.ScalarMeta(anchor, tag, style, mark))
+                case Absent if valueText.startsWith("'") =>
+                    val value = readSourceQuotedScalar(valueText, column, '\'').replace("''", "'")
+                    (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.SingleQuoted, mark))
+                case Absent if valueText.startsWith("\"") =>
+                    val value = unescapeSourceDoubleQuoted(readSourceQuotedScalar(valueText, column, '"'), mark.index)
+                    (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.DoubleQuoted, mark))
+                case Absent =>
+                    val value = readSourcePlainScalar(valueText, column)
+                    (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.Plain, mark))
+            end match
+        end result
+        anchor.foreach(registerSourceAnchor(_, source.substring(scalarStart, sourcePos)))
+        result
     end readSourceScalar
 
     private def sourceBlockScalarHeader(valueText: String): Maybe[(Yaml.ScalarStyle, Char, Maybe[Int])] =
