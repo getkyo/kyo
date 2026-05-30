@@ -3,6 +3,7 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.Writer
+import scala.annotation.tailrec
 
 final class YamlWriter private (private var config: Yaml.WriterConfig) extends Writer:
     import Yaml.WriterConfig.*
@@ -93,8 +94,11 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
     end resultString
 
     private def finishString(): String =
-        if !released && shouldAppendTrailingNewline then out.append('\n')
-        withDocumentMarkers(out.toString)
+        if !released then
+            if shouldAppendTrailingNewline then out.append('\n')
+            appendDocumentMarkers()
+        end if
+        out.toString
     end finishString
 
     private def release(): Unit =
@@ -278,11 +282,11 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
     end appendDouble
 
     private def appendAsciiBytes(bytes: Array[Byte], end: Int): Unit =
-        var i = 0
-        while i < end do
-            out.append(bytes(i).toChar)
-            i += 1
-        end while
+        @tailrec def loop(i: Int): Unit =
+            if i < end then
+                out.append(bytes(i).toChar)
+                loop(i + 1)
+        loop(0)
     end appendAsciiBytes
 
     private def currentIndent: Int =
@@ -293,11 +297,11 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
     end currentIndent
 
     private def writeIndent(indent: Int): Unit =
-        var i = 0
-        while i < indent do
-            out.append(' ')
-            i += 1
-        end while
+        @tailrec def loop(i: Int): Unit =
+            if i < indent then
+                out.append(' ')
+                loop(i + 1)
+        loop(0)
         lastWriteWasLine = false
     end writeIndent
 
@@ -312,38 +316,58 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
     end writeFlowKey
 
     private def appendQuoted(value: String): Unit =
-        if config.quoteStyle == QuoteStyle.Single && !value.exists(c => c < ' ' || c == '\n' || c == '\r' || c == '\t') then
-            appendSingleQuoted(value)
+        if config.quoteStyle == QuoteStyle.Single && canSingleQuote(value) then appendSingleQuoted(value)
         else appendDoubleQuoted(value)
     end appendQuoted
 
+    private def canSingleQuote(value: String): Boolean =
+        @tailrec def loop(i: Int): Boolean =
+            if i >= value.length then true
+            else
+                value.charAt(i) match
+                    case c if c < ' ' || c == '\n' || c == '\r' || c == '\t' => false
+                    case _                                                   => loop(i + 1)
+        loop(0)
+    end canSingleQuote
+
     private def appendDoubleQuoted(value: String): Unit =
         out.append('"')
-        value.foreach {
-            case '"'  => out.append("\\\"")
-            case '\\' => out.append("\\\\")
-            case '\n' => out.append("\\n")
-            case '\r' => out.append("\\r")
-            case '\t' => out.append("\\t")
-            case c if c < ' ' =>
-                val hex = Integer.toHexString(c.toInt)
-                out.append("\\u")
-                var i = hex.length
-                while i < 4 do
-                    out.append('0')
-                    i += 1
-                out.append(hex)
-            case c => out.append(c)
-        }
+
+        @tailrec def loop(i: Int): Unit =
+            if i < value.length then
+                value.charAt(i) match
+                    case '"'  => out.append("\\\"")
+                    case '\\' => out.append("\\\\")
+                    case '\n' => out.append("\\n")
+                    case '\r' => out.append("\\r")
+                    case '\t' => out.append("\\t")
+                    case c if c < ' ' =>
+                        out.append("\\u")
+                        out.append(YamlWriter.Hex.charAt((c >> 12) & 0xf))
+                        out.append(YamlWriter.Hex.charAt((c >> 8) & 0xf))
+                        out.append(YamlWriter.Hex.charAt((c >> 4) & 0xf))
+                        out.append(YamlWriter.Hex.charAt(c & 0xf))
+                    case c => out.append(c)
+                end match
+                loop(i + 1)
+        end loop
+
+        loop(0)
         out.append('"')
     end appendDoubleQuoted
 
     private def appendSingleQuoted(value: String): Unit =
         out.append('\'')
-        value.foreach {
-            case '\'' => out.append("''")
-            case c    => out.append(c)
-        }
+
+        @tailrec def loop(i: Int): Unit =
+            if i < value.length then
+                value.charAt(i) match
+                    case '\'' => out.append("''")
+                    case c    => out.append(c)
+                loop(i + 1)
+        end loop
+
+        loop(0)
         out.append('\'')
     end appendSingleQuoted
 
@@ -353,19 +377,26 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
         val end =
             if value.endsWith("\n") then value.length - 1
             else value.length
-        var start = 0
-        while start <= end && start < value.length do
-            val next = value.indexOf('\n', start) match
-                case -1 => end
-                case n  => math.min(n, end)
-            if next > start then writeIndent(contentIndent)
-            var i = start
-            while i < next do
+
+        @tailrec def appendChars(i: Int, stop: Int): Unit =
+            if i < stop then
                 out.append(value.charAt(i))
-                i += 1
-            out.append('\n')
-            start = next + 1
-        end while
+                appendChars(i + 1, stop)
+        end appendChars
+
+        @tailrec def appendLines(start: Int): Unit =
+            if start <= end && start < value.length then
+                val next =
+                    value.indexOf('\n', start) match
+                        case -1 => end
+                        case n  => math.min(n, end)
+                if next > start then writeIndent(contentIndent)
+                appendChars(start, next)
+                out.append('\n')
+                appendLines(next + 1)
+        end appendLines
+
+        appendLines(0)
         lastWriteWasLine = true
     end appendLiteral
 
@@ -374,20 +405,26 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
             config.multilineStyle match
                 case MultilineStyle.Folded => ">"
                 case _                     => "|"
-        marker + (
-            config.chomping match
-                case Chomping.Strip => "-"
-                case Chomping.Keep  => "+"
-                case Chomping.Clip  => ""
-                case Chomping.Preserve =>
-                    if !value.endsWith("\n") then "-"
-                    else
-                        var i = value.length - 1
-                        while i >= 0 && value.charAt(i) == '\n' do i -= 1
-                        if value.length - 1 - i > 1 then "+"
-                        else ""
-        )
+        marker + chompingIndicator(value)
     end literalHeader
+
+    private def chompingIndicator(value: String): String =
+        config.chomping match
+            case Chomping.Strip => "-"
+            case Chomping.Keep  => "+"
+            case Chomping.Clip  => ""
+            case Chomping.Preserve =>
+                if !value.endsWith("\n") then "-"
+                else if trailingNewlineCount(value) > 1 then "+"
+                else ""
+    end chompingIndicator
+
+    private def trailingNewlineCount(value: String): Int =
+        @tailrec def loop(i: Int, count: Int): Int =
+            if i >= 0 && value.charAt(i) == '\n' then loop(i - 1, count + 1)
+            else count
+        loop(value.length - 1, 0)
+    end trailingNewlineCount
 
     private def isPlainSafeKey(value: String): Boolean =
         config.scalarQuoting != ScalarQuoting.QuoteAllStrings &&
@@ -400,7 +437,7 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
         config.scalarQuoting == ScalarQuoting.QuoteAmbiguous && resolvesAsCoreScalar(value)
 
     private def isPlainSyntaxSafe(value: String): Boolean =
-        if value.isEmpty || value.trim != value then false
+        if value.isEmpty || value.charAt(0).isWhitespace || value.charAt(value.length - 1).isWhitespace then false
         else
             val first = value.charAt(0)
             if first == '-' || first == '?' || first == ':' || first == ',' || first == '[' || first == ']' ||
@@ -409,21 +446,20 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
                 first == '%'
             then false
             else if value == "---" || value == "..." then false
-            else
-                var i    = 0
-                var safe = true
-                while safe && i < value.length do
-                    value.charAt(i) match
-                        case '\n' | '\r' | '\t' | '[' | ']' | '{' | '}' | ',' | '#' | ':' => safe = false
-                        case c if c < ' '                                                 => safe = false
-                        case _                                                            => ()
-                    end match
-                    i += 1
-                end while
-                safe
+            else plainBodySafe(value, 0)
             end if
         end if
     end isPlainSyntaxSafe
+
+    @tailrec
+    private def plainBodySafe(value: String, i: Int): Boolean =
+        if i >= value.length then true
+        else
+            value.charAt(i) match
+                case '\n' | '\r' | '\t' | '[' | ']' | '{' | '}' | ',' | '#' | ':' => false
+                case c if c < ' '                                                 => false
+                case _                                                            => plainBodySafe(value, i + 1)
+    end plainBodySafe
 
     private def resolvesAsCoreScalar(value: String): Boolean =
         YamlScalars.resolvesAsCore(value, config.yamlVersion)
@@ -461,21 +497,26 @@ final class YamlWriter private (private var config: Yaml.WriterConfig) extends W
     private def shouldAppendTrailingNewline: Boolean =
         config.trailingNewline && !lastWriteWasLine
 
-    private def withDocumentMarkers(body: String): String =
+    private def appendDocumentMarkers(): Unit =
         config.documentMarkers match
             case DocumentMarkers.None =>
-                body
+                ()
             case DocumentMarkers.Start =>
-                "---\n" + body
+                out.insert(0, YamlWriter.StartMarker)
             case DocumentMarkers.StartAndEnd =>
-                val middle =
-                    if body.endsWith("\n") then body
-                    else body + "\n"
-                "---\n" + middle + "...\n"
+                val bodyLength = out.length
+                out.insert(0, YamlWriter.StartMarker)
+                if bodyLength == 0 || out.charAt(out.length - 1) != '\n' then out.append('\n')
+                out.append(YamlWriter.EndMarker)
+        end match
+    end appendDocumentMarkers
 end YamlWriter
 
 object YamlWriter:
     final private val MaxCachedOutputCapacity = 262144
+    final private val Hex                     = "0123456789abcdef"
+    final private val StartMarker             = "---\n"
+    final private val EndMarker               = "...\n"
     private[internal] val cache               = new ThreadLocal[YamlWriter]
 
     def apply(): YamlWriter = apply(Yaml.WriterConfig.Default)
