@@ -644,6 +644,8 @@ final class YamlReader private (
         sourceFrames match
             case (f: SourceMappingFrame) :: _ =>
                 skipSourceBlankAndCommentLines()
+                f.count += 1
+                checkCollectionSize(f.count)
                 val lineStart = sourcePos
                 consumeSourceIndent(f.indent)
                 val keyStart = sourcePos
@@ -685,6 +687,8 @@ final class YamlReader private (
     end sourceCaptureMappingValue
 
     private def sourceCaptureSequenceElement(frame: SourceSequenceFrame): Unit =
+        frame.count += 1
+        checkCollectionSize(frame.count)
         val lineNumber = currentSourceLineNumber()
         consumeSourceIndent(frame.indent)
         sourcePos += 1
@@ -1133,8 +1137,8 @@ object YamlReader:
     sealed private trait SourceFrame:
         def indent: Int
     end SourceFrame
-    final private case class SourceMappingFrame(indent: Int)  extends SourceFrame
-    final private case class SourceSequenceFrame(indent: Int) extends SourceFrame
+    final private case class SourceMappingFrame(indent: Int, var count: Int = 0)  extends SourceFrame
+    final private case class SourceSequenceFrame(indent: Int, var count: Int = 0) extends SourceFrame
 
     private enum ScalarValue derives CanEqual:
         case Null

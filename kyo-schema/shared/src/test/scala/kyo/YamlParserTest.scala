@@ -148,6 +148,21 @@ class YamlParserTest extends Test:
             end match
         }
 
+        "schema decode rejects mapping fields beyond maxCollectionSize without parsing later malformed content" in {
+            val yaml =
+                """name: Alice
+                  |age: 30
+                  |extra: 1
+                  |later: [unterminated
+                  |""".stripMargin
+
+            Yaml.decode[MTPerson](yaml, Yaml.DefaultMaxDepth, 2) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.limit == "Collection size")
+                case other => fail(s"Expected LimitExceededException failure, got $other")
+            end match
+        }
+
         "schema decode accounts for expanded alias contents without JSON bridging" in {
             case class AliasLimit(items: List[Int], refs: List[List[Int]]) derives CanEqual
 
