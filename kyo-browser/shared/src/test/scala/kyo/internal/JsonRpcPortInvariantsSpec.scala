@@ -284,7 +284,7 @@ class JsonRpcPortInvariantsSpec extends Test:
         val errorMethod = JsonRpcRoute[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
             "Page.navigate"
         ) { (_, _) =>
-            Abort.fail(JsonRpcError.MethodNotFound)
+            Abort.fail(JsonRpcMethodNotFoundError("Page.navigate", Chunk.empty))
         }
         Scope.run {
             mkBackendWithServer(Seq(errorMethod)).map { (backend, _) =>

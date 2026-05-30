@@ -83,7 +83,7 @@ class HttpStyleTest extends JsonRpcTest:
     }
 
     "LSP pre-init gate: requests before initialize return -32002; after initialize, methods succeed" in run {
-        val serverNotInitialized = JsonRpcError(-32002, "Server not initialized", Absent)
+        val serverNotInitialized = JsonRpcImplementationError(-32002, "Server not initialized")
         var initialized          = false
 
         val lspInitGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:

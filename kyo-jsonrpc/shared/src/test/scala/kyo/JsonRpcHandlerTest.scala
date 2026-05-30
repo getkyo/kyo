@@ -571,7 +571,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                         Abort.run[Closed](tb.send(JsonRpcResponse(
                             JsonRpcId.Num(1),
                             Present(Structure.Value.Record(Chunk.empty)),
-                            Present(JsonRpcError.invalidRequest("x")),
+                            Present(JsonRpcInvalidRequestError(Structure.Value.Str("x"), Chunk.empty)),
                             Absent
                         ))).andThen {
                             callFiber.get.map {

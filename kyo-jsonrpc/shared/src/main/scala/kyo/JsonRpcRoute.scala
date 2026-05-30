@@ -145,11 +145,18 @@ object JsonRpcRoute:
                             case Result.Failure(err) =>
                                 Abort.fail(err)
                             case Result.Panic(t) =>
-                                Abort.fail(JsonRpcError.internalError("Internal error", Present(Structure.Value.Str(t.getMessage))))
+                                Abort.fail(JsonRpcHandlerPanicError(name, t))
                     case Result.Failure(e) =>
-                        Abort.fail(JsonRpcError.invalidParams(e.getMessage))
+                        Abort.fail(JsonRpcInvalidParamsError(
+                            name,
+                            Absent,
+                            Chunk(JsonRpcInvalidParamsError.ParamError(
+                                "params",
+                                JsonRpcInvalidParamsError.Problem.TypeMismatch("expected", e.getMessage)
+                            ))
+                        ))
                     case Result.Panic(t) =>
-                        Abort.fail(JsonRpcError.internalError("Internal error", Present(Structure.Value.Str(t.getMessage))))
+                        Abort.fail(JsonRpcHandlerPanicError(name, t))
             ev.liftContra[[X] =>> Structure.Value < (X & Abort[JsonRpcError])].apply(computation)
         end handle
     end RequestRoute
@@ -176,11 +183,18 @@ object JsonRpcRoute:
                             case Result.Failure(err) =>
                                 Abort.fail(err)
                             case Result.Panic(t) =>
-                                Abort.fail(JsonRpcError.internalError("Internal error", Present(Structure.Value.Str(t.getMessage))))
+                                Abort.fail(JsonRpcHandlerPanicError(name, t))
                     case Result.Failure(e) =>
-                        Abort.fail(JsonRpcError.invalidParams(e.getMessage))
+                        Abort.fail(JsonRpcInvalidParamsError(
+                            name,
+                            Absent,
+                            Chunk(JsonRpcInvalidParamsError.ParamError(
+                                "params",
+                                JsonRpcInvalidParamsError.Problem.TypeMismatch("expected", e.getMessage)
+                            ))
+                        ))
                     case Result.Panic(t) =>
-                        Abort.fail(JsonRpcError.internalError("Internal error", Present(Structure.Value.Str(t.getMessage))))
+                        Abort.fail(JsonRpcHandlerPanicError(name, t))
             ev.liftContra[[X] =>> Structure.Value < (X & Abort[JsonRpcError])].apply(computation)
         end handle
     end NotificationRoute

@@ -20,3 +20,9 @@
 
 - Phase 03 caller-impact (rg --type scala): JsonRpcError reference sites=34, JsonRpcError.internalError sites=5, JsonRpcError pattern-match sites=11, JsonRpcError(code, ...) constructor literals=22. Phase 03 is the largest phase: ~50 reference updates across the construction sites + 11 pattern-match migrations. Special focus: the 5 internalError sites need to be RECLASSIFIED to specific leaves (Configuration / Lifecycle / Transport / HandlerPanic) — not all mapped to the InternalError catchall. The `CdpBackend.scala:65-71` string-prefix-match site also migrates to typed pattern matches.
 
+- Phase 02 committed: 24b78e70f. Audit 0/0/2.
+- Phase 03 impl dispatched in SLOT-A.
+- Phase 02 audit dispatched in SLOT-B — clean.
+
+- Phase 04 prep note: current JsonRpcRoute is `sealed trait JsonRpcRoute[+S]` at JsonRpcRoute.scala:27, with `def apply[In, Out, S](name)(handler: (In, Context) => Out < S)` at :80. HttpRoute reference at kyo-http/.../HttpRoute.scala:40 is `case class HttpRoute[In, Out, +E](method, requestDef, responseDef, filter, metadata)` (not sealed trait). `.error[E2]` at HttpRoute.scala:82 is inline + chainable. Phase 04 needs to (a) restructure JsonRpcRoute to `[In, Out, +E]` shape (case class or sealed trait), (b) fix handler row to `Async & Abort[E | JsonRpcError | JsonRpcResponse.Halt]`, (c) add JsonRpcResponse.Halt + .halt convenience, (d) add .error[E2] inline chainable form, (e) move `dispatch` to internal (audit A1).
+

@@ -40,6 +40,16 @@ EVERY phase impl prompt MUST cite kyo-http file:line precedents for the pattern 
 07. Cleanup nested types (hoist remaining Phase-03 nested ; Pending +Out ; codec/filter presets)
 08. Final cross-platform green gate
 
+## STEER (phase 03, pulse 1)
+
+Em-dashes detected in 3 sites. Fix BEFORE reporting done:
+
+1. `kyo-jsonrpc/shared/src/main/scala/kyo/JsonRpcConfigurationError.scala:16` ; the message string uses an em-dash. Replace with `; ` (semicolon-space). Pattern: `s"Configuration error: '$setting'; $reason"`.
+2. Scaladoc on `JsonRpcHandlerPanicError.scala:8` and `JsonRpcError.scala:9-12` ; rewrite the affected sentences without em-dashes.
+3. `kyo-jsonrpc/shared/src/main/scala/kyo/internal/engine/ProgressEngine.scala:13` ; scaladoc references the old `JsonRpcError.internalError(...)` API. The code at line 23 is already correct (uses `JsonRpcInternalError(Operation.Other, ...)`); only the comment needs to match.
+
+Steering rule: "No em-dashes / LLM-tells in any output." Class-A regex `llm-tells` catalog will reject the commit if these aren't fixed.
+
 ## Repo-wide rules
 
 - Never push to remote. Never create / touch PRs.

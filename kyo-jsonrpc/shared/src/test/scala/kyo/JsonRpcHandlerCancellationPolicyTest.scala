@@ -503,7 +503,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
             (_, ctx) =>
                 ctx.cancelled.get.andThen {
-                    Abort.fail[JsonRpcError](JsonRpcError.ContentModified)
+                    Abort.fail[JsonRpcError](JsonRpcCustomError(-32801, "Content modified"))
                 }
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>

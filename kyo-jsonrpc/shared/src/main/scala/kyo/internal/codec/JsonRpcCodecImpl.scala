@@ -48,7 +48,10 @@ private[kyo] object JsonRpcCodecImpl:
                         Structure.Value.Record(withPayload)
 
                 case JsonRpcMalformedMessage(_, _, _) =>
-                    Abort.fail(JsonRpcError.internalError("cannot encode Malformed", Absent))
+                    Abort.fail(JsonRpcInternalError(
+                        JsonRpcInternalError.Operation.EncodeResponse,
+                        new RuntimeException("cannot encode Malformed message")
+                    ))
 
         def decode(raw: Structure.Value)(using Frame): JsonRpcEnvelope < Sync =
             Sync.defer:
@@ -105,7 +108,7 @@ private[kyo] object JsonRpcCodecImpl:
                                 JsonRpcMalformedMessage(idMaybe, "error field is not a Record", raw)
                             else
                                 val decodedError = errorOpt.map: ev =>
-                                    Structure.decode[JsonRpcError](ev).getOrElse(JsonRpcError.InvalidRequest)
+                                    Structure.decode[JsonRpcError](ev).getOrElse(JsonRpcInvalidRequestError(ev, Chunk.empty))
                                 JsonRpcResponse(idMaybe.get, resultOpt, decodedError, Absent)
                         else
                             JsonRpcMalformedMessage(idMaybe, "unclassifiable envelope", raw)
@@ -148,7 +151,10 @@ private[kyo] object JsonRpcCodecImpl:
                     buildWithExtras(withPayload, extras)
 
                 case JsonRpcMalformedMessage(_, _, _) =>
-                    Abort.fail(JsonRpcError.internalError("cannot encode Malformed", Absent))
+                    Abort.fail(JsonRpcInternalError(
+                        JsonRpcInternalError.Operation.EncodeResponse,
+                        new RuntimeException("cannot encode Malformed message")
+                    ))
 
         private def buildWithExtras(
             base: Chunk[(String, Structure.Value)],
@@ -163,15 +169,21 @@ private[kyo] object JsonRpcCodecImpl:
                     badKey match
                         // scala.Option arm; interop with Iterator.find (covered by comment above match)
                         case Some(key) =>
-                            Abort.fail(JsonRpcError.invalidRequest(s"extras key '$key' is reserved"))
+                            Abort.fail(JsonRpcInvalidRequestError(Structure.Value.Str(s"extras key '$key' is reserved"), Chunk.empty))
                         // scala.Option arm; interop with Iterator.find (covered by comment above match)
                         case None =>
                             Sync.defer(Structure.Value.Record(base ++ extraFields))
                     end match
                 case Present(Structure.Value.VariantCase(_, _)) =>
-                    Abort.fail(JsonRpcError.invalidRequest("extras must be a Record or Null, not VariantCase/MapEntries"))
+                    Abort.fail(JsonRpcInvalidRequestError(
+                        Structure.Value.Str("extras must be a Record or Null, not VariantCase/MapEntries"),
+                        Chunk.empty
+                    ))
                 case Present(Structure.Value.MapEntries(_)) =>
-                    Abort.fail(JsonRpcError.invalidRequest("extras must be a Record or Null, not VariantCase/MapEntries"))
+                    Abort.fail(JsonRpcInvalidRequestError(
+                        Structure.Value.Str("extras must be a Record or Null, not VariantCase/MapEntries"),
+                        Chunk.empty
+                    ))
                 case Present(other) =>
                     Sync.defer(Structure.Value.Record(base :+ ("_extras" -> other)))
 
@@ -230,7 +242,7 @@ private[kyo] object JsonRpcCodecImpl:
                                 JsonRpcMalformedMessage(idMaybe, "error field is not a Record", raw)
                             else
                                 val decodedError = errorOpt.map: ev =>
-                                    Structure.decode[JsonRpcError](ev).getOrElse(JsonRpcError.InvalidRequest)
+                                    Structure.decode[JsonRpcError](ev).getOrElse(JsonRpcInvalidRequestError(ev, Chunk.empty))
                                 JsonRpcResponse(idMaybe.get, resultOpt, decodedError, extras)
                         else
                             JsonRpcMalformedMessage(idMaybe, "unclassifiable envelope", raw)

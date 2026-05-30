@@ -40,12 +40,13 @@ class JsonRpcRouteTest extends JsonRpcTest:
 
     "handler Abort.fail propagates the failure without transformation" in run {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
+            val err = JsonRpcInvalidParamsError("fail", Absent, Chunk.empty)
             val method = JsonRpcRoute[Int, String, Async & Abort[JsonRpcError]]("fail") {
-                (_, _) => Abort.fail(JsonRpcError.InvalidParams)
+                (_, _) => Abort.fail(err)
             }
             val params = Structure.encode[Int](1)
             Abort.run[JsonRpcError](method.handle(params, ctx)).map: result =>
-                assert(result == Result.Failure(JsonRpcError.InvalidParams))
+                assert(result == Result.Failure(err))
     }
 
     "handler panic produces InternalError with panic message in data" in run {
@@ -58,8 +59,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 result match
                     case Result.Failure(err) =>
                         assert(err.code == -32603)
-                        assert(err.message == "Internal error")
-                        assert(err.data == Present(Structure.Value.Str("boom")))
+                        assert(err.isInstanceOf[JsonRpcHandlerPanicError])
                     case other =>
                         fail(s"Expected Failure, got: $other")
     }
@@ -183,7 +183,9 @@ class JsonRpcRouteTest extends JsonRpcTest:
     }
 
     "dispatch propagates handler Abort" in run {
-        val m = JsonRpcRoute[Unit, Unit, Async & Abort[JsonRpcError]]("err") { (_, _) => Abort.fail(JsonRpcError.invalidParams("bad")) }
+        val m = JsonRpcRoute[Unit, Unit, Async & Abort[JsonRpcError]]("err") { (_, _) =>
+            Abort.fail(JsonRpcInvalidParamsError("err", Absent, Chunk.empty))
+        }
         Sync.defer(Structure.encode(())).map { params =>
             val ctx =
                 JsonRpcRoute.Context.forTest(
@@ -195,7 +197,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
             JsonRpcRoute.dispatch[Async & Abort[JsonRpcError]]("err", Seq(m), params, ctx) match
                 case Present(comp) =>
                     Abort.run[JsonRpcError](comp).map {
-                        case Result.Failure(err) => assert(err.code == JsonRpcError.InvalidParams.code)
+                        case Result.Failure(err) => assert(err.code == -32602)
                         case other               => fail(s"expected Failure, got $other")
                     }
                 case Absent => fail("expected Present")

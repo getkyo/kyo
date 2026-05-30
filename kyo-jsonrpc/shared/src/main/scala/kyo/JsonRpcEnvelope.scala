@@ -31,7 +31,7 @@ sealed trait JsonRpcEnvelope derives CanEqual
   * The `extras` field carries any non-standard fields present in the wire object (e.g. CDP
   * `sessionId`). The codec populates this from fields not defined by the base JSON-RPC 2.0 spec.
   *
-  * Extends [[JsonRpcEnvelope]] — exhaustive pattern matching over all envelope kinds is supported.
+  * Extends [[JsonRpcEnvelope]]; exhaustive pattern matching over all envelope kinds is supported.
   *
   * @param id      correlation id; must be echoed in the paired [[JsonRpcResponse]].
   * @param method  the method name being invoked.
@@ -61,7 +61,7 @@ case class JsonRpcRequest(
   *
   * The `extras` field carries any non-standard fields present in the wire object.
   *
-  * Extends [[JsonRpcEnvelope]] — exhaustive pattern matching over all envelope kinds is supported.
+  * Extends [[JsonRpcEnvelope]]; exhaustive pattern matching over all envelope kinds is supported.
   *
   * @param id     correlation id matching the originating [[JsonRpcRequest]].
   * @param result the successful result value, encoded by the route's output schema.
@@ -101,7 +101,7 @@ end JsonRpcResponse
   * The `extras` field carries any non-standard fields present in the wire object (e.g. CDP
   * `sessionId`). The codec populates this from fields not defined by the base JSON-RPC 2.0 spec.
   *
-  * Extends [[JsonRpcEnvelope]] — exhaustive pattern matching over all envelope kinds is supported.
+  * Extends [[JsonRpcEnvelope]]; exhaustive pattern matching over all envelope kinds is supported.
   *
   * @param method  the method name being notified.
   * @param params  optional structured parameters; decoded by the matching route's schema.
@@ -130,7 +130,7 @@ case class JsonRpcNotification(
   *    `InvalidRequest` error.
   *  - If `id` is `Absent`, the message is silently dropped.
   *
-  * Extends [[JsonRpcEnvelope]] — exhaustive pattern matching over all envelope kinds is supported.
+  * Extends [[JsonRpcEnvelope]]; exhaustive pattern matching over all envelope kinds is supported.
   *
   * @param id     the id extracted from the wire object, if one was present and parseable.
   * @param reason a human-readable description of why decoding failed.

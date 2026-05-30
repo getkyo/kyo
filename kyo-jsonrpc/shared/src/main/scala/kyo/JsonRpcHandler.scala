@@ -270,7 +270,7 @@ object JsonRpcHandler:
             encodeParams = lspEncoder,
             decodeParams = lspDecoder,
             expectReplyForCancelledRequest = true,
-            cancelledError = Present(JsonRpcError.RequestCancelled),
+            cancelledError = Present(JsonRpcCustomError(-32800, "Request cancelled")(using Frame.internal)),
             protectedMethods = Set.empty
         )
 

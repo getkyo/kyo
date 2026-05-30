@@ -67,18 +67,20 @@ class JsonRpcEnvelopeTest extends JsonRpcTest:
     }
 
     "Response.failure factory sets error-present result-Absent extras-Absent" in run {
-        val resp = JsonRpcResponse.failure(JsonRpcId.Num(2L), JsonRpcError.MethodNotFound)
+        val err  = JsonRpcMethodNotFoundError("method", Chunk.empty)
+        val resp = JsonRpcResponse.failure(JsonRpcId.Num(2L), err)
         assert(resp.id == JsonRpcId.Num(2L))
         assert(resp.result == Absent)
-        assert(resp.error == Present(JsonRpcError.MethodNotFound))
+        assert(resp.error == Present(err))
         assert(resp.extras == Absent)
     }
 
     "Response copy preserves equality across fields" in run {
-        val base    = JsonRpcResponse.success(JsonRpcId.Num(4L), Structure.Value.Str("v"))
-        val mutated = base.copy(error = Present(JsonRpcError.InternalError))
+        val base        = JsonRpcResponse.success(JsonRpcId.Num(4L), Structure.Value.Str("v"))
+        val internalErr = JsonRpcInternalError(JsonRpcInternalError.Operation.Other, new RuntimeException("x"))
+        val mutated     = base.copy(error = Present(internalErr))
         assert(base != mutated)
-        assert(mutated.error == Present(JsonRpcError.InternalError))
+        assert(mutated.error == Present(internalErr))
         assert(mutated.id == base.id)
     }
 

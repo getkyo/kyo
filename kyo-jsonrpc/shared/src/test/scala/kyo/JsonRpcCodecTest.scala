@@ -176,8 +176,8 @@ class JsonRpcCodecTest extends JsonRpcTest:
                 end match
     }
 
-    "JsonRpcError cancelled has code -32800 and non-empty data" in run {
-        val err = JsonRpcError.cancelled(Present("user"))
+    "JsonRpcCustomError with code -32800 has code -32800" in run {
+        val err = JsonRpcCustomError(-32800, "user-cancel", Present(Str("user")))
         assert(err.code == -32800)
         assert(err.data == Present(Str("user")))
     }

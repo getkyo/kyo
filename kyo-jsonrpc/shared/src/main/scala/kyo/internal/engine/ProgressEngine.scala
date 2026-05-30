@@ -10,7 +10,7 @@ private[kyo] object ProgressEngine:
 
     /** Allocates a unique progress token by generating random alphanumeric strings
       * and registering them with `progressStreams.putIfAbsent` until success.
-      * Fails fast with `JsonRpcError.internalError("progress token exhaustion")`
+      * Fails fast with `JsonRpcInternalError(Operation.Other, ...)`
       * after `maxAttempts` collisions (default 32).
       */
     private[kyo] def allocateProgressToken(
@@ -20,7 +20,7 @@ private[kyo] object ProgressEngine:
     )(using Frame): Structure.Value < (Sync & Abort[JsonRpcError]) =
         def loop(attemptsLeft: Int): Structure.Value < (Sync & Abort[JsonRpcError]) =
             if attemptsLeft <= 0 then
-                Abort.fail(JsonRpcError.internalError("progress token exhaustion", Absent))
+                Abort.fail(JsonRpcInternalError(JsonRpcInternalError.Operation.Other, new RuntimeException("progress token exhaustion")))
             else
                 Random.live.nextStringAlphanumeric(32).map { raw =>
                     val token: Structure.Value = Structure.Value.Str(raw)

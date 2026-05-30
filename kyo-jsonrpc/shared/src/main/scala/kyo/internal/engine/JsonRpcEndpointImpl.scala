@@ -104,8 +104,9 @@ final class JsonRpcEndpointImpl private[kyo] (
                                             exchange(req).map { sv =>
                                                 Structure.decode[Out](sv) match
                                                     case Result.Success(v) => v
-                                                    case Result.Failure(e) => Abort.fail(JsonRpcError.invalidParams(e.getMessage))
-                                                    case Result.Panic(t)   => Abort.panic(t)
+                                                    case Result.Failure(e) =>
+                                                        Abort.fail(JsonRpcInternalError(JsonRpcInternalError.Operation.DecodeResult, e))
+                                                    case Result.Panic(t) => Abort.panic(t)
                                             }
                                         )
                                     if config.requestTimeout == Duration.Infinity then
@@ -125,8 +126,9 @@ final class JsonRpcEndpointImpl private[kyo] (
                                                 // Do NOT await abortSignal here: raceFirst's cleanup has already interrupted
                                                 // the abortSignal promise with Panic(Interrupted), so awaiting it would panic.
                                                 val abortError = config.cancellation match
-                                                    case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(Absent))
-                                                    case Absent     => JsonRpcError.cancelled(Absent)
+                                                    case Present(p) =>
+                                                        p.cancelledError.getOrElse(JsonRpcCustomError(-32800, "Request cancelled"))
+                                                    case Absent => JsonRpcCustomError(-32800, "Request cancelled")
                                                 // Unsafe: read idSignal to find the id for cancel notification
                                                 // unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                                 Sync.Unsafe.defer {
@@ -200,8 +202,9 @@ final class JsonRpcEndpointImpl private[kyo] (
                                         exchange(req).map { sv =>
                                             Structure.decode[Out](sv) match
                                                 case Result.Success(v) => v
-                                                case Result.Failure(e) => Abort.fail(JsonRpcError.invalidParams(e.getMessage))
-                                                case Result.Panic(t)   => Abort.panic(t)
+                                                case Result.Failure(e) =>
+                                                    Abort.fail(JsonRpcInternalError(JsonRpcInternalError.Operation.DecodeResult, e))
+                                                case Result.Panic(t) => Abort.panic(t)
                                         }
                                     )
                                 if config.requestTimeout == Duration.Infinity then
@@ -223,8 +226,8 @@ final class JsonRpcEndpointImpl private[kyo] (
                                     // Carries Unit so the outer race arm can call handleTimeout and then fail.
                                     Fiber.Promise.init[Unit, Any].map { timeoutSignal =>
                                         val abortError = config.cancellation match
-                                            case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(Absent))
-                                            case Absent     => JsonRpcError.cancelled(Absent)
+                                            case Present(p) => p.cancelledError.getOrElse(JsonRpcCustomError(-32800, "Request cancelled"))
+                                            case Absent     => JsonRpcCustomError(-32800, "Request cancelled")
                                         // Poll interval: requestTimeout * 0.1, minimum 10ms
                                         val pollInterval = (config.requestTimeout * 0.1).max(10.millis)
                                         // Monitor fiber: sleep pollInterval, check deadline, recurse or fire timeout.
@@ -307,8 +310,9 @@ final class JsonRpcEndpointImpl private[kyo] (
                                         case Result.Success(v) => v
                                         case Result.Failure(_) =>
                                             val abortError = config.cancellation match
-                                                case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(Absent))
-                                                case Absent     => JsonRpcError.cancelled(Absent)
+                                                case Present(p) =>
+                                                    p.cancelledError.getOrElse(JsonRpcCustomError(-32800, "Request cancelled"))
+                                                case Absent => JsonRpcCustomError(-32800, "Request cancelled")
                                             // Unsafe: read idSignal to find the id for cancel notification
                                             // unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                             Sync.Unsafe.defer {
@@ -370,8 +374,9 @@ final class JsonRpcEndpointImpl private[kyo] (
     )(using frame: Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
         progressPolicy match
             case Absent =>
-                Abort.fail(JsonRpcError.internalError(
-                    "progress not configured: pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
+                Abort.fail(JsonRpcConfigurationError(
+                    "progressPolicy",
+                    "required for callWithProgress; pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
                 ))
             case Present(policy) =>
                 RateLimitEngine.maxInFlightGuard(meter) {
@@ -450,8 +455,9 @@ final class JsonRpcEndpointImpl private[kyo] (
     )(using frame: Frame, tagEmitChunkT: Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
         progressPolicy match
             case Absent =>
-                Stream(Abort.fail[JsonRpcError](JsonRpcError.internalError(
-                    "progress not configured: pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
+                Stream(Abort.fail[JsonRpcError](JsonRpcConfigurationError(
+                    "progressPolicy",
+                    "required for callPartialResults; pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
                 )))
             case Present(policy) =>
                 // All setup runs inside the Stream body so the return type is Stream (not Stream < Sync).
@@ -515,7 +521,10 @@ final class JsonRpcEndpointImpl private[kyo] (
                                                                 // typed stream emit after per-item decode; no canonical alternative
                                                                 case Result.Success(v) => Emit.value(Chunk(v))(using tagEmitChunkT, frame)
                                                                 case Result.Failure(e) =>
-                                                                    Abort.fail(JsonRpcError.invalidParams(e.getMessage))
+                                                                    Abort.fail(JsonRpcInternalError(
+                                                                        JsonRpcInternalError.Operation.DecodeResult,
+                                                                        e
+                                                                    ))
                                                                 case Result.Panic(t) => Abort.panic(t)
                                                     }
                                                 }
@@ -531,8 +540,11 @@ final class JsonRpcEndpointImpl private[kyo] (
                                                         Structure.decode[T](sv) match
                                                             // final item stream emit after decode; no canonical alternative
                                                             case Result.Success(v) => Emit.value(Chunk(v))(using tagEmitChunkT, frame)
-                                                            case Result.Failure(e) => Abort.fail(JsonRpcError.invalidParams(e.getMessage))
-                                                            case Result.Panic(t)   => Abort.panic(t)
+                                                            case Result.Failure(e) => Abort.fail(JsonRpcInternalError(
+                                                                    JsonRpcInternalError.Operation.DecodeResult,
+                                                                    e
+                                                                ))
+                                                            case Result.Panic(t) => Abort.panic(t)
                                                 }
                                             case Result.Panic(t) => Abort.panic(t)
                                         }
@@ -589,7 +601,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                         Sync.Unsafe.defer {
                             // promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
                             info.abortSignal.unsafe.completeDiscard(
-                                Result.succeed(JsonRpcError.cancelled(reason))
+                                Result.succeed(JsonRpcCustomError(-32800, reason.getOrElse("Request cancelled")))
                                 // embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                             )(using AllowUnsafe.embrace.danger)
                         }
@@ -599,7 +611,8 @@ final class JsonRpcEndpointImpl private[kyo] (
                                 s"kyo-jsonrpc: cancel refused for protected method ${info.method}, no-op"
                             )
                         else
-                            val abortError = policy.cancelledError.getOrElse(JsonRpcError.cancelled(reason))
+                            val abortError =
+                                policy.cancelledError.getOrElse(JsonRpcCustomError(-32800, reason.getOrElse("Request cancelled")))
                             if policy.expectReplyForCancelledRequest then
                                 // LSP: server will still reply; set pendingCancelError so decodeCallback
                                 // completes abortSignal when the reply arrives.
@@ -671,13 +684,13 @@ final class JsonRpcEndpointImpl private[kyo] (
                         // Unsafe: failAllPending fails all Exchange pending promises with the given error
                         // Exchange bulk-fail of pending promises from finalizer; no safe equivalent in Exchange public API
                         exchange.unsafe.failAllPending(
-                            JsonRpcError.internalError("endpoint closed", Absent)
+                            JsonRpcLifecycleError(JsonRpcLifecycleError.Stage.Close)
                             // embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                         )(using AllowUnsafe.embrace.danger)
                         callerRegistry.forEach { (_, info) =>
                             // promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
                             info.abortSignal.unsafe.completeDiscard(
-                                Result.succeed(JsonRpcError.internalError("endpoint closed", Absent))
+                                Result.succeed(JsonRpcLifecycleError(JsonRpcLifecycleError.Stage.Close))
                                 // embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                             )(using AllowUnsafe.embrace.danger)
                         }
@@ -810,14 +823,17 @@ object JsonRpcEndpointImpl:
                                             Abort.run[Closed](writerChannel.put(WriterMsg.SendEnvelope(env))).map {
                                                 case Result.Success(_) => ()
                                                 case Result.Failure(c) =>
-                                                    Abort.fail(JsonRpcError.internalError(s"transport closed: ${c.getMessage}", Absent))
+                                                    Abort.fail(JsonRpcTransportError(s"transport closed: ${c.getMessage}", c))
                                                 case Result.Panic(t) => Abort.panic(t)
                                             }
                                         case Result.Failure(e) => Abort.fail(e)
                                         case Result.Panic(t)   => Abort.panic(t)
                                     }
-                                case Result.Failure(_) => Abort.fail(JsonRpcError.internalError("wire decode error", Absent))
-                                case Result.Panic(t)   => Abort.panic(t)
+                                case Result.Failure(e) => Abort.fail(JsonRpcTransportError(
+                                        "wire decode error",
+                                        new RuntimeException("wire decode error")
+                                    ))
+                                case Result.Panic(t) => Abort.panic(t)
 
                     // Receive stream: converts transport's Abort[Closed] to Abort[JsonRpcError]
                     // and re-encodes envelopes to JSON strings for Exchange's decode callback.
@@ -833,7 +849,7 @@ object JsonRpcEndpointImpl:
                                 Abort.run[Closed](_).map {
                                     case Result.Success(_) => ()
                                     case Result.Failure(c) =>
-                                        Abort.fail(JsonRpcError.internalError(s"transport closed: ${c.getMessage}", Absent))
+                                        Abort.fail(JsonRpcTransportError(s"transport closed: ${c.getMessage}", c))
                                     case Result.Panic(t) => Abort.panic(t)
                                 }
                             )
@@ -1038,10 +1054,7 @@ object JsonRpcEndpointImpl:
                                                                                     id,
                                                                                     Absent,
                                                                                     Present(
-                                                                                        JsonRpcError.internalError(
-                                                                                            "Internal error",
-                                                                                            Present(Structure.Value.Str(t.getMessage))
-                                                                                        )
+                                                                                        JsonRpcHandlerPanicError(method, t)(using frame)
                                                                                     ),
                                                                                     extras
                                                                                 )
@@ -1093,7 +1106,10 @@ object JsonRpcEndpointImpl:
                                                                     val response = JsonRpcResponse(
                                                                         id,
                                                                         Absent,
-                                                                        Present(JsonRpcError.methodNotFound(method)(using frame)),
+                                                                        Present(JsonRpcMethodNotFoundError(
+                                                                            method,
+                                                                            Chunk.from(methodMap.keys)
+                                                                        )(using frame)),
                                                                         Absent
                                                                     )
                                                                     // Unsafe: offer to writerChannel inside Exchange decode callback
@@ -1112,7 +1128,10 @@ object JsonRpcEndpointImpl:
                                                                     val response = JsonRpcResponse(
                                                                         id,
                                                                         Absent,
-                                                                        Present(JsonRpcError.methodNotFound(method)(using frame)),
+                                                                        Present(JsonRpcMethodNotFoundError(
+                                                                            method,
+                                                                            Chunk.from(methodMap.keys)
+                                                                        )(using frame)),
                                                                         Absent
                                                                     )
                                                                     // Unsafe: offer to writerChannel inside Exchange decode callback
@@ -1210,7 +1229,10 @@ object JsonRpcEndpointImpl:
                                                         case Present(info) =>
                                                             // CAS-won path completes pending caller promise from outside originating fiber
                                                             info.abortSignal.unsafe.completeDiscard(
-                                                                Result.succeed(JsonRpcError.invalidRequest(s"malformed response: $reason"))
+                                                                Result.succeed(JsonRpcInvalidRequestError(
+                                                                    Structure.Value.Str(s"malformed response: $reason"),
+                                                                    Chunk.empty
+                                                                )(using frame))
                                                                 // embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                             )(using AllowUnsafe.embrace.danger)
                                                         case Absent =>

@@ -256,7 +256,7 @@ class MaxInFlightTest extends JsonRpcTest:
         // First call: handler always fails with MethodNotFound
         val failOnB = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (req, _) =>
             val n = callCount.incrementAndGet()(using AllowUnsafe.embrace.danger)
-            if n == 1 then Abort.fail(JsonRpcError.methodNotFound("ping"))
+            if n == 1 then Abort.fail(JsonRpcMethodNotFoundError("ping", Chunk.empty))
             else PingResp(req.n)
         }
 

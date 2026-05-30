@@ -213,7 +213,7 @@ class CdpBackendTest extends Test:
             val method = JsonRpcRoute[EvalParams, EvalResult, Async & Abort[JsonRpcError]](
                 "Runtime.evaluate"
             ) { (_, _) =>
-                Abort.fail(JsonRpcError.methodNotFound("Runtime.evaluate"))
+                Abort.fail(JsonRpcMethodNotFoundError("Runtime.evaluate", Chunk.empty))
             }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
                 Abort.run[BrowserReadException](CdpBackend.runtimeEvaluate(backend, EvalParams("1+1"))).map {
@@ -476,7 +476,7 @@ class CdpBackendTest extends Test:
         Scope.run {
             val method = JsonRpcRoute[NavigateParams, Unit, Async & Abort[JsonRpcError]](
                 "Page.navigate"
-            ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Page.navigate")) }
+            ) { (_, _) => Abort.fail(JsonRpcMethodNotFoundError("Page.navigate", Chunk.empty)) }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
                 Abort.run[BrowserReadException](CdpBackend.navigate(backend, NavigateParams("http://example.com"))).map {
                     case Result.Failure(e: BrowserProtocolErrorException) =>
@@ -619,7 +619,7 @@ class CdpBackendTest extends Test:
         Scope.run {
             val method = JsonRpcRoute[DispatchKeyEventParams, Unit, Async & Abort[JsonRpcError]](
                 "Input.dispatchKeyEvent"
-            ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Input.dispatchKeyEvent")) }
+            ) { (_, _) => Abort.fail(JsonRpcMethodNotFoundError("Input.dispatchKeyEvent", Chunk.empty)) }
             val params = DispatchKeyEventParams(KeyEventType.Up, Present("a"), Absent, Absent, Absent)
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
                 Abort.run[BrowserReadException](CdpBackend.dispatchKeyEvent(backend, params)).map {
@@ -756,7 +756,7 @@ class CdpBackendTest extends Test:
         Scope.run {
             val method = JsonRpcRoute[NetworkSetCookieParams, Unit, Async & Abort[JsonRpcError]](
                 "Network.setCookie"
-            ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Network.setCookie")) }
+            ) { (_, _) => Abort.fail(JsonRpcMethodNotFoundError("Network.setCookie", Chunk.empty)) }
             val params = NetworkSetCookieParams(name = "x", value = "y")
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
                 Abort.run[BrowserReadException](CdpBackend.setCookie(backend, params)).map {
@@ -809,7 +809,7 @@ class CdpBackendTest extends Test:
         Scope.run {
             val method = JsonRpcRoute[CloseTargetParams, Unit, Async & Abort[JsonRpcError]](
                 "Target.closeTarget"
-            ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Target.closeTarget")) }
+            ) { (_, _) => Abort.fail(JsonRpcMethodNotFoundError("Target.closeTarget", Chunk.empty)) }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
                 Abort.run[BrowserReadException](CdpBackend.closeTarget(backend, CloseTargetParams("t1"))).map {
                     case Result.Failure(e: BrowserProtocolErrorException) =>

@@ -103,8 +103,8 @@ private[kyo] object CancellationEngine:
             case Absent => Kyo.unit
             case Present(info) =>
                 val abortError = cancellation match
-                    case Present(p) => p.cancelledError.getOrElse(JsonRpcError.cancelled(reason))
-                    case Absent     => JsonRpcError.cancelled(reason)
+                    case Present(p) => p.cancelledError.getOrElse(JsonRpcCustomError(-32800, reason.getOrElse("Request cancelled")))
+                    case Absent     => JsonRpcCustomError(-32800, reason.getOrElse("Request cancelled"))
                 cancellation match
                     case Present(policy) =>
                         buildAndEnqueueOutboundCancel(id, reason, info, policy, writerChannel).andThen {

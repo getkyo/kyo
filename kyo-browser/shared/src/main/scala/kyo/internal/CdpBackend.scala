@@ -53,21 +53,21 @@ final private[kyo] class CdpBackend private[kyo] (
                     Present(closed)
                 ))
             } {
-                Abort.recover[JsonRpcError] { err =>
-                    // JsonRpcError.RequestCancelled (code -32800) is how the engine surfaces
-                    // a requestTimeout expiry (internally Abort.run[Timeout] -> JsonRpcError.cancelled).
+                Abort.recover[JsonRpcError] {
+                    // Timeout: code -32800 is how the engine surfaces a requestTimeout expiry.
                     // Map it to BrowserConnectionLostException to preserve legacy CdpClient.submit semantics.
-                    if err.code == JsonRpcError.RequestCancelled.code then
+                    case e: JsonRpcCustomError if e.code == -32800 =>
                         Abort.fail(BrowserConnectionLostException(
                             s"Request timeout: $method",
                             Absent
                         ))
-                    else if err.message == "endpoint closed" || err.message.startsWith("transport closed") then
+                    // Transport/lifecycle errors: the connection is lost at the wire level.
+                    case _: JsonRpcTransportError | _: JsonRpcLifecycleError =>
                         Abort.fail(BrowserConnectionLostException(
-                            s"Connection lost: ${err.message} during $method",
+                            s"Connection lost during $method",
                             Absent
                         ))
-                    else
+                    case err =>
                         Abort.fail(BrowserProtocolErrorException(method, err.message))
                 } {
                     endpoint.call[P, R](method, params, extras)

@@ -108,7 +108,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     }
 
     "gate Reject for Request: caller sees error reply with gate error code" in run {
-        val gateError = JsonRpcError(-32099, "gate blocked", Absent)
+        val gateError = JsonRpcImplementationError(-32099, "gate blocked")
         val rejectGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
                 JsonRpcHandler.MessageGate.Decision.Reject(gateError)
@@ -132,7 +132,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     "gate Reject for Notification: notification dropped, engine does not close" in run {
         val rejectGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
-                JsonRpcHandler.MessageGate.Decision.Reject(JsonRpcError(-32000, "rejected", Absent))
+                JsonRpcHandler.MessageGate.Decision.Reject(JsonRpcImplementationError(-32000, "rejected"))
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
@@ -180,7 +180,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     }
 
     "gate LSP initialize pattern: allows initialize, rejects others with ServerNotInitialized" in run {
-        val serverNotInitialized = JsonRpcError(-32002, "ServerNotInitialized", Absent)
+        val serverNotInitialized = JsonRpcImplementationError(-32002, "ServerNotInitialized")
         val initGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
                 env match

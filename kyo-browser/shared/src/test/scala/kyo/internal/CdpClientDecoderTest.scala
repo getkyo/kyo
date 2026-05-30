@@ -63,7 +63,7 @@ class CdpClientDecoderTest extends kyo.Test:
             val errorMethod = JsonRpcRoute[CdpNoParams, GetTargetsResult, Async & Abort[JsonRpcError]](
                 "Target.getTargets"
             ) { (_, _) =>
-                Abort.fail(JsonRpcError(-32602, "Invalid params", Absent))
+                Abort.fail(JsonRpcInvalidParamsError("[test]", Maybe.Absent, Chunk.empty))
             }
             mkBackendAndServerTransport(Seq(errorMethod)).map { (backend, _) =>
                 Abort.run[BrowserReadException](CdpBackend.getTargets(backend)).map {
@@ -131,7 +131,7 @@ class CdpClientDecoderTest extends kyo.Test:
             val errorMethod = JsonRpcRoute[AttachParams, AttachResult, Async & Abort[JsonRpcError]](
                 "Target.attachToTarget"
             ) { (_, _) =>
-                Abort.fail(JsonRpcError(-32601, "Method not found", Absent))
+                Abort.fail(JsonRpcMethodNotFoundError("[test]", Chunk.empty))
             }
             mkBackendAndServerTransport(Seq(errorMethod)).map { (backend, _) =>
                 Abort.run[BrowserReadException](

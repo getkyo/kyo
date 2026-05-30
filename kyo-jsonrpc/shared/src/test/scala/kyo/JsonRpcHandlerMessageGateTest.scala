@@ -9,14 +9,15 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
     "Decision values are CanEqual-distinguishable across Allow / Reject / Drop" in run {
         val a: JsonRpcHandler.MessageGate.Decision = JsonRpcHandler.MessageGate.Decision.Allow
         val d: JsonRpcHandler.MessageGate.Decision = JsonRpcHandler.MessageGate.Decision.Drop
-        val r: JsonRpcHandler.MessageGate.Decision = JsonRpcHandler.MessageGate.Decision.Reject(JsonRpcError.InvalidRequest)
+        val r: JsonRpcHandler.MessageGate.Decision =
+            JsonRpcHandler.MessageGate.Decision.Reject(JsonRpcInvalidRequestError(Structure.Value.Null, Chunk.empty))
         assert(a != d)
         assert(a != r)
         assert(d != r)
     }
 
     "Reject decision carries the supplied JsonRpcError" in run {
-        val err                                      = JsonRpcError.invalidRequest("nope")
+        val err                                      = JsonRpcInvalidRequestError(Structure.Value.Str("nope"), Chunk.empty)
         val dec: JsonRpcHandler.MessageGate.Decision = JsonRpcHandler.MessageGate.Decision.Reject(err)
         dec match
             case JsonRpcHandler.MessageGate.Decision.Reject(captured) => assert(captured == err)
@@ -45,7 +46,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
         val cases: Seq[JsonRpcHandler.MessageGate.Decision] = Seq(
             JsonRpcHandler.MessageGate.Decision.Allow,
             JsonRpcHandler.MessageGate.Decision.Drop,
-            JsonRpcHandler.MessageGate.Decision.Reject(JsonRpcError.InvalidParams)
+            JsonRpcHandler.MessageGate.Decision.Reject(JsonRpcInvalidParamsError("m", Maybe.Absent, Chunk.empty))
         )
         val tags = cases.map:
             case JsonRpcHandler.MessageGate.Decision.Allow     => "A"
