@@ -46,6 +46,11 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
 
     /** Intern the byte slice `bytes[offset .. offset+length)`, returning a canonical `Entry`. */
     def intern(bytes: Array[Byte], offset: Int, length: Int): Interner.Entry =
+        if offset < 0 || length < 0 || offset + length < 0 || offset + length > bytes.length then
+            throw new ArrayIndexOutOfBoundsException(
+                s"Interner.intern: offset=$offset length=$length bytes.length=${bytes.length}"
+            )
+        end if
         val hash     = computeHash(bytes, offset, length)
         val shardIdx = hash & (numShards - 1)
         internInShard(shards(shardIdx), shardLoadCounters(shardIdx), hash, bytes, offset, length)
@@ -123,6 +128,11 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
     end growShard
 
     private def bytesEqual(entry: Interner.Entry, bytes: Array[Byte], offset: Int, length: Int): Boolean =
+        if offset < 0 || length < 0 || offset + length > bytes.length || offset + length < 0 then
+            throw new ArrayIndexOutOfBoundsException(
+                s"Interner.bytesEqual: offset=$offset length=$length bytes.length=${bytes.length}"
+            )
+        end if
         entry.bytes.length == length && {
             var i  = 0
             var eq = true

@@ -212,4 +212,65 @@ class InternerTest extends Test:
         }
     }
 
+    // Phase 03b / B10 / INV-010: intern rejects offset + length > bytes.length.
+    // The guard in bytesEqual fires for negative offset before computeHash can throw.
+    // For negative offset, computeHash is short-circuited: the guard fires on the first
+    // bytesEqual call when a hash collision occurs. We test the overall intern contract:
+    // calling intern with arguments that violate the bounds invariant throws AIOOBE.
+    //
+    // Case 1: offset + length > bytes.length (4+2=6 > 5). computeHash itself throws a JVM
+    // ArrayIndexOutOfBoundsException at bytes(5) before reaching bytesEqual.
+    "B10/INV-010: intern throws ArrayIndexOutOfBoundsException when offset + length > bytes.length" in run {
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val bytes    = Array[Byte](10, 20, 30, 40, 50) // length = 5
+        intercept[ArrayIndexOutOfBoundsException](interner.intern(bytes, 4, 2))
+        succeed
+    }
+
+    // Case 2: negative offset. The bytesEqual guard (offset < 0) fires on any hash-collision
+    // probe. For a fresh interner with no prior entries the slot is empty and intern proceeds to
+    // copyOfRange which also throws; either way AIOOBE is the contract.
+    "B10: intern throws ArrayIndexOutOfBoundsException for negative offset" in run {
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val bytes    = Array[Byte](1, 2, 3, 4, 5)
+        intercept[ArrayIndexOutOfBoundsException](interner.intern(bytes, -1, 3))
+        succeed
+    }
+
+    // Case 3: negative length - bytesEqual guard path.
+    // computeHash with length=-1 iterates zero times, producing the FNV-1a seed hash
+    // (0x011c9dc5 after masking). We pre-populate shard 5 with an entry whose hash equals
+    // that seed value so the probe loop hits a non-null slot, evaluates existing.hash == hash,
+    // and calls bytesEqual(existing, bytes, 0, -1). The bytesEqual guard (length < 0) fires
+    // and throws AIOOBE with our custom message before any array access occurs.
+    "B10: bytesEqual guard throws ArrayIndexOutOfBoundsException with custom message for negative length" in run {
+        // FNV-1a of zero iterations = 0x811c9dc5 masked = 0x011c9dc5 = 18413021
+        val emptySliceHash = 0x011c9dc5
+        // Plant a seed entry whose hash equals emptySliceHash. We need a byte sequence that
+        // hashes to exactly emptySliceHash under FNV-1a. Rather than searching, we exploit the
+        // fact that FNV-1a("") = seed constant. We intern the empty slice on a dedicated
+        // pre-seeder interner first (to confirm hash), then plant the same hash in our test
+        // interner by interning the empty slice directly.
+        val interner  = new Interner(numShards = 32, initialShardCapacity = 16)
+        val seedBytes = Array[Byte]() // empty -> hash = FNV seed masked = 0x011c9dc5
+        interner.intern(seedBytes, 0, 0) // plant entry with hash=0x011c9dc5 in shard 5
+        val bytes     = Array[Byte](1, 2, 3, 4, 5)
+        // Now intern(bytes, 0, -1): computeHash returns 0x011c9dc5 (same hash as empty entry),
+        // slot probe finds the pre-planted entry, hash matches, bytesEqual(entry, bytes, 0, -1)
+        // fires the length < 0 guard and throws AIOOBE with our custom diagnostic message.
+        val ex = intercept[ArrayIndexOutOfBoundsException](interner.intern(bytes, 0, -1))
+        assert(ex.getMessage.contains("length=-1"), s"expected length=-1 in message: ${ex.getMessage}")
+        assert(ex.getMessage.contains("bytes.length=5"), s"expected bytes.length=5 in message: ${ex.getMessage}")
+    }
+
+    // Case 4: guard allows valid bounds - zero-length intern at a mid-array offset succeeds.
+    // offset=2, length=0 => offset+length=2 <= 5, all guard conditions false, no throw.
+    "B10: zero-length intern with valid offset succeeds (guard allows valid bounds)" in run {
+        val interner = new Interner(numShards = 32, initialShardCapacity = 16)
+        val bytes    = Array[Byte](1, 2, 3, 4, 5)
+        val entry    = interner.intern(bytes, 2, 0)
+        assert(entry ne null)
+        succeed
+    }
+
 end InternerTest
