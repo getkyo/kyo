@@ -58,4 +58,28 @@ class JsonRpcEnvelopeTest extends JsonRpcTestBase:
             case _                                   => fail("expected Malformed")
     }
 
+    "Response.success factory sets result-present error-Absent extras-Absent" in run {
+        val resp = JsonRpcEnvelope.Response.success(JsonRpcId.Num(1L), Structure.Value.Str("ok"))
+        assert(resp.id == JsonRpcId.Num(1L))
+        assert(resp.result == Present(Structure.Value.Str("ok")))
+        assert(resp.error == Absent)
+        assert(resp.extras == Absent)
+    }
+
+    "Response.failure factory sets error-present result-Absent extras-Absent" in run {
+        val resp = JsonRpcEnvelope.Response.failure(JsonRpcId.Num(2L), JsonRpcError.MethodNotFound)
+        assert(resp.id == JsonRpcId.Num(2L))
+        assert(resp.result == Absent)
+        assert(resp.error == Present(JsonRpcError.MethodNotFound))
+        assert(resp.extras == Absent)
+    }
+
+    "Response copy preserves equality across fields" in run {
+        val base    = JsonRpcEnvelope.Response.success(JsonRpcId.Num(4L), Structure.Value.Str("v"))
+        val mutated = base.copy(error = Present(JsonRpcError.InternalError))
+        assert(base != mutated)
+        assert(mutated.error == Present(JsonRpcError.InternalError))
+        assert(mutated.id == base.id)
+    }
+
 end JsonRpcEnvelopeTest

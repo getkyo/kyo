@@ -20,3 +20,11 @@ Append-only log. One entry per Stage 1/2/3 milestone.
 - Phase 01 impl dispatched (sonnet, 30-45min ETA).
 - Phase 02 prep note: `JsonRpcResponse` (3 fields, Maybe[id]) vs `JsonRpcEnvelope.Response` (4 fields, non-Maybe id, has extras) are NOT structurally identical. Phase 02 needs to: keep `Envelope.Response` (extras-bearing, used on wire); delete standalone `JsonRpcResponse.scala`; move `success`/`failure` factories onto `JsonRpcEnvelope.Response` companion adapting to the 4-field shape (extras = Absent default, id-as-Maybe wrapped).
 
+- Phase 03 caller-impact (for impl prompt). 10 nesting moves, files affected (rg --type scala): MessageGate=7, CancellationPolicy=8, ProgressPolicy=8, UnknownMethodPolicy=8, IdStrategy=11, ExtrasEncoder=12, Framer=8, WireTransport=7, HandlerCtx=9 (also renames to JsonRpcMethod.Context), JsonRpcId=33 (also renames to JsonRpcEnvelope.Id). JsonRpcId is the dominant rename due to ubiquitous wire-message construction. Total deduped impact likely 50-80 files. Phase 03 commit will be the largest of the campaign.
+
+- Phase 01 committed: 68ba4e113 (verify PASS, 56 files staged).
+- Phase 01 audit dispatched in SLOT-B.
+- Phase 02 impl dispatched in SLOT-A.
+
+
+

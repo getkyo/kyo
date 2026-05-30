@@ -1,6 +1,9 @@
 package kyo
 
+import kyo.Frame
 import kyo.Maybe
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
 import kyo.Structure
 
 /** The wire-level discriminated union of all JSON-RPC 2.0 message kinds.
@@ -36,4 +39,14 @@ enum JsonRpcEnvelope derives CanEqual:
         extras: Maybe[Structure.Value]
     )
     case Malformed(id: Maybe[JsonRpcId], reason: String, raw: Structure.Value)
+end JsonRpcEnvelope
+
+object JsonRpcEnvelope:
+    object Response:
+        def success(id: JsonRpcId, result: Structure.Value)(using Frame): JsonRpcEnvelope.Response =
+            JsonRpcEnvelope.Response(id, Present(result), Absent, Absent)
+
+        def failure(id: JsonRpcId, error: JsonRpcError)(using Frame): JsonRpcEnvelope.Response =
+            JsonRpcEnvelope.Response(id, Absent, Present(error), Absent)
+    end Response
 end JsonRpcEnvelope
