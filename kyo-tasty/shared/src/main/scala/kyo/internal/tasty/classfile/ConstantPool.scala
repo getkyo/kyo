@@ -217,9 +217,15 @@ object ConstantPool:
                         view match
                             case h: ByteView.Heap =>
                                 entries(idx) = new CpEntry.Utf8Lazy(h.copyBytes(off, off + len), 0, len)
-                            case _: ByteView.Mapped =>
-                                errorMsg =
-                                    s"Unexpected ByteView variant while reading UTF-8 entry at pool[$idx] in $path; only Heap ByteView is supported for classfile reading"
+                            case m: ByteView.Mapped =>
+                                // Eager copy from mapped region into a heap array so that lazy decode
+                                // does not depend on the mmap arena lifetime.
+                                val buf = new Array[Byte](len)
+                                var i   = 0
+                                while i < len do
+                                    buf(i) = m.peekByte((off + i).toLong)
+                                    i += 1
+                                entries(idx) = new CpEntry.Utf8Lazy(buf, 0, len)
                         end match
                         idx += 1
 
