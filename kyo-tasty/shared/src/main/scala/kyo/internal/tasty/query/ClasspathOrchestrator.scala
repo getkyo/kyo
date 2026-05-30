@@ -158,11 +158,13 @@ object ClasspathOrchestrator:
         val sizeHint = 128
 
         // Timing instrumentation: snapshot nanoTime at each stage boundary.
-        // AtomicLong used so decoder fibers can record t_decodeEnd from any thread.
-        val t_start     = new java.util.concurrent.atomic.AtomicLong(java.lang.System.nanoTime())
-        val t_listEnd   = new java.util.concurrent.atomic.AtomicLong(0L)
-        val t_decodeEnd = new java.util.concurrent.atomic.AtomicLong(0L)
-        val t_mergeEnd  = new java.util.concurrent.atomic.AtomicLong(0L)
+        // AtomicLong.Unsafe used so decoder fibers can record t_decodeEnd from any thread.
+        // flow-allow: §839 case 3; pipeline-launch boundary; timing slots allocated once per open() call.
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        val t_start       = AtomicLong.Unsafe.init(java.lang.System.nanoTime())
+        val t_listEnd     = AtomicLong.Unsafe.init(0L)
+        val t_decodeEnd   = AtomicLong.Unsafe.init(0L)
+        val t_mergeEnd    = AtomicLong.Unsafe.init(0L)
 
         Sync.Unsafe.defer(Interner.init(numShards = numShards, initialShardCapacity = sizeHint)).flatMap { interner =>
             Scope.run:
@@ -197,16 +199,16 @@ object ClasspathOrchestrator:
                                 // Producer closes entryCh after all puts complete (closeAwaitEmpty so decoders drain buffer).
                                 val producerWithClose: Unit < (Abort[TastyError] & Async) =
                                     producerStage
-                                        .andThen(Sync.defer(t_listEnd.set(java.lang.System.nanoTime())))
+                                        .andThen(Sync.Unsafe.defer(t_listEnd.set(java.lang.System.nanoTime())))
                                         .andThen(entryCh.closeAwaitEmpty.unit)
                                 // Decoders close resultCh after all puts complete.
                                 val decoderWithClose: Unit < (Abort[TastyError] & Async) =
                                     decoderStage
-                                        .andThen(Sync.defer(t_decodeEnd.set(java.lang.System.nanoTime())))
+                                        .andThen(Sync.Unsafe.defer(t_decodeEnd.set(java.lang.System.nanoTime())))
                                         .andThen(resultCh.closeAwaitEmpty.unit)
                                 // Merger records its end time after draining resultCh.
                                 val mergerWithTiming: Unit < (Async & Abort[TastyError]) =
-                                    mergerStage.andThen(Sync.defer(t_mergeEnd.set(java.lang.System.nanoTime())))
+                                    mergerStage.andThen(Sync.Unsafe.defer(t_mergeEnd.set(java.lang.System.nanoTime())))
 
                                 // Async.foreach with concurrency=3 and 3 items runs all 3 stages concurrently.
                                 // Unlike Async.gather, Async.foreach propagates the first Abort failure and

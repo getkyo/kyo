@@ -70,7 +70,7 @@ class DeclarationTableTest extends Test:
     "AtomicRef CAS-swap visibility: reader sees either empty or fully-populated dict" in run {
         import AllowUnsafe.embrace.danger
         Async.timeout(1.second) {
-            val table   = new DeclarationTable
+            val table   = DeclarationTable.init()
             val members = (1 to 4).map(i => Tasty.Name(s"m$i") -> makeSymbol(s"m$i"))
             for
                 latch <- Latch.init(1)

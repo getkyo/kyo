@@ -36,7 +36,11 @@ object ModuleInfoReader:
     def read(bytes: Array[Byte])(using Frame): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
         val view = ByteView(bytes)
         val path = "<module-info.class>"
-        Sync.Unsafe.defer(Interner.init(numShards = 16, initialShardCapacity = 16)).flatMap: interner =>
+        // Sync.Unsafe.defer provides AllowUnsafe for Interner.init and for readFrom, which calls
+        // ConstantPool.read (allocating AtomicRef.Unsafe slots per Utf8Lazy entry).
+        // flow-allow: §839 case 3; module-load init boundary; the entire constant-pool scan is one allocation phase.
+        Sync.Unsafe.defer:
+            val interner = Interner.init(numShards = 16, initialShardCapacity = 16)
             readFrom(view, interner, path)
     end read
 
@@ -45,7 +49,7 @@ object ModuleInfoReader:
         view: ByteView,
         interner: Interner,
         path: String
-    )(using Frame): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
         checkHeader(view, path).flatMap: _ =>
             ConstantPool.read(view, interner, path).flatMap: pool =>
                 skipClassStructure(view)

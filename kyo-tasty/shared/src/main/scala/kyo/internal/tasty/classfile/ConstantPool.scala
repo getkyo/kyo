@@ -1,6 +1,5 @@
 package kyo.internal.tasty.classfile
 
-import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.symbol.Interner
@@ -14,19 +13,33 @@ sealed trait CpEntry
 
 object CpEntry:
 
-    /** Lazy UTF-8: stores raw bytes and decodes on first utf8() call. */
-    final class Utf8Lazy(val bytes: Array[Byte], val offset: Int, val length: Int) extends CpEntry:
-        private val cached = new AtomicReference[Interner.Entry | Null](null)
+    /** Lazy UTF-8: stores raw bytes and decodes on first utf8() call.
+      *
+      * The `cached` field uses `AtomicRef.Unsafe[Maybe[Interner.Entry]]` with `Absent` as the not-yet-decoded sentinel. This replaces the
+      * previous `AtomicReference[Interner.Entry | Null](null)` null-sentinel pattern. Construction requires AllowUnsafe via the companion
+      * factory; the constructor is private to enforce that invariant.
+      */
+    final class Utf8Lazy private (
+        val bytes: Array[Byte],
+        val offset: Int,
+        val length: Int,
+        private val cached: AtomicRef.Unsafe[Maybe[Interner.Entry]]
+    ) extends CpEntry:
 
         def decode(interner: Interner)(using AllowUnsafe): Interner.Entry =
-            val r = cached.get()
-            if r != null then r
-            else
-                val fresh = interner.intern(bytes, offset, length)
-                cached.set(fresh)
-                fresh
-            end if
+            cached.get() match
+                case Present(e) => e
+                case Absent =>
+                    val fresh = interner.intern(bytes, offset, length)
+                    cached.set(Present(fresh))
+                    fresh
         end decode
+    end Utf8Lazy
+
+    object Utf8Lazy:
+        /** Allocate a lazy UTF-8 entry. Requires AllowUnsafe because AtomicRef.Unsafe.init is an unsafe-tier allocation. */
+        def init(bytes: Array[Byte], offset: Int, length: Int)(using AllowUnsafe): Utf8Lazy =
+            new Utf8Lazy(bytes, offset, length, AtomicRef.Unsafe.init[Maybe[Interner.Entry]](Absent))
     end Utf8Lazy
 
     final case class Utf8Decoded(entry: Interner.Entry)                     extends CpEntry
@@ -273,7 +286,7 @@ object ConstantPool:
       * Expects the cursor to be positioned just after the major/minor version fields. Advances the cursor past all pool entries. The raw
       * classfile bytes are kept alive by the returned ConstantPool for lazy UTF-8 decoding.
       */
-    def read(view: ByteView, interner: Interner, path: String)(using Frame): ConstantPool < (Sync & Abort[TastyError]) =
+    def read(view: ByteView, interner: Interner, path: String)(using Frame, AllowUnsafe): ConstantPool < (Sync & Abort[TastyError]) =
         Sync.defer {
             val count   = readU2(view)
             val entries = new Array[CpEntry | Null](count)
@@ -300,7 +313,7 @@ object ConstantPool:
                         // Deferring only String materialization via the Interner.
                         view match
                             case h: ByteView.Heap =>
-                                entries(idx) = new CpEntry.Utf8Lazy(h.copyBytes(off, off + len), 0, len)
+                                entries(idx) = CpEntry.Utf8Lazy.init(h.copyBytes(off, off + len), 0, len)
                             case m: ByteView.Mapped =>
                                 // Eager copy from mapped region into a heap array so that lazy decode
                                 // does not depend on the mmap arena lifetime.
@@ -309,7 +322,7 @@ object ConstantPool:
                                 while i < len do
                                     buf(i) = m.peekByte((off + i).toLong)
                                     i += 1
-                                entries(idx) = new CpEntry.Utf8Lazy(buf, 0, len)
+                                entries(idx) = CpEntry.Utf8Lazy.init(buf, 0, len)
                         end match
                         idx += 1
 
