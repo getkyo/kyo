@@ -553,29 +553,50 @@ final class YamlReader private (
     end clearFinishedDelegate
 
     private def currentAliasOr[A](onAlias: YamlReader => A)(body: => A): A =
-        prepare()
-        peek match
-            case Alias(name, mark) =>
-                startAlias(name, mark)
-                delegate match
-                    case Present(reader) =>
-                        val out = onAlias(reader)
-                        clearFinishedDelegate()
-                        out
-                    case Absent => body
-                end match
-            case _ => body
-        end match
+        if trySourceAlias() then
+            delegate match
+                case Present(reader) =>
+                    val out = onAlias(reader)
+                    clearFinishedDelegate()
+                    out
+                case Absent => body
+        else
+            prepare()
+            peek match
+                case Alias(name, mark) =>
+                    startAlias(name, mark)
+                    delegate match
+                        case Present(reader) =>
+                            val out = onAlias(reader)
+                            clearFinishedDelegate()
+                            out
+                        case Absent => body
+                    end match
+                case _ => body
+            end match
+        end if
     end currentAliasOr
 
     private def startAlias(name: String, mark: Yaml.Mark): Unit =
+        startAliasReader(name, mark) {
+            pos += 1
+        }
+    end startAlias
+
+    private def startSourceAlias(name: String, mark: Yaml.Mark): Unit =
+        startAliasReader(name, mark) {
+            val _ = readSourceRestOfLine()
+        }
+    end startSourceAlias
+
+    private def startAliasReader(name: String, mark: Yaml.Mark)(advance: => Unit): Unit =
         anchors.get(name) match
             case Some(anchor) =>
                 expansion.values += anchor.values
                 expansion.depth = math.max(expansion.depth, anchor.maxDepth)
                 checkCollectionSize(expansion.values)
                 if expansion.depth > maxDepth then throw LimitExceededException("Nesting depth", expansion.depth, maxDepth)
-                pos += 1
+                advance
                 val reader = anchor.source match
                     case Present(source) => sourceChild(source)
                     case Absent          => child(anchor.start, anchor.end)
@@ -585,7 +606,7 @@ final class YamlReader private (
             case None =>
                 throw ParseException(Yaml(), "", s"Unknown alias '$name' at line ${mark.line}, column ${mark.column}", Nil, mark.index)
         end match
-    end startAlias
+    end startAliasReader
 
     private def child(start: Int, stop: Int): YamlReader =
         val reader = new YamlReader("", yamlVersion, events, start, stop, anchors, expansion, allowSourcePull = false)
@@ -650,6 +671,29 @@ final class YamlReader private (
                 val _ = readSourceRestOfLine()
                 skipSourceIgnorable()
     end initSourcePosition
+
+    private def trySourceAlias(): Boolean =
+        if !allowSourcePull || prepared || sourceFrames.nonEmpty || source.isEmpty then false
+        else
+            initSourcePosition()
+            if sourcePos >= source.length then false
+            else
+                val lineStart = sourcePos
+                val indent    = currentSourceIndent()
+                val line      = currentSourceLine()
+                val stripped  = stripSourceComment(line.drop(indent)).trim
+                if stripped.startsWith("*") then
+                    val (token, rest) = sourcePropertyToken(stripped)
+                    if token.length <= 1 then sourceError("Expected YAML alias name", lineStart + indent)
+                    else if rest.nonEmpty then sourceError("Unexpected content after YAML alias", lineStart + indent + token.length)
+                    val mark = Yaml.Mark(lineStart + indent, lineNumberAt(lineStart + indent), indent)
+                    startSourceAlias(token.drop(1), mark)
+                    true
+                else false
+                end if
+            end if
+        end if
+    end trySourceAlias
 
     private def sourceMappingEmpty: Boolean =
         sourceFrames match

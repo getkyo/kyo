@@ -20,6 +20,7 @@ final case class YamlValueHolder(
 final case class YamlCountOnly(count: Int) derives CanEqual
 final case class YamlAnchoredCount(value: YamlCountOnly) derives CanEqual
 final case class YamlScalarAlias(first: String, second: String) derives CanEqual
+final case class YamlSequenceAlias(name: String, items: List[String]) derives CanEqual
 final case class YamlUnicodeField(café: Int) derives CanEqual
 
 class YamlTest extends Test:
@@ -548,6 +549,36 @@ class YamlTest extends Test:
                   |""".stripMargin
 
             assert(Yaml.decode[YamlScalarAlias](yaml) == Result.succeed(YamlScalarAlias("Alice", "Alice")))
+        }
+
+        "reader resolves source aliases before unrelated malformed fields" in {
+            val yaml =
+                """first: &name Alice
+                  |second: *name
+                  |later: [unterminated
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlScalarAlias](yaml) == Result.succeed(YamlScalarAlias("Alice", "Alice")))
+        }
+
+        "reader resolves source aliases in sequences before malformed elements" in {
+            val yaml =
+                """name: &name Alice
+                  |items:
+                  |  - *name
+                  |later: [unterminated
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlSequenceAlias](yaml) == Result.succeed(YamlSequenceAlias("Alice", List("Alice"))))
+        }
+
+        "reader reports unknown source aliases with context" in {
+            Yaml.decode[String]("*missing\n") match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("Unknown alias 'missing'"))
+                    assert(e.getMessage.contains("line 1"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
         }
 
         "skip advances the current sequence element without parsing later malformed content" in {
