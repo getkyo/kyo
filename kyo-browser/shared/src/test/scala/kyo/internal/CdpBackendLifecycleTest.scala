@@ -173,7 +173,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // closeNow with in-flight
     // ─────────────────────────────────────────────────────────────────────────
 
-    "closeNow while a slow in-flight send is pending surfaces ConnectionLost to the caller" in run {
+    "closeNow while a slow in-flight send is pending surfaces ConnectionLost (or transport-closed ProtocolError) to the caller" in run {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
@@ -199,12 +199,15 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                     yield fiberResult match
                         case Result.Failure(_: BrowserConnectionLostException) =>
                             succeed
+                        case Result.Failure(e: BrowserProtocolErrorException)
+                            if e.error.contains("transport closed") || e.error.contains("endpoint closed") =>
+                            // JS: engine surfaces close as JsonRpcError("transport closed"); JVM: maps to Closed -> ConnectionLost.
+                            // Both are valid outcomes for a closeNow racing an in-flight send.
+                            succeed
                         case Result.Success(v) =>
-                            fail(s"Expected ConnectionLost but send succeeded with: $v")
-                        case Result.Panic(ex) =>
-                            fail(s"Expected ConnectionLost but got Panic: ${ex.getMessage}")
-                        case Result.Failure(other) =>
-                            fail(s"Expected BrowserConnectionLostException but got ${other.getClass.getName}: ${other.getMessage}")
+                            fail(s"Expected close-induced abort but send succeeded with: $v")
+                        case other =>
+                            fail(s"Expected ConnectionLost or transport-closed ProtocolError, got: $other")
                 }
             }
         }.orFail("Unexpected outer")
@@ -1140,6 +1143,97 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                 }
             }
         }.orFail("Unexpected BrowserConnectionException")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Audit finding (g): endpoint.close hang must not block drainer interrupt
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** A transport that delegates all ops to a base transport except `close`,
+      * which blocks until `closeSignal` receives a unit. Used to simulate a
+      * Chrome WS peer that goes silent without sending a TCP RST so that
+      * `JsonRpcEndpointImpl.finalizer -> transport.close` hangs indefinitely.
+      */
+    final private class BlockingCloseTransport(
+        base: JsonRpcTransport,
+        closeSignal: Channel[Unit]
+    ) extends JsonRpcTransport:
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) = base.send(env)
+        def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]]   = base.incoming
+        def close(using Frame): Unit < Async =
+            Abort.run[Closed](closeSignal.take).unit.andThen(base.close)
+    end BlockingCloseTransport
+
+    "close(gracePeriod) bounds total close duration regardless of endpoint hang" in run {
+        // Server handles only Browser.getVersion (Q-002 probe); all other sends hang.
+        val testLaunchCfg = Browser.LaunchConfig.default.copy(
+            requestTimeout = 30.seconds,
+            closeGrace = 100.millis
+        )
+        val testVersionResult = BrowserVersionResult(
+            protocolVersion = "0",
+            product = "Headless/0",
+            revision = "0",
+            userAgent = "Mozilla/5.0 (Headless)",
+            jsVersion = "0.0"
+        )
+        Scope.run {
+            for
+                // closeSignal: blocks transport.close until we release it
+                closeSignal <- Channel.initUnscoped[Unit](1)
+                // Paired in-memory transports
+                (clientBase, server) <- JsonRpcTransport.inMemory
+                // Wrap the client side with a blocking-close transport
+                client = new BlockingCloseTransport(clientBase, closeSignal)
+                // Server: handles only Browser.getVersion; all other sends never get a reply
+                versionMethod = JsonRpcMethod[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
+                    "Browser.getVersion"
+                ) { (_, _) => testVersionResult }
+                serverCfg = JsonRpcEndpoint.Config(
+                    codec = JsonRpcCodec.Cdp,
+                    maxInFlight = Present(8),
+                    idStrategy = IdStrategy.SequentialInt
+                )
+                _ <- JsonRpcEndpoint.init(server, Seq(versionMethod), serverCfg)
+                // Init CdpBackend via the blocking-close transport
+                backend <- CdpBackend.initUnscoped(client, testLaunchCfg)
+                drainer = backend.dialogDrainer
+                // Issue an in-flight send that will never get a response (server has no handler)
+                _ <- Fiber.initUnscoped {
+                    Abort.run[BrowserReadException](
+                        backend.send[BrowserGetVersionParams, BrowserVersionResult](
+                            "Target.getTargets",
+                            BrowserGetVersionParams()
+                        )
+                    )
+                }
+                // Let the in-flight send register before starting close
+                _ <- Async.delay(30.millis)(Kyo.unit)
+                // Start close(100ms) in a fiber; endpoint.close will:
+                //   1. Async.timeout(100ms)(awaitDrain) -> times out after 100ms
+                //   2. finalizer -> transport.close -> BLOCKS on closeSignal
+                // Without the fix: drainer.interrupt never runs until transport.close unblocks.
+                // With the fix (Async.zip): drainer.interrupt runs concurrently at step 1.
+                closeFiber <- Fiber.initUnscoped(backend.close(100.millis))
+                // Wait past the awaitDrain timeout so finalizer is definitely running transport.close
+                _ <- Async.delay(200.millis)(Kyo.unit)
+                // At this point, transport.close is blocked. Check drainer state.
+                drainerDoneWhileHanging <- drainer.done
+                // Unblock the transport close
+                _ <- closeSignal.put(())
+                // Await the close fiber to let all resources clean up
+                _                     <- closeFiber.get
+                drainerDoneAfterClose <- drainer.done
+            yield
+                assert(
+                    drainerDoneWhileHanging,
+                    s"dialogDrainer must be interrupted as soon as close() starts (concurrent with endpoint.close), " +
+                        s"not after transport.close unblocks. done=$drainerDoneWhileHanging"
+                )
+                assert(drainerDoneAfterClose, s"dialogDrainer must be done after close() returns. done=$drainerDoneAfterClose")
+                succeed
+            end for
+        }
     }
 
 end CdpBackendLifecycleTest

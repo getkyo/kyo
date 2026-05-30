@@ -123,7 +123,8 @@ private[kyo] object CdpBackendFixtureServer:
     /** Decode the request, extract `id` via [[FixtureIdEnvelope]] (permissive Maybe[Int]), send a proper reply.
       *
       * For `Browser.getVersion` requests, returns a valid [[BrowserVersionResult]] JSON so the Q-002 probe in [[CdpBackend.initUnscoped]]
-      * succeeds. For all other requests, returns `{"id":id,"result":{}}`.
+      * succeeds. For `Target.getTargets` requests, returns `{"targetInfos":[]}` (an empty but schema-valid response). For all other
+      * requests, returns `{"id":id,"result":{}}`.
       */
     private val versionResultJson =
         """{"protocolVersion":"1.3","product":"Chrome/120","revision":"abc","userAgent":"Mozilla","jsVersion":"12.0"}"""
@@ -136,8 +137,12 @@ private[kyo] object CdpBackendFixtureServer:
                 env.id match
                     case Present(id) =>
                         // Check if this is a Browser.getVersion request; reply with a valid version envelope.
-                        val result = if requestWire.contains("Browser.getVersion") then versionResultJson else "{}"
-                        val reply  = s"""{"id":$id,"result":$result}"""
+                        // Check if this is a Target.getTargets request; reply with a schema-valid empty list.
+                        val result =
+                            if requestWire.contains("Browser.getVersion") then versionResultJson
+                            else if requestWire.contains("Target.getTargets") then """{"targetInfos":[]}"""
+                            else "{}"
+                        val reply = s"""{"id":$id,"result":$result}"""
                         ws.put(HttpWebSocket.Payload.Text(reply))
                     case Absent => Kyo.unit
             case _ => Kyo.unit

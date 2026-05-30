@@ -1204,7 +1204,19 @@ lazy val `kyo-browser` =
             `openssl-native-settings`,
             // Chrome resource contention makes parallel test-suite execution flaky on Native — serialize
             // suites so each owns the shared Chrome WebSocket channel in turn.
-            Test / parallelExecution := false
+            Test / parallelExecution := false,
+            // kyo-browser runs N=10 parallel Async.zip + Scope.ensure chains in its uniqueness tests.
+            // The default 8 MB main-thread stack (macOS system default) is insufficient for 10 concurrent
+            // fibers each running deep Abort.recover / Scope / CDP send continuations. Set the main-thread
+            // stack to 64 MB via the macOS linker's -stack_size flag. On Linux the kernel grows the stack
+            // on demand so no linker flag is needed. (Decision 68)
+            nativeConfig ~= { c =>
+                if (System.getProperty("os.name").toLowerCase.contains("mac"))
+                    c.withLinkingOptions(
+                        c.linkingOptions ++ Seq("-Xlinker", "-stack_size", "-Xlinker", "0x4000000")
+                    )
+                else c
+            }
         )
         .jsSettings(
             `js-settings`,

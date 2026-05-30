@@ -53,17 +53,14 @@ final private[kyo] class CdpBackend private[kyo] (
                     // JsonRpcError.RequestCancelled (code -32800) is how the engine surfaces
                     // a requestTimeout expiry (internally Abort.run[Timeout] -> JsonRpcError.cancelled).
                     // Map it to BrowserConnectionLostException to preserve legacy CdpClient.submit semantics.
-                    // JsonRpcError.internalError("endpoint closed") is how the engine surfaces a call that
-                    // was in-flight when the endpoint was closed; also maps to BrowserConnectionLostException
-                    // to preserve pre-port behavior where CdpClient.submit recovered Closed to that exception.
                     if err.code == JsonRpcError.RequestCancelled.code then
                         Abort.fail(BrowserConnectionLostException(
                             s"Request timeout: $method",
                             Absent
                         ))
-                    else if err.message == "endpoint closed" then
+                    else if err.message == "endpoint closed" || err.message.startsWith("transport closed") then
                         Abort.fail(BrowserConnectionLostException(
-                            s"Connection lost: endpoint closed during $method",
+                            s"Connection lost: ${err.message} during $method",
                             Absent
                         ))
                     else
@@ -101,19 +98,28 @@ final private[kyo] class CdpBackend private[kyo] (
             sessionId = Present(sid)
         )
 
-    /** Graceful close: delegates to endpoint.close(gracePeriod), then closes the
-      * dialog queue, then interrupts the drainer fiber.
+    /** Graceful close: dialog queue close + drainer interrupt run CONCURRENTLY
+      * with a timeout-bounded endpoint.close so an unresponsive WS peer cannot
+      * stall fiber cleanup.
+      *
+      * Async.zip runs both branches concurrently. The right branch (queue close +
+      * drainer interrupt) completes in a few ms regardless of endpoint state. The
+      * left branch wraps endpoint.close in Async.timeout(gracePeriod + 100.millis)
+      * and swallows the resulting Timeout via Abort.run[Timeout], so Async.zip
+      * returns within gracePeriod + 100ms even if transport.close hangs.
       */
     private[kyo] def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        endpoint.close(gracePeriod)
-            .andThen(Abort.run[Closed](dialogQueue.close).unit)
-            .andThen(dialogDrainer.interrupt.unit)
+        Async.zip(
+            Abort.run[Timeout](Async.timeout(gracePeriod + 100.millis)(endpoint.close(gracePeriod))).unit,
+            Abort.run[Closed](dialogQueue.close).unit.andThen(dialogDrainer.interrupt.unit)
+        ).unit
 
-    /** Immediate close: same ordering, no grace period. */
+    /** Immediate close: same concurrent + timeout-bounded ordering, no grace period. */
     private[kyo] def closeNow(using Frame): Unit < Async =
-        endpoint.closeNow
-            .andThen(Abort.run[Closed](dialogQueue.close).unit)
-            .andThen(dialogDrainer.interrupt.unit)
+        Async.zip(
+            Abort.run[Timeout](Async.timeout(500.millis)(endpoint.closeNow)).unit,
+            Abort.run[Closed](dialogQueue.close).unit.andThen(dialogDrainer.interrupt.unit)
+        ).unit
 
     /** Drain barrier: returns when all outstanding inflight calls have settled. */
     private[kyo] def awaitDrain(using Frame): Unit < Async =
