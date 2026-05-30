@@ -10,8 +10,7 @@ import kyo.internal.tasty.type_.TypeArena
 /** Tests for Phase 10: Scala 2 pickle reader.
   *
   * All 7 tests are JVM-only because:
-  *   - InflaterInputStream (for the "Scala" ZLIB attribute) is JVM-only.
-  *   - On JS/Native the InflateHook returns NotImplemented, so the inflation path is untestable.
+  *   - InflaterInputStream is available on JVM and Native (Phase 20a); JS is still NotImplemented.
   *   - The ScalaSig compact-encoding tests use TestResourceLoader which is JVM-only.
   *
   * Tests use hand-crafted synthetic Scala 2 pickle bytes (raw format, no compact encoding) because generating real Scala 2 classfiles
