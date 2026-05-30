@@ -10,7 +10,7 @@ private[kyo] case class OutboundReq(
     // Unsafe: completed inside Exchange encode callback (Sync context, no Frame available)
     idSignal: Promise.Unsafe[JsonRpcEnvelope.Id, Any],
     abortSignal: Fiber.Promise[JsonRpcError, Any],
-    extras: JsonRpcEndpoint.ExtrasEncoder
+    extras: JsonRpcHandler.ExtrasEncoder
 )
 
 private[kyo] case class CallerInfo(
@@ -53,11 +53,11 @@ final class JsonRpcEndpointImpl private[kyo] (
     private[kyo] val inFlight: AtomicInt,
     private val drainSignal: AtomicRef[Fiber.Promise[Unit, Any]],
     private val codec: JsonRpcCodec,
-    private val methodMap: Map[String, JsonRpcMethod[Async & Abort[JsonRpcError]]],
-    private val unknownPolicy: JsonRpcEndpoint.UnknownMethodPolicy,
-    private[kyo] val config: JsonRpcEndpoint.Config,
+    private val methodMap: Map[String, JsonRpcRoute[Async & Abort[JsonRpcError]]],
+    private val unknownPolicy: JsonRpcHandler.UnknownMethodPolicy,
+    private[kyo] val config: JsonRpcHandler.Config,
     private[kyo] val initFrame: Frame,
-    private val progressPolicy: Maybe[JsonRpcEndpoint.ProgressPolicy],
+    private val progressPolicy: Maybe[JsonRpcHandler.ProgressPolicy],
     private[kyo] val progressStreams: ConcurrentHashMap[Structure.Value, Channel[Structure.Value]],
     private[kyo] val outboundIdToToken: ConcurrentHashMap[JsonRpcEnvelope.Id, Structure.Value],
     private val meter: Maybe[Meter],
@@ -68,7 +68,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     def call[In: Schema, Out: Schema](
         method: String,
         params: In,
-        extras: JsonRpcEndpoint.ExtrasEncoder
+        extras: JsonRpcHandler.ExtrasEncoder
     )(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
         RateLimitEngine.maxInFlightGuard(meter) {
             Fiber.Promise.init[JsonRpcError, Any].map { abortSignal =>
@@ -162,7 +162,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     private def callEncoded[Out: Schema](
         method: String,
         encodedParams: Maybe[Structure.Value],
-        extras: JsonRpcEndpoint.ExtrasEncoder,
+        extras: JsonRpcHandler.ExtrasEncoder,
         // AtomicLong is kyo.AtomicLong's underlying type (Atomic.scala:354); used as a mutable deadline cell shared between call and monitor fibers
         deadlineRef: Maybe[java.util.concurrent.atomic.AtomicLong]
     )(using frame: Frame): (Fiber.Promise[JsonRpcEnvelope.Id, Any], Out < (Async & Abort[JsonRpcError | Closed])) =
@@ -339,7 +339,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     def notify[In: Schema](
         method: String,
         params: In,
-        extras: JsonRpcEndpoint.ExtrasEncoder
+        extras: JsonRpcHandler.ExtrasEncoder
     )(using Frame): Unit < (Async & Abort[Closed]) =
         val sentinelId    = JsonRpcEnvelope.Id.Num(-1L)
         val encodedParams = Present(Structure.encode[In](params))
@@ -353,7 +353,7 @@ final class JsonRpcEndpointImpl private[kyo] (
         method: String,
         params: In,
         id: JsonRpcEnvelope.Id,
-        extras: JsonRpcEndpoint.ExtrasEncoder
+        extras: JsonRpcHandler.ExtrasEncoder
     )(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer(Structure.encode[In](params)).map { encodedParams =>
             extras.resolve(id).map { extrasVal =>
@@ -366,8 +366,8 @@ final class JsonRpcEndpointImpl private[kyo] (
     def callWithProgress[In: Schema, Out: Schema](
         method: String,
         params: In,
-        extras: JsonRpcEndpoint.ExtrasEncoder
-    )(using frame: Frame): JsonRpcEndpoint.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
+        extras: JsonRpcHandler.ExtrasEncoder
+    )(using frame: Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
         progressPolicy match
             case Absent =>
                 Abort.fail(JsonRpcError.internalError(
@@ -428,7 +428,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                                         }.andThen {
                                             // Await the id (populated in encode callback, which fires as the fiber starts)
                                             idPromise.get.map { id =>
-                                                new JsonRpcEndpoint.Pending[Out](
+                                                new JsonRpcHandler.Pending[Out](
                                                     id = id,
                                                     result = fiber.get,
                                                     progress = progChan.streamUntilClosed(),
@@ -446,7 +446,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     def callPartialResults[In: Schema, T: Schema: Tag](
         method: String,
         params: In,
-        extras: JsonRpcEndpoint.ExtrasEncoder
+        extras: JsonRpcHandler.ExtrasEncoder
     )(using frame: Frame, tagEmitChunkT: Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
         progressPolicy match
             case Absent =>
@@ -726,15 +726,15 @@ object JsonRpcEndpointImpl:
 
     def init(
         transport: JsonRpcTransport,
-        methods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]],
-        config: JsonRpcEndpoint.Config
+        methods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]],
+        config: JsonRpcHandler.Config
     )(using frame: Frame): JsonRpcEndpointImpl < (Sync & Async & Scope) =
         Scope.acquireRelease(initEngine(transport, methods, config))(impl => impl.finalizer(using impl.initFrame))
 
     private def initEngine(
         transport: JsonRpcTransport,
-        methods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]],
-        config: JsonRpcEndpoint.Config
+        methods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]],
+        config: JsonRpcHandler.Config
     )(using frame: Frame): JsonRpcEndpointImpl < (Sync & Async) =
         // Unsafe: ConcurrentHashMap mirrors Exchange's own internal pattern
         val callerRegistry = new ConcurrentHashMap[JsonRpcEnvelope.Id, CallerInfo]()
@@ -912,7 +912,7 @@ object JsonRpcEndpointImpl:
                                                                                     AllowUnsafe.embrace.danger
                                                                                 )
                                                                             val ctx =
-                                                                                new JsonRpcMethod.Context(
+                                                                                new JsonRpcRoute.Context(
                                                                                     cancelledUnsafe.safe,
                                                                                     Absent,
                                                                                     env.extras,
@@ -937,11 +937,11 @@ object JsonRpcEndpointImpl:
                                                                                 Exchange.Message.Skip
                                                                             else
                                                                                 config.unknownMethod.onUnknownNotification match
-                                                                                    case JsonRpcEndpoint.UnknownMethodPolicy.UnknownAction.Drop =>
+                                                                                    case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.Drop =>
                                                                                         Exchange.Message.Skip
-                                                                                    case JsonRpcEndpoint.UnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
+                                                                                    case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
                                                                                         Exchange.Message.Skip
-                                                                                    case JsonRpcEndpoint.UnknownMethodPolicy.UnknownAction.Reject =>
+                                                                                    case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.Reject =>
                                                                                         Log.warn(
                                                                                             s"kyo-jsonrpc: unknown notification method '$method' rejected"
                                                                                         ).andThen {
@@ -968,16 +968,16 @@ object JsonRpcEndpointImpl:
                                                                         dispatchNotification
                                                                     case Present(g) =>
                                                                         g.beforeDispatch(env)(using frame).map {
-                                                                            case JsonRpcEndpoint.MessageGate.Decision.Allow =>
+                                                                            case JsonRpcHandler.MessageGate.Decision.Allow =>
                                                                                 dispatchNotification
-                                                                            case JsonRpcEndpoint.MessageGate.Decision.Reject(_) =>
+                                                                            case JsonRpcHandler.MessageGate.Decision.Reject(_) =>
                                                                                 // Notifications have no id: log WARN, drop silently (no wire response)
                                                                                 Log.warn(
                                                                                     s"kyo-jsonrpc: gate rejected notification method '$method'"
                                                                                 ).andThen(
                                                                                     Exchange.Message.Skip
                                                                                 )
-                                                                            case JsonRpcEndpoint.MessageGate.Decision.Drop =>
+                                                                            case JsonRpcHandler.MessageGate.Decision.Drop =>
                                                                                 Exchange.Message.Skip
                                                                         }
                                                                 end match
@@ -1006,7 +1006,7 @@ object JsonRpcEndpointImpl:
                                                                     // embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                 )(using frame, AllowUnsafe.embrace.danger)
                                                             val ctx =
-                                                                new JsonRpcMethod.Context(
+                                                                new JsonRpcRoute.Context(
                                                                     cancelledUnsafe.safe,
                                                                     Present(id),
                                                                     extras,
@@ -1089,7 +1089,7 @@ object JsonRpcEndpointImpl:
                                                         case None =>
                                                             // Step 3: unknown-method dispatch for requests
                                                             config.unknownMethod.onUnknownRequest match
-                                                                case JsonRpcEndpoint.UnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
+                                                                case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.ReplyMethodNotFound =>
                                                                     val response = JsonRpcEnvelope.Response(
                                                                         id,
                                                                         Absent,
@@ -1105,9 +1105,9 @@ object JsonRpcEndpointImpl:
                                                                         discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
                                                                         // format: on
                                                                     }.andThen(Exchange.Message.Skip)
-                                                                case JsonRpcEndpoint.UnknownMethodPolicy.UnknownAction.Drop =>
+                                                                case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.Drop =>
                                                                     Exchange.Message.Skip
-                                                                case JsonRpcEndpoint.UnknownMethodPolicy.UnknownAction.Reject =>
+                                                                case JsonRpcHandler.UnknownMethodPolicy.UnknownAction.Reject =>
                                                                     // Reject for a Request: send MethodNotFound first (so caller is unblocked), then close.
                                                                     val response = JsonRpcEnvelope.Response(
                                                                         id,
@@ -1140,9 +1140,9 @@ object JsonRpcEndpointImpl:
                                                         dispatchRequest
                                                     case Present(g) =>
                                                         g.beforeDispatch(env2)(using frame).map {
-                                                            case JsonRpcEndpoint.MessageGate.Decision.Allow =>
+                                                            case JsonRpcHandler.MessageGate.Decision.Allow =>
                                                                 dispatchRequest
-                                                            case JsonRpcEndpoint.MessageGate.Decision.Reject(err) =>
+                                                            case JsonRpcHandler.MessageGate.Decision.Reject(err) =>
                                                                 // Request has an id: send error response so caller is not left hanging
                                                                 val response = JsonRpcEnvelope.Response(id, Absent, Present(err), Absent)
                                                                 // Unsafe: offer to writerChannel inside gate decision handler
@@ -1154,7 +1154,7 @@ object JsonRpcEndpointImpl:
                                                                     discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
                                                                     // format: on
                                                                 }.andThen(Exchange.Message.Skip)
-                                                            case JsonRpcEndpoint.MessageGate.Decision.Drop =>
+                                                            case JsonRpcHandler.MessageGate.Decision.Drop =>
                                                                 Exchange.Message.Skip
                                                         }
                                                 end match

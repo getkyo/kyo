@@ -6,11 +6,11 @@ import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.concurrent.ExecutionContext
 
-abstract class JsonRpcTestBase extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
+abstract class JsonRpcTest extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
 
     type Assertion = org.scalatest.Assertion
     def assertionSuccess              = succeed
     def assertionFailure(msg: String) = fail(msg)
 
     override given executionContext: ExecutionContext = Platform.executionContext
-end JsonRpcTestBase
+end JsonRpcTest

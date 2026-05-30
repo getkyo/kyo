@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class JsonRpcEnvelopeTest extends JsonRpcTestBase:
+class JsonRpcEnvelopeTest extends JsonRpcTest:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 

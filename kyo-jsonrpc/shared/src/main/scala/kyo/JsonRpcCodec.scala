@@ -13,10 +13,10 @@ import kyo.Sync
   *  - [[JsonRpcCodec.Cdp]]: Chrome DevTools Protocol dialect without the `"jsonrpc"` version
   *    field.
   *
-  * Set via [[JsonRpcEndpoint.Config.codec]]. Custom implementations can be provided by
+  * Set via [[JsonRpcHandler.Config.codec]]. Custom implementations can be provided by
   * implementing this trait.
   *
-  * @see [[JsonRpcEndpoint.Config]]
+  * @see [[JsonRpcHandler.Config]]
   * @see [[JsonRpcTransport.fromWire]]
   */
 trait JsonRpcCodec:

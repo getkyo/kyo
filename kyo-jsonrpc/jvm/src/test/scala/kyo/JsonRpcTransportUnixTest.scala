@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
 
-class JsonRpcTransportUnixTest extends JsonRpcTestBase:
+class JsonRpcTransportUnixTest extends JsonRpcTest:
 
     "unixDomain binds and accepts a connection" in run {
         val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")

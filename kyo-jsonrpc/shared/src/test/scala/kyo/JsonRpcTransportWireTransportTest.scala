@@ -2,7 +2,7 @@ package kyo
 
 import kyo.Maybe.Absent
 
-class JsonRpcTransportWireTransportTest extends JsonRpcTestBase:
+class JsonRpcTransportWireTransportTest extends JsonRpcTest:
 
     "empty wire transport produces no bytes" in run {
         val wire   = JsonRpcTransport.WireTransport.empty

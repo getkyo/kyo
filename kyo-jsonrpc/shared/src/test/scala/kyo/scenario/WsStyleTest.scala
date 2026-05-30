@@ -4,7 +4,7 @@ import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class WsStyleTest extends JsonRpcTestBase:
+class WsStyleTest extends JsonRpcTest:
 
     case class CmdReq(cmd: String) derives Schema, CanEqual
     case class CmdResp(result: String) derives Schema, CanEqual
@@ -34,7 +34,7 @@ class WsStyleTest extends JsonRpcTestBase:
         // Unsafe: AtomicInt.Unsafe.init as countdown latch (init=2, decrements to 0)
         val notifLatch = AtomicInt.Unsafe.init(2)(using AllowUnsafe.embrace.danger)
 
-        val eventOnA = JsonRpcMethod[EventMsg, Unit, Async & Abort[JsonRpcError]]("server/event") {
+        val eventOnA = JsonRpcRoute[EventMsg, Unit, Async & Abort[JsonRpcError]]("server/event") {
             (msg, _) =>
                 Sync.defer {
                     discard(receivedEvents.getAndUpdate(msg.event :: _)(using AllowUnsafe.embrace.danger))
@@ -42,13 +42,13 @@ class WsStyleTest extends JsonRpcTestBase:
                 }
         }
 
-        val cmdOnB = JsonRpcMethod[CmdReq, CmdResp, Async & Abort[JsonRpcError]]("execute") {
+        val cmdOnB = JsonRpcRoute[CmdReq, CmdResp, Async & Abort[JsonRpcError]]("execute") {
             (req, _) => CmdResp(s"executed:${req.cmd}")
         }
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq(eventOnA)).map { endpointA =>
-                JsonRpcEndpoint.init(tb, Seq(cmdOnB)).map { endpointB =>
+            JsonRpcHandler.init(ta, Seq(eventOnA)).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(cmdOnB)).map { endpointB =>
                     endpointA.call[CmdReq, CmdResp]("execute", CmdReq("start")).map { resp1 =>
                         assert(resp1 == CmdResp("executed:start"))
                         endpointB.notify[EventMsg]("server/event", EventMsg("alpha")).andThen {
@@ -78,7 +78,7 @@ class WsStyleTest extends JsonRpcTestBase:
         // Unsafe: AtomicRef.Unsafe.init for remaining slot promises
         val slotRest = AtomicRef.Unsafe.init(List.empty[Fiber.Promise[Unit, Any]])(using AllowUnsafe.embrace.danger)
 
-        val pingOnB = JsonRpcMethod[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (req, _) =>
+        val pingOnB = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (req, _) =>
             Fiber.Promise.init[Unit, Any].map { entryP =>
                 Fiber.Promise.init[Unit, Any].map { holdP =>
                     Sync.defer {
@@ -92,7 +92,7 @@ class WsStyleTest extends JsonRpcTestBase:
             }
         }
 
-        val cdpConfig = JsonRpcEndpoint.Config(
+        val cdpConfig = JsonRpcHandler.Config(
             codec = JsonRpcCodec.Cdp,
             cancellation = Absent,
             progress = Absent,
@@ -100,8 +100,8 @@ class WsStyleTest extends JsonRpcTestBase:
         )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty, cdpConfig).map { endpointA =>
-                JsonRpcEndpoint.init(tb, Seq(pingOnB), cdpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, cdpConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(pingOnB), cdpConfig).map { _ =>
                     Kyo.foreach(Chunk.from(1 to 8)) { n =>
                         Fiber.initUnscoped(
                             Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(n)))
@@ -146,29 +146,29 @@ class WsStyleTest extends JsonRpcTestBase:
         }
     }
 
-    "CDP-shape extras: JsonRpcEndpoint.ExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in run {
+    "CDP-shape extras: JsonRpcHandler.ExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in run {
         // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
         val capturedExtras = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
 
-        val cmdOnB = JsonRpcMethod[CmdReq, CmdResp, Async & Abort[JsonRpcError]]("execute") {
+        val cmdOnB = JsonRpcRoute[CmdReq, CmdResp, Async & Abort[JsonRpcError]]("execute") {
             (req, ctx) =>
                 Sync.defer(capturedExtras.set(ctx.extras)(using AllowUnsafe.embrace.danger)).andThen(CmdResp(req.cmd))
         }
 
         val sessionExtras = Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("s1")))
-        val cdpConfig = JsonRpcEndpoint.Config(
+        val cdpConfig = JsonRpcHandler.Config(
             codec = JsonRpcCodec.Cdp,
             cancellation = Absent,
             progress = Absent
         )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty, cdpConfig).map { endpointA =>
-                JsonRpcEndpoint.init(tb, Seq(cmdOnB), cdpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, cdpConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(cmdOnB), cdpConfig).map { _ =>
                     endpointA.call[CmdReq, CmdResp](
                         "execute",
                         CmdReq("doWork"),
-                        JsonRpcEndpoint.ExtrasEncoder.const(sessionExtras)
+                        JsonRpcHandler.ExtrasEncoder.const(sessionExtras)
                     ).map { resp =>
                         assert(resp == CmdResp("doWork"))
                         Sync.defer {

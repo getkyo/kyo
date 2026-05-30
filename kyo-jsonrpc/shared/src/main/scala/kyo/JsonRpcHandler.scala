@@ -7,9 +7,9 @@ import kyo.Stream
 import kyo.Structure
 import kyo.Sync
 
-/** A live JSON-RPC 2.0 endpoint managing bidirectional communication over a [[JsonRpcTransport]].
+/** A live JSON-RPC 2.0 handler managing bidirectional communication over a [[JsonRpcTransport]].
   *
-  * Obtain an instance via [[JsonRpcEndpoint.init]], which starts the inbound dispatch loop and
+  * Obtain an instance via [[JsonRpcHandler.init]], which starts the inbound dispatch loop and
   * attaches the outbound sender. Calling code interacts with the peer through the typed methods
   * on this class:
   *  - [[call]]: send a request and await the typed response.
@@ -17,27 +17,27 @@ import kyo.Sync
   *  - [[callWithProgress]]: send a request and receive incremental progress notifications.
   *  - [[callPartialResults]]: send a request and stream partial results as a `Stream[T, ...]`.
   *  - [[cancel]]: send a cancellation notification for an in-flight request.
-  *  - [[close]] / [[closeNow]]: tear down the endpoint.
+  *  - [[close]] / [[closeNow]]: tear down the handler.
   *
-  * The endpoint is `Scope`-managed; it closes automatically when the enclosing `Scope` exits.
+  * The handler is `Scope`-managed; it closes automatically when the enclosing `Scope` exits.
   *
-  * @see [[JsonRpcEndpoint.init]]
+  * @see [[JsonRpcHandler.init]]
   * @see [[JsonRpcTransport]]
   */
-// Hub.scala:22 smart-constructor pattern; init through JsonRpcEndpoint.init
-final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.engine.JsonRpcEndpointImpl):
+// Hub.scala:22 smart-constructor pattern; init through JsonRpcHandler.init
+final class JsonRpcHandler private[kyo] (private[kyo] val impl: internal.engine.JsonRpcEndpointImpl):
 
     def call[In: Schema, Out: Schema](
         method: String,
         params: In,
-        extras: JsonRpcEndpoint.ExtrasEncoder = JsonRpcEndpoint.ExtrasEncoder.empty
+        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
     )(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
         impl.call[In, Out](method, params, extras)
 
     def notify[In: Schema](
         method: String,
         params: In,
-        extras: JsonRpcEndpoint.ExtrasEncoder = JsonRpcEndpoint.ExtrasEncoder.empty
+        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
     )(using Frame): Unit < (Async & Abort[Closed]) =
         impl.notify[In](method, params, extras)
 
@@ -45,21 +45,21 @@ final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.engine
         method: String,
         params: In,
         id: JsonRpcEnvelope.Id,
-        extras: JsonRpcEndpoint.ExtrasEncoder = JsonRpcEndpoint.ExtrasEncoder.empty
+        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
     )(using Frame): Unit < (Async & Abort[Closed]) =
         impl.sendUnmatched[In](method, params, id, extras)
 
     def callWithProgress[In: Schema, Out: Schema](
         method: String,
         params: In,
-        extras: JsonRpcEndpoint.ExtrasEncoder = JsonRpcEndpoint.ExtrasEncoder.empty
-    )(using Frame): JsonRpcEndpoint.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
+        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+    )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
         impl.callWithProgress[In, Out](method, params, extras)
 
     def callPartialResults[In: Schema, T: Schema: Tag](
         method: String,
         params: In,
-        extras: JsonRpcEndpoint.ExtrasEncoder = JsonRpcEndpoint.ExtrasEncoder.empty
+        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
     )(using Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
         impl.callPartialResults[In, T](method, params, extras)
 
@@ -95,14 +95,14 @@ final class JsonRpcEndpoint private[kyo] (private[kyo] val impl: internal.engine
       */
     def closeNow(using Frame): Unit < Async = impl.close(Duration.Zero)
 
-end JsonRpcEndpoint
+end JsonRpcHandler
 
-object JsonRpcEndpoint:
+object JsonRpcHandler:
 
     /** Represents an in-flight request that supports progress reporting.
       *
-      * Returned by [[JsonRpcEndpoint.callWithProgress]]. Provides:
-      *  - `id`: the assigned request id, usable with [[JsonRpcEndpoint.cancel]].
+      * Returned by [[JsonRpcHandler.callWithProgress]]. Provides:
+      *  - `id`: the assigned request id, usable with [[JsonRpcHandler.cancel]].
       *  - `result`: the final typed response, available as `Out < (Async & Abort[...])`.
       *  - `progress`: a `Stream` of progress `Structure.Value` notifications from the peer.
       *  - `cancel`: cancels the in-flight request by sending a cancellation notification.
@@ -123,9 +123,9 @@ object JsonRpcEndpoint:
       *  - [[IdStrategy.Custom]]: caller-supplied generator; use when interoperating with peers that
       *    require string ids or specific id formats.
       *
-      * Set via [[JsonRpcEndpoint.Config.idStrategy]].
+      * Set via [[JsonRpcHandler.Config.idStrategy]].
       *
-      * @see [[JsonRpcEndpoint.Config]]
+      * @see [[JsonRpcHandler.Config]]
       */
     enum IdStrategy derives CanEqual:
         case SequentialLong
@@ -141,9 +141,9 @@ object JsonRpcEndpoint:
       *  - [[UnknownMethodPolicy.lsp]]: same as `minimal` but also allows `$/`-prefixed LSP meta-methods.
       *  - [[UnknownMethodPolicy.strict]]: reply `MethodNotFound` on requests, reject unknown notifications.
       *
-      * Set via [[JsonRpcEndpoint.Config.unknownMethod]].
+      * Set via [[JsonRpcHandler.Config.unknownMethod]].
       *
-      * @see [[JsonRpcEndpoint.Config]]
+      * @see [[JsonRpcHandler.Config]]
       */
     // Hub.scala:22 smart-constructor pattern; users select .minimal / .lsp / .strict
     final case class UnknownMethodPolicy private[kyo] (
@@ -187,9 +187,9 @@ object JsonRpcEndpoint:
       *  - `Reject`: reply with a `JsonRpcError` and discard the message.
       *  - `Drop`: silently discard the message.
       *
-      * Set via [[JsonRpcEndpoint.Config.gate]].
+      * Set via [[JsonRpcHandler.Config.gate]].
       *
-      * @see [[JsonRpcEndpoint.Config]]
+      * @see [[JsonRpcHandler.Config]]
       */
     trait MessageGate:
         def beforeDispatch(env: JsonRpcEnvelope)(using Frame): MessageGate.Decision < Sync
@@ -213,9 +213,9 @@ object JsonRpcEndpoint:
       *  - [[CancellationPolicy.mcp]]: MCP `notifications/cancelled` with `{"requestId": ...}`; no
       *    reply is expected for cancelled requests; `initialize` is protected.
       *
-      * Set via [[JsonRpcEndpoint.Config.cancellation]].
+      * Set via [[JsonRpcHandler.Config.cancellation]].
       *
-      * @see [[JsonRpcEndpoint.Config]]
+      * @see [[JsonRpcHandler.Config]]
       */
     final case class CancellationPolicy(
         cancelMethod: String,
@@ -295,10 +295,10 @@ object JsonRpcEndpoint:
       *  - [[ProgressPolicy.mcp]]: MCP `notifications/progress` with `_meta.progressToken`; enforces
       *    monotonic progress values.
       *
-      * Set via [[JsonRpcEndpoint.Config.progress]].
+      * Set via [[JsonRpcHandler.Config.progress]].
       *
-      * @see [[JsonRpcEndpoint.Config]]
-      * @see [[JsonRpcMethod.Context]]
+      * @see [[JsonRpcHandler.Config]]
+      * @see [[JsonRpcRoute.Context]]
       */
     final case class ProgressPolicy(
         progressMethod: String,
@@ -357,7 +357,7 @@ object JsonRpcEndpoint:
 
     /** Opaque function type that attaches protocol-specific extra fields to outbound envelopes.
       *
-      * Passed to `JsonRpcEndpoint.call`, `notify`, and `sendUnmatched` as the `extras` parameter.
+      * Passed to `JsonRpcHandler.call`, `notify`, and `sendUnmatched` as the `extras` parameter.
       * The function receives the assigned request id and returns an optional `Structure.Value` map
       * that is merged into the outgoing envelope's `extras` field.
       *
@@ -366,7 +366,7 @@ object JsonRpcEndpoint:
       *  - [[ExtrasEncoder.const]]: attach the same extras value to every call.
       *  - [[ExtrasEncoder.apply]]: full control with a per-id function.
       *
-      * @see [[JsonRpcEndpoint]]
+      * @see [[JsonRpcHandler]]
       */
     opaque type ExtrasEncoder = JsonRpcEnvelope.Id => Maybe[Structure.Value] < Sync
 
@@ -383,16 +383,16 @@ object JsonRpcEndpoint:
             def resolve(id: JsonRpcEnvelope.Id)(using Frame): Maybe[Structure.Value] < Sync = self(id)
     end ExtrasEncoder
 
-    /** Configuration for a [[JsonRpcEndpoint]].
+    /** Configuration for a [[JsonRpcHandler]].
       *
       * Start from [[Config.default]] and override individual fields using the fluent builder
-      * methods. Pass the result to [[JsonRpcEndpoint.init]].
+      * methods. Pass the result to [[JsonRpcHandler.init]].
       *
       * Controls codec selection, cancellation protocol, progress reporting, unknown-method
       * handling, message gating, concurrency limits, request timeouts, and id-allocation
       * strategy.
       *
-      * @see [[JsonRpcEndpoint.init]]
+      * @see [[JsonRpcHandler.init]]
       * @see [[Config.default]]
       * @see [[Config.require]]
       */
@@ -432,11 +432,11 @@ object JsonRpcEndpoint:
 
     def init(
         transport: JsonRpcTransport,
-        methods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]],
+        methods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]],
         config: Config = Config.default
-    )(using Frame): JsonRpcEndpoint < (Async & Scope) =
+    )(using Frame): JsonRpcHandler < (Async & Scope) =
         Config.require(config)
-        internal.engine.JsonRpcEndpointImpl.init(transport, methods, config).map(new JsonRpcEndpoint(_))
+        internal.engine.JsonRpcEndpointImpl.init(transport, methods, config).map(new JsonRpcHandler(_))
     end init
 
-end JsonRpcEndpoint
+end JsonRpcHandler

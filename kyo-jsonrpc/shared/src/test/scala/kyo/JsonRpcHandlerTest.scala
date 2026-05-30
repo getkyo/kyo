@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class JsonRpcEndpointTest extends JsonRpcTestBase:
+class JsonRpcHandlerTest extends JsonRpcTest:
 
     case class AddReq(a: Int, b: Int) derives Schema, CanEqual
     case class AddResp(sum: Int) derives Schema, CanEqual
@@ -11,12 +11,12 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     case class DialogParams(accept: Boolean) derives Schema, CanEqual
 
     private def mkEndpoints(
-        methodsA: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]],
-        methodsB: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]]
-    )(using Frame): (JsonRpcEndpoint, JsonRpcEndpoint) < (Sync & Async & Scope) =
+        methodsA: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]],
+        methodsB: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]]
+    )(using Frame): (JsonRpcHandler, JsonRpcHandler) < (Sync & Async & Scope) =
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, methodsA).map { endpointA =>
-                JsonRpcEndpoint.init(tb, methodsB).map { endpointB =>
+            JsonRpcHandler.init(ta, methodsA).map { endpointA =>
+                JsonRpcHandler.init(tb, methodsB).map { endpointB =>
                     (endpointA, endpointB)
                 }
             }
@@ -36,7 +36,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     end CountingTransport
 
     "call add handler returns correct result" in run {
-        val addMethod = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addMethod = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         mkEndpoints(Seq.empty, Seq(addMethod)).map { (a, _) =>
@@ -49,7 +49,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     "notify sends notification and handler runs without reply" in run {
         // Unsafe: AtomicInt.Unsafe.init for concurrent counter in synchronous handler scope
         val seen = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val logMethod = JsonRpcMethod[LogMsg, Unit, Async & Abort[JsonRpcError]]("log") {
+        val logMethod = JsonRpcRoute[LogMsg, Unit, Async & Abort[JsonRpcError]]("log") {
             (_, _) => Sync.defer(discard(seen.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         mkEndpoints(Seq.empty, Seq(logMethod)).map { (a, _) =>
@@ -60,10 +60,10 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "bidirectional simultaneous calls resolve without cross-wiring" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
-        val addOnA = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnA = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         mkEndpoints(Seq(addOnA), Seq(addOnB)).map { (a, b) =>
@@ -77,7 +77,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "multiple concurrent calls resolve independently" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         mkEndpoints(Seq.empty, Seq(addOnB)).map { (a, _) =>
@@ -101,17 +101,17 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "Scope exit closes Exchange and fails in-flight calls" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => Async.sleep(2.seconds).andThen(AddResp(req.a + req.b))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
+            JsonRpcHandler.init(tb, Seq(addOnB)).map { _ =>
                 // Outer fiber lives beyond the scope; captures the call result
                 // Unsafe: AtomicRef.Unsafe.init for result capture across fibers
                 val resultRef =
                     AtomicRef.Unsafe.init[Maybe[Result[JsonRpcError | Closed, AddResp]]](Absent)(using AllowUnsafe.embrace.danger)
                 Scope.run {
-                    JsonRpcEndpoint.init(ta, Seq.empty).map { endpointA =>
+                    JsonRpcHandler.init(ta, Seq.empty).map { endpointA =>
                         Fiber.initUnscoped(
                             Abort.run[JsonRpcError | Closed](
                                 endpointA.call[AddReq, AddResp]("add", AddReq(1, 2))
@@ -135,16 +135,16 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "callerRegistry drain on close fails pending calls" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => Async.sleep(3.seconds).andThen(AddResp(req.a + req.b))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
+            JsonRpcHandler.init(tb, Seq(addOnB)).map { _ =>
                 // Unsafe: AtomicRef.Unsafe.init for result capture across fibers
                 val resultRef =
                     AtomicRef.Unsafe.init[Maybe[Result[JsonRpcError | Closed, AddResp]]](Absent)(using AllowUnsafe.embrace.danger)
                 Scope.run {
-                    JsonRpcEndpoint.init(ta, Seq.empty).map { endpointA =>
+                    JsonRpcHandler.init(ta, Seq.empty).map { endpointA =>
                         Fiber.initUnscoped(
                             Abort.run[JsonRpcError | Closed](
                                 endpointA.call[AddReq, AddResp]("add", AddReq(1, 2))
@@ -173,7 +173,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "callerRegistry is empty after a call completes normally" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         mkEndpoints(Seq.empty, Seq(addOnB)).map { (a, _) =>
@@ -186,7 +186,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "callerRegistry is empty after a call fiber is interrupted externally" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => Async.sleep(5.seconds).andThen(AddResp(req.a + req.b))
         }
         mkEndpoints(Seq.empty, Seq(addOnB)).map { (a, _) =>
@@ -203,7 +203,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "call returns error when transport closes mid-call" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => Async.sleep(2.seconds).andThen(AddResp(req.a + req.b))
         }
         mkEndpoints(Seq.empty, Seq(addOnB)).map { (a, _) =>
@@ -224,7 +224,7 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "awaitDrain returns after all pending calls resolve" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => Async.sleep(30.millis).andThen(AddResp(req.a + req.b))
         }
         mkEndpoints(Seq.empty, Seq(addOnB)).map { (a, _) =>
@@ -241,21 +241,21 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "cancel with no CancellationPolicy fails call locally with cancelled error" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => Async.sleep(3.seconds).andThen(AddResp(req.a + req.b))
         }
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcEnvelope.Id]](Absent)(using AllowUnsafe.embrace.danger)
-        val captureEncoder = JsonRpcEndpoint.ExtrasEncoder(id =>
+        val captureEncoder = JsonRpcHandler.ExtrasEncoder(id =>
             Sync.defer {
                 capturedId.set(Present(id))(using AllowUnsafe.embrace.danger)
                 Absent
             }
         )
-        val noPolicyConfig = JsonRpcEndpoint.Config(cancellation = Absent)
+        val noPolicyConfig = JsonRpcHandler.Config(cancellation = Absent)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty, noPolicyConfig).map { a =>
-                JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, noPolicyConfig).map { a =>
+                JsonRpcHandler.init(tb, Seq(addOnB)).map { _ =>
                     Fiber.initUnscoped(
                         Abort.run[JsonRpcError | Closed](
                             a.call[AddReq, AddResp]("add", AddReq(1, 2), captureEncoder)
@@ -282,22 +282,22 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     "late reply for cancelled outbound call is silently dropped" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcEnvelope.Id]](Absent)(using AllowUnsafe.embrace.danger)
-        val captureEncoder = JsonRpcEndpoint.ExtrasEncoder(id =>
+        val captureEncoder = JsonRpcHandler.ExtrasEncoder(id =>
             Sync.defer {
                 capturedId.set(Present(id))(using AllowUnsafe.embrace.danger)
                 Absent
             }
         )
-        val slowAddOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val slowAddOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => Async.sleep(5.seconds).andThen(AddResp(req.a + req.b))
         }
         // Use the fast addOnB for the second (post-cancel) call to verify the endpoint is still healthy
-        val fastAddOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val fastAddOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
-                JsonRpcEndpoint.init(tb, Seq(slowAddOnB)).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                JsonRpcHandler.init(tb, Seq(slowAddOnB)).map { _ =>
                     Fiber.initUnscoped(
                         Abort.run[JsonRpcError | Closed](
                             a.call[AddReq, AddResp]("add", AddReq(1, 2), captureEncoder)
@@ -336,22 +336,22 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
         }
     }
 
-    "JsonRpcEndpoint.ExtrasEncoder.const causes extras value to appear in handler ctx" in run {
+    "JsonRpcHandler.ExtrasEncoder.const causes extras value to appear in handler ctx" in run {
         val extrasValue = Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("my-token")))
         // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
         val seen = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
-        val echoMethod = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val echoMethod = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, ctx) =>
                 Sync.defer {
                     seen.set(ctx.extras)(using AllowUnsafe.embrace.danger)
                     AddResp(req.a + req.b)
                 }
         }
-        val cdpConfig = JsonRpcEndpoint.Config(codec = JsonRpcCodec.Cdp)
+        val cdpConfig = JsonRpcHandler.Config(codec = JsonRpcCodec.Cdp)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty, cdpConfig).map { a =>
-                JsonRpcEndpoint.init(tb, Seq(echoMethod), cdpConfig).map { _ =>
-                    a.call[AddReq, AddResp]("add", AddReq(1, 1), JsonRpcEndpoint.ExtrasEncoder.const(extrasValue)).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, cdpConfig).map { a =>
+                JsonRpcHandler.init(tb, Seq(echoMethod), cdpConfig).map { _ =>
+                    a.call[AddReq, AddResp]("add", AddReq(1, 1), JsonRpcHandler.ExtrasEncoder.const(extrasValue)).map { _ =>
                         Sync.defer(assert(seen.get()(using AllowUnsafe.embrace.danger) == Present(extrasValue)))
                     }
                 }
@@ -362,10 +362,10 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     "IdStrategy.SequentialLong produces ids Num(1), Num(2), Num(3)" in run {
         // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
         val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope.Id])(using AllowUnsafe.embrace.danger)
-        val capture = JsonRpcEndpoint.ExtrasEncoder(id =>
+        val capture = JsonRpcHandler.ExtrasEncoder(id =>
             Sync.defer { ids.getAndUpdate(id :: _)(using AllowUnsafe.embrace.danger); Absent }
         )
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         mkEndpoints(Seq.empty, Seq(addOnB)).map { (a, _) =>
@@ -383,15 +383,15 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     "IdStrategy.SequentialInt produces ids Num(1), Num(2), Num(3)" in run {
         // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
         val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope.Id])(using AllowUnsafe.embrace.danger)
-        val capture = JsonRpcEndpoint.ExtrasEncoder(id =>
+        val capture = JsonRpcHandler.ExtrasEncoder(id =>
             Sync.defer { ids.getAndUpdate(id :: _)(using AllowUnsafe.embrace.danger); Absent }
         )
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty, JsonRpcEndpoint.Config(idStrategy = JsonRpcEndpoint.IdStrategy.SequentialInt)).map { a =>
-                JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, JsonRpcHandler.Config(idStrategy = JsonRpcHandler.IdStrategy.SequentialInt)).map { a =>
+                JsonRpcHandler.init(tb, Seq(addOnB)).map { _ =>
                     a.call[AddReq, AddResp]("add", AddReq(1, 0), capture).andThen {
                         a.call[AddReq, AddResp]("add", AddReq(2, 0), capture).andThen {
                             a.call[AddReq, AddResp]("add", AddReq(3, 0), capture).map { _ =>
@@ -408,15 +408,15 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "close prevents further call success" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             // Unsafe: AtomicInt.Unsafe.init for send counter
             val sendCounter = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
             val countingTa  = new CountingTransport(ta, sendCounter)
-            JsonRpcEndpoint.init(countingTa, Seq.empty).map { a =>
-                JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
+            JsonRpcHandler.init(countingTa, Seq.empty).map { a =>
+                JsonRpcHandler.init(tb, Seq(addOnB)).map { _ =>
                     val countBefore = sendCounter.get()(using AllowUnsafe.embrace.danger)
                     a.closeNow.andThen {
                         val countAfterClose = sendCounter.get()(using AllowUnsafe.embrace.danger)
@@ -439,18 +439,18 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     "IdStrategy.Custom with 100 concurrent calls produces 100 distinct ids" in run {
         // Unsafe: AtomicLong.Unsafe.init for id generation
         val counter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
-        val customStrategy = JsonRpcEndpoint.IdStrategy.Custom(() =>
+        val customStrategy = JsonRpcHandler.IdStrategy.Custom(() =>
             Sync.defer(JsonRpcEnvelope.Id.Num(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         )
         // Unsafe: AtomicRef.Unsafe.init for concurrent id collection (replaces ConcurrentHashMap)
         val collectedIds = AtomicRef.Unsafe.init(Map.empty[JsonRpcEnvelope.Id, Boolean])(using AllowUnsafe.embrace.danger)
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty, JsonRpcEndpoint.Config(idStrategy = customStrategy)).map { a =>
-                JsonRpcEndpoint.init(tb, Seq(addOnB)).map { _ =>
-                    val capture = JsonRpcEndpoint.ExtrasEncoder(id =>
+            JsonRpcHandler.init(ta, Seq.empty, JsonRpcHandler.Config(idStrategy = customStrategy)).map { a =>
+                JsonRpcHandler.init(tb, Seq(addOnB)).map { _ =>
+                    val capture = JsonRpcHandler.ExtrasEncoder(id =>
                         Sync.defer { collectedIds.getAndUpdate(_ + (id -> true))(using AllowUnsafe.embrace.danger); Absent }
                     )
                     Kyo.fill(100)(a.call[AddReq, AddResp]("add", AddReq(1, 0), capture)).map { _ =>
@@ -462,59 +462,59 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "default Config() has cancellation Absent" in run {
-        val cfg = JsonRpcEndpoint.Config()
+        val cfg = JsonRpcHandler.Config()
         assert(cfg.cancellation == Absent)
         assert(cfg.codec eq JsonRpcCodec.Strict2_0)
         assert(cfg.progress == Absent)
-        assert(cfg.unknownMethod == JsonRpcEndpoint.UnknownMethodPolicy.minimal)
+        assert(cfg.unknownMethod == JsonRpcHandler.UnknownMethodPolicy.minimal)
     }
 
     "Config.default equals Config()" in run {
-        assert(JsonRpcEndpoint.Config.default == JsonRpcEndpoint.Config())
+        assert(JsonRpcHandler.Config.default == JsonRpcHandler.Config())
     }
 
     "Config.default == Config.default (CanEqual derivation)" in run {
-        val a = JsonRpcEndpoint.Config.default
-        val b = JsonRpcEndpoint.Config.default
+        val a = JsonRpcHandler.Config.default
+        val b = JsonRpcHandler.Config.default
         assert(a == b)
     }
 
     "Config fluent setter codec round-trips" in run {
-        val cfg = JsonRpcEndpoint.Config.default.codec(JsonRpcCodec.Cdp)
+        val cfg = JsonRpcHandler.Config.default.codec(JsonRpcCodec.Cdp)
         assert(cfg.codec eq JsonRpcCodec.Cdp)
     }
 
     "Config fluent setter idStrategy round-trips" in run {
-        val cfg = JsonRpcEndpoint.Config.default.idStrategy(JsonRpcEndpoint.IdStrategy.SequentialInt)
-        assert(cfg.idStrategy == JsonRpcEndpoint.IdStrategy.SequentialInt)
+        val cfg = JsonRpcHandler.Config.default.idStrategy(JsonRpcHandler.IdStrategy.SequentialInt)
+        assert(cfg.idStrategy == JsonRpcHandler.IdStrategy.SequentialInt)
     }
 
     "Config fluent setter maxInFlight wraps in Present" in run {
-        val cfg = JsonRpcEndpoint.Config.default.maxInFlight(10)
+        val cfg = JsonRpcHandler.Config.default.maxInFlight(10)
         assert(cfg.maxInFlight == Present(10))
     }
 
     "Config.require throws on maxInFlight <= 0" in run {
         assert(
             try
-                JsonRpcEndpoint.Config.require(JsonRpcEndpoint.Config.default.maxInFlight(0)); false
+                JsonRpcHandler.Config.require(JsonRpcHandler.Config.default.maxInFlight(0)); false
             catch case e: IllegalArgumentException => e.getMessage.contains("maxInFlight")
         )
     }
 
     "Config.require accepts Duration.Zero requestTimeout" in run {
-        JsonRpcEndpoint.Config.require(JsonRpcEndpoint.Config.default.requestTimeout(Duration.Zero))
+        JsonRpcHandler.Config.require(JsonRpcHandler.Config.default.requestTimeout(Duration.Zero))
         succeed
     }
 
     "Config.require accepts Duration.Infinity requestTimeout" in run {
-        JsonRpcEndpoint.Config.require(JsonRpcEndpoint.Config.default.requestTimeout(Duration.Infinity))
+        JsonRpcHandler.Config.require(JsonRpcHandler.Config.default.requestTimeout(Duration.Infinity))
         succeed
     }
 
     "Config() default plus LSP-shaped timeout emits no cancel" in run {
         val seen = AtomicRef.Unsafe.init[Chunk[JsonRpcEnvelope]](Chunk.empty)(using AllowUnsafe.embrace.danger)
-        val slow = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("slow") { (_, _) => Async.sleep(2.seconds) }
+        val slow = JsonRpcRoute[Unit, Unit, Async & Abort[JsonRpcError]]("slow") { (_, _) => Async.sleep(2.seconds) }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val tbWrap = new JsonRpcTransport:
                 def send(env: JsonRpcEnvelope)(using Frame) = tb.send(env)
@@ -523,8 +523,8 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
                     env
                 }
                 def close(using Frame) = tb.close
-            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
-                JsonRpcEndpoint.init(tbWrap, Seq(slow)).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                JsonRpcHandler.init(tbWrap, Seq(slow)).map { _ =>
                     Abort.run[Timeout](Async.timeout(100.millis)(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit](
                         "slow",
                         ()
@@ -558,8 +558,8 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
             def decode(raw: Structure.Value)(using Frame): JsonRpcEnvelope < Sync =
                 JsonRpcCodec.Strict2_0.decode(raw)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            val cfg = JsonRpcEndpoint.Config(codec = bothFieldsCodec)
-            JsonRpcEndpoint.init(ta, Seq.empty, cfg).map { a =>
+            val cfg = JsonRpcHandler.Config(codec = bothFieldsCodec)
+            JsonRpcHandler.init(ta, Seq.empty, cfg).map { a =>
                 // Start the call in a fiber so we can inject the malformed response after it registers.
                 // Wait until callerRegistry is non-empty (id registered) before sending the malformed wire.
                 // This ensures the Malformed-with-id branch finds the caller on all schedulers (JVM, JS, Native).
@@ -591,10 +591,10 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
     }
 
     "close(0) is equivalent to closeNow" in run {
-        val slow = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("slow") { (_, _) => Async.sleep(5.seconds) }
+        val slow = JsonRpcRoute[Unit, Unit, Async & Abort[JsonRpcError]]("slow") { (_, _) => Async.sleep(5.seconds) }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
-                JsonRpcEndpoint.init(tb, Seq(slow)).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                JsonRpcHandler.init(tb, Seq(slow)).map { _ =>
                     Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ()))).map { _ =>
                         a.close(Duration.Zero).andThen {
                             Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ())).map {
@@ -610,12 +610,12 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
 
     "close(gracePeriod) drains before forcing" in run {
         val done = Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe
-        val q = JsonRpcMethod[Unit, Unit, Async & Abort[JsonRpcError]]("q") { (_, _) =>
+        val q = JsonRpcRoute[Unit, Unit, Async & Abort[JsonRpcError]]("q") { (_, _) =>
             Async.sleep(200.millis).andThen(done.completeUnit.unit)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
-                JsonRpcEndpoint.init(tb, Seq(q)).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                JsonRpcHandler.init(tb, Seq(q)).map { _ =>
                     Fiber.initUnscoped(a.call[Unit, Unit]("q", ())).andThen {
                         // Yield until the call fiber has registered in inFlight. On Native's single-threaded
                         // scheduler, Fiber.initUnscoped does not transfer control immediately, so close()
@@ -644,8 +644,8 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
                     env
                 }
                 def close(using Frame) = tb.close
-            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
-                JsonRpcEndpoint.init(tbWrap, Seq.empty).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                JsonRpcHandler.init(tbWrap, Seq.empty).map { _ =>
                     a.sendUnmatched("Page.handleJavaScriptDialog", DialogParams(true), JsonRpcEnvelope.Id.Num(-1)).andThen {
                         untilTrue(Sync.defer(seen.get()(using AllowUnsafe.embrace.danger).exists {
                             case JsonRpcEnvelope.Request(JsonRpcEnvelope.Id.Num(-1), "Page.handleJavaScriptDialog", _, _) => true
@@ -659,8 +659,8 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
 
     "sendUnmatched registers no pending caller" in run {
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
-                JsonRpcEndpoint.init(tb, Seq.empty).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                JsonRpcHandler.init(tb, Seq.empty).map { _ =>
                     Kyo.foreachDiscard(1 to 5) { i =>
                         a.sendUnmatched("noop", (), JsonRpcEnvelope.Id.Num(i.toLong))
                     }.andThen {
@@ -673,8 +673,8 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
 
     "sendUnmatched does not block waiting for response" in run {
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty).map { a =>
-                JsonRpcEndpoint.init(tb, Seq.empty).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                JsonRpcHandler.init(tb, Seq.empty).map { _ =>
                     val start = java.lang.System.currentTimeMillis
                     a.sendUnmatched("noop", (), JsonRpcEnvelope.Id.Num(1)).andThen(a.awaitDrain).map { _ =>
                         val elapsed = java.lang.System.currentTimeMillis - start
@@ -685,4 +685,4 @@ class JsonRpcEndpointTest extends JsonRpcTestBase:
         }
     }
 
-end JsonRpcEndpointTest
+end JsonRpcHandlerTest

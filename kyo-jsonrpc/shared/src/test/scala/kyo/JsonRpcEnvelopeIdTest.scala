@@ -1,6 +1,6 @@
 package kyo
 
-class JsonRpcEnvelopeIdTest extends JsonRpcTestBase:
+class JsonRpcEnvelopeIdTest extends JsonRpcTest:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 

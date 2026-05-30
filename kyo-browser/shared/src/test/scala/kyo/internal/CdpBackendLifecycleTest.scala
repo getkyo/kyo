@@ -4,14 +4,14 @@ import CdpTypes.*
 import kyo.*
 import kyo.BrowserElementNotActionableException.Reason
 import kyo.BrowserIFrameInvalidException.Reason as IFrameReason
-import kyo.JsonRpcEndpoint.IdStrategy
+import kyo.JsonRpcHandler.IdStrategy
 import kyo.internal.SharedChrome
 
 /** [[CdpBackend]] lifecycle, close, and connection tests.
   *
   * Mechanical rename of the former `CdpClientLifecycleTest`: `CdpClient.init/initUnscoped` -> `CdpBackend.init/initUnscoped`,
   * `tab.client` -> `tab.backend`, raw-string sends replaced with typed [[CdpBackend]] wrappers. Tests that exercised `CdpClient`-specific
-  * internals (relay fiber, inFlight counter, drainSignal) are adapted to the equivalent [[CdpBackend]] / [[JsonRpcEndpoint]] APIs.
+  * internals (relay fiber, inFlight counter, drainSignal) are adapted to the equivalent [[CdpBackend]] / [[JsonRpcHandler]] APIs.
   */
 class CdpBackendLifecycleTest extends kyo.BrowserTest:
 
@@ -1170,15 +1170,15 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         Scope.run {
             for
                 (clientTransport, server) <- JsonRpcTransport.inMemory
-                versionMethod = JsonRpcMethod[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
+                versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
                     "Browser.getVersion"
                 ) { (_, _) => testVersionResult }
-                serverCfg = JsonRpcEndpoint.Config(
+                serverCfg = JsonRpcHandler.Config(
                     codec = JsonRpcCodec.Cdp,
                     maxInFlight = Present(8),
                     idStrategy = IdStrategy.SequentialInt
                 )
-                _       <- JsonRpcEndpoint.init(server, Seq(versionMethod), serverCfg)
+                _       <- JsonRpcHandler.init(server, Seq(versionMethod), serverCfg)
                 backend <- CdpBackend.initUnscoped(clientTransport, testLaunchCfg)
                 drainer = backend.dialogDrainer
                 // Verify drainer is alive before close.

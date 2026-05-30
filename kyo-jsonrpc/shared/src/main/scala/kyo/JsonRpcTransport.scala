@@ -15,7 +15,7 @@ import kyo.Stream
   *  - [[JsonRpcTransport.fromWire]]: wraps a [[JsonRpcTransport.WireTransport]] + [[JsonRpcTransport.Framer]] + [[JsonRpcCodec]].
   *  - [[JsonRpcTransport.stdio]]: line-delimited stdin/stdout transport for CLI servers.
   *
-  * @see [[JsonRpcEndpoint]]
+  * @see [[JsonRpcHandler]]
   */
 trait JsonRpcTransport:
     def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed])

@@ -4,7 +4,7 @@ import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class BidiTest extends JsonRpcTestBase:
+class BidiTest extends JsonRpcTest:
 
     case class AddReq(a: Int, b: Int) derives Schema, CanEqual
     case class AddResp(sum: Int) derives Schema, CanEqual
@@ -30,16 +30,16 @@ class BidiTest extends JsonRpcTestBase:
     end CapturingTransport
 
     "both endpoints register methods; simultaneous A.call(B) and B.call(A) resolve without id collision" in run {
-        val addOnB = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
-        val echoOnA = JsonRpcMethod[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnA = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
             (req, _) => EchoResp(req.text.toUpperCase)
         }
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq(echoOnA)).map { endpointA =>
-                JsonRpcEndpoint.init(tb, Seq(addOnB)).map { endpointB =>
+            JsonRpcHandler.init(ta, Seq(echoOnA)).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(addOnB)).map { endpointB =>
                     Async.zip[JsonRpcError | Closed, AddResp, EchoResp, Any](
                         endpointA.call[AddReq, AddResp]("add", AddReq(5, 3)),
                         endpointB.call[EchoReq, EchoResp]("echo", EchoReq("hello"))
@@ -56,19 +56,19 @@ class BidiTest extends JsonRpcTestBase:
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcEnvelope.Id]](Absent)(using AllowUnsafe.embrace.danger)
 
-        val echoOnB = JsonRpcMethod[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
             (req, ctx) =>
                 ctx.cancelled.get.andThen(EchoResp(req.text))
         }
 
-        val lspConfig = JsonRpcEndpoint.Config(cancellation = Present(JsonRpcEndpoint.CancellationPolicy.lsp))
+        val lspConfig = JsonRpcHandler.Config(cancellation = Present(JsonRpcHandler.CancellationPolicy.lsp))
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val capB = new CapturingTransport(tb)
-            JsonRpcEndpoint.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcEndpoint.init(capB, Seq(echoOnB), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
+                JsonRpcHandler.init(capB, Seq(echoOnB), lspConfig).map { _ =>
                     val idEncoder =
-                        JsonRpcEndpoint.ExtrasEncoder(id =>
+                        JsonRpcHandler.ExtrasEncoder(id =>
                             Sync.defer { capturedId.set(Present(id))(using AllowUnsafe.embrace.danger); Absent }
                         )
                     Fiber.initUnscoped(
@@ -107,7 +107,7 @@ class BidiTest extends JsonRpcTestBase:
         val handlerReady = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
         val handlerDone  = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
 
-        val echoOnB = JsonRpcMethod[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
             (req, _) =>
                 Fiber.Promise.init[Unit, Any].map { holdP =>
                     Fiber.Promise.init[Unit, Any].map { doneP =>
@@ -126,14 +126,14 @@ class BidiTest extends JsonRpcTestBase:
                 }
         }
 
-        val mcpConfig = JsonRpcEndpoint.Config(cancellation = Present(JsonRpcEndpoint.CancellationPolicy.mcp))
+        val mcpConfig = JsonRpcHandler.Config(cancellation = Present(JsonRpcHandler.CancellationPolicy.mcp))
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val capB = new CapturingTransport(tb)
-            JsonRpcEndpoint.init(ta, Seq.empty, mcpConfig).map { endpointA =>
-                JsonRpcEndpoint.init(capB, Seq(echoOnB), mcpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, mcpConfig).map { endpointA =>
+                JsonRpcHandler.init(capB, Seq(echoOnB), mcpConfig).map { _ =>
                     val idEncoder =
-                        JsonRpcEndpoint.ExtrasEncoder(id =>
+                        JsonRpcHandler.ExtrasEncoder(id =>
                             Sync.defer { capturedId.set(Present(id))(using AllowUnsafe.embrace.danger); Absent }
                         )
                     Fiber.initUnscoped(
@@ -178,7 +178,7 @@ class BidiTest extends JsonRpcTestBase:
         // Unsafe: AtomicRef.Unsafe.init for progress value accumulation across fibers
         val progressValues = AtomicRef.Unsafe.init(List.empty[Structure.Value])(using AllowUnsafe.embrace.danger)
 
-        val workOnB = JsonRpcMethod[WorkReq, WorkResp, Async & Abort[JsonRpcError]]("work") {
+        val workOnB = JsonRpcRoute[WorkReq, WorkResp, Async & Abort[JsonRpcError]]("work") {
             (_, ctx) =>
                 val v1 = Structure.Value.Record(Chunk("kind" -> Structure.Value.Str("begin")))
                 val v2 = Structure.Value.Record(Chunk("kind" -> Structure.Value.Str("report"), "message" -> Structure.Value.Str("halfway")))
@@ -192,11 +192,11 @@ class BidiTest extends JsonRpcTestBase:
                 }
         }
 
-        val lspConfig = JsonRpcEndpoint.Config(progress = Present(JsonRpcEndpoint.ProgressPolicy.lsp))
+        val lspConfig = JsonRpcHandler.Config(progress = Present(JsonRpcHandler.ProgressPolicy.lsp))
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcEndpoint.init(tb, Seq(workOnB), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(workOnB), lspConfig).map { _ =>
                     endpointA.callWithProgress[WorkReq, WorkResp]("work", WorkReq("task1")).map { pending =>
                         pending.progress.run.map { collected =>
                             pending.result.map { finalResp =>

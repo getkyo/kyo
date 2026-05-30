@@ -4,7 +4,7 @@ import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class HttpStyleTest extends JsonRpcTestBase:
+class HttpStyleTest extends JsonRpcTest:
 
     case class AddReq(a: Int, b: Int) derives Schema, CanEqual
     case class AddResp(sum: Int) derives Schema, CanEqual
@@ -33,15 +33,15 @@ class HttpStyleTest extends JsonRpcTestBase:
     end CapturingTransport
 
     "single server endpoint with add and greet: two sequential calls return correct typed results" in run {
-        val addMethod = JsonRpcMethod[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addMethod = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
-        val greetMethod = JsonRpcMethod[GreetReq, GreetResp, Async & Abort[JsonRpcError]]("greet") {
+        val greetMethod = JsonRpcRoute[GreetReq, GreetResp, Async & Abort[JsonRpcError]]("greet") {
             (req, _) => GreetResp(s"Hello, ${req.name}!")
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty).map { client =>
-                JsonRpcEndpoint.init(tb, Seq(addMethod, greetMethod)).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty).map { client =>
+                JsonRpcHandler.init(tb, Seq(addMethod, greetMethod)).map { _ =>
                     client.call[AddReq, AddResp]("add", AddReq(3, 7)).map { addResult =>
                         assert(addResult == AddResp(10))
                         client.call[GreetReq, GreetResp]("greet", GreetReq("World")).map { greetResult =>
@@ -56,13 +56,13 @@ class HttpStyleTest extends JsonRpcTestBase:
     "notification triggers handler and no reply frame arrives on wire" in run {
         // Unsafe: AtomicInt.Unsafe.init for handler run counter
         val handlerRan = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val logMethod = JsonRpcMethod[LogMsg, Unit, Async & Abort[JsonRpcError]]("log") {
+        val logMethod = JsonRpcRoute[LogMsg, Unit, Async & Abort[JsonRpcError]]("log") {
             (_, _) => Sync.defer(discard(handlerRan.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val capA = new CapturingTransport(ta)
-            JsonRpcEndpoint.init(capA, Seq.empty).map { client =>
-                JsonRpcEndpoint.init(tb, Seq(logMethod)).map { _ =>
+            JsonRpcHandler.init(capA, Seq.empty).map { client =>
+                JsonRpcHandler.init(tb, Seq(logMethod)).map { _ =>
                     val framesBefore = Sync.defer(capA.sentList.size)
                     framesBefore.map { before =>
                         client.notify[LogMsg]("log", LogMsg("event occurred")).andThen {
@@ -86,28 +86,28 @@ class HttpStyleTest extends JsonRpcTestBase:
         val serverNotInitialized = JsonRpcError(-32002, "Server not initialized", Absent)
         var initialized          = false
 
-        val lspInitGate: JsonRpcEndpoint.MessageGate = new JsonRpcEndpoint.MessageGate:
-            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcEndpoint.MessageGate.Decision < Sync =
+        val lspInitGate: JsonRpcHandler.MessageGate = new JsonRpcHandler.MessageGate:
+            def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
                 env match
                     case JsonRpcEnvelope.Request(_, "initialize", _, _) =>
-                        JsonRpcEndpoint.MessageGate.Decision.Allow
+                        JsonRpcHandler.MessageGate.Decision.Allow
                     case JsonRpcEnvelope.Request(_, _, _, _) if !initialized =>
-                        JsonRpcEndpoint.MessageGate.Decision.Reject(serverNotInitialized)
+                        JsonRpcHandler.MessageGate.Decision.Reject(serverNotInitialized)
                     case _ =>
-                        JsonRpcEndpoint.MessageGate.Decision.Allow
+                        JsonRpcHandler.MessageGate.Decision.Allow
 
-        val initMethod = JsonRpcMethod[InitReq, InitResp, Async & Abort[JsonRpcError]]("initialize") {
+        val initMethod = JsonRpcRoute[InitReq, InitResp, Async & Abort[JsonRpcError]]("initialize") {
             (req, _) =>
                 Sync.defer { initialized = true }.andThen(InitResp("test-server"))
         }
-        val hoverMethod = JsonRpcMethod[HoverReq, HoverResp, Async & Abort[JsonRpcError]]("textDocument/hover") {
+        val hoverMethod = JsonRpcRoute[HoverReq, HoverResp, Async & Abort[JsonRpcError]]("textDocument/hover") {
             (req, _) => HoverResp(s"hover at line ${req.line}")
         }
 
-        val gatedConfig = JsonRpcEndpoint.Config(gate = Present(lspInitGate))
+        val gatedConfig = JsonRpcHandler.Config(gate = Present(lspInitGate))
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcEndpoint.init(ta, Seq.empty).map { client =>
-                JsonRpcEndpoint.init(tb, Seq(initMethod, hoverMethod), gatedConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty).map { client =>
+                JsonRpcHandler.init(tb, Seq(initMethod, hoverMethod), gatedConfig).map { _ =>
                     Abort.run[JsonRpcError | Closed](
                         client.call[HoverReq, HoverResp]("textDocument/hover", HoverReq(10))
                     ).map {

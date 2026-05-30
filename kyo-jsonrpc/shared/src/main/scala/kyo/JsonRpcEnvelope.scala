@@ -18,10 +18,10 @@ import scala.annotation.nowarn
   *  - [[JsonRpcEnvelope.Malformed]]: a message that could not be decoded; carries the raw value
   *    and a reason string for logging.
   *
-  * Consumed by [[JsonRpcTransport]] and [[JsonRpcEndpoint.MessageGate]] implementations.
+  * Consumed by [[JsonRpcTransport]] and [[JsonRpcHandler.MessageGate]] implementations.
   *
   * @see [[JsonRpcTransport]]
-  * @see [[JsonRpcEndpoint.MessageGate]]
+  * @see [[JsonRpcHandler.MessageGate]]
   */
 enum JsonRpcEnvelope derives CanEqual:
     case Request(
@@ -51,8 +51,8 @@ object JsonRpcEnvelope:
       * JSON-RPC 2.0 §5 allows ids to be a string, a number, or null. This enum models the
       * non-null cases; a null id is represented by `Maybe.Absent` at the call site.
       *
-      * Used in `JsonRpcEndpoint.cancel`, `JsonRpcEndpoint.Pending.id`, `JsonRpcEndpoint.ExtrasEncoder`,
-      * and `JsonRpcMethod.Context.requestId`.
+      * Used in `JsonRpcHandler.cancel`, `JsonRpcHandler.Pending.id`, `JsonRpcHandler.ExtrasEncoder`,
+      * and `JsonRpcRoute.Context.requestId`.
       *
       * @see [[JsonRpcEnvelope.Request]]
       * @see [[JsonRpcEnvelope.Response]]

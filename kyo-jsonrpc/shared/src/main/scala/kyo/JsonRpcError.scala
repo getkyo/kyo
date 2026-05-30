@@ -13,13 +13,13 @@ import kyo.Structure
   * Predefined constants and smart constructors in the companion cover the standard JSON-RPC
   * and LSP error codes.
   *
-  * Appears in the `Abort[JsonRpcError]` effect row of `JsonRpcEndpoint.call` and handler
+  * Appears in the `Abort[JsonRpcError]` effect row of `JsonRpcHandler.call` and handler
   * return types.
   *
   * @param code    integer error code (negative values are reserved by JSON-RPC 2.0 §5.1)
   * @param message short description of the error
   * @param data    optional additional information, protocol-defined
-  * @see [[JsonRpcEndpoint]]
+  * @see [[JsonRpcHandler]]
   */
 case class JsonRpcError(code: Int, message: String, data: Maybe[Structure.Value]) derives Schema, CanEqual
 

@@ -2,9 +2,9 @@ package kyo.internal
 
 import CdpTypes.*
 import kyo.*
-import kyo.JsonRpcEndpoint.ExtrasEncoder
-import kyo.JsonRpcEndpoint.IdStrategy
-import kyo.JsonRpcEndpoint.UnknownMethodPolicy
+import kyo.JsonRpcHandler.ExtrasEncoder
+import kyo.JsonRpcHandler.IdStrategy
+import kyo.JsonRpcHandler.UnknownMethodPolicy
 
 /** Invariant smoke tests for Phase 01 of the kyo-browser CDP client port to kyo-jsonrpc.
   *
@@ -45,15 +45,15 @@ class JsonRpcPortInvariantsSpec extends Test:
     /** Creates a server endpoint that handles Browser.getVersion plus any `extraMethods`. */
     private def mkServerEndpoint(
         serverTransport: JsonRpcTransport,
-        extraMethods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]] = Seq.empty
-    )(using Frame): JsonRpcEndpoint < (Async & Scope) =
-        val versionMethod = JsonRpcMethod[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
+        extraMethods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]] = Seq.empty
+    )(using Frame): JsonRpcHandler < (Async & Scope) =
+        val versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
             "Browser.getVersion"
         ) { (_, _) => testVersionResult }
-        JsonRpcEndpoint.init(
+        JsonRpcHandler.init(
             serverTransport,
             versionMethod +: extraMethods,
-            JsonRpcEndpoint.Config(
+            JsonRpcHandler.Config(
                 codec = JsonRpcCodec.Cdp,
                 maxInFlight = Present(8),
                 idStrategy = IdStrategy.SequentialInt
@@ -63,8 +63,8 @@ class JsonRpcPortInvariantsSpec extends Test:
 
     /** Paired backend + server within a Scope. */
     private def mkBackendWithServer(
-        extraServerMethods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]] = Seq.empty
-    )(using Frame): (CdpBackend, JsonRpcEndpoint) < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
+        extraServerMethods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]] = Seq.empty
+    )(using Frame): (CdpBackend, JsonRpcHandler) < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
         JsonRpcTransport.inMemory.map { (client, server) =>
             mkServerEndpoint(server, extraServerMethods).map { serverEndpoint =>
                 CdpBackend.initUnscoped(client, testLaunchCfg).map { backend =>
@@ -183,7 +183,7 @@ class JsonRpcPortInvariantsSpec extends Test:
     "INV-015: round-trip exercises ExtrasEncoder and ctx.extras routing" in run {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
             AtomicRef.init[Maybe[CdpEvent.Generic]](Absent).map { frameEventRef =>
-                val navigateMethod = JsonRpcMethod[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
+                val navigateMethod = JsonRpcRoute[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
                     "Page.navigate"
                 ) { (_, ctx) =>
                     capturedExtrasRef.set(Present(ctx.extras)).map(_ => NavigateResult("frame-rt"))
@@ -281,7 +281,7 @@ class JsonRpcPortInvariantsSpec extends Test:
     }
 
     "INV-017: JsonRpcError at send surfaces as BrowserProtocolErrorException" in run {
-        val errorMethod = JsonRpcMethod[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
+        val errorMethod = JsonRpcRoute[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
             "Page.navigate"
         ) { (_, _) =>
             Abort.fail(JsonRpcError.MethodNotFound)
@@ -311,13 +311,13 @@ class JsonRpcPortInvariantsSpec extends Test:
         )
         Scope.run {
             JsonRpcTransport.inMemory.map { (client, server) =>
-                val versionMethod = JsonRpcMethod[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
+                val versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
                     "Browser.getVersion"
                 ) { (_, _) => testVersionResult }
-                JsonRpcEndpoint.init(
+                JsonRpcHandler.init(
                     server,
                     Seq(versionMethod),
-                    JsonRpcEndpoint.Config(
+                    JsonRpcHandler.Config(
                         codec = JsonRpcCodec.Cdp,
                         unknownMethod = dropPolicy,
                         maxInFlight = Present(8),
@@ -347,14 +347,14 @@ class JsonRpcPortInvariantsSpec extends Test:
     "INV-018: dialogIdCounter starts at Int.MinValue and produces negative ids disjoint from SequentialInt" in run {
         AtomicRef.init[Maybe[Long]](Absent).map { dialogIdRef =>
             AtomicRef.init[Maybe[Long]](Absent).map { regularIdRef =>
-                val handleDialogMethod = JsonRpcMethod[HandleJavaScriptDialogParams, Unit, Async & Abort[JsonRpcError]](
+                val handleDialogMethod = JsonRpcRoute[HandleJavaScriptDialogParams, Unit, Async & Abort[JsonRpcError]](
                     "Page.handleJavaScriptDialog"
                 ) { (_, ctx) =>
                     ctx.requestId match
                         case Present(JsonRpcEnvelope.Id.Num(n)) => dialogIdRef.set(Present(n))
                         case _                                  => Kyo.unit
                 }
-                val navigateMethod = JsonRpcMethod[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
+                val navigateMethod = JsonRpcRoute[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
                     "Page.navigate"
                 ) { (_, ctx) =>
                     ctx.requestId match

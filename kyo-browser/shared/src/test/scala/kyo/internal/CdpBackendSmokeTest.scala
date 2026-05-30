@@ -2,14 +2,14 @@ package kyo.internal
 
 import CdpTypes.*
 import kyo.*
-import kyo.JsonRpcEndpoint.ExtrasEncoder
-import kyo.JsonRpcEndpoint.IdStrategy
+import kyo.JsonRpcHandler.ExtrasEncoder
+import kyo.JsonRpcHandler.IdStrategy
 import kyo.internal.cdp.PageDownload
 
 /** Smoke tests for the Phase 01 [[CdpBackend]] runtime class.
   *
   * Tests use paired [[JsonRpcTransport.inMemory]] transports with a fake-server
-  * [[JsonRpcEndpoint]] to exercise the new class without a live browser process.
+  * [[JsonRpcHandler]] to exercise the new class without a live browser process.
   *
   * Test cases 1-10 per 05-plan.md Phase 01 Tests section.
   */
@@ -28,31 +28,31 @@ class CdpBackendSmokeTest extends Test:
         jsVersion = "0.0"
     )
 
-    /** Creates a server-side [[JsonRpcEndpoint]] that handles `Browser.getVersion` with
+    /** Creates a server-side [[JsonRpcHandler]] that handles `Browser.getVersion` with
       * [[testVersionResult]] and routes any other request to `extraMethods`.
       * Registers the endpoint with the enclosing Scope so it is closed on test exit.
       */
     private def mkServerEndpoint(
         serverTransport: JsonRpcTransport,
-        extraMethods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]] = Seq.empty
-    )(using Frame): JsonRpcEndpoint < (Async & Scope) =
-        val versionMethod = JsonRpcMethod[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
+        extraMethods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]] = Seq.empty
+    )(using Frame): JsonRpcHandler < (Async & Scope) =
+        val versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
             "Browser.getVersion"
         ) { (_, _) => testVersionResult }
-        val config = JsonRpcEndpoint.Config(
+        val config = JsonRpcHandler.Config(
             codec = JsonRpcCodec.Cdp,
             maxInFlight = Present(8),
             idStrategy = IdStrategy.SequentialInt
         )
-        JsonRpcEndpoint.init(serverTransport, versionMethod +: extraMethods, config)
+        JsonRpcHandler.init(serverTransport, versionMethod +: extraMethods, config)
     end mkServerEndpoint
 
     /** Initialises a [[CdpBackend]] using a paired in-memory transport where the server
-      * side is a [[JsonRpcEndpoint]] registered with the enclosing Scope.
+      * side is a [[JsonRpcHandler]] registered with the enclosing Scope.
       */
     private def mkBackendWithServer(
-        extraServerMethods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]] = Seq.empty
-    )(using Frame): (CdpBackend, JsonRpcEndpoint) < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
+        extraServerMethods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]] = Seq.empty
+    )(using Frame): (CdpBackend, JsonRpcHandler) < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
         JsonRpcTransport.inMemory.map { (client, server) =>
             mkServerEndpoint(server, extraServerMethods).map { serverEndpoint =>
                 CdpBackend.initUnscoped(client, testLaunchCfg).map { backend =>
@@ -89,7 +89,7 @@ class CdpBackendSmokeTest extends Test:
 
     "send writes wire bytes that match legacy CDP envelope shape" in run {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
-            val navigateMethod = JsonRpcMethod[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
+            val navigateMethod = JsonRpcRoute[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
                 "Page.navigate"
             ) { (_, ctx) =>
                 capturedExtrasRef.set(Present(ctx.extras)).map(_ => NavigateResult("frame-1"))
@@ -114,7 +114,7 @@ class CdpBackendSmokeTest extends Test:
 
     "session-scoped backend stamps sessionId via ExtrasEncoder" in run {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
-            val navigateMethod = JsonRpcMethod[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
+            val navigateMethod = JsonRpcRoute[NavigateParams, NavigateResult, Async & Abort[JsonRpcError]](
                 "Page.navigate"
             ) { (_, ctx) =>
                 capturedExtrasRef.set(Present(ctx.extras)).map(_ => NavigateResult("frame-2"))
@@ -171,7 +171,7 @@ class CdpBackendSmokeTest extends Test:
 
     "Page.javascriptDialogOpening auto-dismisses when no handler is registered" in run {
         AtomicRef.init[Maybe[Long]](Absent).map { capturedDismissId =>
-            val handleDialogMethod = JsonRpcMethod[HandleJavaScriptDialogParams, Unit, Async & Abort[JsonRpcError]](
+            val handleDialogMethod = JsonRpcRoute[HandleJavaScriptDialogParams, Unit, Async & Abort[JsonRpcError]](
                 "Page.handleJavaScriptDialog"
             ) { (_, ctx) =>
                 // Capture the request id to verify the drainer sent the auto-dismiss
@@ -290,7 +290,7 @@ class CdpBackendSmokeTest extends Test:
 
     "dialog drainer issues sendUnmatched with negative JsonRpcEnvelope.Id.Num" in run {
         AtomicRef.init[Maybe[Long]](Absent).map { capturedIdRef =>
-            val handleDialogMethod = JsonRpcMethod[HandleJavaScriptDialogParams, Unit, Async & Abort[JsonRpcError]](
+            val handleDialogMethod = JsonRpcRoute[HandleJavaScriptDialogParams, Unit, Async & Abort[JsonRpcError]](
                 "Page.handleJavaScriptDialog"
             ) { (_, ctx) =>
                 ctx.requestId match

@@ -3,14 +3,14 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class JsonRpcEndpointExtrasEncoderTest extends JsonRpcTestBase:
+class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
     "empty.resolve always yields Absent regardless of id" in run {
         for
-            a <- JsonRpcEndpoint.ExtrasEncoder.empty.resolve(JsonRpcEnvelope.Id.Num(1L))
-            b <- JsonRpcEndpoint.ExtrasEncoder.empty.resolve(JsonRpcEnvelope.Id.Str("x"))
+            a <- JsonRpcHandler.ExtrasEncoder.empty.resolve(JsonRpcEnvelope.Id.Num(1L))
+            b <- JsonRpcHandler.ExtrasEncoder.empty.resolve(JsonRpcEnvelope.Id.Str("x"))
         yield
             assert(a == Absent)
             assert(b == Absent)
@@ -18,7 +18,7 @@ class JsonRpcEndpointExtrasEncoderTest extends JsonRpcTestBase:
 
     "const(v).resolve always yields Present(v) regardless of id" in run {
         val v   = Structure.Value.Str("payload")
-        val enc = JsonRpcEndpoint.ExtrasEncoder.const(v)
+        val enc = JsonRpcHandler.ExtrasEncoder.const(v)
         for
             a <- enc.resolve(JsonRpcEnvelope.Id.Num(1L))
             b <- enc.resolve(JsonRpcEnvelope.Id.Str("x"))
@@ -29,7 +29,7 @@ class JsonRpcEndpointExtrasEncoderTest extends JsonRpcTestBase:
     }
 
     "apply(f).resolve forwards id to f" in run {
-        val enc = JsonRpcEndpoint.ExtrasEncoder { id =>
+        val enc = JsonRpcHandler.ExtrasEncoder { id =>
             Sync.defer(Present(Structure.Value.Str(id.toString)))
         }
         for
@@ -40,7 +40,7 @@ class JsonRpcEndpointExtrasEncoderTest extends JsonRpcTestBase:
     "apply(f) lifts a Sync-effectful body through .resolve" in run {
         // Unsafe: AtomicLong.Unsafe.init for in-test counter outside effect context
         val counter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
-        val enc = JsonRpcEndpoint.ExtrasEncoder { _ =>
+        val enc = JsonRpcHandler.ExtrasEncoder { _ =>
             Sync.Unsafe.defer(Present(Structure.Value.Integer(counter.incrementAndGet())))
         }
         for
@@ -52,4 +52,4 @@ class JsonRpcEndpointExtrasEncoderTest extends JsonRpcTestBase:
         end for
     }
 
-end JsonRpcEndpointExtrasEncoderTest
+end JsonRpcHandlerExtrasEncoderTest

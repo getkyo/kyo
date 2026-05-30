@@ -1,6 +1,6 @@
 package kyo
 
-class JsonRpcTransportFramerTest extends JsonRpcTestBase:
+class JsonRpcTransportFramerTest extends JsonRpcTest:
 
     "lineDelimited.frame appends LF" in run {
         val payload = Chunk.from("abc".getBytes("UTF-8"))

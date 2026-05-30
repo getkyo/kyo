@@ -42,7 +42,7 @@ private[kyo] object ProgressEngine:
         id: JsonRpcEnvelope.Id,
         params: Maybe[Structure.Value],
         extras: Maybe[Structure.Value],
-        progressPolicy: Maybe[JsonRpcEndpoint.ProgressPolicy],
+        progressPolicy: Maybe[JsonRpcHandler.ProgressPolicy],
         pendingInbound: ConcurrentHashMap[JsonRpcEnvelope.Id, InboundEntry],
         writerChannel: Channel[WriterMsg]
     )(using frame: Frame, allow: AllowUnsafe): Maybe[Structure.Value => Unit < (Async & Abort[Closed])] =

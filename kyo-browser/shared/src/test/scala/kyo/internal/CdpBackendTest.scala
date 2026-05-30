@@ -1,12 +1,12 @@
 package kyo.internal
 
 import kyo.*
-import kyo.JsonRpcEndpoint.IdStrategy
+import kyo.JsonRpcHandler.IdStrategy
 import kyo.internal.CdpTypes.*
 
 /** Typed CDP wrapper tests for [[CdpBackend]] companion methods.
   *
-  * Tests use paired [[JsonRpcTransport.inMemory]] transports with a fake-server [[JsonRpcEndpoint]] to exercise each wrapper without a live
+  * Tests use paired [[JsonRpcTransport.inMemory]] transports with a fake-server [[JsonRpcHandler]] to exercise each wrapper without a live
   * browser process. The server handles `Browser.getVersion` (required by the Q-002 probe in initUnscoped) plus the method under test.
   *
   * "Valid response" cases: server returns the correctly-typed value; wrapper must decode and return it.
@@ -37,30 +37,30 @@ class CdpBackendTest extends Test:
       */
     private case class BadGetTargetsResult(targetInfos: Int = 42) derives Schema
 
-    /** Creates a server-side [[JsonRpcEndpoint]] that handles `Browser.getVersion` with [[testVersionResult]] and routes any other request
+    /** Creates a server-side [[JsonRpcHandler]] that handles `Browser.getVersion` with [[testVersionResult]] and routes any other request
       * to `extraMethods`. Registers the endpoint with the enclosing Scope so it is closed on test exit.
       */
     private def mkServerEndpoint(
         serverTransport: JsonRpcTransport,
-        extraMethods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]] = Seq.empty
-    )(using Frame): JsonRpcEndpoint < (Async & Scope) =
-        val versionMethod = JsonRpcMethod[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
+        extraMethods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]] = Seq.empty
+    )(using Frame): JsonRpcHandler < (Async & Scope) =
+        val versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
             "Browser.getVersion"
         ) { (_, _) => testVersionResult }
-        val config = JsonRpcEndpoint.Config(
+        val config = JsonRpcHandler.Config(
             codec = JsonRpcCodec.Cdp,
             maxInFlight = Present(8),
             idStrategy = IdStrategy.SequentialInt
         )
-        JsonRpcEndpoint.init(serverTransport, versionMethod +: extraMethods, config)
+        JsonRpcHandler.init(serverTransport, versionMethod +: extraMethods, config)
     end mkServerEndpoint
 
-    /** Initialises a [[CdpBackend]] using a paired in-memory transport where the server side is a [[JsonRpcEndpoint]] registered with the
+    /** Initialises a [[CdpBackend]] using a paired in-memory transport where the server side is a [[JsonRpcHandler]] registered with the
       * enclosing Scope.
       */
     private def mkBackendWithServer(
-        extraServerMethods: Seq[JsonRpcMethod[Async & Abort[JsonRpcError]]] = Seq.empty
-    )(using Frame): (CdpBackend, JsonRpcEndpoint) < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
+        extraServerMethods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]] = Seq.empty
+    )(using Frame): (CdpBackend, JsonRpcHandler) < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
         JsonRpcTransport.inMemory.map { (client, server) =>
             mkServerEndpoint(server, extraServerMethods).map { serverEndpoint =>
                 CdpBackend.initUnscoped(client, testLaunchCfg).map { backend =>
@@ -75,7 +75,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getNavigationHistory decodes a valid response into NavigationHistory" in run {
         Scope.run {
-            val navMethod = JsonRpcMethod[CdpNoParams, NavigationHistory, Async & Abort[JsonRpcError]](
+            val navMethod = JsonRpcRoute[CdpNoParams, NavigationHistory, Async & Abort[JsonRpcError]](
                 "Page.getNavigationHistory"
             ) { (_, _) =>
                 NavigationHistory(
@@ -101,7 +101,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getNavigationHistory surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val navMethod = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+            val navMethod = JsonRpcRoute[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
                 "Page.getNavigationHistory"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(navMethod)).map { (backend, _) =>
@@ -120,7 +120,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.captureScreenshot decodes a valid response into ScreenshotResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[ScreenshotParams, ScreenshotResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[ScreenshotParams, ScreenshotResult, Async & Abort[JsonRpcError]](
                 "Page.captureScreenshot"
             ) { (_, _) => ScreenshotResult(data = "aGVsbG8=") }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -135,7 +135,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.captureScreenshot surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[ScreenshotParams, BadResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[ScreenshotParams, BadResult, Async & Abort[JsonRpcError]](
                 "Page.captureScreenshot"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -154,7 +154,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.printToPDF decodes a valid response into PrintToPdfResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, PrintToPdfResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, PrintToPdfResult, Async & Abort[JsonRpcError]](
                 "Page.printToPDF"
             ) { (_, _) => PrintToPdfResult(data = "cGRmZGF0YQ==") }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -169,7 +169,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.printToPDF surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
                 "Page.printToPDF"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -188,7 +188,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.runtimeEvaluate returns raw CdpReply-wrapped JSON string" in run {
         Scope.run {
-            val method = JsonRpcMethod[EvalParams, EvalResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[EvalParams, EvalResult, Async & Abort[JsonRpcError]](
                 "Runtime.evaluate"
             ) { (_, _) =>
                 EvalResult(result = RemoteObject.`string`(value = "hello"))
@@ -210,7 +210,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.runtimeEvaluate surfaces BrowserProtocolErrorException when server signals an error" in run {
         Scope.run {
-            val method = JsonRpcMethod[EvalParams, EvalResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[EvalParams, EvalResult, Async & Abort[JsonRpcError]](
                 "Runtime.evaluate"
             ) { (_, _) =>
                 Abort.fail(JsonRpcError.methodNotFound("Runtime.evaluate"))
@@ -231,7 +231,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getCookies decodes a valid response into NetworkGetCookiesResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, NetworkGetCookiesResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, NetworkGetCookiesResult, Async & Abort[JsonRpcError]](
                 "Network.getCookies"
             ) { (_, _) =>
                 NetworkGetCookiesResult(cookies =
@@ -254,7 +254,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getCookies surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
                 "Network.getCookies"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -273,7 +273,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getTargets decodes a valid response into GetTargetsResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, GetTargetsResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, GetTargetsResult, Async & Abort[JsonRpcError]](
                 "Target.getTargets"
             ) { (_, _) =>
                 GetTargetsResult(targetInfos =
@@ -296,7 +296,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getTargets surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, BadGetTargetsResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, BadGetTargetsResult, Async & Abort[JsonRpcError]](
                 "Target.getTargets"
             ) { (_, _) => BadGetTargetsResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -315,7 +315,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.attachToTarget decodes a valid response into AttachResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[AttachParams, AttachResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[AttachParams, AttachResult, Async & Abort[JsonRpcError]](
                 "Target.attachToTarget"
             ) { (_, _) => AttachResult(sessionId = "s42") }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -330,7 +330,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.attachToTarget surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[AttachParams, BadResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[AttachParams, BadResult, Async & Abort[JsonRpcError]](
                 "Target.attachToTarget"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -349,7 +349,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.createTarget decodes a valid response into CreateTargetResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[CreateTargetParams, CreateTargetResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CreateTargetParams, CreateTargetResult, Async & Abort[JsonRpcError]](
                 "Target.createTarget"
             ) { (_, _) => CreateTargetResult(targetId = "new-tab-id") }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -364,7 +364,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.createTarget surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[CreateTargetParams, BadResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CreateTargetParams, BadResult, Async & Abort[JsonRpcError]](
                 "Target.createTarget"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -383,7 +383,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.createBrowserContext decodes a valid response into CreateBrowserContextResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, CreateBrowserContextResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, CreateBrowserContextResult, Async & Abort[JsonRpcError]](
                 "Target.createBrowserContext"
             ) { (_, _) => CreateBrowserContextResult(browserContextId = "ctx-123") }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -398,7 +398,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.createBrowserContext surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
                 "Target.createBrowserContext"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -420,7 +420,7 @@ class CdpBackendTest extends Test:
     "CdpBackend typed decoders are permissive: extra fields are silently ignored" in run {
         Scope.run {
             // NavigationHistory with extra field
-            val navMethod = JsonRpcMethod[CdpNoParams, NavigationHistory, Async & Abort[JsonRpcError]](
+            val navMethod = JsonRpcRoute[CdpNoParams, NavigationHistory, Async & Abort[JsonRpcError]](
                 "Page.getNavigationHistory"
             ) { (_, _) =>
                 NavigationHistory(currentIndex = 0, entries = Seq(NavigationEntry(id = 1, url = "http://x.com", title = "X")))
@@ -441,7 +441,7 @@ class CdpBackendTest extends Test:
     "CdpBackend typed decoders reject missing-required-field shapes" in run {
         Scope.run {
             // NavigationHistory decoder fails when `entries` is missing from `BadResult()`
-            val navMethod = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+            val navMethod = JsonRpcRoute[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
                 "Page.getNavigationHistory"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(navMethod)).map { (backend, _) =>
@@ -460,7 +460,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.navigate sends Page.navigate and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[NavigateParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[NavigateParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Page.navigate"
             ) { (_, _) => CdpNoParams() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -474,7 +474,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.navigate surfaces BrowserProtocolErrorException when server signals an error" in run {
         Scope.run {
-            val method = JsonRpcMethod[NavigateParams, Unit, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[NavigateParams, Unit, Async & Abort[JsonRpcError]](
                 "Page.navigate"
             ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Page.navigate")) }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -493,7 +493,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.navigateToHistoryEntry sends Page.navigateToHistoryEntry and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[NavigateToEntryParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[NavigateToEntryParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Page.navigateToHistoryEntry"
             ) { (_, _) => CdpNoParams() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -511,7 +511,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.reload sends Page.reload and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[ReloadParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[ReloadParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Page.reload"
             ) { (_, _) => CdpNoParams() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -529,7 +529,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getFrameTree decodes a valid response into GetFrameTreeResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, GetFrameTreeResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, GetFrameTreeResult, Async & Abort[JsonRpcError]](
                 "Page.getFrameTree"
             ) { (_, _) =>
                 GetFrameTreeResult(frameTree = FrameTreeNode(frame = FrameInfo(id = "f1", url = "http://example.com")))
@@ -547,7 +547,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getFrameTree surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, BadResult, Async & Abort[JsonRpcError]](
                 "Page.getFrameTree"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -566,7 +566,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.setDeviceMetricsOverride sends Emulation.setDeviceMetricsOverride and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[ViewportParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[ViewportParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Emulation.setDeviceMetricsOverride"
             ) { (_, _) => CdpNoParams() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -584,7 +584,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.clearDeviceMetricsOverride sends Emulation.clearDeviceMetricsOverride and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[CdpNoParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CdpNoParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Emulation.clearDeviceMetricsOverride"
             ) { (_, _) => CdpNoParams() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -602,7 +602,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.dispatchKeyEvent sends Input.dispatchKeyEvent and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[DispatchKeyEventParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[DispatchKeyEventParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Input.dispatchKeyEvent"
             ) { (_, _) => CdpNoParams() }
             val params = DispatchKeyEventParams(KeyEventType.Down, Present("a"), Present("a"), Absent, Absent)
@@ -617,7 +617,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.dispatchKeyEvent surfaces BrowserProtocolErrorException when server signals an error" in run {
         Scope.run {
-            val method = JsonRpcMethod[DispatchKeyEventParams, Unit, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[DispatchKeyEventParams, Unit, Async & Abort[JsonRpcError]](
                 "Input.dispatchKeyEvent"
             ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Input.dispatchKeyEvent")) }
             val params = DispatchKeyEventParams(KeyEventType.Up, Present("a"), Absent, Absent, Absent)
@@ -637,7 +637,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.dispatchMouseEvent sends Input.dispatchMouseEvent and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[MouseEventParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[MouseEventParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Input.dispatchMouseEvent"
             ) { (_, _) => CdpNoParams() }
             val params = MouseEventParams(MouseEventType.Moved, 100, 200)
@@ -656,7 +656,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.getProperties decodes a valid response into GetPropertiesResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[GetPropertiesParams, GetPropertiesResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[GetPropertiesParams, GetPropertiesResult, Async & Abort[JsonRpcError]](
                 "Runtime.getProperties"
             ) { (_, _) =>
                 GetPropertiesResult(result =
@@ -683,7 +683,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.describeNodeByBackendId decodes a valid response into DescribeNodeResult" in run {
         Scope.run {
-            val method = JsonRpcMethod[DescribeNodeByBackendIdParams, DescribeNodeResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[DescribeNodeByBackendIdParams, DescribeNodeResult, Async & Abort[JsonRpcError]](
                 "DOM.describeNode"
             ) { (_, _) =>
                 DescribeNodeResult(node = DescribedNode(backendNodeId = 99, frameId = Present("frame1")))
@@ -701,7 +701,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.describeNodeByBackendId surfaces BrowserProtocolErrorException on malformed response" in run {
         Scope.run {
-            val method = JsonRpcMethod[DescribeNodeByBackendIdParams, BadResult, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[DescribeNodeByBackendIdParams, BadResult, Async & Abort[JsonRpcError]](
                 "DOM.describeNode"
             ) { (_, _) => BadResult() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -720,7 +720,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.setFileInputFiles sends DOM.setFileInputFiles and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[SetFileInputFilesParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[SetFileInputFilesParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "DOM.setFileInputFiles"
             ) { (_, _) => CdpNoParams() }
             val params = SetFileInputFilesParams(Seq("/tmp/a.txt"), 77)
@@ -739,7 +739,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.setCookie sends Network.setCookie and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[NetworkSetCookieParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[NetworkSetCookieParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Network.setCookie"
             ) { (_, _) => CdpNoParams() }
             val params = NetworkSetCookieParams(name = "session", value = "abc", domain = Present("example.com"))
@@ -754,7 +754,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.setCookie surfaces BrowserProtocolErrorException when server signals an error" in run {
         Scope.run {
-            val method = JsonRpcMethod[NetworkSetCookieParams, Unit, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[NetworkSetCookieParams, Unit, Async & Abort[JsonRpcError]](
                 "Network.setCookie"
             ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Network.setCookie")) }
             val params = NetworkSetCookieParams(name = "x", value = "y")
@@ -774,7 +774,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.deleteCookies sends Network.deleteCookies and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[NetworkDeleteCookiesParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[NetworkDeleteCookiesParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Network.deleteCookies"
             ) { (_, _) => CdpNoParams() }
             val params = NetworkDeleteCookiesParams("session", domain = Present("example.com"))
@@ -793,7 +793,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.closeTarget sends Target.closeTarget and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[CloseTargetParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CloseTargetParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Target.closeTarget"
             ) { (_, _) => CdpNoParams() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -807,7 +807,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.closeTarget surfaces BrowserProtocolErrorException when server signals an error" in run {
         Scope.run {
-            val method = JsonRpcMethod[CloseTargetParams, Unit, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[CloseTargetParams, Unit, Async & Abort[JsonRpcError]](
                 "Target.closeTarget"
             ) { (_, _) => Abort.fail(JsonRpcError.methodNotFound("Target.closeTarget")) }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>
@@ -826,7 +826,7 @@ class CdpBackendTest extends Test:
 
     "CdpBackend.disposeBrowserContext sends Target.disposeBrowserContext and discards the response" in run {
         Scope.run {
-            val method = JsonRpcMethod[DisposeBrowserContextParams, CdpNoParams, Async & Abort[JsonRpcError]](
+            val method = JsonRpcRoute[DisposeBrowserContextParams, CdpNoParams, Async & Abort[JsonRpcError]](
                 "Target.disposeBrowserContext"
             ) { (_, _) => CdpNoParams() }
             mkBackendWithServer(Seq(method)).map { (backend, _) =>

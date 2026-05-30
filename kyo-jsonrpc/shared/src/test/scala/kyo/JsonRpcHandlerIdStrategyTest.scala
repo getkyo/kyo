@@ -2,12 +2,12 @@ package kyo
 
 import kyo.internal.engine.IdStrategyEngine
 
-class JsonRpcEndpointIdStrategyTest extends JsonRpcTestBase:
+class JsonRpcHandlerIdStrategyTest extends JsonRpcTest:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
     "SequentialLong allocates monotonically increasing JsonRpcEnvelope.Id.Num starting at 1" in run {
-        val next = IdStrategyEngine.mkNextId(JsonRpcEndpoint.IdStrategy.SequentialLong)
+        val next = IdStrategyEngine.mkNextId(JsonRpcHandler.IdStrategy.SequentialLong)
         for
             a <- next()
             b <- next()
@@ -20,7 +20,7 @@ class JsonRpcEndpointIdStrategyTest extends JsonRpcTestBase:
     }
 
     "SequentialInt allocates monotonically increasing JsonRpcEnvelope.Id.Num starting at 1" in run {
-        val next = IdStrategyEngine.mkNextId(JsonRpcEndpoint.IdStrategy.SequentialInt)
+        val next = IdStrategyEngine.mkNextId(JsonRpcHandler.IdStrategy.SequentialInt)
         for
             a <- next()
             b <- next()
@@ -35,7 +35,7 @@ class JsonRpcEndpointIdStrategyTest extends JsonRpcTestBase:
         val counter = AtomicLong.Unsafe.init(99L)(using AllowUnsafe.embrace.danger)
         val custom: () => JsonRpcEnvelope.Id < Sync =
             () => Sync.Unsafe.defer(JsonRpcEnvelope.Id.Num(counter.incrementAndGet()))
-        val next = IdStrategyEngine.mkNextId(JsonRpcEndpoint.IdStrategy.Custom(custom))
+        val next = IdStrategyEngine.mkNextId(JsonRpcHandler.IdStrategy.Custom(custom))
         for
             a <- next()
             b <- next()
@@ -47,7 +47,7 @@ class JsonRpcEndpointIdStrategyTest extends JsonRpcTestBase:
 
     "Custom with constant-returning function returns the same id repeatedly" in run {
         val custom: () => JsonRpcEnvelope.Id < Sync = () => Sync.defer(JsonRpcEnvelope.Id.Str("static"))
-        val next                                    = IdStrategyEngine.mkNextId(JsonRpcEndpoint.IdStrategy.Custom(custom))
+        val next                                    = IdStrategyEngine.mkNextId(JsonRpcHandler.IdStrategy.Custom(custom))
         for
             a <- next()
             b <- next()
@@ -57,4 +57,4 @@ class JsonRpcEndpointIdStrategyTest extends JsonRpcTestBase:
         end for
     }
 
-end JsonRpcEndpointIdStrategyTest
+end JsonRpcHandlerIdStrategyTest

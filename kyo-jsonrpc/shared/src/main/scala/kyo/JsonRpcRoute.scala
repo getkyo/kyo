@@ -10,38 +10,38 @@ import kyo.Result
 import kyo.Schema
 import kyo.Structure
 
-/** Describes a single JSON-RPC method binding: a name, a kind (Request or Notification),
+/** Describes a single JSON-RPC route binding: a name, a kind (Request or Notification),
   * and a typed handler function.
   *
   * Use the companion factories to construct instances:
-  *  - [[JsonRpcMethod.apply]] for request/response methods.
-  *  - [[JsonRpcMethod.notification]] for fire-and-forget notifications.
+  *  - [[JsonRpcRoute.apply]] for request/response routes.
+  *  - [[JsonRpcRoute.notification]] for fire-and-forget notifications.
   *
   * The handler type parameter `S` captures the effect set required by the handler. The
   * framework constrains `S` to include at minimum `Async & Abort[JsonRpcError]`. Pass the
-  * resulting `JsonRpcMethod` to `JsonRpcEndpoint.init`.
+  * resulting `JsonRpcRoute` to `JsonRpcHandler.init`.
   *
   * @tparam S the effect set of the handler; must satisfy `(Async & Abort[JsonRpcError]) <:< S`
-  * @see JsonRpcEndpoint
+  * @see JsonRpcHandler
   */
-sealed trait JsonRpcMethod[+S]:
+sealed trait JsonRpcRoute[+S]:
     def name: String
-    def kind: JsonRpcMethod.Kind
+    def kind: JsonRpcRoute.Kind
     // Stream.scala:48 sealed-protocol with framework-only abstract members
     private[kyo] def schemaIn: Schema[?]
     // Stream.scala:48 sealed-protocol with framework-only abstract members
     private[kyo] def schemaOut: Schema[?]
     // Stream.scala:48 sealed-protocol with framework-only abstract members
-    private[kyo] def handle(params: Structure.Value, ctx: JsonRpcMethod.Context)(using
+    private[kyo] def handle(params: Structure.Value, ctx: JsonRpcRoute.Context)(using
         Frame
     ): Structure.Value < (Async & Abort[JsonRpcError])
-end JsonRpcMethod
+end JsonRpcRoute
 
-object JsonRpcMethod:
+object JsonRpcRoute:
     enum Kind derives CanEqual:
         case Request, Notification
 
-    /** Per-request context supplied to every [[JsonRpcMethod]] handler by the endpoint.
+    /** Per-request context supplied to every [[JsonRpcRoute]] handler by the handler.
       *
       * Provides access to:
       *  - `cancelled`: a `Fiber.Promise` that is completed when the peer sends a cancellation for
@@ -51,8 +51,8 @@ object JsonRpcMethod:
       *  - `progress`: reports a progress notification back to the caller via `$.progress` (LSP) or
       *    `notifications/progress` (MCP), depending on the active `ProgressPolicy`.
       *
-      * @see [[JsonRpcMethod]]
-      * @see [[JsonRpcEndpoint.ProgressPolicy]]
+      * @see [[JsonRpcRoute]]
+      * @see [[JsonRpcHandler.ProgressPolicy]]
       */
     // Hub.scala:22 smart-constructor pattern; framework creates instances via forTest or JsonRpcEndpointImpl
     final class Context private[kyo] (
@@ -68,7 +68,7 @@ object JsonRpcMethod:
     end Context
 
     object Context:
-        // test-only construction escape hatch consumed by JsonRpcMethodTest
+        // test-only construction escape hatch consumed by JsonRpcRouteTest
         private[kyo] def forTest(
             cancelled: Fiber.Promise[Unit, Sync],
             requestId: Maybe[JsonRpcEnvelope.Id],
@@ -77,70 +77,63 @@ object JsonRpcMethod:
         ): Context = new Context(cancelled, requestId, extras, progressSink)
     end Context
 
-    def apply[In: Schema, Out: Schema, S](name: String)(handler: (In, JsonRpcMethod.Context) => Out < S)(
+    def apply[In: Schema, Out: Schema, S](name: String)(handler: (In, JsonRpcRoute.Context) => Out < S)(
         using
         Frame,
         (Async & Abort[JsonRpcError]) <:< S
-    ): JsonRpcMethod[S] =
+    ): JsonRpcRoute[S] =
         val capturedName                   = name
         val capturedSchemaIn: Schema[In]   = summon[Schema[In]]
         val capturedSchemaOut: Schema[Out] = summon[Schema[Out]]
         val ev                             = summon[(Async & Abort[JsonRpcError]) <:< S]
-        new RequestMethod(capturedName, capturedSchemaIn, capturedSchemaOut, handler, ev)
+        new RequestRoute(capturedName, capturedSchemaIn, capturedSchemaOut, handler, ev)
     end apply
 
-    def apply[In: Schema, Out: Schema, S](name: String)(handler: In => Out < S)(
+    def notification[In: Schema, S](name: String)(handler: (In, JsonRpcRoute.Context) => Unit < S)(
         using
         Frame,
         (Async & Abort[JsonRpcError]) <:< S
-    ): JsonRpcMethod[S] =
-        apply[In, Out, S](name)((in, _ctx) => handler(in))
-
-    def notification[In: Schema, S](name: String)(handler: (In, JsonRpcMethod.Context) => Unit < S)(
-        using
-        Frame,
-        (Async & Abort[JsonRpcError]) <:< S
-    ): JsonRpcMethod[S] =
+    ): JsonRpcRoute[S] =
         val capturedName                 = name
         val capturedSchemaIn: Schema[In] = summon[Schema[In]]
         val ev                           = summon[(Async & Abort[JsonRpcError]) <:< S]
-        new NotificationMethod(capturedName, capturedSchemaIn, handler, ev)
+        new NotificationRoute(capturedName, capturedSchemaIn, handler, ev)
     end notification
 
-    /** Dispatches `params` to the named method in `methods`. Returns Absent for unknown method.
+    /** Dispatches `params` to the named route in `routes`. Returns Absent for unknown route.
       * Public reach-in for non-engine consumers (one-shot stdio loop, HTTP POST endpoints,
-      * custom routers); keeps `JsonRpcMethod.handle` private[kyo]. For Notification kind the
+      * custom routers); keeps `JsonRpcRoute.handle` private[kyo]. For Notification kind the
       * inner result is `Structure.Value.Null` after the handler completes.
       */
     def dispatch[S](
         name: String,
-        methods: Seq[JsonRpcMethod[S]],
+        routes: Seq[JsonRpcRoute[S]],
         params: Structure.Value,
-        ctx: JsonRpcMethod.Context
+        ctx: JsonRpcRoute.Context
     )(using Frame, (Async & Abort[JsonRpcError]) <:< S): Maybe[Structure.Value < (Async & Abort[JsonRpcError])] =
-        val methodMap: Map[String, JsonRpcMethod[S]] =
-            methods.iterator.map(m => (m.name, m)).toMap
+        val routeMap: Map[String, JsonRpcRoute[S]] =
+            routes.iterator.map(m => (m.name, m)).toMap
         // Map.get returns scala.Option; match arms are interop, not kyo code
-        methodMap.get(name) match
+        routeMap.get(name) match
             // scala.Option arm; interop with Map.get
-            case Some(method) => Present(method.handle(params, ctx))
+            case Some(route) => Present(route.handle(params, ctx))
             // scala.Option arm; interop with Map.get
             case None => Absent
         end match
     end dispatch
 
-    final private class RequestMethod[In, Out, S](
+    final private class RequestRoute[In, Out, S](
         val name: String,
         in: Schema[In],
         out: Schema[Out],
-        handler: (In, JsonRpcMethod.Context) => Out < S,
+        handler: (In, JsonRpcRoute.Context) => Out < S,
         ev: (Async & Abort[JsonRpcError]) <:< S
-    ) extends JsonRpcMethod[S]:
+    ) extends JsonRpcRoute[S]:
         val kind                              = Kind.Request
         private[kyo] val schemaIn: Schema[?]  = in
         private[kyo] val schemaOut: Schema[?] = out
 
-        private[kyo] def handle(params: Structure.Value, ctx: JsonRpcMethod.Context)(using
+        private[kyo] def handle(params: Structure.Value, ctx: JsonRpcRoute.Context)(using
             fr: Frame
         ): Structure.Value < (Async & Abort[JsonRpcError]) =
             val computation: Structure.Value < (S & Abort[JsonRpcError]) =
@@ -159,19 +152,19 @@ object JsonRpcMethod:
                         Abort.fail(JsonRpcError.internalError("Internal error", Present(Structure.Value.Str(t.getMessage))))
             ev.liftContra[[X] =>> Structure.Value < (X & Abort[JsonRpcError])].apply(computation)
         end handle
-    end RequestMethod
+    end RequestRoute
 
-    final private class NotificationMethod[In, S](
+    final private class NotificationRoute[In, S](
         val name: String,
         in: Schema[In],
-        handler: (In, JsonRpcMethod.Context) => Unit < S,
+        handler: (In, JsonRpcRoute.Context) => Unit < S,
         ev: (Async & Abort[JsonRpcError]) <:< S
-    ) extends JsonRpcMethod[S]:
+    ) extends JsonRpcRoute[S]:
         val kind                              = Kind.Notification
         private[kyo] val schemaIn: Schema[?]  = in
         private[kyo] val schemaOut: Schema[?] = summon[Schema[Unit]]
 
-        private[kyo] def handle(params: Structure.Value, ctx: JsonRpcMethod.Context)(using
+        private[kyo] def handle(params: Structure.Value, ctx: JsonRpcRoute.Context)(using
             fr: Frame
         ): Structure.Value < (Async & Abort[JsonRpcError]) =
             val computation: Structure.Value < (S & Abort[JsonRpcError]) =
@@ -190,5 +183,5 @@ object JsonRpcMethod:
                         Abort.fail(JsonRpcError.internalError("Internal error", Present(Structure.Value.Str(t.getMessage))))
             ev.liftContra[[X] =>> Structure.Value < (X & Abort[JsonRpcError])].apply(computation)
         end handle
-    end NotificationMethod
-end JsonRpcMethod
+    end NotificationRoute
+end JsonRpcRoute
