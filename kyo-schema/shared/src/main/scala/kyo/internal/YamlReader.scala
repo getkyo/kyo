@@ -722,7 +722,6 @@ final class YamlReader private (
             if sourcePos >= source.length then Absent
             else
                 val line    = currentSourceLine()
-                val text    = source.substring(sourcePos)
                 val trimmed = line.trim
                 if trimmed.startsWith("*") ||
                     sourceStartsFlowCollection ||
@@ -730,19 +729,286 @@ final class YamlReader private (
                     isSourceBlockMappingLine(line)
                 then Absent
                 else
-                    val built = EventBuilder.build("value: " + text, maxDepth, maxCollectionSize)
-                    if built.events.length >= 3 then
-                        built.events(2) match
-                            case Scalar(value, meta, _) =>
-                                sourcePos = source.length
-                                Maybe(resolveScalarValue(value, meta))
-                            case _ => Absent
-                    else Absent
-                    end if
+                    val (value, meta) = readSourceScalar()
+                    Maybe(resolveScalarValue(value, meta))
                 end if
             end if
         end if
     end trySourceScalarValue
+
+    private def readSourceScalar(): (String, Yaml.ScalarMeta) =
+        val scalarStart              = sourcePos
+        val lineNumber               = currentSourceLineNumber()
+        val column                   = currentSourceIndent()
+        val line                     = currentSourceLine()
+        val stripped                 = stripSourceComment(line.drop(column)).trim
+        val (anchor, tag, valueText) = sourceProperties(stripped)
+        val mark                     = Yaml.Mark(scalarStart + column, lineNumber, column)
+
+        sourceBlockScalarHeader(valueText) match
+            case Present((style, chomp, explicitIndent)) =>
+                val _     = readSourceRestOfLine()
+                val value = readSourceBlockScalar(column, explicitIndent, style, chomp)
+                (value, Yaml.ScalarMeta(anchor, tag, style, mark))
+            case Absent if valueText.startsWith("'") =>
+                val value = readSourceQuotedScalar(valueText, column, '\'').replace("''", "'")
+                (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.SingleQuoted, mark))
+            case Absent if valueText.startsWith("\"") =>
+                val value = unescapeSourceDoubleQuoted(readSourceQuotedScalar(valueText, column, '"'), mark.index)
+                (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.DoubleQuoted, mark))
+            case Absent =>
+                val value = readSourcePlainScalar(valueText, column)
+                (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.Plain, mark))
+        end match
+    end readSourceScalar
+
+    private def sourceBlockScalarHeader(valueText: String): Maybe[(Yaml.ScalarStyle, Char, Maybe[Int])] =
+        if valueText.nonEmpty && (valueText.charAt(0) == '|' || valueText.charAt(0) == '>') then
+            val style          = if valueText.charAt(0) == '|' then Yaml.ScalarStyle.Literal else Yaml.ScalarStyle.Folded
+            var explicitIndent = Maybe.empty[Int]
+            var i              = 1
+            while i < valueText.length do
+                val ch = valueText.charAt(i)
+                if ch >= '1' && ch <= '9' then explicitIndent = Maybe(ch - '0')
+                i += 1
+            end while
+            val chomp =
+                if valueText.indexOf('-') >= 0 then '-'
+                else if valueText.indexOf('+') >= 0 then '+'
+                else ' '
+            Maybe((style, chomp, explicitIndent))
+        else Absent
+    end sourceBlockScalarHeader
+
+    private def readSourceBlockScalar(
+        parentIndent: Int,
+        explicitIndent: Maybe[Int],
+        style: Yaml.ScalarStyle,
+        chomp: Char
+    ): String =
+        val indent = explicitIndent match
+            case Present(n) => parentIndent + n
+            case Absent     => inferredSourceBlockScalarIndent(parentIndent)
+        val lines = scala.collection.mutable.ListBuffer.empty[SourceScalarLine]
+        var done  = false
+        while !done && sourcePos < source.length do
+            val n    = currentSourceIndent()
+            val text = currentSourceLine()
+            if text.trim.isEmpty then
+                val _ = readSourceRestOfLine()
+                lines += SourceScalarLine("", false)
+            else if n >= indent then
+                consumeSourceIndent(indent)
+                lines += SourceScalarLine(readSourceRestOfLine(), n > indent)
+            else if n > parentIndent then sourceError(s"Expected block scalar indentation of at least $indent spaces")
+            else done = true
+            end if
+        end while
+        val contentLines =
+            if chomp == '+' then lines.toList
+            else lines.toList.reverse.dropWhile(_.isBlank).reverse
+        val base =
+            if style == Yaml.ScalarStyle.Literal then contentLines.map(_.text).mkString("\n")
+            else foldSourceScalarLines(contentLines)
+        if chomp == '-' || base.isEmpty then base else base + "\n"
+    end readSourceBlockScalar
+
+    private def inferredSourceBlockScalarIndent(parentIndent: Int): Int =
+        var i = sourcePos
+        while i < source.length do
+            var indent = 0
+            while i < source.length && source.charAt(i) == ' ' do
+                indent += 1
+                i += 1
+            end while
+            val lineStart = i
+            while i < source.length && source.charAt(i) != '\n' do i += 1
+            val line = source.substring(lineStart, i)
+            if line.trim.nonEmpty then return indent
+            if i < source.length && source.charAt(i) == '\n' then i += 1
+        end while
+        parentIndent + 1
+    end inferredSourceBlockScalarIndent
+
+    private def readSourceQuotedScalar(valueText: String, indent: Int, quote: Char): String =
+        val lines = scala.collection.mutable.ListBuffer.empty[SourceScalarLine]
+        val first = valueText.drop(1)
+        closingSourceQuoteIndex(first, quote) match
+            case Present(idx) =>
+                val _ = readSourceRestOfLine()
+                first.substring(0, idx)
+            case Absent =>
+                lines += SourceScalarLine(first, false)
+                val _    = readSourceRestOfLine()
+                var done = false
+                while !done && sourcePos < source.length do
+                    if currentSourceLine().trim.isEmpty then
+                        val _ = readSourceRestOfLine()
+                        lines += SourceScalarLine("", false)
+                    else if currentSourceIndent() <= indent then
+                        sourceError(s"Unterminated ${if quote == '\'' then "single" else "double"} quoted scalar")
+                    else
+                        val lineText = readSourceContinuationText(indent + 2)
+                        closingSourceQuoteIndex(lineText, quote) match
+                            case Present(idx) =>
+                                lines += SourceScalarLine(lineText.substring(0, idx), false)
+                                done = true
+                            case Absent =>
+                                lines += SourceScalarLine(lineText, false)
+                        end match
+                    end if
+                end while
+                if done then foldSourceScalarLines(lines.toList)
+                else sourceError(s"Unterminated ${if quote == '\'' then "single" else "double"} quoted scalar")
+        end match
+    end readSourceQuotedScalar
+
+    private def readSourcePlainScalar(valueText: String, indent: Int): String =
+        val lines = scala.collection.mutable.ListBuffer.empty[SourceScalarLine]
+        lines += SourceScalarLine(valueText, false)
+        val _    = readSourceRestOfLine()
+        var done = false
+        while !done && sourcePos < source.length do
+            val text = currentSourceLine()
+            val n    = currentSourceIndent()
+            if text.trim.isEmpty then
+                val _ = readSourceRestOfLine()
+                lines += SourceScalarLine("", false)
+            else if n > indent then
+                lines += SourceScalarLine(readSourceContinuationText(indent + 2), n > indent + 2)
+            else done = true
+            end if
+        end while
+        foldSourceScalarLines(lines.toList)
+    end readSourcePlainScalar
+
+    private def readSourceContinuationText(indent: Int): String =
+        var removed = 0
+        while removed < indent && sourcePos < source.length && source.charAt(sourcePos) == ' ' do
+            sourcePos += 1
+            removed += 1
+        readSourceRestOfLine()
+    end readSourceContinuationText
+
+    private def closingSourceQuoteIndex(text: String, quote: Char): Maybe[Int] =
+        if quote == '\'' then
+            var i = 0
+            while i < text.length do
+                if text.charAt(i) == '\'' then
+                    if i + 1 < text.length && text.charAt(i + 1) == '\'' then i += 2
+                    else return Maybe(i)
+                else i += 1
+            end while
+            Absent
+        else
+            var i      = 0
+            var escape = false
+            while i < text.length do
+                val ch = text.charAt(i)
+                if escape then escape = false
+                else if ch == '\\' then escape = true
+                else if ch == '"' then return Maybe(i)
+                i += 1
+            end while
+            Absent
+        end if
+    end closingSourceQuoteIndex
+
+    private def foldSourceScalarLines(lines: List[SourceScalarLine]): String =
+        val out           = new StringBuilder
+        var previousText  = Maybe.empty[SourceScalarLine]
+        var pendingBlanks = 0
+        lines.foreach { line =>
+            if line.isBlank then pendingBlanks += 1
+            else
+                previousText match
+                    case Absent =>
+                        if pendingBlanks > 0 then out.append("\n" * pendingBlanks)
+                    case Present(previous) =>
+                        if pendingBlanks > 0 then
+                            val preservedBreak = if previous.moreIndented || line.moreIndented then 1 else 0
+                            out.append("\n" * (pendingBlanks + preservedBreak))
+                        else if previous.moreIndented || line.moreIndented then out.append('\n')
+                        else out.append(' ')
+                end match
+                out.append(line.text)
+                previousText = Maybe(line)
+                pendingBlanks = 0
+            end if
+        }
+        if pendingBlanks > 0 then out.append("\n" * pendingBlanks)
+        out.toString
+    end foldSourceScalarLines
+
+    private def unescapeSourceDoubleQuoted(s: String, baseIndex: Int): String =
+        val b = new StringBuilder
+        var i = 0
+        while i < s.length do
+            val ch = s.charAt(i)
+            if ch == '\\' && i + 1 < s.length then
+                i += 1
+                s.charAt(i) match
+                    case '0'  => b.append('\u0000')
+                    case 'a'  => b.append('\u0007')
+                    case 'b'  => b.append('\b')
+                    case 't'  => b.append('\t')
+                    case '\t' => b.append('\t')
+                    case 'n'  => b.append('\n')
+                    case 'v'  => b.append('\u000b')
+                    case 'f'  => b.append('\f')
+                    case 'r'  => b.append('\r')
+                    case 'e'  => b.append('\u001b')
+                    case ' '  => b.append(' ')
+                    case '"'  => b.append('"')
+                    case '/'  => b.append('/')
+                    case '\\' => b.append('\\')
+                    case 'N'  => b.append('\u0085')
+                    case '_'  => b.append('\u00a0')
+                    case 'L'  => b.append('\u2028')
+                    case 'P'  => b.append('\u2029')
+                    case 'x' =>
+                        b.append(readSourceHexEscape(s, i, 2, baseIndex).toChar)
+                        i += 2
+                    case 'u' =>
+                        b.append(readSourceHexEscape(s, i, 4, baseIndex).toChar)
+                        i += 4
+                    case 'U' =>
+                        val codePoint = readSourceHexEscape(s, i, 8, baseIndex)
+                        try b.appendAll(Character.toChars(codePoint))
+                        catch
+                            case _: IllegalArgumentException =>
+                                sourceError(
+                                    s"Invalid escape sequence \\${s.charAt(i)}${s.substring(i + 1, math.min(s.length, i + 9))}",
+                                    baseIndex + i - 1
+                                )
+                        end try
+                        i += 8
+                    case other => sourceError(s"Invalid escape sequence \\$other", baseIndex + i - 1)
+                end match
+            else if ch == '\\' then sourceError("Invalid escape sequence \\", baseIndex + i)
+            else b.append(ch)
+            end if
+            i += 1
+        end while
+        b.toString
+    end unescapeSourceDoubleQuoted
+
+    private def readSourceHexEscape(s: String, escapeIndex: Int, digits: Int, baseIndex: Int): Int =
+        val start = escapeIndex + 1
+        val end   = start + digits
+        if end > s.length then
+            sourceError(s"Invalid escape sequence \\${s.charAt(escapeIndex)}${s.substring(start)}", baseIndex + escapeIndex - 1)
+        var value = 0
+        var i     = start
+        while i < end do
+            val digit = Character.digit(s.charAt(i), 16)
+            if digit < 0 then
+                sourceError(s"Invalid escape sequence \\${s.charAt(escapeIndex)}${s.substring(start, end)}", baseIndex + escapeIndex - 1)
+            value = value * 16 + digit
+            i += 1
+        end while
+        value
+    end readSourceHexEscape
 
     private def captureNestedBlock(parentIndent: Int, includeIndentlessSequence: Boolean): Int =
         val start = sourcePos
@@ -1084,6 +1350,23 @@ final class YamlReader private (
         error(s"Expected $expected, got ${describeEvent(event)}")
     end expected
 
+    private def sourceError[A](message: String, position: Int = sourcePos): A =
+        val safePosition = math.max(0, math.min(position, source.length))
+        val line         = lineNumberAt(safePosition)
+        val column       = sourceColumnAt(safePosition)
+        val start        = math.max(0, safePosition - 30)
+        val stop         = math.min(source.length, safePosition + 30)
+        val snippet      = source.substring(start, stop)
+        val caret        = " " * (safePosition - start) + "^"
+        throw ParseException(Yaml(), snippet + "\n" + caret, s"$message at line $line, column $column", Nil, safePosition)
+    end sourceError
+
+    private def sourceColumnAt(position: Int): Int =
+        var i = math.max(0, math.min(position, source.length)) - 1
+        while i >= 0 && source.charAt(i) != '\n' do i -= 1
+        position - i - 1
+    end sourceColumnAt
+
     private def error[A](message: String): A =
         val position =
             if prepared && pos < end then events(pos).mark.index
@@ -1139,6 +1422,9 @@ object YamlReader:
     end SourceFrame
     final private case class SourceMappingFrame(indent: Int, var count: Int = 0)  extends SourceFrame
     final private case class SourceSequenceFrame(indent: Int, var count: Int = 0) extends SourceFrame
+    final private case class SourceScalarLine(text: String, moreIndented: Boolean):
+        def isBlank: Boolean = text.isEmpty
+    end SourceScalarLine
 
     private enum ScalarValue derives CanEqual:
         case Null

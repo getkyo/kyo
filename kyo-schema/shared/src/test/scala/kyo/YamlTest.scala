@@ -377,6 +377,12 @@ class YamlTest extends Test:
             assert(decoded == Result.succeed(YamlOpaqueUserId("user-123")))
         }
 
+        "decodes root scalars without spending nesting depth on synthetic nodes" in {
+            val decoded = Yaml.decode[Int]("42\n", Yaml.ReaderConfig(maxDepth = 0))
+
+            assert(decoded == Result.succeed(42))
+        }
+
         "decodes AnyVal value classes as single-field products" in {
             val decoded = Yaml.decode[YamlAnyValUserId]("value: user-123\n")
 
@@ -434,6 +440,22 @@ class YamlTest extends Test:
 
             assert(reader.matchField("value".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
             assert(reader.int() == 42)
+        }
+
+        "reader folds a requested plain scalar prefix without parsing later malformed content" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """value: hello
+                      |  world
+                      |later: [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.objectStart())
+            reader.fieldParse()
+
+            assert(reader.matchField("value".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            assert(reader.string() == "hello world")
         }
 
         "captureValue buffers only the requested subtree" in {
