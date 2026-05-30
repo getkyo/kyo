@@ -34,8 +34,8 @@ import kyo.internal.tasty.query.Classpath as InternalClasspath
   *
   * The budget applies only to Rec unfolding, not to structural recursion depth over other ADT cases.
   *
-  * Pure (v3 Phase 3): all parent-chain lookups read from pre-populated `_parents` SingleAssign slots via AllowUnsafe. No Sync or Abort
-  * effects are required.
+  * Pure: all parent-chain lookups read from pre-populated `_parents` SingleAssign slots (write-once, referentially transparent post-init).
+  * No Sync, Abort, or AllowUnsafe effects are required.
   */
 object Subtyping:
 
@@ -52,11 +52,11 @@ object Subtyping:
       * @param sup
       *   candidate supertype
       * @param cp
-      *   classpath for parent-chain resolution (accessed via pure AllowUnsafe reads on Symbol._parents slots)
+      *   classpath for parent-chain resolution (accessed via pure reads on immutable post-open Symbol._parents slots)
       * @param budget
       *   remaining Rec-unfolding steps; 0 means return Unknown
       */
-    def isSubtype(sub: Tasty.Type, sup: Tasty.Type, cp: InternalClasspath, budget: Int)(using AllowUnsafe): SubtypeVerdict =
+    def isSubtype(sub: Tasty.Type, sup: Tasty.Type, cp: InternalClasspath, budget: Int): SubtypeVerdict =
         if budget <= 0 then Unknown
         else
             // Any is supertype of everything
@@ -176,7 +176,7 @@ object Subtyping:
         supSym: Tasty.Symbol,
         cp: InternalClasspath,
         budget: Int
-    )(using AllowUnsafe): SubtypeVerdict =
+    ): SubtypeVerdict =
         if subSym._parents.isSet then
             val parents = subSym._parents.get()
             checkParents(parents, supSym, cp, budget)
@@ -192,7 +192,7 @@ object Subtyping:
         supSym: Tasty.Symbol,
         cp: InternalClasspath,
         budget: Int
-    )(using AllowUnsafe): SubtypeVerdict =
+    ): SubtypeVerdict =
         if parents.isEmpty then NotSub
         else
             parents.head match
@@ -232,7 +232,7 @@ object Subtyping:
         baseSymOpt: Maybe[Tasty.Symbol],
         cp: InternalClasspath,
         budget: Int
-    )(using AllowUnsafe): SubtypeVerdict =
+    ): SubtypeVerdict =
         val typeParamsOpt: Maybe[Chunk[Tasty.Symbol]] = baseSymOpt.flatMap: baseSym =>
             if baseSym._typeParams.isSet then Maybe(baseSym._typeParams.get())
             else Maybe.Absent
@@ -246,7 +246,7 @@ object Subtyping:
         idx: Int,
         cp: InternalClasspath,
         budget: Int
-    )(using AllowUnsafe): SubtypeVerdict =
+    ): SubtypeVerdict =
         if idx >= subArgs.length then Sub
         else
             val subArg = subArgs(idx)

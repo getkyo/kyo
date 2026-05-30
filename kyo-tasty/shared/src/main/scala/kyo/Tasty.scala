@@ -56,9 +56,12 @@ object Tasty:
           *   n.asString == "scala.Predef"
           * }}}
           */
-        def apply(s: String)(using AllowUnsafe): Name =
+        def apply(s: String): Name =
+            // flow-allow: §839 case 3 -- monotone interner; same input produces the same Name forever.
+            import AllowUnsafe.embrace.danger
             val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
             globalInterner.intern(bytes, 0, bytes.length)
+        end apply
 
         /** Wrap an already-interned `Entry` as a `Name`. For use by kyo-internal unpicklers only. */
         private[kyo] def wrap(entry: Interner.Entry): Name = entry
@@ -67,10 +70,8 @@ object Tasty:
         given CanEqual[Name, Name] = CanEqual.canEqualAny
 
         extension (n: Name)
-            /** Decode the interned bytes to a String (lazily cached). Requires (using AllowUnsafe) because the underlying OnceCell.get() is
-              * unsafe-tier.
-              */
-            def asString(using AllowUnsafe): String = n.string.get()
+            /** Decode the interned bytes to a String (lazily cached). Pure post-init: OnceCell.get() is referentially transparent. */
+            def asString: String = n.string.get()
         end extension
     end Name
 
@@ -649,12 +650,12 @@ object Tasty:
     ):
 
         // Pure accessors (no effect, always present even after classpath close).
-        def fullName(using AllowUnsafe): Name = _fullNameOnce.get()
-        def binaryName: String                = Symbol.computeBinaryName(this)
-        def isInline: Boolean                 = flags.contains(Flag.Inline)
-        def isContextual: Boolean             = flags.contains(Flag.Given)
-        def isOpaque: Boolean                 = flags.contains(Flag.Opaque)
-        def isPackageObject(using AllowUnsafe): Boolean =
+        def fullName: Name        = _fullNameOnce.get()
+        def binaryName: String    = Symbol.computeBinaryName(this)
+        def isInline: Boolean     = flags.contains(Flag.Inline)
+        def isContextual: Boolean = flags.contains(Flag.Given)
+        def isOpaque: Boolean     = flags.contains(Flag.Opaque)
+        def isPackageObject: Boolean =
             flags.contains(Flag.Module) && name.string.get() == "package"
         def isModule: Boolean = flags.contains(Flag.Module)
         def isJava: Boolean   = flags.contains(Flag.JavaDefined)
@@ -665,7 +666,7 @@ object Tasty:
           * symbols without a comment, for Java-sourced classfile symbols (classfiles have no Comments section), and for symbols whose home
           * classpath has not yet been loaded. This is a pure accessor: it reads from a pre-populated write-once slot with no classpath I/O.
           */
-        def scaladoc(using AllowUnsafe): Maybe[String] =
+        def scaladoc: Maybe[String] =
             if _scaladoc.isSet then _scaladoc.get()
             else Maybe.Absent
 
@@ -676,7 +677,7 @@ object Tasty:
           * section, and for symbols whose home classpath has not yet been loaded. This is a pure accessor: it reads from a pre-populated
           * write-once slot with no classpath I/O.
           */
-        def position(using AllowUnsafe): Maybe[Position] =
+        def position: Maybe[Position] =
             if _position.isSet then _position.get()
             else Maybe.Absent
 
@@ -695,7 +696,7 @@ object Tasty:
           * @note
           *   Populated eagerly during cold-load mergeResults; readable as a pure accessor thereafter.
           */
-        def declaredType(using AllowUnsafe): Type =
+        def declaredType: Type =
             if kind == SymbolKind.Package then
                 throw new IllegalArgumentException("Symbol.declaredType is not available for Package symbols")
             else
@@ -705,19 +706,19 @@ object Tasty:
           *
           * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
           */
-        def parents(using AllowUnsafe): Chunk[Type] = _parents.get()
+        def parents: Chunk[Type] = _parents.get()
 
         /** The type parameters of this symbol.
           *
           * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
           */
-        def typeParams(using AllowUnsafe): Chunk[Symbol] = _typeParams.get()
+        def typeParams: Chunk[Symbol] = _typeParams.get()
 
         /** The member declarations of this symbol (methods, fields, nested types).
           *
           * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
           */
-        def declarations(using AllowUnsafe): Chunk[Symbol] = _declarations.get()
+        def declarations: Chunk[Symbol] = _declarations.get()
 
         /** The companion object symbol of this class or trait, if one exists.
           *
@@ -725,14 +726,15 @@ object Tasty:
           * looks up the companion class via the owner FQN and the simple name with any trailing `$` stripped. Java symbols always return
           * `Absent`. All other kinds return `Absent`.
           *
-          * Pure accessor: reads from the fqnIndex HashMap in the immutable Ready state via AllowUnsafe. Valid after `open` returns.
+          * Pure accessor: reads from the fqnIndex HashMap in the immutable Ready state. Valid after `open` returns.
           */
-        def companion(using AllowUnsafe): Maybe[Symbol] =
+        def companion: Maybe[Symbol] =
             if isJava then Maybe.Absent
             else if !home.isAssigned then Maybe.Absent
             else
                 import Name.asString
-                // Unsafe: reading immutable Ready-state fqnIndex via AllowUnsafe; populated during open, before any user access.
+                // flow-allow: §839 case 3 -- post-open immutable Ready-state fqnIndex lookup; populated during open, before any user access.
+                given AllowUnsafe = AllowUnsafe.embrace.danger
                 // Helper: true when the owner is null or is the synthetic root-package sentinel
                 // (identified by owner.owner eq owner, i.e. the root owns itself).
                 // For root-owned or unowned symbols the owner FQN is empty, so we use the
@@ -769,9 +771,9 @@ object Tasty:
         /** Permitted subclasses of this sealed Java class, populated from the PermittedSubclasses classfile attribute.
           *
           * Returns Maybe.Present containing the subclass symbols when the attribute was present, or Maybe.Absent when not (non-sealed class
-          * or attribute not yet decoded). Requires AllowUnsafe because it reads a write-once SingleAssign slot.
+          * or attribute not yet decoded). Pure accessor: reads a write-once SingleAssign slot that is immutable after classpath open.
           */
-        def permittedSubclasses(using AllowUnsafe): Maybe[Chunk[Symbol]] =
+        def permittedSubclasses: Maybe[Chunk[Symbol]] =
             if _permittedSubclasses.isSet then _permittedSubclasses.get() else Maybe.Absent
 
         /** The body tree of this symbol, decoded lazily from the TASTy body byte slice.
@@ -791,22 +793,21 @@ object Tasty:
                     Abort.fail(TastyError.NotImplemented("body not available for Java symbols"))
                 case o: Symbol.TastyOrigin =>
                     Sync.Unsafe.defer:
-                        // Unsafe: ClasspathRef.get() and ClasspathRef.isClosed are unsafe-tier helpers; covered
-                        // by Sync.Unsafe.defer which provides AllowUnsafe implicitly (Sync.scala:138-141).
+                        // home.get() is pure (write-once ClasspathRef); home.get().isClosed is unsafe-tier
+                        // (reads stateRef.unsafe.get()) but is covered by the enclosing Sync.Unsafe.defer.
                         // home.isAssigned is invariant=true after Classpath.open returns (assignHomes guarantees it).
                         home.get().checkOpen.andThen:
                             if o.bodyStart == 0 || o.bodyEnd == 0 || kind == SymbolKind.Package then
                                 Abort.fail(TastyError.NotImplemented("body not available for this symbol kind"))
                             else
-                                // Unsafe: ClasspathRef.get() and Classpath.isClosed read AtomicRef state;
+                                // Unsafe: Classpath.isClosed reads AtomicRef state via stateRef.unsafe.get();
                                 // covered by the enclosing Sync.Unsafe.defer.
                                 // State transitions are monotonic (Closed is terminal) so a stale read is conservative.
                                 if home.get().isClosed then
                                     Abort.fail(TastyError.ClasspathClosed)
                                 else
-                                    // Unsafe: OnceCell.get() is an unsafe-tier helper; covered by the enclosing
-                                    // Sync.Unsafe.defer. The try/catch converts decode exceptions to Either before
-                                    // any kyo effect constructor runs.
+                                    // _bodyOnce.get() is pure (OnceCell post-init); the try/catch converts
+                                    // decode exceptions to Either before any kyo effect constructor runs.
                                     val decoded: Either[TastyError, Tree] =
                                         try Right(_bodyOnce.get())
                                         catch
@@ -844,8 +845,6 @@ object Tasty:
           * computed separately via computeBinaryName.
           */
         private[Tasty] def computeFullName(s: Symbol): Name =
-            // flow-allow: §839 case 3; OnceCell init thunk for fullName; reads immutable interned Name strings.
-            import AllowUnsafe.embrace.danger
             val parts = new scala.collection.mutable.ArrayBuffer[String]()
             var cur   = s
             while (cur ne null) && (cur.owner ne cur) && cur.owner != null do
@@ -859,8 +858,6 @@ object Tasty:
         end computeFullName
 
         private[Tasty] def computeBinaryName(s: Symbol): String =
-            // flow-allow: §839 case 3; pure binaryName computation from immutable interned Names.
-            import AllowUnsafe.embrace.danger
             // Walk owner chain producing JVM binary form:
             //   - packages (kind == Package) contribute segments separated by '/'
             //   - class/trait/object segments are separated by '$' from a preceding class segment
@@ -1202,18 +1199,25 @@ object Tasty:
           *
           * Example:
           * {{{
-          *   import kyo.AllowUnsafe.embrace.danger
           *   val sym = cp.findClass("scala.Predef")
           *   sym.isPresent == true
           * }}}
           */
-        def findClass(fqn: String)(using AllowUnsafe): Maybe[Symbol] = cp.pureClass(fqn)
+        def findClass(fqn: String): Maybe[Symbol] =
+            // flow-allow: §839 case 3 -- post-open immutable fqnIndex lookup; populated during open, before any user access.
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            cp.pureClass(fqn)
+        end findClass
 
         /** Look up a package symbol by fully-qualified dotted name.
           *
           * Pure accessor: reads from the immutable packageIndex HashMap in Ready state. Valid after `open` returns.
           */
-        def findPackage(fqn: String)(using AllowUnsafe): Maybe[Symbol] = cp.purePackage(fqn)
+        def findPackage(fqn: String): Maybe[Symbol] =
+            // flow-allow: §839 case 3 -- post-open immutable packageIndex lookup; populated during open, before any user access.
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            cp.purePackage(fqn)
+        end findPackage
 
         /** All package symbols in this classpath.
           *
@@ -1221,12 +1225,15 @@ object Tasty:
           *
           * Example:
           * {{{
-          *   import kyo.AllowUnsafe.embrace.danger
           *   val pkgs = cp.packages
           *   pkgs.nonEmpty == true
           * }}}
           */
-        def packages(using AllowUnsafe): Chunk[Symbol] = cp.purePackages
+        def packages: Chunk[Symbol] =
+            // flow-allow: §839 case 3 -- post-open immutable packages Chunk lookup; populated during open, before any user access.
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            cp.purePackages
+        end packages
 
         /** All top-level class symbols (not packages) in this classpath.
           *
@@ -1234,18 +1241,25 @@ object Tasty:
           *
           * Example:
           * {{{
-          *   import kyo.AllowUnsafe.embrace.danger
           *   val classes = cp.topLevelClasses
           *   classes.nonEmpty == true
           * }}}
           */
-        def topLevelClasses(using AllowUnsafe): Chunk[Symbol] = cp.pureTopLevelClasses
+        def topLevelClasses: Chunk[Symbol] =
+            // flow-allow: §839 case 3 -- post-open immutable topLevelClasses Chunk lookup; populated during open, before any user access.
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            cp.pureTopLevelClasses
+        end topLevelClasses
 
         /** Errors accumulated during loading (soft-fail mode).
           *
           * Pure accessor: reads from immutable error state populated during classpath open. Empty for clean classpaths.
           */
-        def errors(using AllowUnsafe): Chunk[TastyError] = cp.accumulatedErrors
+        def errors: Chunk[TastyError] =
+            // flow-allow: §839 case 3 -- post-open accumulated errors; monotone append-only during open, immutable after.
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            cp.accumulatedErrors
+        end errors
 
         /** Look up a JPMS module descriptor by module name (e.g., "java.base").
           *
@@ -1254,7 +1268,11 @@ object Tasty:
           *
           * Pure accessor: reads from the immutable moduleIndex HashMap in Ready state. Valid after `open` returns.
           */
-        def findModule(name: String)(using AllowUnsafe): Maybe[ModuleDescriptor] = cp.pureModule(name)
+        def findModule(name: String): Maybe[ModuleDescriptor] =
+            // flow-allow: §839 case 3 -- post-open immutable moduleIndex lookup; populated during open, before any user access.
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            cp.pureModule(name)
+        end findModule
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
           *
@@ -1262,9 +1280,12 @@ object Tasty:
           *
           * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns.
           */
-        def findClassByBinary(binaryName: String)(using AllowUnsafe): Maybe[Symbol] =
-            val fqn = binaryName.replace('/', '.').replace('$', '.')
+        def findClassByBinary(binaryName: String): Maybe[Symbol] =
+            // flow-allow: §839 case 3 -- post-open immutable fqnIndex lookup via binary name conversion; populated during open.
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            val fqn           = binaryName.replace('/', '.').replace('$', '.')
             cp.pureClass(fqn)
+        end findClassByBinary
 
     end extension
 
@@ -1299,11 +1320,9 @@ object Tasty:
           * @param other
           *   the candidate supertype
           * @param cp
-          *   the classpath used for transitive parent-chain resolution (accessed via pure AllowUnsafe reads)
+          *   the classpath used for transitive parent-chain resolution (reads immutable post-open parent-chain slots)
           */
         def isSubtypeOf(other: Type)(using cp: Classpath): SubtypeVerdict =
-            // flow-allow: §839 case 3; pure accessor on immutable post-open parent-chain slots; no suspension required.
-            given AllowUnsafe = AllowUnsafe.embrace.danger
             kyo.internal.tasty.type_.Subtyping.isSubtype(t, other, cp, budget = 64)
     end extension
 

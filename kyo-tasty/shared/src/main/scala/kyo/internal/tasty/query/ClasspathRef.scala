@@ -19,14 +19,19 @@ final class ClasspathRef private (private val slot: SingleAssign[Tasty.Classpath
         slot.set(cp)
     end assign
 
-    /** Retrieve the assigned Classpath. Throws if not yet assigned. Requires proof that the caller holds AllowUnsafe. */
-    def get()(using AllowUnsafe): Tasty.Classpath =
+    /** Retrieve the assigned Classpath. Throws if not yet assigned.
+      *
+      * Pure post-init: the underlying SingleAssign slot is write-once; reading it after assignment is referentially transparent.
+      */
+    def get(): Tasty.Classpath =
         slot.get()
     end get
 
-    /** Returns true if the Classpath has been assigned, false if the slot is still unset. Requires proof that the caller holds AllowUnsafe.
+    /** Returns true if the Classpath has been assigned, false if the slot is still unset.
+      *
+      * Pure post-init: the write-once slot flip is monotone; a true result is stable.
       */
-    def isAssigned(using AllowUnsafe): Boolean =
+    def isAssigned: Boolean =
         slot.isSet
     end isAssigned
 

@@ -25,10 +25,12 @@ final class SingleAssign[A] private (private val ref: AtomicRef.Unsafe[AnyRef]):
 
     /** Retrieve the value. Throws `IllegalStateException` if not yet assigned.
       *
-      * Requires AllowUnsafe: this method reads an AtomicRef.Unsafe as a side effect.
+      * Pure post-init: the slot is written exactly once during classpath open; subsequent reads are referentially transparent.
       */
-    def get()(using AllowUnsafe): A =
-        val v = ref.get()
+    def get(): A =
+        // flow-allow: §839 case 3 -- write-once slot; post-set read is referentially transparent.
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        val v             = ref.get()
         if v eq SingleAssign.Unset then throw new IllegalStateException("SingleAssign not yet set")
         else
             // AsInstanceOf justified: AnyRef sentinel pattern; ref holds either SingleAssign.Unset or an A stored as AnyRef;
@@ -39,10 +41,13 @@ final class SingleAssign[A] private (private val ref: AtomicRef.Unsafe[AnyRef]):
 
     /** Returns true if the value has been assigned, false if still unset.
       *
-      * Requires AllowUnsafe: this method reads an AtomicRef.Unsafe as a side effect.
+      * Pure post-init: the Unset->set flip is monotone (never reverts), so a true result is stable.
       */
-    def isSet(using AllowUnsafe): Boolean =
+    def isSet: Boolean =
+        // flow-allow: §839 case 3 -- write-once slot; the isSet flip is monotone (Unset -> set, never back).
+        given AllowUnsafe = AllowUnsafe.embrace.danger
         ref.get() ne SingleAssign.Unset
+    end isSet
 
 end SingleAssign
 

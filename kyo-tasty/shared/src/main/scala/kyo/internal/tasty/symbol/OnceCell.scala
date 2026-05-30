@@ -42,10 +42,12 @@ final class OnceCell[A] private (init: () => A, ref: AtomicRef.Unsafe[AnyRef]):
 
     /** Return the cached value, computing it on first call.
       *
-      * Requires AllowUnsafe: this method reads and potentially writes an AtomicRef as a side effect.
+      * Pure post-init: race-and-discard semantics; post-init reads are referentially transparent.
       */
-    def get()(using AllowUnsafe): A =
-        val cached = ref.get()
+    def get(): A =
+        // flow-allow: §839 case 3 -- memoized lazy; race-and-discard but post-init reads are referentially transparent.
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        val cached        = ref.get()
         if cached ne OnceCell.Unset then
             // Unsafe: AnyRef-sentinel pattern; ne-Unset guarantees the stored value is A.
             cached.asInstanceOf[A]

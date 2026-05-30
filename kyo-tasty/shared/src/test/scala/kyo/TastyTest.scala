@@ -142,42 +142,31 @@ class TastyTest extends Test:
         Future.successful(succeed)
     }
 
-    // ── Phase 02a source-text invariant tests (INV-001) ─────────────────────
+    // ── Phase 31 source-text invariant tests (INV-001 updated) ─────────────────────
 
-    "every Symbol accessor signature carries (using AllowUnsafe)" in {
-        // INV-001: Name.asString + 9 Symbol accessors all use (using AllowUnsafe) not import danger in body.
+    "no Symbol accessor signature carries (using AllowUnsafe)" in {
+        // INV-001 updated (Phase 31): all 10 accessors are now pure -- no (using AllowUnsafe) on their signatures.
         // Given: source Tasty.scala read as String.
         // When: regex search counts occurrences of def (accessor)(using AllowUnsafe).
-        // Then: count equals 10.
+        // Then: count equals 0.
         val src = TestResourceLoader.readText("kyo/Tasty.scala")
         val pattern =
-            """def (fullName|isPackageObject|scaladoc|position|declaredType|parents|typeParams|declarations|companion|asString)\(using AllowUnsafe\)""".r
+            """def (fullName|isPackageObject|scaladoc|position|declaredType|parents|typeParams|declarations|companion|permittedSubclasses|asString)\(using AllowUnsafe\)""".r
         val count = pattern.findAllIn(src).length
-        assert(count == 10, s"Expected 10 accessor signatures with (using AllowUnsafe), found $count")
+        assert(count == 0, s"Expected 0 accessor signatures with (using AllowUnsafe) after Phase 31, found $count")
         Future.successful(succeed)
     }
 
-    "no import AllowUnsafe.embrace.danger in any migrated Symbol accessor body" in {
-        // INV-001: after Phase 02a, no import danger inside the 10 migrated accessor bodies.
+    "no Classpath extension method carries (using AllowUnsafe)" in {
+        // INV-001 updated (Phase 31): all Classpath extension methods are pure after Phase 31.
         // Given: source Tasty.scala read as String.
-        // When: substring scan for import AllowUnsafe.embrace.danger on lines within the 10 accessor bodies.
-        // Then: count is 0.
-        // Note: import danger may remain in Symbol.body and computeFullName/computeBinaryName/show (§839 case 3 non-accessor sites).
-        val lines = TestResourceLoader.readText("kyo/Tasty.scala").split("\n")
-        // The 10 accessor defs (after Phase 02a) are single-line or short-body forms.
-        // The key invariant: no line in the range covering accessor bodies has BOTH a (using AllowUnsafe) accessor def
-        // AND an import danger on the SAME body line. We verify that none of the 10 accessor signatures are
-        // immediately followed by `import AllowUnsafe.embrace.danger` within 3 lines.
-        val accessorPattern =
-            """def (fullName|isPackageObject|scaladoc|position|declaredType|parents|typeParams|declarations|companion)\(using AllowUnsafe\)""".r
-        var violations = List.empty[String]
-        for (line, idx) <- lines.zipWithIndex do
-            if accessorPattern.findFirstIn(line).isDefined then
-                val window = lines.slice(idx + 1, idx + 4).mkString(" ")
-                if window.contains("import AllowUnsafe.embrace.danger") then
-                    violations = violations :+ s"line ${idx + 1}: accessor followed by import danger within 3 lines"
-        end for
-        assert(violations.isEmpty, s"INV-001 violated: ${violations.mkString("; ")}")
+        // When: regex search for (using AllowUnsafe) on findClass/findPackage/packages/topLevelClasses/errors/findModule/findClassByBinary.
+        // Then: count equals 0.
+        val src = TestResourceLoader.readText("kyo/Tasty.scala")
+        val pattern =
+            """def (findClass|findPackage|packages|topLevelClasses|errors|findModule|findClassByBinary)[^)]*\(using AllowUnsafe\)""".r
+        val count = pattern.findAllIn(src).length
+        assert(count == 0, s"Expected 0 Classpath extension method signatures with (using AllowUnsafe) after Phase 31, found $count")
         Future.successful(succeed)
     }
 
@@ -310,7 +299,7 @@ class TastyTest extends Test:
         // When: scan for the findClass scaladoc and its {{{ block.
         // Then: block is present and contains the expected expression.
         val src          = TestResourceLoader.readText("kyo/Tasty.scala")
-        val findClassIdx = src.indexOf("def findClass(fqn: String)(using AllowUnsafe)")
+        val findClassIdx = src.indexOf("def findClass(fqn: String): Maybe[Symbol]")
         assert(findClassIdx >= 0, "Could not find 'def findClass' in Tasty.scala")
         val docRegionStart = src.lastIndexOf("/**", findClassIdx)
         assert(docRegionStart >= 0, "findClass: no preceding scaladoc block found")
@@ -327,7 +316,7 @@ class TastyTest extends Test:
         // When: scan for the topLevelClasses scaladoc and its {{{ block.
         // Then: block is present and contains the expected expression.
         val src    = TestResourceLoader.readText("kyo/Tasty.scala")
-        val tlcIdx = src.indexOf("def topLevelClasses(using AllowUnsafe)")
+        val tlcIdx = src.indexOf("def topLevelClasses: Chunk[Symbol]")
         assert(tlcIdx >= 0, "Could not find 'def topLevelClasses' in Tasty.scala")
         val docRegionStart = src.lastIndexOf("/**", tlcIdx)
         assert(docRegionStart >= 0, "topLevelClasses: no preceding scaladoc block found")
@@ -344,7 +333,7 @@ class TastyTest extends Test:
         // When: scan for the packages scaladoc and its {{{ block.
         // Then: block is present and contains the expected expression.
         val src    = TestResourceLoader.readText("kyo/Tasty.scala")
-        val pkgIdx = src.indexOf("def packages(using AllowUnsafe)")
+        val pkgIdx = src.indexOf("def packages: Chunk[Symbol]")
         assert(pkgIdx >= 0, "Could not find 'def packages' in Tasty.scala")
         val docRegionStart = src.lastIndexOf("/**", pkgIdx)
         assert(docRegionStart >= 0, "packages: no preceding scaladoc block found")

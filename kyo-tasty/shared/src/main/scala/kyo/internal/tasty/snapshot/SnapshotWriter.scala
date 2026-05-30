@@ -361,7 +361,7 @@ object SnapshotWriter:
     end serializeSymbolRelLists
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
-    private def nameToStr(n: Tasty.Name)(using AllowUnsafe): String =
+    private def nameToStr(n: Tasty.Name): String =
         import Tasty.Name.asString
         n.asString
     end nameToStr
