@@ -269,9 +269,17 @@ object TreeUnpickler:
                 skipOneTree(view)
                 Tasty.Tree.Unknown(tag, 0)
 
-            // Type nodes in category 3; skip them.
-            case TastyFormat.BYNAMEtype | TastyFormat.BYNAMEtpt | TastyFormat.RECtype | TastyFormat.SINGLETONtpt |
-                TastyFormat.BOUNDED | TastyFormat.EXPLICITtpt =>
+            // RECtype and BYNAMEtype: category-3 (tag+AST); decode into typed Tree cases.
+            case TastyFormat.RECtype =>
+                val parent = readTree(view, ctx)
+                Tasty.Tree.RecType(parent)
+
+            case TastyFormat.BYNAMEtype =>
+                val arg = readTree(view, ctx)
+                Tasty.Tree.ByNameType(arg)
+
+            // Other category-3 type-position nodes; skip sub-tree.
+            case TastyFormat.BYNAMEtpt | TastyFormat.SINGLETONtpt | TastyFormat.BOUNDED | TastyFormat.EXPLICITtpt =>
                 skipOneTree(view)
                 Tasty.Tree.Unknown(tag, 0)
 
@@ -565,7 +573,14 @@ object TreeUnpickler:
                 view.goto(end)
                 Tasty.Tree.Unapply(fun, implicits, patterns)
 
-            case TastyFormat.ANNOTATEDtype | TastyFormat.ANNOTATEDtpt =>
+            case TastyFormat.ANNOTATEDtype =>
+                val end    = view.readEnd()
+                val parent = readTree(view, ctx)
+                val annot  = readTree(view, ctx)
+                view.goto(end)
+                Tasty.Tree.AnnotatedType(parent, annot)
+
+            case TastyFormat.ANNOTATEDtpt =>
                 val end  = view.readEnd()
                 val expr = readTree(view, ctx)
                 val ann  = readTree(view, ctx)
@@ -595,6 +610,71 @@ object TreeUnpickler:
                     else Maybe.Absent
                 view.goto(end)
                 Tasty.Tree.Super(qual, mix)
+
+            // ── Category-5 type-form tags (SUPERtype, REFINEDtype, APPLIEDtype, etc.) ─
+            // These tags are length-prefixed (tag + Length + payload); boundary is readEnd().
+            // Mirror of TypeUnpickler boundary derivation: readEnd() then decode nodes until end.
+
+            case TastyFormat.SUPERtype =>
+                val end      = view.readEnd()
+                val thistpe  = readTree(view, ctx)
+                val supertpe = readTree(view, ctx)
+                view.goto(end)
+                Tasty.Tree.SuperType(thistpe, supertpe)
+
+            case TastyFormat.REFINEDtype =>
+                val end     = view.readEnd()
+                val nameRef = view.readNat()
+                val parent  = readTree(view, ctx)
+                val info    = readTree(view, ctx)
+                view.goto(end)
+                Tasty.Tree.RefinedType(parent, nameFromRef(nameRef, ctx), info)
+
+            case TastyFormat.APPLIEDtype =>
+                // Length-prefixed: readEnd() gives the payload boundary.
+                // tycon is one tree node; remaining nodes until end are type args.
+                val end   = view.readEnd()
+                val tycon = readTree(view, ctx)
+                val args  = readTreesUntil(view, end, ctx)
+                view.goto(end)
+                Tasty.Tree.AppliedType(tycon, args)
+
+            case TastyFormat.TYPEBOUNDS =>
+                val end = view.readEnd()
+                val lo  = readTree(view, ctx)
+                val hi  = if view.position < end then readTree(view, ctx) else Tasty.Tree.Unknown(0, 0)
+                view.goto(end)
+                Tasty.Tree.TypeBounds(lo, hi)
+
+            case TastyFormat.ANDtype =>
+                val end   = view.readEnd()
+                val left  = readTree(view, ctx)
+                val right = readTree(view, ctx)
+                view.goto(end)
+                Tasty.Tree.AndType(left, right)
+
+            case TastyFormat.ORtype =>
+                val end   = view.readEnd()
+                val left  = readTree(view, ctx)
+                val right = readTree(view, ctx)
+                view.goto(end)
+                Tasty.Tree.OrType(left, right)
+
+            case TastyFormat.MATCHtype =>
+                // Length-prefixed: readEnd() gives the payload boundary.
+                // bound + scrutinee are the first two nodes; remaining nodes until end are cases.
+                val end       = view.readEnd()
+                val bound     = readTree(view, ctx)
+                val scrutinee = readTree(view, ctx)
+                val cases     = readTreesUntil(view, end, ctx)
+                view.goto(end)
+                Tasty.Tree.MatchType(bound, scrutinee, cases)
+
+            case TastyFormat.FLEXIBLEtype =>
+                val end = view.readEnd()
+                val arg = readTree(view, ctx)
+                view.goto(end)
+                Tasty.Tree.FlexibleType(arg)
 
             // All remaining category-5 nodes: skip and return Unknown.
             case other if other >= TastyFormat.firstLengthTreeTag =>

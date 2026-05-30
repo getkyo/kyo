@@ -537,6 +537,39 @@ object Tasty:
         /** TASTy category-1 modifier tag (single-byte, no payload; tag in range [1, 59]). */
         final case class Modifier(flag: Flag) extends Tree
 
+        /** Recursive type wrapper (RECtype tag). */
+        final case class RecType(parent: Tree) extends Tree
+
+        /** Super type pair (SUPERtype tag). */
+        final case class SuperType(thistpe: Tree, supertpe: Tree) extends Tree
+
+        /** Structural refinement type (REFINEDtype tag). */
+        final case class RefinedType(parent: Tree, name: Name, info: Tree) extends Tree
+
+        /** Type constructor applied to arguments (APPLIEDtype tag). */
+        final case class AppliedType(tycon: Tree, args: Chunk[Tree]) extends Tree
+
+        /** Type bounds (TYPEBOUNDS tag). */
+        final case class TypeBounds(lo: Tree, hi: Tree) extends Tree
+
+        /** Annotated type (ANNOTATEDtype tag). */
+        final case class AnnotatedType(parent: Tree, annot: Tree) extends Tree
+
+        /** Intersection type (ANDtype tag). */
+        final case class AndType(left: Tree, right: Tree) extends Tree
+
+        /** Union type (ORtype tag). */
+        final case class OrType(left: Tree, right: Tree) extends Tree
+
+        /** By-name type (BYNAMEtype tag). */
+        final case class ByNameType(arg: Tree) extends Tree
+
+        /** Match type with scrutinee and cases (MATCHtype tag). */
+        final case class MatchType(bound: Tree, scrutinee: Tree, cases: Chunk[Tree]) extends Tree
+
+        /** Flexible (Java-nullable) type (FLEXIBLEtype tag). */
+        final case class FlexibleType(arg: Tree) extends Tree
+
         /** Unknown tag -- encountered a tag not covered by this ADT version. */
         final case class Unknown(tag: Int, length: Int) extends Tree
     end Tree

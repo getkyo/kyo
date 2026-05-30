@@ -671,4 +671,132 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
+    // ── Phase 18c Tests (M1, category-5 type-form tags) ──────────────────────
+    //
+    // Byte-sequence construction note:
+    //   TASTy nat encoding: big-endian base-128 with continuation bit 0x80 CLEAR and stop bit 0x80 SET on the last byte.
+    //   So single-byte nat `n` (0 < n < 128) encodes as `n | 0x80`.
+    //   readEnd() reads a nat as the payload length, then returns cursor + length.
+    //   APPLIEDtype = 161 (0xA1), TERMREFdirect = 62 (0x3E), MATCHtype = 190 (0xBE).
+    //
+    // Boundary strategy used for APPLIEDtype and MATCHtype: readEnd() from the length-prefixed payload
+    // (category-5 format), mirroring TypeUnpickler.APPLIEDtype and TypeUnpickler.MATCHtype.
+    //
+    // Fixture-byte construction: handcrafted minimal byte sequences using TERMREFdirect refs into a
+    // synthetic addrMap; no TASTy header or section overhead needed since decodeAnnotationTerm starts
+    // decoding from position 0 of the pickle array.
+
+    // Test 18c-1 (M1 category 3): APPLIEDtype decodes nested arguments.
+    // Given: bytes [APPLIEDtype=161, length=4, TERMREFdirect=62, nat(1), TERMREFdirect=62, nat(2)]
+    //   with addrMap(1)=listSym, addrMap(2)=intSym.
+    // When: decode.
+    // Then: returns Tree.AppliedType(Tree.Ident(listSym.name, _), Chunk(Tree.Ident(intSym.name, _))).
+    "Phase18c-1: APPLIEDtype decodes tycon + one arg into Tree.AppliedType" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val listSym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("List"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val intSym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Int"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val names   = Array(Tasty.Name("scala"))
+        val addrMap = IntMap(1 -> listSym, 2 -> intSym)
+        val home    = new ClasspathRef
+        // APPLIEDtype(161=0xA1) Length(4=0x84) TERMREFdirect(62=0x3E) nat(1)=0x81 TERMREFdirect(62=0x3E) nat(2)=0x82
+        val pickle = Chunk[Byte](
+            TastyFormat.APPLIEDtype.toByte,
+            (4 | 0x80).toByte,
+            TastyFormat.TERMREFdirect.toByte,
+            (1 | 0x80).toByte,
+            TastyFormat.TERMREFdirect.toByte,
+            (2 | 0x80).toByte
+        )
+        val sectionBytes = pickle.toArray
+        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(listSym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.AppliedType(tycon, args)) =>
+                val tyconName = tycon match
+                    case Tasty.Tree.Ident(n, _) => n.asString
+                    case _                      => ""
+                assert(tyconName == "List", s"Expected tycon name 'List' but got '$tyconName'")
+                assert(args.length == 1, s"Expected 1 arg but got ${args.length}")
+                val argName = args(0) match
+                    case Tasty.Tree.Ident(n, _) => n.asString
+                    case _                      => ""
+                assert(argName == "Int", s"Expected arg name 'Int' but got '$argName'")
+            case Result.Success(other) =>
+                fail(s"Expected Tree.AppliedType but got $other")
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Test 18c-2 (M1 category 3): MATCHtype with 2 case nodes decodes into Tree.MatchType.
+    // Given: bytes [MATCHtype=190, length=8, TERMREFdirect nat(1), TERMREFdirect nat(2),
+    //               TERMREFdirect nat(3), TERMREFdirect nat(4)]
+    //   with addrMap(1..4) each mapped to synthetic symbols.
+    // When: decode.
+    // Then: returns Tree.MatchType(bound, scrutinee, cases) with cases.length == 2.
+    "Phase18c-2: MATCHtype with 2 case nodes decodes into Tree.MatchType with cases.length==2" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        def makeSym(n: String) = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name(n),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val boundSym = makeSym("Bound")
+        val scrutSym = makeSym("Scrut")
+        val case1Sym = makeSym("Case1")
+        val case2Sym = makeSym("Case2")
+        val names    = Array(Tasty.Name("scala"))
+        val addrMap  = IntMap(1 -> boundSym, 2 -> scrutSym, 3 -> case1Sym, 4 -> case2Sym)
+        val home     = new ClasspathRef
+        // MATCHtype(190=0xBE) Length(8=0x88) TERMREFdirect nat(1) TERMREFdirect nat(2)
+        //   TERMREFdirect nat(3) TERMREFdirect nat(4)
+        val pickle = Chunk[Byte](
+            TastyFormat.MATCHtype.toByte,
+            (8 | 0x80).toByte,
+            TastyFormat.TERMREFdirect.toByte,
+            (1 | 0x80).toByte,
+            TastyFormat.TERMREFdirect.toByte,
+            (2 | 0x80).toByte,
+            TastyFormat.TERMREFdirect.toByte,
+            (3 | 0x80).toByte,
+            TastyFormat.TERMREFdirect.toByte,
+            (4 | 0x80).toByte
+        )
+        val sectionBytes = pickle.toArray
+        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(boundSym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.MatchType(_, _, cases)) =>
+                assert(cases.length == 2, s"Expected 2 cases but got ${cases.length}")
+            case Result.Success(other) =>
+                fail(s"Expected Tree.MatchType but got $other")
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
 end TreeUnpicklerTest
