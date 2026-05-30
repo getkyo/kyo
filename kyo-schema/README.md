@@ -173,7 +173,7 @@ Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitE
 
 ### YAML
 
-`Yaml.decode` parses one YAML document into a typed value and returns `Result[DecodeException, A]`. For document streams, use `Yaml.decodeAll`, or pass `Yaml.DocumentIndex(n)` to target one zero-based document without decoding the whole stream. Use `Yaml.ReaderConfig` when you need document selection, decode limits, or YAML 1.1 scalar resolution for legacy systems.
+`Yaml.decode` parses one YAML document into a typed value and returns `Result[DecodeException, A]`. For document streams, use `Yaml.decodeAll`, or pass `Yaml.DocumentIndex(n)` to target one zero-based document without decoding the whole stream. Use `Yaml.ReaderConfig` when you need document selection, stream-fragment merging, decode limits, or YAML 1.1 scalar resolution for legacy systems.
 
 ```scala
 val yaml =
@@ -189,6 +189,25 @@ val yaml =
 Yaml.decode[User](yaml)
 // Result.Success(alice)
 
+val stream =
+    """---
+      |id: 0
+      |name: Bob
+      |email: bob@example.com
+      |password: secret
+      |address:
+      |  city: Seattle
+      |  zip: "98101"
+      |---
+      |id: 1
+      |name: Alice
+      |email: alice@example.com
+      |password: secret
+      |address:
+      |  city: Portland
+      |  zip: "97201"
+      |""".stripMargin
+
 Yaml.decode[User](stream, Yaml.DocumentIndex(1))
 // decodes the second document in the stream
 
@@ -197,6 +216,27 @@ Yaml.decode[User](stream, Yaml.ReaderConfig(
     maxDepth = 64,
     maxCollectionSize = 1024,
     yamlVersion = Yaml.SpecVersion.Yaml11
+))
+```
+
+`Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings` treats non-empty documents in a stream as fragments of one top-level mapping. This is useful for configuration files that split one case class, sealed trait wrapper, or Scala 3 enum case across document separators:
+
+```scala
+val splitStream =
+    """---
+      |id: 1
+      |name: Alice
+      |---
+      |email: alice@example.com
+      |password: secret
+      |---
+      |address:
+      |  city: Portland
+      |  zip: "97201"
+      |""".stripMargin
+
+Yaml.decode[User](splitStream, Yaml.ReaderConfig(
+    documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings
 ))
 ```
 

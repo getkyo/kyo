@@ -1,6 +1,7 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
+import scala.annotation.tailrec
 
 final class Yaml(writerConfig: Yaml.WriterConfig = Yaml.WriterConfig.Default) extends Codec:
     def newWriter(): Codec.Writer = kyo.internal.YamlWriter(writerConfig)
@@ -10,8 +11,8 @@ end Yaml
 
 /** Primary entry point for YAML 1.2 serialization, parsing, and visiting.
   *
-  * YAML decoding is event-first: the parser drives a [[Yaml.Visitor]] and does not require constructing a YAML node tree. The schema
-  * decoder uses that same event stream and adapts it to kyo-schema's existing codec reader machinery.
+  * YAML parsing is event-first: the parser drives a [[Yaml.Visitor]] and does not require constructing a YAML node tree. Schema decoding
+  * uses a direct YAML [[Codec.Reader]] path, so ordinary decode does not require a YAML DOM, a whole-document event tape, or a JSON bridge.
   *
   * @see
   *   [[kyo.Json]] for JSON serialization
@@ -58,8 +59,10 @@ object Yaml:
       * without losing access to safety limits. `yamlVersion` selects scalar resolution rules for schema decoding. `maxDepth` limits nested
       * codec reads, and `maxCollectionSize` limits collection entries in the same way as [[Json]] decoding. `documentIndex` is empty for
       * single-document decoding and set to `DocumentIndex(n)` to decode the zero-based nth document from a stream. `documentMode` controls
-      * how single-value decoding handles streams when no `documentIndex` is selected. The default configuration decodes exactly one YAML 1.2
-      * document with the standard limits.
+      * how single-value decoding handles streams when no `documentIndex` is selected. `MergeTopLevelMappings` concatenates non-empty stream
+      * documents as fragments of one top-level mapping, which can decode case classes and wrapped ADT variants whose fields are split across
+      * documents. A present `documentIndex` always takes precedence over `documentMode`. The default configuration decodes exactly one YAML
+      * 1.2 document with the standard limits.
       */
     case class ReaderConfig(
         maxDepth: Int = DefaultMaxDepth,
@@ -425,15 +428,18 @@ object Yaml:
         Frame
     ): Result[DecodeException, Chunk[A]] =
         val docs = splitDocuments(input)
-        def loop(remaining: List[String], acc: Chunk[A]): Result[DecodeException, Chunk[A]] =
-            remaining match
-                case Nil => Result.succeed(acc)
-                case doc :: tail =>
-                    parseOne(doc) match
-                        case Result.Success(value) => loop(tail, acc :+ value)
-                        case Result.Failure(e)     => Result.fail(e)
-                        case Result.Panic(e)       => Result.panic(e)
-        loop(docs.toList, Chunk.empty)
+
+        @tailrec def loop(index: Int, acc: Chunk[A]): Result[DecodeException, Chunk[A]] =
+            if index >= docs.size then Result.succeed(acc)
+            else
+                parseOne(docs(index)) match
+                    case Result.Success(value) => loop(index + 1, acc :+ value)
+                    case Result.Failure(e)     => Result.fail(e)
+                    case Result.Panic(e)       => Result.panic(e)
+            end if
+        end loop
+
+        loop(0, Chunk.empty)
     end parseEach
 
     private def selectDocument(input: String, documentIndex: DocumentIndex)(using Frame): Result[DecodeException, String] =
