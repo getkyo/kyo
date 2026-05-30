@@ -10,8 +10,10 @@ import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
+import kyo.internal.tasty.reader.TypeUnpickler
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
+import scala.collection.immutable.IntMap
 
 /** Phase 5b tests for the unified Java/Scala model: SymbolKind matrix and type normalization.
   *
@@ -302,6 +304,99 @@ class UnifiedModelTest extends Test:
             val missing = expectedKinds -- foundKinds
             assert(missing.isEmpty, s"Missing SymbolKind coverage: $missing. Found: $foundKinds")
         end for
+    }
+
+    // ── Nat encoding helpers (dotty big-endian base-128, stop-bit on last byte) ─
+
+    private def encodeNat(n: Int): Array[Byte] =
+        if n < 128 then Array((n | 0x80).toByte)
+        else if n < 16384 then Array((n >> 7).toByte, ((n & 0x7f) | 0x80).toByte)
+        else
+            Array(
+                (n >> 14).toByte,
+                ((n >> 7) & 0x7f).toByte,
+                ((n & 0x7f) | 0x80).toByte
+            )
+
+    private def cat2(tag: Int, n: Int): Array[Byte]           = tag.toByte +: encodeNat(n)
+    private def cat3(tag: Int, sub: Array[Byte]): Array[Byte] = tag.toByte +: sub
+
+    // ── INV-013 / M10: CLASSconst decoding via TypeUnpickler ─────────────────
+
+    // Test 19: CLASSconst with a known TYPEREFdirect decodes to ConstantType(ClassConst(Named(sym))).
+    "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in run {
+        val stringSym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("java.lang.String"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val stringAddr = 10
+        val addrMap    = IntMap(stringAddr -> stringSym)
+        // CLASSconst (92) is category 3: tag + sub-type.
+        // Sub-type: TYPEREFdirect (63) category 2: tag + Nat(addr).
+        val subBytes = cat2(TastyFormat.TYPEREFdirect, stringAddr)
+        val bytes    = cat3(TastyFormat.CLASSconst, subBytes)
+        val view     = ByteView(bytes)
+        val arena    = TypeArena.canonical()
+        val home     = new ClasspathRef
+        Abort.run[TastyError](
+            TypeUnpickler.readType(view, Array.empty, addrMap, arena, home, bytes, 0)
+        ).map:
+            case Result.Success((tpe, _)) =>
+                tpe match
+                    case Tasty.Type.ConstantType(Tasty.Constant.ClassConst(Tasty.Type.Named(s))) =>
+                        assert(
+                            s eq stringSym,
+                            s"Expected stringSym but got ${s.name.asString}"
+                        )
+                    case other =>
+                        fail(s"Expected ConstantType(ClassConst(Named(stringSym))), got $other")
+            case Result.Failure(e) => fail(s"Unexpected failure: $e")
+            case Result.Panic(t)   => throw t
+    }
+
+    // Test 20: CLASSconst with an unresolved TYPEREFpkg decodes to ConstantType(ClassConst(Named(unresolved))).
+    // The unresolved symbol carries the class fqn as its name.
+    "CLASSconst with unresolved TYPEREFpkg decodes to ConstantType(ClassConst(Named(Unresolved)))" in run {
+        val missingFqn = "com.missing.X"
+        val names      = Array(Tasty.Name(missingFqn))
+        val nameRef    = 0
+        // Sub-type: TYPEREFpkg (65) category 2: tag + Nat(nameRef).
+        val subBytes = cat2(TastyFormat.TYPEREFpkg, nameRef)
+        val bytes    = cat3(TastyFormat.CLASSconst, subBytes)
+        val view     = ByteView(bytes)
+        val arena    = TypeArena.canonical()
+        val home     = new ClasspathRef
+        Abort.run[TastyError](
+            TypeUnpickler.readType(view, names, IntMap.empty, arena, home, bytes, 0)
+        ).map:
+            case Result.Success((tpe, _)) =>
+                tpe match
+                    case Tasty.Type.ConstantType(Tasty.Constant.ClassConst(Tasty.Type.Named(s))) =>
+                        assert(
+                            s.kind == Tasty.SymbolKind.Unresolved,
+                            s"Expected Unresolved kind but got ${s.kind}"
+                        )
+                        import AllowUnsafe.embrace.danger
+                        assert(
+                            s.name.asString == missingFqn,
+                            s"Expected fqn '$missingFqn' but got '${s.name.asString}'"
+                        )
+                    case other =>
+                        fail(s"Expected ConstantType(ClassConst(Named(Unresolved))), got $other")
+            case Result.Failure(e) => fail(s"Unexpected failure: $e")
+            case Result.Panic(t)   => throw t
+    }
+
+    // Test 21: Constant.scala source contains zero occurrences of "classConstSentinel".
+    "Constant.scala source contains zero occurrences of classConstSentinel" in run {
+        val src   = TestResourceLoader.readText("kyo/internal/tasty/symbol/Constant.scala")
+        val count = src.split("classConstSentinel", -1).length - 1
+        assert(count == 0, s"Expected 0 occurrences of 'classConstSentinel' in Constant.scala but found $count")
     }
 
 end UnifiedModelTest

@@ -521,11 +521,12 @@ def kyoTastyEmbeddedTextGenerator(platform: String): Def.Initialize[Task[Seq[Fil
     outDir.mkdirs()
     val outFile = outDir / "EmbeddedText.scala"
     val filesToEmbed = Seq(
-        "readme"      -> ("README.md",                                                 IO.read(base / "README.md")),
-        "design"      -> ("DESIGN.md",                                                 IO.read(base / "DESIGN.md")),
-        "tasty"       -> ("kyo/Tasty.scala",                                           IO.read(srcBase / "kyo" / "Tasty.scala")),
-        "clsUnpickle" -> ("kyo/internal/tasty/classfile/ClassfileUnpickler.scala",     IO.read(srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala")),
-        "onceCell"    -> ("kyo/internal/tasty/symbol/OnceCell.scala",                  IO.read(srcBase / "kyo" / "internal" / "tasty" / "symbol" / "OnceCell.scala"))
+        "readme"      -> ("README.md",                                                         IO.read(base / "README.md")),
+        "design"      -> ("DESIGN.md",                                                         IO.read(base / "DESIGN.md")),
+        "tasty"       -> ("kyo/Tasty.scala",                                                   IO.read(srcBase / "kyo" / "Tasty.scala")),
+        "clsUnpickle" -> ("kyo/internal/tasty/classfile/ClassfileUnpickler.scala",             IO.read(srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala")),
+        "onceCell"    -> ("kyo/internal/tasty/symbol/OnceCell.scala",                          IO.read(srcBase / "kyo" / "internal" / "tasty" / "symbol" / "OnceCell.scala")),
+        "constant"    -> ("kyo/internal/tasty/symbol/Constant.scala",                          IO.read(srcBase / "kyo" / "internal" / "tasty" / "symbol" / "Constant.scala"))
     )
     val fields = filesToEmbed.map { case (varName, (_, content)) =>
         kyoTastyEmitVal(varName, content)
@@ -564,11 +565,12 @@ lazy val `kyo-tasty` =
                 val srcBase  = base / "shared" / "src" / "main" / "scala"
                 val resManaged = (Test / resourceManaged).value
                 val filesToCopy = Seq(
-                    (base / "README.md")                                                              -> "README.md",
-                    (base / "DESIGN.md")                                                              -> "DESIGN.md",
-                    (srcBase / "kyo" / "Tasty.scala")                                                 -> "kyo/Tasty.scala",
+                    (base / "README.md")                                                                -> "README.md",
+                    (base / "DESIGN.md")                                                                -> "DESIGN.md",
+                    (srcBase / "kyo" / "Tasty.scala")                                                   -> "kyo/Tasty.scala",
                     (srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala") -> "kyo/internal/tasty/classfile/ClassfileUnpickler.scala",
-                    (srcBase / "kyo" / "internal" / "tasty" / "symbol" / "OnceCell.scala")            -> "kyo/internal/tasty/symbol/OnceCell.scala"
+                    (srcBase / "kyo" / "internal" / "tasty" / "symbol" / "OnceCell.scala")              -> "kyo/internal/tasty/symbol/OnceCell.scala",
+                    (srcBase / "kyo" / "internal" / "tasty" / "symbol" / "Constant.scala")              -> "kyo/internal/tasty/symbol/Constant.scala"
                 )
                 filesToCopy.map { case (src, resourcePath) =>
                     val dest = resManaged / resourcePath

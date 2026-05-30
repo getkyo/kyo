@@ -3,6 +3,7 @@ package kyo.internal.tasty.symbol
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.TastyFormat
+import kyo.internal.tasty.reader.TypeUnpickler
 
 /** Decodes TASTy constant leaf nodes into `Tasty.Constant` values.
   *
@@ -12,33 +13,25 @@ import kyo.internal.tasty.reader.TastyFormat
   *     + Nat)
   *   - CLASSconst=92: category 3 (tag + sub-AST type reference)
   *
-  * For `CLASSconst`: the type reference embedded in TASTy is decoded to produce `ClassConst(typeRef: Tasty.Type)` without resolving the
-  * class symbol at decode time. This is the cross-platform path: no `java.lang.Class` reference at decode time.
+  * For `CLASSconst`: the embedded type sub-AST is decoded via TypeUnpickler.readTypeIntoSession to produce
+  * `ClassConst(typeRef: Tasty.Type)`. No class symbol resolution at decode time; the type carries the class identity. Cross-platform: no
+  * `java.lang.Class` reference.
   */
 object Constant:
-
-    /** Sentinel symbol used as the type carrier for CLASSconst placeholders. Phase 4 replaces it with the resolved class symbol. */
-    private val classConstSentinel: Tasty.Symbol =
-        Tasty.Symbol.make(
-            Tasty.SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name(""),
-            null,
-            new kyo.internal.tasty.query.ClasspathRef,
-            Tasty.Symbol.TastyOrigin.empty,
-            kyo.Maybe.Absent
-        )
 
     /** Decode the constant whose tag byte has already been read. The `view` cursor is positioned immediately after the tag.
       *
       * For category-1 tags (UNITconst, FALSEconst, TRUEconst, NULLconst): no further bytes are consumed. For category-2 tags: one Nat is
-      * consumed. For category-3 CLASSconst: the type sub-AST is skipped (type decoding is Phase 4).
+      * consumed. For category-3 CLASSconst: the type sub-AST is decoded via `session` and the resulting `Tasty.Type` is wrapped in
+      * `ClassConst`.
       *
-      * `names` is the file's name table, used for STRINGconst.
+      * `session` carries the name table, addrMap, arena, and home classpath reference used for type decoding.
       */
-    def fromTastyTag(tag: Int, view: ByteView, names: Array[Tasty.Name])(using Frame): Tasty.Constant < (Sync & Abort[TastyError]) =
+    def fromTastyTag(tag: Int, view: ByteView, session: TypeUnpickler.DecodeSession)(using
+        frame: Frame
+    ): Tasty.Constant < (Sync & Abort[TastyError]) =
         val result =
-            try Right(decodeConstant(tag, view, names))
+            try Right(decodeConstant(tag, view, session, frame))
             catch
                 case _: ArrayIndexOutOfBoundsException =>
                     Left(TastyError.MalformedSection("ASTs", s"unexpected end while reading constant tag $tag", view.position))
@@ -47,7 +40,7 @@ object Constant:
             case Left(err) => Abort.fail(err)
     end fromTastyTag
 
-    private def decodeConstant(tag: Int, view: ByteView, names: Array[Tasty.Name]): Tasty.Constant =
+    private def decodeConstant(tag: Int, view: ByteView, session: TypeUnpickler.DecodeSession, frame: Frame): Tasty.Constant =
         // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
         import AllowUnsafe.embrace.danger
         tag match
@@ -78,39 +71,15 @@ object Constant:
                 Tasty.Constant.DoubleConst(java.lang.Double.longBitsToDouble(bits))
             case TastyFormat.STRINGconst =>
                 val nameRef = view.readNat()
-                Tasty.Constant.StringConst(names(nameRef).asString)
+                Tasty.Constant.StringConst(session.names(nameRef).asString)
             case TastyFormat.CLASSconst =>
-                // Category 3: tag + sub-AST (type reference). Skip the sub-AST for now.
-                // The type reference is decoded in Phase 4. Return a placeholder ClassConst.
-                skipTree(view)
-                // Return a placeholder; Phase 4 resolves the actual type.
-                Tasty.Constant.ClassConst(Tasty.Type.Named(classConstSentinel))
+                // Category 3: tag + sub-AST (type reference).
+                // Decode the embedded type sub-AST via the shared session; no placeholder needed.
+                val tpe = TypeUnpickler.readTypeIntoSession(view, session)(using frame)
+                Tasty.Constant.ClassConst(tpe)
             case other =>
                 throw new ArrayIndexOutOfBoundsException(s"Unrecognized constant tag $other")
         end match
     end decodeConstant
-
-    /** Skip one tree from the view. Used for CLASSconst sub-AST skipping. */
-    private def skipTree(view: ByteView): Unit =
-        val tag = view.readByte() & 0xff
-        skipTreeBody(tag, view)
-
-    private def skipTreeBody(tag: Int, view: ByteView): Unit =
-        if tag < TastyFormat.firstLengthTreeTag then
-            if tag >= 60 && tag <= 89 then
-                // Category 2: tag + Nat
-                discard(view.readNat())
-            else if tag >= 90 && tag <= 109 then
-                // Category 3: tag + sub-AST
-                skipTree(view)
-            else if tag >= 110 && tag <= 127 then
-                // Category 4: tag + Nat + sub-AST
-                discard(view.readNat())
-                skipTree(view)
-            // else category 1: nothing more to skip
-        else
-            // Category 5: tag + Length + payload
-            val end = view.readEnd()
-            view.goto(end)
 
 end Constant
