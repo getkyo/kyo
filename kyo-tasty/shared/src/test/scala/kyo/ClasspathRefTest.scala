@@ -42,4 +42,31 @@ class ClasspathRefTest extends Test:
             assert(after, "Expected isAssigned to be true after assign")
     }
 
+    // Test 3 (T2): unassigned ClasspathRef.get() throws IllegalStateException.
+    // Given: a fresh ClasspathRef with no assignment; AllowUnsafe in scope.
+    // When: ref.get() is called.
+    // Then: IllegalStateException is thrown with a message containing "not yet set".
+    // Pins: T2.
+    "ClasspathRef.get on unassigned ref throws IllegalStateException" in run {
+        Sync.defer {
+            val ref = new ClasspathRef
+            val ex  = intercept[IllegalStateException](ref.get())
+            assert(ex.getMessage.contains("not yet set"), s"Unexpected message: ${ex.getMessage}")
+        }
+    }
+
+    // Test 4 (T2): second assign on an already-assigned ClasspathRef throws IllegalStateException.
+    // Given: a ClasspathRef assigned once with cp1; AllowUnsafe in scope.
+    // When: ref.assign(cp2) is called a second time.
+    // Then: IllegalStateException is thrown with a message containing "already set".
+    // Pins: T2.
+    "ClasspathRef.assign a second time throws IllegalStateException" in run {
+        Tasty.Classpath.fromPickles(Seq.empty).flatMap: cp1 =>
+            Tasty.Classpath.fromPickles(Seq.empty).map: cp2 =>
+                val ref = new ClasspathRef
+                ref.assign(cp1)
+                val ex = intercept[IllegalStateException](ref.assign(cp2))
+                assert(ex.getMessage.contains("already set"), s"Unexpected message: ${ex.getMessage}")
+    }
+
 end ClasspathRefTest

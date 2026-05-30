@@ -92,4 +92,29 @@ class PerfCountersTest extends Test:
         }
     }
 
+    // Test 3 (T2): incrementing jarOpenCount and entryReadCount grows the snapshot counters monotonically.
+    // Given: fresh PerfCounters (via withClean); jarOpenCount incremented 5 times; entryReadCount incremented 3 times.
+    // When: snapshot() is called.
+    // Then: snapshot.jarOpenCount == 5 and snapshot.entryReadCount == 3.
+    // Pins: T2.
+    "PerfCountersTest T2: incJarOpen 5 times and incEntryRead 3 times produces matching snapshot" in run {
+        withClean {
+            Sync.defer {
+                var i = 0
+                while i < 5 do
+                    PerfCounters.jarOpenCount.incrementAndGet()
+                    i += 1
+                end while
+                var j = 0
+                while j < 3 do
+                    PerfCounters.entryReadCount.incrementAndGet()
+                    j += 1
+                end while
+                val s = PerfCounters.snapshot()
+                assert(s.jarOpenCount == 5, s"Expected jarOpenCount == 5, got ${s.jarOpenCount}")
+                assert(s.entryReadCount == 3, s"Expected entryReadCount == 3, got ${s.entryReadCount}")
+            }
+        }
+    }
+
 end PerfCountersTest
