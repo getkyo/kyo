@@ -11,6 +11,9 @@ import kyo.AllowUnsafe
   * Concurrent first-access semantics: if two threads race on `get()` before either has CAS-published, BOTH run `init()` redundantly. One
   * CAS wins; the other's computed value is discarded. Both threads then return the same cached value.
   *
+  * REQUIRES IDEMPOTENT INIT: if two threads race on `get()`, both run `init()` redundantly; the design assumes `init() == init()` modulo
+  * equality. Debug mode: `-Dkyo.tasty.OnceCell.debug=true` flags non-idempotent init via `IllegalStateException`.
+  *
   * This is distinct from `kyo.Cache.memo`, which uses a Promise to dedup concurrent first-callers (only one runs `init()`; others await the
   * Promise). `kyo.Cache.memo`'s dedup costs Async on the accessor's effect row. OnceCell's race-and-discard costs occasional redundant
   * init() calls but never blocks and never adds Async.
@@ -36,8 +39,16 @@ final class OnceCell[A](init: () => A):
             cached.asInstanceOf[A]
         else
             // Unsafe: we store A as AnyRef to coexist with the Unset sentinel in AtomicReference[AnyRef].
-            val v = init().asInstanceOf[AnyRef]
-            ref.compareAndSet(OnceCell.Unset, v)
+            val v   = init().asInstanceOf[AnyRef]
+            val won = ref.compareAndSet(OnceCell.Unset, v)
+            if !won && OnceCell.debugIdempotent then
+                val winner = ref.get()
+                if !winner.equals(v) then
+                    throw new IllegalStateException(
+                        s"OnceCell idempotence violated: init() returned $v but stored value is $winner"
+                    )
+                end if
+            end if
             // Unsafe: same sentinel pattern; ref.get() now holds the CAS-winning value.
             ref.get().asInstanceOf[A]
         end if
@@ -47,4 +58,11 @@ end OnceCell
 
 object OnceCell:
     private val Unset: AnyRef = new AnyRef
+
+    /** When true, a CAS-losing thread that computed a different value from the winner throws [[IllegalStateException]].
+      *
+      * Enable via `-Dkyo.tasty.OnceCell.debug=true`.
+      */
+    private[kyo] val debugIdempotent: Boolean =
+        java.lang.System.getProperty("kyo.tasty.OnceCell.debug", "false").equalsIgnoreCase("true")
 end OnceCell
