@@ -276,4 +276,59 @@ object PortableInflate:
         arr
     end decodeCodeLengths
 
+    /** RFC 1950 ZLIB inflate: validates CMF/FLG header, dispatches DEFLATE block decoders, and verifies the Adler-32 trailer.
+      */
+    def inflate(compressed: Array[Byte]): Array[Byte] =
+        if compressed.length < 6 then
+            throw new InflateException("ZLIB input too short (< 6 bytes)", 0L)
+        val cmf = compressed(0) & 0xff
+        val flg = compressed(1) & 0xff
+        if (cmf & 0x0f) != 8 then
+            throw new InflateException(s"unsupported compression method ${cmf & 0x0f}", 0L)
+        if ((cmf << 8) | flg) % 31 != 0 then
+            throw new InflateException("ZLIB header checksum failed", 0L)
+        if (flg & 0x20) != 0 then
+            throw new InflateException("ZLIB preset dictionary not supported", 1L)
+        val stream    = new BitStream(compressed, 16L)
+        val out       = new scala.collection.mutable.ArrayBuffer[Byte](compressed.length * 4)
+        var lastBlock = false
+        while !lastBlock do
+            lastBlock = stream.readBit() == 1
+            val blockType = stream.readBits(2)
+            blockType match
+                case 0 => decodeStoredBlock(stream, out)
+                case 1 => decodeFixedHuffmanBlock(stream, out)
+                case 2 => decodeDynamicHuffmanBlock(stream, out)
+                case 3 => throw new InflateException("reserved DEFLATE block type 3", stream.byteOffset)
+            end match
+        end while
+        val tail          = stream.alignToByte()
+        val expectedAdler = readU32BE(compressed, tail)
+        val actualAdler   = adler32(out.toArray)
+        if expectedAdler != actualAdler then
+            throw new InflateException(s"Adler-32 mismatch: expected $expectedAdler got $actualAdler", tail.toLong)
+        out.toArray
+    end inflate
+
+    /** RFC 1950 §9 Adler-32. Uses Long accumulators to defer the modulo and avoid overflow. */
+    private def adler32(data: Array[Byte]): Long =
+        var a = 1L
+        var b = 0L
+        var i = 0
+        while i < data.length do
+            a = (a + (data(i) & 0xff)) % 65521
+            b = (b + a)                % 65521
+            i += 1
+        end while
+        (b << 16) | a
+    end adler32
+
+    /** Read a 4-byte big-endian unsigned value from buf at offset. The ZLIB Adler-32 trailer is big-endian. */
+    private def readU32BE(buf: Array[Byte], offset: Int): Long =
+        ((buf(offset) & 0xffL) << 24) |
+            ((buf(offset + 1) & 0xffL) << 16) |
+            ((buf(offset + 2) & 0xffL) << 8) |
+            (buf(offset + 3) & 0xffL)
+    end readU32BE
+
 end PortableInflate

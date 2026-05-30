@@ -121,10 +121,125 @@ class PortableInflateTest extends Test:
         )
     }
 
-    // Test 7 (dynamic Huffman): DEFERRED to Phase 20e / Phase 20f.
-    // A full-roundtrip test requiring the ZLIB wrapper (Phase 20e) is the most reliable way to
-    // exercise dynamic Huffman end-to-end without hand-crafting a complete dynamic header.
-    // The dynamic-Huffman decode path (decodeDynamicHuffmanBlock + decodeCodeLengths) will be
-    // covered by the "the quick brown fox" round-trip test added in Phase 20e or 20f.
+    // Test 7: ZLIB input shorter than 6 bytes is rejected.
+    // Minimum valid ZLIB stream is 2 bytes (CMF+FLG) + at least 1 deflate byte + 4 Adler bytes = 7 bytes,
+    // but the guard is set at 6 to catch obviously truncated inputs early.
+    "inflate rejects ZLIB input shorter than 6 bytes" in run {
+        val bytes = Array(0x78.toByte, 0x9c.toByte, 0x03.toByte, 0x00.toByte)
+        try
+            PortableInflate.inflate(bytes)
+            fail("Expected InflateException but no exception was thrown")
+        catch
+            case ex: PortableInflate.InflateException =>
+                assert(
+                    ex.getMessage == "ZLIB input too short (< 6 bytes)",
+                    s"Expected 'ZLIB input too short (< 6 bytes)' but got '${ex.getMessage}'"
+                )
+        end try
+    }
+
+    // Test 8: ZLIB stored-block envelope with a corrupted Adler-32 trailer is rejected.
+    //
+    // Byte construction:
+    //   byte[0]=0x78 (CMF): CM=8 (deflate), CINFO=7 (window=32k)
+    //   byte[1]=0x9C (FLG): FCHECK: (0x78*256+0x9C)=30876, 30876%31=0, checksum valid; FDICT bit clear
+    //   byte[2]=0x01: BFINAL=1 (bit0), BTYPE=00 (bits1-2), rest=padding zeros
+    //   byte[3]=0x00, byte[4]=0x00: LEN=0 (little-endian)
+    //   byte[5]=0xFF, byte[6]=0xFF: NLEN=0xFFFF (little-endian); LEN ^ NLEN = 0xFFFF OK
+    //   bytes[7..10]: Adler-32 of empty payload = 0x00000001 big-endian = [0x00,0x00,0x00,0x01]
+    //   We replace the correct Adler [0x00,0x00,0x00,0x01] with wrong [0xFF,0xFF,0xFF,0xFF].
+    "inflate rejects Adler-32 mismatch in stored-block ZLIB" in run {
+        val bytes = Array(
+            0x78.toByte, // CMF
+            0x9c.toByte, // FLG (header check: 0x789C % 31 == 0)
+            0x01.toByte, // BFINAL=1, BTYPE=00 (stored), padding
+            0x00.toByte, // LEN low
+            0x00.toByte, // LEN high  -> LEN=0
+            0xff.toByte, // NLEN low
+            0xff.toByte, // NLEN high -> NLEN=0xFFFF; LEN^NLEN=0xFFFF
+            0xff.toByte, // Adler-32 byte 0 (wrong)
+            0xff.toByte, // Adler-32 byte 1 (wrong)
+            0xff.toByte, // Adler-32 byte 2 (wrong)
+            0xff.toByte  // Adler-32 byte 3 (wrong)
+        )
+        try
+            PortableInflate.inflate(bytes)
+            fail("Expected InflateException but no exception was thrown")
+        catch
+            case ex: PortableInflate.InflateException =>
+                assert(
+                    ex.getMessage.startsWith("Adler-32 mismatch"),
+                    s"Expected message starting with 'Adler-32 mismatch' but got '${ex.getMessage}'"
+                )
+        end try
+    }
+
+    // Test 9 (deferred dynamic Huffman, now landing): Full ZLIB round-trip with dynamic Huffman block.
+    //
+    // Fixture capture: produced via Java's java.util.zip.Deflater(DEFAULT_COMPRESSION) on the input
+    // "aaabbbcccdddeeefffggghhh" repeated 50 times (1200 bytes). This highly repetitive ASCII input
+    // causes the JVM deflater to emit a dynamic Huffman block (BTYPE=10), covering the
+    // decodeDynamicHuffmanBlock + decodeCodeLengths paths that were deferred from Phase 20d.
+    //
+    // Capture command used (Java):
+    //   byte[] input = "aaabbbcccdddeeefffggghhh".repeat(50).getBytes("UTF-8");
+    //   DeflaterOutputStream dos = new DeflaterOutputStream(baos, new Deflater(DEFAULT_COMPRESSION));
+    //   dos.write(input); dos.finish(); dos.close();
+    //   => 42 bytes, BFINAL=1, BTYPE=2 (dynamic Huffman)
+    //
+    // CMF=0x78 FLG=0x9C: header checksum (0x78*256+0x9C)%31 = 0. No preset dictionary.
+    // The expected decompressed bytes are "aaabbbcccdddeeefffggghhh".repeat(50) encoded as UTF-8.
+    "inflate full ZLIB round-trip with dynamic Huffman block" in run {
+        val zlibBytes: Array[Byte] = Array(
+            0x78.toByte,
+            0x9c.toByte,
+            0xed.toByte,
+            0xc8.toByte,
+            0x31.toByte,
+            0x01.toByte,
+            0x00.toByte,
+            0x30.toByte,
+            0x0c.toByte,
+            0x02.toByte,
+            0x30.toByte,
+            0xad.toByte,
+            0x50.toByte,
+            0x68.toByte,
+            0xf1.toByte,
+            0xaf.toByte,
+            0x60.toByte,
+            0x36.toByte,
+            0x76.toByte,
+            0x90.toByte,
+            0x33.toByte,
+            0x00.toByte,
+            0x48.toByte,
+            0xce.toByte,
+            0x8c.toByte,
+            0x24.toByte,
+            0xdb.toByte,
+            0xbb.toByte,
+            0x7b.toByte,
+            0x77.toByte,
+            0x49.toByte,
+            0xd0.toByte,
+            0xef.toByte,
+            0xf7.toByte,
+            0xfb.toByte,
+            0x9f.toByte,
+            0xfd.toByte,
+            0x03.toByte,
+            0x07.toByte,
+            0x67.toByte,
+            0xd7.toByte,
+            0x28.toByte
+        )
+        val expected: Array[Byte] = "aaabbbcccdddeeefffggghhh".repeat(50).getBytes("UTF-8")
+        val actual                = PortableInflate.inflate(zlibBytes)
+        assert(
+            java.util.Arrays.equals(actual, expected),
+            s"Decompressed bytes did not match: got ${actual.length} bytes, expected ${expected.length} bytes"
+        )
+    }
 
 end PortableInflateTest

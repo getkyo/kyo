@@ -219,3 +219,5 @@ one INV, one explanation a reviewer can hold in head as one idea."
 - Phase 20a audit NOTE: test duplication shared/jvmOnly + native/-specific is correct because Test.scala lacks a nativeOnly tag. ROUTE: Phase 21d / general infra — consider adding nativeOnly tag for symmetry.
 - Phase 20b+20c audit NOTE (2026-05-30): BitStream and HuffmanTree are `private[kyo]` because the test lives under `package kyo`. A tighter `private[tasty]` would suffice. ROUTE: Phase 21d (Test reader subsystem) or general API-tightening sweep.
 - Phase 20b+20c audit NOTE: decodeOne's `var result = -1` sentinel benefits from a short comment marking the no-return rationale. ROUTE: Phase 21d doc sweep.
+- Phase 20d audit WARN (2026-05-30): PortableInflate.copyBack lacks a `dist > out.length` bounds check. Corrupt ZLIB input would raise raw IndexOutOfBoundsException instead of InflateException. ROUTE: inline fix in a 20d-debt commit after Phase 20e lands (to avoid edit conflicts with the in-flight Phase 20e impl).
+- Phase 20d audit NOTE: `val _ = stream.alignToByte()` could be a bare statement call (drop `val _`). ROUTE: Phase 21d cleanup.
