@@ -31,12 +31,12 @@ package kyo.internal.tasty.snapshot
   *   - `SYMBOLS`: Fixed-size records encoding symbol fields (kind, flags, nameId, ownerId, etc.). `home` is NOT serialized; restored from
   *     the enclosing `Classpath` at load time.
   *   - `TYPES`: Packed type records indexed by canonical type ID.
-  *   - `TYPES_EXTRA`: Variable-length operand data for multi-operand types.
+  *   - `TYPESEXT`: Variable-length operand data for multi-operand types.
   *   - `PARENTS`: Int arrays for class parent lists.
   *   - `MEMBERS`: Int arrays for class member lists.
   *   - `TPARAMS_`: Type parameter records per symbol (added in minor=3).
   *   - `FILES`: Per-source-file metadata (path, mtime, size, uuid).
-  *   - `BODY_BYTES`: Inline byte storage for lazy body decode.
+  *   - `BODYBYTE`: Inline byte storage for lazy body decode.
   *   - `ERRORS`: Serialized TastyError cases accumulated during decode.
   *
   * Versioning policy:

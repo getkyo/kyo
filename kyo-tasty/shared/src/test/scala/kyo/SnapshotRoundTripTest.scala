@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.PlatformFileSource
@@ -9,6 +10,7 @@ import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
+import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
 /** Tests for Phase 7: KRFL snapshot round-trip, digest determinism, and openCached behavior.
@@ -549,6 +551,108 @@ class SnapshotRoundTripTest extends Test:
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
                     throw t
+    }
+
+    // Test P1 (Phase 19b WARN): snapshot round-trip preserves a local Named parent.
+    //
+    // Given: a synthetic classpath with two symbols: test.Bar (Class, no parents) and test.Foo
+    //        (Class, parents=[Named(barSym)]). Both symbols are local so the SnapshotWriter assigns
+    //        barSym a local symbolId and writes it in the PARENTS section.
+    // When: snapshot write + read.
+    // Then: the warm-loaded test.Foo symbol's parents is non-empty and contains a Named type whose
+    //       fullName equals "test.Bar".
+    // Pins: T2 (Phase 19b local-parent coverage).
+    "snapshot round-trip: local Named parent is preserved in Foo.parents" in run {
+        val cacheSrc = MemoryFileSource()
+        val digest =
+            Array[Byte](0x70.toByte, 0x71.toByte, 0x72.toByte, 0x73.toByte, 0x74.toByte, 0x75.toByte, 0x76.toByte, 0x77.toByte)
+
+        // Build synthetic symbols: root (pkg) -> test (pkg) -> Bar (class) and Foo (class extends Bar).
+        val refCp = new ClasspathRef
+        val rootSym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Package,
+            Tasty.Flags.empty,
+            Tasty.Name(""),
+            null,
+            refCp,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val pkgSym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Package,
+            Tasty.Flags.empty,
+            Tasty.Name("test"),
+            rootSym,
+            refCp,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val barSym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Bar"),
+            pkgSym,
+            refCp,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val fooSym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Foo"),
+            pkgSym,
+            refCp,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        barSym._parents.set(Chunk.empty)
+        barSym._declarations.set(Chunk.empty)
+        barSym._typeParams.set(Chunk.empty)
+        fooSym._parents.set(Chunk(Tasty.Type.Named(barSym)))
+        fooSym._declarations.set(Chunk.empty)
+        fooSym._typeParams.set(Chunk.empty)
+
+        val allSyms  = Chunk(rootSym, pkgSym, barSym, fooSym)
+        val topLevel = Chunk(barSym, fooSym)
+        val pkgs     = Chunk(rootSym, pkgSym)
+        val fqnMap   = scala.collection.immutable.Map("test.Bar" -> barSym, "test.Foo" -> fooSym)
+        val pkgMap   = scala.collection.immutable.Map("test" -> pkgSym)
+
+        Abort.run[TastyError]:
+            InternalClasspath.allocate.flatMap: rawCpCold =>
+                InternalClasspath.transitionToReady(
+                    rawCpCold,
+                    allSyms,
+                    topLevel,
+                    pkgs,
+                    fqnMap,
+                    pkgMap,
+                    TypeArena.canonical(),
+                    Chunk.empty,
+                    Map.empty
+                )
+                val cpWrap = Tasty.Classpath.wrap(rawCpCold)
+                refCp.assign(cpWrap)
+                SnapshotWriter.write(rawCpCold, "cache", digest, cacheSrc).andThen:
+                    val hex      = DigestComputer.toHexString(digest)
+                    val snapPath = s"cache/$hex.krfl"
+                    InternalClasspath.allocate.flatMap: rawCpWarm =>
+                        SnapshotReader.read(snapPath, cacheSrc, rawCpWarm).andThen:
+                            ClasspathTestHelpers.assignHomesForTest(rawCpWarm)
+                            rawCpWarm.pureClass("test.Foo") match
+                                case Maybe.Present(sym) => sym.parents
+                                case Maybe.Absent       => Abort.fail(TastyError.NotImplemented("test.Foo not found after snapshot load"))
+        .map:
+            case Result.Success(parents) =>
+                assert(parents.nonEmpty, "Foo.parents must be non-empty after snapshot round-trip with local Named parent")
+                val hasBar = parents.toSeq.exists:
+                    case Tasty.Type.Named(sym) => sym.fullName.asString == "test.Bar"
+                    case _                     => false
+                assert(hasBar, s"Foo.parents must contain Named(test.Bar) after snapshot round-trip; got: ${parents.toSeq.map(_.show)}")
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
     }
 
     // T-J2: directory-root digest is deterministic across two calls

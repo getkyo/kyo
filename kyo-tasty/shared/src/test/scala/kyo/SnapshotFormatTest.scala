@@ -1,5 +1,6 @@
 package kyo
 
+import java.nio.charset.StandardCharsets
 import kyo.internal.tasty.snapshot.SnapshotFormat
 
 /** Tests for SnapshotFormat version and section-name constants.
@@ -33,6 +34,18 @@ class SnapshotFormatTest extends Test:
     "SnapshotFormat.sectionTPARAMS constant matches the TPARAMS_ array entry" in run {
         assert(SnapshotFormat.sectionTPARAMS == "TPARAMS_")
         assert(SnapshotFormat.sectionNames.contains(SnapshotFormat.sectionTPARAMS))
+        succeed
+    }
+
+    // Test 5 (T2): magic bytes decoded as US-ASCII equal "KRFL".
+    //
+    // Given: SnapshotFormat.magic (4-byte Array).
+    // When: new String(magic, StandardCharsets.US_ASCII).
+    // Then: equals "KRFL".
+    // Pins: T2.
+    "SnapshotFormat.magic bytes decoded as US-ASCII equal KRFL" in run {
+        val decoded = new String(SnapshotFormat.magic, StandardCharsets.US_ASCII)
+        assert(decoded == "KRFL", s"Expected magic to decode to KRFL but got: $decoded")
         succeed
     }
 

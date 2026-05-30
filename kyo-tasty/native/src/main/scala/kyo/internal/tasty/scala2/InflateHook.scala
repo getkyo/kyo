@@ -23,6 +23,8 @@ object InflateHook extends InflateHookImpl:
                     inflater.close()
                     out.toByteArray()
                 catch
+                    case ex: java.util.zip.DataFormatException =>
+                        Abort.fail(TastyError.MalformedSection("Scala2Inflate", ex.getMessage, 0L))
                     case ex: java.util.zip.ZipException =>
                         Abort.fail(TastyError.MalformedSection("Scala2Inflate", ex.getMessage, 0L))
                     case ex: java.io.IOException =>
