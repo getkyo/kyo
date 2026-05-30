@@ -49,8 +49,12 @@ object PositionsUnpickler:
         val result =
             try Right(readSync(view, addrMap, sourceFile))
             catch
-                case _: ArrayIndexOutOfBoundsException =>
-                    Left(TastyError.MalformedSection("Positions", "unexpected end of Positions section"))
+                case ex: ArrayIndexOutOfBoundsException =>
+                    val msg = ex.getMessage
+                    val reason =
+                        if msg != null && msg.contains("exceeds Int.MaxValue") then msg
+                        else "unexpected end of Positions section"
+                    Left(TastyError.MalformedSection("Positions", reason))
         result match
             case Right(m)  => Sync.defer(m)
             case Left(err) => Abort.fail(err)
@@ -75,11 +79,19 @@ object PositionsUnpickler:
         // Build lineStarts: cumulative character offset of the first character on each line.
         // lineStarts(0) = 0 (line 1 starts at offset 0).
         // lineStarts(k) = lineStarts(k-1) + lineSizes(k-1) + 1 (the +1 accounts for the newline character itself).
+        // Arithmetic is widened to Long first to detect Int overflow on pathologically large files;
+        // a negative lineStart would silently corrupt all subsequent line/column computations (B9).
         val lineStarts = new Array[Int](numLines + 1)
         lineStarts(0) = 0
         var k = 0
         while k < numLines do
-            lineStarts(k + 1) = lineStarts(k) + lineSizes(k) + 1
+            val nextStart: Long = lineStarts(k).toLong + lineSizes(k).toLong + 1L
+            if nextStart > Int.MaxValue then
+                throw new ArrayIndexOutOfBoundsException(
+                    s"PositionsUnpickler: cumulative lineStart at line ${k + 1} exceeds Int.MaxValue ($nextStart); source file too large"
+                )
+            end if
+            lineStarts(k + 1) = nextStart.toInt
             k += 1
         end while
 

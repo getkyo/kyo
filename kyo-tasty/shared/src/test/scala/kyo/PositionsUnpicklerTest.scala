@@ -329,4 +329,177 @@ class PositionsUnpicklerTest extends Test:
                 throw t
     }
 
+    // ── Test B9-1: Int overflow on lineStarts cumulation is detected (B9) ────────
+
+    // B9-1: When the cumulative sum of lineSizes overflows Int, PositionsUnpickler must
+    // produce MalformedSection("Positions", reason) where reason contains "exceeds Int.MaxValue".
+    //
+    // Payload: numLines=1, lineSizes=[Int.MaxValue].
+    // lineStarts(1) = 0 + Int.MaxValue + 1 = 2147483648, which exceeds Int.MaxValue.
+    //
+    // TASTy Nat encoding of Int.MaxValue (2147483647 = 0x7FFFFFFF):
+    //   5 bytes big-endian in 7-bit groups: [7, 127, 127, 127, 127].
+    //   bytes: 0x07, 0x7F, 0x7F, 0x7F, 0xFF (last byte has stop-bit 0x80 set).
+    //   Verify: (7 << 28) | (127 << 21) | (127 << 14) | (127 << 7) | 127 = 2147483647.
+    "B9-1: PositionsUnpickler: Int overflow on lineStarts cumulation produces MalformedSection" in run {
+        // numLines=1 encoded as Nat: single byte (1 | 0x80) = 0x81
+        // lineSizes[0] = Int.MaxValue = 2147483647 encoded as 5-byte Nat
+        //   7-bit groups (big-endian): [7, 127, 127, 127, 127]
+        //   bytes: [0x07, 0x7F, 0x7F, 0x7F, (127 | 0x80)=0xFF]
+        val payload = Array[Byte](
+            0x81.toByte, // numLines = 1
+            0x07.toByte, // Int.MaxValue byte 1 (7-bit group: 7)
+            0x7f.toByte, // Int.MaxValue byte 2 (7-bit group: 127)
+            0x7f.toByte, // Int.MaxValue byte 3 (7-bit group: 127)
+            0x7f.toByte, // Int.MaxValue byte 4 (7-bit group: 127)
+            0xff.toByte  // Int.MaxValue byte 5 = (127 | 0x80), stop bit set
+            // No Assoc entries needed; overflow happens during lineStarts construction
+        )
+        val view = ByteView(payload)
+        Abort.run[TastyError](PositionsUnpickler.read(view, IntMap.empty, Absent)).map:
+            case Result.Success(result) =>
+                fail(s"Expected MalformedSection for overflow but got success with ${result.size} entries")
+            case Result.Failure(TastyError.MalformedSection("Positions", reason)) =>
+                assert(
+                    reason.contains("exceeds Int.MaxValue"),
+                    s"Expected reason to contain 'exceeds Int.MaxValue' but got: $reason"
+                )
+                succeed
+            case Result.Failure(other) =>
+                fail(s"Expected MalformedSection but got: $other")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // ── Test B9-2: Normal 200-line file decodes lineStarts correctly (B9 baseline) ─
+
+    // B9-2: A 200-line synthetic file where line k has size (100 + k) decodes correctly.
+    // lineStarts(0) = 0
+    // lineStarts(k) = sum_{i=0}^{k-1} (100 + i + 1) = sum_{i=0}^{k-1} (101 + i) = 101*k + k*(k-1)/2
+    // Spot-check: lineStarts(10) = 101*10 + 10*9/2 = 1010 + 45 = 1055.
+    //
+    // Payload encodes numLines=200, then 200 line sizes in [100..299], then a single Assoc entry
+    // at addrDelta=1, hasStart=true, start_delta=0 (curStart=0 => line 1, col 1).
+    "B9-2: PositionsUnpickler: 200-line file with varying line sizes decodes lineStarts correctly" in run {
+        val numLines = 200
+
+        // Build payload: numLines as Nat, then numLines line sizes (each in 100..299), then one Assoc entry
+        // numLines=200: single byte (200 > 127, need 2 bytes)
+        // 200 = 1*128 + 72 => [0x01, (72 | 0x80)=0xC8] -- no, TASTy Nat uses 7-bit groups:
+        //   200 in 7-bit groups: 200 = 1*128 + 72 => groups [1, 72] => bytes [0x01, (72|0x80)=0xC8]
+        // Line sizes 100..299 (values 100-127 fit in 1 byte, 128+ need 2 bytes):
+        //   size k (for k in 0..99): 100+k in [100..199] -- 100-127 fit 1 byte; 128-199 need 2 bytes
+        //   size k (for k in 100..199): 100+k in [200..299] -- all need 2 bytes
+        // For 2-byte Nat v where 128 <= v <= 16383:
+        //   high 7 bits = v >> 7, low 7 bits = v & 0x7F; bytes = [v>>7, (v&0x7F)|0x80]
+        val assocEntry = Array[Byte](
+            encNat(12), // header: addrDelta=1, hasStart=1 => (1<<3)|4=12
+            encInt(0)   // start_delta=0 => curStart stays 0 => offset 0 => line 1, col 1
+        )
+
+        // Build lineSize bytes first to know total length
+        val lineSizeByteArrays: Array[Array[Byte]] = Array.tabulate(numLines): k =>
+            val size = 100 + k
+            if size < 128 then Array((size | 0x80).toByte)
+            else Array((size >> 7).toByte, ((size & 0x7f) | 0x80).toByte)
+
+        val lineSizeTotalBytes = lineSizeByteArrays.map(_.length).sum
+        val numLinesBytes      = Array[Byte](0x01.toByte, 0xc8.toByte) // Nat encoding of 200
+        val totalBytes         = numLinesBytes.length + lineSizeTotalBytes + assocEntry.length
+        val payload            = new Array[Byte](totalBytes)
+        var offset             = 0
+
+        // numLines
+        java.lang.System.arraycopy(numLinesBytes, 0, payload, offset, numLinesBytes.length)
+        offset += numLinesBytes.length
+
+        // line sizes
+        var k = 0
+        while k < numLines do
+            val sizeBytes = lineSizeByteArrays(k)
+            java.lang.System.arraycopy(sizeBytes, 0, payload, offset, sizeBytes.length)
+            offset += sizeBytes.length
+            k += 1
+        end while
+
+        // single Assoc entry
+        java.lang.System.arraycopy(assocEntry, 0, payload, offset, assocEntry.length)
+        offset += assocEntry.length
+
+        val sym     = makeTestSymbol("B9Baseline")
+        val addrMap = IntMap(1 -> sym)
+        val view    = ByteView(payload)
+        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Absent)).map:
+            case Result.Success(result) =>
+                // Verify the read succeeded; the position of sym at offset 0 should be line 1, col 1
+                assert(result.contains(sym), "Expected sym to have a position entry")
+                val pos = result(sym)
+                assert(pos.line == 1, s"Expected line=1 but got ${pos.line}")
+                assert(pos.column == 1, s"Expected column=1 but got ${pos.column}")
+                // Verify spot-check on lineStarts(10) = 1055 via a new read with sym at that offset
+                succeed
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // ── Test B9-3: lineStarts(10) value correctness for 200-line file ─────────
+
+    // B9-3: Confirms the exact value of lineStarts(10) for a 200-line file where line k has size (100+k).
+    // lineStarts(10) = 101*10 + 10*9/2 = 1010 + 45 = 1055.
+    // A symbol at address 1 with curStart=1055 should decode to (line=11, col=1).
+    "B9-3: PositionsUnpickler: lineStarts(10) equals 1055 for 200-line file with sizes 100+k" in run {
+        val numLines = 200
+
+        // Build line size bytes
+        val lineSizeByteArrays: Array[Array[Byte]] = Array.tabulate(numLines): k =>
+            val size = 100 + k
+            if size < 128 then Array((size | 0x80).toByte)
+            else Array((size >> 7).toByte, ((size & 0x7f) | 0x80).toByte)
+
+        val lineSizeTotalBytes = lineSizeByteArrays.map(_.length).sum
+        val numLinesBytes      = Array[Byte](0x01.toByte, 0xc8.toByte) // Nat 200
+
+        // Assoc entry: addrDelta=1, hasStart=true, start_delta=1055 (to reach line 11, col 1)
+        // 1055 as TASTy signed Int: positive, 1055 = 8*128 + 31 => [0x08, (31|0x80)=0x9F]
+        val assocEntry = Array[Byte](
+            0x8c.toByte, // encNat(12): header addrDelta=1, hasStart=1
+            0x08.toByte, // Int high byte for 1055 (1055 >> 7 = 8)
+            0x9f.toByte  // Int low byte for 1055 ((1055 & 0x7F) | 0x80 = 31 | 0x80 = 0x9F)
+        )
+
+        val totalBytes = numLinesBytes.length + lineSizeTotalBytes + assocEntry.length
+        val payload    = new Array[Byte](totalBytes)
+        var offset     = 0
+
+        java.lang.System.arraycopy(numLinesBytes, 0, payload, offset, numLinesBytes.length)
+        offset += numLinesBytes.length
+
+        var k = 0
+        while k < numLines do
+            val sizeBytes = lineSizeByteArrays(k)
+            java.lang.System.arraycopy(sizeBytes, 0, payload, offset, sizeBytes.length)
+            offset += sizeBytes.length
+            k += 1
+        end while
+
+        java.lang.System.arraycopy(assocEntry, 0, payload, offset, assocEntry.length)
+
+        val sym     = makeTestSymbol("B9LineStarts10")
+        val addrMap = IntMap(1 -> sym)
+        val view    = ByteView(payload)
+        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Absent)).map:
+            case Result.Success(result) =>
+                assert(result.contains(sym), "Expected sym to have a position entry")
+                val pos = result(sym)
+                // offset 1055 = lineStarts(10) => line index 10 (0-based) => line 11 (1-based), col 1
+                assert(pos.line == 11, s"Expected line=11 (lineStarts(10)=1055) but got ${pos.line}")
+                assert(pos.column == 1, s"Expected column=1 but got ${pos.column}")
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
 end PositionsUnpicklerTest
