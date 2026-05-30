@@ -291,6 +291,9 @@ final class YamlReader private (
                     case (f: SourceFlowSequenceFrame) :: _ if allowSourcePull && !prepared =>
                         sourceCaptureSequenceElement(f)
                         delegate = Absent
+                    case Nil if allowSourcePull && !prepared && source.nonEmpty =>
+                        initSourcePosition()
+                        sourcePos = source.length
                     case _ =>
                         currentAliasOr(_.skip()) {
                             prepare()
@@ -1473,10 +1476,163 @@ final class YamlReader private (
     end sourcePropertyToken
 
     private def registerSourceAnchor(name: String, value: String): Unit =
-        val built = EventBuilder.build(value, maxDepth, maxCollectionSize)
-        anchors(name) =
-            Anchor(0, 0, valueCount(built.events, 0, built.events.length), depth(built.events, 0, built.events.length), Maybe(value))
+        val (values, maxDepth) = sourceAnchorStats(value)
+        anchors(name) = Anchor(0, 0, values, maxDepth, Maybe(value))
     end registerSourceAnchor
+
+    private def sourceAnchorStats(value: String): (Int, Int) =
+        var count    = 0
+        var maxDepth = 0
+        val stack    = ArrayBuffer.empty[(Int, Char)]
+
+        def countValue(): Unit =
+            count += 1
+        end countValue
+
+        def countCollection(depth: Int): Unit =
+            count += 1
+            maxDepth = math.max(maxDepth, depth)
+        end countCollection
+
+        def popTo(indent: Int): Unit =
+            while stack.nonEmpty && stack.last._1 > indent do
+                val _ = stack.remove(stack.length - 1)
+        end popTo
+
+        def enter(indent: Int, kind: Char): Unit =
+            popTo(indent)
+            if stack.isEmpty || stack.last._1 != indent || stack.last._2 != kind then
+                while stack.nonEmpty && stack.last._1 >= indent do
+                    val _ = stack.remove(stack.length - 1)
+                stack += ((indent, kind))
+                countCollection(stack.length)
+            end if
+        end enter
+
+        def flowStats(text: String, baseDepth: Int): Unit =
+            var i          = 0
+            var depth      = 0
+            var tokenStart = -1
+            var single     = false
+            var double     = false
+            var escape     = false
+
+            def finishToken(stop: Int): Unit =
+                if tokenStart >= 0 then
+                    var from = tokenStart
+                    var to   = stop
+                    while from < to && text.charAt(from).isWhitespace do from += 1
+                    while to > from && text.charAt(to - 1).isWhitespace do to -= 1
+                    if from < to then countValue()
+                    tokenStart = -1
+                end if
+            end finishToken
+
+            while i < text.length do
+                val ch = text.charAt(i)
+                if escape then escape = false
+                else if double && ch == '\\' then escape = true
+                else if !double && ch == '\'' then
+                    if !single && tokenStart < 0 then tokenStart = i
+                    single = !single
+                    if !single then finishToken(i + 1)
+                else if !single && ch == '"' then
+                    if !double && tokenStart < 0 then tokenStart = i
+                    double = !double
+                    if !double then finishToken(i + 1)
+                else if !single && !double then
+                    ch match
+                        case '[' | '{' =>
+                            finishToken(i)
+                            depth += 1
+                            countCollection(baseDepth + depth)
+                        case ']' | '}' =>
+                            finishToken(i)
+                            if depth > 0 then depth -= 1
+                        case ',' =>
+                            finishToken(i)
+                        case ':'
+                            if i + 1 >= text.length || text.charAt(i + 1).isWhitespace ||
+                                i > 0 && (text.charAt(i - 1) == '\'' || text.charAt(i - 1) == '"') =>
+                            finishToken(i)
+                        case '#' if tokenStart < 0 || i > 0 && text.charAt(i - 1).isWhitespace =>
+                            finishToken(i)
+                            while i < text.length && text.charAt(i) != '\n' do i += 1
+                        case c if c.isWhitespace =>
+                            if tokenStart < 0 then ()
+                        case _ =>
+                            if tokenStart < 0 then tokenStart = i
+                    end match
+                end if
+                i += 1
+            end while
+            finishToken(text.length)
+        end flowStats
+
+        def countInlineValue(text: String): Boolean =
+            val (_, _, valueText) = sourceProperties(text)
+            if valueText.isEmpty then false
+            else
+                val first = valueText.charAt(0)
+                if first == '[' || first == '{' then flowStats(valueText, stack.length)
+                else countValue()
+                first == '|' || first == '>'
+            end if
+        end countInlineValue
+
+        var i                 = 0
+        var sawRootScalar     = false
+        var blockScalarIndent = -1
+        while i < value.length do
+            var indent = 0
+            while i < value.length && value.charAt(i) == ' ' do
+                indent += 1
+                i += 1
+            end while
+            val textStart = i
+            while i < value.length && value.charAt(i) != '\n' do i += 1
+            val lineEnd = i
+            if i < value.length && value.charAt(i) == '\n' then i += 1
+
+            val raw      = value.substring(textStart, lineEnd)
+            val stripped = stripSourceComment(raw).trim
+            if stripped.nonEmpty then
+                if blockScalarIndent >= 0 && indent >= blockScalarIndent then ()
+                else
+                    blockScalarIndent = -1
+                    popTo(indent)
+                    if stripped == "-" || stripped.startsWith("- ") then
+                        enter(indent, 's')
+                        val itemText = stripped.drop(1).trim
+                        if itemText.nonEmpty then
+                            val colon = findSourceTopLevel(itemText, ':')
+                            if colon >= 0 && (colon == itemText.length - 1 || itemText.charAt(colon + 1).isWhitespace) then
+                                enter(indent + 2, 'm')
+                                countValue()
+                                val rest = itemText.substring(colon + 1).trim
+                                if rest.nonEmpty && countInlineValue(rest) then blockScalarIndent = indent + 3
+                            else if countInlineValue(itemText) then blockScalarIndent = indent + 1
+                            end if
+                        end if
+                    else
+                        val colon = findSourceTopLevel(raw, ':')
+                        if colon >= 0 && (colon == raw.length - 1 || raw.charAt(colon + 1).isWhitespace) then
+                            enter(indent, 'm')
+                            countValue()
+                            val rest = raw.substring(colon + 1).trim
+                            if rest.nonEmpty && countInlineValue(rest) then blockScalarIndent = indent + 1
+                        else if stack.isEmpty && !sawRootScalar then
+                            val _ = countInlineValue(stripped)
+                            if count == 0 then countValue()
+                            sawRootScalar = true
+                        end if
+                    end if
+                end if
+            end if
+        end while
+
+        (math.max(count, 1), maxDepth)
+    end sourceAnchorStats
 
     private def findSourceTopLevel(s: String, target: Char): Int =
         var i      = 0

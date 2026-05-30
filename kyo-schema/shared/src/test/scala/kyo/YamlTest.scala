@@ -17,6 +17,8 @@ final case class YamlValueHolder(
     anyValId: YamlAnyValUserId,
     valueObject: YamlValueObject
 ) derives CanEqual
+final case class YamlCountOnly(count: Int) derives CanEqual
+final case class YamlAnchoredCount(value: YamlCountOnly) derives CanEqual
 final case class YamlUnicodeField(café: Int) derives CanEqual
 
 class YamlTest extends Test:
@@ -516,6 +518,16 @@ class YamlTest extends Test:
             reader.fieldParse()
             assert(reader.matchField("name".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
             assert(reader.string() == "Alice")
+        }
+
+        "reader registers anchored mapping sources without parsing later malformed fields" in {
+            val yaml =
+                """value: &thing
+                  |  count: 7
+                  |  later: [unterminated
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlAnchoredCount](yaml) == Result.succeed(YamlAnchoredCount(YamlCountOnly(7))))
         }
 
         "skip advances the current sequence element without parsing later malformed content" in {
