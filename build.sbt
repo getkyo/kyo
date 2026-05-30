@@ -165,6 +165,7 @@ lazy val kyoJVM = project
         `kyo-tasty`.jvm,
         `kyo-tasty-fixtures`.jvm,
         `kyo-tasty-bench`.jvm,
+        `kyo-tasty-examples`.jvm,
         `kyo-compat-future`.jvm,
         `kyo-compat-kyo`.jvm,
         `kyo-compat-zio`.jvm,
@@ -204,6 +205,7 @@ lazy val kyoJS = project
         `kyo-actor`.js,
         `kyo-tasty`.js,
         `kyo-tasty-fixtures`.js,
+        `kyo-tasty-examples`.js,
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
@@ -238,6 +240,7 @@ lazy val kyoNative = project
         `kyo-actor`.native,
         `kyo-tasty`.native,
         `kyo-tasty-fixtures`.native,
+        `kyo-tasty-examples`.native,
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -614,6 +617,18 @@ lazy val `kyo-tasty-bench` =
         .jvmSettings(
             libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0"
         )
+        .disablePlugins(MimaPlugin)
+
+lazy val `kyo-tasty-examples` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-tasty-examples"))
+        .dependsOn(`kyo-tasty`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
         .disablePlugins(MimaPlugin)
 
 lazy val `kyo-logging-jpl` =

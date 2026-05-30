@@ -1,4 +1,4 @@
-package kyo.tasty.examples
+package examples
 
 import kyo.*
 import kyo.Tasty.*
