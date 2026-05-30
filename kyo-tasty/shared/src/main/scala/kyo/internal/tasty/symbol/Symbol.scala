@@ -1,5 +1,6 @@
 package kyo.internal.tasty.symbol
 
+import kyo.AllowUnsafe
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Tasty
@@ -15,7 +16,8 @@ object Symbol:
     /** Create a new `Tasty.Symbol` with the given fields.
       *
       * `home` is stored but not called during pass 1. `origin` records the TASTy body slice or Java origin for pass 2 / Phase 5.
-      * `javaMetadata` is populated for Java-sourced symbols by ClassfileUnpickler.
+      * `javaMetadata` is populated for Java-sourced symbols by ClassfileUnpickler. Requires AllowUnsafe because Symbol.make allocates
+      * SingleAssign slots via SingleAssign.init().
       */
     def makeSymbol(
         kind: Tasty.SymbolKind,
@@ -25,7 +27,7 @@ object Symbol:
         home: ClasspathRef,
         origin: Tasty.Symbol.Origin,
         javaMetadata: Maybe[Tasty.JavaMetadata]
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         Tasty.Symbol.make(kind, flags, name, owner, home, origin, javaMetadata)
 
 end Symbol

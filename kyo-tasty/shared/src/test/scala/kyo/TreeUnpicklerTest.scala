@@ -69,7 +69,7 @@ class TreeUnpicklerTest extends Test:
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val view     = ByteView(bytes)
         val interner = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home     = new ClasspathRef
+        val home     = ClasspathRef.init()
         val arena    = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
@@ -294,7 +294,7 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("javaMethod"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.JavaOrigin,
             Absent
         )
@@ -353,7 +353,8 @@ class TreeUnpicklerTest extends Test:
                     case Some(sym) =>
                         sym.origin match
                             case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 =>
-                                val truncated = new Tasty.Symbol.TastyOrigin(
+                                import AllowUnsafe.embrace.danger
+                                val truncated = Tasty.Symbol.TastyOrigin.init(
                                     o.bodyStart,
                                     o.bodyStart + 1,
                                     o.sectionBytes,
@@ -361,7 +362,6 @@ class TreeUnpicklerTest extends Test:
                                     o.sectionOffset,
                                     null
                                 )
-                                import AllowUnsafe.embrace.danger
                                 truncated._addrMap.set(scala.collection.immutable.IntMap.empty)
                                 // decodeSync should either succeed (single-byte literal) or throw a caught exception.
                                 val ok =
@@ -471,13 +471,13 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Int"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val names   = Array(Tasty.Name("scala"))
         val addrMap = IntMap(1 -> sym)
-        val home    = new ClasspathRef
+        val home    = ClasspathRef.init()
         // UNITconst is a single-byte tag (category 1); TreeUnpickler decodes it as Literal(UnitConst).
         val pickle = Chunk(TastyFormat.UNITconst.toByte)
         // sectionBytes must be non-null for DecodeContext to function; use a minimal byte array.
@@ -506,13 +506,13 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Foo"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val names     = Array(Tasty.Name("test"))
         val addrMap   = IntMap.empty[Tasty.Symbol]
-        val home      = new ClasspathRef
+        val home      = ClasspathRef.init()
         val decodeCtx = new Tasty.Annotation.DecodeContext(names, addrMap, home, Array.emptyByteArray, 0)
         val ann       = Tasty.Annotation(Tasty.Type.Named(sym), Chunk.empty, decodeCtx)
         Abort.run[TastyError](ann.args).map:
@@ -540,13 +540,13 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Dummy"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val names        = Array(Tasty.Name("dummy"))
         val addrMap      = IntMap.empty[Tasty.Symbol]
-        val home         = new ClasspathRef
+        val home         = ClasspathRef.init()
         val pickle       = Chunk(TastyFormat.PRIVATE.toByte)
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
@@ -574,13 +574,13 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Dummy"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val names   = Array(Tasty.Name("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
-        val home    = new ClasspathRef
+        val home    = ClasspathRef.init()
         // Tag 50 is below firstASTtag (60) but is not assigned to any modifier or constant.
         val unknownTag: Byte = 50.toByte
         val pickle           = Chunk(unknownTag)
@@ -612,13 +612,19 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Dummy"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val pickle = Chunk(TastyFormat.OBJECT.toByte)
         val decodeCtx =
-            new Tasty.Annotation.DecodeContext(Array(Tasty.Name("dummy")), IntMap.empty[Tasty.Symbol], new ClasspathRef, pickle.toArray, 0)
+            new Tasty.Annotation.DecodeContext(
+                Array(Tasty.Name("dummy")),
+                IntMap.empty[Tasty.Symbol],
+                ClasspathRef.init(),
+                pickle.toArray,
+                0
+            )
         val ann = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Module.bit => succeed
@@ -633,13 +639,19 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Dummy"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val pickle = Chunk(TastyFormat.TRAIT.toByte)
         val decodeCtx =
-            new Tasty.Annotation.DecodeContext(Array(Tasty.Name("dummy")), IntMap.empty[Tasty.Symbol], new ClasspathRef, pickle.toArray, 0)
+            new Tasty.Annotation.DecodeContext(
+                Array(Tasty.Name("dummy")),
+                IntMap.empty[Tasty.Symbol],
+                ClasspathRef.init(),
+                pickle.toArray,
+                0
+            )
         val ann = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Trait.bit => succeed
@@ -654,13 +666,19 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Dummy"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val pickle = Chunk(TastyFormat.ENUM.toByte)
         val decodeCtx =
-            new Tasty.Annotation.DecodeContext(Array(Tasty.Name("dummy")), IntMap.empty[Tasty.Symbol], new ClasspathRef, pickle.toArray, 0)
+            new Tasty.Annotation.DecodeContext(
+                Array(Tasty.Name("dummy")),
+                IntMap.empty[Tasty.Symbol],
+                ClasspathRef.init(),
+                pickle.toArray,
+                0
+            )
         val ann = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Enum.bit => succeed
@@ -681,13 +699,13 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Dummy"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val names   = Array(Tasty.Name("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
-        val home    = new ClasspathRef
+        val home    = ClasspathRef.init()
         // SHAREDtype = 61; nat(42): single-byte encoding with stop-bit set = 42 | 0x80 = 0xAA.
         val pickle       = Chunk(TastyFormat.SHAREDtype.toByte, (42 | 0x80).toByte)
         val sectionBytes = pickle.toArray
@@ -716,13 +734,13 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Dummy"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val names   = Array(Tasty.Name("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
-        val home    = new ClasspathRef
+        val home    = ClasspathRef.init()
         // INTconst = 70; int(7): signed readInt encoding, single byte with stop-bit set = 7 | 0x80 = 0x87.
         val pickle       = Chunk(TastyFormat.INTconst.toByte, (7 | 0x80).toByte)
         val sectionBytes = pickle.toArray
@@ -768,7 +786,7 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("List"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -777,13 +795,13 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Int"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val names   = Array(Tasty.Name("scala"))
         val addrMap = IntMap(1 -> listSym, 2 -> intSym)
-        val home    = new ClasspathRef
+        val home    = ClasspathRef.init()
         // APPLIEDtype(161=0xA1) Length(4=0x84) TERMREFdirect(62=0x3E) nat(1)=0x81 TERMREFdirect(62=0x3E) nat(2)=0x82
         val pickle = Chunk[Byte](
             TastyFormat.APPLIEDtype.toByte,
@@ -829,7 +847,7 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name(n),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -839,7 +857,7 @@ class TreeUnpicklerTest extends Test:
         val case2Sym = makeSym("Case2")
         val names    = Array(Tasty.Name("scala"))
         val addrMap  = IntMap(1 -> boundSym, 2 -> scrutSym, 3 -> case1Sym, 4 -> case2Sym)
-        val home     = new ClasspathRef
+        val home     = ClasspathRef.init()
         // MATCHtype(190=0xBE) Length(8=0x88) TERMREFdirect nat(1) TERMREFdirect nat(2)
         //   TERMREFdirect nat(3) TERMREFdirect nat(4)
         val pickle = Chunk[Byte](
@@ -882,7 +900,7 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Dummy"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -896,7 +914,7 @@ class TreeUnpicklerTest extends Test:
             Tasty.Name("scala")
         )
         val addrMap = IntMap.empty[Tasty.Symbol]
-        val home    = new ClasspathRef
+        val home    = ClasspathRef.init()
         // TERMREFpkg = 64; nat(5): single-byte stop-bit encoding = 5 | 0x80 = 0x85.
         val pickle       = Chunk(TastyFormat.TERMREFpkg.toByte, (5 | 0x80).toByte)
         val sectionBytes = pickle.toArray
@@ -926,7 +944,7 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("List"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -935,13 +953,13 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("scala"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
         val names   = Array(Tasty.Name("map"))
         val addrMap = IntMap(1 -> listSym, 2 -> scalaSym)
-        val home    = new ClasspathRef
+        val home    = ClasspathRef.init()
         // SELECTin = 176 (0xB0), length-prefixed (cat 5).
         // Payload: nameRef=nat(0)=0x80, TERMREFdirect=62 nat(1)=0x81, TERMREFdirect=62 nat(2)=0x82 => 6 bytes.
         // Length nat(6): single-byte stop-bit = 6 | 0x80 = 0x86.
@@ -1026,7 +1044,7 @@ class TreeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name(n),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -1035,7 +1053,7 @@ class TreeUnpicklerTest extends Test:
         val arg2Sym = makeSym("arg2")
         val names   = Array(Tasty.Name("test"))
         val addrMap = IntMap(1 -> fnSym, 2 -> arg1Sym, 3 -> arg2Sym)
-        val home    = new ClasspathRef
+        val home    = ClasspathRef.init()
         // APPLY(136) Length(6=0x86) TERMREFdirect(62=0x3E) nat(1)=0x81 TERMREFdirect(62=0x3E) nat(2)=0x82 TERMREFdirect(62=0x3E) nat(3)=0x83
         val pickle = Chunk[Byte](
             TastyFormat.APPLY.toByte,

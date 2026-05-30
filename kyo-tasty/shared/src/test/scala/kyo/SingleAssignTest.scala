@@ -16,7 +16,7 @@ class SingleAssignTest extends Test:
     // Then: returns 7.
     // Pins: T2.
     "SingleAssign set/get round trip returns assigned value" in {
-        val slot = new SingleAssign[Int]
+        val slot = SingleAssign.init[Int]()
         slot.set(7)
         val result = slot.get()
         assert(result == 7, s"Expected 7 but got $result")
@@ -30,7 +30,7 @@ class SingleAssignTest extends Test:
     // Then: throws IllegalStateException whose message contains "already set".
     // Pins: T2.
     "SingleAssign second set throws IllegalStateException with already-set message" in {
-        val slot = new SingleAssign[Int]
+        val slot = SingleAssign.init[Int]()
         slot.set(7)
         var thrown = false
         var msg    = ""
@@ -53,7 +53,7 @@ class SingleAssignTest extends Test:
     // When: slot.get().
     // Then: throws IllegalStateException whose message contains "not yet set".
     "SingleAssign get before set throws IllegalStateException" in {
-        val slot   = new SingleAssign[Int]
+        val slot   = SingleAssign.init[Int]()
         var thrown = false
         try
             slot.get()
@@ -66,7 +66,7 @@ class SingleAssignTest extends Test:
 
     // isSet returns false before assignment, true after.
     "SingleAssign isSet returns false before set and true after set" in {
-        val slot = new SingleAssign[String]
+        val slot = SingleAssign.init[String]()
         assert(!slot.isSet, "Expected isSet == false before assignment")
         slot.set("hi")
         assert(slot.isSet, "Expected isSet == true after assignment")
@@ -80,7 +80,7 @@ class SingleAssignTest extends Test:
     // Uses kyo.Async.foreach so the test compiles and runs on JVM, JS, and Native.
     // Pins: T7.
     "SingleAssign T7: 16-fiber concurrent set sees exactly one winner" in run {
-        val slot       = new SingleAssign[Int]
+        val slot       = SingleAssign.init[Int]()
         val fiberCount = 16
         Async.foreach(0 until fiberCount, concurrency = fiberCount) { fiberIndex =>
             Abort.run[IllegalStateException] {

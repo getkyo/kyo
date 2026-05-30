@@ -10,15 +10,17 @@ import kyo.internal.tasty.type_.TypeArena
 class TypeArenaTest extends Test:
 
     private def makeSym(name: String): Tasty.Symbol =
+        import AllowUnsafe.embrace.danger
         Tasty.Symbol.make(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
             Tasty.Name(name),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
+    end makeSym
 
     // Test 1: intern called twice with structurally identical Type.Named(sym) returns the same reference.
     "intern called twice with the same Named(sym) returns the same reference" in run {

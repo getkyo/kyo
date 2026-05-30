@@ -38,7 +38,7 @@ object JavaAnnotationUnpickler:
         pool: ConstantPool,
         interner: Interner,
         home: ClasspathRef
-    )(using Frame): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         Sync.defer(readU2(view)).map: numAnnotations =>
             readAnnotationList(view, pool, interner, home, numAnnotations, 0, Chunk.empty, depth = 0)
 
@@ -51,7 +51,7 @@ object JavaAnnotationUnpickler:
         idx: Int,
         acc: Chunk[Tasty.JavaAnnotation],
         depth: Int
-    )(using Frame): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             readOneAnnotation(view, pool, interner, home, depth).map: ann =>
@@ -63,7 +63,7 @@ object JavaAnnotationUnpickler:
         interner: Interner,
         home: ClasspathRef,
         depth: Int
-    )(using Frame): Tasty.JavaAnnotation < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.JavaAnnotation < (Sync & Abort[TastyError]) =
         if depth > MaxAnnotationDepth then
             Abort.fail(TastyError.ClassfileFormatError(
                 pool.path,
@@ -87,7 +87,7 @@ object JavaAnnotationUnpickler:
         idx: Int,
         acc: Map[Tasty.Name, Tasty.JavaAnnotation.Value],
         depth: Int
-    )(using Frame): Map[Tasty.Name, Tasty.JavaAnnotation.Value] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Map[Tasty.Name, Tasty.JavaAnnotation.Value] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             Sync.defer(readU2(view)).map: nameIdx =>
@@ -102,7 +102,7 @@ object JavaAnnotationUnpickler:
         interner: Interner,
         home: ClasspathRef,
         depth: Int
-    )(using Frame): Tasty.JavaAnnotation.Value < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.JavaAnnotation.Value < (Sync & Abort[TastyError]) =
         Sync.defer(readU1(view)).map: tag =>
             tag match
                 case 'B' =>
@@ -197,14 +197,14 @@ object JavaAnnotationUnpickler:
         idx: Int,
         acc: Chunk[Tasty.JavaAnnotation.Value],
         depth: Int
-    )(using Frame): Chunk[Tasty.JavaAnnotation.Value] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation.Value] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             readElementValue(view, pool, interner, home, depth).map: v =>
                 readElementValueArray(view, pool, interner, home, total, idx + 1, acc.appended(v), depth)
 
     /** Convert a field descriptor like "Ljava/lang/Deprecated;" to an Unresolved symbol. */
-    private def descriptorToUnresolvedSymbol(descriptor: String, home: ClasspathRef): Tasty.Symbol =
+    private def descriptorToUnresolvedSymbol(descriptor: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Symbol =
         val fqn = descriptorToFqn(descriptor)
         SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
@@ -218,7 +218,7 @@ object JavaAnnotationUnpickler:
     end descriptorToUnresolvedSymbol
 
     /** Convert a class descriptor to a Tasty.Type.Named wrapping an Unresolved symbol. */
-    private def descriptorToType(descriptor: String, home: ClasspathRef): Tasty.Type =
+    private def descriptorToType(descriptor: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Type =
         Tasty.Type.Named(descriptorToUnresolvedSymbol(descriptor, home))
 
     /** Strip "L" prefix and ";" suffix, replace "/" with ".". For non-L descriptors (primitives), return as-is.

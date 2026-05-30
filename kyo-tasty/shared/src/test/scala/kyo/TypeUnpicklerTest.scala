@@ -35,7 +35,7 @@ class TypeUnpicklerTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def makeArena(): TypeArena   = TypeArena.canonical()
-    private def makeHome(): ClasspathRef = new ClasspathRef
+    private def makeHome(): ClasspathRef = ClasspathRef.init()
 
     private def makeSym(name: String, kind: Tasty.SymbolKind = Tasty.SymbolKind.Class): Tasty.Symbol =
         Tasty.Symbol.make(
@@ -43,7 +43,7 @@ class TypeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name(name),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -470,7 +470,7 @@ class TypeUnpicklerTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("s"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )

@@ -615,58 +615,33 @@ object Tasty:
 
     // ── Symbol ──────────────────────────────────────────────────────────────
 
-    final class Symbol private[Tasty] (
+    final class Symbol private (
         val kind: SymbolKind,
         val flags: Flags,
         val name: Name,
         val owner: Symbol,
         private[kyo] val home: ClasspathRef,
         private[kyo] val origin: Symbol.Origin,
-        private[kyo] val javaMetadata: Maybe[JavaMetadata]
-    ):
-        // Write-once slots populated during classpath orchestration.
-        // Unsafe: SingleAssign is an unsafe-tier helper; callers in mergeResults / ClassfileUnpickler hold AllowUnsafe.
-        private[kyo] val _parents: kyo.internal.tasty.symbol.SingleAssign[Chunk[Type]]      = new kyo.internal.tasty.symbol.SingleAssign
-        private[kyo] val _typeParams: kyo.internal.tasty.symbol.SingleAssign[Chunk[Symbol]] = new kyo.internal.tasty.symbol.SingleAssign
-        private[kyo] val _declarations: kyo.internal.tasty.symbol.SingleAssign[Chunk[Symbol]] =
-            new kyo.internal.tasty.symbol.SingleAssign
-        private[kyo] val _declaredType: kyo.internal.tasty.symbol.SingleAssign[Type] = new kyo.internal.tasty.symbol.SingleAssign
-        private[kyo] val _scaladoc: kyo.internal.tasty.symbol.SingleAssign[Maybe[String]] =
-            new kyo.internal.tasty.symbol.SingleAssign
-        private[kyo] val _position: kyo.internal.tasty.symbol.SingleAssign[Maybe[Position]] =
-            new kyo.internal.tasty.symbol.SingleAssign
+        private[kyo] val javaMetadata: Maybe[JavaMetadata],
+        // Write-once slots populated during classpath orchestration. Passed as constructor parameters
+        // so that SingleAssign.init() (which requires AllowUnsafe) is called inside Symbol.make's scope.
+        private[kyo] val _parents: kyo.internal.tasty.symbol.SingleAssign[Chunk[Type]],
+        private[kyo] val _typeParams: kyo.internal.tasty.symbol.SingleAssign[Chunk[Symbol]],
+        private[kyo] val _declarations: kyo.internal.tasty.symbol.SingleAssign[Chunk[Symbol]],
+        private[kyo] val _declaredType: kyo.internal.tasty.symbol.SingleAssign[Type],
+        private[kyo] val _scaladoc: kyo.internal.tasty.symbol.SingleAssign[Maybe[String]],
+        private[kyo] val _position: kyo.internal.tasty.symbol.SingleAssign[Maybe[Position]],
         // PermittedSubclasses attribute: populated by ClassfileUnpickler for sealed Java classes.
-        private[kyo] val _permittedSubclasses: kyo.internal.tasty.symbol.SingleAssign[Maybe[Chunk[Symbol]]] =
-            new kyo.internal.tasty.symbol.SingleAssign
-
+        private[kyo] val _permittedSubclasses: kyo.internal.tasty.symbol.SingleAssign[Maybe[Chunk[Symbol]]],
         // Cached full name: computed once on first call to fullName, then returned from the cell.
         // OnceCell's race-and-discard semantics are acceptable here: init() is a pure owner-chain walk
         // that always returns the same Name; at most one redundant computation per symbol under contention.
-        // Unsafe: OnceCell is an unsafe-tier helper; AllowUnsafe is embraced at the fullName accessor boundary.
-        private[kyo] val _fullNameOnce: kyo.internal.tasty.symbol.OnceCell[Name] =
-            new kyo.internal.tasty.symbol.OnceCell[Name](() => Symbol.computeFullName(this))
-
+        private[kyo] val _fullNameOnce: kyo.internal.tasty.symbol.OnceCell[Name],
         // Lazy body cell: populated on first call to Symbol.body. Not a write-once slot because the
         // computation is driven by the caller, not by classpath orchestration. OnceCell handles thread safety.
-        // Unsafe: OnceCell is an unsafe-tier helper; AllowUnsafe is embraced at the body accessor boundary.
         // The init lambda may throw TreeUnpickler.DecodeException for corrupt byte slices; body() catches it.
-        private[kyo] val _bodyOnce: kyo.internal.tasty.symbol.OnceCell[Tree] =
-            new kyo.internal.tasty.symbol.OnceCell[Tree](() =>
-                // This init lambda is called at most once per symbol. TreeUnpickler.decodeSync throws
-                // TreeUnpickler.DecodeException on corrupt/truncated slices; body() catches and wraps it.
-                // Unsafe: OnceCell init runs via TreeUnpickler.decodeSync, which reads unsafe-tier helpers.
-                import AllowUnsafe.embrace.danger
-                origin match
-                    case Tasty.Symbol.JavaOrigin =>
-                        // No cursor: Java symbols have no TASTy body to read.
-                        throw new kyo.internal.tasty.reader.TreeUnpickler.DecodeException(
-                            "body not available for Java symbols",
-                            0L
-                        )
-                    case o: Tasty.Symbol.TastyOrigin =>
-                        kyo.internal.tasty.reader.TreeUnpickler.decodeSync(o, this)
-                end match
-            )
+        private[kyo] val _bodyOnce: kyo.internal.tasty.symbol.OnceCell[Tree]
+    ):
 
         // Pure accessors (no effect, always present even after classpath close).
         def fullName(using AllowUnsafe): Name = _fullNameOnce.get()
@@ -922,8 +897,8 @@ object Tasty:
 
         /** Internal factory used by kyo.internal.tasty.symbol.Symbol to construct Symbol instances.
           *
-          * The Symbol constructor is private[Tasty] so only code inside object Tasty can call it. This factory bridges that access boundary
-          * for internal unpickler code.
+          * The Symbol constructor is private so only Symbol.make (inside object Tasty) can call it. This factory bridges that access
+          * boundary for internal unpickler code. Requires AllowUnsafe because it allocates SingleAssign.init() slots.
           */
         private[kyo] def make(
             kind: SymbolKind,
@@ -933,8 +908,43 @@ object Tasty:
             home: ClasspathRef,
             origin: Origin,
             javaMetadata: Maybe[JavaMetadata]
-        ): Symbol =
-            new Symbol(kind, flags, name, owner, home, origin, javaMetadata)
+        )(using AllowUnsafe): Symbol =
+            // Use lazy val to allow _fullNameOnce and _bodyOnce init lambdas to capture `sym` by reference.
+            lazy val sym: Symbol = new Symbol(
+                kind,
+                flags,
+                name,
+                owner,
+                home,
+                origin,
+                javaMetadata,
+                _parents = kyo.internal.tasty.symbol.SingleAssign.init[Chunk[Type]](),
+                _typeParams = kyo.internal.tasty.symbol.SingleAssign.init[Chunk[Symbol]](),
+                _declarations = kyo.internal.tasty.symbol.SingleAssign.init[Chunk[Symbol]](),
+                _declaredType = kyo.internal.tasty.symbol.SingleAssign.init[Type](),
+                _scaladoc = kyo.internal.tasty.symbol.SingleAssign.init[Maybe[String]](),
+                _position = kyo.internal.tasty.symbol.SingleAssign.init[Maybe[Position]](),
+                _permittedSubclasses = kyo.internal.tasty.symbol.SingleAssign.init[Maybe[Chunk[Symbol]]](),
+                _fullNameOnce = new kyo.internal.tasty.symbol.OnceCell[Name](() => Symbol.computeFullName(sym)),
+                _bodyOnce = new kyo.internal.tasty.symbol.OnceCell[Tree](() =>
+                    // This init lambda is called at most once per symbol. TreeUnpickler.decodeSync throws
+                    // TreeUnpickler.DecodeException on corrupt/truncated slices; body() catches and wraps it.
+                    // flow-allow: §839 case 3 -- OnceCell init lambda; runs at first body access, single-fiber decode boundary.
+                    import AllowUnsafe.embrace.danger
+                    sym.origin match
+                        case Tasty.Symbol.JavaOrigin =>
+                            // No cursor: Java symbols have no TASTy body to read.
+                            throw new kyo.internal.tasty.reader.TreeUnpickler.DecodeException(
+                                "body not available for Java symbols",
+                                0L
+                            )
+                        case o: Tasty.Symbol.TastyOrigin =>
+                            kyo.internal.tasty.reader.TreeUnpickler.decodeSync(o, sym)
+                    end match
+                )
+            )
+            sym
+        end make
 
         /** The complete Symbol.Origin ADT. Sealed here; JavaOrigin and TastyOrigin are the two concrete subtypes. */
         sealed trait Origin derives CanEqual
@@ -956,7 +966,7 @@ object Tasty:
           * symbol and is used by TreeUnpickler to resolve IDENT/SELECT tree references during lazy body decode. Always Map.empty for
           * synthetic (non-file) symbols.
           */
-        final class TastyOrigin(
+        final class TastyOrigin private (
             val bodyStart: Int,
             val bodyEnd: Int,
             val sectionBytes: Array[Byte],
@@ -966,11 +976,11 @@ object Tasty:
               * constructing a ByteView from sectionBytes. After the backing arena is closed, reads from this view throw
               * IllegalStateException which Symbol.body maps to TastyError.ClasspathClosed.
               */
-            val bodyView: kyo.internal.tasty.binary.ByteView | Null
+            val bodyView: kyo.internal.tasty.binary.ByteView | Null,
+            // Write-once: populated by AstUnpickler after pass1 completes. Passed as constructor parameter so that
+            // SingleAssign.init() (which requires AllowUnsafe) is called inside TastyOrigin.init's scope.
+            private[kyo] val _addrMap: kyo.internal.tasty.symbol.SingleAssign[IntMap[Tasty.Symbol]]
         ) extends Origin:
-            // Write-once: populated by AstUnpickler after pass1 completes. Unsafe: SingleAssign is unsafe-tier.
-            private[kyo] val _addrMap: kyo.internal.tasty.symbol.SingleAssign[IntMap[Tasty.Symbol]] =
-                new kyo.internal.tasty.symbol.SingleAssign
 
             private[kyo] def addrMap: IntMap[Tasty.Symbol] =
                 // Unsafe: SingleAssign.get() is unsafe-tier; private[kyo] limits callers to kyo.internal.tasty.* §839 case 3 contexts.
@@ -987,8 +997,42 @@ object Tasty:
         end TastyOrigin
 
         object TastyOrigin:
-            /** Convenience factory for synthetic symbols that have no file bytes or body. */
-            def empty: TastyOrigin = new TastyOrigin(0, 0, Array.empty[Byte], Array.empty[Tasty.Name], 0, null)
+            /** Convenience factory for synthetic symbols that have no file bytes or body.
+              *
+              * Allocates a fresh unset SingleAssign for _addrMap at module-load time. flow-allow: §839 case 3 -- module-load init; object
+              * TastyOrigin initializer runs once at class load.
+              */
+            val empty: TastyOrigin =
+                import AllowUnsafe.embrace.danger
+                new TastyOrigin(
+                    0,
+                    0,
+                    Array.empty[Byte],
+                    Array.empty[Tasty.Name],
+                    0,
+                    null,
+                    kyo.internal.tasty.symbol.SingleAssign.init[IntMap[Tasty.Symbol]]()
+                )
+            end empty
+
+            /** Factory for file-backed TastyOrigin instances. Requires AllowUnsafe to allocate the SingleAssign slot. */
+            private[kyo] def init(
+                bodyStart: Int,
+                bodyEnd: Int,
+                sectionBytes: Array[Byte],
+                names: Array[Tasty.Name],
+                sectionOffset: Int,
+                bodyView: kyo.internal.tasty.binary.ByteView | Null
+            )(using AllowUnsafe): TastyOrigin =
+                new TastyOrigin(
+                    bodyStart,
+                    bodyEnd,
+                    sectionBytes,
+                    names,
+                    sectionOffset,
+                    bodyView,
+                    kyo.internal.tasty.symbol.SingleAssign.init[IntMap[Tasty.Symbol]]()
+                )
 
             /** Pattern match extractor: `case TastyOrigin(bodyStart, bodyEnd)`. */
             def unapply(o: TastyOrigin): Some[(Int, Int)] =

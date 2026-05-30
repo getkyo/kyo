@@ -80,7 +80,7 @@ object TreeUnpickler:
                 end if
                 (ByteView(b, origin.bodyStart, origin.bodyEnd), b)
         val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
-        val dummyHome     = new ClasspathRef
+        val dummyHome     = ClasspathRef.init()
         val dummyArena    = TypeArena.canonical()
         val typeSession   = new TypeUnpickler.TreeTypeSession(names, addrMap, dummyArena, dummyHome, bytes, origin.sectionOffset)
         val ctx = DecodeCtx(
@@ -106,7 +106,7 @@ object TreeUnpickler:
         view: ByteView,
         end: Int,
         ctx: DecodeCtx
-    ): Tasty.Tree =
+    )(using AllowUnsafe): Tasty.Tree =
         import Tasty.SymbolKind.*
         sym.kind match
             case Val | Var | Field | Parameter =>
@@ -986,7 +986,7 @@ object TreeUnpickler:
         view: ByteView,
         end: Long,
         ctx: DecodeCtx
-    ): (Chunk[Chunk[Tasty.Tree]], Tasty.Type) =
+    )(using AllowUnsafe): (Chunk[Chunk[Tasty.Tree]], Tasty.Type) =
         val paramss = new mutable.ArrayBuffer[Chunk[Tasty.Tree]]()
         var tpt     = Tasty.Type.Named(makeUnresolvedSym("unknown-tpt", ctx.home)): Tasty.Type
         while view.position < end do
@@ -1051,7 +1051,7 @@ object TreeUnpickler:
     end readTypesUntil
 
     /** Read the first type node in the payload if the current tag looks like a type tag; skip modifiers first. */
-    private def readTypeOrSkip(view: ByteView, end: Long, ctx: DecodeCtx): Tasty.Type =
+    private def readTypeOrSkip(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Type =
         skipModifierTags(view, end)
         if view.position < end then
             val peek = view.peekByte(view.position) & 0xff
@@ -1183,7 +1183,7 @@ object TreeUnpickler:
         else Tasty.Name(s"name@$nameRef")
     end nameFromRef
 
-    private def makeUnresolvedSym(name: String, home: ClasspathRef): Tasty.Symbol =
+    private def makeUnresolvedSym(name: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Symbol =
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,

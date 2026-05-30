@@ -53,7 +53,7 @@ class PositionsUnpicklerTest extends Test:
 
     /** Create a minimal Tasty.Symbol for testing. */
     private def makeTestSymbol(nameStr: String): Tasty.Symbol =
-        val home   = new ClasspathRef
+        val home   = ClasspathRef.init()
         val origin = Tasty.Symbol.TastyOrigin.empty
         Tasty.Symbol.make(
             Tasty.SymbolKind.Class,
@@ -153,7 +153,7 @@ class PositionsUnpicklerTest extends Test:
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
         val interner   = new Interner(numShards = 32, initialShardCapacity = 16)
         val arena      = new TypeArena
-        val home       = new ClasspathRef
+        val home       = ClasspathRef.init()
         Abort.run[TastyError]:
             ClassfileUnpickler.read(classBytes, interner, arena, home).flatMap: result =>
                 Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>

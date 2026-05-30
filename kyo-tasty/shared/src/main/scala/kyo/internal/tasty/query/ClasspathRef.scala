@@ -12,8 +12,7 @@ import kyo.internal.tasty.symbol.SingleAssign
   * Lifecycle constraint: no Phase 3 code may call `get()` or `assign()`. Phase 3 code may only store or forward the `ClasspathRef`
   * reference. The owner-chain walks in `computeFullName` and `computeBinaryName` do NOT call through `home`.
   */
-final class ClasspathRef:
-    private val slot = new SingleAssign[Tasty.Classpath]
+final class ClasspathRef private (private val slot: SingleAssign[Tasty.Classpath]):
 
     /** Assign the Classpath. Called by Phase 7 orchestration. Throws if already assigned. */
     def assign(cp: Tasty.Classpath): Unit =
@@ -33,4 +32,10 @@ final class ClasspathRef:
         slot.isSet
     end isAssigned
 
+end ClasspathRef
+
+object ClasspathRef:
+    /** Allocate a fresh unset ClasspathRef. Requires AllowUnsafe because SingleAssign.init() allocates an AtomicRef.Unsafe slot. */
+    def init()(using AllowUnsafe): ClasspathRef =
+        new ClasspathRef(SingleAssign.init[Tasty.Classpath]())
 end ClasspathRef

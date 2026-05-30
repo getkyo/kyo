@@ -21,7 +21,7 @@ class SubtypeTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name(""),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -31,7 +31,7 @@ class SubtypeTest extends Test:
                 Tasty.Flags.empty,
                 Tasty.Name(part),
                 owner,
-                new ClasspathRef,
+                ClasspathRef.init(),
                 Tasty.Symbol.TastyOrigin.empty,
                 Absent
             )
@@ -48,7 +48,7 @@ class SubtypeTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name(""),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -57,7 +57,7 @@ class SubtypeTest extends Test:
             new Tasty.Flags(Tasty.Flag.CoVariant.bit),
             Tasty.Name(name),
             root,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -156,6 +156,7 @@ class SubtypeTest extends Test:
     // Test 8: TypeLambda([T], C[T]) isSubtypeOf TypeLambda([U], C[U]) Sub (alpha-equivalence)
     "TypeLambda([T], C[T]).isSubtypeOf(TypeLambda([U], C[U])) Sub (alpha-equiv)" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+            import AllowUnsafe.embrace.danger
             given Tasty.Classpath = cp
             val cSym              = makeSym("test.C")
             val cType             = Tasty.Type.Named(cSym)
@@ -164,7 +165,7 @@ class SubtypeTest extends Test:
                 Tasty.Flags.empty,
                 Tasty.Name("T"),
                 null,
-                new ClasspathRef,
+                ClasspathRef.init(),
                 Tasty.Symbol.TastyOrigin.empty,
                 Absent
             )
@@ -173,7 +174,7 @@ class SubtypeTest extends Test:
                 Tasty.Flags.empty,
                 Tasty.Name("U"),
                 null,
-                new ClasspathRef,
+                ClasspathRef.init(),
                 Tasty.Symbol.TastyOrigin.empty,
                 Absent
             )
@@ -285,7 +286,7 @@ class SubtypeTest extends Test:
                 Tasty.Flags.empty,
                 Tasty.Name(""),
                 null,
-                new ClasspathRef,
+                ClasspathRef.init(),
                 Tasty.Symbol.TastyOrigin.empty,
                 Absent
             )
@@ -294,7 +295,7 @@ class SubtypeTest extends Test:
                 Tasty.Flags.empty,
                 Tasty.Name("Foo"),
                 root,
-                new ClasspathRef,
+                ClasspathRef.init(),
                 Tasty.Symbol.TastyOrigin.empty,
                 Absent
             )

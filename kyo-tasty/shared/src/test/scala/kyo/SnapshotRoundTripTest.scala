@@ -568,7 +568,7 @@ class SnapshotRoundTripTest extends Test:
             Array[Byte](0x70.toByte, 0x71.toByte, 0x72.toByte, 0x73.toByte, 0x74.toByte, 0x75.toByte, 0x76.toByte, 0x77.toByte)
 
         // Build synthetic symbols: root (pkg) -> test (pkg) -> Bar (class) and Foo (class extends Bar).
-        val refCp = new ClasspathRef
+        val refCp = ClasspathRef.init()
         val rootSym = Tasty.Symbol.make(
             Tasty.SymbolKind.Package,
             Tasty.Flags.empty,

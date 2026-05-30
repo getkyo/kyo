@@ -41,7 +41,7 @@ class ClasspathRefDedupTest extends Test:
         val bytes    = kyo.fixtures.Embedded.plainClassTasty
         val view     = ByteView(bytes)
         val interner = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home     = new ClasspathRef
+        val home     = ClasspathRef.init()
         val arena    = TypeArena.canonical()
         Abort.run[TastyError]:
             for
@@ -87,15 +87,15 @@ class ClasspathRefDedupTest extends Test:
                         succeed
     }
 
-    /** Regression test 2: the "previously seen" check returns true exactly once per new ClasspathRef.
+    /** Regression test 2: the "previously seen" check returns true exactly once per ClasspathRef.init().
       *
       * Directly exercises `java.util.HashSet[ClasspathRef].add` semantics. With the old `IdentityHashMap[ClasspathRef, Boolean]`
       * implementation, `containsKey` always returned null->false for an absent key, but a `HashSet`-based check returns true only on the
       * first insertion. This test validates that the current HashSet approach behaves correctly.
       */
     "HashSet dedup: add returns true exactly once per ClasspathRef instance" in {
-        val ref1 = new ClasspathRef
-        val ref2 = new ClasspathRef
+        val ref1 = ClasspathRef.init()
+        val ref2 = ClasspathRef.init()
         val seen = new java.util.HashSet[ClasspathRef]()
 
         // First add of ref1: should return true (newly added).

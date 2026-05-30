@@ -11,7 +11,8 @@ import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 class DeclarationTableTest extends Test:
 
     private def makeSymbol(nameStr: String): Tasty.Symbol =
-        val home   = new ClasspathRef
+        import AllowUnsafe.embrace.danger
+        val home   = ClasspathRef.init()
         val origin = Tasty.Symbol.TastyOrigin.empty
         Tasty.Symbol.make(
             Tasty.SymbolKind.Val,

@@ -20,7 +20,7 @@ class UnresolvedRefTest extends Test:
     "UnresolvedRef preserves fqn and starts with an unset replaceSlot" in run {
         Sync.defer {
             val fqn  = "missing.X"
-            val slot = new SingleAssign[Tasty.Type]
+            val slot = SingleAssign.init[Tasty.Type]()
             val ref  = new UnresolvedRef(fqn, slot)
             assert(ref.fqn == fqn, s"Expected fqn == 'missing.X', got '${ref.fqn}'")
             assert(!ref.replaceSlot.isSet, "Expected replaceSlot.isSet to be false before assignment")

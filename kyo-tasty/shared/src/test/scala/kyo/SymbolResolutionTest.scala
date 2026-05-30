@@ -168,7 +168,7 @@ class SymbolResolutionTest extends Test:
     private def decodeBytes(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val view     = ByteView(bytes)
         val interner = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home     = new kyo.internal.tasty.query.ClasspathRef
+        val home     = kyo.internal.tasty.query.ClasspathRef.init()
         val arena    = new TypeArena
         for
             _        <- TastyHeader.read(view)
@@ -217,7 +217,7 @@ class SymbolResolutionTest extends Test:
                         Tasty.Flags.empty,
                         Tasty.Name(fqn),
                         null,
-                        new kyo.internal.tasty.query.ClasspathRef,
+                        kyo.internal.tasty.query.ClasspathRef.init(),
                         Tasty.Symbol.TastyOrigin.empty,
                         Maybe.Absent
                     )
@@ -279,7 +279,7 @@ class SymbolResolutionTest extends Test:
                         Tasty.Flags.empty,
                         Tasty.Name(fqn),
                         null,
-                        new kyo.internal.tasty.query.ClasspathRef,
+                        kyo.internal.tasty.query.ClasspathRef.init(),
                         Tasty.Symbol.TastyOrigin.empty,
                         Maybe.Absent
                     )

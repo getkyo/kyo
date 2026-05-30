@@ -53,7 +53,7 @@ object ClassfileUnpickler:
         interner: Interner,
         arena: TypeArena,
         home: ClasspathRef
-    )(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         val view = ByteView(bytes)
         val path = "<classfile>"
         readFrom(view, interner, arena, home, path)
@@ -65,13 +65,11 @@ object ClassfileUnpickler:
         arena: TypeArena,
         home: ClasspathRef,
         path: String
-    )(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         readFromRaw(view, interner, arena, home, path).map: result =>
             // Populate _parents, _typeParams, _declarations, _declaredType on the class symbol and member symbols.
-            // Unsafe: SingleAssign.set() and isSet are unsafe-tier helpers; AllowUnsafe embraced here at the
-            // ClassfileUnpickler boundary where all symbols are freshly allocated and not yet shared.
+            // Unsafe: SingleAssign.set() and isSet are unsafe-tier helpers; AllowUnsafe proof flows from method signature.
             // Note: Scala 2 pickle symbols (from Scala2PickleReader) have their slots pre-wired; we skip already-set slots.
-            import AllowUnsafe.embrace.danger
             if !result.classSymbol._parents.isSet then result.classSymbol._parents.set(result.parents)
             if !result.classSymbol._typeParams.isSet then result.classSymbol._typeParams.set(result.typeParams)
             if !result.classSymbol._declarations.isSet then result.classSymbol._declarations.set(result.symbols)
@@ -110,7 +108,7 @@ object ClassfileUnpickler:
         arena: TypeArena,
         home: ClasspathRef,
         path: String
-    )(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
 
         // Magic
         Sync.defer(readU4(view)).map: magic =>
@@ -147,7 +145,7 @@ object ClassfileUnpickler:
         arena: TypeArena,
         home: ClasspathRef,
         path: String
-    )(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         Sync.defer {
             val accessFlags = readU2(view)
             val thisIdx     = readU2(view)
@@ -169,7 +167,7 @@ object ClassfileUnpickler:
                 else
                     readClassBody(view, pool, interner, arena, home, path, accessFlags, thisBinaryName, superIdx)
 
-    private def makeUnresolvedSymbol(binaryName: String, accessFlags: Int, home: ClasspathRef): Tasty.Symbol =
+    private def makeUnresolvedSymbol(binaryName: String, accessFlags: Int, home: ClasspathRef)(using AllowUnsafe): Tasty.Symbol =
         val simpleName = binaryName.split("[./]").last
         SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
@@ -182,7 +180,7 @@ object ClassfileUnpickler:
         )
     end makeUnresolvedSymbol
 
-    private def unresolvedType(binaryName: String, home: ClasspathRef): Tasty.Type =
+    private def unresolvedType(binaryName: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Type =
         val sym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
@@ -205,7 +203,7 @@ object ClassfileUnpickler:
         accessFlags: Int,
         thisBinaryName: String,
         superIdx: Int
-    )(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         // Read parent types: super class + interfaces
         resolveOptionalSuperType(pool, home, superIdx).map: superTypeOpt =>
             Sync.defer {
@@ -245,7 +243,7 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         home: ClasspathRef,
         superIdx: Int
-    )(using Frame): Maybe[Tasty.Type] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Maybe[Tasty.Type] < (Sync & Abort[TastyError]) =
         if superIdx == 0 then Absent
         else pool.classRef(superIdx).map(bn => Present(unresolvedType(bn, home)))
 
@@ -256,7 +254,7 @@ object ClassfileUnpickler:
         idxs: Array[Int],
         i: Int,
         acc: Chunk[Tasty.Type]
-    )(using Frame): Chunk[Tasty.Type] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Type] < (Sync & Abort[TastyError]) =
         if i >= idxs.length then acc
         else
             pool.classRef(idxs(i)).map: bn =>
@@ -1049,7 +1047,7 @@ object ClassfileUnpickler:
         fieldInfos: Chunk[MemberInfo],
         methodInfos: Chunk[MemberInfo],
         classAttrs: ClassAttributes
-    )(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
 
         val isInterface  = (accessFlags & ClassfileFormat.ACC_INTERFACE) != 0
         val isAnnotation = (accessFlags & ClassfileFormat.ACC_ANNOTATION) != 0
@@ -1115,7 +1113,6 @@ object ClassfileUnpickler:
                                                             )
                                                             // Wire _permittedSubclasses on the class symbol if the attribute was present.
                                                             if permittedSubSym.nonEmpty then
-                                                                import AllowUnsafe.embrace.danger
                                                                 classSym._permittedSubclasses.set(Present(permittedSubSym))
                                                             // Parse class-level Signature attribute to extract type parameters.
                                                             parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map:
@@ -1175,7 +1172,7 @@ object ClassfileUnpickler:
         home: ClasspathRef,
         scalaSigBytes: Maybe[Array[Byte]],
         scalaAttrBytes: Maybe[Array[Byte]]
-    )(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         scalaSigBytes match
             case Present(sigBytes) =>
                 // ScalaSig attribute: compact-encoded pickle
@@ -1282,7 +1279,7 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         interner: Interner,
         signatureIdx: Maybe[Int]
-    )(using Frame): Chunk[Tasty.Symbol] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Symbol] < (Sync & Abort[TastyError]) =
         signatureIdx match
             case Absent => Chunk.empty
             case Present(idx) =>
@@ -1302,7 +1299,7 @@ object ClassfileUnpickler:
         thisBinaryName: String,
         innerTable: Map[String, (String, String)],
         home: ClasspathRef
-    ): (String, Tasty.Symbol) =
+    )(using AllowUnsafe): (String, Tasty.Symbol) =
         innerTable.get(thisBinaryName) match
             case Some((outerBinaryName, innerSimpleName))
                 if outerBinaryName.nonEmpty && innerSimpleName.nonEmpty =>
@@ -1331,7 +1328,7 @@ object ClassfileUnpickler:
         outerBinaryName: String,
         innerTable: Map[String, (String, String)],
         home: ClasspathRef
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         // Check if the outer is itself an inner class
         innerTable.get(outerBinaryName) match
             case Some((outerOuterBinaryName, outerSimpleName))
@@ -1361,6 +1358,8 @@ object ClassfileUnpickler:
                     Tasty.Symbol.JavaOrigin,
                     Absent
                 )
+        end match
+    end buildPackageOwnerChain
 
     /** Build a chain of Package symbols for a package path (e.g., Array("java", "util")). Returns the innermost package symbol. If segments
       * is empty, returns null.
@@ -1368,7 +1367,7 @@ object ClassfileUnpickler:
     private def buildPackageSymbol(
         segments: Array[String],
         home: ClasspathRef
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         if segments.isEmpty then null
         else
             var cur: Tasty.Symbol = null
@@ -1386,6 +1385,8 @@ object ClassfileUnpickler:
                 i += 1
             end while
             cur
+        end if
+    end buildPackageSymbol
 
     private def buildEnclosingMethod(
         pool: ConstantPool,
@@ -1394,7 +1395,7 @@ object ClassfileUnpickler:
         enclosingMethodIdx: Maybe[Int],
         innerTable: Map[String, (String, String)],
         home: ClasspathRef
-    )(using Frame): Maybe[(Tasty.Symbol, Tasty.Name)] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Maybe[(Tasty.Symbol, Tasty.Name)] < (Sync & Abort[TastyError]) =
         enclosingClassIdx match
             case Absent => Absent
             case Present(classIdx) =>
@@ -1430,7 +1431,7 @@ object ClassfileUnpickler:
         path: String,
         components: Chunk[(Int, Int, Maybe[Int])],
         isRecord: Boolean
-    )(using Frame): Chunk[(Tasty.Name, Tasty.Type)] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[(Tasty.Name, Tasty.Type)] < (Sync & Abort[TastyError]) =
         if !isRecord || components.isEmpty then Chunk.empty
         else buildRecordComponentList(pool, interner, home, path, components, 0, Chunk.empty)
 
@@ -1442,7 +1443,7 @@ object ClassfileUnpickler:
         components: Chunk[(Int, Int, Maybe[Int])],
         idx: Int,
         acc: Chunk[(Tasty.Name, Tasty.Type)]
-    )(using Frame): Chunk[(Tasty.Name, Tasty.Type)] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[(Tasty.Name, Tasty.Type)] < (Sync & Abort[TastyError]) =
         if idx >= components.length then acc
         else
             val (nameIdx, descIdx, sigIdx) = components(idx)
@@ -1459,7 +1460,7 @@ object ClassfileUnpickler:
         path: String,
         descriptor: String,
         sigIdx: Maybe[Int]
-    )(using Frame): Tasty.Type < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.Type < (Sync & Abort[TastyError]) =
         sigIdx match
             case Present(idx) =>
                 pool.utf8(idx).map: sig =>
@@ -1474,7 +1475,7 @@ object ClassfileUnpickler:
       *
       * Handles: B/C/D/F/I/J/S/Z (primitives), V (void), [X (array), Lfoo/bar/Baz; (class reference).
       */
-    private def parseErasedDescriptorType(descriptor: String, home: ClasspathRef): Tasty.Type =
+    private def parseErasedDescriptorType(descriptor: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Type =
         descriptor match
             case "B" => primType("scala.Byte")
             case "C" => primType("scala.Char")
@@ -1493,13 +1494,13 @@ object ClassfileUnpickler:
             case other =>
                 unresolvedType(other, home)
 
-    private def primType(fqn: String): Tasty.Type =
+    private def primType(fqn: String)(using AllowUnsafe): Tasty.Type =
         val sym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
             Tasty.Name(fqn.split("\\.").last),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.JavaOrigin,
             Absent
         )
@@ -1512,7 +1513,7 @@ object ClassfileUnpickler:
         home: ClasspathRef,
         visibleBytes: Maybe[Array[Byte]],
         invisibleBytes: Maybe[Array[Byte]]
-    )(using Frame): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         val visibleEffect: Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
             visibleBytes match
                 case Absent => Chunk.empty
@@ -1540,7 +1541,7 @@ object ClassfileUnpickler:
         owner: Tasty.Symbol,
         infos: Chunk[MemberInfo],
         isMethods: Boolean
-    )(using Frame): Chunk[(Tasty.Symbol, Tasty.Type)] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[(Tasty.Symbol, Tasty.Type)] < (Sync & Abort[TastyError]) =
         buildMemberList(pool, interner, home, path, owner, infos, 0, Chunk.empty, isMethods)
 
     private def buildMemberList(
@@ -1553,7 +1554,7 @@ object ClassfileUnpickler:
         idx: Int,
         acc: Chunk[(Tasty.Symbol, Tasty.Type)],
         isMethods: Boolean
-    )(using Frame): Chunk[(Tasty.Symbol, Tasty.Type)] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[(Tasty.Symbol, Tasty.Type)] < (Sync & Abort[TastyError]) =
         if idx >= infos.length then acc
         else
             buildOneMemberSymbol(pool, interner, home, path, owner, infos(idx), isMethods).map: pair =>
@@ -1567,7 +1568,7 @@ object ClassfileUnpickler:
         owner: Tasty.Symbol,
         info: MemberInfo,
         isMethod: Boolean
-    )(using Frame): (Tasty.Symbol, Tasty.Type) < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): (Tasty.Symbol, Tasty.Type) < (Sync & Abort[TastyError]) =
         pool.utf8(info.nameIdx).map: memberName =>
             val accessFlags = info.accessFlags
             val isStatic    = (accessFlags & ClassfileFormat.ACC_STATIC) != 0
@@ -1628,7 +1629,7 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         path: String,
         exceptionIdxs: Chunk[Int]
-    )(using Frame): Chunk[Tasty.Type] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Type] < (Sync & Abort[TastyError]) =
         resolveThrowsList(pool, path, exceptionIdxs, 0, Chunk.empty)
 
     private def resolveThrowsList(
@@ -1637,7 +1638,7 @@ object ClassfileUnpickler:
         idxs: Chunk[Int],
         i: Int,
         acc: Chunk[Tasty.Type]
-    )(using Frame): Chunk[Tasty.Type] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Type] < (Sync & Abort[TastyError]) =
         if i >= idxs.length then acc
         else
             pool.classRef(idxs(i)).map: binaryName =>
@@ -1646,7 +1647,7 @@ object ClassfileUnpickler:
                     new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
                     Tasty.Name(binaryName.replace('/', '.')),
                     null,
-                    new ClasspathRef,
+                    ClasspathRef.init(),
                     Tasty.Symbol.JavaOrigin,
                     Absent
                 )
@@ -1683,7 +1684,7 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         home: ClasspathRef,
         idx: Maybe[Int]
-    )(using Frame): Maybe[Tasty.Symbol] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Maybe[Tasty.Symbol] < (Sync & Abort[TastyError]) =
         idx match
             case Absent => Absent
             case Present(i) =>
@@ -1695,7 +1696,7 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         home: ClasspathRef,
         idxs: Chunk[Int]
-    )(using Frame): Chunk[Tasty.Symbol] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Symbol] < (Sync & Abort[TastyError]) =
         resolveClassSymbolListRec(pool, home, idxs, 0, Chunk.empty)
 
     private def resolveClassSymbolListRec(
@@ -1704,7 +1705,7 @@ object ClassfileUnpickler:
         idxs: Chunk[Int],
         i: Int,
         acc: Chunk[Tasty.Symbol]
-    )(using Frame): Chunk[Tasty.Symbol] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Symbol] < (Sync & Abort[TastyError]) =
         if i >= idxs.length then acc
         else
             pool.classRef(idxs(i)).map: binaryName =>
@@ -1719,7 +1720,7 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         interner: Interner,
         home: ClasspathRef
-    )(using Frame): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         bytes match
             case Absent        => Chunk.empty
             case Present(data) => decodeTypeAnnotations(data, pool, interner, home)
@@ -1866,7 +1867,7 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         interner: Interner,
         home: ClasspathRef
-    )(using Frame): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         val typeAnnView = ByteView(bytes)
         Sync.defer(readU2(typeAnnView)).map: count =>
             decodeTypeAnnotationList(typeAnnView, pool, interner, home, count, 0, Chunk.empty)
@@ -1880,7 +1881,7 @@ object ClassfileUnpickler:
         total: Int,
         idx: Int,
         acc: Chunk[Tasty.JavaAnnotation]
-    )(using Frame): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             Sync.defer(skipTypeAnnotationTargetAndPath(view)).map: _ =>

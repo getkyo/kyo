@@ -534,7 +534,7 @@ object ClasspathOrchestrator:
         // Unsafe: Symbol.fullName requires AllowUnsafe; embraced here in the orchestration decode context (§839 case 3).
         import AllowUnsafe.embrace.danger
         val view  = ByteView(bytes)
-        val home  = new ClasspathRef
+        val home  = ClasspathRef.init()
         val arena = new TypeArena
         for
             _        <- timed(TastyPerfStats.tastyHeaderNs)(TastyHeader.read(view))
@@ -595,13 +595,13 @@ object ClasspathOrchestrator:
       *
       * Mirrors TypeUnpickler.makeUnresolvedSym; duplicated here to avoid promoting a private method across package boundaries.
       */
-    private def makeUnresolvedSym(fqn: String): Tasty.Symbol =
+    private def makeUnresolvedSym(fqn: String)(using AllowUnsafe): Tasty.Symbol =
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name(fqn),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )

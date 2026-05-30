@@ -18,7 +18,7 @@ class ClasspathRefTest extends Test:
     // Pins: INV-001 (ClasspathRef case).
     "ClasspathRef.get returns the assigned Classpath" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
-            val ref = new ClasspathRef
+            val ref = ClasspathRef.init()
             ref.assign(cp)
             val got = ref.get()
             assert(
@@ -34,7 +34,7 @@ class ClasspathRefTest extends Test:
     // Pins: INV-001.
     "ClasspathRef.isAssigned returns false before assign and true after" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
-            val ref    = new ClasspathRef
+            val ref    = ClasspathRef.init()
             val before = ref.isAssigned
             ref.assign(cp)
             val after = ref.isAssigned
@@ -49,7 +49,7 @@ class ClasspathRefTest extends Test:
     // Pins: T2.
     "ClasspathRef.get on unassigned ref throws IllegalStateException" in run {
         Sync.defer {
-            val ref = new ClasspathRef
+            val ref = ClasspathRef.init()
             val ex  = intercept[IllegalStateException](ref.get())
             assert(ex.getMessage.contains("not yet set"), s"Unexpected message: ${ex.getMessage}")
         }
@@ -63,7 +63,7 @@ class ClasspathRefTest extends Test:
     "ClasspathRef.assign a second time throws IllegalStateException" in run {
         Tasty.Classpath.fromPickles(Seq.empty).flatMap: cp1 =>
             Tasty.Classpath.fromPickles(Seq.empty).map: cp2 =>
-                val ref = new ClasspathRef
+                val ref = ClasspathRef.init()
                 ref.assign(cp1)
                 val ex = intercept[IllegalStateException](ref.assign(cp2))
                 assert(ex.getMessage.contains("already set"), s"Unexpected message: ${ex.getMessage}")

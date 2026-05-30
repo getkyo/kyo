@@ -41,16 +41,16 @@ class UnifiedModelTest extends Test:
 
     private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
         val bytes = loadJdkClass(binaryPath)
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, new ClasspathRef)
+        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init())
 
     private def readClassBytes(bytes: Array[Byte])(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, new ClasspathRef)
+        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init())
 
     /** Run TASTy pass 1 on fixture file bytes. Returns symbols from the result. */
     private def tastySymbols(fileName: String)(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val bytes = loadFixture(fileName)
         val view  = ByteView(bytes)
-        val home  = new ClasspathRef
+        val home  = ClasspathRef.init()
         val arena = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
@@ -330,7 +330,7 @@ class UnifiedModelTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("java.lang.String"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -342,7 +342,7 @@ class UnifiedModelTest extends Test:
         val bytes    = cat3(TastyFormat.CLASSconst, subBytes)
         val view     = ByteView(bytes)
         val arena    = TypeArena.canonical()
-        val home     = new ClasspathRef
+        val home     = ClasspathRef.init()
         Abort.run[TastyError](
             TypeUnpickler.readType(view, Array.empty, addrMap, arena, home, bytes, 0)
         ).map:
@@ -370,7 +370,7 @@ class UnifiedModelTest extends Test:
         val bytes    = cat3(TastyFormat.CLASSconst, subBytes)
         val view     = ByteView(bytes)
         val arena    = TypeArena.canonical()
-        val home     = new ClasspathRef
+        val home     = ClasspathRef.init()
         Abort.run[TastyError](
             TypeUnpickler.readType(view, names, IntMap.empty, arena, home, bytes, 0)
         ).map:

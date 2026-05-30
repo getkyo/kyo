@@ -77,7 +77,7 @@ object Scala2PickleReader:
         interner: Interner,
         arena: TypeArena,
         home: ClasspathRef
-    )(using Frame): Scala2PickleResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Scala2PickleResult < (Sync & Abort[TastyError]) =
         parsePickle(pickleBytes, interner, arena, home)
 
     /** Read a Scala 2 pickle from a "ScalaSig" attribute value (compact-encoded, no compression).
@@ -90,7 +90,7 @@ object Scala2PickleReader:
         interner: Interner,
         arena: TypeArena,
         home: ClasspathRef
-    )(using Frame): Scala2PickleResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Scala2PickleResult < (Sync & Abort[TastyError]) =
         Sync.defer(decodeCompact(attrBytes)).map: decoded =>
             parsePickle(decoded, interner, arena, home)
 
@@ -104,7 +104,7 @@ object Scala2PickleReader:
         interner: Interner,
         arena: TypeArena,
         home: ClasspathRef
-    )(using Frame): Scala2PickleResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Scala2PickleResult < (Sync & Abort[TastyError]) =
         InflateHook.inflate(attrBytes).map: inflated =>
             parsePickle(inflated, interner, arena, home)
 
@@ -177,7 +177,7 @@ object Scala2PickleReader:
         interner: Interner,
         arena: TypeArena,
         home: ClasspathRef
-    )(using Frame): Scala2PickleResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Scala2PickleResult < (Sync & Abort[TastyError]) =
         if bytes.length < 2 then
             Abort.fail(TastyError.CorruptedFile("<Scala2Pickle>", 0L, s"pickle too short: ${bytes.length} bytes"))
         else
@@ -240,7 +240,7 @@ object Scala2PickleReader:
         entries: Chunk[PickleEntry],
         interner: Interner,
         home: ClasspathRef
-    ): Scala2PickleResult =
+    )(using AllowUnsafe): Scala2PickleResult =
         // Build name table: entry index -> String
         val nameTable = scala.collection.mutable.HashMap.empty[Int, String]
         entries.iterator.zipWithIndex.foreach { case (entry, i) =>
@@ -284,10 +284,8 @@ object Scala2PickleReader:
                 case _ => ()
         }
 
-        // Wire SingleAssign slots on all produced symbols
-        // Unsafe: SingleAssign.isSet/set are unsafe-tier helpers; AllowUnsafe embraced here at the
-        // Scala2PickleReader boundary where all symbols are freshly allocated and not yet shared.
-        import AllowUnsafe.embrace.danger
+        // Wire SingleAssign slots on all produced symbols.
+        // AllowUnsafe proof flows from buildResult's (using AllowUnsafe) parameter.
         symbols.foreach { sym =>
             if !sym._parents.isSet then sym._parents.set(Chunk.empty)
             if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
@@ -312,7 +310,7 @@ object Scala2PickleReader:
         baseFlags: Tasty.Flags,
         home: ClasspathRef,
         interner: Interner
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
         val symName = nameTable.getOrElse(nameRef, s"<class$idx>")
@@ -330,7 +328,7 @@ object Scala2PickleReader:
         baseFlags: Tasty.Flags,
         home: ClasspathRef,
         interner: Interner
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
         val symName = nameTable.getOrElse(nameRef, s"<module$idx>")
@@ -355,7 +353,7 @@ object Scala2PickleReader:
         baseFlags: Tasty.Flags,
         home: ClasspathRef,
         interner: Interner
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
         val symName = nameTable.getOrElse(nameRef, s"<val$idx>")
@@ -369,10 +367,9 @@ object Scala2PickleReader:
             else if (rawFlags & FINAL_FLAG) != 0 then Tasty.SymbolKind.Val
             else Tasty.SymbolKind.Field
         val sym = makePickleSym(kind, flags, symName, home, interner)
-        // For method symbols, set declaredType to Type.Function with empty param list
-        // Unsafe: SingleAssign.set is unsafe-tier; AllowUnsafe embraced at fresh-symbol population boundary.
+        // For method symbols, set declaredType to Type.Function with empty param list.
+        // AllowUnsafe proof flows from decodeValSym's (using AllowUnsafe) parameter.
         if isMethod then
-            import AllowUnsafe.embrace.danger
             sym._declaredType.set(Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(sym), false))
         sym
     end decodeValSym
@@ -393,7 +390,7 @@ object Scala2PickleReader:
         baseFlags: Tasty.Flags,
         home: ClasspathRef,
         interner: Interner
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
         val symName = nameTable.getOrElse(nameRef, s"<alias$idx>")
@@ -402,9 +399,8 @@ object Scala2PickleReader:
         val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags)
         val sym      = makePickleSym(Tasty.SymbolKind.TypeAlias, flags, symName, home, interner)
         // For type alias symbols, set declaredType to Named("String") as a placeholder.
-        // Unsafe: SingleAssign.set is unsafe-tier; AllowUnsafe embraced at fresh-symbol population boundary.
+        // AllowUnsafe proof flows from decodeAliasSym's (using AllowUnsafe) parameter.
         val stringSym = makePickleSym(Tasty.SymbolKind.Class, baseFlags, "String", home, interner)
-        import AllowUnsafe.embrace.danger
         stringSym._parents.set(Chunk.empty)
         stringSym._typeParams.set(Chunk.empty)
         stringSym._declarations.set(Chunk.empty)
@@ -423,7 +419,7 @@ object Scala2PickleReader:
         baseFlags: Tasty.Flags,
         home: ClasspathRef,
         interner: Interner
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
         val symName = nameTable.getOrElse(nameRef, s"<typeparam$idx>")
@@ -447,7 +443,7 @@ object Scala2PickleReader:
         baseFlags: Tasty.Flags,
         home: ClasspathRef,
         interner: Interner
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         val c           = new PickleCursor(data, 0)
         val nameRef     = if c.remaining > 0 then c.readNat() else 0
         val ownerRefOpt = if c.remaining > 0 then Present(c.readNat()) else Absent
@@ -455,9 +451,7 @@ object Scala2PickleReader:
         val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn         = ownerFqn.fold(symName)(q => q + "." + symName)
         val sym         = makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
-        // flow-allow: §839 case 3 (pickle decode orchestration init path)
-        // Unsafe: SingleAssign.set is unsafe-tier; AllowUnsafe embraced at fresh-symbol population boundary.
-        import AllowUnsafe.embrace.danger
+        // AllowUnsafe proof flows from decodeExtRef's (using AllowUnsafe) parameter.
         sym._declaredType.set(Tasty.Type.Named(sym))
         sym
     end decodeExtRef
@@ -475,7 +469,7 @@ object Scala2PickleReader:
         baseFlags: Tasty.Flags,
         home: ClasspathRef,
         interner: Interner
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         val c               = new PickleCursor(data, 0)
         val nameRef         = if c.remaining > 0 then c.readNat() else 0
         val ownerRefOpt     = if c.remaining > 0 then Present(c.readNat()) else Absent
@@ -484,9 +478,7 @@ object Scala2PickleReader:
         val ownerFqn        = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn             = ownerFqn.fold(moduleClassName)(q => q + "." + moduleClassName)
         val sym             = makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
-        // flow-allow: §839 case 3 (pickle decode orchestration init path)
-        // Unsafe: SingleAssign.set is unsafe-tier; AllowUnsafe embraced at fresh-symbol population boundary.
-        import AllowUnsafe.embrace.danger
+        // AllowUnsafe proof flows from decodeExtModClassRef's (using AllowUnsafe) parameter.
         sym._declaredType.set(Tasty.Type.Named(sym))
         sym
     end decodeExtModClassRef
@@ -535,6 +527,8 @@ object Scala2PickleReader:
     // -------------------------------------------------------------------------
 
     private def buildAnyRefParent(home: ClasspathRef): Tasty.Type =
+        // flow-allow: §839 case 3 -- Scala 2 pickle decode context; single-fiber synchronous allocation.
+        import AllowUnsafe.embrace.danger
         val anyRefSym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             new Tasty.Flags(Tasty.Flag.Scala2.bit | Tasty.Flag.JavaDefined.bit),
@@ -544,8 +538,6 @@ object Scala2PickleReader:
             Tasty.Symbol.JavaOrigin,
             Absent
         )
-        // Unsafe: SingleAssign.set is unsafe-tier; AllowUnsafe embraced at fresh-symbol population boundary.
-        import AllowUnsafe.embrace.danger
         anyRefSym._parents.set(Chunk.empty)
         anyRefSym._typeParams.set(Chunk.empty)
         anyRefSym._declarations.set(Chunk.empty)
@@ -561,7 +553,7 @@ object Scala2PickleReader:
         name: String,
         home: ClasspathRef,
         interner: Interner
-    ): Tasty.Symbol =
+    )(using AllowUnsafe): Tasty.Symbol =
         val bytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val entry = interner.intern(bytes, 0, bytes.length)
         // null owner: Scala 2 pickle entries do not carry a full owner chain; follows the same convention as

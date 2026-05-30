@@ -25,7 +25,7 @@ trait TastyTestSupport:
             Tasty.Flags.empty,
             Tasty.Name(""),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -35,7 +35,7 @@ trait TastyTestSupport:
                 Tasty.Flags.empty,
                 Tasty.Name(part),
                 owner,
-                new ClasspathRef,
+                ClasspathRef.init(),
                 Tasty.Symbol.TastyOrigin.empty,
                 Absent
             )

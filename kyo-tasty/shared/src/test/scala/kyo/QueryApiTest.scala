@@ -600,7 +600,7 @@ class QueryApiTest extends Test:
     "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" taggedAs jvmOnly in run {
         val bytes    = kyo.fixtures.Embedded.arrayRecordClass
         val interner = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home     = new ClasspathRef
+        val home     = ClasspathRef.init()
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, interner, new TypeArena, home).flatMap: cr =>
                 // Create a mini-classpath so home.isAssigned is true and checkOpen passes.
@@ -849,7 +849,7 @@ class QueryApiTest extends Test:
     "Phase 5: Java classfile field declaredType returns Array type for int[] values" taggedAs jvmOnly in run {
         val bytes    = kyo.fixtures.Embedded.arrayRecordClass
         val interner = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home     = new ClasspathRef
+        val home     = ClasspathRef.init()
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, interner, new TypeArena, home).flatMap: cr =>
                 Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>

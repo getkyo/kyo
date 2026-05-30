@@ -33,15 +33,18 @@ object TypeUnpickler:
       * from the args chunk.
       */
     val MatchCaseSentinel: Tasty.Symbol =
+        // flow-allow: §839 case 3 -- module-load init; object TypeUnpickler initializer runs once at class load.
+        import AllowUnsafe.embrace.danger
         Tasty.Symbol.make(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name("$$MatchCase"),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
+    end MatchCaseSentinel
 
     /** Decode a single type node from `view`.
       *
@@ -248,7 +251,7 @@ object TypeUnpickler:
         val frame: Frame
     )
 
-    private def makeUnresolvedSym(fqn: String, home: ClasspathRef): Tasty.Symbol =
+    private def makeUnresolvedSym(fqn: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Symbol =
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
@@ -331,14 +334,14 @@ object TypeUnpickler:
             case TastyFormat.TERMREFpkg =>
                 val nameRef = view.readNat()
                 val fqn     = nameAt(ctx.names, nameRef).asString
-                val ref     = new UnresolvedRef(fqn, new SingleAssign[Tasty.Type])
+                val ref     = new UnresolvedRef(fqn, SingleAssign.init[Tasty.Type]())
                 ctx.placeholders += ref
                 Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home))
 
             case TastyFormat.TYPEREFpkg =>
                 val nameRef = view.readNat()
                 val fqn     = nameAt(ctx.names, nameRef).asString
-                val ref     = new UnresolvedRef(fqn, new SingleAssign[Tasty.Type])
+                val ref     = new UnresolvedRef(fqn, SingleAssign.init[Tasty.Type]())
                 ctx.placeholders += ref
                 Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home))
 
@@ -559,7 +562,7 @@ object TypeUnpickler:
                 discard(readTypeNode(view, ctx)) // namespace
                 view.goto(end)
                 val fqn = nameAt(ctx.names, nameRef).asString
-                val ref = new UnresolvedRef(fqn, new SingleAssign[Tasty.Type])
+                val ref = new UnresolvedRef(fqn, SingleAssign.init[Tasty.Type]())
                 ctx.placeholders += ref
                 Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home))
 
@@ -656,7 +659,7 @@ object TypeUnpickler:
         view: ByteView,
         end: Long,
         ctx: DecodeCtx
-    ): mutable.ArrayBuffer[Tasty.Symbol] =
+    )(using AllowUnsafe): mutable.ArrayBuffer[Tasty.Symbol] =
         val resultStart = view.position
         // Skip result type to find TypesNames start.
         skipOneType(view)
@@ -695,7 +698,7 @@ object TypeUnpickler:
         view: ByteView,
         end: Long,
         ctx: DecodeCtx
-    ): mutable.ArrayBuffer[Tasty.Symbol] =
+    )(using AllowUnsafe): mutable.ArrayBuffer[Tasty.Symbol] =
         val resultStart = view.position
         // Skip result type.
         skipOneType(view)

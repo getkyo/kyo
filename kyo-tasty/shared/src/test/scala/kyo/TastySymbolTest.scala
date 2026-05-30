@@ -170,7 +170,7 @@ class TastySymbolTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name(""),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -182,7 +182,7 @@ class TastySymbolTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name(name),
             owner,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -194,7 +194,7 @@ class TastySymbolTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name(name),
             owner,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -206,7 +206,7 @@ class TastySymbolTest extends Test:
             new Tasty.Flags(Tasty.Flag.Module.bit),
             Tasty.Name(name),
             owner,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -286,7 +286,7 @@ class TastySymbolTest extends Test:
             Tasty.Flags.empty,
             Tasty.Name("Foo"),
             root,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -515,7 +515,7 @@ class TastySymbolTest extends Test:
                 Tasty.Flags.empty,
                 Tasty.Name(name),
                 root,
-                new ClasspathRef,
+                ClasspathRef.init(),
                 Tasty.Symbol.TastyOrigin.empty,
                 Absent
             )

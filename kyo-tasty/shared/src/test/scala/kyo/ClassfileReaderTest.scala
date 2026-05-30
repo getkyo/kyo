@@ -30,7 +30,7 @@ class ClassfileReaderTest extends Test:
 
     private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
         val bytes = loadClassBytes(binaryPath)
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, new ClasspathRef)
+        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init())
 
     /** Load raw bytes for a test resource by path. Works on JVM only. */
     private def loadResourceBytes(resourcePath: String): Array[Byte] =
@@ -39,7 +39,7 @@ class ClassfileReaderTest extends Test:
     /** Run TASTy pass 1 on raw TASTy bytes and return the first non-root class symbol. */
     private def firstClassSymbolFromTasty(bytes: Array[Byte])(using Frame): Tasty.Symbol < (Sync & Abort[TastyError]) =
         val view  = ByteView(bytes)
-        val home  = new ClasspathRef
+        val home  = ClasspathRef.init()
         val arena = new TypeArena
         for
             _        <- TastyHeader.read(view)
@@ -174,7 +174,7 @@ class ClassfileReaderTest extends Test:
             0x00.toByte,
             0x3d.toByte // major = 61 (Java 17)
         )
-        Abort.run(ClassfileUnpickler.read(badBytes, interner, new TypeArena, new ClasspathRef)).map: result =>
+        Abort.run(ClassfileUnpickler.read(badBytes, interner, new TypeArena, ClasspathRef.init())).map: result =>
             result match
                 case Result.Failure(TastyError.ClassfileFormatError(_, reason, _)) =>
                     assert(reason.contains("magic") || reason.contains("0xdeadbeef"), s"Unexpected reason: $reason")
@@ -390,7 +390,7 @@ class ClassfileReaderTest extends Test:
         out.write(typeAnnBody)
         out.flush()
         val bytes = buf.toByteArray
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, new ClasspathRef).map: result =>
+        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init()).map: result =>
             val md = result.classSymbol.javaSpecific.getOrElse(fail("Expected javaSpecific Present"))
             assert(
                 md.runtimeTypeAnnotations.nonEmpty,

@@ -10,13 +10,14 @@ import kyo.internal.tasty.type_.TypeOps
 class TypeOpsTest extends Test:
 
     private def makeNamedSym(fqn: String): Tasty.Type.Named =
+        import AllowUnsafe.embrace.danger
         val parts = fqn.split("\\.").toList
         val root = Tasty.Symbol.make(
             Tasty.SymbolKind.Package,
             Tasty.Flags.empty,
             Tasty.Name(""),
             null,
-            new ClasspathRef,
+            ClasspathRef.init(),
             Tasty.Symbol.TastyOrigin.empty,
             Absent
         )
@@ -26,7 +27,7 @@ class TypeOpsTest extends Test:
                 Tasty.Flags.empty,
                 Tasty.Name(part),
                 owner,
-                new ClasspathRef,
+                ClasspathRef.init(),
                 Tasty.Symbol.TastyOrigin.empty,
                 Absent
             )
@@ -37,7 +38,7 @@ class TypeOpsTest extends Test:
                 Tasty.Flags.empty,
                 Tasty.Name(part),
                 owner,
-                new ClasspathRef,
+                ClasspathRef.init(),
                 Tasty.Symbol.TastyOrigin.empty,
                 Absent
             )

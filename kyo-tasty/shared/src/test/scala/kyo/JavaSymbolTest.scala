@@ -35,7 +35,7 @@ class JavaSymbolTest extends Test:
         TestResourceLoader.loadBytes(s"/kyo/fixtures/$name")
 
     private def readClass(bytes: Array[Byte])(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, new ClasspathRef)
+        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init())
 
     /** Load raw bytes for a test resource by path. JVM-only. */
     private def loadResourceBytes(resourcePath: String): Array[Byte] =
@@ -47,7 +47,7 @@ class JavaSymbolTest extends Test:
             case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
             case other              => loadResourceBytes(s"/kyo/fixtures/$other")
         val view  = ByteView(bytes)
-        val home  = new ClasspathRef
+        val home  = ClasspathRef.init()
         val arena = new TypeArena
         for
             _        <- TastyHeader.read(view)

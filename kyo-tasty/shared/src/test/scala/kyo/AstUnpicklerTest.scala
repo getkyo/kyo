@@ -36,7 +36,7 @@ class AstUnpicklerTest extends Test:
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val view     = ByteView(bytes)
         val interner = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home     = new ClasspathRef
+        val home     = ClasspathRef.init()
         val arena    = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
@@ -60,7 +60,7 @@ class AstUnpicklerTest extends Test:
         : AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val view     = ByteView(bytes)
         val interner = new Interner(numShards = 32, initialShardCapacity = 16)
-        val home     = new ClasspathRef
+        val home     = ClasspathRef.init()
         for
             _        <- TastyHeader.read(view)
             names    <- NameUnpickler.read(view, interner)
@@ -480,7 +480,7 @@ class AstUnpicklerTest extends Test:
         // Length Nat = 127 (single byte in dotty Nat encoding: (127 | 0x80).toByte = 0xff)
         // Then 0 actual payload bytes. readByte() inside the payload will AIOOB.
         val corruptAsts = Array(128.toByte, 0xff.toByte)
-        val home        = new ClasspathRef
+        val home        = ClasspathRef.init()
         val arena       = TypeArena.canonical()
         val view        = ByteView(corruptAsts)
         val attrs       = FileAttributes.default

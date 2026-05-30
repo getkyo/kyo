@@ -118,6 +118,9 @@ object SnapshotReader:
         bytes: Array[Byte],
         cp: Classpath
     ): Unit =
+        // Unsafe: readSymbols / readSymbolsMapped allocate SingleAssign and ClasspathRef slots; AllowUnsafe is
+        // embraced here in the snapshot-deserialize context (§839 case 3 -- single-threaded, no suspension).
+        import AllowUnsafe.embrace.danger
         // Parse section index (starts at offset 32)
         val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
         val sectionMap   = mutable.HashMap.empty[String, (Int, Int)]
@@ -165,8 +168,6 @@ object SnapshotReader:
             case None                   => Chunk.empty[TastyError]
 
         val canonical = TypeArena.canonical()
-        // Unsafe: atomic state write + SingleAssign.set(); called from single-threaded deserialize.
-        import AllowUnsafe.embrace.danger
         Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
 
         // Build an indexed array of all symbols so ref-list entries can address by index.
@@ -235,6 +236,9 @@ object SnapshotReader:
       * from the mapped view and throws IllegalStateException, which Symbol.body catches as ClasspathClosed.
       */
     private def deserializeMapped(path: String, view: ByteView, cp: Classpath): Unit =
+        // Unsafe: readSymbolsMapped allocates SingleAssign and ClasspathRef slots; AllowUnsafe is
+        // embraced here in the snapshot-deserializeMapped context (§839 case 3 -- single-threaded, no suspension).
+        import AllowUnsafe.embrace.danger
         // Read the section index from the view.
         // SnapshotFormat.readInt32LE needs an Array[Byte]; copy 36+ bytes from the view for parsing.
         // The section index starts at byte 32. Each entry is sectionIndexEntrySize (24) bytes.
@@ -290,8 +294,6 @@ object SnapshotReader:
         val errors = if errorsBytes.nonEmpty then readErrors(errorsBytes, 0, errorsBytes.length) else Chunk.empty[TastyError]
 
         val canonical = TypeArena.canonical()
-        // Unsafe: atomic state write + SingleAssign.set(); called from single-threaded deserializeMapped.
-        import AllowUnsafe.embrace.danger
         Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
 
         val symsArray = allSymbols.toArray
@@ -384,6 +386,8 @@ object SnapshotReader:
         length: Int,
         namePool: Array[String],
         bodyViewOpt: ByteView | Null
+    )(using
+        AllowUnsafe
     ): (
         Chunk[Tasty.Symbol],
         scala.collection.Map[String, Tasty.Symbol],
@@ -438,12 +442,12 @@ object SnapshotReader:
             val flags = new Tasty.Flags(raw.flagBits)
             val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
             val owner = if raw.ownerId >= 0 && raw.ownerId < count && created(raw.ownerId) != null then created(raw.ownerId) else null
-            val home  = new ClasspathRef
+            val home  = ClasspathRef.init()
             val origin: Tasty.Symbol.Origin =
                 if raw.bodyStart > 0 && raw.bodyEnd > raw.bodyStart && (bodyViewOpt ne null) then
                     // Mmap path: bodyView is a sub-view into the mapped BODY_BYTES region.
                     // sectionBytes is empty; body decode reads via bodyView, which fails with IllegalStateException after arena close.
-                    new Tasty.Symbol.TastyOrigin(
+                    Tasty.Symbol.TastyOrigin.init(
                         raw.bodyStart,
                         raw.bodyEnd,
                         Array.empty[Byte],
@@ -533,6 +537,8 @@ object SnapshotReader:
         length: Int,
         namePool: Array[String],
         bodyBytesArray: Array[Byte]
+    )(using
+        AllowUnsafe
     ): (
         Chunk[Tasty.Symbol],
         scala.collection.Map[String, Tasty.Symbol],
@@ -594,14 +600,14 @@ object SnapshotReader:
             val flags = new Tasty.Flags(raw.flagBits)
             val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
             val owner = if raw.ownerId >= 0 && raw.ownerId < count && created(raw.ownerId) != null then created(raw.ownerId) else null
-            val home  = new ClasspathRef
+            val home  = ClasspathRef.init()
             val origin: Tasty.Symbol.Origin =
                 if raw.bodyStart > 0 && raw.bodyEnd > raw.bodyStart && bodyBytesArray.nonEmpty
                     && raw.bodyEnd <= bodyBytesArray.length
                 then
                     // Restore body origin: offsets are relative to the start of BODY_BYTES section.
                     // sectionOffset is 0 because bodyStart is already absolute within bodyBytesArray.
-                    new Tasty.Symbol.TastyOrigin(raw.bodyStart, raw.bodyEnd, bodyBytesArray, Array.empty[Tasty.Name], 0, null)
+                    Tasty.Symbol.TastyOrigin.init(raw.bodyStart, raw.bodyEnd, bodyBytesArray, Array.empty[Tasty.Name], 0, null)
                 else
                     Tasty.Symbol.JavaOrigin
             created(idx) = InternalSymbol.makeSymbol(kind, flags, name, owner, home, origin, Maybe.Absent)

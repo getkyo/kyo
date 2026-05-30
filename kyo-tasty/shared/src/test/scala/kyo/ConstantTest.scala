@@ -32,7 +32,7 @@ class ConstantTest extends Test:
             )
 
     private def makeSession(names: Array[Tasty.Name]): TypeUnpickler.DecodeSession =
-        val home    = new ClasspathRef
+        val home    = ClasspathRef.init()
         val arena   = TypeArena.canonical()
         val addrMap = new mutable.HashMap[Int, Tasty.Symbol]()
         new TypeUnpickler.DecodeSession(names, addrMap, arena, home)

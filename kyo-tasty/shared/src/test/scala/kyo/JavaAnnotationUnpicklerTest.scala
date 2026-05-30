@@ -65,7 +65,7 @@ class JavaAnnotationUnpicklerTest extends Test:
                     0x00, 0x00  // num_element_value_pairs = 0
                 )
                 val annView = ByteView(annBytes)
-                val home    = new ClasspathRef
+                val home    = ClasspathRef.init()
                 Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool, interner, home)).map:
                     case Result.Failure(err) => fail(s"readAnnotations failed: $err")
                     case Result.Panic(ex)    => fail(s"readAnnotations panicked: $ex")
@@ -127,7 +127,7 @@ class JavaAnnotationUnpicklerTest extends Test:
                     0x04 // element 1: String at #4 ("b")
                 )
                 val annView = ByteView(annBytes)
-                val home    = new ClasspathRef
+                val home    = ClasspathRef.init()
                 Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool, interner, home)).map:
                     case Result.Failure(err) => fail(s"readAnnotations failed: $err")
                     case Result.Panic(ex)    => fail(s"readAnnotations panicked: $ex")
