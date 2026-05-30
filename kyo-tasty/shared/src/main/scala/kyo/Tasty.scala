@@ -52,7 +52,7 @@ object Tasty:
           *   n.asString == "scala.Predef"
           * }}}
           */
-        def apply(s: String): Name =
+        def apply(s: String)(using AllowUnsafe): Name =
             val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
             globalInterner.intern(bytes, 0, bytes.length)
 
@@ -925,8 +925,8 @@ object Tasty:
                 _scaladoc = kyo.internal.tasty.symbol.SingleAssign.init[Maybe[String]](),
                 _position = kyo.internal.tasty.symbol.SingleAssign.init[Maybe[Position]](),
                 _permittedSubclasses = kyo.internal.tasty.symbol.SingleAssign.init[Maybe[Chunk[Symbol]]](),
-                _fullNameOnce = new kyo.internal.tasty.symbol.OnceCell[Name](() => Symbol.computeFullName(sym)),
-                _bodyOnce = new kyo.internal.tasty.symbol.OnceCell[Tree](() =>
+                _fullNameOnce = kyo.internal.tasty.symbol.OnceCell.init[Name](() => Symbol.computeFullName(sym)),
+                _bodyOnce = kyo.internal.tasty.symbol.OnceCell.init[Tree](() =>
                     // This init lambda is called at most once per symbol. TreeUnpickler.decodeSync throws
                     // TreeUnpickler.DecodeException on corrupt/truncated slices; body() catches and wraps it.
                     // flow-allow: §839 case 3 -- OnceCell init lambda; runs at first body access, single-fiber decode boundary.

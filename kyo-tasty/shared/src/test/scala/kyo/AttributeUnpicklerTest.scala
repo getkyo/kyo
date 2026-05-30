@@ -76,6 +76,7 @@ class AttributeUnpicklerTest extends Test:
 
     // Test 15: sourceFile attribute is decoded as Present("Foo.scala") when present, Absent otherwise.
     "SOURCEFILEattr decodes to Present(sourceFileName) when present" in run {
+        import AllowUnsafe.embrace.danger
         // Build a names array with "Foo.scala" at index 0.
         val interner                 = new Interner(numShards = 32, initialShardCapacity = 16)
         val nameStr                  = "Foo.scala"

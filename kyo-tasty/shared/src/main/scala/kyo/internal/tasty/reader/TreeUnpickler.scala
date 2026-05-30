@@ -808,7 +808,7 @@ object TreeUnpickler:
     // ── Template decode ───────────────────────────────────────────────────────
 
     /** Read a TEMPLATE node. Tag byte has already been consumed (or not; we consume it here if present). */
-    private def readTemplate(view: ByteView, ctx: DecodeCtx): Tasty.Tree.Template =
+    private def readTemplate(view: ByteView, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Tree.Template =
         // Consume tag + length prefix.
         val end                          = view.readEnd()
         val parents                      = new mutable.ArrayBuffer[Tasty.Tree]()
@@ -849,7 +849,7 @@ object TreeUnpickler:
       * Used by `decodeSymBody` for class-like symbols whose body slice starts at the TEMPLATE payload content (the TEMPLATE tag and length
       * prefix were already consumed by AstUnpickler during Pass 1).
       */
-    private def readTemplateBody(view: ByteView, end: Long, ctx: DecodeCtx): Tasty.Tree.Template =
+    private def readTemplateBody(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Tree.Template =
         val parents                      = new mutable.ArrayBuffer[Tasty.Tree]()
         var selfSym: Maybe[Tasty.Symbol] = Maybe.Absent
         val bodyBuf                      = new mutable.ArrayBuffer[Tasty.Tree]()
@@ -1078,7 +1078,7 @@ object TreeUnpickler:
 
     // ── Package name extraction ───────────────────────────────────────────────
 
-    private def extractPackageName(view: ByteView, ctx: DecodeCtx): Tasty.Name =
+    private def extractPackageName(view: ByteView, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Name =
         val tag = view.readByte() & 0xff
         tag match
             case TastyFormat.TERMREFpkg =>
@@ -1178,7 +1178,7 @@ object TreeUnpickler:
 
     // ── Name helper ───────────────────────────────────────────────────────────
 
-    private def nameFromRef(nameRef: Int, ctx: DecodeCtx): Tasty.Name =
+    private def nameFromRef(nameRef: Int, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Name =
         if nameRef >= 0 && nameRef < ctx.names.length then ctx.names(nameRef)
         else Tasty.Name(s"name@$nameRef")
     end nameFromRef

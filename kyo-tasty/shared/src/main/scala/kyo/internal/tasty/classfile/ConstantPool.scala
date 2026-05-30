@@ -18,7 +18,7 @@ object CpEntry:
     final class Utf8Lazy(val bytes: Array[Byte], val offset: Int, val length: Int) extends CpEntry:
         private val cached = new AtomicReference[Interner.Entry | Null](null)
 
-        def decode(interner: Interner): Interner.Entry =
+        def decode(interner: Interner)(using AllowUnsafe): Interner.Entry =
             val r = cached.get()
             if r != null then r
             else

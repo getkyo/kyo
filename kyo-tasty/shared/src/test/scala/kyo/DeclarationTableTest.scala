@@ -28,6 +28,7 @@ class DeclarationTableTest extends Test:
     // Test 21: 4 members use flat-array Dict path; all retrievable by name.
     // Verifies that small tables (size <= 8) use the flat-array internal representation.
     "class with 4 members uses flat-array Dict path: all members retrievable" in run {
+        import AllowUnsafe.embrace.danger
         val members = (1 to 4).map(i => Tasty.Name(s"member$i") -> makeSymbol(s"member$i"))
         val table   = DeclarationTable.build(members)
         assert(
@@ -46,6 +47,7 @@ class DeclarationTableTest extends Test:
     // Test 22: 9 members (above threshold 8) use HashMap path; all retrievable.
     // Verifies that larger tables (size > 8) use the HashMap internal representation.
     "class with 9 members (above threshold) uses HashMap path: all members retrievable" in run {
+        import AllowUnsafe.embrace.danger
         val members = (1 to 9).map(i => Tasty.Name(s"field$i") -> makeSymbol(s"field$i"))
         val table   = DeclarationTable.build(members)
         assert(
@@ -66,6 +68,7 @@ class DeclarationTableTest extends Test:
     // Verifies that the AtomicRef CAS-swap in populate() is visible to a fiber that starts reading
     // after the latch is released.
     "AtomicRef CAS-swap visibility: reader sees either empty or fully-populated dict" in run {
+        import AllowUnsafe.embrace.danger
         Async.timeout(1.second) {
             val table   = new DeclarationTable
             val members = (1 to 4).map(i => Tasty.Name(s"m$i") -> makeSymbol(s"m$i"))

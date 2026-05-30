@@ -1,7 +1,7 @@
 package kyo.internal.tasty.symbol
 
-import java.util.concurrent.atomic.AtomicReference
 import kyo.AllowUnsafe
+import kyo.AtomicRef
 
 /** A lazy one-time computation cell.
   *
@@ -21,16 +21,28 @@ import kyo.AllowUnsafe
   * For kyo-tasty's body decode and Name interning workloads, OnceCell is correct: the init() call is small and synchronous, redundant
   * first-access work is bounded to microseconds, and keeping the accessor effect row Sync-only is more valuable than dedup precision.
   *
-  * WARNING: This is an unsafe-tier helper. `get()` reads and potentially writes an AtomicReference as a side effect. Callers must hold an
+  * WARNING: This is an unsafe-tier helper. `get()` reads and potentially writes an AtomicRef as a side effect. Callers must hold an
   * `AllowUnsafe` proof.
   */
-final class OnceCell[A](init: () => A):
-    // Store as AnyRef to avoid strict-null comparison issues.
-    private val ref = new AtomicReference[AnyRef](OnceCell.Unset)
+object OnceCell:
+    /** When true, a CAS-losing thread that computed a different value from the winner throws [[IllegalStateException]].
+      *
+      * Enable via `-Dkyo.tasty.OnceCell.debug=true`.
+      */
+    private[kyo] val debugIdempotent: Boolean =
+        java.lang.System.getProperty("kyo.tasty.OnceCell.debug", "false").equalsIgnoreCase("true")
+
+    private val Unset: AnyRef = new AnyRef
+
+    def init[A](init: () => A)(using AllowUnsafe): OnceCell[A] =
+        new OnceCell(init, AtomicRef.Unsafe.init[AnyRef](Unset))
+end OnceCell
+
+final class OnceCell[A] private (init: () => A, ref: AtomicRef.Unsafe[AnyRef]):
 
     /** Return the cached value, computing it on first call.
       *
-      * Requires AllowUnsafe: this method reads and potentially writes an AtomicReference as a side effect.
+      * Requires AllowUnsafe: this method reads and potentially writes an AtomicRef as a side effect.
       */
     def get()(using AllowUnsafe): A =
         val cached = ref.get()
@@ -38,7 +50,7 @@ final class OnceCell[A](init: () => A):
             // Unsafe: AnyRef-sentinel pattern; ne-Unset guarantees the stored value is A.
             cached.asInstanceOf[A]
         else
-            // Unsafe: we store A as AnyRef to coexist with the Unset sentinel in AtomicReference[AnyRef].
+            // Unsafe: we store A as AnyRef to coexist with the Unset sentinel in AtomicRef.Unsafe[AnyRef].
             val v   = init().asInstanceOf[AnyRef]
             val won = ref.compareAndSet(OnceCell.Unset, v)
             if !won && OnceCell.debugIdempotent then
@@ -54,15 +66,4 @@ final class OnceCell[A](init: () => A):
         end if
     end get
 
-end OnceCell
-
-object OnceCell:
-    private val Unset: AnyRef = new AnyRef
-
-    /** When true, a CAS-losing thread that computed a different value from the winner throws [[IllegalStateException]].
-      *
-      * Enable via `-Dkyo.tasty.OnceCell.debug=true`.
-      */
-    private[kyo] val debugIdempotent: Boolean =
-        java.lang.System.getProperty("kyo.tasty.OnceCell.debug", "false").equalsIgnoreCase("true")
 end OnceCell

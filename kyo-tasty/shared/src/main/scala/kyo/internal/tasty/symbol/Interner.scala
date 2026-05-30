@@ -3,6 +3,7 @@ package kyo.internal.tasty.symbol
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicReferenceArray
+import kyo.AllowUnsafe
 import kyo.internal.tasty.binary.Utf8
 
 /** A sharded intern table that maps byte sequences to canonical `Entry` objects.
@@ -45,7 +46,7 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
         Array.fill(numShards)(new AtomicInteger(0))
 
     /** Intern the byte slice `bytes[offset .. offset+length)`, returning a canonical `Entry`. */
-    def intern(bytes: Array[Byte], offset: Int, length: Int): Interner.Entry =
+    def intern(bytes: Array[Byte], offset: Int, length: Int)(using AllowUnsafe): Interner.Entry =
         if offset < 0 || length < 0 || offset + length < 0 || offset + length > bytes.length then
             throw new ArrayIndexOutOfBoundsException(
                 s"Interner.intern: offset=$offset length=$length bytes.length=${bytes.length}"
@@ -64,7 +65,7 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
         bytes: Array[Byte],
         offset: Int,
         length: Int
-    ): Interner.Entry =
+    )(using AllowUnsafe): Interner.Entry =
         val table               = shardRef.get()
         val len                 = table.length()
         val mask                = len - 1
@@ -89,7 +90,7 @@ final class Interner(numShards: Int, initialShardCapacity: Int):
                 end if
                 // Eagerly copy the byte slice so the Entry does not hold the parse buffer alive.
                 val copiedBytes = java.util.Arrays.copyOfRange(bytes, offset, offset + length)
-                val candidate   = new Interner.Entry(hash, copiedBytes, new OnceCell(() => Utf8.decode(copiedBytes, 0, copiedBytes.length)))
+                val candidate = new Interner.Entry(hash, copiedBytes, OnceCell.init(() => Utf8.decode(copiedBytes, 0, copiedBytes.length)))
                 // Per-slot CAS: no full-table copy needed.
                 if table.compareAndSet(slot, null, candidate) then
                     loadCounter.incrementAndGet(): Unit

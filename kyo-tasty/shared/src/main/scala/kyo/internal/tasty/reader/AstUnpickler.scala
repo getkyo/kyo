@@ -733,7 +733,7 @@ object AstUnpickler:
       * This method recursively walks the path chain to build the full dotted name (e.g. "kyo.fixtures" from
       * `SELECT(nameRef=fixtures, TERMREFpkg(nameRef=kyo))`).
       */
-    private def extractPackageName(view: ByteView, names: Array[Tasty.Name]): Tasty.Name =
+    private def extractPackageName(view: ByteView, names: Array[Tasty.Name])(using AllowUnsafe): Tasty.Name =
         val segments = new mutable.ArrayBuffer[String]()
         extractPackagePathSegments(view, names, segments)
         Tasty.Name(segments.mkString("."))

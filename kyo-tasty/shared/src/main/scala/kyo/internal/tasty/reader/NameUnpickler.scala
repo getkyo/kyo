@@ -223,7 +223,7 @@ object NameUnpickler:
     end readBytes
 
     /** Intern a `String` by encoding to UTF-8 and passing to the interner. */
-    private def internString(interner: Interner, s: String): Tasty.Name =
+    private def internString(interner: Interner, s: String)(using AllowUnsafe): Tasty.Name =
         val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         Tasty.Name.wrap(interner.intern(bytes, 0, bytes.length))
     end internString
