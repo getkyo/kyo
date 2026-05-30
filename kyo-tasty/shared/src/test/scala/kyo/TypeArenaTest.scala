@@ -147,4 +147,51 @@ class TypeArenaTest extends Test:
         assert(canon.values.nonEmpty)
     }
 
+    // Test 8 (T4, Rec depth boundary): Rec-type nesting at MaxDepth-1 succeeds without DepthExceededException.
+    // The depth check fires when internRec is called at depth >= MaxDepth. With MaxDepth-1 levels of Rec
+    // wrapping a Named leaf, the deepest internRec call is at depth MaxDepth-1 (< MaxDepth), so no throw.
+    // This complements Test 7 (Applied nesting) by exercising the Rec ADT arm of internRec specifically.
+    // Pins: T4 (Rec at depth boundary).
+    "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException" in run {
+        val leafSym          = makeSym("RecDepthLeaf")
+        val leaf: Tasty.Type = Tasty.Type.Named(leafSym)
+        // Build MaxDepth-1 levels of Rec wrapping: Rec(Rec(Rec(...Named...))).
+        var t: Tasty.Type = leaf
+        var i             = 0
+        while i < (TypeArena.MaxDepth - 1) do
+            t = Tasty.Type.Rec(t)
+            i += 1
+        end while
+        val arena = TypeArena.canonical()
+        arena.intern(t)
+        val canon = TypeArena.canonical()
+        // Merge must complete without throwing DepthExceededException.
+        arena.merge(canon)
+        assert(canon.values.nonEmpty, "canonical arena must be non-empty after successful merge")
+    }
+
+    // Test 9 (T4, cyclic Rec self-reference): canonical map produces reference-equal result under repeated intern.
+    // The RecThis(rec) case in internRec returns the type as-is (leaf treatment), breaking the structural
+    // recursion and allowing merge to complete. After merge, interning the same structural type twice returns
+    // the same canonical reference.
+    // Pins: T4 (cyclic Rec self-reference).
+    "T4: cyclic Rec(RecThis) self-reference interns to reference-equal canonical value" in run {
+        val sentinel = Tasty.Type.Named(makeSym("CyclicSentinel"))
+        // Build Rec(RecThis(inner)) where inner is a separate Rec pointing at sentinel.
+        // RecThis(inner) is at depth 2 inside the outermost Rec.
+        val inner   = Tasty.Type.Rec(sentinel)
+        val recThis = Tasty.Type.RecThis(inner)
+        val outer   = Tasty.Type.Rec(recThis)
+
+        val arena = TypeArena.canonical()
+        arena.intern(outer)
+        val canon = TypeArena.canonical()
+        arena.merge(canon)
+
+        // After merge, interning the same structural type twice yields reference-equal results.
+        val first  = canon.intern(outer)
+        val second = canon.intern(outer)
+        assert(first eq second, "repeated intern of the same cyclic Rec type must return the same canonical reference")
+    }
+
 end TypeArenaTest

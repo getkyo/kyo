@@ -419,6 +419,26 @@ class TastySymbolTest extends Test:
         )
     }
 
+    // Test (T4, root-owned FQN): root sentinel Symbol where owner eq sym itself returns empty fullName and binaryName.
+    // The computeFullName loop terminates when cur.owner eq cur (root-owns-itself sentinel condition).
+    // The resulting parts list contains only the empty root name, which is filtered, yielding "".
+    // Pins: T4 (root-owned symbol FQN handling).
+    "T4: root sentinel Symbol fullName and binaryName both return empty string" in {
+        import AllowUnsafe.embrace.danger
+        // Build a root sentinel: Package, empty name, null owner (makeRoot produces exactly this).
+        val root = makeRoot()
+        // fullName.asString must be "" (no owner chain to traverse, root name is empty).
+        assert(
+            root.fullName.asString == "",
+            s"Expected fullName.asString == '' for root sentinel but got '${root.fullName.asString}'"
+        )
+        // binaryName must also be "" (filtered parts is empty).
+        assert(
+            root.binaryName == "",
+            s"Expected binaryName == '' for root sentinel but got '${root.binaryName}'"
+        )
+    }
+
     // Phase 13 T1 gap: kind accessor on each major SymbolKind.
     // Given: synthetic symbols with each of Class, Trait, Object, Package, Method, Field kinds.
     // When: sym.kind read.

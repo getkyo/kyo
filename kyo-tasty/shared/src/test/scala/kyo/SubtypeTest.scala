@@ -245,6 +245,33 @@ class SubtypeTest extends Test:
             assert(result == Tasty.SubtypeVerdict.Unknown)
     }
 
+    // Test 14 (Phase 15 steering note): real deeply-nested Rec type exhausts default budget.
+    // Build a Rec-wrapped chain 66 levels deep: Rec(Rec(Rec(...Named...))).
+    // When isSubtypeOf is called with the default budget=64, each Rec unfolding decrements
+    // the budget by 1. After 64 Rec unfolds the budget reaches 0 and isSubtype returns Unknown.
+    // This exercises real recursive traversal through 66 Rec levels (vs the budget=0 shortcut in Test 12).
+    // Fixture approach: 66 nested Rec wrappers around a Named leaf.
+    // Pins: Phase 15 audit NOTE (real-recursion coverage).
+    "real 66-deep Rec chain exhausts default budget=64 and returns Unknown" in run {
+        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+            given Tasty.Classpath = cp
+            val leafSym           = makeSym("RecBudgetLeaf")
+            val leaf: Tasty.Type  = Tasty.Type.Named(leafSym)
+            // Build 66 levels of Rec wrapping: Rec(Rec(Rec(...Named...))).
+            // The default budget is 64; 66 unfolds will exceed it.
+            var t: Tasty.Type = leaf
+            var i             = 0
+            while i < 66 do
+                t = Tasty.Type.Rec(t)
+                i += 1
+            end while
+            val result = t.isSubtypeOf(t)
+            assert(
+                result == Tasty.SubtypeVerdict.Unknown,
+                s"Expected Unknown from real 66-deep Rec chain (budget=64) but got $result"
+            )
+    }
+
     // Test 13: missing parent chain returns Unknown
     // A symbol whose _parents slot has never been set produces Unknown (not NotSub), because the
     // absence of parent data means we cannot definitively say the relation does not hold.
