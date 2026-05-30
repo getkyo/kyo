@@ -3,6 +3,7 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.Reader
+import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
 final class YamlReader private (
@@ -829,7 +830,7 @@ final class YamlReader private (
         sourceFrames match
             case (f: SourceMappingFrame) :: _ =>
                 skipSourceBlankAndCommentLines()
-                sourcePos < source.length && currentSourceIndent() >= f.indent && isSourceBlockMappingLine(currentSourceLine())
+                sourcePos < source.length && currentSourceIndent() >= f.indent && isCurrentSourceBlockMappingLine
             case (f: SourceFlowMappingFrame) :: _ =>
                 sourceHasNextFlowMappingField(f)
             case _ => false
@@ -861,13 +862,12 @@ final class YamlReader private (
                 val lineStart = sourcePos
                 consumeSourceIndent(f.indent)
                 val keyStart = sourcePos
-                val line     = currentSourceLine()
-                val colon    = findSourceTopLevel(line, ':')
+                val lineEnd  = sourceLineEnd(keyStart)
+                val colon    = findSourceTopLevel(keyStart, lineEnd, ':')
                 if colon < 0 then error("Expected YAML mapping field")
-                val keyText = source.substring(keyStart, keyStart + colon).trim
-                _lastFieldName = unquoteSourceKey(keyText)
+                _lastFieldName = unquoteSourceKey(keyStart, colon)
                 _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
-                sourcePos = keyStart + colon + 1
+                sourcePos = colon + 1
                 val restStart = sourcePos
                 val rest      = readSourceRestOfLineFrom(restStart)
                 val value     = sourceCaptureMappingValue(f, rest, lineNumberAt(lineStart))
@@ -900,13 +900,13 @@ final class YamlReader private (
         val entryEnd   = sourceFlowEntryEnd('}')
         val separator  = findSourceFlowMappingSeparator(entryStart, entryEnd)
         if separator < 0 then
-            _lastFieldName = source.substring(entryStart, entryEnd).trim
+            _lastFieldName = sourceTrimmedSubstring(entryStart, entryEnd)
             _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
             delegate = Maybe(sourceChild("\n"))
         else
-            _lastFieldName = unquoteSourceKey(source.substring(entryStart, separator).trim)
+            _lastFieldName = unquoteSourceKey(entryStart, separator)
             _lastFieldBytes = _lastFieldName.getBytes(StandardCharsets.UTF_8)
-            val value = normalizeSourceFlowValue(source.substring(separator + 1, entryEnd))
+            val value = normalizeSourceFlowValue(separator + 1, entryEnd)
             delegate = Maybe(sourceChild(value + "\n"))
         end if
         delegateDepth = 0
@@ -969,15 +969,20 @@ final class YamlReader private (
         if sourcePos >= source.length then sourceError("Unterminated flow sequence")
         else if source.charAt(sourcePos) == ']' then false
         else
-            if frame.first then frame.first = false
+            if frame.first then
+                frame.first = false
+                sourceCaptureSequenceElement(frame)
+                true
             else
                 if source.charAt(sourcePos) != ',' then sourceError("Expected YAML flow sequence separator")
                 sourcePos += 1
                 skipSourceFlowWhitespace()
-                if sourcePos < source.length && source.charAt(sourcePos) == ']' then return false
+                if sourcePos < source.length && source.charAt(sourcePos) == ']' then false
+                else
+                    sourceCaptureSequenceElement(frame)
+                    true
+                end if
             end if
-            sourceCaptureSequenceElement(frame)
-            true
         end if
     end sourceHasNextFlowSequenceElement
 
@@ -986,45 +991,55 @@ final class YamlReader private (
         checkCollectionSize(frame.count)
         val start = sourcePos
         val stop  = sourceFlowEntryEnd(']')
-        val value = normalizeSourceFlowValue(source.substring(start, stop))
+        val value = normalizeSourceFlowValue(start, stop)
         sourcePos = stop
         delegate = Maybe(sourceChild(value + "\n"))
         delegateDepth = 0
     end sourceCaptureSequenceElement
 
-    private def normalizeSourceFlowValue(value: String): String =
-        val trimmed = value.trim
-        if !trimmed.contains('\n') || trimmed.startsWith("[") || trimmed.startsWith("{") then trimmed
-        else YamlSource.foldFlowScalarText(trimmed)
+    private def normalizeSourceFlowValue(start: Int, stop: Int): String =
+        val (from, to) = trimmedSourceRange(start, stop)
+        if from >= to then ""
+        else if !sourceContainsNewline(from, to) || source.charAt(from) == '[' || source.charAt(from) == '{' then source.substring(from, to)
+        else YamlSource.foldFlowScalarText(source.substring(from, to))
     end normalizeSourceFlowValue
 
+    private def sourceContainsNewline(from: Int, to: Int): Boolean =
+        @tailrec def loop(i: Int): Boolean =
+            if i >= to then false
+            else if source.charAt(i) == '\n' then true
+            else loop(i + 1)
+        loop(from)
+    end sourceContainsNewline
+
     private def sourceFlowEntryEnd(close: Char): Int =
-        var i      = sourcePos
-        var depth  = 0
-        var single = false
-        var double = false
-        var escape = false
-        while i < source.length do
-            val ch = source.charAt(i)
-            if escape then escape = false
-            else if double && ch == '\\' then escape = true
-            else if !double && ch == '\'' then single = !single
-            else if !single && ch == '"' then double = !double
-            else if !single && !double then
-                ch match
-                    case '[' | '{' =>
-                        depth += 1
-                    case ']' | '}' =>
-                        if depth == 0 && ch == close then return i
-                        if depth > 0 then depth -= 1
-                    case ',' if depth == 0 =>
-                        return i
-                    case _ => ()
-                end match
+        @tailrec def loop(i: Int, depth: Int, single: Boolean, double: Boolean, escape: Boolean): Int =
+            if i >= source.length then sourceError(s"Unterminated flow ${if close == ']' then "sequence" else "mapping"}")
+            else
+                val ch = source.charAt(i)
+                if escape then loop(i + 1, depth, single, double, false)
+                else if double && ch == '\\' then loop(i + 1, depth, single, double, true)
+                else if !double && ch == '\'' then loop(i + 1, depth, !single, double, false)
+                else if !single && ch == '"' then loop(i + 1, depth, single, !double, false)
+                else if !single && !double then
+                    ch match
+                        case '[' | '{' =>
+                            loop(i + 1, depth + 1, single, double, false)
+                        case ']' | '}' if depth == 0 && ch == close =>
+                            i
+                        case ']' | '}' if depth > 0 =>
+                            loop(i + 1, depth - 1, single, double, false)
+                        case ',' if depth == 0 =>
+                            i
+                        case _ =>
+                            loop(i + 1, depth, single, double, false)
+                    end match
+                else loop(i + 1, depth, single, double, false)
+                end if
             end if
-            i += 1
-        end while
-        sourceError(s"Unterminated flow ${if close == ']' then "sequence" else "mapping"}")
+        end loop
+
+        loop(sourcePos, 0, single = false, double = false, escape = false)
     end sourceFlowEntryEnd
 
     private def findSourceFlowMappingSeparator(start: Int, stop: Int): Int =
@@ -1467,11 +1482,41 @@ final class YamlReader private (
         out
     end readSourceRestOfLineFrom
 
+    private def sourceLineEnd(pos: Int): Int =
+        YamlSource.lineEnd(source, pos)
+    end sourceLineEnd
+
+    private def sourceTrimmedSubstring(start: Int, stop: Int): String =
+        val (from, to) = trimmedSourceRange(start, stop)
+        source.substring(from, to)
+    end sourceTrimmedSubstring
+
+    private def isCurrentSourceBlockMappingLine: Boolean =
+        val stop  = sourceLineEnd(sourcePos)
+        val start = firstNonSpace(sourcePos, stop)
+        sourceBlockMappingLineAt(start, stop)
+    end isCurrentSourceBlockMappingLine
+
     private def isSourceBlockMappingLine(lineText: String): Boolean =
-        val stripped = lineText.dropWhile(_ == ' ')
-        val colon    = findSourceTopLevel(stripped, ':')
-        colon >= 0 && (colon == stripped.length - 1 || stripped.charAt(colon + 1).isWhitespace)
+        val start = firstNonSpace(lineText, 0, lineText.length)
+        val colon = findSourceTopLevel(lineText, start, lineText.length, ':')
+        colon >= 0 && (colon == lineText.length - 1 || lineText.charAt(colon + 1).isWhitespace)
     end isSourceBlockMappingLine
+
+    private def sourceBlockMappingLineAt(start: Int, stop: Int): Boolean =
+        val colon = findSourceTopLevel(start, stop, ':')
+        colon >= 0 && (colon == stop - 1 || source.charAt(colon + 1).isWhitespace)
+    end sourceBlockMappingLineAt
+
+    @tailrec
+    private def firstNonSpace(source: String, from: Int, stop: Int): Int =
+        if from < stop && source.charAt(from) == ' ' then firstNonSpace(source, from + 1, stop)
+        else from
+    end firstNonSpace
+
+    private def firstNonSpace(from: Int, stop: Int): Int =
+        firstNonSpace(source, from, stop)
+    end firstNonSpace
 
     private def sourceStartsSequenceEntryAtIndent(): Boolean =
         YamlSource.startsSequenceEntryAtIndent(source, sourcePos)
@@ -1507,6 +1552,11 @@ final class YamlReader private (
         else if text.length >= 2 && text.charAt(0) == '"' && text.charAt(text.length - 1) == '"' then
             text.substring(1, text.length - 1)
         else text
+    end unquoteSourceKey
+
+    private def unquoteSourceKey(start: Int, stop: Int): String =
+        val (from, to) = trimmedSourceRange(start, stop)
+        unquoteSourceKey(source.substring(from, to))
     end unquoteSourceKey
 
     private def trimmedSourceRange(start: Int, stop: Int): (Int, Int) =
@@ -1704,6 +1754,14 @@ final class YamlReader private (
 
     private def findSourceTopLevel(s: String, target: Char): Int =
         YamlSource.findTopLevel(s, target)
+    end findSourceTopLevel
+
+    private def findSourceTopLevel(s: String, start: Int, stop: Int, target: Char): Int =
+        YamlSource.findTopLevel(s, target, start, stop)
+    end findSourceTopLevel
+
+    private def findSourceTopLevel(start: Int, stop: Int, target: Char): Int =
+        YamlSource.findTopLevel(source, target, start, stop)
     end findSourceTopLevel
 
     private def prepare(): Unit =
