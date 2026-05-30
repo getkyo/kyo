@@ -121,6 +121,20 @@ class PortableInflateTest extends Test:
         )
     }
 
+    // Phase 20d-debt: copyBack rejects out-of-range LZ77 distance.
+    // A corrupt deflate stream that emits a backreference with dist > out.length
+    // must raise InflateException, not a raw IndexOutOfBoundsException.
+    "copyBack rejects LZ77 distance beyond output buffer length" in run {
+        val out = scala.collection.mutable.ArrayBuffer[Byte](0x41.toByte, 0x42.toByte) // 2 bytes
+        try
+            PortableInflate.copyBack(out, dist = 5, len = 3)
+            fail("Expected InflateException for dist > out.length")
+        catch
+            case ex: PortableInflate.InflateException =>
+                assert(ex.getMessage.contains("invalid LZ77 distance 5"))
+        end try
+    }
+
     // Test 7: ZLIB input shorter than 6 bytes is rejected.
     // Minimum valid ZLIB stream is 2 bytes (CMF+FLG) + at least 1 deflate byte + 4 Adler bytes = 7 bytes,
     // but the guard is set at 6 to catch obviously truncated inputs early.

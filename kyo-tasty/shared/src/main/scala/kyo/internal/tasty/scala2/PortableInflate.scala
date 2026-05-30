@@ -216,7 +216,9 @@ object PortableInflate:
     // LZ77 backreference copy: dist bytes back in out, copy len bytes
     private[kyo] def copyBack(out: scala.collection.mutable.ArrayBuffer[Byte], dist: Int, len: Int): Unit =
         val start = out.length
-        var i     = 0
+        if dist <= 0 || dist > start then
+            throw new InflateException(s"invalid LZ77 distance $dist (output length $start)", start.toLong)
+        var i = 0
         while i < len do
             out += out(start - dist + i)
             i += 1
