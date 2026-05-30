@@ -4,7 +4,7 @@ import kyo.internal.tasty.query.ClasspathRef
 
 /** Tests for Phase 9: Subtype checking and type comparison.
   *
-  * Plan tests 1-9.
+  * Plan tests 1-9 (original) + tests 10-13 (Phase 15: SubtypeVerdict).
   *
   * All tests use synthetic Symbol instances constructed in-memory (no TASTy/classfile I/O). Parent chains are wired by writing directly to
   * the `_parents` SingleAssign slot (the same path used by AstUnpickler during real classpath loading). Each test obtains a minimal
@@ -71,38 +71,38 @@ class SubtypeTest extends Test:
         sym._typeParams.set(params)
 
     // Test 1: Named(A).isSubtypeOf(Named(A)) -- reflexivity via same symbol reference
-    "Named(A).isSubtypeOf(Named(A)) returns true (reflexivity)" in run {
+    "Named(A).isSubtypeOf(Named(A)) returns Sub (reflexivity)" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
             given Tasty.Classpath = cp
             val intSym            = makeSym("scala.Int")
             val intType           = Tasty.Type.Named(intSym)
-            assert(intType.isSubtypeOf(intType))
+            assert(intType.isSubtypeOf(intType) == Tasty.SubtypeVerdict.Sub)
     }
 
-    // Test 2: Named(String).isSubtypeOf(Named(Object)) returns true via parent chain
-    "Named(String).isSubtypeOf(Named(Object)) returns true via parent chain" in run {
+    // Test 2: Named(String).isSubtypeOf(Named(Object)) returns Sub via parent chain
+    "Named(String).isSubtypeOf(Named(Object)) returns Sub via parent chain" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
             given Tasty.Classpath = cp
             val objectSym         = makeSym("java.lang.Object")
             val objectType        = Tasty.Type.Named(objectSym)
             val stringSym         = makeSym("java.lang.String", Chunk(objectType))
             val stringType        = Tasty.Type.Named(stringSym)
-            assert(stringType.isSubtypeOf(objectType))
+            assert(stringType.isSubtypeOf(objectType) == Tasty.SubtypeVerdict.Sub)
     }
 
-    // Test 3: Named(String).isSubtypeOf(Named(Int)) returns false
-    "Named(String).isSubtypeOf(Named(Int)) returns false" in run {
+    // Test 3: Named(String).isSubtypeOf(Named(Int)) returns NotSub
+    "Named(String).isSubtypeOf(Named(Int)) returns NotSub" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
             given Tasty.Classpath = cp
             val intSym            = makeSym("scala.Int")
             val stringSym         = makeSym("java.lang.String")
             val intType           = Tasty.Type.Named(intSym)
             val stringType        = Tasty.Type.Named(stringSym)
-            assert(!stringType.isSubtypeOf(intType))
+            assert(stringType.isSubtypeOf(intType) == Tasty.SubtypeVerdict.NotSub)
     }
 
-    // Test 4: AndType(A, B).isSubtypeOf(A) returns true
-    "AndType(A, B).isSubtypeOf(A) returns true" in run {
+    // Test 4: AndType(A, B).isSubtypeOf(A) returns Sub
+    "AndType(A, B).isSubtypeOf(A) returns Sub" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
             given Tasty.Classpath = cp
             val symA              = makeSym("test.A")
@@ -110,11 +110,11 @@ class SubtypeTest extends Test:
             val typeA             = Tasty.Type.Named(symA)
             val typeB             = Tasty.Type.Named(symB)
             val andType           = Tasty.Type.AndType(typeA, typeB)
-            assert(andType.isSubtypeOf(typeA))
+            assert(andType.isSubtypeOf(typeA) == Tasty.SubtypeVerdict.Sub)
     }
 
-    // Test 5: A.isSubtypeOf(OrType(A, B)) returns true
-    "A.isSubtypeOf(OrType(A, B)) returns true" in run {
+    // Test 5: A.isSubtypeOf(OrType(A, B)) returns Sub
+    "A.isSubtypeOf(OrType(A, B)) returns Sub" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
             given Tasty.Classpath = cp
             val symA              = makeSym("test.A")
@@ -122,11 +122,11 @@ class SubtypeTest extends Test:
             val typeA             = Tasty.Type.Named(symA)
             val typeB             = Tasty.Type.Named(symB)
             val orType            = Tasty.Type.OrType(typeA, typeB)
-            assert(typeA.isSubtypeOf(orType))
+            assert(typeA.isSubtypeOf(orType) == Tasty.SubtypeVerdict.Sub)
     }
 
-    // Test 6: Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) true when List is covariant
-    "Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) true when List is covariant" in run {
+    // Test 6: Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant
+    "Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
             given Tasty.Classpath = cp
             val anyRefSym         = makeSym("java.lang.Object")
@@ -139,22 +139,22 @@ class SubtypeTest extends Test:
             val listType   = Tasty.Type.Named(listSym)
             val listString = Tasty.Type.Applied(listType, Chunk(stringType))
             val listAnyRef = Tasty.Type.Applied(listType, Chunk(anyRefType))
-            assert(listString.isSubtypeOf(listAnyRef))
+            assert(listString.isSubtypeOf(listAnyRef) == Tasty.SubtypeVerdict.Sub)
     }
 
-    // Test 7: Named(Nothing).isSubtypeOf(anyType) returns true (Nothing is subtype of all)
-    "Named(Nothing).isSubtypeOf(any type) returns true (bottom)" in run {
+    // Test 7: Named(Nothing).isSubtypeOf(anyType) returns Sub (Nothing is subtype of all)
+    "Named(Nothing).isSubtypeOf(any type) returns Sub (bottom)" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
             given Tasty.Classpath = cp
             val nothingSym        = makeSym("scala.Nothing")
             val nothingType       = Tasty.Type.Named(nothingSym)
             val anySym            = makeSym("scala.Any")
             val anyType           = Tasty.Type.Named(anySym)
-            assert(nothingType.isSubtypeOf(anyType))
+            assert(nothingType.isSubtypeOf(anyType) == Tasty.SubtypeVerdict.Sub)
     }
 
-    // Test 8: TypeLambda([T], C[T]) isSubtypeOf TypeLambda([U], C[U]) true (alpha-equivalence)
-    "TypeLambda([T], C[T]).isSubtypeOf(TypeLambda([U], C[U])) true (alpha-equiv)" in run {
+    // Test 8: TypeLambda([T], C[T]) isSubtypeOf TypeLambda([U], C[U]) Sub (alpha-equivalence)
+    "TypeLambda([T], C[T]).isSubtypeOf(TypeLambda([U], C[U])) Sub (alpha-equiv)" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
             given Tasty.Classpath = cp
             val cSym              = makeSym("test.C")
@@ -186,7 +186,7 @@ class SubtypeTest extends Test:
                 Tasty.Type.Applied(cType, Chunk(Tasty.Type.Named(uSym)))
             )
             val result = lambda1.isSubtypeOf(lambda2)
-            assert(result)
+            assert(result == Tasty.SubtypeVerdict.Sub)
     }
 
     // Test 9: Rec type with RecThis back-reference does not cause infinite recursion
@@ -200,8 +200,82 @@ class SubtypeTest extends Test:
             val recBody = Tasty.Type.Applied(cType, Chunk(Tasty.Type.RecThis(cType)))
             val rec     = Tasty.Type.Rec(recBody)
             val result  = rec.isSubtypeOf(rec)
-            // Either true or false is acceptable; termination is the critical property.
-            assert(result == true || result == false)
+            // Sub, NotSub, or Unknown are all acceptable; termination is the critical property.
+            assert(
+                result == Tasty.SubtypeVerdict.Sub ||
+                    result == Tasty.SubtypeVerdict.NotSub ||
+                    result == Tasty.SubtypeVerdict.Unknown
+            )
+    }
+
+    // ── Phase 15 tests (SubtypeVerdict) ──────────────────────────────────────
+
+    // Test 10: Int <: Any returns Sub
+    "Int <: Any returns Sub" in run {
+        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+            given Tasty.Classpath = cp
+            val intSym            = makeSym("scala.Int")
+            val anySym            = makeSym("scala.Any")
+            val intType           = Tasty.Type.Named(intSym)
+            val anyType           = Tasty.Type.Named(anySym)
+            assert(intType.isSubtypeOf(anyType) == Tasty.SubtypeVerdict.Sub)
+    }
+
+    // Test 11: String <: Int returns NotSub
+    "String <: Int returns NotSub" in run {
+        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+            given Tasty.Classpath = cp
+            val stringSym         = makeSym("java.lang.String")
+            val intSym            = makeSym("scala.Int")
+            val stringType        = Tasty.Type.Named(stringSym)
+            val intType           = Tasty.Type.Named(intSym)
+            assert(stringType.isSubtypeOf(intType) == Tasty.SubtypeVerdict.NotSub)
+    }
+
+    // Test 12: budget=0 forces Unknown (simulates deep Rec exhaustion without building 66 unfoldings)
+    // Fallback: calling isSubtype directly with budget=0 produces Unknown, which is what would happen
+    // if a deeply-nested Rec type exhausted the budget during a real check.
+    "budget exhaustion returns Unknown" in run {
+        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+            val stringSym  = makeSym("java.lang.String")
+            val intSym     = makeSym("scala.Int")
+            val stringType = Tasty.Type.Named(stringSym)
+            val intType    = Tasty.Type.Named(intSym)
+            val result     = kyo.internal.tasty.type_.Subtyping.isSubtype(stringType, intType, Tasty.Classpath.unwrap(cp), budget = 0)
+            assert(result == Tasty.SubtypeVerdict.Unknown)
+    }
+
+    // Test 13: missing parent chain returns Unknown
+    // A symbol whose _parents slot has never been set produces Unknown (not NotSub), because the
+    // absence of parent data means we cannot definitively say the relation does not hold.
+    "missing parent chain returns Unknown" in run {
+        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+            given Tasty.Classpath = cp
+            import AllowUnsafe.embrace.danger
+            // Build Foo without setting _parents (slot is unset)
+            val root = Tasty.Symbol.make(
+                Tasty.SymbolKind.Package,
+                Tasty.Flags.empty,
+                Tasty.Name(""),
+                null,
+                new ClasspathRef,
+                Tasty.Symbol.TastyOrigin.empty,
+                Absent
+            )
+            val fooSym = Tasty.Symbol.make(
+                Tasty.SymbolKind.Class,
+                Tasty.Flags.empty,
+                Tasty.Name("Foo"),
+                root,
+                new ClasspathRef,
+                Tasty.Symbol.TastyOrigin.empty,
+                Absent
+            )
+            // _parents intentionally NOT set on fooSym
+            val barSym  = makeSym("test.Bar")
+            val fooType = Tasty.Type.Named(fooSym)
+            val barType = Tasty.Type.Named(barSym)
+            assert(fooType.isSubtypeOf(barType) == Tasty.SubtypeVerdict.Unknown)
     }
 
 end SubtypeTest

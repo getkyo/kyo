@@ -147,6 +147,18 @@ object Tasty:
             Unresolved
     end SymbolKind
 
+    // ── Subtype verdict ──────────────────────────────────────────────────────
+
+    /** Three-way result of a subtype check.
+      *
+      *   - `Sub`: the subtype relation definitively holds (`t <: other`).
+      *   - `NotSub`: the subtype relation definitively does not hold.
+      *   - `Unknown`: the check could not reach a definitive verdict (budget exhausted, or parent chain absent from the classpath).
+      */
+    enum SubtypeVerdict derives CanEqual:
+        case Sub, NotSub, Unknown
+    end SubtypeVerdict
+
     // ── Constants and annotations ───────────────────────────────────────────
 
     enum Constant:
@@ -1118,8 +1130,8 @@ object Tasty:
       *
       * A `Rec` type contains a recursive back-reference (`RecThis`). To avoid infinite recursion, each `Rec` unfolding decrements an
       * internal budget counter that starts at 64. If the budget is exhausted before a definitive subtype verdict is reached, the method
-      * returns `false` (conservative: not-a-subtype). Normal type hierarchies are nowhere near 64 levels deep; the budget is a safety net
-      * for adversarial or machine-generated type structures.
+      * returns `SubtypeVerdict.Unknown`. Normal type hierarchies are nowhere near 64 levels deep; the budget is a safety net for
+      * adversarial or machine-generated type structures.
       *
       * @param other
       *   the candidate supertype
@@ -1129,6 +1141,9 @@ object Tasty:
     extension (t: Type)
         /** Check whether `t` is a subtype of `other` using the structural covariant rules in `kyo.internal.tasty.type_.Subtyping`.
           *
+          * Returns `SubtypeVerdict.Sub` when the relation definitively holds, `SubtypeVerdict.NotSub` when it definitively does not hold,
+          * and `SubtypeVerdict.Unknown` when the budget was exhausted or the parent chain was not fully available on the classpath.
+          *
           * Pure accessor: parent-chain lookups use the pre-populated `_parents` SingleAssign slots in each Symbol, which are set during
           * classpath open and are immutable thereafter. No classpath I/O is performed.
           *
@@ -1137,7 +1152,7 @@ object Tasty:
           * @param cp
           *   the classpath used for transitive parent-chain resolution (accessed via pure AllowUnsafe reads)
           */
-        def isSubtypeOf(other: Type)(using cp: Classpath): Boolean =
+        def isSubtypeOf(other: Type)(using cp: Classpath): SubtypeVerdict =
             kyo.internal.tasty.type_.Subtyping.isSubtype(t, other, cp, budget = 64)
     end extension
 
