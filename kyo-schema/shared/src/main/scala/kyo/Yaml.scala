@@ -3,8 +3,20 @@ package kyo
 import java.nio.charset.StandardCharsets
 import scala.annotation.tailrec
 
+/** YAML codec instance for codec-polymorphic schema APIs.
+  *
+  * The companion object provides the usual high-level helpers for YAML strings and UTF-8 bytes. A `Yaml` instance is useful when code works
+  * through the generic [[Codec]] or [[Schema.encode]] / [[Schema.decode]] APIs and needs to carry writer configuration in the contextual
+  * codec value.
+  *
+  * Reader configuration is supplied by the companion decode helpers. Codec-generic reads use the direct YAML reader with YAML 1.2 scalar
+  * resolution and the standard safety limits.
+  */
 final class Yaml(writerConfig: Yaml.WriterConfig = Yaml.WriterConfig.Default) extends Codec:
+    /** Creates a YAML writer using this codec instance's writer configuration. */
     def newWriter(): Codec.Writer = kyo.internal.YamlWriter(writerConfig)
+
+    /** Creates a direct YAML reader over UTF-8 input bytes. */
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         kyo.internal.YamlReader(input)
 end Yaml
@@ -20,9 +32,13 @@ end Yaml
   *   [[kyo.Schema]] for type-driven serialization
   */
 object Yaml:
-    val DefaultMaxDepth: Int          = Json.DefaultMaxDepth
+    /** Default maximum nesting depth for YAML schema decoding. */
+    val DefaultMaxDepth: Int = Json.DefaultMaxDepth
+
+    /** Default maximum number of entries in a decoded YAML collection or mapping. */
     val DefaultMaxCollectionSize: Int = Json.DefaultMaxCollectionSize
 
+    /** Default YAML codec instance for generic schema encoding and decoding. */
     given Yaml = Yaml()
 
     /** YAML language version used for schema-level scalar resolution.
@@ -36,7 +52,11 @@ object Yaml:
       * integers, sexagesimal numbers, and underscores inside numeric scalars.
       */
     enum SpecVersion derives CanEqual:
-        case Yaml12, Yaml11
+        /** YAML 1.2 Core scalar resolution. */
+        case Yaml12
+
+        /** YAML 1.1 legacy scalar resolution for older YAML-consuming systems. */
+        case Yaml11
     end SpecVersion
 
     /** Zero-based selector for one YAML document within a stream.
@@ -47,11 +67,19 @@ object Yaml:
       */
     opaque type DocumentIndex = Int
 
+    /** Constructors and accessors for [[DocumentIndex]] values.
+      *
+      * `DocumentIndex` is intentionally an opaque type so APIs that select a YAML document cannot accidentally be confused with parser
+      * depth or collection-size limits.
+      */
     object DocumentIndex:
+        /** Creates a zero-based document selector. */
         def apply(value: Int): DocumentIndex = value
     end DocumentIndex
 
-    extension (index: DocumentIndex) def value: Int = index
+    extension (index: DocumentIndex)
+        /** Returns the zero-based integer value of this document selector. */
+        def value: Int = index
 
     /** Decoding settings for YAML input.
       *
@@ -72,13 +100,27 @@ object Yaml:
         documentMode: ReaderConfig.DocumentMode = ReaderConfig.DocumentMode.SingleDocument
     ) derives CanEqual
 
+    /** Reader configuration defaults and stream handling modes. */
     object ReaderConfig:
+        /** How a single schema decode handles a YAML stream when no explicit document index is selected.
+          *
+          * The normal mode treats multi-document streams as an error for single-value decoding. Merge mode exists for configuration shapes
+          * where a top-level case class, sealed trait wrapper, or Scala 3 enum variant is deliberately split across YAML document
+          * separators.
+          */
         enum DocumentMode derives CanEqual:
-            case SingleDocument, MergeTopLevelMappings
+            /** Requires the input to contain exactly one YAML document. */
+            case SingleDocument
+
+            /** Treats each non-empty document as a fragment of one top-level mapping. */
+            case MergeTopLevelMappings
         end DocumentMode
 
+        /** Default YAML reader configuration: YAML 1.2, one document, and standard safety limits. */
         val Default: ReaderConfig = ReaderConfig()
-        given ReaderConfig        = Default
+
+        /** Contextual default reader configuration used by the single-argument decode helpers. */
+        given ReaderConfig = Default
     end ReaderConfig
 
     /** Encoding settings for YAML output.
@@ -113,44 +155,138 @@ object Yaml:
         yamlVersion: SpecVersion = SpecVersion.Yaml12
     ) derives CanEqual
 
+    /** Writer configuration profiles and option enums. */
     object WriterConfig:
+        /** Collection layout used for mappings and sequences.
+          *
+          * Block style favors human editing. Flow style favors compactness. JSON-compatible flow style is useful when downstream
+          * processors are optimized for JSON-like YAML.
+          */
         enum CollectionStyle derives CanEqual:
-            case Block, Flow, JsonCompatibleFlow
+            /** Writes indented block-style YAML collections. */
+            case Block
+
+            /** Writes YAML flow-style collections such as `[a, b]` and `{k: v}`. */
+            case Flow
+
+            /** Writes flow collections using JSON-compatible punctuation and scalar quoting. */
+            case JsonCompatibleFlow
         end CollectionStyle
 
+        /** Layout used when a sequence element is itself a mapping.
+          *
+          * This setting only affects block-style sequences whose elements are mappings. Compact output starts the first field immediately
+          * after `-`; indented output places every field under the sequence marker.
+          */
         enum SequenceMappingStyle derives CanEqual:
-            case Compact, Indented
+            /** Writes the first mapping field on the same line as the sequence marker when possible. */
+            case Compact
+
+            /** Writes sequence mapping fields on indented child lines. */
+            case Indented
         end SequenceMappingStyle
 
+        /** Policy for quoting string scalars.
+          *
+          * Quoting has correctness implications because YAML decoders can implicitly resolve plain strings as booleans, nulls, integers,
+          * floats, or legacy YAML 1.1 values. The default quotes ambiguous strings so schema round trips preserve Scala `String` values.
+          */
         enum ScalarQuoting derives CanEqual:
-            case WhenNeeded, QuoteAmbiguous, QuoteAllStrings
+            /** Quotes only strings that cannot be emitted as valid plain YAML scalars. */
+            case WhenNeeded
+
+            /** Quotes strings that could be implicitly resolved as non-string YAML scalars. */
+            case QuoteAmbiguous
+
+            /** Quotes every string scalar. */
+            case QuoteAllStrings
         end ScalarQuoting
 
+        /** Quote style used when a string scalar is quoted.
+          *
+          * Double quotes support YAML escape sequences and are the default. Single quotes are visually quieter for ordinary text and escape
+          * embedded single quotes by doubling them.
+          */
         enum QuoteStyle derives CanEqual:
-            case Double, Single
+            /** Uses double-quoted YAML strings with escape sequences. */
+            case Double
+
+            /** Uses single-quoted YAML strings with doubled single quote escaping. */
+            case Single
         end QuoteStyle
 
+        /** Encoding style used for strings containing line breaks.
+          *
+          * Literal and folded styles emit YAML block scalars. Double-quoted style keeps multiline values inside ordinary scalar syntax and
+          * is used by the compact JSON-compatible writer profile.
+          */
         enum MultilineStyle derives CanEqual:
-            case Literal, Folded, DoubleQuoted
+            /** Uses literal block scalars, preserving line breaks. */
+            case Literal
+
+            /** Uses folded block scalars, folding ordinary line breaks to spaces. */
+            case Folded
+
+            /** Uses double-quoted scalars with escaped line breaks. */
+            case DoubleQuoted
         end MultilineStyle
 
+        /** Block scalar chomping behavior for trailing line breaks.
+          *
+          * YAML block scalars distinguish the final line break and any extra trailing line breaks from the main content. Preserve mode
+          * chooses the YAML chomping indicator that round trips the exact Scala string.
+          */
         enum Chomping derives CanEqual:
-            case Clip, Strip, Keep, Preserve
+            /** Clips the final line break in YAML block scalar form. */
+            case Clip
+
+            /** Strips the final line break in YAML block scalar form. */
+            case Strip
+
+            /** Keeps trailing line breaks in YAML block scalar form. */
+            case Keep
+
+            /** Selects the chomping mode needed to preserve the exact Scala string. */
+            case Preserve
         end Chomping
 
+        /** Document marker policy for encoded YAML output.
+          *
+          * Markers are optional for ordinary single-document YAML, but they can make streams explicit and are sometimes required by tools
+          * that concatenate YAML documents.
+          */
         enum DocumentMarkers derives CanEqual:
-            case None, Start, StartAndEnd
+            /** Emits no explicit document markers. */
+            case None
+
+            /** Emits an explicit document-start marker. */
+            case Start
+
+            /** Emits explicit document-start and document-end markers. */
+            case StartAndEnd
         end DocumentMarkers
 
+        /** Rendering style for non-finite floating-point values.
+          *
+          * YAML Core has native spellings for NaN and infinities. Tagged output is useful with the JSON-compatible flow profile because the
+          * scalar text remains quoted while the YAML tag preserves the numeric meaning for this decoder.
+          */
         enum SpecialFloatStyle derives CanEqual:
-            case YamlCore, TaggedYamlCore
+            /** Emits YAML Core special floats such as `.nan` and `.inf`. */
+            case YamlCore
+
+            /** Emits tagged YAML Core special floats to preserve JSON-compatible flow output. */
+            case TaggedYamlCore
         end SpecialFloatStyle
 
+        /** Readability-oriented profile and the default writer configuration. */
         val Readable: WriterConfig = WriterConfig()
 
+        /** Compact block-style profile that keeps sequence mappings tighter. */
         val Compact: WriterConfig =
             WriterConfig(sequenceMappingStyle = SequenceMappingStyle.Compact)
 
+        /** Size-oriented profile using flow collections and no trailing newline. */
         val Small: WriterConfig =
             WriterConfig(
                 collectionStyle = CollectionStyle.Flow,
@@ -159,6 +295,7 @@ object Yaml:
                 trailingNewline = false
             )
 
+        /** Processing-speed-oriented profile using JSON-compatible flow output. */
         val Fast: WriterConfig =
             WriterConfig(
                 collectionStyle = CollectionStyle.JsonCompatibleFlow,
@@ -169,29 +306,73 @@ object Yaml:
                 trailingNewline = false
             )
 
+        /** Concrete default writer profile. */
         val Default: WriterConfig = Readable
-        given WriterConfig        = Default
+
+        /** Contextual default writer configuration used by single-argument encode helpers. */
+        given WriterConfig = Default
     end WriterConfig
 
-    /** Source position in the YAML stream. */
+    /** Source position in the YAML stream.
+      *
+      * Marks are attached to visitor events and parser metadata so callers can report application-level errors at the same source position
+      * where the YAML parser found a value. The raw `index` is the character offset into the decoded input string; `line` and `column` are
+      * intended for display in diagnostics.
+      */
     case class Mark(index: Int, line: Int, column: Int) derives CanEqual
 
-    /** Node metadata carried by collections. */
+    /** Node metadata carried by collection nodes.
+      *
+      * YAML anchors and tags are exposed as metadata instead of being interpreted by the event parser. Schema decoding honors the standard
+      * scalar tags it understands, while unknown and local tags remain available to visitors and DOM-style parsing as metadata.
+      */
     case class Meta(anchor: Maybe[String], tag: Maybe[String], mark: Mark) derives CanEqual
 
-    /** Scalar style as written in the YAML stream. */
+    /** Scalar style as written in the YAML stream.
+      *
+      * The style records YAML surface syntax without changing the scalar value reported to visitors. It lets callers distinguish plain,
+      * quoted, literal, and folded content when they need formatting-aware behavior.
+      */
     enum ScalarStyle derives CanEqual:
-        case Plain, SingleQuoted, DoubleQuoted, Literal, Folded
+        /** Plain scalar without quote or block indicators. */
+        case Plain
+
+        /** Single-quoted scalar. */
+        case SingleQuoted
+
+        /** Double-quoted scalar. */
+        case DoubleQuoted
+
+        /** Literal block scalar introduced with `|`. */
+        case Literal
+
+        /** Folded block scalar introduced with `>`. */
+        case Folded
     end ScalarStyle
 
-    /** Metadata carried by scalar nodes. */
+    /** Metadata carried by scalar nodes.
+      *
+      * Scalar metadata includes the same anchor, tag, and mark information as collection metadata, plus the scalar's source style. Visitors
+      * can use the tag and style to implement custom scalar handling without forcing the parser to build a node tree.
+      */
     case class ScalarMeta(anchor: Maybe[String], tag: Maybe[String], style: ScalarStyle, mark: Mark) derives CanEqual
 
-    /** Optional YAML node tree built only by [[parse]] and [[parseAll]]. */
+    /** YAML node tree built only by [[parse]] and [[parseAll]].
+      *
+      * Ordinary visiting and schema decoding are event-first and do not require this tree. Use `Node` when a caller explicitly needs to
+      * inspect or transform a YAML document as data while preserving anchors, tags, scalar styles, and source marks.
+      */
     enum Node derives CanEqual:
+        /** Mapping node containing key-value node pairs and collection metadata. */
         case Mapping(entries: Chunk[(Node, Node)], meta: Meta)
+
+        /** Sequence node containing element nodes and collection metadata. */
         case Sequence(elements: Chunk[Node], meta: Meta)
+
+        /** Scalar node containing the raw scalar text and scalar metadata. */
         case Scalar(value: String, meta: ScalarMeta)
+
+        /** Alias node referencing a previously declared anchor by name. */
         case Alias(name: String, mark: Mark)
     end Node
 
@@ -199,16 +380,40 @@ object Yaml:
       *
       * The parser passes caller-owned context through every callback. Returning [[Result.Failure]] stops parsing immediately and returns
       * that error to the caller.
+      *
+      * @tparam Ctx
+      *   caller-owned context threaded through the event stream
+      * @tparam Err
+      *   application error type that can stop parsing
+      * @tparam A
+      *   final visitor result produced at stream end
       */
     trait Visitor[Ctx, Err, A]:
+        /** Called once before the first document is visited. */
         def streamStart(context: Ctx, mark: Mark): Result[Err, Ctx]
+
+        /** Called before each YAML document body. */
         def documentStart(context: Ctx, mark: Mark): Result[Err, Ctx]
+
+        /** Called when a mapping node starts. */
         def mappingStart(context: Ctx, meta: Meta): Result[Err, Ctx]
+
+        /** Called when a sequence node starts. */
         def sequenceStart(context: Ctx, meta: Meta): Result[Err, Ctx]
+
+        /** Called for each scalar node with its source text and metadata. */
         def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err, Ctx]
+
+        /** Called for each alias node with the referenced anchor name. */
         def alias(context: Ctx, name: String, mark: Mark): Result[Err, Ctx]
+
+        /** Called when a mapping or sequence node ends. */
         def nodeEnd(context: Ctx, mark: Mark): Result[Err, Ctx]
+
+        /** Called after each YAML document body. */
         def documentEnd(context: Ctx, mark: Mark): Result[Err, Ctx]
+
+        /** Called once after the stream has been visited and returns the final visitor value. */
         def streamEnd(context: Ctx, mark: Mark): Result[Err, A]
     end Visitor
 
