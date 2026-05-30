@@ -3,6 +3,7 @@ package kyo.internal.tasty.snapshot
 import kyo.*
 import kyo.internal.tasty.binary.MappedByteView
 import kyo.internal.tasty.query.FileSource
+import scala.scalanative.posix.sys.stat as posixStat
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 
@@ -21,15 +22,15 @@ object NativeMmapReader:
                     if fd < 0 then
                         Abort.fail(TastyError.FileNotFound(s"$path: open failed"))
                     else
-                        val statBuf = alloc[NativeMmapBindings.StatBuf]()
-                        if NativeMmapBindings.fstat(fd, statBuf) < 0 then
+                        val statBuf = alloc[posixStat.stat]()
+                        if posixStat.fstat(fd, statBuf) < 0 then
                             val _ = NativeMmapBindings.close(fd)
                             Abort.fail(TastyError.FileNotFound(s"$path: fstat failed"))
                         else
-                            val size      = (!statBuf)._1.toLong
+                            val size      = statBuf._6.toLong // _6 = st_size (off_t) in posixlib stat struct
                             val mmapFd    = fd
-                            val protRead  = 0x1 // PROT_READ
-                            val mapShared = 0x2 // MAP_PRIVATE (0x02) -- we don't need to write back
+                            val protRead  = 0x1               // PROT_READ
+                            val mapShared = 0x2               // MAP_PRIVATE (0x02) -- we don't need to write back
                             val ptr       = NativeMmapBindings.mmap(null, size.toUSize, protRead, mapShared, mmapFd, 0)
                             val _         = NativeMmapBindings.close(fd)
                             if ptr == null then
@@ -52,11 +53,8 @@ end NativeMmapReader
 
 @extern
 private object NativeMmapBindings:
-    type StatBuf = CStruct8[Long, Long, Long, Long, Long, Long, Long, Long]
-
     @name("open")
     def openFile(path: CString, flags: CInt): CInt = extern
-    def fstat(fd: CInt, buf: Ptr[StatBuf]): CInt   = extern
     def close(fd: CInt): CInt                      = extern
     def mmap(
         addr: Ptr[Byte],

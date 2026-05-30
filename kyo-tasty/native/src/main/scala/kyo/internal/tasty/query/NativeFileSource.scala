@@ -1,6 +1,7 @@
 package kyo.internal.tasty.query
 
 import kyo.*
+import scala.scalanative.posix.sys.stat as posixStat
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 
@@ -78,11 +79,11 @@ object NativeFileSource extends FileSource:
             val fd = PosixFileBindings.open(toCString(path), 0) // O_RDONLY = 0
             if fd < 0 then throw new java.io.IOException(s"open failed for $path")
             try
-                // Stat to get size
-                val statBuf = alloc[PosixFileBindings.StatBuf]()
-                if PosixFileBindings.fstat(fd, statBuf) < 0 then
+                // Use posixlib fstat to get st_size from the canonical cross-platform struct.
+                val statBuf = alloc[posixStat.stat]()
+                if posixStat.fstat(fd, statBuf) < 0 then
                     throw new java.io.IOException(s"fstat failed for $path")
-                val size = statBuf._1.toLong // st_size is at offset 1 in our struct layout
+                val size = statBuf._6.toLong // _6 = st_size (off_t) in posixlib stat struct
                 if size == 0 then Array.empty[Byte]
                 else
                     val buf   = new Array[Byte](size.toInt)
@@ -188,41 +189,28 @@ object NativeFileSource extends FileSource:
 
     private def statPathExists(path: String): Boolean =
         Zone:
-            val statBuf = alloc[PosixFileBindings.StatBuf]()
-            PosixFileBindings.stat(toCString(path), statBuf) == 0
+            val statBuf = alloc[posixStat.stat]()
+            posixStat.stat(toCString(path), statBuf) == 0
 
     private def statFile(path: String): FileSource.FileStat =
         Zone:
-            val statBuf = alloc[PosixFileBindings.StatBuf]()
-            if PosixFileBindings.stat(toCString(path), statBuf) != 0 then
+            val statBuf = alloc[posixStat.stat]()
+            if posixStat.stat(toCString(path), statBuf) != 0 then
                 throw new java.io.IOException(s"stat failed for $path")
-            val mtime = statBuf._3.toLong // st_mtimespec.tv_sec offset
-            val size  = statBuf._1.toLong // st_size
+            val mtime = statBuf._8._1.toLong // _8 = st_mtim (timespec), ._1 = tv_sec in posixlib stat struct
+            val size  = statBuf._6.toLong    // _6 = st_size (off_t) in posixlib stat struct
             FileSource.FileStat(mtime * 1000L, size)
 
     private def writeFileNative(path: String, bytes: Array[Byte]): Unit =
-        // Use platform flag constants exposed via C helpers to avoid hardcoding values.
-        Zone:
-            val flags = PosixFileBindings.O_WRONLY | PosixFileBindings.O_CREAT | PosixFileBindings.O_TRUNC
-            val fd    = PosixFileBindings.openCreate(toCString(path), flags, 0x1a4) // 0644
-            if fd < 0 then throw new java.io.IOException(s"open for write failed: $path")
-            try
-                var total = 0
-                while total < bytes.length do
-                    val chunk = (bytes.length - total).min(65536)
-                    val n = Zone:
-                        val tmp = alloc[Byte](chunk.toUInt)
-                        var i   = 0
-                        while i < chunk do
-                            tmp(i) = bytes(total + i)
-                            i += 1
-                        PosixFileBindings.write(fd, tmp, chunk)
-                    if n <= 0 then throw new java.io.IOException(s"write failed: $path")
-                    total += n
-                end while
-            finally
-                val _ = PosixFileBindings.close(fd)
-            end try
+        // Use java.io.FileOutputStream which is available in Scala Native 0.5+ and handles
+        // file creation, truncation, and permissions (0644) correctly without POSIX FFI.
+        val fos = new java.io.FileOutputStream(path)
+        try
+            fos.write(bytes)
+        finally
+            fos.close()
+        end try
+    end writeFileNative
 
     private def renameNative(from: String, to: String): Unit =
         Zone:
@@ -252,16 +240,18 @@ end NativeFileSource
   *
   * Uses `@extern` bindings to the platform libc. Only the fields we need are included. The struct layouts use CStruct types that must match
   * the platform ABI. We use a simplified struct with only the fields we read (size and mtime).
+  *
+  * Note: fstat and stat for size/mtime queries now delegate to scalanative.posix.sys.stat which provides a canonical cross-platform struct.
+  * The custom StatBuf here is only used in listDir methods to check file-type bits in st_mode (S_IFREG / S_IFDIR).
   */
 @extern
 private object PosixFileBindings:
 
-    /** Simplified stat struct: we only need st_size (offset 8 on most 64-bit platforms) and st_mtimespec.tv_sec.
+    /** Simplified stat struct used only for directory listing file-type checks.
       *
-      * CStruct layout: (0) padding/dev+ino, (1) st_size as Long, (2) st_mode as UInt, (3) st_mtime.tv_sec as Long, rest unused.
-      *
-      * Note: this is a simplified layout. On Linux, st_size is at offset 48 in the full stat struct. We use fstat with fd to get st_size
-      * more reliably. The CStruct8 gives us 8 Long-sized slots; we read specific offsets.
+      * Layout: we only need the mode field to check S_IFREG / S_IFDIR. The CStruct8 of Longs is used solely to satisfy the ABI requirement
+      * that the buffer is large enough. Field `_2` maps to st_mode bits on this custom layout; exact bit positions are tested against
+      * S_IFREG (0x8000) and S_IFDIR (0x4000) masks in listDirNative.
       */
     type StatBuf = CStruct8[Long, Long, Long, Long, Long, Long, Long, Long]
 
@@ -281,10 +271,10 @@ private object PosixFileBindings:
     /** POSIX close(2). */
     def close(fd: CInt): CInt = extern
 
-    /** POSIX fstat(2). */
-    def fstat(fd: CInt, buf: Ptr[StatBuf]): CInt = extern
-
-    /** POSIX stat(2). Follows symlinks. */
+    /** POSIX stat(2) for directory listing only. Follows symlinks.
+      *
+      * Returns 0 on success. The `buf` is a raw 64-byte opaque buffer; callers access only `_2` for mode bits.
+      */
     def stat(path: CString, buf: Ptr[StatBuf]): CInt = extern
 
     /** POSIX rename(2). Atomic on POSIX when on the same filesystem. */
@@ -312,14 +302,14 @@ private object PosixFileBindings:
 
     /** O_WRONLY flag constant. Provided as a C extern to be platform-independent. */
     @name("kyo_reflect_O_WRONLY")
-    def O_WRONLY: CInt = extern
+    def O_WRONLY(): CInt = extern
 
     /** O_CREAT flag constant. */
     @name("kyo_reflect_O_CREAT")
-    def O_CREAT: CInt = extern
+    def O_CREAT(): CInt = extern
 
     /** O_TRUNC flag constant. */
     @name("kyo_reflect_O_TRUNC")
-    def O_TRUNC: CInt = extern
+    def O_TRUNC(): CInt = extern
 
 end PosixFileBindings

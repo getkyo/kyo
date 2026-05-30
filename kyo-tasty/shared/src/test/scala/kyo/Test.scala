@@ -10,8 +10,9 @@ import scala.concurrent.ExecutionContext
 abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
 
     private def runWhen(cond: => Boolean) = if cond then "" else "org.scalatest.Ignore"
-    object jvmOnly extends Tag(runWhen(kyo.internal.Platform.isJVM))
-    object jsOnly  extends Tag(runWhen(kyo.internal.Platform.isJS))
+    object jvmOnly    extends Tag(runWhen(kyo.internal.Platform.isJVM))
+    object jsOnly     extends Tag(runWhen(kyo.internal.Platform.isJS))
+    object nativeOnly extends Tag(runWhen(kyo.internal.Platform.isNative))
 
     type Assertion = org.scalatest.Assertion
     def assertionSuccess              = succeed

@@ -90,4 +90,14 @@ class Utf8Test extends Test:
         assert(result.length == 11)
     }
 
+    // T5 Native parity: Native Utf8.decode path (String constructor via StandardCharsets.UTF_8)
+    // produces the same result as the JVM reference for a plain ASCII string. Pins T5.
+    "T5 Native parity: decode 'hello world' bytes returns 'hello world' on Native" taggedAs nativeOnly in run {
+        // "hello world" ASCII bytes
+        val bytes  = "hello world".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val result = Utf8.decode(bytes, 0, bytes.length)
+        assert(result == "hello world")
+        assert(result.length == 11)
+    }
+
 end Utf8Test
