@@ -205,3 +205,8 @@ one INV, one explanation a reviewer can hold in head as one idea."
 - Phase 18c audit WARN: Tree.TypeBounds uses Unknown(0,0) as absent-hi sentinel; TypeUnpickler returns lo directly for alias bounds. Semantic quirk. ROUTE: Phase 21d or 21h; consider splitting into TypeAlias vs TypeBounds cases for clarity.
 - Phase 18d audit NOTE (2026-05-30): test helper `containsApplyOrIdentOrLiteral` still pattern-matches Tree.Ident. Not a production gap (no main-source consumer left). ROUTE: Phase 21d cleanup if convenient.
 - Phase 18d audit NOTE: Tree.*Ref* cases carrying addr: Int lack scaladoc clarifying that addr is an absolute byte offset into the TASTy section, keyed against addrMap. ROUTE: Phase 21d or doc sweep.
+- Phase 18e audit WARN (2026-05-30): INV-005 zero-Unknown sweep covers only someObjectTasty + plainClassTasty (2 of 10 fixtures, small). BOUNDED (102) import-selector path untested. ROUTE: Phase 22a or 22d (Test deep symbol structures) — sweep wider corpus including macro / type-lambda / bounded-given fixtures.
+- Phase 18e audit NOTE: readImportSelectors scaladoc omits BOUNDED handling note. ROUTE: Phase 21d doc sweep.
+- Phase 18e audit NOTE: phase-18e-decisions.md has stale sentence describing discarded Tree.Unknown/Chunk.empty design alongside the final design. Code is correct; remove stale sentence in Phase 21d.
+- Phase 18e audit NOTE: Import/Export/AnnotationNode placed at Tree tail before Unknown; could be grouped near PackageDef (line 514). Optional improvement, not incorrect.
+- Phase 19a audit NOTE (2026-05-30): pre-existing scaladoc name mismatches in SnapshotFormat.scala — TYPES_EXTRA in doc vs TYPESEXT wire name; BODY_BYTES in doc vs BODYBYTE wire name. Pre-dates Phase 19a. ROUTE: Phase 21f (Test snapshot subsystem) doc sweep.

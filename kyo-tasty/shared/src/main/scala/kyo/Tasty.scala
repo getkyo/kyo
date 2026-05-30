@@ -811,47 +811,45 @@ object Tasty:
                     Abort.fail(TastyError.NotImplemented("body not available for Java symbols"))
                 case o: Symbol.TastyOrigin =>
                     Sync.Unsafe.defer:
-                        // Unsafe: ClasspathRef.isAssigned and ClasspathRef.get() are unsafe-tier helpers; covered
+                        // Unsafe: ClasspathRef.get() and ClasspathRef.isClosed are unsafe-tier helpers; covered
                         // by Sync.Unsafe.defer which provides AllowUnsafe implicitly (Sync.scala:138-141).
-                        if !home.isAssigned then stub("Symbol.body")
-                        else
-                            home.get().checkOpen.andThen:
-                                if o.bodyStart == 0 || o.bodyEnd == 0 || kind == SymbolKind.Package then
-                                    Abort.fail(TastyError.NotImplemented("body not available for this symbol kind"))
+                        // home.isAssigned is invariant=true after Classpath.open returns (assignHomes guarantees it).
+                        home.get().checkOpen.andThen:
+                            if o.bodyStart == 0 || o.bodyEnd == 0 || kind == SymbolKind.Package then
+                                Abort.fail(TastyError.NotImplemented("body not available for this symbol kind"))
+                            else
+                                // Unsafe: ClasspathRef.get() and Classpath.isClosed read AtomicRef state;
+                                // covered by the enclosing Sync.Unsafe.defer.
+                                // State transitions are monotonic (Closed is terminal) so a stale read is conservative.
+                                if home.get().isClosed then
+                                    Abort.fail(TastyError.ClasspathClosed)
                                 else
-                                    // Unsafe: ClasspathRef.get() and Classpath.isClosed read AtomicRef state;
-                                    // covered by the enclosing Sync.Unsafe.defer.
-                                    // State transitions are monotonic (Closed is terminal) so a stale read is conservative.
-                                    if home.get().isClosed then
-                                        Abort.fail(TastyError.ClasspathClosed)
-                                    else
-                                        // Unsafe: OnceCell.get() is an unsafe-tier helper; covered by the enclosing
-                                        // Sync.Unsafe.defer. The try/catch converts decode exceptions to Either before
-                                        // any kyo effect constructor runs.
-                                        val decoded: Either[TastyError, Tree] =
-                                            try Right(_bodyOnce.get())
-                                            catch
-                                                case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                                    Left(TastyError.MalformedSection(
-                                                        "ASTs",
-                                                        s"body decode failed for '${name.asString}': ${ex.getMessage}",
-                                                        ex.byteOffset
-                                                    ))
-                                                case ex: ArrayIndexOutOfBoundsException =>
-                                                    // no cursor: exception does not carry a byte offset
-                                                    Left(TastyError.MalformedSection(
-                                                        "ASTs",
-                                                        s"body truncated for '${name.asString}': ${ex.getMessage}",
-                                                        0L
-                                                    ))
-                                                case _: IllegalStateException =>
-                                                    // Thrown when a mmap-backed ByteView is read after its arena was closed.
-                                                    Left(TastyError.ClasspathClosed)
-                                        decoded match
-                                            case Right(t) => Sync.defer(t)
-                                            case Left(e)  => Abort.fail(e)
-                                    end if
-                        end if
+                                    // Unsafe: OnceCell.get() is an unsafe-tier helper; covered by the enclosing
+                                    // Sync.Unsafe.defer. The try/catch converts decode exceptions to Either before
+                                    // any kyo effect constructor runs.
+                                    val decoded: Either[TastyError, Tree] =
+                                        try Right(_bodyOnce.get())
+                                        catch
+                                            case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                                Left(TastyError.MalformedSection(
+                                                    "ASTs",
+                                                    s"body decode failed for '${name.asString}': ${ex.getMessage}",
+                                                    ex.byteOffset
+                                                ))
+                                            case ex: ArrayIndexOutOfBoundsException =>
+                                                // no cursor: exception does not carry a byte offset
+                                                Left(TastyError.MalformedSection(
+                                                    "ASTs",
+                                                    s"body truncated for '${name.asString}': ${ex.getMessage}",
+                                                    0L
+                                                ))
+                                            case _: IllegalStateException =>
+                                                // Thrown when a mmap-backed ByteView is read after its arena was closed.
+                                                Left(TastyError.ClasspathClosed)
+                                    decoded match
+                                        case Right(t) => Sync.defer(t)
+                                        case Left(e)  => Abort.fail(e)
+                                end if
             end match
         end body
     end Symbol
@@ -1310,10 +1308,5 @@ object Tasty:
         end deleteFile
 
     end Snapshot
-
-    // ── Helpers ─────────────────────────────────────────────────────────────
-
-    private def stub[A](feature: String)(using Frame): A < (Sync & Abort[TastyError]) =
-        Abort.fail(TastyError.NotImplemented(feature))
 
 end Tasty

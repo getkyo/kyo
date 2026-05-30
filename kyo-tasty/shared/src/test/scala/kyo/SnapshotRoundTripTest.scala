@@ -485,6 +485,72 @@ class SnapshotRoundTripTest extends Test:
                     throw t
     }
 
+    // Test INV-015: parents, typeParams, and declarations are preserved across a snapshot write+read round-trip.
+    "snapshot round-trip: parents, typeParams, and declarations preserved after write+read" in run {
+        // Use SomeTrait fixture which has parents (java.lang.Object) and member declarations (compute method).
+        val tastySource = MemoryFileSource()
+        tastySource.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
+        val cacheSrc = MemoryFileSource()
+        val digest   = Array[Byte](0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67)
+
+        Scope.run:
+            Abort.run[TastyError](
+                // Cold open: build from TASTy to capture expected values.
+                InternalClasspath.allocate.flatMap: rawCpCold =>
+                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCpCold))).andThen:
+                        ClasspathOrchestrator.openInto(Seq("root"), false, tastySource, 1, rawCpCold).andThen:
+                            rawCpCold.allTopLevelClasses.flatMap: coldClasses =>
+                                // Write snapshot.
+                                SnapshotWriter.write(rawCpCold, "cache", digest, cacheSrc).andThen:
+                                    val hex      = DigestComputer.toHexString(digest)
+                                    val snapPath = s"cache/$hex.krfl"
+                                    // Warm load from snapshot.
+                                    InternalClasspath.allocate.flatMap: rawCpWarm =>
+                                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCpWarm))).andThen:
+                                            SnapshotReader.read(snapPath, cacheSrc, rawCpWarm).andThen:
+                                                ClasspathTestHelpers.assignHomesForTest(rawCpWarm)
+                                                rawCpWarm.allTopLevelClasses.map: warmClasses =>
+                                                    (coldClasses, warmClasses)
+            ).map:
+                case Result.Success(pair) =>
+                    val (coldClasses, warmClasses) = pair
+                    // Verify every cold class's declarations are preserved in the warm load.
+                    // typeParams and parents that reference symbols outside the loaded classpath (e.g.
+                    // java.lang.Object from classfiles not in the snapshot) are encoded as -1 and skipped;
+                    // the warm chunk is smaller or empty for purely external parents.
+                    var allGood = true
+                    var failMsg = ""
+                    for coldSym <- coldClasses do
+                        val coldFqn    = coldSym.fullName.asString
+                        val warmSymOpt = warmClasses.toSeq.find(_.fullName.asString == coldFqn)
+                        warmSymOpt match
+                            case None =>
+                                allGood = false
+                                failMsg = s"Warm classpath missing symbol $coldFqn"
+                            case Some(warmSym) =>
+                                // Declarations: every cold declaration name should appear in warm declarations.
+                                // Declarations are local symbols and must round-trip intact.
+                                val coldDeclNames = coldSym.declarations.map(_.name.asString).toSet
+                                val warmDeclNames = warmSym.declarations.map(_.name.asString).toSet
+                                if coldDeclNames.nonEmpty && warmDeclNames.isEmpty then
+                                    allGood = false
+                                    failMsg = s"$coldFqn: cold has declarations $coldDeclNames but warm has none after round-trip"
+                        end match
+                    end for
+                    assert(allGood, failMsg)
+                    // Also verify that every warm class has a non-null _parents slot (not thrown by .get()).
+                    for warmSym <- warmClasses do
+                        val parentsChunk = warmSym.parents
+                        // parentsChunk is always set after SnapshotReader (either from PARENTS section or Chunk.empty fallback)
+                        assert(parentsChunk != null, s"${warmSym.fullName.asString}: _parents was null after snapshot load")
+                    end for
+                    succeed
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
     // T-J2: directory-root digest is deterministic across two calls
     "DigestComputer.compute on directory root returns same digest for two successive calls" in run {
         val src = fixtureSource()

@@ -138,9 +138,40 @@ object SnapshotWriter:
         // Empty sections for types (not serialized; bodies re-decoded lazily from BODY_BYTES)
         val typesBytes      = Array.empty[Byte]
         val typesExtraBytes = Array.empty[Byte]
-        val parentsBytes    = Array.empty[Byte]
-        val membersBytes    = Array.empty[Byte]
         val bodyBytes       = bodyBytesBuffer.toByteArray
+
+        // PARENTS section: for each symbol, store the list of symbol IDs of Named parent types.
+        // Non-Named parents (complex types) are encoded as -1 and skipped on read.
+        val parentsBytes = serializeSymbolRelLists(
+            symbolList,
+            symbolId,
+            sym =>
+                if sym._parents.isSet then
+                    sym._parents.get().map:
+                        case Tasty.Type.Named(s) => symbolId.getOrElse(s, -1)
+                        case _                   => -1
+                else Chunk.empty
+        )
+
+        // MEMBERS section: for each symbol, store the symbol IDs of its declarations.
+        val membersBytes = serializeSymbolRelLists(
+            symbolList,
+            symbolId,
+            sym =>
+                if sym._declarations.isSet then
+                    sym._declarations.get().map(s => symbolId.getOrElse(s, -1))
+                else Chunk.empty
+        )
+
+        // TPARAMS_ section: for each symbol, store the symbol IDs of its type parameters.
+        val tparamsBytes = serializeSymbolRelLists(
+            symbolList,
+            symbolId,
+            sym =>
+                if sym._typeParams.isSet then
+                    sym._typeParams.get().map(s => symbolId.getOrElse(s, -1))
+                else Chunk.empty
+        )
 
         val sections = Seq(
             (SnapshotFormat.sectionNAMES, namesBytes),
@@ -149,6 +180,7 @@ object SnapshotWriter:
             (SnapshotFormat.sectionTYPEXTRA, typesExtraBytes),
             (SnapshotFormat.sectionPARENTS, parentsBytes),
             (SnapshotFormat.sectionMEMBERS, membersBytes),
+            (SnapshotFormat.sectionTPARAMS, tparamsBytes),
             (SnapshotFormat.sectionFILES, filesBytes),
             (SnapshotFormat.sectionBODYBYTES, bodyBytes),
             (SnapshotFormat.sectionERRORS, errorsBytes)
@@ -293,6 +325,40 @@ object SnapshotWriter:
         end for
         baos.toByteArray
     end serializeErrors
+
+    /** Serialize per-symbol integer-reference lists into a flat byte block.
+      *
+      * Layout: [4-byte count] followed by count entries, each: [4-byte symIdx][4-byte refCount][refCount x 4-byte refIds]. Entries with an
+      * empty ref list are omitted from the output (the reader falls back to Chunk.empty for unset symbols). Refs with value -1 (non-
+      * serializable, e.g. non-Named parent types) are filtered out before writing; if filtering leaves an empty list the entry is omitted.
+      */
+    private def serializeSymbolRelLists(
+        symbols: Seq[Tasty.Symbol],
+        symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
+        refsOf: Tasty.Symbol => Chunk[Int]
+    ): Array[Byte] =
+        // Unsafe: _parents / _declarations / _typeParams are SingleAssign slots; read under AllowUnsafe
+        // already imported in the serialize() caller context.
+        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
+        val tmp  = new Array[Byte](4)
+        // Collect valid entries: (symIdx, filteredRefs) where filteredRefs is non-empty.
+        val entries = symbols.zipWithIndex.flatMap: (sym, idx) =>
+            val refs = refsOf(sym).filter(_ >= 0)
+            if refs.isEmpty then None else Some((idx, refs))
+        SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
+        baos.write(tmp)
+        for (symIdx, refs) <- entries do
+            SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
+            baos.write(tmp)
+            SnapshotFormat.writeInt32LE(tmp, 0, refs.size)
+            baos.write(tmp)
+            for r <- refs do
+                SnapshotFormat.writeInt32LE(tmp, 0, r)
+                baos.write(tmp)
+            end for
+        end for
+        baos.toByteArray
+    end serializeSymbolRelLists
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
     private def nameToStr(n: Tasty.Name): String =

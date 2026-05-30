@@ -250,6 +250,21 @@ class TastyTest extends Test:
         Future.successful(succeed)
     }
 
+    // Phase 19b source-text invariant test (M10 stub removal)
+
+    "no stub(\"Symbol.body\") in Tasty.scala production source" in {
+        // M10: the legacy defensive guard stub("Symbol.body") was removed at Tasty.scala:709.
+        // home.isAssigned is invariant=true after Classpath.open returns (assignHomes guarantees it),
+        // so the guard is unnecessary and was deleted in Phase 19b.
+        val src   = TestResourceLoader.readText("kyo/Tasty.scala")
+        val count = countOccurrences(src, "stub(\"Symbol.body\")")
+        assert(
+            count == 0,
+            s"Tasty.scala: expected 0 occurrences of stub(\"Symbol.body\"), found $count"
+        )
+        Future.successful(succeed)
+    }
+
     /** Count non-overlapping occurrences of `needle` in `haystack`. */
     private def countOccurrences(haystack: String, needle: String): Int =
         var count = 0

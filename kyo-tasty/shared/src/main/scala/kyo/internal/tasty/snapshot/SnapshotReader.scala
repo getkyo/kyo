@@ -168,12 +168,62 @@ object SnapshotReader:
         // Unsafe: atomic state write + SingleAssign.set(); called from single-threaded deserialize.
         import AllowUnsafe.embrace.danger
         Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
-        // Populate _parents, _typeParams, _declarations with empty chunks for snapshot-restored symbols.
-        // The snapshot format does not yet serialize parent/member data; symbols restored here return
-        // empty chunks for these accessors. A future snapshot format version will add this data.
+
+        // Build an indexed array of all symbols so ref-list entries can address by index.
+        val symsArray = allSymbols.toArray
+
+        // Populate _parents from PARENTS section (symbol IDs of Named parent types).
+        // If the section is absent or empty (old minor=2 snapshot), fall back to Chunk.empty.
+        sectionMap.get(SnapshotFormat.sectionPARENTS) match
+            case Some((off, len)) if len > 0 =>
+                deserializeRefLists(
+                    bytes,
+                    off,
+                    len,
+                    symsArray,
+                    (sym, refs) =>
+                        sym._parents.set(Chunk.from(refs.map(id => Tasty.Type.Named(symsArray(id)))))
+                )
+            case _ =>
+                ()
+        end match
         for sym <- allSymbols do
             if !sym._parents.isSet then sym._parents.set(Chunk.empty)
+        end for
+
+        // Populate _typeParams from TPARAMS_ section.
+        sectionMap.get(SnapshotFormat.sectionTPARAMS) match
+            case Some((off, len)) if len > 0 =>
+                deserializeRefLists(
+                    bytes,
+                    off,
+                    len,
+                    symsArray,
+                    (sym, refs) =>
+                        sym._typeParams.set(Chunk.from(refs.map(id => symsArray(id))))
+                )
+            case _ =>
+                ()
+        end match
+        for sym <- allSymbols do
             if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
+        end for
+
+        // Populate _declarations from MEMBERS section.
+        sectionMap.get(SnapshotFormat.sectionMEMBERS) match
+            case Some((off, len)) if len > 0 =>
+                deserializeRefLists(
+                    bytes,
+                    off,
+                    len,
+                    symsArray,
+                    (sym, refs) =>
+                        sym._declarations.set(Chunk.from(refs.map(id => symsArray(id))))
+                )
+            case _ =>
+                ()
+        end match
+        for sym <- allSymbols do
             if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
         end for
     end deserialize
@@ -243,9 +293,63 @@ object SnapshotReader:
         // Unsafe: atomic state write + SingleAssign.set(); called from single-threaded deserializeMapped.
         import AllowUnsafe.embrace.danger
         Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
+
+        val symsArray = allSymbols.toArray
+
+        // Populate _parents from PARENTS section. Read the section into a heap array first (it is small).
+        sectionMap.get(SnapshotFormat.sectionPARENTS) match
+            case Some((off, len)) if len > 0 =>
+                val secBytes = copyViewRange(view, off, off + len)
+                deserializeRefLists(
+                    secBytes,
+                    0,
+                    len,
+                    symsArray,
+                    (sym, refs) =>
+                        sym._parents.set(Chunk.from(refs.map(id => Tasty.Type.Named(symsArray(id)))))
+                )
+            case _ =>
+                ()
+        end match
         for sym <- allSymbols do
             if !sym._parents.isSet then sym._parents.set(Chunk.empty)
+        end for
+
+        // Populate _typeParams from TPARAMS_ section.
+        sectionMap.get(SnapshotFormat.sectionTPARAMS) match
+            case Some((off, len)) if len > 0 =>
+                val secBytes = copyViewRange(view, off, off + len)
+                deserializeRefLists(
+                    secBytes,
+                    0,
+                    len,
+                    symsArray,
+                    (sym, refs) =>
+                        sym._typeParams.set(Chunk.from(refs.map(id => symsArray(id))))
+                )
+            case _ =>
+                ()
+        end match
+        for sym <- allSymbols do
             if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
+        end for
+
+        // Populate _declarations from MEMBERS section.
+        sectionMap.get(SnapshotFormat.sectionMEMBERS) match
+            case Some((off, len)) if len > 0 =>
+                val secBytes = copyViewRange(view, off, off + len)
+                deserializeRefLists(
+                    secBytes,
+                    0,
+                    len,
+                    symsArray,
+                    (sym, refs) =>
+                        sym._declarations.set(Chunk.from(refs.map(id => symsArray(id))))
+                )
+            case _ =>
+                ()
+        end match
+        for sym <- allSymbols do
             if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
         end for
     end deserializeMapped
@@ -562,6 +666,42 @@ object SnapshotReader:
             Chunk.from(buf.toSeq)
         end if
     end readErrors
+
+    /** Deserialize a ref-list section produced by SnapshotWriter.serializeSymbolRelLists.
+      *
+      * Layout: [4-byte count] then count x ([4-byte symIdx][4-byte refCount][refCount x 4-byte refId]). For each entry,
+      * `assign(syms(symIdx), filteredRefs)` is called where filteredRefs contains only ref IDs in range [0, syms.length). Out-of-range or
+      * negative ref IDs are silently dropped (they were encoded as -1 for non-serializable references).
+      */
+    private def deserializeRefLists(
+        bytes: Array[Byte],
+        offset: Int,
+        length: Int,
+        syms: Array[Tasty.Symbol],
+        assign: (Tasty.Symbol, Array[Int]) => Unit
+    ): Unit =
+        val end   = offset + length
+        val count = SnapshotFormat.readInt32LE(bytes, offset)
+        var pos   = offset + 4
+        var i     = 0
+        while i < count && pos + 8 <= end do
+            val symIdx   = SnapshotFormat.readInt32LE(bytes, pos)
+            val refCount = SnapshotFormat.readInt32LE(bytes, pos + 4)
+            pos += 8
+            val rawRefs = new Array[Int](refCount)
+            var j       = 0
+            while j < refCount && pos + 4 <= end do
+                rawRefs(j) = SnapshotFormat.readInt32LE(bytes, pos)
+                pos += 4
+                j += 1
+            end while
+            if symIdx >= 0 && symIdx < syms.length then
+                val validRefs = rawRefs.filter(r => r >= 0 && r < syms.length)
+                assign(syms(symIdx), validRefs)
+            end if
+            i += 1
+        end while
+    end deserializeRefLists
 
     /** Best-effort reconstruction of a TastyError from its toString representation. */
     private def parseErrorString(msg: String): TastyError =
