@@ -531,6 +531,9 @@ object Tasty:
         /** Annotated tree (ANNOTATEDtpt/ANNOTATEDtype). */
         final case class Annotated(expr: Tree, annotation: Tree) extends Tree
 
+        /** Shared sub-tree back-reference (SHAREDtype or SHAREDterm tag). `addr` is the byte address of the original node. */
+        final case class Shared(addr: Int) extends Tree
+
         /** TASTy category-1 modifier tag (single-byte, no payload; tag in range [1, 59]). */
         final case class Modifier(flag: Flag) extends Tree
 

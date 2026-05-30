@@ -599,4 +599,76 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
+    // ── Phase 18b Tests (M1, category-2 tags) ────────────────────────────────
+
+    // Test 18b-1 (M1 category 2): SHAREDtype byte + nat(42) decodes to Tree.Shared(42).
+    // Given: an annotation pickle containing [SHAREDtype=61, nat(42)].
+    // When: annotation.args is evaluated via decodeAnnotationTerm.
+    // Then: returns Tree.Shared(42).
+    "Phase18b-1: SHAREDtype + nat(42) decodes to Tree.Shared(42)" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Dummy"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val names   = Array(Tasty.Name("dummy"))
+        val addrMap = IntMap.empty[Tasty.Symbol]
+        val home    = new ClasspathRef
+        // SHAREDtype = 61; nat(42): single-byte encoding with stop-bit set = 42 | 0x80 = 0xAA.
+        val pickle       = Chunk(TastyFormat.SHAREDtype.toByte, (42 | 0x80).toByte)
+        val sectionBytes = pickle.toArray
+        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.Shared(42)) =>
+                succeed
+            case Result.Success(other) =>
+                fail(s"Expected Tree.Shared(42) but got $other")
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Test 18b-2 (M1 category 2): INTconst byte + int(7) decodes to Tree.Literal(Constant.IntConst(7)).
+    // Given: an annotation pickle containing [INTconst=70, int(7)].
+    // When: annotation.args is evaluated via decodeAnnotationTerm.
+    // Then: returns Tree.Literal(Constant.IntConst(7)).
+    "Phase18b-2: INTconst + int(7) decodes to Tree.Literal(Constant.IntConst(7))" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Dummy"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val names   = Array(Tasty.Name("dummy"))
+        val addrMap = IntMap.empty[Tasty.Symbol]
+        val home    = new ClasspathRef
+        // INTconst = 70; int(7): signed readInt encoding, single byte with stop-bit set = 7 | 0x80 = 0x87.
+        val pickle       = Chunk(TastyFormat.INTconst.toByte, (7 | 0x80).toByte)
+        val sectionBytes = pickle.toArray
+        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.Literal(Tasty.Constant.IntConst(7))) =>
+                succeed
+            case Result.Success(other) =>
+                fail(s"Expected Tree.Literal(Constant.IntConst(7)) but got $other")
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
 end TreeUnpicklerTest

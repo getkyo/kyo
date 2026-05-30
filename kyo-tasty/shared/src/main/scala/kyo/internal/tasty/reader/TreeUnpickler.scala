@@ -153,7 +153,7 @@ object TreeUnpickler:
         val startAddr = view.positionInt
         val tag       = view.readByte() & 0xff
         val result    = decodeTreeTag(tag, startAddr, view, ctx)
-        if tag != TastyFormat.SHAREDterm then
+        if tag != TastyFormat.SHAREDterm && tag != TastyFormat.SHAREDtype then
             ctx.treeAddrCache(startAddr) = result
         result
     end readTree
@@ -191,7 +191,7 @@ object TreeUnpickler:
 
             case TastyFormat.SHAREDterm =>
                 val addr = view.readNat()
-                ctx.treeAddrCache.getOrElse(addr, Tasty.Tree.Unknown(TastyFormat.SHAREDterm, 0))
+                Tasty.Tree.Shared(addr)
 
             case TastyFormat.TERMREFdirect =>
                 val addr = view.readNat()
@@ -221,8 +221,12 @@ object TreeUnpickler:
                 val nameRef = view.readNat()
                 Tasty.Tree.Literal(Tasty.Constant.StringConst(nameFromRef(nameRef, ctx).asString))
 
+            case TastyFormat.SHAREDtype =>
+                val addr = view.readNat()
+                Tasty.Tree.Shared(addr)
+
             // These category-2 tags are not term trees; skip Nat and return Unknown.
-            case TastyFormat.SHAREDtype | TastyFormat.TYPEREFdirect | TastyFormat.TYPEREFpkg | TastyFormat.RECthis |
+            case TastyFormat.TYPEREFdirect | TastyFormat.TYPEREFpkg | TastyFormat.RECthis |
                 TastyFormat.IMPORTED | TastyFormat.RENAMED =>
                 discard(view.readNat())
                 Tasty.Tree.Unknown(tag, 0)
