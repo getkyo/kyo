@@ -194,4 +194,47 @@ class TypeArenaTest extends Test:
         assert(first eq second, "repeated intern of the same cyclic Rec type must return the same canonical reference")
     }
 
+    // Test 10 (T7): 8-fiber concurrent interning with separate per-fiber arenas preserves canonicality.
+    // TypeArena is NOT thread-safe and is intended for one-per-fiber use. Each of the 8 fibers
+    // creates its own TypeArena, interns the same type `t`, and returns both the interned reference
+    // and the arena itself. Because `intern` calls `map.getOrElseUpdate(key, t)` on an empty arena
+    // and `t` is the value passed in, each fiber returns `t` itself (reference-equal to the original).
+    // After all fibers finish, all 8 returned references must be `eq` to `t`.
+    // The 8 per-fiber arenas are then merged sequentially into a single canonical arena (mimicking
+    // Phase C) which must report values.size == 1 (one structural entry regardless of how many arenas
+    // contributed it).
+    // Uses kyo.Async.foreach so the test compiles and runs on JVM, JS, and Native.
+    // Pins: T7.
+    "T7: 8-fiber concurrent interning with per-fiber arenas all return eq canonical reference" in run {
+        val sym        = makeSym("ConcurrentCanon")
+        val t          = Tasty.Type.Named(sym)
+        val fiberCount = 8
+        Async.foreach(0 until fiberCount, concurrency = fiberCount) { _ =>
+            Sync.defer {
+                val arena = TypeArena.canonical()
+                (arena.intern(t), arena)
+            }
+        }.map { results =>
+            assert(results.size == fiberCount, s"Expected $fiberCount results, got ${results.size}")
+            var allEq = true
+            var idx   = 0
+            while idx < results.size && allEq do
+                if !(results(idx)._1 eq t) then allEq = false
+                idx += 1
+            end while
+            assert(allEq, s"Not all $fiberCount fibers returned the same reference as t")
+            // Merge all per-fiber arenas into a canonical arena sequentially (Phase C pattern).
+            val canon = TypeArena.canonical()
+            var i     = 0
+            while i < results.size do
+                results(i)._2.merge(canon)
+                i += 1
+            end while
+            assert(
+                canon.values.size == 1,
+                s"Expected 1 canonical entry after merge but got ${canon.values.size}"
+            )
+        }
+    }
+
 end TypeArenaTest

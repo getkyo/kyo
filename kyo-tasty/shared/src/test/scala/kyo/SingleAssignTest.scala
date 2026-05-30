@@ -72,4 +72,44 @@ class SingleAssignTest extends Test:
         assert(slot.isSet, "Expected isSet == true after assignment")
     }
 
+    // Test 5 (T7, SingleAssign): 16-fiber concurrent set sees exactly one winner.
+    // Given: fresh SingleAssign[Int]; 16 fibers each attempt slot.set(fiberIndex) concurrently.
+    // When: all fibers complete.
+    // Then: exactly one fiber succeeded (Result.Success); 15 caught IllegalStateException
+    //       whose message contains "already set"; slot.get() equals the winning fiber's index.
+    // Uses kyo.Async.foreach so the test compiles and runs on JVM, JS, and Native.
+    // Pins: T7.
+    "SingleAssign T7: 16-fiber concurrent set sees exactly one winner" in run {
+        val slot       = new SingleAssign[Int]
+        val fiberCount = 16
+        Async.foreach(0 until fiberCount, concurrency = fiberCount) { fiberIndex =>
+            Abort.run[IllegalStateException] {
+                Abort.catching[IllegalStateException] {
+                    Sync.Unsafe.defer(slot.set(fiberIndex))
+                }
+            }
+        }.map { (results: Chunk[Result[IllegalStateException, Unit]]) =>
+            assert(results.size == fiberCount, s"Expected $fiberCount results, got ${results.size}")
+            val successes = results.filter(_.isSuccess)
+            val failures  = results.filter(_.isFailure)
+            assert(
+                successes.size == 1,
+                s"Expected exactly 1 successful set but got ${successes.size}"
+            )
+            assert(
+                failures.size == fiberCount - 1,
+                s"Expected ${fiberCount - 1} failures but got ${failures.size}"
+            )
+            val allAlreadySet = failures.forall { r =>
+                r.failure.fold(false)(_.getMessage.contains("already set"))
+            }
+            assert(allAlreadySet, s"Not all failures had 'already set' message: $failures")
+            val winnerValue = slot.get()
+            assert(
+                winnerValue >= 0 && winnerValue < fiberCount,
+                s"slot.get() returned $winnerValue which is outside the expected range [0, $fiberCount)"
+            )
+        }
+    }
+
 end SingleAssignTest

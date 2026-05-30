@@ -115,6 +115,27 @@ class OnceCellTest extends Test:
         }
     }
 
+    // Test 8 (T7, INV-009): 64-fiber concurrent first-call all receive the same cached Long.
+    // OnceCell[Long] wraps System.nanoTime(). All 64 fibers race to call get(); exactly one
+    // runs the init lambda, the rest receive the cached result. All returned Longs must be equal.
+    // Uses kyo.Async.foreach so the test compiles and runs on JVM, JS, and Native.
+    "OnceCellTest T7 INV-009: 64-fiber concurrent first-call all receive the same cached Long" in run {
+        val cell = new OnceCell[Long](() => java.lang.System.nanoTime())
+        Async.foreach(1 to 64, concurrency = 64) { _ =>
+            Sync.Unsafe.defer(cell.get())
+        }.map { results =>
+            assert(results.size == 64, s"Expected 64 results, got ${results.size}")
+            val first    = results(0)
+            var allEqual = true
+            var idx      = 1
+            while idx < results.size && allEqual do
+                if results(idx) != first then allEqual = false
+                idx += 1
+            end while
+            assert(allEqual, s"Not all 64 fibers received the same cached Long; first=$first, results=$results")
+        }
+    }
+
     // Test 7 (T2, OnceCell): cell holding a null reference returns null on first and second get.
     // The plan draft used null.asInstanceOf[String] which is banned (no-casts rule). Instead we
     // use OnceCell[String | Null] whose init lambda returns null directly; Scala 3 treats null as
