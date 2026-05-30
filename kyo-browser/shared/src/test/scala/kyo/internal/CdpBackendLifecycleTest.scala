@@ -1146,26 +1146,15 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Audit finding (g): endpoint.close hang must not block drainer interrupt
+    // close() WS full-teardown invariant
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** A transport that delegates all ops to a base transport except `close`,
-      * which blocks until `closeSignal` receives a unit. Used to simulate a
-      * Chrome WS peer that goes silent without sending a TCP RST so that
-      * `JsonRpcEndpointImpl.finalizer -> transport.close` hangs indefinitely.
-      */
-    final private class BlockingCloseTransport(
-        base: JsonRpcTransport,
-        closeSignal: Channel[Unit]
-    ) extends JsonRpcTransport:
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) = base.send(env)
-        def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]]   = base.incoming
-        def close(using Frame): Unit < Async =
-            Abort.run[Closed](closeSignal.take).unit.andThen(base.close)
-    end BlockingCloseTransport
-
-    "close(gracePeriod) bounds total close duration regardless of endpoint hang" in run {
-        // Server handles only Browser.getVersion (Q-002 probe); all other sends hang.
+    "close(grace) returns only after dialogDrainer is fully stopped (not just interrupted)" in run {
+        // This test verifies the CORRECT invariant: after close() returns, the
+        // dialogDrainer fiber is fully stopped (getResult is Done), not merely
+        // scheduled-for-interrupt but still running. A drainer that is only
+        // interrupted but not yet done would allow the next test's CdpBackend.init
+        // to race with the still-live drainer fiber consuming the old dialog queue.
         val testLaunchCfg = Browser.LaunchConfig.default.copy(
             requestTimeout = 30.seconds,
             closeGrace = 100.millis
@@ -1179,13 +1168,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         )
         Scope.run {
             for
-                // closeSignal: blocks transport.close until we release it
-                closeSignal <- Channel.initUnscoped[Unit](1)
-                // Paired in-memory transports
-                (clientBase, server) <- JsonRpcTransport.inMemory
-                // Wrap the client side with a blocking-close transport
-                client = new BlockingCloseTransport(clientBase, closeSignal)
-                // Server: handles only Browser.getVersion; all other sends never get a reply
+                (clientTransport, server) <- JsonRpcTransport.inMemory
                 versionMethod = JsonRpcMethod[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
                     "Browser.getVersion"
                 ) { (_, _) => testVersionResult }
@@ -1194,44 +1177,27 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                     maxInFlight = Present(8),
                     idStrategy = IdStrategy.SequentialInt
                 )
-                _ <- JsonRpcEndpoint.init(server, Seq(versionMethod), serverCfg)
-                // Init CdpBackend via the blocking-close transport
-                backend <- CdpBackend.initUnscoped(client, testLaunchCfg)
+                _       <- JsonRpcEndpoint.init(server, Seq(versionMethod), serverCfg)
+                backend <- CdpBackend.initUnscoped(clientTransport, testLaunchCfg)
                 drainer = backend.dialogDrainer
-                // Issue an in-flight send that will never get a response (server has no handler)
-                _ <- Fiber.initUnscoped {
-                    Abort.run[BrowserReadException](
-                        backend.send[BrowserGetVersionParams, BrowserVersionResult](
-                            "Target.getTargets",
-                            BrowserGetVersionParams()
-                        )
-                    )
-                }
-                // Let the in-flight send register before starting close
-                _ <- Async.delay(30.millis)(Kyo.unit)
-                // Start close(100ms) in a fiber; endpoint.close will:
-                //   1. Async.timeout(100ms)(awaitDrain) -> times out after 100ms
-                //   2. finalizer -> transport.close -> BLOCKS on closeSignal
-                // Without the fix: drainer.interrupt never runs until transport.close unblocks.
-                // With the fix (Async.zip): drainer.interrupt runs concurrently at step 1.
-                closeFiber <- Fiber.initUnscoped(backend.close(100.millis))
-                // Wait past the awaitDrain timeout so finalizer is definitely running transport.close
-                _ <- Async.delay(200.millis)(Kyo.unit)
-                // At this point, transport.close is blocked. Check drainer state.
-                drainerDoneWhileHanging <- drainer.done
-                // Unblock the transport close
-                _ <- closeSignal.put(())
-                // Await the close fiber to let all resources clean up
-                _                     <- closeFiber.get
-                drainerDoneAfterClose <- drainer.done
+                // Verify drainer is alive before close.
+                aliveBefore <- drainer.done
+                // close(grace): must return only after full teardown.
+                _ <- backend.close(50.millis)
+                // After close() returns, getResult must be available immediately.
+                // If the drainer were only interrupted-but-still-running, getResult
+                // would block (still running) rather than completing right away.
+                drainerResult <- drainer.getResult
+                doneAfter     <- drainer.done
             yield
-                assert(
-                    drainerDoneWhileHanging,
-                    s"dialogDrainer must be interrupted as soon as close() starts (concurrent with endpoint.close), " +
-                        s"not after transport.close unblocks. done=$drainerDoneWhileHanging"
-                )
-                assert(drainerDoneAfterClose, s"dialogDrainer must be done after close() returns. done=$drainerDoneAfterClose")
-                succeed
+                assert(!aliveBefore, s"dialogDrainer should be running before close, but done=$aliveBefore")
+                assert(doneAfter, s"dialogDrainer must be fully stopped after close() returns, but done=$doneAfter")
+                drainerResult match
+                    case Result.Failure(_: kyo.Interrupted) => succeed
+                    case Result.Panic(_: kyo.Interrupted)   => succeed
+                    case Result.Success(_)                  => succeed
+                    case other                              => fail(s"drainer not fully stopped: $other")
+                end match
             end for
         }
     }

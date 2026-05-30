@@ -98,28 +98,42 @@ final private[kyo] class CdpBackend private[kyo] (
             sessionId = Present(sid)
         )
 
-    /** Graceful close: dialog queue close + drainer interrupt run CONCURRENTLY
-      * with a timeout-bounded endpoint.close so an unresponsive WS peer cannot
-      * stall fiber cleanup.
-      *
-      * Async.zip runs both branches concurrently. The right branch (queue close +
-      * drainer interrupt) completes in a few ms regardless of endpoint state. The
-      * left branch wraps endpoint.close in Async.timeout(gracePeriod + 100.millis)
-      * and swallows the resulting Timeout via Abort.run[Timeout], so Async.zip
-      * returns within gracePeriod + 100ms even if transport.close hangs.
+    /** Graceful close: waits up to gracePeriod for in-flight requests to drain,
+      * then sequentially closes the endpoint (transport) and stops the dialog
+      * drainer. Both closeOrderly and closeNow WAIT for the drainer fiber to
+      * fully stop (via getResult) before returning, so the caller is guaranteed
+      * the WS is fully torn down. This prevents the two-simultaneous-clients
+      * scenario: if close() returned while transport.close was still running in
+      * the background, a new CdpBackend.init on the same Chrome instance would
+      * open a second WS connection while the first was still live, causing Chrome
+      * to silently drop events on the new connection.
       */
     private[kyo] def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        Async.zip(
-            Abort.run[Timeout](Async.timeout(gracePeriod + 100.millis)(endpoint.close(gracePeriod))).unit,
-            Abort.run[Closed](dialogQueue.close).unit.andThen(dialogDrainer.interrupt.unit)
-        ).unit
+        if gracePeriod == Duration.Zero then closeNow
+        else
+            Abort.run[Timeout](Async.timeout(gracePeriod)(closeOrderly))
+                .map {
+                    case Result.Success(_)          => Kyo.unit
+                    case Result.Failure(_: Timeout) => closeNow
+                    case Result.Panic(ex)           => closeNow.andThen(Abort.panic(ex))
+                }
 
-    /** Immediate close: same concurrent + timeout-bounded ordering, no grace period. */
+    /** Immediate close: forcefully stops the endpoint (no drain) then waits for
+      * the dialog drainer fiber to fully stop before returning.
+      */
     private[kyo] def closeNow(using Frame): Unit < Async =
-        Async.zip(
-            Abort.run[Timeout](Async.timeout(500.millis)(endpoint.closeNow)).unit,
-            Abort.run[Closed](dialogQueue.close).unit.andThen(dialogDrainer.interrupt.unit)
-        ).unit
+        endpoint.closeNow
+            .andThen(Abort.run[Closed](dialogQueue.close).unit)
+            .andThen(dialogDrainer.interrupt.andThen(dialogDrainer.getResult.unit))
+
+    /** Orderly close: drains in-flight requests then closes the endpoint and
+      * stops the dialog drainer sequentially.
+      */
+    private def closeOrderly(using Frame): Unit < Async =
+        awaitDrain
+            .andThen(endpoint.close(Duration.Zero))
+            .andThen(Abort.run[Closed](dialogQueue.close).unit)
+            .andThen(dialogDrainer.interrupt.andThen(dialogDrainer.getResult.unit))
 
     /** Drain barrier: returns when all outstanding inflight calls have settled. */
     private[kyo] def awaitDrain(using Frame): Unit < Async =

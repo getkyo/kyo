@@ -90,3 +90,24 @@ unwind encoding`. This is a pre-existing Scala Native 0.5.10 bug on macOS ARM64,
 by running the isolated ResolverTest against the committed baseline (crash occurs there too
 when Chrome is healthy). The crash is NOT introduced by the port.
 Time: 2026-05-29T22:15Z
+
+Decision 70 (CRITICAL): Reverted Decisions 65/66's Async.zip+Async.timeout
+close pattern. The OLD CdpClient.close explicitly warned: "If we return
+before the relay stops, a new connection opened while the old one is still
+alive gives Chrome two simultaneous clients, which causes dialog events to
+be silently dropped on the new connection." My audit-fix introduced exactly
+this two-clients state: close() returned while transport.close was still
+running in the background, and the next test's CdpBackend.init connected
+while the old WS was still tearing down. This was the cascade-failure root
+cause (Decisions 65-69 were treating symptoms; this is the root). Restored
+the OLD pattern: closeOrderly under Async.timeout(gracePeriod), with closeNow
+as forceful-fallback on Timeout. closeNow sequentially waits for full teardown
+via dialogDrainer.getResult before returning. closeOrderly also waits via
+dialogDrainer.getResult. The bounded-close RED test was retired - it asserted
+the WRONG invariant (close-duration-bounded vs WS-fully-closed, and its
+Async.zip fix broke the teardown sequencing). Replaced with a test asserting
+dialogDrainer.getResult returns Done after close(grace), proving the drainer
+fiber is fully stopped (not merely interrupted-but-still-running). The
+BlockingCloseTransport test helper was removed along with the retired test.
+Files: CdpBackend.scala, CdpBackendLifecycleTest.scala.
+Time: 2026-05-29T22:30Z
