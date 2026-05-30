@@ -132,11 +132,12 @@ object JsonRpcRoute:
     end notification
 
     /** Dispatches `params` to the named route in `routes`. Returns Absent for unknown route.
-      * Public reach-in for non-engine consumers (one-shot stdio loop, HTTP POST endpoints,
+      * Internal helper for non-engine consumers (one-shot stdio loop, HTTP POST endpoints,
       * custom routers); keeps `JsonRpcRoute.handle` private[kyo]. For Notification kind the
       * inner result is `Structure.Value.Null` after the handler completes.
+      * Use `JsonRpcHandler.Unsafe.dispatch` for engine-level route dispatch.
       */
-    def dispatch(
+    private[kyo] def dispatch(
         name: String,
         routes: Seq[JsonRpcRoute[?, ?, ?]],
         params: Structure.Value,

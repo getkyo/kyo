@@ -76,7 +76,9 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty, strictConfig).map { b =>
                     a.notify[Empty]("unknown/event", Empty()).andThen {
-                        untilTrue(Sync.defer(b.impl.config.unknownMethod == JsonRpcHandler.UnknownMethodPolicy.strict)).andThen {
+                        untilTrue(Sync.defer(b.unsafe.asInstanceOf[
+                            internal.engine.JsonRpcEndpointImpl
+                        ].config.unknownMethod == JsonRpcHandler.UnknownMethodPolicy.strict)).andThen {
                             Async.sleep(150.millis).andThen {
                                 Abort.run[JsonRpcError | Closed](a.call[Empty, Empty]("any/method", Empty())).map {
                                     case Result.Failure(_) => succeed

@@ -26,3 +26,10 @@
 
 - Phase 04 prep note: current JsonRpcRoute is `sealed trait JsonRpcRoute[+S]` at JsonRpcRoute.scala:27, with `def apply[In, Out, S](name)(handler: (In, Context) => Out < S)` at :80. HttpRoute reference at kyo-http/.../HttpRoute.scala:40 is `case class HttpRoute[In, Out, +E](method, requestDef, responseDef, filter, metadata)` (not sealed trait). `.error[E2]` at HttpRoute.scala:82 is inline + chainable. Phase 04 needs to (a) restructure JsonRpcRoute to `[In, Out, +E]` shape (case class or sealed trait), (b) fix handler row to `Async & Abort[E | JsonRpcError | JsonRpcResponse.Halt]`, (c) add JsonRpcResponse.Halt + .halt convenience, (d) add .error[E2] inline chainable form, (e) move `dispatch` to internal (audit A1).
 
+- Phase 03 committed: cc067892b. Audit 0/1/4 (WARN: Schema binary serializeRead drops data — non-critical; primary path preserves).
+- Phase 04 committed: f71402d0d (186/186 tests). Audit 0/2/3:
+  - WARN-1: handler row uses `Abort[JsonRpcError | JsonRpcResponse.Halt]` with E=Nothing start (not `Abort[E | JsonRpcError | JsonRpcResponse.Halt]`). E accumulates via `.error[E2]` into the ROUTE type but isn't in the handler row. Phase 05 MUST wire engine to `ErrorMapping[E].matches` else `.error[E2]` is dead API.
+  - WARN-2: Halt-in-request-handler path currently emits JsonRpcHandlerPanicError instead of the wrapped response. The test "JsonRpcResponse.Halt aborts with the wrapped response" actually asserts the panic shape (misleading name). Phase 05 must add a gate-layer Halt-to-response test + fix the routing.
+- Phase 05 impl dispatched in SLOT-A.
+- Phase 04 audit dispatched in SLOT-B — clean.
+

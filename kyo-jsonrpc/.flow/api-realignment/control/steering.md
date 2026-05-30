@@ -40,6 +40,16 @@ EVERY phase impl prompt MUST cite kyo-http file:line precedents for the pattern 
 07. Cleanup nested types (hoist remaining Phase-03 nested ; Pending +Out ; codec/filter presets)
 08. Final cross-platform green gate
 
+## STEER (phase 05, from phase 04 audit)
+
+Two items rolled into Phase 05 scope from phase 04 audit:
+
+1. **Wire engine to `ErrorMapping[E].matches`** so `.error[E2]` is functional, not dead API. The route's `errorMappings: Chunk[ErrorMapping[?]]` exists with `ConcreteTag[E].accepts` runtime dispatch hook. The engine's request-dispatch loop (currently in `kyo.internal.engine.JsonRpcEndpointImpl` ; now the `JsonRpcHandler.Unsafe` body after Phase 05) MUST consult `errorMappings` when a route's handler aborts: match the abort value against each mapping's tag, emit the corresponding JsonRpcError code if found, else emit `JsonRpcHandlerPanicError`.
+
+2. **Fix Halt-in-request-handler routing**: today a handler's `Abort.fail(JsonRpcResponse.Halt(resp))` lands as `JsonRpcHandlerPanicError` because the engine's catch-all interprets any abort as a panic. The fix: the engine's dispatch loop catches `JsonRpcResponse.Halt(resp)` before the generic catch and emits `resp` directly as the response. Then add an integration test that constructs a route which `Abort.fail(JsonRpcResponse.halt(myResponse))`s and asserts the wrapped response is what reaches the wire.
+
+Phase 05 already covers the opaque-type conversion and `dispatch` migration; folding in (1)+(2) keeps the engine-wiring work in one phase. If they prove too large to fit, defer to Phase 06.
+
 ## STEER (phase 03, pulse 1)
 
 Em-dashes detected in 3 sites. Fix BEFORE reporting done:

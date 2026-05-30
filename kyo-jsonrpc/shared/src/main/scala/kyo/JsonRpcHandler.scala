@@ -10,8 +10,8 @@ import kyo.Sync
 /** A live JSON-RPC 2.0 handler managing bidirectional communication over a [[JsonRpcTransport]].
   *
   * Obtain an instance via [[JsonRpcHandler.init]], which starts the inbound dispatch loop and
-  * attaches the outbound sender. Calling code interacts with the peer through the typed methods
-  * on this class:
+  * attaches the outbound sender. Calling code interacts with the peer through the typed extension
+  * methods on this type:
   *  - [[call]]: send a request and await the typed response.
   *  - [[notify]]: send a fire-and-forget notification.
   *  - [[callWithProgress]]: send a request and receive incremental progress notifications.
@@ -21,83 +21,139 @@ import kyo.Sync
   *
   * The handler is `Scope`-managed; it closes automatically when the enclosing `Scope` exits.
   *
+  * Mirrors `HttpServer` at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:37.
+  *
   * @see [[JsonRpcHandler.init]]
   * @see [[JsonRpcTransport]]
   */
-// Hub.scala:22 smart-constructor pattern; init through JsonRpcHandler.init
-final class JsonRpcHandler private[kyo] (private[kyo] val impl: internal.engine.JsonRpcEndpointImpl):
-
-    def call[In: Schema, Out: Schema](
-        method: String,
-        params: In,
-        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
-    )(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
-        impl.call[In, Out](method, params, extras)
-
-    def notify[In: Schema](
-        method: String,
-        params: In,
-        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
-    )(using Frame): Unit < (Async & Abort[Closed]) =
-        impl.notify[In](method, params, extras)
-
-    def sendUnmatched[In: Schema](
-        method: String,
-        params: In,
-        id: JsonRpcId,
-        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
-    )(using Frame): Unit < (Async & Abort[Closed]) =
-        impl.sendUnmatched[In](method, params, id, extras)
-
-    def callWithProgress[In: Schema, Out: Schema](
-        method: String,
-        params: In,
-        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
-    )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
-        impl.callWithProgress[In, Out](method, params, extras)
-
-    def callPartialResults[In: Schema, T: Schema: Tag](
-        method: String,
-        params: In,
-        extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
-    )(using Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
-        impl.callPartialResults[In, T](method, params, extras)
-
-    def subscribeProgress(token: Structure.Value)(using Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync =
-        impl.subscribeProgress(token)
-
-    def unsubscribeProgress(token: Structure.Value)(using Frame): Unit < Async =
-        impl.unsubscribeProgress(token)
-
-    def cancel(id: JsonRpcId, reason: Maybe[String] = Absent)(using Frame): Unit < (Async & Abort[Closed]) =
-        impl.cancel(id, reason)
-
-    def awaitDrain(using Frame): Unit < Async = impl.awaitDrain
-
-    /** Closes the endpoint immediately without draining in-flight requests.
-      *
-      * Note: when chaining with `.andThen`, use `closeNow.andThen(...)` to avoid Scala 3
-      * overload-resolution ambiguity between this no-arg form and `close(gracePeriod: Duration)`.
-      */
-    def close(using Frame): Unit < Async = impl.close(Duration.Zero)
-
-    /** Closes the endpoint, waiting up to `gracePeriod` for in-flight requests to drain before forcing.
-      *
-      * Note: when chaining with `.andThen`, prefer `close(Duration.Zero).andThen(...)` or
-      * `closeNow.andThen(...)` to avoid Scala 3 overload-resolution ambiguity on the no-arg `close`.
-      */
-    def close(gracePeriod: Duration)(using Frame): Unit < Async = impl.close(gracePeriod)
-
-    /** Closes the endpoint immediately without draining in-flight requests.
-      *
-      * Identical to `close(Duration.Zero)`. Use this form when chaining with `.andThen` to avoid
-      * Scala 3 overload-resolution ambiguity on the no-arg `close` overload.
-      */
-    def closeNow(using Frame): Unit < Async = impl.close(Duration.Zero)
-
-end JsonRpcHandler
+// HttpServer.scala:37 opaque-type pattern; init through JsonRpcHandler.init
+opaque type JsonRpcHandler = JsonRpcHandler.Unsafe
 
 object JsonRpcHandler:
+
+    extension (self: JsonRpcHandler)
+        def call[In: Schema, Out: Schema](
+            method: String,
+            params: In,
+            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+        )(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
+            self.callUnsafe[In, Out](method, params, extras)
+
+        def notify[In: Schema](
+            method: String,
+            params: In,
+            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+        )(using Frame): Unit < (Async & Abort[Closed]) =
+            self.notifyUnsafe[In](method, params, extras)
+
+        def sendUnmatched[In: Schema](
+            method: String,
+            params: In,
+            id: JsonRpcId,
+            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+        )(using Frame): Unit < (Async & Abort[Closed]) =
+            self.sendUnmatchedUnsafe[In](method, params, id, extras)
+
+        def callWithProgress[In: Schema, Out: Schema](
+            method: String,
+            params: In,
+            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+        )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
+            self.callWithProgressUnsafe[In, Out](method, params, extras)
+
+        def callPartialResults[In: Schema, T: Schema: Tag](
+            method: String,
+            params: In,
+            extras: JsonRpcHandler.ExtrasEncoder = JsonRpcHandler.ExtrasEncoder.empty
+        )(using Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
+            self.callPartialResultsUnsafe[In, T](method, params, extras)
+
+        def subscribeProgress(token: Structure.Value)(using Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync =
+            self.subscribeProgressUnsafe(token)
+
+        def unsubscribeProgress(token: Structure.Value)(using Frame): Unit < Async =
+            self.unsubscribeProgressUnsafe(token)
+
+        def cancel(id: JsonRpcId, reason: Maybe[String] = Absent)(using Frame): Unit < (Async & Abort[Closed]) =
+            self.cancelUnsafe(id, reason)
+
+        def awaitDrain(using Frame): Unit < Async =
+            self.awaitDrainUnsafe
+
+        /** Closes the handler immediately without draining in-flight requests. */
+        def close(using Frame): Unit < Async =
+            self.closeUnsafe(Duration.Zero)
+
+        /** Closes the handler, waiting up to `gracePeriod` for in-flight requests to drain before forcing. */
+        def close(gracePeriod: Duration)(using Frame): Unit < Async =
+            self.closeUnsafe(gracePeriod)
+
+        /** Closes the handler immediately without draining in-flight requests. Identical to `close(Duration.Zero)`. */
+        def closeNow(using Frame): Unit < Async =
+            self.closeUnsafe(Duration.Zero)
+
+        /** Returns the underlying unsafe handler instance. */
+        def unsafe: Unsafe = self
+    end extension
+
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    abstract class Unsafe:
+
+        def callUnsafe[In: Schema, Out: Schema](
+            method: String,
+            params: In,
+            extras: JsonRpcHandler.ExtrasEncoder
+        )(using Frame): Out < (Async & Abort[JsonRpcError | Closed])
+
+        def notifyUnsafe[In: Schema](
+            method: String,
+            params: In,
+            extras: JsonRpcHandler.ExtrasEncoder
+        )(using Frame): Unit < (Async & Abort[Closed])
+
+        def sendUnmatchedUnsafe[In: Schema](
+            method: String,
+            params: In,
+            id: JsonRpcId,
+            extras: JsonRpcHandler.ExtrasEncoder
+        )(using Frame): Unit < (Async & Abort[Closed])
+
+        def callWithProgressUnsafe[In: Schema, Out: Schema](
+            method: String,
+            params: In,
+            extras: JsonRpcHandler.ExtrasEncoder
+        )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed])
+
+        def callPartialResultsUnsafe[In: Schema, T: Schema: Tag](
+            method: String,
+            params: In,
+            extras: JsonRpcHandler.ExtrasEncoder
+        )(using Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]]
+
+        def subscribeProgressUnsafe(token: Structure.Value)(using Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync
+
+        def unsubscribeProgressUnsafe(token: Structure.Value)(using Frame): Unit < Async
+
+        def cancelUnsafe(id: JsonRpcId, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed])
+
+        def awaitDrainUnsafe(using Frame): Unit < Async
+
+        /** Closes the handler, waiting up to `gracePeriod` for in-flight requests to drain before forcing. */
+        def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async
+
+        /** Dispatches `params` to the named route held by this handler. Returns Absent for unknown names.
+          * Mirrors `JsonRpcRoute.dispatch` but operates on the handler's registered method map directly.
+          * For Notification kind the inner result is `Structure.Value.Null` after the handler completes.
+          */
+        def dispatch(
+            name: String,
+            params: Structure.Value,
+            ctx: JsonRpcRoute.Context
+        )(using Frame): Maybe[Structure.Value < (Async & Abort[JsonRpcError])]
+
+        /** Returns the safe opaque-type wrapper for this unsafe handler instance. */
+        final def safe: JsonRpcHandler = this
+    end Unsafe
 
     /** Represents an in-flight request that supports progress reporting.
       *
@@ -436,7 +492,18 @@ object JsonRpcHandler:
         config: Config = Config.default
     )(using Frame): JsonRpcHandler < (Async & Scope) =
         Config.require(config)
-        internal.engine.JsonRpcEndpointImpl.init(transport, methods, config).map(new JsonRpcHandler(_))
+        Scope.acquireRelease(
+            internal.engine.JsonRpcEndpointImpl.initEngine(transport, methods, config).map(_.safe)
+        )(_.closeNow)
     end init
+
+    def initUnscoped(
+        transport: JsonRpcTransport,
+        methods: Seq[JsonRpcRoute[?, ?, ?]],
+        config: Config = Config.default
+    )(using Frame): JsonRpcHandler < Async =
+        Config.require(config)
+        internal.engine.JsonRpcEndpointImpl.initEngine(transport, methods, config).map(_.safe)
+    end initUnscoped
 
 end JsonRpcHandler

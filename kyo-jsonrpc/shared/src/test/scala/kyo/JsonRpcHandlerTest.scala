@@ -179,7 +179,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         mkEndpoints(Seq.empty, Seq(addOnB)).map { (a, _) =>
             a.call[AddReq, AddResp]("add", AddReq(5, 5)).andThen {
                 a.awaitDrain.andThen {
-                    Sync.defer(assert(a.impl.callerRegistry.isEmpty))
+                    Sync.defer(assert(a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].callerRegistry.isEmpty))
                 }
             }
         }
@@ -195,7 +195,9 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             ).map { fib =>
                 Async.sleep(30.millis).andThen {
                     fib.interrupt.andThen {
-                        untilTrue(Sync.defer(a.impl.callerRegistry.isEmpty)).andThen(succeed)
+                        untilTrue(
+                            Sync.defer(a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].callerRegistry.isEmpty)
+                        ).andThen(succeed)
                     }
                 }
             }
@@ -232,7 +234,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                 Fiber.initUnscoped(a.call[AddReq, AddResp]("add", AddReq(2, 2))).andThen {
                     a.awaitDrain.andThen {
                         Sync.Unsafe.defer {
-                            assert(a.impl.inFlight.unsafe.get() <= 0)
+                            assert(a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].inFlight.unsafe.get() <= 0)
                         }
                     }
                 }
@@ -564,7 +566,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                 // Wait until callerRegistry is non-empty (id registered) before sending the malformed wire.
                 // This ensures the Malformed-with-id branch finds the caller on all schedulers (JVM, JS, Native).
                 Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("noop", ()))).map { callFiber =>
-                    untilTrue(Sync.defer(!a.impl.callerRegistry.isEmpty)).andThen {
+                    untilTrue(Sync.defer(!a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].callerRegistry.isEmpty)).andThen {
                         // tb.send triggers ta.incoming; bothFieldsCodec encodes both result+error on the wire;
                         // Strict2_0.decode sees both fields and emits Malformed(Present(Num(1)), ...).
                         // The Malformed-with-id branch completes abortSignal with invalidRequest("malformed response: ...").
@@ -620,7 +622,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                         // Yield until the call fiber has registered in inFlight. On Native's single-threaded
                         // scheduler, Fiber.initUnscoped does not transfer control immediately, so close()
                         // can observe inFlight == 0 and skip draining without this guard.
-                        untilTrue(a.impl.inFlight.get.map(_ > 0)).andThen {
+                        untilTrue(a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].inFlight.get.map(_ > 0)).andThen {
                             val start = java.lang.System.currentTimeMillis
                             a.close(1.second).map { _ =>
                                 val elapsed = java.lang.System.currentTimeMillis - start
