@@ -1,5 +1,7 @@
 package kyo.internal
 
+import scala.annotation.tailrec
+
 private[kyo] object YamlSource:
 
     def lineEnd(source: String, pos: Int): Int =
@@ -171,27 +173,26 @@ private[kyo] object YamlSource:
     end findTopLevel
 
     def findTopLevel(s: String, target: Char, from: Int, stop: Int): Int =
-        var i      = from
-        var depth  = 0
-        var single = false
-        var double = false
-        var escape = false
-        while i < stop do
-            val ch = s.charAt(i)
-            if escape then escape = false
-            else if double && ch == '\\' then escape = true
-            else if !double && ch == '\'' then single = !single
-            else if !single && ch == '"' then double = !double
-            else if !single && !double then
-                ch match
-                    case '[' | '{'                      => depth += 1
-                    case ']' | '}'                      => depth -= 1
-                    case c if c == target && depth == 0 => return i
-                    case _                              => ()
-                end match
+        @tailrec def loop(i: Int, depth: Int, single: Boolean, double: Boolean, escape: Boolean): Int =
+            if i >= stop then -1
+            else
+                val ch = s.charAt(i)
+                if escape then loop(i + 1, depth, single, double, false)
+                else if double && ch == '\\' then loop(i + 1, depth, single, double, true)
+                else if !double && ch == '\'' then loop(i + 1, depth, !single, double, false)
+                else if !single && ch == '"' then loop(i + 1, depth, single, !double, false)
+                else if !single && !double then
+                    ch match
+                        case '[' | '{'                      => loop(i + 1, depth + 1, single, double, false)
+                        case ']' | '}'                      => loop(i + 1, depth - 1, single, double, false)
+                        case c if c == target && depth == 0 => i
+                        case _                              => loop(i + 1, depth, single, double, false)
+                    end match
+                else loop(i + 1, depth, single, double, false)
+                end if
             end if
-            i += 1
-        end while
-        -1
+        end loop
+
+        loop(from, 0, single = false, double = false, escape = false)
     end findTopLevel
 end YamlSource
