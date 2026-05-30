@@ -9,6 +9,7 @@ import kyo.internal.tasty.query.ClasspathRef
   */
 class ClasspathRefTest extends Test:
 
+    // flow-allow: §839 case 3 — test helper boundary; ClasspathRef factory + assign are unsafe-tier
     import AllowUnsafe.embrace.danger
 
     // Test 1 (INV-001): ClasspathRef.get() returns the assigned Classpath.

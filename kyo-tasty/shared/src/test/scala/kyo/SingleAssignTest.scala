@@ -8,6 +8,7 @@ import kyo.internal.tasty.symbol.SingleAssign
   */
 class SingleAssignTest extends Test:
 
+    // flow-allow: §839 case 3 — test helper boundary; SingleAssign factory + ops are unsafe-tier
     import AllowUnsafe.embrace.danger
 
     // Test 5 (T2, SingleAssign): set/get round trip returns the assigned value.
