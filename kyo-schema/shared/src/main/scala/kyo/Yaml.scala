@@ -57,17 +57,23 @@ object Yaml:
       * `ReaderConfig` keeps parser limits and stream selection in one value so callers can choose a document from a multi-document stream
       * without losing access to safety limits. `yamlVersion` selects scalar resolution rules for schema decoding. `maxDepth` limits nested
       * codec reads, and `maxCollectionSize` limits collection entries in the same way as [[Json]] decoding. `documentIndex` is empty for
-      * single-document decoding and set to `DocumentIndex(n)` to decode the zero-based nth document from a stream. The default
-      * configuration decodes exactly one YAML 1.2 document with the standard limits.
+      * single-document decoding and set to `DocumentIndex(n)` to decode the zero-based nth document from a stream. `documentMode` controls
+      * how single-value decoding handles streams when no `documentIndex` is selected. The default configuration decodes exactly one YAML 1.2
+      * document with the standard limits.
       */
     case class ReaderConfig(
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize,
         documentIndex: Maybe[DocumentIndex] = Absent,
-        yamlVersion: SpecVersion = SpecVersion.Yaml12
+        yamlVersion: SpecVersion = SpecVersion.Yaml12,
+        documentMode: ReaderConfig.DocumentMode = ReaderConfig.DocumentMode.SingleDocument
     ) derives CanEqual
 
     object ReaderConfig:
+        enum DocumentMode derives CanEqual:
+            case SingleDocument, MergeTopLevelMappings
+        end DocumentMode
+
         val Default: ReaderConfig = ReaderConfig()
         given ReaderConfig        = Default
     end ReaderConfig
@@ -291,18 +297,29 @@ object Yaml:
                     )
                 else
                     val docs = splitDocuments(input)
-                    if docs.size == 1 then decodePreparedString(docs(0), config.maxDepth, config.maxCollectionSize, config.yamlVersion)
-                    else if docs.isEmpty && input.trim.isEmpty then
-                        decodePreparedString(input, config.maxDepth, config.maxCollectionSize, config.yamlVersion)
-                    else
-                        Result.fail(ParseException(
-                            Yaml(),
-                            "",
-                            "Unexpected content after YAML document end",
-                            Nil,
-                            0
-                        ))
-                    end if
+                    config.documentMode match
+                        case ReaderConfig.DocumentMode.MergeTopLevelMappings =>
+                            decodePreparedString(
+                                internal.YamlDocuments.mergeTopLevelMappings(docs),
+                                config.maxDepth,
+                                config.maxCollectionSize,
+                                config.yamlVersion
+                            )
+                        case ReaderConfig.DocumentMode.SingleDocument =>
+                            if docs.size == 1 then
+                                decodePreparedString(docs(0), config.maxDepth, config.maxCollectionSize, config.yamlVersion)
+                            else if docs.isEmpty && input.trim.isEmpty then
+                                decodePreparedString(input, config.maxDepth, config.maxCollectionSize, config.yamlVersion)
+                            else
+                                Result.fail(ParseException(
+                                    Yaml(),
+                                    "",
+                                    "Unexpected content after YAML document end",
+                                    Nil,
+                                    0
+                                ))
+                            end if
+                    end match
                 end if
         end match
     end decode
@@ -328,26 +345,8 @@ object Yaml:
         input: Span[Byte],
         config: ReaderConfig
     )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        config.documentIndex match
-            case Present(index) =>
-                decode[A](String(input.toArray, StandardCharsets.UTF_8), config.copy(documentIndex = Maybe(index)))
-            case Absent =>
-                decodePreparedBytes(input, config.maxDepth, config.maxCollectionSize, config.yamlVersion)
-        end match
+        decode[A](String(input.toArray, StandardCharsets.UTF_8), config)
     end decodeBytes
-
-    private def decodePreparedBytes[A](
-        input: Span[Byte],
-        maxDepth: Int,
-        maxCollectionSize: Int,
-        yamlVersion: SpecVersion
-    )(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        Result.catching[DecodeException] {
-            val reader = internal.YamlReader(input, yamlVersion)
-            reader.resetLimits(maxDepth, maxCollectionSize)
-            schema.readFrom(reader)
-        }
-    end decodePreparedBytes
 
     private def decodePreparedString[A](
         input: String,

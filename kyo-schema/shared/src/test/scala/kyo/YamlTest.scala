@@ -22,6 +22,13 @@ final case class YamlAnchoredCount(value: YamlCountOnly) derives CanEqual
 final case class YamlScalarAlias(first: String, second: String) derives CanEqual
 final case class YamlSequenceAlias(name: String, items: List[String]) derives CanEqual
 final case class YamlUnicodeField(café: Int) derives CanEqual
+final case class YamlMultiDocumentConfig(
+    primary: MTPerson,
+    people: List[MTPerson],
+    shape: MTShape,
+    status: MixedArityEnum,
+    unit: SealedNoArgVariants
+) derives CanEqual
 
 class YamlTest extends Test:
 
@@ -195,6 +202,20 @@ class YamlTest extends Test:
             assert(Yaml.decodeBytes[MTPerson](bytes, Yaml.DocumentIndex(1)) == Result.succeed(MTPerson("Bob", 25)))
         }
 
+        "decodeBytes rejects multi-document streams for single-document decode" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            assert(Yaml.decodeBytes[MTPerson](bytes).isFailure)
+        }
+
         "decode config combines document index and limits" in {
             val yaml =
                 """---
@@ -302,6 +323,109 @@ class YamlTest extends Test:
                     assert(e.getMessage.contains("Unexpected content after YAML document end"))
                 case other => fail(s"Expected ParseException failure, got $other")
             end match
+        }
+
+        "decode merges document stream mapping fragments when configured" in {
+            val yaml =
+                """---
+                  |primary:
+                  |  name: Alice
+                  |  age: 30
+                  |---
+                  |people:
+                  |  - name: Bob
+                  |    age: 25
+                  |  - name: Charlie
+                  |    age: 35
+                  |---
+                  |shape:
+                  |  MTRectangle:
+                  |    width: 3.0
+                  |    height: 4.0
+                  |---
+                  |status:
+                  |  Alpha:
+                  |    x: 7
+                  |---
+                  |unit:
+                  |  Unit2: {}
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(
+                Yaml.decode[YamlMultiDocumentConfig](yaml, config) ==
+                    Result.succeed(
+                        YamlMultiDocumentConfig(
+                            MTPerson("Alice", 30),
+                            List(MTPerson("Bob", 25), MTPerson("Charlie", 35)),
+                            MTRectangle(3.0, 4.0),
+                            MixedArityEnum.Alpha(7),
+                            SealedNoArgVariants.Unit2
+                        )
+                    )
+            )
+        }
+
+        "decode merges document stream fragments for top-level sealed traits when configured" in {
+            val yaml =
+                """---
+                  |Labeled:
+                  |---
+                  |  name: release
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.decode[SealedNoArgVariants](yaml, config) == Result.succeed(SealedNoArgVariants.Labeled("release")))
+        }
+
+        "decode merges document stream fragments for top-level Scala 3 enums when configured" in {
+            val yaml =
+                """---
+                  |Alpha:
+                  |---
+                  |  x: 7
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.decode[MixedArityEnum](yaml, config) == Result.succeed(MixedArityEnum.Alpha(7)))
+        }
+
+        "decodeBytes merges document stream fragments when configured" in {
+            val yaml =
+                """---
+                  |Alpha:
+                  |---
+                  |  x: 7
+                  |""".stripMargin
+            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.decodeBytes[MixedArityEnum](bytes, config) == Result.succeed(MixedArityEnum.Alpha(7)))
+        }
+
+        "document index takes precedence over document stream merging" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            val config = Yaml.ReaderConfig.Default.copy(
+                documentIndex = Maybe(Yaml.DocumentIndex(1)),
+                documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings
+            )
+
+            assert(Yaml.decode[MTPerson](yaml, config) == Result.succeed(MTPerson("Bob", 25)))
         }
 
         "reports line and column in parser failures" in {

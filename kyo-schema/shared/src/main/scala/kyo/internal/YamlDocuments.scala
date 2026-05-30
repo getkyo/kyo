@@ -62,6 +62,25 @@ private[kyo] object YamlDocuments:
         docs.result()
     end split
 
+    def mergeTopLevelMappings(docs: Chunk[String]): String =
+        val out = new StringBuilder
+
+        @tailrec def loop(index: Int): Unit =
+            if index < docs.size then
+                val doc = docs(index)
+                if hasNonWhitespace(doc, 0, doc.length) then
+                    if out.nonEmpty && out.charAt(out.length - 1) != '\n' then out.append('\n')
+                    out.append(doc)
+                    if out.nonEmpty && out.charAt(out.length - 1) != '\n' then out.append('\n')
+                end if
+                loop(index + 1)
+            end if
+        end loop
+
+        loop(0)
+        out.result()
+    end mergeTopLevelMappings
+
     private def marker(input: String, start: Int, stop: Int): Maybe[String] =
         if startsWith(input, start, stop, "---") && separated(input, start + 3, stop) then Maybe("---")
         else if startsWith(input, start, stop, "...") && separated(input, start + 3, stop) then Maybe("...")
