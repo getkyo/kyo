@@ -310,15 +310,15 @@ class TypeUnpicklerTest extends Test:
         }
     }
 
-    // Test 18c: Annotation built via the public factory (no decode context) returns NotImplemented from args.
-    "Annotation.args returns NotImplemented when no decode context is attached" in run {
+    // Test 18c: Annotation built via the public factory (no decode context) returns Tree.Unknown(-1, 0) from args.
+    // Per Phase 17 (INV-014): null-context branch no longer returns NotImplemented.
+    "Annotation.args returns Tree.Unknown(-1,0) when no decode context is attached" in run {
         val ann = Tasty.Annotation(Tasty.Type.Named(makeSym("Foo")), Chunk(0x42.toByte))
         Abort.run[TastyError](ann.args).map {
-            case Result.Success(t) =>
-                fail(s"Expected NotImplemented but got Tree $t")
-            case Result.Failure(TastyError.NotImplemented(_)) => succeed
-            case Result.Failure(other)                        => fail(s"Expected NotImplemented but got $other")
-            case Result.Panic(t)                              => throw t
+            case Result.Success(Tasty.Tree.Unknown(-1, 0)) => succeed
+            case Result.Success(other)                     => fail(s"Expected Tree.Unknown(-1,0) but got $other")
+            case Result.Failure(e)                         => fail(s"Expected Tree.Unknown(-1,0) but got failure $e")
+            case Result.Panic(t)                           => throw t
         }
     }
 

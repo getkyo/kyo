@@ -198,29 +198,35 @@ object Tasty:
         val argsPickle: Chunk[Byte],
         private[kyo] val _decodeCtx: Annotation.DecodeContext | Null
     ):
-        /** Decode the annotation's argument expression into a [[Tree]]. Returns `NotImplemented` if the annotation has no decode context
-          * (e.g. synthetic annotations constructed in tests).
+        /** Decode the annotation's argument expression into a [[Tree]].
+          *
+          * Returns `Tree.Unknown(-1, 0)` when the annotation has no decode context (e.g. synthetic annotations built via the public
+          * factory) or when `argsPickle` is empty. The only remaining failure paths are `MalformedSection` (corrupt or truncated pickle
+          * bytes) -- never `NotImplemented`.
           */
         def args(using Frame): Tree < (Sync & Abort[TastyError]) =
             _decodeCtx match
                 case null =>
-                    Abort.fail(TastyError.NotImplemented("annotation args decode requires file decode context"))
+                    Sync.defer(Tree.Unknown(-1, 0))
                 case ctx: Annotation.DecodeContext =>
                     if argsPickle.isEmpty then
-                        Abort.fail(TastyError.NotImplemented("annotation argsPickle is empty"))
+                        Sync.defer(Tree.Unknown(-1, 0))
                     else
                         Sync.defer:
-                            try Right(kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(argsPickle, ctx))
-                            catch
-                                case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                    // no cursor: DecodeException does not carry a byte offset
-                                    Left(TastyError.MalformedSection("ASTs", s"annotation arg decode failed: ${ex.getMessage}", 0L))
-                                case ex: ArrayIndexOutOfBoundsException =>
-                                    // no cursor: exception does not carry a byte offset
-                                    Left(TastyError.MalformedSection("ASTs", s"annotation arg truncated: ${ex.getMessage}", 0L))
-                        .map:
-                            case Right(t) => t
-                            case Left(e)  => Abort.fail(e)
+                            val result: Tree < Abort[TastyError] =
+                                try kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(argsPickle, ctx)
+                                catch
+                                    case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                        // no cursor available from DecodeException
+                                        Abort.fail(TastyError.MalformedSection(
+                                            "ASTs",
+                                            s"annotation arg decode failed: ${ex.getMessage}",
+                                            0L
+                                        ))
+                                    case ex: ArrayIndexOutOfBoundsException =>
+                                        // no cursor available from AIOOBE
+                                        Abort.fail(TastyError.MalformedSection("ASTs", s"annotation arg truncated: ${ex.getMessage}", 0L))
+                            result
 
         override def equals(other: Any): Boolean = other match
             case a: Annotation =>
@@ -233,7 +239,7 @@ object Tasty:
 
     object Annotation:
         /** Public factory for tests / synthetic annotations. The resulting annotation has no decode context, so [[Annotation.args]] returns
-          * `NotImplemented`.
+          * `Tree.Unknown(-1, 0)`.
           */
         def apply(annotationType: Type, argsPickle: Chunk[Byte]): Annotation =
             new Annotation(annotationType, argsPickle, null)

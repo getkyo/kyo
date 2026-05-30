@@ -69,4 +69,25 @@ class TastyAnnotationTest extends Test:
         end match
     }
 
+    // Phase 17 Test 3 (INV-014): synthetic factory with empty argsPickle returns Tree.Unknown(-1, 0).
+    // Given: a = Tasty.Annotation(Type.Named(sym), Chunk.empty) (null decode context via public factory).
+    // When: a.args is evaluated.
+    // Then: returns Tree.Unknown(-1, 0); NOT Abort.fail(NotImplemented).
+    // Pins: INV-014.
+    "Phase17-3: Annotation(type, Chunk.empty).args returns Tree.Unknown(-1,0), not NotImplemented" in run {
+        val deprecatedType = makeNamed("scala.deprecated")
+        val a              = Tasty.Annotation(deprecatedType, Chunk.empty)
+        Abort.run[TastyError](a.args).map:
+            case Result.Success(Tasty.Tree.Unknown(-1, 0)) =>
+                succeed
+            case Result.Success(other) =>
+                fail(s"Expected Tree.Unknown(-1,0) but got $other")
+            case Result.Failure(TastyError.NotImplemented(msg)) =>
+                fail(s"Expected Tree.Unknown(-1,0) but got NotImplemented: $msg")
+            case Result.Failure(e) =>
+                fail(s"Expected Tree.Unknown(-1,0) but got failure $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
 end TastyAnnotationTest

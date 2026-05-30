@@ -452,4 +452,78 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
+    // ── Phase 17 Tests (INV-014, M2) ─────────────────────────────────────────────
+    //
+    // Fallback note for Test A: no @deprecated TASTy fixture exists in kyo-tasty-fixtures.
+    // We use a UNITconst annotation term with a synthetic DecodeContext to demonstrate that
+    // Annotation.args decodes a real pickle into a Tree via the orchestrator-level path.
+    // This exercises INV-014 and M2 (the critical path: non-null _decodeCtx + non-empty argsPickle).
+
+    // Test A (INV-014, M2): Annotation with a real DecodeContext and a valid argsPickle decodes to a Tree.
+    // Given: an Annotation built via the internal factory with argsPickle = [UNITconst] and a real DecodeContext.
+    // When: annotation.args is evaluated.
+    // Then: returns Tree.Literal(UnitConst).
+    "Phase17-A: annotation with real decodeCtx and UNITconst pickle decodes to Literal(UnitConst)" in run {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Int"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val names   = Array(Tasty.Name("scala"))
+        val addrMap = IntMap(1 -> sym)
+        val home    = new ClasspathRef
+        // UNITconst is a single-byte tag (category 1); TreeUnpickler decodes it as Literal(UnitConst).
+        val pickle = Chunk(TastyFormat.UNITconst.toByte)
+        // sectionBytes must be non-null for DecodeContext to function; use a minimal byte array.
+        val sectionBytes = pickle.toArray
+        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type)) =>
+                succeed
+            case Result.Success(other) =>
+                fail(s"Expected Literal(UnitConst) but got $other")
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Test B (INV-014): Annotation with non-null DecodeContext but empty argsPickle returns Tree.Unknown(-1, 0).
+    // Given: an Annotation built via the internal factory with argsPickle = Chunk.empty and a real DecodeContext.
+    // When: annotation.args is evaluated.
+    // Then: returns Tree.Unknown(-1, 0) (the empty-pickle branch).
+    "Phase17-B: annotation with non-null decodeCtx but empty argsPickle returns Tree.Unknown(-1,0)" in run {
+        import scala.collection.immutable.IntMap
+        val sym = Tasty.Symbol.make(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("Foo"),
+            null,
+            new ClasspathRef,
+            Tasty.Symbol.TastyOrigin.empty,
+            Absent
+        )
+        val names     = Array(Tasty.Name("test"))
+        val addrMap   = IntMap.empty[Tasty.Symbol]
+        val home      = new ClasspathRef
+        val decodeCtx = new Tasty.Annotation.DecodeContext(names, addrMap, home, Array.emptyByteArray, 0)
+        val ann       = Tasty.Annotation(Tasty.Type.Named(sym), Chunk.empty, decodeCtx)
+        Abort.run[TastyError](ann.args).map:
+            case Result.Success(Tasty.Tree.Unknown(-1, 0)) =>
+                succeed
+            case Result.Success(other) =>
+                fail(s"Expected Tree.Unknown(-1,0) but got $other")
+            case Result.Failure(e) =>
+                fail(s"Expected Tree.Unknown(-1,0) but got failure $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
 end TreeUnpicklerTest
