@@ -250,6 +250,70 @@ Yaml.decode[User](
 
 For lower-level use cases, `Yaml.visit` exposes an event-first parser API. It lets callers carry their own context and fail early without building a YAML node tree. `Yaml.parse` and `Yaml.parseAll` are available when a DOM-style node tree is desired.
 
+#### Event-first YAML visitors
+
+Visitors receive parser events directly and decide what state to keep. They can return a value at the end of the stream or stop early with a typed error. This is useful for validation, indexing, metrics, extraction, and other workflows where building a YAML node tree would be unnecessary.
+
+This visitor audits YAML anchors. It records anchor declarations from mapping, sequence, and scalar metadata, records alias usage from `alias` events, then reports aliases that point at missing anchors and anchors that were never used.
+
+```scala
+case class AnchorReport(declared: Set[Yaml.Anchor], used: Set[Yaml.Anchor]):
+    def undeclared: Set[Yaml.Anchor] = used -- declared
+    def unused: Set[Yaml.Anchor]     = declared -- used
+end AnchorReport
+
+object AnchorReport:
+    val empty: AnchorReport = AnchorReport(Set.empty, Set.empty)
+end AnchorReport
+
+def declare(report: AnchorReport, anchor: Maybe[Yaml.Anchor]): AnchorReport =
+    anchor.fold(report)(a => report.copy(declared = report.declared + a))
+
+val anchorAudit = new Yaml.Visitor[AnchorReport, Nothing, AnchorReport]:
+    def streamStart(report: AnchorReport, mark: Yaml.Mark)   = Result.succeed(report)
+    def documentStart(report: AnchorReport, mark: Yaml.Mark) = Result.succeed(report)
+    def documentEnd(report: AnchorReport, mark: Yaml.Mark)   = Result.succeed(report)
+    def nodeEnd(report: AnchorReport, mark: Yaml.Mark)       = Result.succeed(report)
+
+    def mappingStart(report: AnchorReport, meta: Yaml.Meta) =
+        Result.succeed(declare(report, meta.anchor))
+
+    def sequenceStart(report: AnchorReport, meta: Yaml.Meta) =
+        Result.succeed(declare(report, meta.anchor))
+
+    def scalar(report: AnchorReport, value: String, meta: Yaml.ScalarMeta) =
+        Result.succeed(declare(report, meta.anchor))
+
+    def alias(report: AnchorReport, name: Yaml.Anchor, mark: Yaml.Mark) =
+        Result.succeed(report.copy(used = report.used + name))
+
+    def streamEnd(report: AnchorReport, mark: Yaml.Mark) =
+        Result.succeed(report)
+end anchorAudit
+
+val input =
+    """defaults: &defaults
+      |  retries: 3
+      |database: &database
+      |  host: localhost
+      |workers: &workers
+      |  - api
+      |service:
+      |  config: *defaults
+      |  connection: *database
+      |  pool: *workers
+      |orphan: *missing
+      |unused: &unused value
+      |""".stripMargin
+
+val report = Yaml.visit(input, AnchorReport.empty)(anchorAudit)
+
+assert(report.map(_.undeclared) == Result.succeed(Set(Yaml.Anchor("missing"))))
+assert(report.map(_.unused) == Result.succeed(Set(Yaml.Anchor("unused"))))
+```
+
+When callers do want a tree, `Yaml.parse` builds one explicitly. For a complete visitor-based node-builder with a custom error hierarchy, see [YamlVisitorTest.scala](shared/src/test/scala/kyo/YamlVisitorTest.scala).
+
 ### Protobuf
 
 The same types that serialize to JSON also serialize to Protocol Buffers:

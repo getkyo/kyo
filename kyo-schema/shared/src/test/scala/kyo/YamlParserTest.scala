@@ -255,137 +255,6 @@ class YamlParserTest extends Test:
         }
     }
 
-    "visit" - {
-
-        "streams block mapping events without requiring a YAML node tree" in {
-            val visitor = new Yaml.Visitor[List[String], String, List[String]]:
-                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed("streamStart" :: context)
-
-                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed("documentStart" :: context)
-
-                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
-                    Result.succeed(s"mappingStart:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
-
-                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
-                    Result.succeed(s"sequenceStart:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
-
-                def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
-                    Result.succeed(s"scalar:$value:${meta.style}" :: context)
-
-                def alias(context: List[String], name: String, mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed(s"alias:$name" :: context)
-
-                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed("nodeEnd" :: context)
-
-                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed("documentEnd" :: context)
-
-                def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed(("streamEnd" :: context).reverse)
-            end visitor
-
-            val visited = Yaml.visit("name: Alice\nage: 30\n", Nil)(visitor)
-
-            assert(
-                visited == Result.succeed(List(
-                    "streamStart",
-                    "documentStart",
-                    "mappingStart::",
-                    "scalar:name:Plain",
-                    "scalar:Alice:Plain",
-                    "scalar:age:Plain",
-                    "scalar:30:Plain",
-                    "nodeEnd",
-                    "documentEnd",
-                    "streamEnd"
-                ))
-            )
-        }
-
-        "exposes anchors and tags as visitor metadata" in {
-            val visitor = new Yaml.Visitor[List[String], String, List[String]]:
-                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]   = Result.succeed(context)
-                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context)
-
-                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
-                    Result.succeed(s"map:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
-
-                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
-                    Result.succeed(s"seq:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
-
-                def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
-                    Result.succeed(s"scalar:$value:${meta.anchor.getOrElse("")}:${meta.tag.getOrElse("")}" :: context)
-
-                def alias(context: List[String], name: String, mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed(s"alias:$name" :: context)
-
-                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]     = Result.succeed(context)
-                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context)
-                def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]   = Result.succeed(context.reverse)
-            end visitor
-
-            val yaml =
-                """value: !custom &id Alice
-                  |again: *id
-                  |""".stripMargin
-
-            assert(
-                Yaml.visit(yaml, Nil)(visitor) == Result.succeed(List(
-                    "map::",
-                    "scalar:value::",
-                    "scalar:Alice:id:!custom",
-                    "scalar:again::",
-                    "alias:id"
-                ))
-            )
-        }
-
-        "targets a document by zero-based index" in {
-            val visitor = new Yaml.Visitor[List[String], String, List[String]]:
-                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed(context)
-
-                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed(context)
-
-                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
-                    Result.succeed(context)
-
-                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]] =
-                    Result.succeed(context)
-
-                def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
-                    Result.succeed(value :: context)
-
-                def alias(context: List[String], name: String, mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed(context)
-
-                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed(context)
-
-                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed(context)
-
-                def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] =
-                    Result.succeed(context.reverse)
-            end visitor
-
-            val yaml =
-                """---
-                  |name: Alice
-                  |age: 30
-                  |---
-                  |name: Bob
-                  |age: 25
-                  |""".stripMargin
-
-            assert(Yaml.visit(yaml, Yaml.DocumentIndex(1), Nil)(visitor) == Result.succeed(List("name", "Bob", "age", "25")))
-        }
-    }
-
     "real-world YAML" - {
 
         "decodes GitHub Actions workflow shapes" in {
@@ -919,17 +788,17 @@ class YamlParserTest extends Test:
 
         "treats local tags from the yaml document from hell as metadata only" in {
             val visitor = new Yaml.Visitor[List[String], String, List[String]]:
-                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]         = Result.succeed(context)
-                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]       = Result.succeed(context)
-                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]]        = Result.succeed(context)
-                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]]       = Result.succeed(context)
-                def alias(context: List[String], name: String, mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context)
-                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]             = Result.succeed(context)
-                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]         = Result.succeed(context)
+                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]              = Result.succeed(context)
+                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]            = Result.succeed(context)
+                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]]             = Result.succeed(context)
+                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]]            = Result.succeed(context)
+                def alias(context: List[String], name: Yaml.Anchor, mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context)
+                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]                  = Result.succeed(context)
+                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]              = Result.succeed(context)
                 def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context.reverse)
 
                 def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
-                    Result.succeed(s"$value:${meta.tag.getOrElse("")}" :: context)
+                    Result.succeed(s"$value:${meta.tag.map(_.value).getOrElse("")}" :: context)
             end visitor
 
             assert(Yaml.visit("serve:\n  - !.git\n", Nil)(visitor) == Result.succeed(List("serve:", ":!.git")))

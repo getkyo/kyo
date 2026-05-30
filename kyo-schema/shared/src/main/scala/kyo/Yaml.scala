@@ -2,6 +2,7 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 import scala.annotation.tailrec
+import scala.annotation.targetName
 
 /** YAML codec instance for codec-polymorphic schema APIs.
   *
@@ -80,6 +81,54 @@ object Yaml:
     extension (index: DocumentIndex)
         /** Returns the zero-based integer value of this document selector. */
         def value: Int = index
+
+    /** YAML anchor name.
+      *
+      * Anchors name a node so aliases can refer to it later in the same YAML document. `Anchor` is an opaque string type to keep anchor
+      * metadata distinct from ordinary strings while remaining allocation-free.
+      */
+    opaque type Anchor = String
+
+    /** Constructors and extractors for [[Anchor]] values. */
+    object Anchor:
+        /** Creates an anchor from its YAML source name without the leading `&`. */
+        def apply(value: String): Anchor = value
+
+        /** Extracts the raw YAML anchor name. */
+        def unapply(anchor: Anchor): Some[String] = Some(anchor)
+
+        given CanEqual[Anchor, Anchor] = CanEqual.derived
+    end Anchor
+
+    extension (anchor: Anchor)
+        /** Returns the raw YAML anchor name without the leading `&`. */
+        @targetName("anchorValue")
+        def value: String = anchor
+    end extension
+
+    /** YAML tag handle.
+      *
+      * Tags annotate a YAML node with application-specific or standard YAML type information. `Tag` is an opaque string type to keep tag
+      * metadata distinct from ordinary strings while remaining allocation-free.
+      */
+    opaque type Tag = String
+
+    /** Constructors and extractors for [[Tag]] values. */
+    object Tag:
+        /** Creates a tag from its YAML source spelling, such as `!local`, `!!str`, or `tag:yaml.org,2002:str`. */
+        def apply(value: String): Tag = value
+
+        /** Extracts the raw YAML tag spelling. */
+        def unapply(tag: Tag): Some[String] = Some(tag)
+
+        given CanEqual[Tag, Tag] = CanEqual.derived
+    end Tag
+
+    extension (tag: Tag)
+        /** Returns the raw YAML tag spelling. */
+        @targetName("tagValue")
+        def value: String = tag
+    end extension
 
     /** Decoding settings for YAML input.
       *
@@ -326,7 +375,7 @@ object Yaml:
       * YAML anchors and tags are exposed as metadata instead of being interpreted by the event parser. Schema decoding honors the standard
       * scalar tags it understands, while unknown and local tags remain available to visitors and DOM-style parsing as metadata.
       */
-    case class Meta(anchor: Maybe[String], tag: Maybe[String], mark: Mark) derives CanEqual
+    case class Meta(anchor: Maybe[Anchor], tag: Maybe[Tag], mark: Mark) derives CanEqual
 
     /** Scalar style as written in the YAML stream.
       *
@@ -355,7 +404,7 @@ object Yaml:
       * Scalar metadata includes the same anchor, tag, and mark information as collection metadata, plus the scalar's source style. Visitors
       * can use the tag and style to implement custom scalar handling without forcing the parser to build a node tree.
       */
-    case class ScalarMeta(anchor: Maybe[String], tag: Maybe[String], style: ScalarStyle, mark: Mark) derives CanEqual
+    case class ScalarMeta(anchor: Maybe[Anchor], tag: Maybe[Tag], style: ScalarStyle, mark: Mark) derives CanEqual
 
     /** YAML node tree built only by [[parse]] and [[parseAll]].
       *
@@ -373,7 +422,7 @@ object Yaml:
         case Scalar(value: String, meta: ScalarMeta)
 
         /** Alias node referencing a previously declared anchor by name. */
-        case Alias(name: String, mark: Mark)
+        case Alias(name: Anchor, mark: Mark)
     end Node
 
     /** Event consumer for YAML parsing.
@@ -405,7 +454,7 @@ object Yaml:
         def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err, Ctx]
 
         /** Called for each alias node with the referenced anchor name. */
-        def alias(context: Ctx, name: String, mark: Mark): Result[Err, Ctx]
+        def alias(context: Ctx, name: Anchor, mark: Mark): Result[Err, Ctx]
 
         /** Called when a mapping or sequence node ends. */
         def nodeEnd(context: Ctx, mark: Mark): Result[Err, Ctx]
@@ -689,7 +738,7 @@ object Yaml:
         def scalar(context: Unit, value: String, meta: ScalarMeta): Result[DecodeException, Unit] =
             addNode(Node.Scalar(value, meta))
 
-        def alias(context: Unit, name: String, mark: Mark): Result[DecodeException, Unit] =
+        def alias(context: Unit, name: Anchor, mark: Mark): Result[DecodeException, Unit] =
             addNode(Node.Alias(name, mark))
 
         def nodeEnd(context: Unit, mark: Mark): Result[DecodeException, Unit] =

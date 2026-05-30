@@ -9,8 +9,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private var pos: Int                     = 0
     private var line: Int                    = 1
     private var column: Int                  = 1
-    private var pendingAnchor: Maybe[String] = Absent
-    private var pendingTag: Maybe[String]    = Absent
+    private var pendingAnchor: Maybe[Anchor] = Absent
+    private var pendingTag: Maybe[Tag]       = Absent
 
     def visit[Ctx, Err, A](context: Ctx)(visitor: Visitor[Ctx, Err, A]): Result[Err | DecodeException, A] =
         run(context, visitor.streamStart(_, mark())) { c1 =>
@@ -138,7 +138,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag, valueText) = readProperties(text)
         if valueText.startsWith("*") && !valueText.exists(_.isWhitespace) then
-            visitor.alias(context, valueText.drop(1), valueMark)
+            visitor.alias(context, Anchor(valueText.drop(1)), valueMark)
         else if valueText.startsWith("[") && valueText.endsWith("]") then
             withPending(anchor, tag)(parseFlowSequence(valueText, context, visitor))
         else if valueText.startsWith("{") && valueText.endsWith("}") then
@@ -528,8 +528,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         explicitIndent: Maybe[Int],
         style: ScalarStyle,
         chomp: Char,
-        anchor: Maybe[String],
-        tag: Maybe[String],
+        anchor: Maybe[Anchor],
+        tag: Maybe[Tag],
         visitor: Visitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         val indent = explicitIndent match
@@ -609,7 +609,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         out.toString
     end foldBlockScalarLines
 
-    private def withPending[A](anchor: Maybe[String], tag: Maybe[String])(body: => A): A =
+    private def withPending[A](anchor: Maybe[Anchor], tag: Maybe[Tag])(body: => A): A =
         val prevAnchor = pendingAnchor
         val prevTag    = pendingTag
         pendingAnchor = anchor
@@ -621,28 +621,28 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         end try
     end withPending
 
-    private def takeProperties(): (Maybe[String], Maybe[String]) =
+    private def takeProperties(): (Maybe[Anchor], Maybe[Tag]) =
         val out = (pendingAnchor, pendingTag)
         pendingAnchor = Absent
         pendingTag = Absent
         out
     end takeProperties
 
-    private def readProperties(text: String): (Maybe[String], Maybe[String], String) =
-        var anchor: Maybe[String] = Absent
-        var tag: Maybe[String]    = Absent
+    private def readProperties(text: String): (Maybe[Anchor], Maybe[Tag], String) =
+        var anchor: Maybe[Anchor] = Absent
+        var tag: Maybe[Tag]       = Absent
         var rest                  = text.trim
         var changed               = true
         while changed do
             changed = false
             if rest.startsWith("&") then
                 val (token, next) = readPropertyToken(rest)
-                anchor = Maybe(token.drop(1))
+                anchor = Maybe(Anchor(token.drop(1)))
                 rest = next
                 changed = true
             else if rest.startsWith("!") then
                 val (token, next) = readPropertyToken(rest)
-                tag = Maybe(token)
+                tag = Maybe(Tag(token))
                 rest = next
                 changed = true
             end if

@@ -607,15 +607,14 @@ final class YamlReader private (
             case _                                        => error(s"Invalid YAML float value: '$value'")
     end taggedFloat
 
-    private def normalizeTag(tag: Maybe[String]): Maybe[String] =
-        tag.map {
+    private def normalizeTag(tag: Maybe[Yaml.Tag]): Maybe[String] =
+        tag.map(_.value match
             case "!!str"   => "tag:yaml.org,2002:str"
             case "!!int"   => "tag:yaml.org,2002:int"
             case "!!bool"  => "tag:yaml.org,2002:bool"
             case "!!float" => "tag:yaml.org,2002:float"
             case "!!null"  => "tag:yaml.org,2002:null"
-            case other     => other
-        }
+            case other     => other)
     end normalizeTag
 
     private def checkNumericScalar(value: String): Unit =
@@ -713,14 +712,14 @@ final class YamlReader private (
         end if
     end currentAliasOr
 
-    private def startAlias(name: String, mark: Yaml.Mark): Unit =
-        startAliasReader(name, mark) {
+    private def startAlias(name: Yaml.Anchor, mark: Yaml.Mark): Unit =
+        startAliasReader(name.value, mark) {
             pos += 1
         }
     end startAlias
 
-    private def startSourceAlias(name: String, mark: Yaml.Mark): Unit =
-        startAliasReader(name, mark) {
+    private def startSourceAlias(name: Yaml.Anchor, mark: Yaml.Mark): Unit =
+        startAliasReader(name.value, mark) {
             val _ = readSourceRestOfLine()
         }
     end startSourceAlias
@@ -827,7 +826,7 @@ final class YamlReader private (
                     if token.length <= 1 then sourceError("Expected YAML alias name", lineStart + indent)
                     else if rest.nonEmpty then sourceError("Unexpected content after YAML alias", lineStart + indent + token.length)
                     val mark = Yaml.Mark(lineStart + indent, lineNumberAt(lineStart + indent), indent)
-                    startSourceAlias(token.drop(1), mark)
+                    startSourceAlias(Yaml.Anchor(token.drop(1)), mark)
                     true
                 else false
                 end if
@@ -950,7 +949,7 @@ final class YamlReader private (
             if valueText.isEmpty && tailEnd > tailStart then
                 val value     = normalizeBlock(tailStart, tailEnd, frame.indent + 2)
                 val valueLine = lineNumberAt(tailStart)
-                anchor.foreach(registerSourceAnchor(_, value, valueLine))
+                anchor.foreach(a => registerSourceAnchor(a.value, value, valueLine))
                 SourceValue(value, valueLine)
             else if tailEnd > tailStart then
                 SourceValue(trimmed + "\n" + normalizeBlock(tailStart, tailEnd, frame.indent), lineNumber)
@@ -1122,7 +1121,7 @@ final class YamlReader private (
                     (value, Yaml.ScalarMeta(anchor, tag, Yaml.ScalarStyle.Plain, mark))
             end match
         end result
-        anchor.foreach(registerSourceAnchor(_, source.substring(scalarStart, sourcePos), lineNumberAt(scalarStart)))
+        anchor.foreach(a => registerSourceAnchor(a.value, source.substring(scalarStart, sourcePos), lineNumberAt(scalarStart)))
         result
     end readSourceScalar
 
@@ -1603,21 +1602,21 @@ final class YamlReader private (
         YamlSource.quotedScalar(source, start, stop)
     end sourceQuotedScalar
 
-    private def sourceProperties(text: String): (Maybe[String], Maybe[String], String) =
-        var anchor: Maybe[String] = Absent
-        var tag: Maybe[String]    = Absent
-        var rest                  = text.trim
-        var changed               = true
+    private def sourceProperties(text: String): (Maybe[Yaml.Anchor], Maybe[Yaml.Tag], String) =
+        var anchor: Maybe[Yaml.Anchor] = Absent
+        var tag: Maybe[Yaml.Tag]       = Absent
+        var rest                       = text.trim
+        var changed                    = true
         while changed do
             changed = false
             if rest.startsWith("&") then
                 val (token, next) = sourcePropertyToken(rest)
-                anchor = Maybe(token.drop(1))
+                anchor = Maybe(Yaml.Anchor(token.drop(1)))
                 rest = next
                 changed = true
             else if rest.startsWith("!") then
                 val (token, next) = sourcePropertyToken(rest)
-                tag = Maybe(token)
+                tag = Maybe(Yaml.Tag(token))
                 rest = next
                 changed = true
             end if
@@ -1897,29 +1896,29 @@ object YamlReader:
 
     sealed private[internal] trait Event:
         def mark: Yaml.Mark
-        def anchor: Maybe[String]
+        def anchor: Maybe[Yaml.Anchor]
     end Event
 
     final private[internal] case class MappingStart(meta: Yaml.Meta) extends Event:
-        def mark: Yaml.Mark       = meta.mark
-        def anchor: Maybe[String] = meta.anchor
+        def mark: Yaml.Mark            = meta.mark
+        def anchor: Maybe[Yaml.Anchor] = meta.anchor
     end MappingStart
 
     final private[internal] case class SequenceStart(meta: Yaml.Meta) extends Event:
-        def mark: Yaml.Mark       = meta.mark
-        def anchor: Maybe[String] = meta.anchor
+        def mark: Yaml.Mark            = meta.mark
+        def anchor: Maybe[Yaml.Anchor] = meta.anchor
     end SequenceStart
 
     final private[internal] case class Scalar(value: String, meta: Yaml.ScalarMeta, mark: Yaml.Mark) extends Event:
-        def anchor: Maybe[String] = meta.anchor
+        def anchor: Maybe[Yaml.Anchor] = meta.anchor
     end Scalar
 
-    final private[internal] case class Alias(name: String, mark: Yaml.Mark) extends Event:
-        def anchor: Maybe[String] = Absent
+    final private[internal] case class Alias(name: Yaml.Anchor, mark: Yaml.Mark) extends Event:
+        def anchor: Maybe[Yaml.Anchor] = Absent
     end Alias
 
     final private[internal] case class NodeEnd(mark: Yaml.Mark) extends Event:
-        def anchor: Maybe[String] = Absent
+        def anchor: Maybe[Yaml.Anchor] = Absent
     end NodeEnd
 
     final private case class Built(events: Array[Event], anchors: scala.collection.mutable.Map[String, Anchor])
@@ -2011,7 +2010,7 @@ object YamlReader:
             Result.unit
         end scalar
 
-        def alias(context: Unit, name: String, mark: Yaml.Mark): Result[DecodeException, Unit] =
+        def alias(context: Unit, name: Yaml.Anchor, mark: Yaml.Mark): Result[DecodeException, Unit] =
             countValue()
             buffer += Alias(name, mark)
             Result.unit
@@ -2052,7 +2051,7 @@ object YamlReader:
             events(i).anchor match
                 case Present(name) =>
                     val stop = subtreeEnd(events, i)
-                    out(name) = Anchor(i, stop, valueCount(events, i, stop), depth(events, i, stop), Absent)
+                    out(name.value) = Anchor(i, stop, valueCount(events, i, stop), depth(events, i, stop), Absent)
                 case Absent => ()
             end match
             i += 1
