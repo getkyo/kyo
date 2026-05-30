@@ -32,7 +32,7 @@ class MaxInFlightTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init used for concurrent promise accumulation outside effect context
         val handlerPromises = AtomicRef.Unsafe.init(List.empty[Fiber.Promise[Unit, Any]])(using AllowUnsafe.embrace.danger)
 
-        val pingOnB = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (req, _) =>
+        val pingOnB = JsonRpcRoute[PingReq, PingResp]("ping") { (req, _) =>
             Fiber.Promise.init[Unit, Any].map { p =>
                 Sync.defer(discard(handlerPromises.getAndUpdate(p :: _)(using AllowUnsafe.embrace.danger))).andThen {
                     Sync.defer(discard(handlerEntered.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen {
@@ -103,12 +103,12 @@ class MaxInFlightTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for handler promise capture across fibers
         val handlerBlocked = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
 
-        val pingOnB = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (_, _) =>
+        val pingOnB = JsonRpcRoute[PingReq, PingResp]("ping") { (_, _) =>
             Fiber.Promise.init[Unit, Any].map { p =>
                 Sync.defer(handlerBlocked.set(Present(p))(using AllowUnsafe.embrace.danger)).andThen(p.get.andThen(PingResp(0)))
             }
         }
-        val logOnB = JsonRpcRoute[LogMsg, Unit, Async & Abort[JsonRpcError]]("log") { (_, _) =>
+        val logOnB = JsonRpcRoute[LogMsg, Unit]("log") { (_, _) =>
             Sync.defer(discard(notifyReceived.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
 
@@ -149,7 +149,7 @@ class MaxInFlightTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for handler promise capture across fibers
         val blocked = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
 
-        val pingOnB = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (_, _) =>
+        val pingOnB = JsonRpcRoute[PingReq, PingResp]("ping") { (_, _) =>
             Fiber.Promise.init[Unit, Any].map { p =>
                 Sync.defer(blocked.set(Present(p))(using AllowUnsafe.embrace.danger)).andThen(p.get.andThen(PingResp(0)))
             }
@@ -176,7 +176,7 @@ class MaxInFlightTest extends JsonRpcTest:
     }
 
     "requestTimeout fires and $/cancelRequest appears on transport with LSP policy" in run {
-        val pingOnB = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (_, _) =>
+        val pingOnB = JsonRpcRoute[PingReq, PingResp]("ping") { (_, _) =>
             // Block forever; timeout is the only exit
             Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
         }
@@ -213,7 +213,7 @@ class MaxInFlightTest extends JsonRpcTest:
     }
 
     "requestTimeout fires with cancellation = Absent: no cancel notification sent" in run {
-        val pingOnB = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (_, _) =>
+        val pingOnB = JsonRpcRoute[PingReq, PingResp]("ping") { (_, _) =>
             // Block forever; timeout is the only exit
             Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
         }
@@ -254,7 +254,7 @@ class MaxInFlightTest extends JsonRpcTest:
         val callCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
         // First call: handler always fails with MethodNotFound
-        val failOnB = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (req, _) =>
+        val failOnB = JsonRpcRoute[PingReq, PingResp]("ping") { (req, _) =>
             val n = callCount.incrementAndGet()(using AllowUnsafe.embrace.danger)
             if n == 1 then Abort.fail(JsonRpcMethodNotFoundError("ping", Chunk.empty))
             else PingResp(req.n)
@@ -293,7 +293,7 @@ class MaxInFlightTest extends JsonRpcTest:
         // A 1-second timeout: without resets it would fire before the handler completes.
         // The handler sends 4 progress notifications at 300ms intervals (total ~1.2s).
         // With progressResetsTimeout = true, each notification resets the 1-second clock.
-        val longTask = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("longTask") { (req, ctx) =>
+        val longTask = JsonRpcRoute[PingReq, PingResp]("longTask") { (req, ctx) =>
             val progressValue = Structure.Value.Record(Chunk("pct" -> Structure.Value.Integer(25L)))
             Async.sleep(300.millis).andThen {
                 Abort.run[Closed](ctx.progress(progressValue)).andThen {

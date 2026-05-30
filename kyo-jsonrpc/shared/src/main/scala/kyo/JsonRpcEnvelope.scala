@@ -89,6 +89,22 @@ object JsonRpcResponse:
     def failure(id: JsonRpcId, error: JsonRpcError)(using Frame): JsonRpcResponse =
         JsonRpcResponse(id, Absent, Present(error), Absent)
 
+    /** Short-circuit signal for routes and gates to abort request processing and send a response
+      * immediately. Used with `Abort.fail(Halt(response))` or the convenience
+      * `JsonRpcResponse.halt(response)`. When a route or gate aborts with Halt, the framework
+      * skips remaining processing and sends the wrapped response directly.
+      *
+      * Mirrors `HttpResponse.Halt` at kyo-http/shared/src/main/scala/kyo/HttpResponse.scala:169.
+      */
+    case class Halt(response: JsonRpcResponse)
+
+    /** Convenience for short-circuiting: aborts with the given response immediately.
+      *
+      * Mirrors `HttpResponse.halt` at kyo-http/shared/src/main/scala/kyo/HttpResponse.scala:172.
+      */
+    def halt(response: JsonRpcResponse)(using Frame): Nothing < Abort[Halt] =
+        Abort.fail(Halt(response))
+
 end JsonRpcResponse
 
 /** A JSON-RPC 2.0 wire notification message: a method call without a correlation id, expecting

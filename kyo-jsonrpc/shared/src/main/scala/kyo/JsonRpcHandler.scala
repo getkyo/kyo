@@ -432,7 +432,7 @@ object JsonRpcHandler:
 
     def init(
         transport: JsonRpcTransport,
-        methods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]],
+        methods: Seq[JsonRpcRoute[?, ?, ?]],
         config: Config = Config.default
     )(using Frame): JsonRpcHandler < (Async & Scope) =
         Config.require(config)

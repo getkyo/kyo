@@ -30,10 +30,10 @@ class BidiTest extends JsonRpcTest:
     end CapturingTransport
 
     "both endpoints register methods; simultaneous A.call(B) and B.call(A) resolve without id collision" in run {
-        val addOnB = JsonRpcRoute[AddReq, AddResp, Async & Abort[JsonRpcError]]("add") {
+        val addOnB = JsonRpcRoute[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
-        val echoOnA = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnA = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (req, _) => EchoResp(req.text.toUpperCase)
         }
 
@@ -56,7 +56,7 @@ class BidiTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
 
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (req, ctx) =>
                 ctx.cancelled.get.andThen(EchoResp(req.text))
         }
@@ -107,7 +107,7 @@ class BidiTest extends JsonRpcTest:
         val handlerReady = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
         val handlerDone  = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
 
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (req, _) =>
                 Fiber.Promise.init[Unit, Any].map { holdP =>
                     Fiber.Promise.init[Unit, Any].map { doneP =>
@@ -178,7 +178,7 @@ class BidiTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for progress value accumulation across fibers
         val progressValues = AtomicRef.Unsafe.init(List.empty[Structure.Value])(using AllowUnsafe.embrace.danger)
 
-        val workOnB = JsonRpcRoute[WorkReq, WorkResp, Async & Abort[JsonRpcError]]("work") {
+        val workOnB = JsonRpcRoute[WorkReq, WorkResp]("work") {
             (_, ctx) =>
                 val v1 = Structure.Value.Record(Chunk("kind" -> Structure.Value.Str("begin")))
                 val v2 = Structure.Value.Record(Chunk("kind" -> Structure.Value.Str("report"), "message" -> Structure.Value.Str("halfway")))

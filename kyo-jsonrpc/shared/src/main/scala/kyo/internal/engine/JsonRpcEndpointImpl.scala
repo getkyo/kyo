@@ -53,7 +53,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     private[kyo] val inFlight: AtomicInt,
     private val drainSignal: AtomicRef[Fiber.Promise[Unit, Any]],
     private val codec: JsonRpcCodec,
-    private val methodMap: Map[String, JsonRpcRoute[Async & Abort[JsonRpcError]]],
+    private val methodMap: Map[String, JsonRpcRoute[?, ?, ?]],
     private val unknownPolicy: JsonRpcHandler.UnknownMethodPolicy,
     private[kyo] val config: JsonRpcHandler.Config,
     private[kyo] val initFrame: Frame,
@@ -739,14 +739,14 @@ object JsonRpcEndpointImpl:
 
     def init(
         transport: JsonRpcTransport,
-        methods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]],
+        methods: Seq[JsonRpcRoute[?, ?, ?]],
         config: JsonRpcHandler.Config
     )(using frame: Frame): JsonRpcEndpointImpl < (Sync & Async & Scope) =
         Scope.acquireRelease(initEngine(transport, methods, config))(impl => impl.finalizer(using impl.initFrame))
 
     private def initEngine(
         transport: JsonRpcTransport,
-        methods: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]],
+        methods: Seq[JsonRpcRoute[?, ?, ?]],
         config: JsonRpcHandler.Config
     )(using frame: Frame): JsonRpcEndpointImpl < (Sync & Async) =
         // Unsafe: ConcurrentHashMap mirrors Exchange's own internal pattern

@@ -64,7 +64,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     end CapturingTransport
 
     "callWithProgress with LSP: handler calls ctx.progress three times, caller observes three progress values" in run {
-        val longTask = JsonRpcRoute[TaskReq, TaskResp, Async & Abort[JsonRpcError]]("longTask") {
+        val longTask = JsonRpcRoute[TaskReq, TaskResp]("longTask") {
             (_, ctx) =>
                 sendProgress(ctx, mkBegin).andThen {
                     sendProgress(ctx, mkReport("working")).andThen {
@@ -92,7 +92,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     "callWithProgress with LSP: stampOutboundToken attaches workDoneToken to params, handler reads token" in run {
         // Unsafe: AtomicRef.Unsafe.init for token capture across fibers
         val capturedToken = AtomicRef.Unsafe.init[Maybe[String]](Absent)(using AllowUnsafe.embrace.danger)
-        val taskMethod = JsonRpcRoute[TaskReqWithToken, TaskResp, Async & Abort[JsonRpcError]]("task") {
+        val taskMethod = JsonRpcRoute[TaskReqWithToken, TaskResp]("task") {
             (params, _) =>
                 Sync.defer(capturedToken.set(params.workDoneToken)(using AllowUnsafe.embrace.danger)).andThen(TaskResp(true))
         }
@@ -113,7 +113,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     }
 
     "callPartialResults with LSP: handler sends three progress notifications then null final response, stream emits three strings" in run {
-        val searchMethod = JsonRpcRoute[SearchReq, Structure.Value, Async & Abort[JsonRpcError]]("search") {
+        val searchMethod = JsonRpcRoute[SearchReq, Structure.Value]("search") {
             (_, ctx) =>
                 sendProgress(ctx, Structure.Value.Str("result1")).andThen {
                     sendProgress(ctx, Structure.Value.Str("result2")).andThen {
@@ -137,7 +137,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     "callWithProgress with MCP: outbound params carry _meta.progressToken, handler receives it" in run {
         // Unsafe: AtomicRef.Unsafe.init for meta capture across fibers
         val capturedMeta = AtomicRef.Unsafe.init[Maybe[ProgressMeta]](Absent)(using AllowUnsafe.embrace.danger)
-        val taskMethod = JsonRpcRoute[TaskReqWithMeta, TaskResp, Async & Abort[JsonRpcError]]("run") {
+        val taskMethod = JsonRpcRoute[TaskReqWithMeta, TaskResp]("run") {
             (params, _) =>
                 Sync.defer(capturedMeta.set(params.`_meta`)(using AllowUnsafe.embrace.danger)).andThen(TaskResp(true))
         }
@@ -220,7 +220,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     }
 
     "ctx.progress with progress = Absent returns Unit without sending any progress wire notification" in run {
-        val taskMethod = JsonRpcRoute[TaskReq, TaskResp, Async & Abort[JsonRpcError]]("task") {
+        val taskMethod = JsonRpcRoute[TaskReq, TaskResp]("task") {
             (_, ctx) => sendProgress(ctx, mkBegin).andThen(TaskResp(true))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -241,7 +241,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     }
 
     "MCP monotonicity: non-monotonic progress value 5.0 between 10.0 and 20.0 is dropped" in run {
-        val taskMethod = JsonRpcRoute[TaskReq, TaskResp, Async & Abort[JsonRpcError]]("task") {
+        val taskMethod = JsonRpcRoute[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 sendProgress(ctx, mkProgress(10.0)).andThen {
                     sendProgress(ctx, mkProgress(5.0)).andThen {
@@ -276,7 +276,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     }
 
     "LSP non-monotonic: all three progress values pass through in order" in run {
-        val taskMethod = JsonRpcRoute[TaskReq, TaskResp, Async & Abort[JsonRpcError]]("task") {
+        val taskMethod = JsonRpcRoute[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 sendProgress(ctx, mkProgress(10.0)).andThen {
                     sendProgress(ctx, mkProgress(5.0)).andThen {
@@ -307,7 +307,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
             AtomicRef.Unsafe.init[Maybe[Structure.Value => Unit < (Async & Abort[Closed])]](Absent)(using AllowUnsafe.embrace.danger)
         // Unsafe: AtomicBoolean.Unsafe.init for handler-done flag across fibers
         val handlerDone = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-        val taskMethod = JsonRpcRoute[TaskReq, TaskResp, Async & Abort[JsonRpcError]]("task") {
+        val taskMethod = JsonRpcRoute[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 Sync.defer(sinkRef.set(ctx.progressSink)(using AllowUnsafe.embrace.danger)).andThen {
                     Sync.defer(handlerDone.set(true)(using AllowUnsafe.embrace.danger)).andThen {
@@ -365,7 +365,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     }
 
     "callPartialResults where final response has non-absent result: it is decoded as the last chunk" in run {
-        val searchMethod = JsonRpcRoute[SearchReq, String, Async & Abort[JsonRpcError]]("search") {
+        val searchMethod = JsonRpcRoute[SearchReq, String]("search") {
             (_, ctx) =>
                 sendProgress(ctx, Structure.Value.Str("partial1")).andThen {
                     "final-result"
@@ -383,7 +383,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     }
 
     "ctx.progress extras: progress notification is built with extras captured from the inbound request" in run {
-        val taskMethod = JsonRpcRoute[TaskReq, TaskResp, Async & Abort[JsonRpcError]]("task") {
+        val taskMethod = JsonRpcRoute[TaskReq, TaskResp]("task") {
             (_, ctx) => sendProgress(ctx, mkBegin).andThen(TaskResp(true))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -405,7 +405,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     }
 
     "MCP concurrent monotonicity: two concurrent progress calls emit only the one with the larger value" in run {
-        val taskMethod = JsonRpcRoute[TaskReq, TaskResp, Async & Abort[JsonRpcError]]("task") {
+        val taskMethod = JsonRpcRoute[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 Async.zip[JsonRpcError, Unit, Unit, Any](
                     sendProgress(ctx, mkProgress(10.0)),

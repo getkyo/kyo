@@ -34,7 +34,7 @@ class WsStyleTest extends JsonRpcTest:
         // Unsafe: AtomicInt.Unsafe.init as countdown latch (init=2, decrements to 0)
         val notifLatch = AtomicInt.Unsafe.init(2)(using AllowUnsafe.embrace.danger)
 
-        val eventOnA = JsonRpcRoute[EventMsg, Unit, Async & Abort[JsonRpcError]]("server/event") {
+        val eventOnA = JsonRpcRoute[EventMsg, Unit]("server/event") {
             (msg, _) =>
                 Sync.defer {
                     discard(receivedEvents.getAndUpdate(msg.event :: _)(using AllowUnsafe.embrace.danger))
@@ -42,7 +42,7 @@ class WsStyleTest extends JsonRpcTest:
                 }
         }
 
-        val cmdOnB = JsonRpcRoute[CmdReq, CmdResp, Async & Abort[JsonRpcError]]("execute") {
+        val cmdOnB = JsonRpcRoute[CmdReq, CmdResp]("execute") {
             (req, _) => CmdResp(s"executed:${req.cmd}")
         }
 
@@ -78,7 +78,7 @@ class WsStyleTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for remaining slot promises
         val slotRest = AtomicRef.Unsafe.init(List.empty[Fiber.Promise[Unit, Any]])(using AllowUnsafe.embrace.danger)
 
-        val pingOnB = JsonRpcRoute[PingReq, PingResp, Async & Abort[JsonRpcError]]("ping") { (req, _) =>
+        val pingOnB = JsonRpcRoute[PingReq, PingResp]("ping") { (req, _) =>
             Fiber.Promise.init[Unit, Any].map { entryP =>
                 Fiber.Promise.init[Unit, Any].map { holdP =>
                     Sync.defer {
@@ -150,7 +150,7 @@ class WsStyleTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
         val capturedExtras = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
 
-        val cmdOnB = JsonRpcRoute[CmdReq, CmdResp, Async & Abort[JsonRpcError]]("execute") {
+        val cmdOnB = JsonRpcRoute[CmdReq, CmdResp]("execute") {
             (req, ctx) =>
                 Sync.defer(capturedExtras.set(ctx.extras)(using AllowUnsafe.embrace.danger)).andThen(CmdResp(req.cmd))
         }

@@ -10,8 +10,8 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     case class Empty() derives Schema, CanEqual
 
     private def mkEndpoints(
-        methodsA: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]],
-        methodsB: Seq[JsonRpcRoute[Async & Abort[JsonRpcError]]],
+        methodsA: Seq[JsonRpcRoute[?, ?, ?]],
+        methodsB: Seq[JsonRpcRoute[?, ?, ?]],
         configA: JsonRpcHandler.Config = JsonRpcHandler.Config(),
         configB: JsonRpcHandler.Config = JsonRpcHandler.Config()
     )(using Frame): (JsonRpcHandler, JsonRpcHandler) < (Sync & Async & Scope) =
@@ -36,7 +36,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     "lsp policy: unknown notification starting with dollar-slash is silently dropped" in run {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val dollarMethod = JsonRpcRoute[Empty, Unit, Async & Abort[JsonRpcError]]("$/setTrace") {
+        val dollarMethod = JsonRpcRoute[Empty, Unit]("$/setTrace") {
             (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         val lspConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcHandler.UnknownMethodPolicy.lsp)
@@ -96,7 +96,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
                 JsonRpcHandler.MessageGate.Decision.Allow
 
-        val pingMethod = JsonRpcRoute[Ping, Pong, Async & Abort[JsonRpcError]]("ping") {
+        val pingMethod = JsonRpcRoute[Ping, Pong]("ping") {
             (req, _) => Pong("pong:" + req.msg)
         }
         val gatedConfig = JsonRpcHandler.Config(gate = Present(allowGate))
@@ -115,7 +115,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val pingMethod = JsonRpcRoute[Ping, Pong, Async & Abort[JsonRpcError]]("ping") {
+        val pingMethod = JsonRpcRoute[Ping, Pong]("ping") {
             (req, _) =>
                 Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen(Pong("pong"))
         }
@@ -136,7 +136,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val eventMethod = JsonRpcRoute[Empty, Unit, Async & Abort[JsonRpcError]]("event") {
+        val eventMethod = JsonRpcRoute[Empty, Unit]("event") {
             (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         val gatedConfig = JsonRpcHandler.Config(gate = Present(rejectGate))
@@ -164,7 +164,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcHandler.MessageGate.Decision < Sync =
                 JsonRpcHandler.MessageGate.Decision.Drop
 
-        val pingMethod = JsonRpcRoute[Ping, Pong, Async & Abort[JsonRpcError]]("ping") {
+        val pingMethod = JsonRpcRoute[Ping, Pong]("ping") {
             (req, _) => Pong("pong")
         }
         val gatedConfig  = JsonRpcHandler.Config(gate = Present(dropGate))
@@ -191,7 +191,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
                     case _ =>
                         JsonRpcHandler.MessageGate.Decision.Allow
 
-        val initMethod = JsonRpcRoute[Ping, Pong, Async & Abort[JsonRpcError]]("initialize") {
+        val initMethod = JsonRpcRoute[Ping, Pong]("initialize") {
             (req, _) => Pong("initialized:" + req.msg)
         }
         val gatedConfig = JsonRpcHandler.Config(gate = Present(initGate))

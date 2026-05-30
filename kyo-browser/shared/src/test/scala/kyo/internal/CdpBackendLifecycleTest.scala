@@ -1170,7 +1170,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         Scope.run {
             for
                 (clientTransport, server) <- JsonRpcTransport.inMemory
-                versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult, Async & Abort[JsonRpcError]](
+                versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult](
                     "Browser.getVersion"
                 ) { (_, _) => testVersionResult }
                 serverCfg = JsonRpcHandler.Config(

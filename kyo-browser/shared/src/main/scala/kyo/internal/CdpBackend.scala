@@ -520,8 +520,8 @@ private[kyo] object CdpBackend:
         dialogHandlers: AtomicRef[Dict[String, (Boolean, String)]],
         dialogQueue: Channel[(Boolean, String, Maybe[SessionId])],
         dialogRecorders: AtomicRef[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]]
-    )(using Frame): JsonRpcRoute[Async & Abort[JsonRpcError]] < Sync =
-        Sync.defer(JsonRpcRoute.notification[JavascriptDialogOpeningParams, Async & Abort[JsonRpcError]](
+    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+        Sync.defer(JsonRpcRoute.notification[JavascriptDialogOpeningParams](
             "Page.javascriptDialogOpening"
         ) { (params, ctx) =>
             val sid = readSessionIdFromExtras(ctx.extras)
@@ -533,8 +533,8 @@ private[kyo] object CdpBackend:
       */
     private def buildFrameCreatedMethod(
         frameEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
-    )(using Frame): JsonRpcRoute[Async & Abort[JsonRpcError]] < Sync =
-        Sync.defer(JsonRpcRoute.notification[ExecutionContextCreatedParams, Async & Abort[JsonRpcError]](
+    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+        Sync.defer(JsonRpcRoute.notification[ExecutionContextCreatedParams](
             "Runtime.executionContextCreated"
         ) { (params, ctx) =>
             val sid        = readSessionIdFromExtras(ctx.extras)
@@ -545,8 +545,8 @@ private[kyo] object CdpBackend:
     /** Runtime.executionContextDestroyed: typed params decoded, then dispatched via dispatchFrameEvent. */
     private def buildFrameDestroyedMethod(
         frameEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
-    )(using Frame): JsonRpcRoute[Async & Abort[JsonRpcError]] < Sync =
-        Sync.defer(JsonRpcRoute.notification[ExecutionContextDestroyedParams, Async & Abort[JsonRpcError]](
+    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+        Sync.defer(JsonRpcRoute.notification[ExecutionContextDestroyedParams](
             "Runtime.executionContextDestroyed"
         ) { (params, ctx) =>
             val sid        = readSessionIdFromExtras(ctx.extras)
@@ -557,8 +557,8 @@ private[kyo] object CdpBackend:
     /** Page.downloadWillBegin notification. */
     private def buildDownloadWillMethod(
         downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
-    )(using Frame): JsonRpcRoute[Async & Abort[JsonRpcError]] < Sync =
-        Sync.defer(JsonRpcRoute.notification[PageDownload.DownloadWillBeginWire, Async & Abort[JsonRpcError]](
+    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+        Sync.defer(JsonRpcRoute.notification[PageDownload.DownloadWillBeginWire](
             "Page.downloadWillBegin"
         ) { (params, ctx) =>
             val sid = readSessionIdFromExtras(ctx.extras)
@@ -568,8 +568,8 @@ private[kyo] object CdpBackend:
     /** Page.downloadProgress notification. */
     private def buildDownloadProgressMethod(
         downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
-    )(using Frame): JsonRpcRoute[Async & Abort[JsonRpcError]] < Sync =
-        Sync.defer(JsonRpcRoute.notification[PageDownload.DownloadProgressWire, Async & Abort[JsonRpcError]](
+    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+        Sync.defer(JsonRpcRoute.notification[PageDownload.DownloadProgressWire](
             "Page.downloadProgress"
         ) { (params, ctx) =>
             val sid = readSessionIdFromExtras(ctx.extras)

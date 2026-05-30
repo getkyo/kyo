@@ -58,7 +58,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "LSP inbound cancel: handler observes cancelled and caller gets -32800" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (req, ctx) =>
                 ctx.cancelled.get.andThen(EchoResp(req.text))
         }
@@ -96,7 +96,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "LSP inbound cancel: a reply IS still sent on the transport" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (req, ctx) =>
                 ctx.cancelled.get.andThen(EchoResp(req.text))
         }
@@ -137,7 +137,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "MCP inbound cancel: no reply is sent on the transport" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (_, ctx) =>
                 ctx.cancelled.get.andThen(EchoResp("done"))
         }
@@ -184,7 +184,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         Fiber.Promise.init[Unit, Abort[Closed]].map { sendGate =>
             JsonRpcTransport.inMemory.map { (ta, tb) =>
                 val gatedTb = new GatedTransport(tb, sendGate)
-                val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+                val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
                     (req, _) => EchoResp(req.text)
                 }
                 JsonRpcHandler.init(ta, Seq.empty, mcpConfig).map { endpointA =>
@@ -233,7 +233,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "LSP outbound cancel: sends $/cancelRequest notification and call fails with -32800" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (_, ctx) => ctx.cancelled.get.andThen(EchoResp("cancelled"))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -277,7 +277,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "MCP outbound cancel: sends notifications/cancelled with requestId and reason, call fails" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (_, ctx) => ctx.cancelled.get.andThen(EchoResp("cancelled"))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -320,7 +320,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "cancel for protected method (MCP initialize) sends no notification and does not abort call" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val initOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("initialize") {
+        val initOnB = JsonRpcRoute[EchoReq, EchoResp]("initialize") {
             (req, ctx) => ctx.cancelled.get.andThen(EchoResp("initialized"))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -365,7 +365,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "cancel for already-completed call returns unit without sending a cancel notification" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (req, _) => EchoResp(req.text)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -406,7 +406,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     }
 
     "inbound cancel for absent handler id is silently dropped without error" in run {
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (req, _) => EchoResp(req.text)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -438,7 +438,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "timeout with LSP policy sends $/cancelRequest and caller fails with -32800" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val neverReturns = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val neverReturns = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (_, ctx) => ctx.cancelled.get.andThen(EchoResp("cancelled"))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -468,7 +468,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     }
 
     "timeout with cancellation=Absent sends no cancel notification; call fails locally" in run {
-        val neverReturns = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val neverReturns = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (_, _) => Async.sleep(10.seconds).andThen(EchoResp("never"))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -500,7 +500,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "handler aborts with ContentModified on cancel: wire response carries -32801 verbatim" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (_, ctx) =>
                 ctx.cancelled.get.andThen {
                     Abort.fail[JsonRpcError](JsonRpcCustomError(-32801, "Content modified"))
@@ -539,7 +539,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "cancel notification carries extras from original call (C1 extras propagation)" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (_, ctx) => ctx.cancelled.get.andThen(EchoResp("done"))
         }
         val sessionExtras = Structure.Value.Record(Chunk("session" -> Structure.Value.Str("s1")))
@@ -591,7 +591,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         // Unsafe: AtomicBoolean.Unsafe.init for cancel-fired flag across fibers
         val cancelFired = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-        val echoOnB = JsonRpcRoute[EchoReq, EchoResp, Async & Abort[JsonRpcError]]("echo") {
+        val echoOnB = JsonRpcRoute[EchoReq, EchoResp]("echo") {
             (_, ctx) => ctx.cancelled.get.andThen(EchoResp("cancelled"))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
