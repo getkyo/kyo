@@ -457,6 +457,42 @@ class TastySymbolTest extends Test:
         )
     }
 
+    // Test (Phase 25b T6-3): seeded generative test for Symbol.fullName.asString.
+    // 100 random ownership chains of 1-10 alphanumeric segments, each segment 1-8 chars.
+    // Build Symbol chain using makeClass chained from makeRoot.
+    // Assert sym.fullName.asString equals the dot-joined segment list.
+    "Symbol.fullName.asString matches dot-joined segments for 100 seeded random chains" in {
+        val rng          = new scala.util.Random(0L)
+        val alphanumeric = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        val trials       = 100
+
+        def randomSegment(): String =
+            val len = 1 + rng.nextInt(8) // 1..8 chars
+            val arr = new Array[Char](len)
+            var k   = 0
+            while k < len do
+                arr(k) = alphanumeric.charAt(rng.nextInt(alphanumeric.length))
+                k += 1
+            end while
+            new String(arr)
+        end randomSegment
+
+        val failures = (0 until trials).flatMap { i =>
+            val depth    = 1 + rng.nextInt(10) // 1..10 segments
+            val segments = (0 until depth).map(_ => randomSegment()).toList
+            val root     = makeRoot()
+            val finalSym = segments.foldLeft(root)((owner, seg) => makeClass(seg, owner))
+            val expected = segments.mkString(".")
+            val actual   = finalSym.fullName.asString
+            if actual == expected then None
+            else Some(s"trial=$i: segments=[${segments.mkString(",")}] expected='$expected' actual='$actual'")
+        }
+        assert(
+            failures.isEmpty,
+            s"Symbol.fullName.asString generative failures: ${failures.mkString("; ")}"
+        )
+    }
+
     // Phase 13 T1 gap: kind accessor on each major SymbolKind.
     // Given: synthetic symbols with each of Class, Trait, Object, Package, Method, Field kinds.
     // When: sym.kind read.

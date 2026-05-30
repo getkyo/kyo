@@ -223,4 +223,24 @@ class VarintTest extends Test:
         assert(Varint.readLongNat(view) == 9_999_999_999L)
     }
 
+    // Test (Phase 25b T6-1): seeded generative round-trip for writeLongNat / readLongNat.
+    // 100 non-negative Long values drawn from scala.util.Random(seed=0L).
+    // Negative values are masked to non-negative via >>> 1 (arithmetic unsigned shift).
+    "writeLongNat then readLongNat round-trips 100 seeded random non-negative Longs" in run {
+        val rng    = new scala.util.Random(0L)
+        val trials = 100
+        val failures = (0 until trials).flatMap { _ =>
+            val v   = rng.nextLong() >>> 1 // non-negative
+            val buf = scala.collection.mutable.ArrayBuffer.empty[Byte]
+            Varint.writeLongNat(buf, v)
+            val result = Varint.readLongNat(viewOf(buf.toArray))
+            if result == v then None
+            else Some(s"v=$v decoded=$result")
+        }
+        assert(
+            failures.isEmpty,
+            s"writeLongNat/readLongNat round-trip failures: ${failures.mkString(", ")}"
+        )
+    }
+
 end VarintTest

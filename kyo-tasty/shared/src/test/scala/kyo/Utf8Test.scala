@@ -1,5 +1,6 @@
 package kyo
 
+import java.nio.charset.StandardCharsets
 import kyo.internal.tasty.binary.Utf8
 
 class Utf8Test extends Test:
@@ -98,6 +99,45 @@ class Utf8Test extends Test:
         val result = Utf8.decode(bytes, 0, bytes.length)
         assert(result == "hello world")
         assert(result.length == 11)
+    }
+
+    // Test (Phase 25b T6-2): seeded generative round-trip for UTF-8 encode/decode.
+    // Utf8 exposes only decode; encode is s.getBytes(StandardCharsets.UTF_8), which is the same
+    // underlying platform UTF-8 codec used by each Utf8 platform implementation. Round-tripping
+    // through getBytes + Utf8.decode therefore exercises the decode path against well-formed input.
+    // 100 strings with length 0-128, drawn from BMP + 10% supplementary code points.
+    // Supplementary characters are generated as low-surrogate + high-surrogate pairs via
+    // Character.toChars so that String construction is well-formed (no unpaired surrogates).
+    "Utf8.decode round-trips 100 seeded random strings via getBytes encode" in run {
+        val rng    = new scala.util.Random(0L)
+        val trials = 100
+        val failures = (0 until trials).flatMap { i =>
+            val len = rng.nextInt(129) // 0..128 inclusive
+            val sb  = new java.lang.StringBuilder
+            var j   = 0
+            while j < len do
+                if rng.nextInt(10) == 0 then
+                    // 10% chance: supplementary code point in range U+10000..U+10FFFF
+                    val cp = 0x10000 + rng.nextInt(0x10ffff - 0x10000 + 1)
+                    sb.append(new String(Character.toChars(cp)))
+                    j += 1
+                else
+                    // BMP code point in range U+0020..U+D7FF (avoids surrogates and control codes)
+                    val cp = 0x0020 + rng.nextInt(0xd7ff - 0x0020 + 1)
+                    sb.appendCodePoint(cp)
+                    j += 1
+                end if
+            end while
+            val s      = sb.toString
+            val bytes  = s.getBytes(StandardCharsets.UTF_8)
+            val result = Utf8.decode(bytes, 0, bytes.length)
+            if result == s then None
+            else Some(s"trial=$i: input length=${s.length} result length=${result.length}")
+        }
+        assert(
+            failures.isEmpty,
+            s"Utf8 encode/decode round-trip failures: ${failures.mkString(", ")}"
+        )
     }
 
 end Utf8Test
