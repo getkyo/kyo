@@ -498,6 +498,16 @@ class YamlTest extends Test:
             assert(count == 7)
         }
 
+        "captureValue buffers a root source value without parsing later malformed content" in {
+            val reader = kyo.internal.YamlReader("[1, [unterminated")
+
+            val captured = reader.captureValue()
+
+            discard(captured.arrayStart())
+            assert(captured.hasNextElement())
+            assert(captured.int() == 1)
+        }
+
         "reader can pull a flow sequence prefix without parsing later malformed content" in {
             val reader = kyo.internal.YamlReader("[1, [unterminated")
 

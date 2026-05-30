@@ -385,6 +385,11 @@ final class YamlReader private (
                                 reader
                             case Absent => error("Expected captured YAML value")
                         end match
+                    case Nil if allowSourcePull && !prepared && source.nonEmpty =>
+                        initSourcePosition()
+                        val start = sourcePos
+                        sourcePos = source.length
+                        sourceChild(source.substring(start))
                     case _ =>
                         withDelegate(_.captureValue()) {
                             prepare()
