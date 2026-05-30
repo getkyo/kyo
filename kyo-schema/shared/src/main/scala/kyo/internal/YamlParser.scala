@@ -304,7 +304,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end readFlowText
 
     private def startsFlowCollection(text: String): Boolean =
-        text.startsWith("[") || text.startsWith("{")
+        YamlSource.startsFlowCollection(text)
+    end startsFlowCollection
 
     private def foldFlowScalarText(text: String): String =
         if !text.contains('\n') then text
@@ -515,31 +516,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end parseInlineMappingEntry
 
     private def findFlowMappingSeparator(text: String): Int =
-        var start = 0
-        var colon = findTopLevel(text, ':', start)
-        while colon >= 0 do
-            val (keyStart, keyEnd) = trimmedRange(text, 0, colon)
-            if colon == text.length - 1 || text.charAt(colon + 1).isWhitespace || quotedScalar(text, keyStart, keyEnd) then return colon
-            start = colon + 1
-            colon = findTopLevel(text, ':', start)
-        end while
-        -1
+        YamlSource.flowMappingSeparator(text)
     end findFlowMappingSeparator
 
     private def trimmedRange(text: String, start: Int, end: Int): (Int, Int) =
-        var from = start
-        var to   = end
-        while from < to && text.charAt(from).isWhitespace do from += 1
-        while to > from && text.charAt(to - 1).isWhitespace do to -= 1
-        (from, to)
+        YamlSource.trimmedRange(text, start, end)
     end trimmedRange
-
-    private def quotedScalar(text: String, start: Int, end: Int): Boolean =
-        end - start >= 2 && (
-            (text.charAt(start) == '"' && text.charAt(end - 1) == '"') ||
-                (text.charAt(start) == '\'' && text.charAt(end - 1) == '\'')
-        )
-    end quotedScalar
 
     private def parseBlockScalar[Ctx, Err, A](
         context: Ctx,
@@ -701,12 +683,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end errorAt
 
     private def currentIndent(): Int =
-        var i = pos
-        var n = 0
-        while i < input.length && input.charAt(i) == ' ' do
-            n += 1
-            i += 1
-        n
+        YamlSource.indent(input, pos)
     end currentIndent
 
     private def consumeIndent(n: Int): Unit =
@@ -717,10 +694,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end consumeIndent
 
     private def currentLineText(): String =
-        val end = input.indexOf('\n', pos) match
-            case -1 => input.length
-            case n  => n
-        input.substring(pos, end)
+        YamlSource.line(input, pos)
     end currentLineText
 
     private def isBlockMappingLine(lineText: String): Boolean =
@@ -735,14 +709,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end startsWithAtIndent
 
     private def startsWithSequenceEntryAtIndent(): Boolean =
-        val n   = currentIndent()
-        val idx = pos + n
-        idx < input.length && input.charAt(idx) == '-' && (
-            idx + 1 >= input.length ||
-                input.charAt(idx + 1) == ' ' ||
-                input.charAt(idx + 1) == '\n' ||
-                input.charAt(idx + 1) == '\r'
-        )
+        YamlSource.startsSequenceEntryAtIndent(input, pos)
     end startsWithSequenceEntryAtIndent
 
     private def readUntilMappingColon(): String =
@@ -766,22 +733,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end readRestOfLine
 
     private def stripComment(s: String): String =
-        var i      = 0
-        var single = false
-        var double = false
-        var escape = false
-        while i < s.length do
-            val ch = s.charAt(i)
-            if escape then escape = false
-            else if double && ch == '\\' then escape = true
-            else if !double && ch == '\'' then single = !single
-            else if !single && ch == '"' then double = !double
-            else if !single && !double && ch == '#' && (i == 0 || s.charAt(i - 1).isWhitespace) then
-                return s.substring(0, i)
-            end if
-            i += 1
-        end while
-        s
+        YamlSource.stripComment(s)
     end stripComment
 
     private def isInlineMappingText(s: String): Boolean =
@@ -796,30 +748,11 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end unquoteKey
 
     private def findTopLevel(s: String, target: Char): Int =
-        findTopLevel(s, target, 0)
+        YamlSource.findTopLevel(s, target)
+    end findTopLevel
 
     private def findTopLevel(s: String, target: Char, from: Int): Int =
-        var i      = from
-        var depth  = 0
-        var single = false
-        var double = false
-        var escape = false
-        while i < s.length do
-            val ch = s.charAt(i)
-            if escape then escape = false
-            else if double && ch == '\\' then escape = true
-            else if !double && ch == '\'' then single = !single
-            else if !single && ch == '"' then double = !double
-            else if !single && !double then
-                ch match
-                    case '[' | '{'                      => depth += 1
-                    case ']' | '}'                      => depth -= 1
-                    case c if c == target && depth == 0 => return i
-                    case _                              => ()
-            end if
-            i += 1
-        end while
-        -1
+        YamlSource.findTopLevel(s, target, from)
     end findTopLevel
 
     private def foldTopLevel[Ctx, Err](
@@ -886,14 +819,8 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end skipIgnorable
 
     private def skipBlankAndCommentLines(): Unit =
-        var done = false
-        while !done && pos < input.length do
-            val line    = currentLineText()
-            val trimmed = line.trim
-            if trimmed.isEmpty || trimmed.startsWith("#") then
-                val _ = readRestOfLine()
-            else done = true
-        end while
+        val next = YamlSource.skipBlankAndCommentLines(input, pos)
+        advance(next - pos)
     end skipBlankAndCommentLines
 
     private def skipToNextLine(): Unit =
@@ -905,12 +832,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def peekChar(c: Char): Boolean     = pos < input.length && input.charAt(pos) == c
 
     private def isDocumentMarker(marker: String): Boolean =
-        val lineText = currentLineText()
-        currentIndent() == 0 && lineText.startsWith(marker) && (
-            lineText.length == marker.length ||
-                lineText.charAt(marker.length).isWhitespace ||
-                lineText.charAt(marker.length) == '#'
-        )
+        YamlSource.isDocumentMarker(input, pos, marker)
     end isDocumentMarker
 
     private def advance(n: Int): Unit =

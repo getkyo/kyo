@@ -95,6 +95,8 @@ final case class YamlPlayer(name: String, hr: Int, avg: Double) derives CanEqual
 final case class YamlLeagues(american: List[String], national: List[String]) derives CanEqual
 final case class YamlEscapes(unicode: String, control: String, hex: String) derives CanEqual
 final case class YamlFlowText(doubleQuoted: String, plain: String) derives CanEqual
+final case class YamlFlowScanDoc(items: List[YamlFlowScanItem]) derives CanEqual
+final case class YamlFlowScanItem(name: String, url: String, labels: List[String]) derives CanEqual
 final case class YamlMultilineScalars(
     literalStrip: String,
     literalClip: String,
@@ -662,6 +664,35 @@ class YamlParserTest extends Test:
             assert(Yaml.decode[MTPerson](person) == Result.succeed(MTPerson("Alice", 30)))
             assert(Yaml.decode[List[Int]](numbers) == Result.succeed(List(1, 2, 3)))
             assert(Yaml.decode[YamlFlowText](text) == Result.succeed(YamlFlowText("double quoted", "plain scalar")))
+        }
+
+        "keeps parser and schema decode aligned for tricky flow collection scanning" in {
+            val yaml =
+                """{
+                  |  items: [
+                  |    { name: "Alice # admin", url: https://example.com/a:b, labels: [one, "two, too"] }, # trailing comment
+                  |    { name: Bob, url: 'urn:svc:orders', labels: [three] }
+                  |  ]
+                  |}
+                  |""".stripMargin
+            val expected = YamlFlowScanDoc(
+                List(
+                    YamlFlowScanItem("Alice # admin", "https://example.com/a:b", List("one", "two, too")),
+                    YamlFlowScanItem("Bob", "urn:svc:orders", List("three"))
+                )
+            )
+
+            assert(Yaml.decode[YamlFlowScanDoc](yaml) == Result.succeed(expected))
+            Yaml.parse(yaml).getOrThrow match
+                case Yaml.Node.Mapping(entries, _) =>
+                    assert(entries.size == 1)
+                    entries(0) match
+                        case (Yaml.Node.Scalar("items", _), Yaml.Node.Sequence(items, _)) =>
+                            assert(items.size == 2)
+                        case other => fail(s"Expected items sequence, got $other")
+                    end match
+                case other => fail(s"Expected flow mapping root, got $other")
+            end match
         }
 
         "parses flow sequence entries that are single pair mappings" in {

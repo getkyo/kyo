@@ -133,6 +133,10 @@ private[kyo] object YamlSource:
         idx < source.length && source.charAt(idx) == '{'
     end startsFlowMapping
 
+    def startsFlowCollection(text: String): Boolean =
+        text.startsWith("[") || text.startsWith("{")
+    end startsFlowCollection
+
     def isDocumentMarker(source: String, pos: Int, marker: String): Boolean =
         val text = line(source, pos)
         indent(source, pos) == 0 && text.startsWith(marker) && (
@@ -142,13 +146,37 @@ private[kyo] object YamlSource:
         )
     end isDocumentMarker
 
+    def flowMappingSeparator(text: String): Int =
+        flowMappingSeparator(text, 0, text.length)
+    end flowMappingSeparator
+
+    def flowMappingSeparator(source: String, start: Int, stop: Int): Int =
+        var current = start
+        var colon   = findTopLevel(source, ':', current, stop)
+        while colon >= 0 do
+            val (keyStart, keyEnd) = trimmedRange(source, start, colon)
+            if colon == stop - 1 || source.charAt(colon + 1).isWhitespace || quotedScalar(source, keyStart, keyEnd) then return colon
+            current = colon + 1
+            colon = findTopLevel(source, ':', current, stop)
+        end while
+        -1
+    end flowMappingSeparator
+
     def findTopLevel(s: String, target: Char): Int =
-        var i      = 0
+        findTopLevel(s, target, 0, s.length)
+    end findTopLevel
+
+    def findTopLevel(s: String, target: Char, from: Int): Int =
+        findTopLevel(s, target, from, s.length)
+    end findTopLevel
+
+    def findTopLevel(s: String, target: Char, from: Int, stop: Int): Int =
+        var i      = from
         var depth  = 0
         var single = false
         var double = false
         var escape = false
-        while i < s.length do
+        while i < stop do
             val ch = s.charAt(i)
             if escape then escape = false
             else if double && ch == '\\' then escape = true

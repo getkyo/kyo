@@ -1028,30 +1028,7 @@ final class YamlReader private (
     end sourceFlowEntryEnd
 
     private def findSourceFlowMappingSeparator(start: Int, stop: Int): Int =
-        var i      = start
-        var depth  = 0
-        var single = false
-        var double = false
-        var escape = false
-        while i < stop do
-            val ch = source.charAt(i)
-            if escape then escape = false
-            else if double && ch == '\\' then escape = true
-            else if !double && ch == '\'' then single = !single
-            else if !single && ch == '"' then double = !double
-            else if !single && !double then
-                ch match
-                    case '[' | '{' => depth += 1
-                    case ']' | '}' => depth -= 1
-                    case ':' if depth == 0 =>
-                        val (keyStart, keyEnd) = trimmedSourceRange(start, i)
-                        if i == stop - 1 || source.charAt(i + 1).isWhitespace || sourceQuotedScalar(keyStart, keyEnd) then return i
-                    case _ => ()
-                end match
-            end if
-            i += 1
-        end while
-        -1
+        YamlSource.flowMappingSeparator(source, start, stop)
     end findSourceFlowMappingSeparator
 
     private def trySourceScalarValue(): Maybe[ScalarValue] =
