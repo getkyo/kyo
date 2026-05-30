@@ -104,4 +104,47 @@ class TypeArenaTest extends Test:
         assert(c1 eq c2)
     }
 
+    // Test 6 (B8/INV-019): deeply nested Applied chain at MaxDepth+1 (1025 levels) throws DepthExceededException during merge.
+    // Uses exactly one level above the cap so the depth guard fires without exceeding the JVM stack during hash computation.
+    // Pins: INV-019, B8.
+    "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge" in run {
+        val baseSym = makeSym("DepthBase")
+        val argSym  = makeSym("DepthArg")
+        val leaf    = Tasty.Type.Named(argSym)
+        // Build MaxDepth+1 = 1025 levels of Applied nesting.
+        var t: Tasty.Type = leaf
+        var i             = 0
+        while i < (TypeArena.MaxDepth + 1) do
+            t = Tasty.Type.Applied(Tasty.Type.Named(baseSym), Chunk(t))
+            i += 1
+        end while
+        val arena = TypeArena.canonical()
+        arena.intern(t)
+        val canon = TypeArena.canonical()
+        val ex    = intercept[TypeArena.DepthExceededException](arena.merge(canon))
+        assert(ex.getMessage.contains(s"depth ${TypeArena.MaxDepth} exceeded"), ex.getMessage)
+        succeed
+    }
+
+    // Test 7 (B8 boundary): nesting at MaxDepth-1 (1023 levels) succeeds without exception.
+    // Pins: B8 boundary.
+    "B8: nesting at MaxDepth-1 (1023 levels) merges successfully" in run {
+        val baseSym = makeSym("BoundBase")
+        val argSym  = makeSym("BoundArg")
+        val leaf    = Tasty.Type.Named(argSym)
+        // Build 1023 levels of Applied nesting.
+        var t: Tasty.Type = leaf
+        var i             = 0
+        while i < (TypeArena.MaxDepth - 1) do
+            t = Tasty.Type.Applied(Tasty.Type.Named(baseSym), Chunk(t))
+            i += 1
+        end while
+        val arena = TypeArena.canonical()
+        arena.intern(t)
+        val canon = TypeArena.canonical()
+        // Should not throw.
+        arena.merge(canon)
+        assert(canon.values.nonEmpty)
+    }
+
 end TypeArenaTest

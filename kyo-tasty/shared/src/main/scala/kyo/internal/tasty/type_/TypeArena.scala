@@ -32,7 +32,7 @@ final class TypeArena:
     def merge(canonical: TypeArena): Unit =
         val inProgress = new mutable.HashMap[TypeKey, Tasty.Type]()
 
-        def recurse(t: Tasty.Type): Tasty.Type =
+        def recurse(t: Tasty.Type, depth: Int): Tasty.Type =
             t match
                 case Tasty.Type.Named(_)        => t
                 case Tasty.Type.RecThis(_)      => t
@@ -40,45 +40,50 @@ final class TypeArena:
                 case Tasty.Type.ConstantType(_) => t
                 case Tasty.Type.ThisType(_)     => t
                 case Tasty.Type.Applied(base, args) =>
-                    Tasty.Type.Applied(internRec(base), args.map(internRec))
+                    Tasty.Type.Applied(internRec(base, depth), args.map(internRec(_, depth)))
                 case Tasty.Type.Function(ps, r, ctx) =>
-                    Tasty.Type.Function(ps.map(internRec), internRec(r), ctx)
+                    Tasty.Type.Function(ps.map(internRec(_, depth)), internRec(r, depth), ctx)
                 case Tasty.Type.Tuple(elems) =>
-                    Tasty.Type.Tuple(elems.map(internRec))
+                    Tasty.Type.Tuple(elems.map(internRec(_, depth)))
                 case Tasty.Type.ByName(u) =>
-                    Tasty.Type.ByName(internRec(u))
+                    Tasty.Type.ByName(internRec(u, depth))
                 case Tasty.Type.Repeated(e) =>
-                    Tasty.Type.Repeated(internRec(e))
+                    Tasty.Type.Repeated(internRec(e, depth))
                 case Tasty.Type.Array(e) =>
-                    Tasty.Type.Array(internRec(e))
+                    Tasty.Type.Array(internRec(e, depth))
                 case Tasty.Type.AndType(l, r) =>
-                    Tasty.Type.AndType(internRec(l), internRec(r))
+                    Tasty.Type.AndType(internRec(l, depth), internRec(r, depth))
                 case Tasty.Type.OrType(l, r) =>
-                    Tasty.Type.OrType(internRec(l), internRec(r))
+                    Tasty.Type.OrType(internRec(l, depth), internRec(r, depth))
                 case Tasty.Type.Refinement(p, n, i) =>
-                    Tasty.Type.Refinement(internRec(p), n, internRec(i))
+                    Tasty.Type.Refinement(internRec(p, depth), n, internRec(i, depth))
                 case Tasty.Type.Rec(p) =>
-                    Tasty.Type.Rec(internRec(p))
+                    Tasty.Type.Rec(internRec(p, depth))
                 case Tasty.Type.Annotated(u, ann) =>
-                    Tasty.Type.Annotated(internRec(u), ann)
+                    Tasty.Type.Annotated(internRec(u, depth), ann)
                 case Tasty.Type.SuperType(s, m) =>
-                    Tasty.Type.SuperType(internRec(s), internRec(m))
+                    Tasty.Type.SuperType(internRec(s, depth), internRec(m, depth))
                 case Tasty.Type.Wildcard(lo, hi) =>
-                    Tasty.Type.Wildcard(internRec(lo), internRec(hi))
+                    Tasty.Type.Wildcard(internRec(lo, depth), internRec(hi, depth))
                 case Tasty.Type.Skolem(u) =>
-                    Tasty.Type.Skolem(internRec(u))
+                    Tasty.Type.Skolem(internRec(u, depth))
                 case Tasty.Type.MatchType(b, sc, cs) =>
-                    Tasty.Type.MatchType(internRec(b), internRec(sc), cs.map(internRec))
+                    Tasty.Type.MatchType(internRec(b, depth), internRec(sc, depth), cs.map(internRec(_, depth)))
                 case Tasty.Type.FlexibleType(u) =>
-                    Tasty.Type.FlexibleType(internRec(u))
+                    Tasty.Type.FlexibleType(internRec(u, depth))
                 case Tasty.Type.TermRef(p, n) =>
-                    Tasty.Type.TermRef(internRec(p), n)
+                    Tasty.Type.TermRef(internRec(p, depth), n)
                 case Tasty.Type.TypeLambda(ps, body) =>
-                    Tasty.Type.TypeLambda(ps, internRec(body))
+                    Tasty.Type.TypeLambda(ps, internRec(body, depth))
             end match
         end recurse
 
-        def internRec(t: Tasty.Type): Tasty.Type =
+        def internRec(t: Tasty.Type, depth: Int): Tasty.Type =
+            if depth >= TypeArena.MaxDepth then
+                throw new TypeArena.DepthExceededException(
+                    s"TypeArena.internRec depth ${TypeArena.MaxDepth} exceeded; pathological nesting"
+                )
+            end if
             val key = TypeKey.of(t)
             canonical.map.get(key) match
                 case Some(canon) => canon
@@ -87,7 +92,7 @@ final class TypeArena:
                         case Some(placeholder) => placeholder
                         case None =>
                             inProgress(key) = t
-                            val recurInterned = recurse(t)
+                            val recurInterned = recurse(t, depth + 1)
                             discard(inProgress.remove(key))
                             canonical.map(key) = recurInterned
                             recurInterned
@@ -95,7 +100,7 @@ final class TypeArena:
             end match
         end internRec
 
-        for (_, t) <- map do internRec(t)
+        for (_, t) <- map do internRec(t, 0)
     end merge
 
     /** All type values currently in this arena. */
@@ -106,6 +111,12 @@ end TypeArena
 object TypeArena:
     /** Factory for a fresh (empty) canonical arena used in Phase C. */
     def canonical(): TypeArena = new TypeArena
+
+    /** Maximum recursion depth for TypeArena.internRec before DepthExceededException is thrown. */
+    val MaxDepth: Int = 1024
+
+    /** Thrown when TypeArena.internRec encounters type nesting deeper than MaxDepth. */
+    final class DepthExceededException(msg: String) extends RuntimeException(msg)
 end TypeArena
 
 /** Structural key for Tasty.Type values used by TypeArena's hash-cons map.
