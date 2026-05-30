@@ -35,16 +35,14 @@ object SectionIndex:
       * `names` is the 0-based array produced by `NameUnpickler.read`. Section NameRefs are 0-based indices into this array.
       */
     def read(view: ByteView, names: Array[Tasty.Name])(using Frame): SectionIndex < (Sync & Abort[TastyError]) =
-        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
-        import AllowUnsafe.embrace.danger
-        val result =
+        Sync.Unsafe.defer:
             try Right(readSync(view, names))
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
                     val reason = if ex.getMessage != null then ex.getMessage else "unexpected end while reading section headers"
                     Left(TastyError.MalformedSection("SectionIndex", reason, view.position))
-        result match
-            case Right(idx) => Sync.defer(idx)
+        .map:
+            case Right(idx) => idx
             case Left(err)  => Abort.fail(err)
     end read
 

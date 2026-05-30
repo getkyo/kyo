@@ -30,19 +30,24 @@ object Constant:
     def fromTastyTag(tag: Int, view: ByteView, session: TypeUnpickler.DecodeSession)(using
         frame: Frame
     ): Tasty.Constant < (Sync & Abort[TastyError]) =
-        val result =
-            try Right(decodeConstant(tag, view, session, frame))
+        Sync.Unsafe.defer:
+            try Right(decodeConstant(tag, view, session, frame, summon[AllowUnsafe]))
             catch
                 case _: ArrayIndexOutOfBoundsException =>
                     Left(TastyError.MalformedSection("ASTs", s"unexpected end while reading constant tag $tag", view.position))
-        result match
-            case Right(c)  => Sync.defer(c)
+        .map:
+            case Right(c)  => c
             case Left(err) => Abort.fail(err)
     end fromTastyTag
 
-    private def decodeConstant(tag: Int, view: ByteView, session: TypeUnpickler.DecodeSession, frame: Frame): Tasty.Constant =
-        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    private def decodeConstant(
+        tag: Int,
+        view: ByteView,
+        session: TypeUnpickler.DecodeSession,
+        frame: Frame,
+        allow: AllowUnsafe
+    ): Tasty.Constant =
+        given AllowUnsafe = allow
         tag match
             case TastyFormat.UNITconst  => Tasty.Constant.UnitConst
             case TastyFormat.FALSEconst => Tasty.Constant.BooleanConst(false)

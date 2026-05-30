@@ -15,9 +15,7 @@ import kyo.internal.tasty.symbol.SingleAssign
 final class ClasspathRef private (private val slot: SingleAssign[Tasty.Classpath]):
 
     /** Assign the Classpath. Called by Phase 7 orchestration. Throws if already assigned. */
-    def assign(cp: Tasty.Classpath): Unit =
-        // Unsafe: SingleAssign.set() is an unsafe-tier helper called inside Phase 7 orchestration.
-        import AllowUnsafe.embrace.danger
+    def assign(cp: Tasty.Classpath)(using AllowUnsafe): Unit =
         slot.set(cp)
     end assign
 

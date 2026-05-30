@@ -27,9 +27,7 @@ object TypeOps:
     private val SingletonFqn          = "scala.Singleton"
 
     /** Smart constructor for APPLIEDtype normalization. */
-    def applied(base: Tasty.Type, args: Chunk[Tasty.Type]): Tasty.Type =
-        // Unsafe: Symbol.fullName and Name.asString require AllowUnsafe; embraced here in type-normalization context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    def applied(base: Tasty.Type, args: Chunk[Tasty.Type])(using AllowUnsafe): Tasty.Type =
         base match
             case Tasty.Type.Named(sym) =>
                 val fqn = sym.fullName.asString
@@ -50,9 +48,7 @@ object TypeOps:
     end applied
 
     /** Smart constructor for ANDtype normalization: collapse AndType(Singleton, X) or AndType(X, Singleton) to X. */
-    def andType(left: Tasty.Type, right: Tasty.Type): Tasty.Type =
-        // Unsafe: Symbol.fullName and Name.asString require AllowUnsafe; embraced here in type-normalization context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    def andType(left: Tasty.Type, right: Tasty.Type)(using AllowUnsafe): Tasty.Type =
         (left, right) match
             case (Tasty.Type.Named(sym), _) if sym.fullName.asString == SingletonFqn => right
             case (_, Tasty.Type.Named(sym)) if sym.fullName.asString == SingletonFqn => left

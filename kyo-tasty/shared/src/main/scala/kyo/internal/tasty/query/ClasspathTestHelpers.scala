@@ -14,11 +14,11 @@ object ClasspathTestHelpers:
 
     /** Assign homes for all symbols in `cp` to `cp`. For internal test helpers only. */
     private[kyo] def assignHomesForTest(cp: Classpath): Unit =
-        // Inside object Tasty, Classpath is transparent: the internal and public opaque types alias at runtime.
-        import AllowUnsafe.embrace.danger
-        val syms = cp.allSymbols
-        val seen = new java.util.HashSet[ClasspathRef]()
-        var i    = 0
+        // flow-allow: §839 case 3; test-helper boundary; single-fiber synchronous home assignment after classpath construction.
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        val syms          = cp.allSymbols
+        val seen          = new java.util.HashSet[ClasspathRef]()
+        var i             = 0
         while i < syms.length do
             val ref = syms(i).home
             if seen.add(ref) then ref.assign(Tasty.Classpath.wrap(cp))
@@ -28,7 +28,8 @@ object ClasspathTestHelpers:
 
     /** Assign the given extra symbols' ClasspathRef slots to `cp`. For internal test helpers only. */
     private[kyo] def assignExtraHomes(cp: Tasty.Classpath, extra: Seq[Tasty.Symbol]): Unit =
-        import AllowUnsafe.embrace.danger
+        // flow-allow: §839 case 3; test-helper boundary; single-fiber synchronous home assignment after classpath construction.
+        given AllowUnsafe = AllowUnsafe.embrace.danger
         for sym <- extra do
             if !sym.home.isAssigned then sym.home.assign(cp)
     end assignExtraHomes

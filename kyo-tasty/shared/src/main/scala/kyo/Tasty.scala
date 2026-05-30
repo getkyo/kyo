@@ -417,7 +417,7 @@ object Tasty:
         case FlexibleType(underlying: Type)
 
         def show: String =
-            // Unsafe: sym.fullName requires AllowUnsafe; embraced here at the diagnostic display boundary (§839 case 3).
+            // flow-allow: §839 case 3; diagnostic display boundary; reads immutable interned Name strings.
             import AllowUnsafe.embrace.danger
             import Name.asString
             this match
@@ -844,8 +844,7 @@ object Tasty:
           * computed separately via computeBinaryName.
           */
         private[Tasty] def computeFullName(s: Symbol): Name =
-            // Unsafe: name.asString requires AllowUnsafe; embraced here because this method runs only as an
-            // OnceCell init thunk (initialization context, §839 case 3).
+            // flow-allow: §839 case 3; OnceCell init thunk for fullName; reads immutable interned Name strings.
             import AllowUnsafe.embrace.danger
             val parts = new scala.collection.mutable.ArrayBuffer[String]()
             var cur   = s
@@ -860,8 +859,7 @@ object Tasty:
         end computeFullName
 
         private[Tasty] def computeBinaryName(s: Symbol): String =
-            // Unsafe: name.asString requires AllowUnsafe; embraced here because binaryName is a pure
-            // computation from interned Names (initialization context, §839 case 3).
+            // flow-allow: §839 case 3; pure binaryName computation from immutable interned Names.
             import AllowUnsafe.embrace.danger
             // Walk owner chain producing JVM binary form:
             //   - packages (kind == Package) contribute segments separated by '/'
@@ -988,7 +986,7 @@ object Tasty:
         ) extends Origin:
 
             private[kyo] def addrMap: IntMap[Tasty.Symbol] =
-                // Unsafe: SingleAssign.get() is unsafe-tier; private[kyo] limits callers to kyo.internal.tasty.* §839 case 3 contexts.
+                // flow-allow: §839 case 3; private[kyo] accessor; callers are kyo.internal.tasty.* decode contexts.
                 import AllowUnsafe.embrace.danger
                 if _addrMap.isSet then _addrMap.get()
                 else IntMap.empty
@@ -1008,6 +1006,7 @@ object Tasty:
               * TastyOrigin initializer runs once at class load.
               */
             val empty: TastyOrigin =
+                // flow-allow: §839 case 3; module-load init; TastyOrigin.empty allocated once at object initialization.
                 import AllowUnsafe.embrace.danger
                 new TastyOrigin(
                     0,
@@ -1105,7 +1104,7 @@ object Tasty:
         /** Create a classpath from pre-parsed in-memory pickles. */
         def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < Sync =
             kyo.internal.tasty.query.Classpath.allocate.map: cp =>
-                // Unsafe: atomic state write; single-threaded in Sync.map lambda, no concurrent access.
+                // flow-allow: §839 case 3; single-threaded Sync.map lambda; atomic state write to fresh Classpath.
                 import AllowUnsafe.embrace.danger
                 kyo.internal.tasty.query.Classpath.transitionToReady(
                     cp,
@@ -1158,9 +1157,8 @@ object Tasty:
                         if exists then
                             // Try to load from snapshot using mmap on JVM/Native, heap on JS.
                             kyo.internal.tasty.query.Classpath.allocate.flatMap: cp =>
-                                Scope.ensure(Sync.defer {
-                                    // Unsafe: atomic state write; called from Scope finalizer.
-                                    import AllowUnsafe.embrace.danger
+                                Scope.ensure(Sync.Unsafe.defer {
+                                    // flow-allow: §839 case 3; Scope finalizer; atomic state write to close Classpath.
                                     kyo.internal.tasty.query.Classpath.close(cp)
                                 }).andThen:
                                     Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source, cp)).flatMap:
@@ -1182,8 +1180,7 @@ object Tasty:
           * each slot is assigned exactly once.
           */
         private def assignHomes(cp: kyo.internal.tasty.query.Classpath, cpPublic: Classpath): Unit =
-            // Inside object Tasty, Classpath is transparent: cp (internal) == cpPublic (opaque) at runtime.
-            // We use AllowUnsafe to read allSymbols without an effect context.
+            // flow-allow: §839 case 3; home assignment after classpath construction; single-fiber synchronous init.
             import AllowUnsafe.embrace.danger
             val syms = cp.allSymbols
             val seen = new java.util.HashSet[kyo.internal.tasty.query.ClasspathRef]()
@@ -1305,6 +1302,8 @@ object Tasty:
           *   the classpath used for transitive parent-chain resolution (accessed via pure AllowUnsafe reads)
           */
         def isSubtypeOf(other: Type)(using cp: Classpath): SubtypeVerdict =
+            // flow-allow: §839 case 3; pure accessor on immutable post-open parent-chain slots; no suspension required.
+            given AllowUnsafe = AllowUnsafe.embrace.danger
             kyo.internal.tasty.type_.Subtyping.isSubtype(t, other, cp, budget = 64)
     end extension
 

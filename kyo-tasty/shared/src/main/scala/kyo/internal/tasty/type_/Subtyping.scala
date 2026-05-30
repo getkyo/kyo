@@ -56,9 +56,7 @@ object Subtyping:
       * @param budget
       *   remaining Rec-unfolding steps; 0 means return Unknown
       */
-    def isSubtype(sub: Tasty.Type, sup: Tasty.Type, cp: InternalClasspath, budget: Int): SubtypeVerdict =
-        // Unsafe: Symbol.fullName and Name.asString require AllowUnsafe; embraced here in the subtype-check context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    def isSubtype(sub: Tasty.Type, sup: Tasty.Type, cp: InternalClasspath, budget: Int)(using AllowUnsafe): SubtypeVerdict =
         if budget <= 0 then Unknown
         else
             // Any is supertype of everything
@@ -178,10 +176,7 @@ object Subtyping:
         supSym: Tasty.Symbol,
         cp: InternalClasspath,
         budget: Int
-    ): SubtypeVerdict =
-        // Unsafe: SingleAssign is an unsafe-tier helper; AllowUnsafe is embraced here for the parents accessor.
-        // Reading immutable Ready-state data set during open, before any user access.
-        import AllowUnsafe.embrace.danger
+    )(using AllowUnsafe): SubtypeVerdict =
         if subSym._parents.isSet then
             val parents = subSym._parents.get()
             checkParents(parents, supSym, cp, budget)
@@ -197,7 +192,7 @@ object Subtyping:
         supSym: Tasty.Symbol,
         cp: InternalClasspath,
         budget: Int
-    ): SubtypeVerdict =
+    )(using AllowUnsafe): SubtypeVerdict =
         if parents.isEmpty then NotSub
         else
             parents.head match
@@ -237,10 +232,7 @@ object Subtyping:
         baseSymOpt: Maybe[Tasty.Symbol],
         cp: InternalClasspath,
         budget: Int
-    ): SubtypeVerdict =
-        // Unsafe: SingleAssign is an unsafe-tier helper.
-        // Reading immutable Ready-state data set during open, before any user access.
-        import AllowUnsafe.embrace.danger
+    )(using AllowUnsafe): SubtypeVerdict =
         val typeParamsOpt: Maybe[Chunk[Tasty.Symbol]] = baseSymOpt.flatMap: baseSym =>
             if baseSym._typeParams.isSet then Maybe(baseSym._typeParams.get())
             else Maybe.Absent
@@ -254,7 +246,7 @@ object Subtyping:
         idx: Int,
         cp: InternalClasspath,
         budget: Int
-    ): SubtypeVerdict =
+    )(using AllowUnsafe): SubtypeVerdict =
         if idx >= subArgs.length then Sub
         else
             val subArg = subArgs(idx)

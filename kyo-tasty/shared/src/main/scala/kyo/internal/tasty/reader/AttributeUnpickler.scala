@@ -59,7 +59,7 @@ object AttributeUnpickler:
       * this array.
       */
     def read(view: ByteView, names: Array[Tasty.Name])(using Frame): FileAttributes < (Sync & Abort[TastyError]) =
-        val result =
+        Sync.Unsafe.defer:
             try Right(readSync(view, names))
             catch
                 case _: ArrayIndexOutOfBoundsException =>
@@ -67,14 +67,12 @@ object AttributeUnpickler:
                     Left(TastyError.MalformedSection("Attributes", "unexpected end of attributes section", 0L))
                 case e: UnknownTagException =>
                     Left(TastyError.MalformedSection("Attributes", s"Unknown attribute tag ${e.tag} at position ${e.pos}", e.pos.toLong))
-        result match
-            case Right(fa) => Sync.defer(fa)
+        .map:
+            case Right(fa) => fa
             case Left(err) => Abort.fail(err)
     end read
 
-    private def readSync(view: ByteView, names: Array[Tasty.Name]): FileAttributes =
-        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    private def readSync(view: ByteView, names: Array[Tasty.Name])(using AllowUnsafe): FileAttributes =
         var explicitNulls             = false
         var captureChecked            = false
         var isJava                    = false

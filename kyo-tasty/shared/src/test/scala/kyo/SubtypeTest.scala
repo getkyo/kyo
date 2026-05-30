@@ -238,6 +238,7 @@ class SubtypeTest extends Test:
     // if a deeply-nested Rec type exhausted the budget during a real check.
     "budget exhaustion returns Unknown" in run {
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+            import AllowUnsafe.embrace.danger
             val stringSym  = makeSym("java.lang.String")
             val intSym     = makeSym("scala.Int")
             val stringType = Tasty.Type.Named(stringSym)

@@ -43,7 +43,7 @@ object NameUnpickler:
       * Returns an `Array[Tasty.Name]` indexed 0-based matching the NameRef convention used by the section table.
       */
     def read(view: ByteView, interner: Interner)(using Frame): Array[Tasty.Name] < (Sync & Abort[TastyError]) =
-        val result =
+        Sync.Unsafe.defer:
             try Right(readUnsafe(view, interner))
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
@@ -52,14 +52,12 @@ object NameUnpickler:
                 case ex: java.lang.Error
                     if ex.getCause != null && ex.getCause.isInstanceOf[ArrayIndexOutOfBoundsException] =>
                     Left(TastyError.MalformedSection("Names", "unexpected end of name table", view.position))
-        result match
-            case Right(names) => Sync.defer(names)
+        .map:
+            case Right(names) => names
             case Left(err)    => Abort.fail(err)
     end read
 
-    private def readUnsafe(view: ByteView, interner: Interner): Array[Tasty.Name] =
-        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    private def readUnsafe(view: ByteView, interner: Interner)(using AllowUnsafe): Array[Tasty.Name] =
         val nameTableByteCount = view.readNat()
         val nameTableEnd       = view.position + nameTableByteCount
         val buf                = new scala.collection.mutable.ArrayBuffer[Tasty.Name]()

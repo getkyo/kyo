@@ -103,9 +103,8 @@ object ClasspathOrchestrator:
         concurrency: Int
     )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         Classpath.allocate.flatMap: cp =>
-            Scope.ensure(Sync.defer {
+            Scope.ensure(Sync.Unsafe.defer {
                 // Unsafe: atomic state write; called from Scope finalizer.
-                import AllowUnsafe.embrace.danger
                 Classpath.close(cp)
             }).andThen:
                 openInto(roots, strict, source, concurrency, cp).andThen:
@@ -371,16 +370,14 @@ object ClasspathOrchestrator:
         val moduleIndex  = state.moduleIndex.toMap
 
         TastyStat.scope.traceSpan("finalize.placeholderResolve") {
-            Sync.defer:
+            Sync.Unsafe.defer:
                 for fr <- fileResults do
                     canonical.merge(fr.arena)
                 end for
 
                 // Phase C: resolve all UnresolvedRef placeholders accumulated during Phase B decode.
                 // All arenas merged and fqnIndex fully populated above, so lookups are complete.
-                // Unsafe: replaceSlot.set uses AllowUnsafe (covered by the import below).
                 val allPlaceholders = Chunk.from(fileResults).flatMap(_.placeholders)
-                import AllowUnsafe.embrace.danger
                 for placeholder <- allPlaceholders do
                     fqnIndex.get(placeholder.fqn) match
                         case Some(sym) =>
@@ -390,9 +387,7 @@ object ClasspathOrchestrator:
                 end for
         }.andThen:
             TastyStat.scope.traceSpan("finalize.assignSymbolFields") {
-                Sync.defer:
-                    // Unsafe: .set() calls on OnceCell fields require AllowUnsafe (covered by the import below).
-                    import AllowUnsafe.embrace.danger
+                Sync.Unsafe.defer:
                     // After G13 placeholder resolution: assign _parents, _typeParams, _declarations on TASTy symbols.
                     for fr <- fileResults do
                         for (sym, parents) <- fr.parentsBySymbol do
@@ -446,10 +441,8 @@ object ClasspathOrchestrator:
                     end for
             }.andThen:
                 TastyStat.scope.traceSpan("finalize.transitionToReady") {
-                    Sync.defer:
+                    Sync.Unsafe.defer:
                         // Add errors accumulated during Building state (e.g., from root validation)
-                        // Unsafe: stateRef.unsafe.get() read of Building state, single-threaded Phase C merge
-                        import AllowUnsafe.embrace.danger
                         cp.stateRef.unsafe.get() match
                             case b: Classpath.State.Building => accErrors ++= b.errors
                             case _                           => ()
@@ -534,11 +527,11 @@ object ClasspathOrchestrator:
         interner: Interner,
         cp: Classpath
     )(using Frame): FileResult < (Sync & Abort[TastyError]) =
-        // Unsafe: Symbol.fullName requires AllowUnsafe; embraced here in the orchestration decode context (§839 case 3).
-        import AllowUnsafe.embrace.danger
-        val view  = ByteView(bytes)
-        val home  = ClasspathRef.init()
-        val arena = new TypeArena
+        // flow-allow: §839 case 3; all Name.asString calls in the yield block read immutable intern-pool strings; no suspension required.
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        val view          = ByteView(bytes)
+        val home          = ClasspathRef.init()
+        val arena         = new TypeArena
         for
             _        <- timed(TastyPerfStats.tastyHeaderNs)(TastyHeader.read(view))
             names    <- timed(TastyPerfStats.nameUnpicklerNs)(NameUnpickler.read(view, interner))
@@ -587,9 +580,7 @@ object ClasspathOrchestrator:
     end decodeTastyBytes
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
-    private def nameToString(n: Tasty.Name): String =
-        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the orchestration context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    private def nameToString(n: Tasty.Name)(using AllowUnsafe): String =
         import Tasty.Name.asString
         n.asString
     end nameToString

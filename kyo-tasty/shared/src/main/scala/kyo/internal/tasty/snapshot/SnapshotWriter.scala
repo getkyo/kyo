@@ -57,7 +57,7 @@ object SnapshotWriter:
 
     /** Serialize a Classpath to KRFL bytes, embedding the given input digest in the file header. */
     private def serialize(cp: Classpath, digest: Array[Byte]): Array[Byte] =
-        // Unsafe: stateRef.unsafe.get() non-effectful read of immutable Ready state for snapshot serialization
+        // flow-allow: §839 case 3; snapshot serialization boundary; single-fiber synchronous read of immutable Ready-state data.
         import AllowUnsafe.embrace.danger
         val allSymbols = cp.stateRef.unsafe.get() match
             case s: Classpath.State.Ready => s.allSymbols
@@ -361,9 +361,7 @@ object SnapshotWriter:
     end serializeSymbolRelLists
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
-    private def nameToStr(n: Tasty.Name): String =
-        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the snapshot-serialization context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    private def nameToStr(n: Tasty.Name)(using AllowUnsafe): String =
         import Tasty.Name.asString
         n.asString
     end nameToStr

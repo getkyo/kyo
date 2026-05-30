@@ -118,8 +118,7 @@ object SnapshotReader:
         bytes: Array[Byte],
         cp: Classpath
     ): Unit =
-        // Unsafe: readSymbols / readSymbolsMapped allocate SingleAssign and ClasspathRef slots; AllowUnsafe is
-        // embraced here in the snapshot-deserialize context (§839 case 3 -- single-threaded, no suspension).
+        // flow-allow: §839 case 3; snapshot-deserialize boundary; single-fiber synchronous symbol graph reconstruction.
         import AllowUnsafe.embrace.danger
         // Parse section index (starts at offset 32)
         val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
@@ -236,8 +235,7 @@ object SnapshotReader:
       * from the mapped view and throws IllegalStateException, which Symbol.body catches as ClasspathClosed.
       */
     private def deserializeMapped(path: String, view: ByteView, cp: Classpath): Unit =
-        // Unsafe: readSymbolsMapped allocates SingleAssign and ClasspathRef slots; AllowUnsafe is
-        // embraced here in the snapshot-deserializeMapped context (§839 case 3 -- single-threaded, no suspension).
+        // flow-allow: §839 case 3; snapshot-deserialize-mmap boundary; single-fiber synchronous symbol graph reconstruction.
         import AllowUnsafe.embrace.danger
         // Read the section index from the view.
         // SnapshotFormat.readInt32LE needs an Array[Byte]; copy 36+ bytes from the view for parsing.

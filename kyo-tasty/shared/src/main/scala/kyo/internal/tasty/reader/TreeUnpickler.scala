@@ -62,8 +62,7 @@ object TreeUnpickler:
       * @param sym
       *   the symbol whose body is being decoded; used to determine body-slice layout (VALDEF / DEFDEF / class / package).
       */
-    def decodeSync(origin: Tasty.Symbol.TastyOrigin, sym: Tasty.Symbol): Tasty.Tree =
-        import AllowUnsafe.embrace.danger
+    def decodeSync(origin: Tasty.Symbol.TastyOrigin, sym: Tasty.Symbol)(using AllowUnsafe): Tasty.Tree =
         val addrMap = origin.addrMap
         val names   = origin.names
         // Prefer the pre-constructed ByteView (mmap-backed) if present; otherwise build from sectionBytes.
@@ -951,8 +950,7 @@ object TreeUnpickler:
       * selector is returned as a Tree.Ident built from the imported name. Wildcards and omit-selectors that dotty may emit as bare IMPORTED
       * with a wildcard name are handled the same way.
       */
-    private def readImportSelectors(view: ByteView, end: Long, ctx: DecodeCtx): Chunk[Tasty.Tree] =
-        import AllowUnsafe.embrace.danger
+    private def readImportSelectors(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): Chunk[Tasty.Tree] =
         val buf = new scala.collection.mutable.ArrayBuffer[Tasty.Tree]()
         while view.position < end do
             val peek = view.peekByte(view.position) & 0xff

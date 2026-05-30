@@ -54,6 +54,7 @@ class TypeOpsTest extends Test:
 
     // Test 6: applied(Named(scala.Function2), Chunk(A, B, C)) produces Function(Chunk(A, B), C, false).
     "applied(Named(scala.Function2), [A, B, C]) => Function([A, B], C, false)" in run {
+        import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.Function2")
         val result = TypeOps.applied(base, Chunk(A, B, C))
         result match
@@ -68,6 +69,7 @@ class TypeOpsTest extends Test:
 
     // Test 7: applied(Named(scala.Tuple2), Chunk(A, B)) produces Tuple(Chunk(A, B)).
     "applied(Named(scala.Tuple2), [A, B]) => Tuple([A, B])" in run {
+        import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.Tuple2")
         val result = TypeOps.applied(base, Chunk(A, B))
         result match
@@ -80,6 +82,7 @@ class TypeOpsTest extends Test:
 
     // Test 8: applied(Named(scala.ContextFunction1), Chunk(A, B)) produces Function(Chunk(A), B, true).
     "applied(Named(scala.ContextFunction1), [A, B]) => Function([A], B, true)" in run {
+        import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.ContextFunction1")
         val result = TypeOps.applied(base, Chunk(A, B))
         result match
@@ -94,6 +97,7 @@ class TypeOpsTest extends Test:
 
     // Test 9: applied(Named(scala.Array), Chunk(T)) produces Type.Array(T).
     "applied(Named(scala.Array), [T]) => Array(T)" in run {
+        import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.Array")
         val result = TypeOps.applied(base, Chunk(T))
         result match
@@ -106,6 +110,7 @@ class TypeOpsTest extends Test:
 
     // Test 10: andType(Named(scala.Singleton), X) collapses to X.
     "andType(Named(scala.Singleton), X) => X" in run {
+        import AllowUnsafe.embrace.danger
         val singleton = makeNamedSym("scala.Singleton")
         val result    = TypeOps.andType(singleton, X)
         assert(result eq X)
@@ -113,6 +118,7 @@ class TypeOpsTest extends Test:
 
     // Test 11: andType(X, Named(scala.Singleton)) collapses to X.
     "andType(X, Named(scala.Singleton)) => X" in run {
+        import AllowUnsafe.embrace.danger
         val singleton = makeNamedSym("scala.Singleton")
         val result    = TypeOps.andType(X, singleton)
         assert(result eq X)

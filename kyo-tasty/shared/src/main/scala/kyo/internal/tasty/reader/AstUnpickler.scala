@@ -93,9 +93,9 @@ object AstUnpickler:
         attrs: FileAttributes,
         home: ClasspathRef,
         arena: TypeArena
-    )(using Frame): Pass1Result < (Sync & Abort[TastyError]) =
-        val result =
-            try Right(runPass1(view, names, attrs, home, arena))
+    )(using frame: Frame): Pass1Result < (Sync & Abort[TastyError]) =
+        Sync.Unsafe.defer:
+            try Right(runPass1(view, names, attrs, home, arena)(using frame, summon[AllowUnsafe]))
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
                     Left(TastyError.MalformedSection("ASTs", s"unexpected end: ${ex.getMessage}", view.position))
@@ -104,8 +104,8 @@ object AstUnpickler:
                     Left(TastyError.MalformedSection("ASTs", s"unexpected end: ${ex.getCause.getMessage}", view.position))
                 case ex: Exception =>
                     Left(TastyError.MalformedSection("ASTs", s"parse error: ${ex.getMessage}", view.position))
-        result match
-            case Right(r)  => Sync.defer(r)
+        .map:
+            case Right(r)  => r
             case Left(err) => Abort.fail(err)
     end readPass1
 
@@ -115,10 +115,7 @@ object AstUnpickler:
         attrs: FileAttributes,
         home: ClasspathRef,
         arena: TypeArena
-    )(using Frame): Pass1Result =
-        // Unsafe: InternalSymbol.makeSymbol, TastyOrigin.init, and SingleAssign operations are unsafe-tier helpers;
-        // embraced here in the pass-1 decode context (§839 case 3 -- single-fiber TASTy decode, no suspension).
-        import AllowUnsafe.embrace.danger
+    )(using Frame, AllowUnsafe): Pass1Result =
         val addrMap         = new mutable.HashMap[Int, Tasty.Symbol]()
         val allSymbols      = new mutable.ArrayBuffer[Tasty.Symbol]()
         val ownerStack      = new mutable.ArrayDeque[Tasty.Symbol]()
@@ -741,9 +738,9 @@ object AstUnpickler:
     end extractPackageName
 
     /** Recursively read a package path, prepending each segment to `segments`. */
-    private def extractPackagePathSegments(view: ByteView, names: Array[Tasty.Name], segments: mutable.ArrayBuffer[String]): Unit =
-        // Unsafe: Name.asString requires AllowUnsafe; embraced here in the decode-pass context (§839 case 3).
-        import AllowUnsafe.embrace.danger
+    private def extractPackagePathSegments(view: ByteView, names: Array[Tasty.Name], segments: mutable.ArrayBuffer[String])(using
+        AllowUnsafe
+    ): Unit =
         val pathTag = view.readByte() & 0xff
         pathTag match
             case TastyFormat.TERMREFpkg =>

@@ -526,9 +526,7 @@ object Scala2PickleReader:
     // Helpers
     // -------------------------------------------------------------------------
 
-    private def buildAnyRefParent(home: ClasspathRef): Tasty.Type =
-        // flow-allow: §839 case 3 -- Scala 2 pickle decode context; single-fiber synchronous allocation.
-        import AllowUnsafe.embrace.danger
+    private def buildAnyRefParent(home: ClasspathRef)(using AllowUnsafe): Tasty.Type =
         val anyRefSym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             new Tasty.Flags(Tasty.Flag.Scala2.bit | Tasty.Flag.JavaDefined.bit),
