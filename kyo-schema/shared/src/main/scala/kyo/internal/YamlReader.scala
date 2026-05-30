@@ -995,7 +995,7 @@ final class YamlReader private (
     private def normalizeSourceFlowValue(value: String): String =
         val trimmed = value.trim
         if !trimmed.contains('\n') || trimmed.startsWith("[") || trimmed.startsWith("{") then trimmed
-        else trimmed.linesIterator.map(_.trim).filter(_.nonEmpty).mkString(" ")
+        else YamlSource.foldFlowScalarText(trimmed)
     end normalizeSourceFlowValue
 
     private def sourceFlowEntryEnd(close: Char): Int =

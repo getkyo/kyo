@@ -308,8 +308,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end startsFlowCollection
 
     private def foldFlowScalarText(text: String): String =
-        if !text.contains('\n') then text
-        else text.linesIterator.map(_.trim).filter(_.nonEmpty).mkString(" ")
+        YamlSource.foldFlowScalarText(text)
     end foldFlowScalarText
 
     private def closedSingleQuoted(valueText: String): Boolean =

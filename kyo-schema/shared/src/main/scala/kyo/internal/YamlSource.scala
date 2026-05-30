@@ -67,22 +67,21 @@ private[kyo] object YamlSource:
     end skipFlowWhitespace
 
     def stripComment(s: String): String =
-        var i      = 0
-        var single = false
-        var double = false
-        var escape = false
-        while i < s.length do
-            val ch = s.charAt(i)
-            if escape then escape = false
-            else if double && ch == '\\' then escape = true
-            else if !double && ch == '\'' then single = !single
-            else if !single && ch == '"' then double = !double
-            else if !single && !double && ch == '#' && (i == 0 || s.charAt(i - 1).isWhitespace) then
-                return s.substring(0, i)
+        @tailrec def loop(i: Int, single: Boolean, double: Boolean, escape: Boolean): String =
+            if i >= s.length then s
+            else
+                val ch = s.charAt(i)
+                if escape then loop(i + 1, single, double, false)
+                else if double && ch == '\\' then loop(i + 1, single, double, true)
+                else if !double && ch == '\'' then loop(i + 1, !single, double, false)
+                else if !single && ch == '"' then loop(i + 1, single, !double, false)
+                else if !single && !double && ch == '#' && (i == 0 || s.charAt(i - 1).isWhitespace) then s.substring(0, i)
+                else loop(i + 1, single, double, false)
+                end if
             end if
-            i += 1
-        end while
-        s
+        end loop
+
+        loop(0, single = false, double = false, escape = false)
     end stripComment
 
     def trimmedRange(source: String, start: Int, stop: Int): (Int, Int) =
@@ -105,6 +104,57 @@ private[kyo] object YamlSource:
         while end < text.length && !text.charAt(end).isWhitespace do end += 1
         (text.substring(0, end), text.substring(end).trim)
     end propertyToken
+
+    def foldFlowScalarText(text: String): String =
+        if text.indexOf('\n') < 0 && text.indexOf('\r') < 0 then text
+        else
+            val out = new StringBuilder
+
+            @tailrec def lineStop(i: Int): Int =
+                if i >= text.length || text.charAt(i) == '\n' || text.charAt(i) == '\r' then i
+                else lineStop(i + 1)
+            end lineStop
+
+            @tailrec def trimStart(i: Int, stop: Int): Int =
+                if i < stop && text.charAt(i).isWhitespace then trimStart(i + 1, stop)
+                else i
+            end trimStart
+
+            @tailrec def trimEnd(start: Int, stop: Int): Int =
+                if stop > start && text.charAt(stop - 1).isWhitespace then trimEnd(start, stop - 1)
+                else stop
+            end trimEnd
+
+            @tailrec def appendRange(i: Int, stop: Int): Unit =
+                if i < stop then
+                    out.append(text.charAt(i))
+                    appendRange(i + 1, stop)
+            end appendRange
+
+            @tailrec def loop(start: Int, append: Boolean): Unit =
+                if start <= text.length then
+                    val stop = lineStop(start)
+                    val from = trimStart(start, stop)
+                    val to   = trimEnd(from, stop)
+                    val nextAppend =
+                        if from < to then
+                            if append then out.append(' ')
+                            appendRange(from, to)
+                            true
+                        else append
+                    end nextAppend
+                    val nextStart =
+                        if stop >= text.length then text.length + 1
+                        else if text.charAt(stop) == '\r' && stop + 1 < text.length && text.charAt(stop + 1) == '\n' then stop + 2
+                        else stop + 1
+                    loop(nextStart, nextAppend)
+                end if
+            end loop
+
+            loop(0, append = false)
+            out.result()
+        end if
+    end foldFlowScalarText
 
     def startsSequenceEntryAtIndent(source: String, pos: Int): Boolean =
         val n   = indent(source, pos)
