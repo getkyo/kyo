@@ -29,7 +29,39 @@ private[kyo] object PerfCounters:
     val commentsUnpicklerTimeNs: AtomicLong  = new AtomicLong(0L)
     val positionsUnpicklerTimeNs: AtomicLong = new AtomicLong(0L)
 
-    def reset(): Unit =
+    final case class Snapshot(
+        jarOpenCount: Int,
+        entryReadCount: Int,
+        bytesReadTotal: Long,
+        jarConstructTimeNs: Long,
+        jarReadTimeNs: Long,
+        tastyHeaderTimeNs: Long,
+        nameUnpicklerTimeNs: Long,
+        sectionIndexTimeNs: Long,
+        attributeUnpicklerTimeNs: Long,
+        astPass1TimeNs: Long,
+        commentsUnpicklerTimeNs: Long,
+        positionsUnpicklerTimeNs: Long
+    )
+
+    def snapshot(): Snapshot =
+        Snapshot(
+            jarOpenCount.get(),
+            entryReadCount.get(),
+            bytesReadTotal.get(),
+            jarConstructTimeNs.get(),
+            jarReadTimeNs.get(),
+            tastyHeaderTimeNs.get(),
+            nameUnpicklerTimeNs.get(),
+            sectionIndexTimeNs.get(),
+            attributeUnpicklerTimeNs.get(),
+            astPass1TimeNs.get(),
+            commentsUnpicklerTimeNs.get(),
+            positionsUnpicklerTimeNs.get()
+        )
+
+    def reset(): Snapshot =
+        val s = snapshot()
         jarOpenCount.set(0)
         entryReadCount.set(0)
         bytesReadTotal.set(0L)
@@ -42,5 +74,6 @@ private[kyo] object PerfCounters:
         astPass1TimeNs.set(0L)
         commentsUnpicklerTimeNs.set(0L)
         positionsUnpicklerTimeNs.set(0L)
+        s
     end reset
 end PerfCounters

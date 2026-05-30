@@ -165,7 +165,7 @@ object ClasspathOrchestrator:
         val t_decodeEnd = new java.util.concurrent.atomic.AtomicLong(0L)
         val t_mergeEnd  = new java.util.concurrent.atomic.AtomicLong(0L)
 
-        PerfCounters.reset()
+        val _ = PerfCounters.reset()
 
         Scope.run:
             Channel.initUnscoped[(String, String)](entryCap, Access.MultiProducerMultiConsumer).flatMap: entryCh =>
