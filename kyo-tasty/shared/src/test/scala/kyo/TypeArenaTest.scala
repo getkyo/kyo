@@ -107,7 +107,7 @@ class TypeArenaTest extends Test:
     // Test 6 (B8/INV-019): deeply nested Applied chain at MaxDepth+1 (1025 levels) throws DepthExceededException during merge.
     // Uses exactly one level above the cap so the depth guard fires without exceeding the JVM stack during hash computation.
     // Pins: INV-019, B8.
-    "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge" in run {
+    "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge" taggedAs jvmOnly in run {
         val baseSym = makeSym("DepthBase")
         val argSym  = makeSym("DepthArg")
         val leaf    = Tasty.Type.Named(argSym)
@@ -128,7 +128,7 @@ class TypeArenaTest extends Test:
 
     // Test 7 (B8 boundary): nesting at MaxDepth-1 (1023 levels) succeeds without exception.
     // Pins: B8 boundary.
-    "B8: nesting at MaxDepth-1 (1023 levels) merges successfully" in run {
+    "B8: nesting at MaxDepth-1 (1023 levels) merges successfully" taggedAs jvmOnly in run {
         val baseSym = makeSym("BoundBase")
         val argSym  = makeSym("BoundArg")
         val leaf    = Tasty.Type.Named(argSym)
@@ -152,7 +152,7 @@ class TypeArenaTest extends Test:
     // wrapping a Named leaf, the deepest internRec call is at depth MaxDepth-1 (< MaxDepth), so no throw.
     // This complements Test 7 (Applied nesting) by exercising the Rec ADT arm of internRec specifically.
     // Pins: T4 (Rec at depth boundary).
-    "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException" in run {
+    "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException" taggedAs jvmOnly in run {
         val leafSym          = makeSym("RecDepthLeaf")
         val leaf: Tasty.Type = Tasty.Type.Named(leafSym)
         // Build MaxDepth-1 levels of Rec wrapping: Rec(Rec(Rec(...Named...))).

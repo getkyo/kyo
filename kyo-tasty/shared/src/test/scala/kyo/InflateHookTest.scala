@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.tasty.scala2.InflateHook
+import kyo.internal.tasty.scala2.PortableInflate
 
 /** Tests for Phase 20a/20f: InflateHook real implementation on all platforms.
   *
@@ -90,6 +91,27 @@ class InflateHookTest extends Test:
                 assert(bytes.length == 0, s"Expected empty array but got ${bytes.length} bytes: ${bytes.toSeq}")
             case Result.Failure(e) =>
                 fail(s"Expected success for valid empty-payload ZLIB stream but got failure: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // T5 JS delegation: JS InflateHook delegates to PortableInflate. Output must be byte-equal
+    // to a direct PortableInflate.inflate call on the same input. Pins T5, INV-024.
+    "T5 JS delegation: JS InflateHook output is byte-equal to direct PortableInflate.inflate" taggedAs jsOnly in run {
+        val directResult =
+            try PortableInflate.inflate(zlibCompressed)
+            catch
+                case ex: PortableInflate.InflateException =>
+                    fail(s"PortableInflate.inflate threw unexpectedly: ${ex.getMessage}")
+                    Array.emptyByteArray
+        Abort.run[TastyError](InflateHook.inflate(zlibCompressed)).map:
+            case Result.Success(bytes) =>
+                assert(
+                    bytes.sameElements(directResult),
+                    s"InflateHook output differs from PortableInflate: hook=${bytes.toSeq} direct=${directResult.toSeq}"
+                )
+            case Result.Failure(e) =>
+                fail(s"InflateHook.inflate failed on JS: $e")
             case Result.Panic(t) =>
                 throw t
     }
