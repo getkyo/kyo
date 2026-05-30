@@ -261,12 +261,22 @@ final class YamlReader private (
     end isNil
 
     def skip(): Unit =
-        withDelegate(_.skip()) {
-            currentAliasOr(_.skip()) {
-                prepare()
-                pos = subtreeEnd(pos)
-            }
-        }
+        delegate match
+            case Present(reader) =>
+                reader.skip()
+                clearFinishedDelegate()
+            case Absent =>
+                sourceFrames match
+                    case (f: SourceSequenceFrame) :: _ if allowSourcePull && !prepared =>
+                        sourceCaptureSequenceElement(f)
+                        delegate = Absent
+                    case _ =>
+                        currentAliasOr(_.skip()) {
+                            prepare()
+                            pos = subtreeEnd(pos)
+                        }
+                end match
+        end match
     end skip
 
     def mapStart(): Int         = objectStart()

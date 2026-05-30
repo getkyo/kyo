@@ -474,6 +474,20 @@ class YamlTest extends Test:
             assert(count == 7)
         }
 
+        "skip advances the current sequence element without parsing later malformed content" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """- ignored:
+                      |    count: 7
+                      |- [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.arrayStart())
+            reader.skip()
+            assert(reader.hasNextElement())
+        }
+
         "matches UTF-8 field names without lossy byte comparisons" in {
             assert(Yaml.decode[YamlUnicodeField]("café: 7\n") == Result.succeed(YamlUnicodeField(7)))
         }
