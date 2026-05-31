@@ -8,27 +8,21 @@ on:
 # parallel via build.yml's `target` matrix. Add or comment out arches here when budget
 # allows; the runner-image mapping is duplicated below to keep the workflow
 # self-contained.
-#
-# main builds run on the x86_64 self-hosted runner (runs-on: self-hosted). Only the
-# linux-x64 arch is active here because that runner is x86_64 only; other arches stay
-# commented until a matching runner is available.
 
 jobs:
   linux-x64:
     uses: ./.github/workflows/build.yml
     with:
       os: linux-x64
-      runner-image: self-hosted
+      runner-image: ubuntu-latest
       test-command: test
 
-  # linux-arm64 disabled: the self-hosted runner is x86_64 only. Re-enable on a
-  # GitHub-hosted (or arm64 self-hosted) runner to restore arm64 coverage.
-  # linux-arm64:
-  #   uses: ./.github/workflows/build.yml
-  #   with:
-  #     os: linux-arm64
-  #     runner-image: ubuntu-24.04-arm
-  #     test-command: test
+  linux-arm64:
+    uses: ./.github/workflows/build.yml
+    with:
+      os: linux-arm64
+      runner-image: ubuntu-24.04-arm
+      test-command: test
 
   # Uncomment to extend the matrix when budget allows:
   # macos-x64:

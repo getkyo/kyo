@@ -15,7 +15,7 @@ on:
         type: string
         required: true
       runner-image:
-        description: 'Runner label for `runs-on` (e.g. ubuntu-latest, or a self-hosted label).'
+        description: 'GitHub-hosted runner label for `runs-on` (e.g. ubuntu-latest).'
         type: string
         required: true
       test-command:
