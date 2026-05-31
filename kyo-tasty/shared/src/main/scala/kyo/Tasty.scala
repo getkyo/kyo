@@ -943,6 +943,151 @@ object Tasty:
             else if flags.contains(Flag.Open) then OpenLevel.Open
             else OpenLevel.Default
 
+        /** Dotted fully-qualified name as a `String`. Mirrors `fullName(using cp).asString`. */
+        def fullNameString(using cp: Classpath): String =
+            import Name.asString
+            fullName.asString
+
+        /** Simple name as a `String`. Mirrors `name.asString`. */
+        def simpleName: String =
+            import Name.asString
+            name.asString
+
+        /** Owners-chain self-first walk; depth bound 64; visited-set guards cycles. Returns `Chunk(self, owner1, ..., root)`. */
+        def ownersChain(using cp: Classpath): Chunk[Symbol] =
+            val out     = Chunk.newBuilder[Symbol]
+            val visited = new java.util.HashSet[Int]()
+            var cur     = this: Symbol
+            var depth   = 0
+            var stop    = false
+            while !stop && depth < 64 && visited.add(cur.id.value) do
+                out += cur
+                val ownerSym = cp.symbol(cur.ownerId)
+                if ownerSym.id == cur.id || ownerSym.id.value == -1 then stop = true
+                else
+                    cur = ownerSym
+                    depth += 1
+                end if
+            end while
+            out.result()
+        end ownersChain
+
+        /** Direct parent symbol of this symbol. `Absent` if `ownerId == -1` or the owner is the sentinel. */
+        def directParent(using cp: Classpath): Maybe[Symbol] =
+            if ownerId.value == -1 then Maybe.Absent
+            else Maybe(cp.symbol(ownerId))
+
+        /** Subtype-aware annotation query. ClassLike / Method / Val / Var / TypeAlias / OpaqueType / AbstractType / Parameter walk both
+          * Scala and Java annotation lists; Field walks `javaAnnotations` only; TypeParam / Package / Unresolved return `false`.
+          */
+        def hasAnnotation(annotationFqn: String)(using cp: Classpath): Boolean =
+            def matchScala(a: Annotation): Boolean = a.annotationType match
+                case Type.Named(aid) =>
+                    import Name.asString
+                    cp.symbol(aid).fullName.asString == annotationFqn
+                case _ => false
+            def matchJava(a: JavaAnnotation): Boolean =
+                import Name.asString
+                cp.fullName(a.annotationClass).asString == annotationFqn
+            this match
+                case c: Symbol.Class        => c.annotations.exists(matchScala) || c.javaAnnotations.exists(matchJava)
+                case t: Symbol.Trait        => t.annotations.exists(matchScala) || t.javaAnnotations.exists(matchJava)
+                case o: Symbol.Object       => o.annotations.exists(matchScala) || o.javaAnnotations.exists(matchJava)
+                case m: Symbol.Method       => m.annotations.exists(matchScala)
+                case v: Symbol.Val          => v.annotations.exists(matchScala)
+                case w: Symbol.Var          => w.annotations.exists(matchScala)
+                case f: Symbol.Field        => f.javaAnnotations.exists(matchJava)
+                case t: Symbol.TypeAlias    => t.annotations.exists(matchScala)
+                case t: Symbol.OpaqueType   => t.annotations.exists(matchScala)
+                case t: Symbol.AbstractType => t.annotations.exists(matchScala)
+                case p: Symbol.Parameter    => p.annotations.exists(matchScala)
+                case _                      => false
+            end match
+        end hasAnnotation
+
+        /** Subtype-aware annotation getter; first Scala match preferred, then first Java match. */
+        def getAnnotation(annotationFqn: String)(using cp: Classpath): Maybe[Annotation | JavaAnnotation] =
+            def matchScala(a: Annotation): Boolean = a.annotationType match
+                case Type.Named(aid) =>
+                    import Name.asString
+                    cp.symbol(aid).fullName.asString == annotationFqn
+                case _ => false
+            def matchJava(a: JavaAnnotation): Boolean =
+                import Name.asString
+                cp.fullName(a.annotationClass).asString == annotationFqn
+            this match
+                case c: Symbol.Class =>
+                    Maybe(c.annotations.find(matchScala).orElse(c.javaAnnotations.find(matchJava)).orNull)
+                case t: Symbol.Trait =>
+                    Maybe(t.annotations.find(matchScala).orElse(t.javaAnnotations.find(matchJava)).orNull)
+                case o: Symbol.Object =>
+                    Maybe(o.annotations.find(matchScala).orElse(o.javaAnnotations.find(matchJava)).orNull)
+                case m: Symbol.Method       => Maybe(m.annotations.find(matchScala).orNull)
+                case v: Symbol.Val          => Maybe(v.annotations.find(matchScala).orNull)
+                case w: Symbol.Var          => Maybe(w.annotations.find(matchScala).orNull)
+                case f: Symbol.Field        => Maybe(f.javaAnnotations.find(matchJava).orNull)
+                case t: Symbol.TypeAlias    => Maybe(t.annotations.find(matchScala).orNull)
+                case t: Symbol.OpaqueType   => Maybe(t.annotations.find(matchScala).orNull)
+                case t: Symbol.AbstractType => Maybe(t.annotations.find(matchScala).orNull)
+                case p: Symbol.Parameter    => Maybe(p.annotations.find(matchScala).orNull)
+                case _                      => Maybe.Absent
+            end match
+        end getAnnotation
+
+        /** Human-readable signature. For Method: `def name[Tps](p1: T1, ...): R`. For Class / Trait / Object: `kind name[Tps] extends
+          * parents`. For Val / Var / Field: `kind name: T`. For TypeAlias / OpaqueType: `name = body`. Other subtypes return `simpleName`.
+          */
+        def signature(using cp: Classpath): String =
+            kyo.internal.tasty.symbol.SymbolSignature.compute(this, cp)
+
+        /** Format-selectable show. `FullyQualified` returns `fullNameString`; `Simple` returns `simpleName`; `Code` returns `signature`. */
+        def show(format: ShowFormat)(using cp: Classpath): String = format match
+            case ShowFormat.FullyQualified => fullNameString
+            case ShowFormat.Simple         => simpleName
+            case ShowFormat.Code           => signature
+
+        /** Direct declarations only (for ClassLike); empty for non-classlike. */
+        def declaredMembers(using cp: Classpath): Chunk[Symbol] = this match
+            case c: Symbol.ClassLike => c.declarations
+            case _                   => Chunk.empty
+
+        /** Declarations of this symbol plus all inherited declarations from parent ClassLikes, deduplicated by simple name keeping the
+          * most-specific occurrence. Non-ClassLike receivers return empty.
+          */
+        def allMembers(using cp: Classpath): Chunk[Symbol] = this match
+            case c: Symbol.ClassLike =>
+                val seen = scala.collection.mutable.HashSet.empty[String]
+                val out  = Chunk.newBuilder[Symbol]
+                def visit(cl: Symbol.ClassLike): Unit =
+                    cl.declarations.foreach: d =>
+                        val nm = d.simpleName
+                        if seen.add(nm) then out += d
+                    cl.parents.foreach(visit)
+                end visit
+                visit(c)
+                out.result()
+            case _ => Chunk.empty
+
+        /** Find a direct declaration by simple name. */
+        def findDeclaredMember(name: String)(using cp: Classpath): Maybe[Symbol] =
+            Maybe(declaredMembers.find(_.simpleName == name).orNull)
+
+        /** Find an inherited (parent-or-deeper) declaration by simple name. Not direct. */
+        def findInheritedMember(name: String)(using cp: Classpath): Maybe[Symbol] = this match
+            case c: Symbol.ClassLike =>
+                val directOpt = declaredMembers.find(_.simpleName == name)
+                val allOpt    = allMembers.find(_.simpleName == name)
+                (directOpt, allOpt) match
+                    case (None, Some(m))    => Maybe(m)
+                    case (Some(d), Some(m)) => if d eq m then Maybe.Absent else Maybe(m)
+                    case _                  => Maybe.Absent
+                end match
+            case _ => Maybe.Absent
+
+        /** Find any (direct or inherited) member by simple name. */
+        def findAnyMember(name: String)(using cp: Classpath): Maybe[Symbol] =
+            Maybe(allMembers.find(_.simpleName == name).orNull)
+
         // Resolution accessors preserved from the flat Symbol API (used by existing callers)
 
         /** Resolve the direct parent symbols by extracting only `Type.Named` entries from `parentTypes`. */
@@ -1129,6 +1274,27 @@ object Tasty:
 
             /** Resolve the companion of this classlike (companion object for a Class or Trait; companion class for an Object). */
             override def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
+
+            /** Find every direct declaration whose simple name equals `name`. The singular `findMember` returns the first match. */
+            def findMembers(name: String)(using cp: Classpath): Chunk[Symbol] =
+                import Name.asString
+                declarations.filter(_.name.asString == name)
+
+            /** Find the first direct declaration whose simple name equals `name`. */
+            override def findMember(name: String)(using cp: Classpath): Maybe[Symbol] =
+                import Name.asString
+                declarations.find(_.name.asString == name) match
+                    case Some(s) => Maybe(s)
+                    case None    => Maybe.Absent
+            end findMember
+
+            /** Find a direct declaration by typed `Name` value. */
+            override def findMemberByName(n: Name)(using cp: Classpath): Maybe[Symbol] =
+                import Name.given
+                declarations.find(_.name == n) match
+                    case Some(s) => Maybe(s)
+                    case None    => Maybe.Absent
+            end findMemberByName
 
         end ClassLike
 
