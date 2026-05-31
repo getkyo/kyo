@@ -60,14 +60,14 @@ class ClasspathOrchestratorPipelineTest extends Test:
         src
     end fixtureSource
 
-    /** Open a classpath using ClasspathOrchestrator.openInto with the given concurrency. */
+    /** Open a classpath using ClasspathOrchestrator.open with the given concurrency. */
     private def openFixtureClasspath(
         src: FileSource,
         roots: Seq[String] = Seq("root"),
-        strict: Boolean = false,
+        mode: Tasty.ErrorMode = Tasty.ErrorMode.SoftFail,
         concurrency: Int = 2
     )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(roots, strict, src, concurrency)
+        ClasspathOrchestrator.open(roots, mode, src, concurrency)
     end openFixtureClasspath
 
     // T1: pipeline-produced Classpath contains known FQNs from the fixture.
@@ -132,7 +132,7 @@ class ClasspathOrchestratorPipelineTest extends Test:
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5)) // garbage bytes, invalid TASTy header
         Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(src, strict = false).flatMap: cp =>
+            Abort.run[TastyError](openFixtureClasspath(src, mode = Tasty.ErrorMode.SoftFail).flatMap: cp =>
                 cp.errors).map:
                 case Result.Success(errs) =>
                     assert(errs.nonEmpty, "T4: Expected at least one error for corrupted .tasty file")
@@ -148,7 +148,7 @@ class ClasspathOrchestratorPipelineTest extends Test:
         val src = MemFileSource()
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5)) // garbage bytes
         Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(src, strict = true)).map:
+            Abort.run[TastyError](openFixtureClasspath(src, mode = Tasty.ErrorMode.FailFast)).map:
                 case Result.Failure(_: TastyError) =>
                     succeed
                 case Result.Success(_) =>

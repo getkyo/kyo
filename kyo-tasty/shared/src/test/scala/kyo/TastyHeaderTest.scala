@@ -61,7 +61,7 @@ class TastyHeaderTest extends Test:
 
     // Test 19: valid header 28.8.0 succeeds
     "reading correct magic + Version(28,8,0) succeeds and returns Data with those values" in run {
-        // flow-allow: §839 case 3; TastyHeader.read test, single-threaded, no suspension.
+        // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 28, 8, 0, Array.empty, zeroUuid)
         val view  = ByteView(bytes)
@@ -82,7 +82,7 @@ class TastyHeaderTest extends Test:
 
     // Test 20: wrong magic produces CorruptedFile
     "reading wrong magic 0xDEADBEEF produces CorruptedFile error" in run {
-        // flow-allow: §839 case 3; TastyHeader.read test, single-threaded, no suspension.
+        // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(wrongMagic, 28, 8, 0, Array.empty, zeroUuid)
         val view  = ByteView(bytes)
@@ -99,7 +99,7 @@ class TastyHeaderTest extends Test:
 
     // Test 21: major=99 produces UnsupportedVersion
     "reading major=99 produces UnsupportedVersion error" in run {
-        // flow-allow: §839 case 3; TastyHeader.read test, single-threaded, no suspension.
+        // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 99, 8, 0, Array.empty, zeroUuid)
         val view  = ByteView(bytes)
@@ -117,7 +117,7 @@ class TastyHeaderTest extends Test:
 
     // Test 22: major=28, minor=7, experimental=0 succeeds (backward compatible: 7 < 8, exp==0)
     "reading minor=7 experimental=0 succeeds (stable backward compatible)" in run {
-        // flow-allow: §839 case 3; TastyHeader.read test, single-threaded, no suspension.
+        // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 28, 7, 0, Array.empty, zeroUuid)
         val view  = ByteView(bytes)
@@ -139,7 +139,7 @@ class TastyHeaderTest extends Test:
     // Test 23: major=28, minor=9, experimental=0 produces UnsupportedVersion
     // (minor=9 > supportedMinor=8, so forward-incompatible per dotty rule)
     "reading minor=9 experimental=0 produces UnsupportedVersion (forward incompatible)" in run {
-        // flow-allow: §839 case 3; TastyHeader.read test, single-threaded, no suspension.
+        // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 28, 9, 0, Array.empty, zeroUuid)
         val view  = ByteView(bytes)
@@ -156,7 +156,7 @@ class TastyHeaderTest extends Test:
 
     // Test 24: experimental=1 with supportedExperimental=0 produces UnsupportedVersion
     "reading experimental=1 when supportedExperimental=0 produces UnsupportedVersion" in run {
-        // flow-allow: §839 case 3; TastyHeader.read test, single-threaded, no suspension.
+        // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 28, 8, 1, Array.empty, zeroUuid)
         val view  = ByteView(bytes)
@@ -173,7 +173,7 @@ class TastyHeaderTest extends Test:
 
     // Additional test: truncated header (only magic bytes) produces MalformedSection
     "reading truncated header produces MalformedSection error" in run {
-        // flow-allow: §839 case 3; TastyHeader.read test, single-threaded, no suspension.
+        // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Only 4 magic bytes, no version fields
         val bytes = validMagic
@@ -191,7 +191,7 @@ class TastyHeaderTest extends Test:
 
     // Additional test: UUID is read as 16 bytes and formatted as hex string
     "uuid field is formatted correctly from 16 UUID bytes" in run {
-        // flow-allow: §839 case 3; TastyHeader.read test, single-threaded, no suspension.
+        // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // UUID bytes: first 8 = 0x0102030405060708L, last 8 = 0x090A0B0C0D0E0F10L
         val uuidBytes = Array[Byte](
@@ -215,7 +215,7 @@ class TastyHeaderTest extends Test:
 
     // Additional test: tooling version string is decoded correctly
     "tooling version string is decoded from UTF-8 bytes in header" in run {
-        // flow-allow: §839 case 3; TastyHeader.read test, single-threaded, no suspension.
+        // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // "scalac" = [0x73, 0x63, 0x61, 0x6c, 0x61, 0x63]
         val tooling = Array[Byte](0x73, 0x63, 0x61, 0x6c, 0x61, 0x63)

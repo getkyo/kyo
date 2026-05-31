@@ -113,11 +113,11 @@ object ClasspathOrchestrator:
       */
     def open(
         roots: Seq[String],
-        strict: Boolean,
+        mode: Tasty.ErrorMode,
         source: FileSource,
         concurrency: Int
     )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        // Validate roots exist first (both strict and soft-fail report FileNotFound immediately)
+        // Validate roots exist first (both FailFast and SoftFail report FileNotFound immediately)
         Kyo.foreach(roots): root =>
             source.exists(root).flatMap: ex =>
                 if !ex then Abort.fail(TastyError.FileNotFound(root))
@@ -126,7 +126,7 @@ object ClasspathOrchestrator:
             // Install a read-batch context so JvmFileSource can share mmap readers across the scan+decode pipeline.
             // The default FileSource.withReadBatch is a no-op; JvmFileSource overrides it.
             source.withReadBatch:
-                runPhaseAB(roots, strict, source, concurrency)
+                runPhaseAB(roots, mode, source, concurrency)
 
     /** Phase A+B+C pipeline via Channels.
       *
@@ -140,7 +140,7 @@ object ClasspathOrchestrator:
       */
     private def runPhaseAB(
         roots: Seq[String],
-        strict: Boolean,
+        mode: Tasty.ErrorMode,
         source: FileSource,
         concurrency: Int
     )(using Frame): Tasty.Classpath < (Sync & Async & Abort[TastyError]) =
@@ -156,7 +156,7 @@ object ClasspathOrchestrator:
 
         // Timing instrumentation: snapshot nanoTime at each stage boundary.
         // AtomicLong.Unsafe used so decoder fibers can record t_decodeEnd from any thread.
-        // flow-allow: §839 case 3; pipeline-launch boundary; timing slots allocated once per open() call.
+        // §839 case 3; pipeline-launch boundary; timing slots allocated once per open() call.
         given AllowUnsafe = AllowUnsafe.embrace.danger
         val t_start       = AtomicLong.Unsafe.init(java.lang.System.nanoTime())
         val t_listEnd     = AtomicLong.Unsafe.init(0L)
@@ -182,8 +182,8 @@ object ClasspathOrchestrator:
                                 val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency): _ =>
                                     TastyStat.scope.traceSpan("decoder") {
                                         entryCh.streamUntilClosed().foreach: (entryPath, kind) =>
-                                            decodeOneEntry(entryPath, kind, interner, source, strict).flatMap: result =>
-                                                // If resultCh closed early (strict-mode abort), silently discard
+                                            decodeOneEntry(entryPath, kind, interner, source, mode).flatMap: result =>
+                                                // If resultCh closed early (FailFast abort), silently discard
                                                 Abort.run[Closed](resultCh.put(result)).unit
                                     }
 
@@ -214,7 +214,7 @@ object ClasspathOrchestrator:
                                     Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
                                 Async.foreach(stages, 3): stage =>
                                     stage
-                                .andThen(finalizeMerge(mergeState, source, strict)).flatMap: result =>
+                                .andThen(finalizeMerge(mergeState, source, mode)).flatMap: result =>
                                     (if timingEnabled then
                                          Sync.Unsafe.defer:
                                              val t_end       = java.lang.System.nanoTime()
@@ -288,7 +288,7 @@ object ClasspathOrchestrator:
         kind: String,
         interner: Interner,
         source: FileSource,
-        strict: Boolean
+        mode: Tasty.ErrorMode
     )(using Frame): DecodeResult < (Sync & Async & Abort[TastyError]) =
         if kind == "module-info.class" then
             Abort.run[TastyError](
@@ -301,24 +301,24 @@ object ClasspathOrchestrator:
                 case Result.Success(desc) =>
                     ModuleInfoCase(desc.name, desc)
                 case Result.Failure(err: TastyError) =>
-                    if strict then Abort.fail(err)
+                    if mode == Tasty.ErrorMode.FailFast then Abort.fail(err)
                     else
                         // Soft-fail: produce an empty FileResult with the error recorded
                         FileResultCase(emptyFileResultWithError(entryPath, err))
                 case Result.Panic(t) =>
                     val err = TastyError.CorruptedFile(entryPath, 0L, t.getMessage)
-                    if strict then Abort.fail(err)
+                    if mode == Tasty.ErrorMode.FailFast then Abort.fail(err)
                     else FileResultCase(emptyFileResultWithError(entryPath, err))
         else
             Scope.run:
-                readAndDecodeTastyFile(entryPath, interner, source, strict).map(FileResultCase.apply)
+                readAndDecodeTastyFile(entryPath, interner, source, mode).map(FileResultCase.apply)
 
     /** Merge one DecodeResult into the MergeState. Single-threaded (only the merger fiber calls it). */
     private def mergeOneInto(state: MergeState, result: DecodeResult): Unit =
         result match
             case FileResultCase(fr) =>
-                // plan: phase-02 bridge; add ALL symbols (including members) to allSyms so that
-                // finalizeMerge can look them up by index when building typeParamIds/declarationIds.
+                // Add ALL symbols (including members) to allSyms so that finalizeMerge can look them
+                // up by index when building typeParamIds/declarationIds.
                 // First add all symbols from ownerBySymbol (covers all non-root AST symbols).
                 val seenSyms = new java.util.HashSet[Tasty.Symbol]()
                 for sym <- fr.ownerBySymbol.keys do
@@ -365,7 +365,7 @@ object ClasspathOrchestrator:
     private def finalizeMerge(
         state: MergeState,
         source: FileSource,
-        strict: Boolean
+        mode: Tasty.ErrorMode
     )(using Frame): Tasty.Classpath < Sync =
         val canonical   = TypeArena.canonical()
         val fileResults = state.fileResults.toSeq
@@ -708,7 +708,7 @@ object ClasspathOrchestrator:
         file: String,
         interner: Interner,
         source: FileSource,
-        strict: Boolean
+        mode: Tasty.ErrorMode
     )(using Frame): FileResult < (Sync & Abort[TastyError]) =
         Abort.run[TastyError](
             source.read(file).flatMap: bytes =>
@@ -719,13 +719,13 @@ object ClasspathOrchestrator:
         ).map:
             case Result.Success(fr) => fr
             case Result.Failure(err: TastyError) =>
-                if strict then
+                if mode == Tasty.ErrorMode.FailFast then
                     Abort.fail(err)
                 else
                     emptyFileResultWithError(file, err)
             case Result.Panic(t) =>
                 val err = TastyError.CorruptedFile(file, 0L, t.getMessage)
-                if strict then
+                if mode == Tasty.ErrorMode.FailFast then
                     Abort.fail(err)
                 else
                     emptyFileResultWithError(file, err)
@@ -774,7 +774,7 @@ object ClasspathOrchestrator:
         bytes: Array[Byte],
         interner: Interner
     )(using Frame): FileResult < (Sync & Abort[TastyError]) =
-        // flow-allow: §839 case 3; all Name.asString calls in the yield block read immutable intern-pool strings; no suspension required.
+        // §839 case 3; all Name.asString calls in the yield block read immutable intern-pool strings; no suspension required.
         given AllowUnsafe = AllowUnsafe.embrace.danger
         val view          = ByteView(bytes)
         val arena         = new TypeArena
@@ -808,9 +808,7 @@ object ClasspathOrchestrator:
                 case Absent =>
                     Sync.defer(Map.empty[Tasty.Symbol, Tasty.Position]))
         yield
-            // plan: phase-02 bridge; computeFqn walks the ownerBySymbol chain to build the dotted FQN.
-            // Replaces the old sym.fullName OnceCell that walked sym.owner. Phase 09 adds Symbol.fullName
-            // as a member method once Classpath is a pure case class.
+            // computeFqn walks the ownerBySymbol chain to build the dotted FQN.
             val ownerBySymbol = pass1Result.ownerBySymbol
             val pairs = pass1Result.symbols.flatMap: sym =>
                 val fqn = computeFqn(sym, ownerBySymbol)

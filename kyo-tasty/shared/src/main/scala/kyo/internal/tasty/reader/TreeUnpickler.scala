@@ -245,7 +245,6 @@ object TreeUnpickler:
 
             case TastyFormat.THIS =>
                 val tpe = readType(view, ctx)
-                // plan: phase-05 bridge; Tree.This still carries Symbol (Phase 09 migrates to SymbolId).
                 val sym = tpe match
                     case Tasty.Type.Named(id)    => resolveSymbolById(id, ctx, "this-class")
                     case Tasty.Type.ThisType(id) => resolveSymbolById(id, ctx, "this-class")
@@ -254,7 +253,6 @@ object TreeUnpickler:
 
             case TastyFormat.QUALTHIS =>
                 val tpe = readType(view, ctx)
-                // plan: phase-05 bridge; Tree.This still carries Symbol (Phase 09 migrates to SymbolId).
                 val sym = tpe match
                     case Tasty.Type.Named(id) => resolveSymbolById(id, ctx, "qualthis")
                     case _                    => makeUnresolvedSym("qualthis")

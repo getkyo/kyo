@@ -7,7 +7,7 @@ class PortableInflateTest extends Test:
     // Test 1: BitStream reads single bits LSB-first
     // byte 0xB4 = 0b10110100; LSB-first: [0, 0, 1, 0, 1, 1, 0, 1]
     "BitStream reads single bits LSB-first" in run {
-        // flow-allow: §839 case 3; direct BitStream test, single-threaded, no suspension.
+        // §839 case 3; direct BitStream test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val buf    = Array(0xb4.toByte)
         val stream = new PortableInflate.BitStream(buf, 0L)
@@ -18,7 +18,7 @@ class PortableInflateTest extends Test:
     // Test 2: BitStream.readBits(n) packs LSB-first
     // byte 0xD6 = 0b11010110; readBits(4) => 0b0110 = 6, readBits(4) => 0b1101 = 13
     "BitStream.readBits(n) packs LSB-first" in run {
-        // flow-allow: §839 case 3; direct BitStream test, single-threaded, no suspension.
+        // §839 case 3; direct BitStream test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val buf    = Array(0xd6.toByte)
         val stream = new PortableInflate.BitStream(buf, 0L)
@@ -41,7 +41,7 @@ class PortableInflateTest extends Test:
     // Packed LSB-first into byte 0: bit0=0,bit1=0,bit2=0,bit3=1,bit4=0 => 0b00001000 = 0x08
     // (bits 5-7 are padding zeros)
     "HuffmanTree decodes RFC 1951 §3.2.2 example (F then A)" in run {
-        // flow-allow: §839 case 3; direct BitStream/HuffmanTree test, single-threaded, no suspension.
+        // §839 case 3; direct BitStream/HuffmanTree test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val lengths = Array(3, 3, 3, 3, 3, 2, 4, 4)
         val tree    = PortableInflate.HuffmanTree.fromCodeLengths(lengths)
@@ -59,7 +59,7 @@ class PortableInflateTest extends Test:
     // Tree with lengths [2, 2]: sym 0 -> code 00, sym 1 -> code 01 (maxBits=2).
     // Stream bits 1,1 (byte 0x03 = 0b00000011): produces code=3 at len=2 which exceeds table, throws.
     "HuffmanTree decodeOne throws InflateException for invalid Huffman code" in run {
-        // flow-allow: §839 case 3; direct HuffmanTree error-path test, single-threaded, no suspension.
+        // §839 case 3; direct HuffmanTree error-path test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val lengths = Array(2, 2)
         val tree    = PortableInflate.HuffmanTree.fromCodeLengths(lengths)
@@ -80,7 +80,7 @@ class PortableInflateTest extends Test:
     // The test reads BFINAL+BTYPE (3 bits) first to simulate the block-loop entry, then calls
     // decodeStoredBlock which calls alignToByte() internally before reading LEN/NLEN/data.
     "decodeStoredBlock copies raw bytes (LEN=3, payload ABC)" in run {
-        // flow-allow: §839 case 3; direct decodeStoredBlock test, single-threaded, no suspension.
+        // §839 case 3; direct decodeStoredBlock test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val buf = Array(
             0x01.toByte, // bit0=BFINAL=1, bits1-2=BTYPE=00, bits3-7=padding
@@ -115,7 +115,7 @@ class PortableInflateTest extends Test:
     // EOB (256): 7-bit code = 0 (0b0000000), stream bits = [0,0,0,0,0,0,0], packed = 0x00.
     // Encoding "AAA"+EOB = 3*8 + 7 = 31 bits, padded to 4 bytes: [0x8e, 0x8e, 0x8e, 0x00].
     "decodeFixedHuffmanBlock decodes AAA" in run {
-        // flow-allow: §839 case 3; direct decodeFixedHuffmanBlock test, single-threaded, no suspension.
+        // §839 case 3; direct decodeFixedHuffmanBlock test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Hand-computed bytes: 3x literal-65 (0x8E each) then EOB-256 (0x00 with 1 padding bit)
         val buf = Array(
@@ -151,7 +151,7 @@ class PortableInflateTest extends Test:
     // Minimum valid ZLIB stream is 2 bytes (CMF+FLG) + at least 1 deflate byte + 4 Adler bytes = 7 bytes,
     // but the guard is set at 6 to catch obviously truncated inputs early.
     "inflate rejects ZLIB input shorter than 6 bytes" in run {
-        // flow-allow: §839 case 3; direct inflate error-path test, single-threaded, no suspension.
+        // §839 case 3; direct inflate error-path test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array(0x78.toByte, 0x9c.toByte, 0x03.toByte, 0x00.toByte)
         try
@@ -177,7 +177,7 @@ class PortableInflateTest extends Test:
     //   bytes[7..10]: Adler-32 of empty payload = 0x00000001 big-endian = [0x00,0x00,0x00,0x01]
     //   We replace the correct Adler [0x00,0x00,0x00,0x01] with wrong [0xFF,0xFF,0xFF,0xFF].
     "inflate rejects Adler-32 mismatch in stored-block ZLIB" in run {
-        // flow-allow: §839 case 3; direct inflate Adler-32 error-path test, single-threaded, no suspension.
+        // §839 case 3; direct inflate Adler-32 error-path test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array(
             0x78.toByte, // CMF
@@ -220,7 +220,7 @@ class PortableInflateTest extends Test:
     // CMF=0x78 FLG=0x9C: header checksum (0x78*256+0x9C)%31 = 0. No preset dictionary.
     // The expected decompressed bytes are "aaabbbcccdddeeefffggghhh".repeat(50) encoded as UTF-8.
     "inflate full ZLIB round-trip with dynamic Huffman block" in run {
-        // flow-allow: §839 case 3; direct inflate round-trip test, single-threaded, no suspension.
+        // §839 case 3; direct inflate round-trip test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val zlibBytes: Array[Byte] = Array(
             0x78.toByte,

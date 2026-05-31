@@ -67,10 +67,10 @@ class QueryApiTest extends Test:
       * Returns `Tasty.Classpath` (the public opaque type) so that extension methods such as `findClass`, `errors`, `topLevelClasses`, and
       * `findClassByBinary` are in scope.
       */
-    private def openFixtureClasspath(src: FileSource, strict: Boolean = false)(
+    private def openFixtureClasspath(src: FileSource, mode: Tasty.ErrorMode = Tasty.ErrorMode.SoftFail)(
         using Frame
     ): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(Seq("root"), strict, src, 1)
+        ClasspathOrchestrator.open(Seq("root"), mode, src, 1)
     end openFixtureClasspath
 
     // Test 1: fromPickles(Seq.empty) succeeds; findClass("anything") returns Absent
@@ -278,7 +278,7 @@ class QueryApiTest extends Test:
         var capturedCp: Tasty.Classpath = null
         Abort.run[TastyError]:
             Scope.run:
-                ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+                ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                     capturedCp = cp
         .map:
             case Result.Success(_) =>
@@ -294,7 +294,7 @@ class QueryApiTest extends Test:
     "findClass returns Present after open" in run {
         Abort.run[TastyError]:
             Scope.run:
-                ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).flatMap: cp =>
+                ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).flatMap: cp =>
                     Kyo.lift(cp.findClass("kyo.fixtures.PlainClass"))
         .map:
             case Result.Success(Present(_)) => succeed
@@ -308,7 +308,7 @@ class QueryApiTest extends Test:
         val src = MemoryFileSource()
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5))
         Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(src, strict = true)).map:
+            Abort.run[TastyError](openFixtureClasspath(src, mode = Tasty.ErrorMode.FailFast)).map:
                 case Result.Success(_) =>
                     fail("Expected failure in strict mode with corrupt TASTy")
                 case Result.Failure(_) =>
@@ -323,7 +323,7 @@ class QueryApiTest extends Test:
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5))
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(src, strict = false).flatMap: cp =>
+            Abort.run[TastyError](openFixtureClasspath(src, mode = Tasty.ErrorMode.SoftFail).flatMap: cp =>
                 val errs = cp.errors
                 val cls  = cp.findClass("kyo.fixtures.PlainClass")
                 (errs, cls)).map:
@@ -358,7 +358,7 @@ class QueryApiTest extends Test:
         src.add("root/PlainClass3.tasty", kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](
-                ClasspathOrchestrator.open(Seq("root"), false, src, 3).map: cp =>
+                ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 3).map: cp =>
                     cp.topLevelClasses
             ).map:
                 case Result.Success(classes) =>
@@ -376,7 +376,7 @@ class QueryApiTest extends Test:
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3))
         Scope.run:
             Abort.run[TastyError](
-                ClasspathOrchestrator.open(Seq("root"), false, src, 2).map: cp =>
+                ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 2).map: cp =>
                     (cp.topLevelClasses, cp.errors)
             ).map:
                 case Result.Success((classes, errs)) =>
@@ -454,7 +454,7 @@ class QueryApiTest extends Test:
 
         Scope.run:
             Abort.run[TastyError]:
-                ClasspathOrchestrator.open(Seq("root"), false, tracked, 2)
+                ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, tracked, 2)
             .map: _ =>
                 import AllowUnsafe.embrace.danger
                 val finalCount = counter.get()

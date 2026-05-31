@@ -127,10 +127,10 @@ object TypeUnpickler:
       * Handles SHAREDtype cache misses by re-decoding the referenced type from sectionBytes on demand.
       */
     private[tasty] def readTypeForTree(view: ByteView, session: TreeTypeSession)(using AllowUnsafe): Tasty.Type =
-        // flow-allow: internal frame used here because readTypeForTree is called from
+        // internal frame used here because readTypeForTree is called from
         // TreeUnpickler.decodeSync, which is the OnceCell init lambda for Symbol.body.
         // The init lambda has type () => Tree and cannot accept a Frame parameter.
-        // This is the one legitimate flow-allow site; all other decode paths propagate a real Frame.
+        // This is the one legitimate Frame.internal site; all other decode paths propagate a real Frame.
         val callFrame = Frame.internal
         val peek      = view.peekByte(view.position) & 0xff
         if peek == TastyFormat.SHAREDtype then

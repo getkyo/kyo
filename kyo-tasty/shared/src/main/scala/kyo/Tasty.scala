@@ -35,7 +35,7 @@ object Tasty:
 
     // A module-level interner used by Name.apply(String) so the public API stays unchanged.
     private val globalInterner: Interner =
-        // flow-allow: §839 case 3: module-load Interner construction (single global value at class init)
+        // §839 case 3: module-load Interner construction (single global value at class init)
         import AllowUnsafe.embrace.danger
         Interner.init(numShards = 32, initialShardCapacity = 512)
     end globalInterner
@@ -57,7 +57,7 @@ object Tasty:
           * }}}
           */
         def apply(s: String): Name =
-            // flow-allow: §839 case 3 -- monotone interner; same input produces the same Name forever.
+            // §839 case 3 -- monotone interner; same input produces the same Name forever.
             import AllowUnsafe.embrace.danger
             val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
             globalInterner.intern(bytes, 0, bytes.length)
@@ -775,10 +775,6 @@ object Tasty:
         permittedSubclassIds: Maybe[Chunk[SymbolId]],
         bodyRecord: Maybe[SymbolBody]
     ) derives CanEqual:
-        // plan: phase-02; partial symbols (id == SymbolId(-1)) produced during Pass 1 need reference
-        // identity so that HashMap[Symbol, V] keys are distinct even when two symbols share the same
-        // kind/flags/name. Finalized symbols (id >= 0) use id-based equality: two symbols with the same
-        // id are the same symbol (matches case-class semantics for test fixtures with explicit ids).
         override def equals(other: Any): Boolean =
             other.isInstanceOf[Symbol] && {
                 val that = other.asInstanceOf[Symbol]
@@ -792,8 +788,6 @@ object Tasty:
             else id.value
         end hashCode
 
-        // plan: phase-04; 41 flag predicates -- pure Boolean reads on the Flags long bitmask.
-        // No effect row, no Classpath, no AllowUnsafe.
         def isFinal: Boolean         = flags.contains(Flag.Final)
         def isAbstract: Boolean      = flags.contains(Flag.Abstract)
         def isSealed: Boolean        = flags.contains(Flag.Sealed)
@@ -836,7 +830,6 @@ object Tasty:
         def isContextual: Boolean    = flags.contains(Flag.Given)
         def isOpaque: Boolean        = flags.contains(Flag.Opaque)
 
-        // plan: phase-04; 14 single-kind discriminators -- pure Boolean equality on the SymbolKind enum.
         def isPackage: Boolean        = kind == SymbolKind.Package
         def isClass: Boolean          = kind == SymbolKind.Class
         def isTrait: Boolean          = kind == SymbolKind.Trait
@@ -852,7 +845,6 @@ object Tasty:
         def isParameter: Boolean      = kind == SymbolKind.Parameter
         def isUnresolved: Boolean     = kind == SymbolKind.Unresolved
 
-        // plan: phase-04; 5 composite kind predicates -- pure Boolean combinations.
         def isCaseClass: Boolean  = isClass && isCase
         def isCaseObject: Boolean = isObject && isCase
         def isClassLike: Boolean  = isClass || isTrait || isObject
@@ -1080,13 +1072,15 @@ object Tasty:
             )
         end fromDescriptor
 
-        /** Construct a synthetic placeholder Symbol for internal tree-decode use only.
+        /** Construct a partial placeholder Symbol for Pass A/B tree-decode use only.
           *
-          * Used by TreeUnpickler when an address lookup fails (error recovery) or when building synthetic tree nodes that do not correspond
-          * to real classpath symbols. The returned Symbol has id = SymbolId(-1) and empty relational fields.
+          * Produces a Symbol with id = SymbolId(-1) and only kind, flags, and name populated. All relational fields (parentTypes,
+          * declarationIds, etc.) are left at empty defaults. Pass C replaces partial symbols with fully-populated ones via
+          * `materializeSymbols`.
           *
-          * plan: phase-02 bridge factory; migrates to a phase-09 resolution approach once Classpath becomes a pure case class and
-          * TreeUnpickler can look up SymbolId->Symbol.
+          * Retained as a factory shim for AstUnpickler, TypeUnpickler, TreeUnpickler, ClasspathOrchestrator, ClassfileUnpickler, and
+          * JavaAnnotationUnpickler. Deletion requires migrating all Pass A/B callers to SymbolDescriptor-based construction, which is out
+          * of scope for this campaign.
           */
         private[kyo] def make(
             kind: SymbolKind,
@@ -1391,7 +1385,7 @@ object Tasty:
           * immediately raises `Abort[TastyError]`.
           */
         def open(roots: Seq[String], mode: ErrorMode)(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
-            openImpl(roots, mode == ErrorMode.FailFast)
+            openImpl(roots, mode)
 
         /** Open a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
           *
@@ -1416,8 +1410,8 @@ object Tasty:
                     packageIds = Chunk.empty,
                     fqnIndex = Map.empty,
                     packageIndex = Map.empty,
-                    subclassIndex = Map.empty,  // plan: phase-06 stub; populated in Phase 07
-                    companionIndex = Map.empty, // plan: phase-06 stub; populated in Phase 07
+                    subclassIndex = Map.empty,
+                    companionIndex = Map.empty,
                     moduleIndex = Map.empty,
                     errors = Chunk.empty,
                     canonical = TypeArena.canonical()
@@ -1425,8 +1419,7 @@ object Tasty:
 
         /** Create a test-only classpath from a pre-built symbols array.
           *
-          * plan: phase-06; symbols(i).id.value must equal i for cp.symbol(id) to resolve correctly. Only callable from within package kyo
-          * (private[kyo]).
+          * symbols(i).id.value must equal i for cp.symbol(id) to resolve correctly. Only callable from within package kyo (private[kyo]).
           */
         private[kyo] def fromPicklesWithSymbols(symbols: Chunk[Symbol])(using Frame): Classpath < Sync =
             Sync.defer:
@@ -1437,8 +1430,8 @@ object Tasty:
                     packageIds = Chunk.empty,
                     fqnIndex = Map.empty,
                     packageIndex = Map.empty,
-                    subclassIndex = Map.empty,  // plan: phase-06 stub; populated in Phase 07
-                    companionIndex = Map.empty, // plan: phase-06 stub; populated in Phase 07
+                    subclassIndex = Map.empty,
+                    companionIndex = Map.empty,
                     moduleIndex = Map.empty,
                     errors = Chunk.empty,
                     canonical = TypeArena.canonical()
@@ -1447,7 +1440,7 @@ object Tasty:
         /** Internal: open implementation, delegates to ClasspathOrchestrator. */
         private def openImpl(
             roots: Seq[String],
-            strict: Boolean
+            mode: ErrorMode
         )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
             val source      = PlatformFileSource.get
             val concurrency = Runtime.getRuntime.availableProcessors().max(1)
@@ -1455,7 +1448,7 @@ object Tasty:
                 "coldLoad",
                 Attributes.empty.add("roots", roots.size.toString)
             ) {
-                ClasspathOrchestrator.open(roots, strict, source, concurrency)
+                ClasspathOrchestrator.open(roots, mode, source, concurrency)
             }
         end openImpl
 
@@ -1469,9 +1462,9 @@ object Tasty:
             Abort.run[TastyError](SnapshotDigest.compute(roots, source)).flatMap:
                 case Result.Failure(_) =>
                     // Digest computation failed (e.g., browser): fall through to normal open
-                    openImpl(roots, strict = false)
+                    openImpl(roots, ErrorMode.SoftFail)
                 case Result.Panic(_) =>
-                    openImpl(roots, strict = false)
+                    openImpl(roots, ErrorMode.SoftFail)
                 case Result.Success(digest) =>
                     val hexDigest    = SnapshotDigest.toHexString(digest)
                     val snapshotPath = s"$cacheDir/$hexDigest.krfl"
@@ -1483,10 +1476,10 @@ object Tasty:
                                     cp
                                 case Result.Failure(_) | Result.Panic(_) =>
                                     // Snapshot unreadable; fall through to normal open
-                                    openImpl(roots, strict = false)
+                                    openImpl(roots, ErrorMode.SoftFail)
                         else
                             // No snapshot; open normally then write snapshot
-                            openImpl(roots, strict = false).flatMap: cp =>
+                            openImpl(roots, ErrorMode.SoftFail).flatMap: cp =>
                                 Abort.run[TastyError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen(cp)
         end openCachedImpl
 

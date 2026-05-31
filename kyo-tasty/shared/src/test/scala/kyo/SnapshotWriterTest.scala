@@ -62,7 +62,7 @@ class SnapshotWriterTest extends Test:
 
         Scope.run:
             Abort.run[TastyError](
-                ClasspathOrchestrator.open(Seq("root"), false, src, 1).flatMap: cp =>
+                ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).flatMap: cp =>
                     SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"

@@ -49,7 +49,7 @@ class ClasspathBodyMemoTest extends Test:
     end makeSomeObjectSource
 
     private def openSomeObjectCp(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(Seq("root"), false, makeSomeObjectSource(), 1)
+        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, makeSomeObjectSource(), 1)
     end openSomeObjectCp
 
     // ── Leaf 2: bodyMemo excluded from equality ───────────────────────────────

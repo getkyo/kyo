@@ -4,7 +4,7 @@ import kyo.internal.tasty.symbol.Interner
 
 class InternerTest extends Test:
 
-    // flow-allow: §839 case 3 — test helper boundary; Interner factory + intern are unsafe-tier
+    // §839 case 3 -- test helper boundary; Interner factory + intern are unsafe-tier
     import AllowUnsafe.embrace.danger
 
     private def utf8Bytes(s: String): Array[Byte] =

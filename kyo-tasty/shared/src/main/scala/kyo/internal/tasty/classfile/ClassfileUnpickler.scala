@@ -64,8 +64,7 @@ object ClassfileUnpickler:
         arena: TypeArena,
         path: String
     )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
-        // plan: phase-02 bridge; slot fills removed (Symbol is now immutable); ClasspathOrchestrator
-        // Pass C constructs fully-populated Symbols from ClassfileResult data via materializeSymbols.
+        // ClasspathOrchestrator Pass C constructs fully-populated Symbols from ClassfileResult data via materializeSymbols.
         readFromRaw(view, interner, arena, path)
 
     private def readFromRaw(
@@ -1054,8 +1053,7 @@ object ClassfileUnpickler:
                                                         paramNames = Chunk.empty,
                                                         runtimeTypeAnnotations = allTypeAnns
                                                     )
-                                                    // plan: phase-02 bridge; use fromDescriptor to include javaMetadata directly.
-                                                    // permittedSubclassIds uses SymbolId(-1) placeholders for now (Phase 07 resolves).
+                                                    // permittedSubclassIds uses SymbolId(-1) placeholders resolved by Pass C.
                                                     val permSubIds: Maybe[Chunk[kyo.internal.tasty.symbol.SymbolId]] =
                                                         if permittedSubSym.nonEmpty then
                                                             Maybe(permittedSubSym.map(_ => kyo.internal.tasty.symbol.SymbolId(-1)))
@@ -1543,7 +1541,6 @@ object ClassfileUnpickler:
 
                                 val nameBytes = memberName.getBytes(java.nio.charset.StandardCharsets.UTF_8)
                                 val nameEntry = interner.intern(nameBytes, 0, nameBytes.length)
-                                // plan: phase-02 bridge; include javaMetadata in member symbol.
                                 val sym = Tasty.Symbol.fromDescriptor(
                                     id = SymbolId(-1),
                                     kind = kind,

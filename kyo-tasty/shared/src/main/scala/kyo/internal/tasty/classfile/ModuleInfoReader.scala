@@ -38,7 +38,7 @@ object ModuleInfoReader:
         val path = "<module-info.class>"
         // Sync.Unsafe.defer provides AllowUnsafe for Interner.init and for readFrom, which calls
         // ConstantPool.read (allocating AtomicRef.Unsafe slots per Utf8Lazy entry).
-        // flow-allow: §839 case 3; module-load init boundary; the entire constant-pool scan is one allocation phase.
+        // §839 case 3; module-load init boundary; the entire constant-pool scan is one allocation phase.
         Sync.Unsafe.defer:
             val interner = Interner.init(numShards = 16, initialShardCapacity = 16)
             readFrom(view, interner, path)

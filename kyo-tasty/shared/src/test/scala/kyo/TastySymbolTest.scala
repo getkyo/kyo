@@ -53,7 +53,7 @@ class TastySymbolTest extends Test:
     private def openFixtureClasspath(src: FileSource)(
         using Frame
     ): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(Seq("root"), false, src, 1)
+        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureClasspath
 
     private def plainClassSource(): MemoryFileSource =

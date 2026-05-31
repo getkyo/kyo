@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC per-type satellite for kyo.internal.tasty.symbol.SymbolId; re-exported for user convenience
+// PUBLIC per-type satellite for kyo.internal.tasty.symbol.SymbolId; re-exported for user convenience
 package kyo
 
 /** Per-type satellite that re-exports the internal `SymbolId` opaque type for user access. */

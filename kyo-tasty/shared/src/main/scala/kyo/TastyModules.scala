@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC per-type satellite for JPMS module ADT types; re-exported under kyo.Tasty.ModuleDescriptor etc.
+// PUBLIC per-type satellite for JPMS module ADT types; re-exported under kyo.Tasty.ModuleDescriptor etc.
 package kyo
 
 /** Per-type satellite for `ModuleDescriptor`, `ModuleRequires`, `ModuleExports`, `ModuleOpens`, `ModuleProvides`. Types live in `object

@@ -49,11 +49,11 @@ object AstUnpickler:
       * @param typeBySymbol
       *   Pre-indexed map from each symbol to its declared type. Consumed by Pass C.
       * @param ownerBySymbol
-      *   Map from each symbol to its owner symbol (the partial Symbol used during Pass 1). Used by Pass C to build ownerId fields. plan:
-      *   phase-02 bridge; removed in Phase 12 when AstUnpickler produces SymbolDescriptors directly.
+      *   Map from each symbol to its owner symbol (the partial Symbol used during Pass 1). Used by Pass C to build ownerId fields.
+      *   Retained: Pass A/B pipeline still produces partial Tasty.Symbol instances; SymbolDescriptor migration is out of campaign scope.
       * @param bodyDataByAddr
-      *   Map from TASTy byte address to (bodyStart, bodyEnd) for symbols that have a body. File-level body data. plan: phase-02 bridge;
-      *   removed in Phase 12 when AstUnpickler produces SymbolDescriptors with body field.
+      *   Map from TASTy byte address to (bodyStart, bodyEnd) for symbols that have a body. File-level body data. Retained: Pass A/B
+      *   pipeline still produces partial Tasty.Symbol instances; SymbolDescriptor migration is out of campaign scope.
       * @param sectionBytes
       *   The raw AST section bytes for this file (shared across all symbols). For Pass C SymbolBody construction.
       * @param sectionOffset
@@ -130,8 +130,7 @@ object AstUnpickler:
         val ownerStack      = new mutable.ArrayDeque[Tasty.Symbol]()
         val parentsBySymbol = new mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Type]]()
         val typeBySymbol    = new mutable.HashMap[Tasty.Symbol, Tasty.Type]()
-        // plan: phase-02 bridge; ownerBySymbol and bodyDataByAddr track per-symbol data that was
-        // previously stored on Symbol.owner and Symbol.TastyOrigin. Pass C reads these to build
+        // ownerBySymbol and bodyDataByAddr track per-symbol data consumed by Pass C to build
         // ownerId and body fields on the final immutable Symbols.
         val ownerBySymbol  = new mutable.HashMap[Tasty.Symbol, Tasty.Symbol]()
         val bodyDataByAddr = new mutable.HashMap[Tasty.Symbol, (Int, Int)]()

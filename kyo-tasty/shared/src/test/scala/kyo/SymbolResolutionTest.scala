@@ -66,7 +66,7 @@ class SymbolResolutionTest extends Test:
     end fixtureSource
 
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(Seq("root"), false, src, 1)
+        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
 
     // Test 19: two concurrent findClass calls for the same FQN return reference-equal Symbol instances.
     // The fqnIndex is an immutable HashMap populated once during Phase C. Both calls read the same

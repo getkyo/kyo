@@ -64,7 +64,6 @@ object Subtyping:
         else
             // Any is supertype of everything
             sup match
-                // plan: phase-05; uses cp.symbol(id).name.asString for now; Phase 09 uses sym.fullName.asString
                 case Tasty.Type.Named(supId) if { import Tasty.Name.asString; cp.symbol(supId).name.asString == AnyName } =>
                     Sub
                 // T <: OrType(L, R): Sub if either side is Sub; NotSub only if both are NotSub; else Unknown
@@ -80,7 +79,6 @@ object Subtyping:
                 case _ =>
                     sub match
                         // Nothing is subtype of everything
-                        // plan: phase-05; uses cp.symbol(id).name.asString; Phase 09 uses sym.fullName.asString
                         case Tasty.Type.Named(subId) if { import Tasty.Name.asString; cp.symbol(subId).name.asString == NothingName } =>
                             Sub
 

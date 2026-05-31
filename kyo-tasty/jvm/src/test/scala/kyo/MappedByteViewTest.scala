@@ -34,7 +34,7 @@ class MappedByteViewTest extends Test:
     end makeView
 
     "MappedByteViewTest: position is Long-typed after goto with cursor beyond Int.MaxValue" taggedAs jvmOnly in {
-        // flow-allow: §839 case 3; direct MappedByteView cursor test, single-threaded, no suspension.
+        // §839 case 3; direct MappedByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Given: MappedByteView with logical end=5_000_000_000L, cursor positioned at 3_000_000_000L via goto.
         // When: view.position is read.
@@ -47,7 +47,7 @@ class MappedByteViewTest extends Test:
     }
 
     "MappedByteViewTest: readByte past Int.MaxValue raises IllegalStateException with mmap segment overflow" taggedAs jvmOnly in {
-        // flow-allow: §839 case 3; direct MappedByteView overflow test, single-threaded, no suspension.
+        // §839 case 3; direct MappedByteView overflow test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Given: MappedByteView with cursor at Int.MaxValue + 1L.
         // When: readByte() is called.

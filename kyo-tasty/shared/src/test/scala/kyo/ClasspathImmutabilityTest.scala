@@ -45,7 +45,7 @@ class ClasspathImmutabilityTest extends Test:
     private def openFixtureClasspath(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
-        ClasspathOrchestrator.open(Seq("root"), false, src, 1)
+        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureClasspath
 
     // ── Leaf 1: Classpath constructor fields are immutable ───────────────────

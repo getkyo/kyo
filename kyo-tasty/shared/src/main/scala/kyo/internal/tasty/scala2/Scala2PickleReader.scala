@@ -278,9 +278,8 @@ object Scala2PickleReader:
                 case _ => ()
         }
 
-        // plan: phase-02 bridge; slot fills removed (Symbol is now immutable).
         // Symbols created by makePickleSym already have all fields at defaults (empty/absent).
-        // declaredType defaults to Absent; Phase 09 re-evaluates if needed.
+        // declaredType defaults to Absent.
 
         Scala2PickleResult(firstClass, symbols, classParen)
     end buildResult
@@ -350,8 +349,8 @@ object Scala2PickleReader:
             if isMethod then Tasty.SymbolKind.Method
             else if (rawFlags & FINAL_FLAG) != 0 then Tasty.SymbolKind.Val
             else Tasty.SymbolKind.Field
-        // plan: phase-02 bridge; declaredType for method placeholder set via makePickleSymWithType.
-        // Self-referential Type.Named(sym) is approximated with Absent for Phase 02.
+        // declaredType for method placeholder set via makePickleSymWithType.
+        // Self-referential Type.Named(sym) is approximated with Absent.
         makePickleSym(kind, flags, symName, interner)
     end decodeValSym
 
@@ -377,8 +376,8 @@ object Scala2PickleReader:
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
         val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags)
-        // plan: phase-02 bridge; declaredType is now set at construction time.
-        // Use a placeholder stringSym (declaredType = Absent per Phase 02 defaults).
+        // declaredType is set at construction time via makePickleSymWithType.
+        // Use a placeholder stringSym (declaredType = Absent default).
         val stringSym = makePickleSym(Tasty.SymbolKind.Class, baseFlags, "String", interner)
         val sym = makePickleSymWithType(
             Tasty.SymbolKind.TypeAlias,
@@ -427,7 +426,7 @@ object Scala2PickleReader:
         val symName     = nameTable.getOrElse(nameRef, s"<extref$idx>")
         val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn         = ownerFqn.fold(symName)(q => q + "." + symName)
-        // plan: phase-02 bridge; declaredType=Absent (was Named(sym) self-ref, deferred to Phase 09).
+        // declaredType=Absent (Named(sym) self-ref approximation).
         makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, interner)
     end decodeExtRef
 
@@ -451,7 +450,7 @@ object Scala2PickleReader:
         val moduleClassName = if rawName.endsWith("$") then rawName else rawName + "$"
         val ownerFqn        = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn             = ownerFqn.fold(moduleClassName)(q => q + "." + moduleClassName)
-        // plan: phase-02 bridge; declaredType=Absent (was Named(sym) self-ref, deferred to Phase 09).
+        // declaredType=Absent (Named(sym) self-ref approximation).
         makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, interner)
     end decodeExtModClassRef
 
@@ -499,7 +498,7 @@ object Scala2PickleReader:
     // -------------------------------------------------------------------------
 
     private def buildAnyRefParent()(using AllowUnsafe): Tasty.Type =
-        // plan: phase-02 bridge; declaredType=Absent (was Named(sym) self-ref, deferred to Phase 09).
+        // declaredType=Absent (Named(sym) self-ref approximation).
         val anyRefSym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             new Tasty.Flags(Tasty.Flag.Scala2.bit | Tasty.Flag.JavaDefined.bit),

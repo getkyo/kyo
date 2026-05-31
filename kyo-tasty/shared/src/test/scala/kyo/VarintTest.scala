@@ -10,7 +10,7 @@ class VarintTest extends Test:
 
     // Test 7: readNat decodes 0
     "readNat decodes 0 (single terminating byte 0x80)" in run {
-        // flow-allow: §839 case 3; direct Varint cursor test, single-threaded, no suspension.
+        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 0 encoded: (0 & 0x7f) | 0x80 = 0x80
         val view = viewOf(Array(0x80.toByte))
@@ -19,7 +19,7 @@ class VarintTest extends Test:
 
     // Test 8: readNat decodes 127
     "readNat decodes 127 (single byte 0xFF)" in run {
-        // flow-allow: §839 case 3; direct Varint cursor test, single-threaded, no suspension.
+        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 127 encoded: (127 & 0x7f) | 0x80 = 0x7f | 0x80 = 0xff
         val view = viewOf(Array(0xff.toByte))
@@ -28,7 +28,7 @@ class VarintTest extends Test:
 
     // Test 9: readNat decodes 128 (two bytes)
     "readNat decodes 128 (two-byte encoding)" in run {
-        // flow-allow: §839 case 3; direct Varint cursor test, single-threaded, no suspension.
+        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 128 = 0x80: high 7 bits = 0x01, low 7 bits = 0x00
         // Continuation byte (0x80 CLEAR): 0x01
@@ -39,7 +39,7 @@ class VarintTest extends Test:
 
     // Test 10: readNat decodes 16383 (two-byte maximum)
     "readNat decodes 16383 (max two-byte value)" in run {
-        // flow-allow: §839 case 3; direct Varint cursor test, single-threaded, no suspension.
+        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 16383 = 0x3FFF: high 7 bits = 0x7F, low 7 bits = 0x7F
         // Continuation byte: 0x7F
@@ -50,7 +50,7 @@ class VarintTest extends Test:
 
     // Test 11: readNat decodes Int.MaxValue (5 bytes)
     "readNat decodes Int.MaxValue (5-byte encoding)" in run {
-        // flow-allow: §839 case 3; direct Varint cursor test, single-threaded, no suspension.
+        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Int.MaxValue = 2147483647 = 0x7FFFFFFF
         // Split into 5 groups of 7 bits: 0x07, 0x7F, 0x7F, 0x7F, 0x7F
@@ -62,7 +62,7 @@ class VarintTest extends Test:
 
     // Test 12: readInt decodes -1 (dotty 2's complement, NOT zigzag)
     "readInt decodes -1 using dotty sign-extension semantics" in run {
-        // flow-allow: §839 case 3; direct Varint cursor test, single-threaded, no suspension.
+        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // -1 in dotty readLongInt: single byte 0xFF
         // First byte b = 0xFF, x = ((0xFF << 1).toByte >> 1) = (0xFE.toByte >> 1) = -1
@@ -74,7 +74,7 @@ class VarintTest extends Test:
 
     // Test 13: readInt decodes Int.MinValue
     "readInt decodes Int.MinValue using dotty sign-extension semantics" in run {
-        // flow-allow: §839 case 3; direct Varint cursor test, single-threaded, no suspension.
+        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Int.MinValue = -2147483648 = 0x80000000 in 2's complement
         // Encoding in 5 bytes (groups of 7 from high to low):
@@ -118,7 +118,7 @@ class VarintTest extends Test:
 
     // Test 14: readLongNat decodes Long.MaxValue
     "readLongNat decodes Long.MaxValue" in run {
-        // flow-allow: §839 case 3; direct Varint cursor test, single-threaded, no suspension.
+        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Long.MaxValue = 0x7FFFFFFFFFFFFFFF = 9223372036854775807L
         // Split into 9 groups of 7 bits + 1 bit:
@@ -172,7 +172,7 @@ class VarintTest extends Test:
 
     // Test (Phase 03a B4): readNat rejects continuation past 5 bytes
     "readNat rejects continuation past 5 bytes (Int overflow guard)" in run {
-        // flow-allow: §839 case 3; direct Varint error-path test, single-threaded, no suspension.
+        // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 6 bytes with 0x80 CLEAR = 6 continuation bytes; cap is 5.
         val view = viewOf(Array.fill(6)(0x00.toByte))
@@ -190,7 +190,7 @@ class VarintTest extends Test:
 
     // Test (Phase 03a B4): readLongNat rejects continuation past 10 bytes
     "readLongNat rejects continuation past 10 bytes (Long overflow guard)" in run {
-        // flow-allow: §839 case 3; direct Varint error-path test, single-threaded, no suspension.
+        // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 11 bytes with 0x80 CLEAR = 11 continuation bytes; cap is 10.
         val view = viewOf(Array.fill(11)(0x00.toByte))
@@ -208,7 +208,7 @@ class VarintTest extends Test:
 
     // Test (Phase 03a B4 boundary): readLongNat accepts exactly 10 bytes
     "readLongNat accepts exactly 10-byte encoding without throwing" in run {
-        // flow-allow: §839 case 3; direct Varint boundary test, single-threaded, no suspension.
+        // §839 case 3; direct Varint boundary test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 9 bytes with 0x80 CLEAR (continuation) then 1 terminating byte with 0x80 SET.
         // 0x81 has 0x80 CLEAR (bit 7 = 1 = 0x80, wait: 0x81 = 1000_0001, so bit 7 IS set).
@@ -230,7 +230,7 @@ class VarintTest extends Test:
 
     // Test (Phase 21a T2-1): writeNat then readNat round-trip
     "writeNat then readNat round-trips 1234" in run {
-        // flow-allow: §839 case 3; direct Varint write+read round-trip test, single-threaded.
+        // §839 case 3; direct Varint write+read round-trip test, single-threaded.
         import AllowUnsafe.embrace.danger
         val buf = scala.collection.mutable.ArrayBuffer.empty[Byte]
         Varint.writeNat(buf, 1234)
@@ -240,7 +240,7 @@ class VarintTest extends Test:
 
     // Test (Phase 21a T2-2): writeLongNat then readLongNat round-trip
     "writeLongNat then readLongNat round-trips 9_999_999_999L" in run {
-        // flow-allow: §839 case 3; direct Varint write+read round-trip test, single-threaded.
+        // §839 case 3; direct Varint write+read round-trip test, single-threaded.
         import AllowUnsafe.embrace.danger
         val buf = scala.collection.mutable.ArrayBuffer.empty[Byte]
         Varint.writeLongNat(buf, 9_999_999_999L)
@@ -252,7 +252,7 @@ class VarintTest extends Test:
     // 100 non-negative Long values drawn from scala.util.Random(seed=0L).
     // Negative values are masked to non-negative via >>> 1 (arithmetic unsigned shift).
     "writeLongNat then readLongNat round-trips 100 seeded random non-negative Longs" in run {
-        // flow-allow: §839 case 3; direct Varint write+read generative test, single-threaded.
+        // §839 case 3; direct Varint write+read generative test, single-threaded.
         import AllowUnsafe.embrace.danger
         val rng    = new scala.util.Random(0L)
         val trials = 100

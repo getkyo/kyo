@@ -45,7 +45,7 @@ final class OnceCell[A] private (init: () => A, ref: AtomicRef.Unsafe[AnyRef]):
       * Pure post-init: race-and-discard semantics; post-init reads are referentially transparent.
       */
     def get(): A =
-        // flow-allow: §839 case 3 -- memoized lazy; race-and-discard but post-init reads are referentially transparent.
+        // §839 case 3 -- memoized lazy; race-and-discard but post-init reads are referentially transparent.
         given AllowUnsafe = AllowUnsafe.embrace.danger
         val cached        = ref.get()
         if cached ne OnceCell.Unset then

@@ -95,7 +95,7 @@ class UnifiedModelTest extends Test:
         val src = MemFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
-            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), false, src, 1).flatMap: cp =>
+            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).flatMap: cp =>
                 Kyo.lift(cp.packages)).map:
                 case Result.Success(pkgs) =>
                     assert(pkgs.forall(_.kind == Tasty.SymbolKind.Package), "Expected all packages to have kind Package")

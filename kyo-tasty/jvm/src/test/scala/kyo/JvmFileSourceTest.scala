@@ -571,7 +571,7 @@ class JvmFileSourceTest extends Test:
         val openResult: Result[TastyError, Unit] < Async =
             Abort.run[TastyError]:
                 Scope.run:
-                    ClasspathOrchestrator.open(Seq("root"), false, src, 1).map: cp =>
+                    ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
                         capturedCp = cp
         openResult.map:
             case Result.Success(_) =>

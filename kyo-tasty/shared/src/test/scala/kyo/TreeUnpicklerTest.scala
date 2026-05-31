@@ -53,7 +53,7 @@ class TreeUnpicklerTest extends Test:
     private def openPlainClassCp(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
-        ClasspathOrchestrator.open(Seq("root"), false, src, 1)
+        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openPlainClassCp
 
     // ── Pass-1 helper ─────────────────────────────────────────────────────────

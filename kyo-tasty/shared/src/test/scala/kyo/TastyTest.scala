@@ -73,7 +73,7 @@ class TastyTest extends Test:
     }
 
     "No phase-metadata comments in INV-021 production source sites" in {
-        // flow-allow: this test's rationale comment cites the historical 'Phase N' tokens it tests for; not a DEV tag
+        // this test's rationale comment cites the historical 'Phase N' tokens it tests for; not a DEV tag
         // INV-021: Phase 01 removed delivery-tracking '// Phase N' comments from exactly 3 identified sites:
         //   1. kyo-tasty/shared/src/main/scala/kyo/Tasty.scala, lines 73-88 (around old line 78)
         //   2. kyo-tasty/shared/src/main/scala/kyo/Tasty.scala, lines 1006-1022 (around old line 1012)

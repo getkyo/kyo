@@ -29,18 +29,17 @@ final private[kyo] class SymbolDescriptor(
     var body: Maybe[SymbolBody]
 )
 
-/** Internal factory for partial `Tasty.Symbol` instances used during Pass 1 (pre-Pass C).
+/** Internal factory for partial `Tasty.Symbol` instances used during Pass A/B (pre-Pass C).
   *
   * Creates Symbols with only the fields knowable during AST/classfile scanning: kind, flags, name. All relational fields (parentTypes,
   * declarationIds, etc.) are left at empty defaults. Pass C replaces these partial symbols with fully-populated ones via
   * `materializeSymbols`.
   *
-  * The `plan: phase-02 bridge` note below indicates this object is a transitional helper whose responsibilities migrate to
-  * ClasspathOrchestrator in Phase 07 once the pipeline is fully converted to SymbolDescriptor throughout.
+  * Retained as a factory shim for AstUnpickler, TypeUnpickler, TreeUnpickler, ClasspathOrchestrator, ClassfileUnpickler, and
+  * JavaAnnotationUnpickler. Deletion requires migrating all Pass A/B callers to SymbolDescriptor-based construction, which is out of scope
+  * for this campaign.
   */
 private[kyo] object Symbol:
-    // plan: phase-02 bridge; Pass 1 still creates Tasty.Symbol for addrMap/comments/positions wiring;
-    // Phase 07 converts the full pipeline to SymbolDescriptor so this object is deleted.
 
     /** Create a new partial `Tasty.Symbol` with the given fields.
       *

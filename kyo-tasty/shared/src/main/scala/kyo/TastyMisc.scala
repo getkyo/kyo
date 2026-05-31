@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC per-type satellite for misc types: Version, Position, Pickle, Constant, SubtypeVerdict
+// PUBLIC per-type satellite for misc types: Version, Position, Pickle, Constant, SubtypeVerdict
 package kyo
 
 /** Per-type satellite for miscellaneous small types. Types live in `object Tasty`; this file satisfies Rule 8b. */

@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC per-type satellite for kyo.Tasty.Classpath; re-exported under kyo.Tasty.Classpath
+// PUBLIC per-type satellite for kyo.Tasty.Classpath; re-exported under kyo.Tasty.Classpath
 package kyo
 
 /** Per-type satellite for the `Classpath` case class and companion. Types live in `object Tasty`; this file satisfies Rule 8b. */

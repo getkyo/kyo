@@ -62,7 +62,7 @@ class ClasspathPureAccessorTest extends Test:
     // Pins: INV-003 (Classpath case class fields immutable post-construction).
     "findClass returns Present for a known FQN" in run {
         Scope.run:
-            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 cp.findClass("kyo.fixtures.PlainClass")).map:
                 case Result.Success(Present(sym)) =>
                     assert(
@@ -84,7 +84,7 @@ class ClasspathPureAccessorTest extends Test:
     // Pins: INV-003.
     "symbols is non-empty after open" in run {
         Scope.run:
-            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 cp.symbols).map:
                 case Result.Success(syms) =>
                     assert(syms.nonEmpty, "symbols should be non-empty after loading a classpath")
@@ -103,7 +103,7 @@ class ClasspathPureAccessorTest extends Test:
         var capturedCp: Tasty.Classpath = null
         Abort.run[TastyError]:
             Scope.run:
-                ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+                ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                     capturedCp = cp
         .map:
             case Result.Success(_) =>
@@ -123,7 +123,7 @@ class ClasspathPureAccessorTest extends Test:
     // Pins: INV-003.
     "topLevelClasses is non-empty after open" in run {
         Scope.run:
-            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 cp.topLevelClasses).map:
                 case Result.Success(classes) =>
                     assert(classes.nonEmpty, "topLevelClasses should be non-empty")
