@@ -180,7 +180,7 @@ case class McpUnknownPromptException(name: String, registered: Chunk[String])(us
   *
   * Raised when a client calls a method whose required capability was not declared during
   * the handshake. The `peer` field identifies whether the server or client failed to
-  * advertise the capability. `requiredCapability` is the typed [[McpCapabilityName]]
+  * advertise the capability. `requiredCapability` is the typed [[McpCapabilities.Name]]
   * enum value so the surface never carries a raw `String` for a closed-set capability.
   *
   * @param method             the method name that requires the capability
@@ -189,7 +189,7 @@ case class McpUnknownPromptException(name: String, registered: Chunk[String])(us
   */
 case class McpCapabilityNotAdvertisedException(
     method: String,
-    requiredCapability: McpCapabilityName,
+    requiredCapability: McpCapabilities.Name,
     peer: McpCapabilityNotAdvertisedException.Peer
 )(using Frame)
     extends McpDispatchException(

@@ -24,9 +24,9 @@ class SchemaSingletonTest extends Test:
         assert(s1 eq s2)
     }
 
-    "Schema[McpLogLevel] is a singleton val (INV-013)" in {
-        val s1 = summon[Schema[McpLogLevel]]
-        val s2 = summon[Schema[McpLogLevel]]
+    "Schema[McpServer.LogLevel] is a singleton val (INV-013)" in {
+        val s1 = summon[Schema[McpServer.LogLevel]]
+        val s2 = summon[Schema[McpServer.LogLevel]]
         assert(s1 eq s2)
     }
 

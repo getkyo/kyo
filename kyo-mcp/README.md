@@ -88,12 +88,12 @@ The typed overload aborts with `McpToolStructuredMissingException` when the serv
 
 The remaining client surface is a small set of typed extension methods, each named after the underlying MCP request: `listTools`, `listResources`, `listResourceTemplates`, `readResource`, `listPrompts`, `getPrompt`, `complete`, `setLogLevel`, `subscribeResource`, `unsubscribeResource`, `ping`, `notifyRootsListChanged`. Each is fully callable at the safe tier and returns a typed result. (`subscribeResource(uri)` / `unsubscribeResource(uri)` ride the spec's resource-subscription protocol and only succeed when the server has at least one route declared with `subscribe = true`; `ping` is a `Unit`-returning handshake-liveness check.)
 
-`setLogLevel(level: McpLogLevel)` takes the typed log level (eight cases Debug through Emergency); the server-side `notifyLog(level, data, logger)` matches.
+`setLogLevel(level: McpServer.LogLevel)` takes the typed log level (eight cases Debug through Emergency); the server-side `notifyLog(level, data, logger)` matches.
 
-The list-shaped methods return `McpPage[A]` which also provides factories `McpPage.empty[A]` and `McpPage.of(items, next)` plus a `.isLast` predicate for cursor-based iteration.
+The list-shaped methods return `McpClient.Page[A]` which also provides factories `McpClient.Page.empty[A]` and `McpClient.Page.of(items, next)` plus a `.isLast` predicate for cursor-based iteration.
 
 ```scala
-val tools: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpException | Closed]) =
+val tools: McpClient.Page[McpRoute.ToolMeta] < (Async & Scope & Abort[McpException | Closed]) =
     val info = McpInfo(name = "calc-tester")
     val caps = McpCapabilities.Client()
     JsonRpcTransport.inMemory.map { (_, clientT) =>
@@ -101,7 +101,7 @@ val tools: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpException | Cl
     }
 ```
 
-Each cursor-paginated list returns `McpPage[A](items, nextCursor, meta)` so the page boundary is named, not the tuple-positional `(Chunk[A], Maybe[String])` shape (Audit-A3 / INV-023). The `meta: Maybe[Structure.Value]` field is the spec §3.7 advisory carve-out; the same `_meta` passthrough also rides on `ToolCallResult` and `PromptGetResult` and is the only place the typed API hands you the raw JSON shape.
+Each cursor-paginated list returns `McpClient.Page[A](items, nextCursor, meta)` so the page boundary is named, not the tuple-positional `(Chunk[A], Maybe[String])` shape (Audit-A3 / INV-023). The `meta: Maybe[Structure.Value]` field is the spec §3.7 advisory carve-out; the same `_meta` passthrough also rides on `ToolCallResult` and `PromptGetResult` and is the only place the typed API hands you the raw JSON shape.
 
 ## Routes
 
@@ -276,7 +276,7 @@ val explicitCaps: McpConfig =
 
 Once the handshake completes, `server.clientCapabilities` and `client.serverCapabilities` expose the negotiated record as `Maybe[McpCapabilities.{Client, Server}]` (`Absent` before the handshake finishes). The handler-time `Context` does not expose capabilities directly because routes that depend on an opt-in capability are dispatch-gated by `McpConfig.capabilityGate` ; if a client calls a method whose required capability the server did not advertise (or vice versa), the engine fails with `McpCapabilityNotAdvertisedException` before the handler runs.
 
-The `capabilityName: McpCapabilityName` field on `McpCapabilityNotAdvertisedException` (and the enum's eight cases: Tools, Resources, Prompts, Sampling, Roots, Logging, Completions, Elicitation) lets handler code pattern-match on which capability the peer required.
+The `capabilityName: McpCapabilities.Name` field on `McpCapabilityNotAdvertisedException` (and the enum's eight cases: Tools, Resources, Prompts, Sampling, Roots, Logging, Completions, Elicitation) lets handler code pattern-match on which capability the peer required.
 
 ## Lifecycle
 
@@ -357,7 +357,7 @@ Notifications (`server.notifyToolsListChanged`, `server.notifyResourcesListChang
 The minimal server above uses `stdio()` for exactly the standard MCP deployment shape. For tests, pair a server and a client over `inMemory`:
 
 ```scala
-val pairedTest: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpException | Closed]) =
+val pairedTest: McpClient.Page[McpRoute.ToolMeta] < (Async & Scope & Abort[McpException | Closed]) =
     val addTool = McpRoute.tool[AddIn]("add") { (in, _) =>
         McpContent.text(s"${in.a + in.b}")
     }

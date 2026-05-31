@@ -56,7 +56,7 @@ private[kyo] object McpReverseDispatch:
             if clientCapabilities.sampling.isEmpty then
                 Abort.fail(McpCapabilityNotAdvertisedException(
                     "sampling/createMessage",
-                    McpCapabilityName.Sampling,
+                    McpCapabilities.Name.Sampling,
                     McpCapabilityNotAdvertisedException.Peer.Client
                 ))
             else
@@ -70,7 +70,7 @@ private[kyo] object McpReverseDispatch:
             if clientCapabilities.roots.isEmpty then
                 Abort.fail(McpCapabilityNotAdvertisedException(
                     "roots/list",
-                    McpCapabilityName.Roots,
+                    McpCapabilities.Name.Roots,
                     McpCapabilityNotAdvertisedException.Peer.Client
                 ))
             else
@@ -84,7 +84,7 @@ private[kyo] object McpReverseDispatch:
             if clientCapabilities.elicitation.isEmpty then
                 Abort.fail(McpCapabilityNotAdvertisedException(
                     "elicitation/create",
-                    McpCapabilityName.Elicitation,
+                    McpCapabilities.Name.Elicitation,
                     McpCapabilityNotAdvertisedException.Peer.Client
                 ))
             else

@@ -28,11 +28,11 @@ class McpLoggingSetLevelTypedTest extends Test:
                 McpClient.initUnscoped(tc, McpInfo("log-test"), McpCapabilities.Client(), logNotifRoute)
             ).flatMap { (srv, client) =>
                 for
-                    _ <- client.setLogLevel(McpLogLevel.Warning)
-                    _ <- Abort.run[Closed](srv.notifyLog(McpLogLevel.Info, "dropped-message"))
-                    _ <- Abort.run[Closed](srv.notifyLog(McpLogLevel.Debug, "also-dropped"))
+                    _ <- client.setLogLevel(McpServer.LogLevel.Warning)
+                    _ <- Abort.run[Closed](srv.notifyLog(McpServer.LogLevel.Info, "dropped-message"))
+                    _ <- Abort.run[Closed](srv.notifyLog(McpServer.LogLevel.Debug, "also-dropped"))
                     c1 = counter.get()(using AllowUnsafe.embrace.danger)
-                    _ <- Abort.run[Closed](srv.notifyLog(McpLogLevel.Error, "received-message"))
+                    _ <- Abort.run[Closed](srv.notifyLog(McpServer.LogLevel.Error, "received-message"))
                     _ <- Async.sleep(50.millis)
                     c2 = counter.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow
@@ -61,9 +61,9 @@ class McpLoggingSetLevelTypedTest extends Test:
             ).flatMap { (srv, client) =>
                 for
                     // Info >= Info (default threshold), so Info messages are forwarded.
-                    _ <- Abort.run[Closed](srv.notifyLog(McpLogLevel.Info, "info-message"))
+                    _ <- Abort.run[Closed](srv.notifyLog(McpServer.LogLevel.Info, "info-message"))
                     // Debug < Info, so Debug messages are dropped.
-                    _ <- Abort.run[Closed](srv.notifyLog(McpLogLevel.Debug, "debug-dropped"))
+                    _ <- Abort.run[Closed](srv.notifyLog(McpServer.LogLevel.Debug, "debug-dropped"))
                     _ <- Async.sleep(50.millis)
                     c = counter.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow

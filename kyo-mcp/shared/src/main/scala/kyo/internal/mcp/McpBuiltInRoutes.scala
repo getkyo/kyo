@@ -65,7 +65,7 @@ private[kyo] object McpBuiltInRoutes:
     final private case class CompleteResult(completion: McpRoute.CompletionResult) derives Schema
 
     // Wire shape for logging/setLevel.
-    final private case class SetLogLevelParams(level: McpLogLevel) derives Schema
+    final private case class SetLogLevelParams(level: McpServer.LogLevel) derives Schema
     final private case class SetLogLevelResult() derives Schema
 
     // Wire shape for resources/subscribe and resources/unsubscribe.
@@ -191,7 +191,7 @@ private[kyo] object McpBuiltInRoutes:
             end match
         }
 
-    def loggingSetLevel(logLevelRef: AtomicRef[McpLogLevel])(using Frame): JsonRpcRoute[?, ?, ?] =
+    def loggingSetLevel(logLevelRef: AtomicRef[McpServer.LogLevel])(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[SetLogLevelParams, SetLogLevelResult]("logging/setLevel") { (params, _) =>
             logLevelRef.set(params.level).andThen(SetLogLevelResult())
         }

@@ -5,7 +5,7 @@ import kyo.*
 // Phase 1 compile-spine test: asserts every §2 public type is summonable or constructable.
 // Pins INV-001 (type enumeration), INV-012 (opaque identities via safe/unsafe round-trip),
 // INV-021 (Structure.Value allowlist), INV-022 (typed resource URIs),
-// INV-023 (McpPage named record), INV-024 (Context.server type), INV-025 (no public apply).
+// INV-023 (McpClient.Page named record), INV-024 (Context.server type), INV-025 (no public apply).
 //
 // File lives at kyo/internal/CompileSpineTest.scala but declares package kyo so that
 // opaque-type internal members (safe/unsafe) are accessible.
@@ -35,8 +35,8 @@ class CompileSpineTest extends Test:
         assert(r2.isEmpty)
     }
 
-    "McpPage is a named record (not a tuple)" in {
-        val page = McpPage(Chunk("a", "b"), Absent)
+    "McpClient.Page is a named record (not a tuple)" in {
+        val page = McpClient.Page(Chunk("a", "b"), Absent)
         assert(page.items == Chunk("a", "b"))
         assert(page.nextCursor.isEmpty)
     }

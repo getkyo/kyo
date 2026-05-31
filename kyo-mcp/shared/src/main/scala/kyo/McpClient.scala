@@ -16,10 +16,34 @@ opaque type McpClient = McpClient.Unsafe
 
 object McpClient:
 
+    /** Named-record paginated list result.
+      *
+      * Replaces the tuple `(Chunk[A], Maybe[String])` pattern per Audit-A3 / INV-023.
+      * `nextCursor` is `Absent` on the last page. `meta` carries the optional `_meta`
+      * advisory field from the MCP spec (§3.7); it is omitted from the wire when `Absent`.
+      *
+      * @tparam A the item type
+      */
+    // flow-allow: Structure carve-out per §11a / INV-021
+    final case class Page[+A](items: Chunk[A], nextCursor: Maybe[String], meta: Maybe[Structure.Value] = Absent) derives CanEqual:
+        /** Returns `true` when there are no further pages. */
+        def isLast: Boolean = nextCursor.isEmpty
+
+    object Page:
+        /** Returns an empty page with no cursor. */
+        def empty[A]: Page[A] = Page(Chunk.empty, Absent)
+
+        /** Constructs a page from items and an optional continuation cursor. */
+        def of[A](items: Chunk[A], next: Maybe[String]): Page[A] = Page(items, next)
+
+        given [A: Schema]: Schema[Page[A]] = Schema.derived
+
+    end Page
+
     extension (self: McpClient)
 
-        /** Lists the server's tools. Returns a named `McpPage` record (Audit-A3 / INV-023). */
-        def listTools(cursor: Maybe[String] = Absent)(using Frame): McpPage[McpRoute.ToolMeta] < (Async & Abort[McpException | Closed]) =
+        /** Lists the server's tools. Returns a named `Page` record (Audit-A3 / INV-023). */
+        def listTools(cursor: Maybe[String] = Absent)(using Frame): Page[McpRoute.ToolMeta] < (Async & Abort[McpException | Closed]) =
             self.listToolsUnsafe(cursor)
 
         /** Calls a tool with a typed argument; returns the raw `ToolCallResult`.
@@ -45,16 +69,16 @@ object McpClient:
         ): Out < (Async & Abort[McpException | Closed]) =
             self.callToolTypedUnsafe[In, Out](name, arguments)
 
-        /** Lists the server's resources. Returns a named `McpPage` record (Audit-A3). */
+        /** Lists the server's resources. Returns a named `Page` record (Audit-A3). */
         def listResources(cursor: Maybe[String] = Absent)(using
             Frame
-        ): McpPage[McpRoute.ResourceMeta] < (Async & Abort[McpException | Closed]) =
+        ): Page[McpRoute.ResourceMeta] < (Async & Abort[McpException | Closed]) =
             self.listResourcesUnsafe(cursor)
 
-        /** Lists the server's resource templates. Returns a named `McpPage` record. */
+        /** Lists the server's resource templates. Returns a named `Page` record. */
         def listResourceTemplates(cursor: Maybe[String] = Absent)(using
             Frame
-        ): McpPage[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpException | Closed]) =
+        ): Page[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpException | Closed]) =
             self.listResourceTemplatesUnsafe(cursor)
 
         /** Reads a resource by URI.
@@ -63,10 +87,10 @@ object McpClient:
         def readResource(uri: McpResourceUri)(using Frame): Chunk[McpResourceContents] < (Async & Abort[McpException | Closed]) =
             self.readResourceUnsafe(uri)
 
-        /** Lists the server's prompts. Returns a named `McpPage` record (Audit-A3). */
+        /** Lists the server's prompts. Returns a named `Page` record (Audit-A3). */
         def listPrompts(cursor: Maybe[String] = Absent)(using
             Frame
-        ): McpPage[McpRoute.PromptMeta] < (Async & Abort[McpException | Closed]) =
+        ): Page[McpRoute.PromptMeta] < (Async & Abort[McpException | Closed]) =
             self.listPromptsUnsafe(cursor)
 
         /** Fetches a prompt by name with optional arguments. */
@@ -76,7 +100,7 @@ object McpClient:
             self.getPromptUnsafe(name, arguments)
 
         /** Sets the minimum log level the client wishes to receive. */
-        def setLogLevel(level: McpLogLevel)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
+        def setLogLevel(level: McpServer.LogLevel)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
             self.setLogLevelUnsafe(level)
 
         /** Requests a completion suggestion from the server. */
@@ -128,7 +152,7 @@ object McpClient:
     end extension
 
     abstract class Unsafe:
-        def listToolsUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.ToolMeta] < (Async & Abort[McpException | Closed])
+        def listToolsUnsafe(cursor: Maybe[String])(using Frame): Page[McpRoute.ToolMeta] < (Async & Abort[McpException | Closed])
         def callToolUnsafe[In](name: String, arguments: In)(using
             Frame,
             Schema[In]
@@ -138,16 +162,16 @@ object McpClient:
             Schema[In],
             Schema[Out]
         ): Out < (Async & Abort[McpException | Closed])
-        def listResourcesUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.ResourceMeta] < (Async & Abort[McpException | Closed])
+        def listResourcesUnsafe(cursor: Maybe[String])(using Frame): Page[McpRoute.ResourceMeta] < (Async & Abort[McpException | Closed])
         def listResourceTemplatesUnsafe(cursor: Maybe[String])(using
             Frame
-        ): McpPage[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpException | Closed])
+        ): Page[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpException | Closed])
         def readResourceUnsafe(uri: McpResourceUri)(using Frame): Chunk[McpResourceContents] < (Async & Abort[McpException | Closed])
-        def listPromptsUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.PromptMeta] < (Async & Abort[McpException | Closed])
+        def listPromptsUnsafe(cursor: Maybe[String])(using Frame): Page[McpRoute.PromptMeta] < (Async & Abort[McpException | Closed])
         def getPromptUnsafe(name: String, arguments: Map[String, String])(using
             Frame
         ): McpRoute.PromptGetResult < (Async & Abort[McpException | Closed])
-        def setLogLevelUnsafe(level: McpLogLevel)(using Frame): Unit < (Async & Abort[McpException | Closed])
+        def setLogLevelUnsafe(level: McpServer.LogLevel)(using Frame): Unit < (Async & Abort[McpException | Closed])
         def completeUnsafe(ref: McpRoute.CompletionRef, arg: McpRoute.CompletionArg, context: Maybe[McpRoute.CompletionArg.Context])(using
             Frame
         ): McpRoute.CompletionResult < (Async & Abort[McpException | Closed])

@@ -32,7 +32,7 @@ private[kyo] object McpEngine:
         val clientCapabilitiesRef = AtomicRef.Unsafe.init[Maybe[McpCapabilities.Client]](Absent)(using AllowUnsafe.embrace.danger).safe
         val clientInfoRef         = AtomicRef.Unsafe.init[Maybe[McpInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
         // AllowUnsafe: AtomicRef for log level threshold; initialized to Info per §3.9.
-        val logLevelRef = AtomicRef.Unsafe.init[McpLogLevel](McpLogLevel.Info)(using AllowUnsafe.embrace.danger).safe
+        val logLevelRef = AtomicRef.Unsafe.init[McpServer.LogLevel](McpServer.LogLevel.Info)(using AllowUnsafe.embrace.danger).safe
         // AllowUnsafe: AtomicRef for resource subscription set; initialized to empty per §3.4.
         val subscriptionsRef = AtomicRef.Unsafe.init[Set[McpResourceUri]](Set.empty)(using AllowUnsafe.embrace.danger).safe
 
@@ -164,7 +164,7 @@ private[kyo] object McpEngine:
                         case _ =>
                             Sync.defer(())
 
-                def notifyLogUnsafe[T](level: McpLogLevel, data: T, logger: Maybe[String])(using
+                def notifyLogUnsafe[T](level: McpServer.LogLevel, data: T, logger: Maybe[String])(using
                     Frame,
                     Schema[T]
                 ): Unit < (Async & Abort[Closed]) =

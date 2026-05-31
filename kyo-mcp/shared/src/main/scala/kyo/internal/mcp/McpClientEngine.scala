@@ -153,7 +153,7 @@ private[kyo] object McpClientEngine:
             def notifyPromptsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
                 Sync.defer(())
 
-            def notifyLogUnsafe[T](level: McpLogLevel, data: T, logger: Maybe[String])(using
+            def notifyLogUnsafe[T](level: McpServer.LogLevel, data: T, logger: Maybe[String])(using
                 Frame,
                 Schema[T]
             ): Unit < (Async & Abort[Closed]) =
@@ -189,9 +189,11 @@ private[kyo] object McpClientEngine:
     ): McpClient.Unsafe =
         new McpClient.Unsafe:
 
-            def listToolsUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.ToolMeta] < (Async & Abort[McpException | Closed]) =
+            def listToolsUnsafe(cursor: Maybe[String])(using
+                Frame
+            ): McpClient.Page[McpRoute.ToolMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, ToolsListResponse]("tools/list", ListRequest(cursor))
-                    .map(r => McpPage(r.tools, r.nextCursor))
+                    .map(r => McpClient.Page(r.tools, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("tools/list", "response", e.message))
                     })
@@ -225,18 +227,18 @@ private[kyo] object McpClientEngine:
 
             def listResourcesUnsafe(cursor: Maybe[String])(using
                 Frame
-            ): McpPage[McpRoute.ResourceMeta] < (Async & Abort[McpException | Closed]) =
+            ): McpClient.Page[McpRoute.ResourceMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, ResourcesListResponse]("resources/list", ListRequest(cursor))
-                    .map(r => McpPage(r.resources, r.nextCursor))
+                    .map(r => McpClient.Page(r.resources, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("resources/list", "response", e.message))
                     })
 
             def listResourceTemplatesUnsafe(cursor: Maybe[String])(using
                 Frame
-            ): McpPage[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpException | Closed]) =
+            ): McpClient.Page[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, ResourceTemplatesListResponse]("resources/templates/list", ListRequest(cursor))
-                    .map(r => McpPage(r.resourceTemplates, r.nextCursor))
+                    .map(r => McpClient.Page(r.resourceTemplates, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("resources/templates/list", "response", e.message))
                     })
@@ -250,9 +252,9 @@ private[kyo] object McpClientEngine:
 
             def listPromptsUnsafe(cursor: Maybe[String])(using
                 Frame
-            ): McpPage[McpRoute.PromptMeta] < (Async & Abort[McpException | Closed]) =
+            ): McpClient.Page[McpRoute.PromptMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, PromptsListResponse]("prompts/list", ListRequest(cursor))
-                    .map(r => McpPage(r.prompts, r.nextCursor))
+                    .map(r => McpClient.Page(r.prompts, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("prompts/list", "response", e.message))
                     })
@@ -265,7 +267,7 @@ private[kyo] object McpClientEngine:
                         Abort.fail(McpInvalidArgumentException("prompts/get", "response", e.message))
                     })
 
-            def setLogLevelUnsafe(level: McpLogLevel)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
+            def setLogLevelUnsafe(level: McpServer.LogLevel)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
                 handler.call[SetLogLevelRequest, SetLogLevelResponse]("logging/setLevel", SetLogLevelRequest(level.toString.toLowerCase))
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>

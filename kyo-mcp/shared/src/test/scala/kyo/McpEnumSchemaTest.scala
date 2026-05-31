@@ -2,7 +2,7 @@ package kyo
 
 /** Tests for spec-divergent enum Schemas using hand-rolled `Schema.stringSchema.transform` (Phase 3).
   *
-  * Pins INV-010: all four wire-divergent enums (`McpRole`, `McpLogLevel`,
+  * Pins INV-010: all four wire-divergent enums (`McpRole`, `McpServer.LogLevel`,
   * `McpServer.ElicitationResponse.Action`, `McpServer.SamplingRequest.IncludeContext`) use `transform`,
   * not `derives Schema`. The lint assertions (JVM-only) read each source file and verify
   * zero `derives Schema` lines on the enum declaration.
@@ -35,52 +35,52 @@ class McpEnumSchemaTest extends Test:
         assert(roundtrip[McpRole](McpRole.System) == McpRole.System)
     }
 
-    // ---- McpLogLevel ----
+    // ---- McpServer.LogLevel ----
 
-    "McpLogLevel.Debug encodes to \"debug\"" in {
-        assert(encode[McpLogLevel](McpLogLevel.Debug) == "\"debug\"")
+    "McpServer.LogLevel.Debug encodes to \"debug\"" in {
+        assert(encode[McpServer.LogLevel](McpServer.LogLevel.Debug) == "\"debug\"")
     }
 
-    "McpLogLevel.Info encodes to \"info\"" in {
-        assert(encode[McpLogLevel](McpLogLevel.Info) == "\"info\"")
+    "McpServer.LogLevel.Info encodes to \"info\"" in {
+        assert(encode[McpServer.LogLevel](McpServer.LogLevel.Info) == "\"info\"")
     }
 
-    "McpLogLevel.Notice encodes to \"notice\"" in {
-        assert(encode[McpLogLevel](McpLogLevel.Notice) == "\"notice\"")
+    "McpServer.LogLevel.Notice encodes to \"notice\"" in {
+        assert(encode[McpServer.LogLevel](McpServer.LogLevel.Notice) == "\"notice\"")
     }
 
-    "McpLogLevel.Warning encodes to \"warning\"" in {
-        assert(encode[McpLogLevel](McpLogLevel.Warning) == "\"warning\"")
+    "McpServer.LogLevel.Warning encodes to \"warning\"" in {
+        assert(encode[McpServer.LogLevel](McpServer.LogLevel.Warning) == "\"warning\"")
     }
 
-    "McpLogLevel.Error encodes to \"error\"" in {
-        assert(encode[McpLogLevel](McpLogLevel.Error) == "\"error\"")
+    "McpServer.LogLevel.Error encodes to \"error\"" in {
+        assert(encode[McpServer.LogLevel](McpServer.LogLevel.Error) == "\"error\"")
     }
 
-    "McpLogLevel.Critical encodes to \"critical\"" in {
-        assert(encode[McpLogLevel](McpLogLevel.Critical) == "\"critical\"")
+    "McpServer.LogLevel.Critical encodes to \"critical\"" in {
+        assert(encode[McpServer.LogLevel](McpServer.LogLevel.Critical) == "\"critical\"")
     }
 
-    "McpLogLevel.Alert encodes to \"alert\"" in {
-        assert(encode[McpLogLevel](McpLogLevel.Alert) == "\"alert\"")
+    "McpServer.LogLevel.Alert encodes to \"alert\"" in {
+        assert(encode[McpServer.LogLevel](McpServer.LogLevel.Alert) == "\"alert\"")
     }
 
-    "McpLogLevel.Emergency encodes to \"emergency\"" in {
-        assert(encode[McpLogLevel](McpLogLevel.Emergency) == "\"emergency\"")
+    "McpServer.LogLevel.Emergency encodes to \"emergency\"" in {
+        assert(encode[McpServer.LogLevel](McpServer.LogLevel.Emergency) == "\"emergency\"")
     }
 
-    "McpLogLevel round-trips all 8 cases" in {
+    "McpServer.LogLevel round-trips all 8 cases" in {
         val cases = List(
-            McpLogLevel.Debug,
-            McpLogLevel.Info,
-            McpLogLevel.Notice,
-            McpLogLevel.Warning,
-            McpLogLevel.Error,
-            McpLogLevel.Critical,
-            McpLogLevel.Alert,
-            McpLogLevel.Emergency
+            McpServer.LogLevel.Debug,
+            McpServer.LogLevel.Info,
+            McpServer.LogLevel.Notice,
+            McpServer.LogLevel.Warning,
+            McpServer.LogLevel.Error,
+            McpServer.LogLevel.Critical,
+            McpServer.LogLevel.Alert,
+            McpServer.LogLevel.Emergency
         )
-        assert(cases.forall(lvl => roundtrip[McpLogLevel](lvl) == lvl))
+        assert(cases.forall(lvl => roundtrip[McpServer.LogLevel](lvl) == lvl))
     }
 
     // ---- McpServer.ElicitationResponse.Action ----
@@ -144,8 +144,8 @@ class McpEnumSchemaTest extends Test:
         assert(schema.segments.isEmpty)
     }
 
-    "McpLogLevel Schema uses transform (segments are empty, not a derived enum schema)" in {
-        val schema = summon[Schema[McpLogLevel]]
+    "McpServer.LogLevel Schema uses transform (segments are empty, not a derived enum schema)" in {
+        val schema = summon[Schema[McpServer.LogLevel]]
         assert(schema.segments.isEmpty)
     }
 

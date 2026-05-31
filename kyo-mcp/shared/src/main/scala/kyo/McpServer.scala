@@ -225,6 +225,26 @@ object McpServer:
       */
     final case class Root(uri: McpResourceUri, name: Maybe[String] = Absent) derives Schema, CanEqual
 
+    /** MCP log level enum with 8 severity levels.
+      *
+      * Wire strings are lowercase and match the Scala case name lowercase: `"debug"` | `"info"` |
+      * `"notice"` | `"warning"` | `"error"` | `"critical"` | `"alert"` | `"emergency"`.
+      * Phase 3 replaces the Schema stub with `Schema.stringSchema.transform` per Q-006 / INV-010.
+      * Do NOT add `Schema` to the `derives` clause.
+      */
+    enum LogLevel derives CanEqual:
+        case Debug, Info, Notice, Warning, Error, Critical, Alert, Emergency
+
+    object LogLevel:
+
+        // Wire strings: "debug"|"info"|"notice"|"warning"|"error"|"critical"|"alert"|"emergency" (INV-010).
+        // capitalize maps lowercase wire string to Scala case name: "debug" -> "Debug".
+        given Schema[LogLevel] = Schema.stringSchema.transform(s => LogLevel.valueOf(s.capitalize))(
+            _.toString.toLowerCase
+        )
+
+    end LogLevel
+
     extension (self: McpServer)
 
         /** Sends `sampling/createMessage` to the connected client. */
@@ -260,7 +280,7 @@ object McpServer:
         /** Sends `notifications/message` (server-to-client structured log).
           * Audit-C1: `using` clause order is `(Frame, Schema[T])` per CONTRIBUTING.md:349-351.
           */
-        def notifyLog[T](level: McpLogLevel, data: T, logger: Maybe[String] = Absent)(using
+        def notifyLog[T](level: LogLevel, data: T, logger: Maybe[String] = Absent)(using
             Frame,
             Schema[T]
         ): Unit < (Async & Abort[Closed]) =
@@ -305,7 +325,7 @@ object McpServer:
         def notifyResourcesListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
         def notifyResourceUpdatedUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed])
         def notifyPromptsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
-        def notifyLogUnsafe[T](level: McpLogLevel, data: T, logger: Maybe[String])(using Frame, Schema[T]): Unit < (Async & Abort[Closed])
+        def notifyLogUnsafe[T](level: LogLevel, data: T, logger: Maybe[String])(using Frame, Schema[T]): Unit < (Async & Abort[Closed])
         def protocolVersionUnsafe: Maybe[McpProtocolVersion]
         def clientCapabilitiesUnsafe: Maybe[McpCapabilities.Client]
         def clientInfoUnsafe: Maybe[McpInfo]

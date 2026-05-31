@@ -92,8 +92,8 @@ class McpClientTest extends Test:
         }
     }
 
-    // INV-023: listTools returns McpPage[ToolMeta] with .items and .nextCursor fields.
-    "listTools returns McpPage with .items and .nextCursor (INV-023)" in run {
+    // INV-023: listTools returns McpClient.Page[ToolMeta] with .items and .nextCursor fields.
+    "listTools returns McpClient.Page with .items and .nextCursor (INV-023)" in run {
         val toolRoute = McpRoute.tool[AddIn]("add") { (in, _) =>
             McpContent.Text(s"${in.a + in.b}")
         }
@@ -107,8 +107,8 @@ class McpClientTest extends Test:
         }
     }
 
-    // INV-023: McpPage is a named record; verify listResources also returns McpPage.
-    "listResources returns McpPage with .items and .nextCursor (INV-023)" in run {
+    // INV-023: McpClient.Page is a named record; verify listResources also returns McpClient.Page.
+    "listResources returns McpClient.Page with .items and .nextCursor (INV-023)" in run {
         val uri           = McpResourceUri.parse("file:///data").get
         val resourceRoute = McpRoute.resource(uri, "data")((_, _) => Chunk.empty)
         withPair(Seq(resourceRoute), Seq.empty) { (_, client) =>

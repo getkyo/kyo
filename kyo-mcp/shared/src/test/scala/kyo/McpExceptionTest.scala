@@ -155,7 +155,7 @@ class McpExceptionTest extends Test:
     "McpCapabilityNotAdvertisedException - server peer" in run {
         val e = McpCapabilityNotAdvertisedException(
             "tools/call",
-            McpCapabilityName.Tools,
+            McpCapabilities.Name.Tools,
             McpCapabilityNotAdvertisedException.Peer.Server
         )
         assert(e.code == -32601)
@@ -169,7 +169,7 @@ class McpExceptionTest extends Test:
     "McpCapabilityNotAdvertisedException - client peer" in run {
         val e = McpCapabilityNotAdvertisedException(
             "sampling/createMessage",
-            McpCapabilityName.Sampling,
+            McpCapabilities.Name.Sampling,
             McpCapabilityNotAdvertisedException.Peer.Client
         )
         assert(e.code == -32601)
