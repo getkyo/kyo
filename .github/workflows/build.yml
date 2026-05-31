@@ -1,8 +1,10 @@
 name: build
-# Reusable workflow: builds + tests one arch across the JVM, JS, and Native targets.
+# Reusable workflow: builds + tests one arch with the target axis serialized.
 #
-# The `target` matrix (JVM, JS, Native) runs without a parallelism cap, so the three
-# targets are scheduled concurrently as runner slots allow.
+# Sequential within arch: `max-parallel: 1` on the `target` matrix means JVM → JS →
+# Native run one at a time inside this workflow invocation. Two same-arch jobs never
+# compete for the same runner pool, which previously caused container-stop timeouts
+# and resource starvation on arm64 under contention.
 #
 # Parallel across archs: the parent workflow (build-pr.yml / build-main.yml) calls
 # this workflow once per arch. Those calls have no `needs:` between them so they run
@@ -28,6 +30,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         target: [JVM, JS, Native]
     runs-on: ${{ inputs.runner-image }}

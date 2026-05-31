@@ -25,7 +25,7 @@ import kyo.*
   * @see
   *   [[kyo.HttpDecodeException]] Parsing and deserialization failures
   */
-sealed abstract class HttpException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class HttpException(message: String, cause: String | Throwable = "")(using Frame)
     extends KyoException(message, cause)
 
 object HttpException:
@@ -46,7 +46,7 @@ end HttpException
   * @see
   *   [[kyo.HttpPoolExhaustedException]] All connections to a host are in use
   */
-sealed abstract class HttpConnectionException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class HttpConnectionException(message: String, cause: String | Throwable = "")(using Frame)
     extends HttpException(message, cause)
 
 /** Connection refused or unreachable host. */
@@ -87,7 +87,7 @@ case class HttpPoolExhaustedException(host: String, port: Int, maxConnections: I
   * @see
   *   [[kyo.HttpStatusException]] Non-success status code when the response body can't be decoded
   */
-sealed abstract class HttpRequestException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class HttpRequestException(message: String, cause: String | Throwable = "")(using Frame)
     extends HttpException(message, cause)
 
 /** Request exceeded the configured timeout. */
@@ -143,7 +143,7 @@ end HttpStatusException
   * @see
   *   [[kyo.HttpHandlerException]] Unhandled error from a route handler
   */
-sealed abstract class HttpServerException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class HttpServerException(message: String, cause: String | Throwable = "")(using Frame)
     extends HttpException(message, cause)
 
 /** Server failed to bind to a port. */
@@ -188,11 +188,11 @@ case class HttpHandlerException(error: Any)(using Frame)
   * @see
   *   [[kyo.HttpMissingBoundaryException]] Missing boundary parameter for multipart request
   */
-sealed abstract class HttpDecodeException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class HttpDecodeException(message: String, cause: String | Throwable = "")(using Frame)
     extends HttpException(message, cause)
 
 /** Failed to parse a URL. */
-case class HttpUrlParseException private (url: String, detail: String, cause: Text | Throwable)(using Frame)
+case class HttpUrlParseException private (url: String, detail: String, cause: String | Throwable)(using Frame)
     extends HttpDecodeException(
         s"""Failed to parse URL: $detail.
            |
@@ -213,7 +213,7 @@ case class HttpFieldDecodeException private (
     detail: String,
     method: String,
     url: String,
-    cause: Text | Throwable
+    cause: String | Throwable
 )(using Frame)
     extends HttpDecodeException(
         s"""Failed to decode $fieldType '$fieldName'.
@@ -252,7 +252,7 @@ object HttpJsonDecodeException:
         new HttpJsonDecodeException(detail, method, HttpException.stripQuery(url))
 
 /** Form body decode failed. */
-case class HttpFormDecodeException private (detail: String, method: String, url: String, cause: Text | Throwable)(using Frame)
+case class HttpFormDecodeException private (detail: String, method: String, url: String, cause: String | Throwable)(using Frame)
     extends HttpDecodeException(
         s"""Form decode failed: $detail.
            |
@@ -315,7 +315,7 @@ object HttpMissingBoundaryException:
   * @see
   *   [[kyo.HttpWebSocketHandshakeException]] Server rejected the HttpWebSocket upgrade
   */
-sealed abstract class HttpWebSocketException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class HttpWebSocketException(message: String, cause: String | Throwable = "")(using Frame)
     extends HttpException(message, cause)
 
 /** HttpWebSocket handshake rejected by the server. */

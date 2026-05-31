@@ -1,20 +1,21 @@
 package kyo
 
 final case class Log(unsafe: Log.Unsafe):
-    def level: Log.Level                                                          = unsafe.level
-    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.trace(msg))
-    inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+    def level: Log.Level                                                            = unsafe.level
+    inline def trace(inline msg: => String)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.trace(msg))
+    inline def trace(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         Sync.Unsafe.defer(unsafe.trace(msg, t))
-    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.debug(msg))
-    inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+    inline def debug(inline msg: => String)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.debug(msg))
+    inline def debug(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         Sync.Unsafe.defer(unsafe.debug(msg, t))
-    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.info(msg))
-    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+    inline def info(inline msg: => String)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.info(msg))
+    inline def info(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         Sync.Unsafe.defer(unsafe.info(msg, t))
-    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < Sync                   = Sync.Unsafe.defer(unsafe.warn(msg))
-    inline def warn(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < Sync  = Sync.Unsafe.defer(unsafe.warn(msg, t))
-    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < Sync                  = Sync.Unsafe.defer(unsafe.error(msg))
-    inline def error(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.error(msg, t))
+    inline def warn(inline msg: => String)(using inline frame: Frame): Unit < Sync                  = Sync.Unsafe.defer(unsafe.warn(msg))
+    inline def warn(inline msg: => String, t: => Throwable)(using inline frame: Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.warn(msg, t))
+    inline def error(inline msg: => String)(using inline frame: Frame): Unit < Sync                 = Sync.Unsafe.defer(unsafe.error(msg))
+    inline def error(inline msg: => String, t: => Throwable)(using inline frame: Frame): Unit < Sync =
+        Sync.Unsafe.defer(unsafe.error(msg, t))
 end Log
 
 /** Logging utility object for Kyo applications. */
@@ -90,16 +91,16 @@ object Log:
     abstract class Unsafe extends Serializable:
         def level: Level
 
-        def trace(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit
-        def trace(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
-        def debug(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit
-        def debug(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
-        def info(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit
-        def info(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
-        def warn(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit
-        def warn(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
-        def error(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit
-        def error(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
+        def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
+        def debug(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def debug(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
+        def info(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def info(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
+        def warn(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def warn(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
+        def error(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
 
         def safe: Log = Log(this)
     end Unsafe
@@ -107,34 +108,34 @@ object Log:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         case class ConsoleLogger(name: String, level: Level) extends Log.Unsafe:
-            inline def trace(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.trace.enabled(level) then println(s"TRACE $name -- [${frame.position.show}] $msg")
 
-            inline def trace(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.trace.enabled(level) then println(s"TRACE $name -- [${frame.position.show}] $msg $t")
 
-            inline def debug(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def debug(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.debug.enabled(level) then println(s"DEBUG $name -- [${frame.position.show}] $msg")
 
-            inline def debug(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def debug(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.debug.enabled(level) then println(s"DEBUG $name -- [${frame.position.show}] $msg $t")
 
-            inline def info(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def info(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.info.enabled(level) then println(s"INFO $name -- [${frame.position.show}] $msg")
 
-            inline def info(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def info(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.info.enabled(level) then println(s"INFO $name -- [${frame.position.show}] $msg $t")
 
-            inline def warn(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def warn(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.warn.enabled(level) then println(s"WARN $name -- [${frame.position.show}] $msg")
 
-            inline def warn(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def warn(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.warn.enabled(level) then println(s"WARN $name -- [${frame.position.show}] $msg $t")
 
-            inline def error(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def error(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.error.enabled(level) then println(s"ERROR $name -- [${frame.position.show}] $msg")
 
-            inline def error(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+            inline def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.error.enabled(level) then println(s"ERROR $name -- [${frame.position.show}] $msg $t")
         end ConsoleLogger
     end Unsafe
@@ -155,7 +156,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message
       */
-    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
+    inline def trace(inline msg: => String)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.trace)(_.trace(msg))
 
     /** Logs a trace message with an exception.
@@ -167,7 +168,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message and exception
       */
-    inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+    inline def trace(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.trace)(_.trace(msg, t))
 
     /** Logs a debug message.
@@ -177,7 +178,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message
       */
-    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
+    inline def debug(inline msg: => String)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.debug)(_.debug(msg))
 
     /** Logs a debug message with an exception.
@@ -189,7 +190,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message and exception
       */
-    inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+    inline def debug(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.debug)(_.debug(msg, t))
 
     /** Logs an info message.
@@ -199,7 +200,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message
       */
-    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
+    inline def info(inline msg: => String)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.info)(_.info(msg))
 
     /** Logs an info message with an exception.
@@ -211,7 +212,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message and exception
       */
-    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+    inline def info(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.info)(_.info(msg, t))
 
     /** Logs a warning message.
@@ -221,7 +222,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message
       */
-    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
+    inline def warn(inline msg: => String)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.warn)(_.warn(msg))
 
     /** Logs a warning message with an exception.
@@ -233,7 +234,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message and exception
       */
-    inline def warn(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+    inline def warn(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.warn)(_.warn(msg, t))
 
     /** Logs an error message.
@@ -243,7 +244,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message
       */
-    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
+    inline def error(inline msg: => String)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.error)(_.error(msg))
 
     /** Logs an error message with an exception.
@@ -255,7 +256,7 @@ object Log:
       * @return
       *   An Sync effect that logs the message and exception
       */
-    inline def error(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+    inline def error(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.error)(_.error(msg, t))
 
 end Log

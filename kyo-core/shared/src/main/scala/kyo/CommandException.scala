@@ -21,7 +21,7 @@ package kyo
   * @see
   *   [[Command]] for the API that raises these exceptions
   */
-sealed abstract class CommandException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class CommandException(message: String, cause: String | Throwable = "")(using Frame)
     extends KyoException(message, cause)
 
 /** Raised when the executable named in the command cannot be found on `$PATH` or at the given path.
@@ -56,4 +56,4 @@ case class WorkingDirectoryNotFoundException(path: kyo.Path)(using Frame)
 
 object CommandException:
     given Render[CommandException] with
-        def asText(value: CommandException): Text = Text(value.getMessage)
+        def asString(value: CommandException): String = value.getMessage

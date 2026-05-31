@@ -17,7 +17,7 @@ object Duration:
     inline given CanEqual[Duration, Duration] = CanEqual.derived
 
     /** Exception thrown for invalid duration parsing. */
-    class InvalidDuration(message: Text)(using Frame) extends KyoException(message)
+    class InvalidDuration(message: String)(using Frame) extends KyoException(message)
 
     /** Parses a string representation of a duration.
       *

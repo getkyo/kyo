@@ -26,7 +26,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
 
             "handles recursive parsers" in run {
-                def nested: Text < Parse[Char] =
+                def nested: String < Parse[Char] =
                     Parse.firstOf(
                         Parse.between(
                             Parse.literal('('),
@@ -42,9 +42,9 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     r3   <- Parse.runOrAbort("((()))")(nested)
                     fail <- Parse.runResult("(()")(nested)
                 yield
-                    assert(r1.is("()"))
-                    assert(r2.is("()"))
-                    assert(r3.is("()"))
+                    assert(r1 == ("()"))
+                    assert(r2 == ("()"))
+                    assert(r3 == ("()"))
                     assert(fail.isFailure)
                 end for
             }
@@ -88,7 +88,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
 
             "lazy evaluation prevents stack overflow" in run {
-                def nested: Text < Parse[Char] =
+                def nested: String < Parse[Char] =
                     Parse.firstOf(
                         Parse.between(
                             Parse.literal('['),
@@ -302,7 +302,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                         Parse.literal("world")
                     }
                 Parse.runOrAbort("world")(parser).map { result =>
-                    assert(result.is("world"))
+                    assert(result == ("world"))
                 }
             }
 
@@ -340,7 +340,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             "repeats until failure" in run {
                 val parser = Parse.repeat(Parse.literal("a")).andThen(Parse.literal("b"))
                 Parse.runOrAbort("aaab")(parser).map { result =>
-                    assert(result.is("b"))
+                    assert(result == ("b"))
                 }
             }
 
@@ -961,19 +961,19 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         "whitespaces" - {
             "empty string" in run {
                 Parse.runOrAbort("")(Parse.whitespaces).map { result =>
-                    assert(result.is(""))
+                    assert(result == (""))
                 }
             }
 
             "mixed whitespace types" in run {
                 Parse.runOrAbort(" \t\n\r ")(Parse.whitespaces).map { result =>
-                    assert(result.is(" \t\n\r "))
+                    assert(result == (" \t\n\r "))
                 }
             }
 
             "large whitespace input" in run {
                 Parse.runOrAbort(" " * 10000)(Parse.whitespaces).map { result =>
-                    assert(result.is(" " * 10000))
+                    assert(result == (" " * 10000))
                 }
             }
         }
@@ -1117,7 +1117,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         "identifier" - {
             "valid identifiers" in run {
                 Parse.runOrAbort("_hello123")(Parse.identifier).map { result =>
-                    assert(result.is("_hello123"))
+                    assert(result == ("_hello123"))
                 }
             }
 
@@ -1136,13 +1136,13 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             "very long identifier" in run {
                 val longId = "a" * 1000
                 Parse.runOrAbort(longId)(Parse.identifier).map { result =>
-                    assert(result.is(longId))
+                    assert(result == (longId))
                 }
             }
 
             "unicode letters" in run {
                 Parse.runOrAbort("αβγ123")(Parse.identifier).map { result =>
-                    assert(result.is("αβγ123"))
+                    assert(result == ("αβγ123"))
                 }
             }
 
@@ -1156,7 +1156,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         "regex" - {
             "simple pattern" in run {
                 Parse.runOrAbort("abc123")(Parse.regex("[a-z]+[0-9]+")).map { result =>
-                    assert(result.is("abc123"))
+                    assert(result == ("abc123"))
                 }
             }
 
@@ -1168,7 +1168,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
             "empty match pattern" in run {
                 Parse.runOrAbort("")(Parse.regex(".*")).map { result =>
-                    assert(result.is(""))
+                    assert(result == (""))
                 }
             }
         }
@@ -1328,7 +1328,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
         "basic streaming" in run {
             val parser = Parse.int
-            val input  = Stream.init(Seq[Text]("1", "2", "3"))
+            val input  = Stream.init(Seq("1", "2", "3"))
             Parse.runStream(input)(parser).run.map { result =>
                 assert(result == Chunk(123))
             }
@@ -1340,7 +1340,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     r <- Parse.int
                     _ <- Parse.attempt(Parse.literal(' '))
                 yield r
-            val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
+            val input = Stream.init(Seq("1", "2 3", "4 5"))
             Parse.runStream(input)(parser).run.map { result =>
                 assert(result == Chunk(12, 34, 5))
             }
@@ -1354,7 +1354,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     _ <- Parse.whitespaces
                 yield n
 
-            val input = Stream.init(Seq[Text](" 1 ", "  2  ", " 3 "))
+            val input = Stream.init(Seq(" 1 ", "  2  ", " 3 "))
             Parse.runStream(input)(parser).run.map { result =>
                 assert(result == Chunk(1, 2, 3))
             }
@@ -1362,7 +1362,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
         "error handling" in run {
             val parser = Parse.int
-            val input  = Stream.init(Seq[Text]("1", "abc", "3"))
+            val input  = Stream.init(Seq("1", "abc", "3"))
 
             Abort.run(Parse.runStream(input)(parser).run).map { result =>
                 assert(result.isFailure)
@@ -1371,7 +1371,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
         "incomplete parse" in run {
             val parser = Parse.literal("abc")
-            val input  = Stream.init(Seq("ab").map(Text(_)))
+            val input  = Stream.init(Seq("ab"))
 
             Abort.run(Parse.runStream(input)(parser).run).map { result =>
                 assert(result.isFailure)
@@ -1387,7 +1387,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     _ <- Parse.whitespaces
                 yield r
             val numbers = (1 to size).map(_.toString)
-            val chunks  = numbers.grouped(size / 10).map(seq => Text(seq.map(n => s"$n ").mkString)).toSeq
+            val chunks  = numbers.grouped(size / 10).map(seq => seq.map(n => s"$n ").mkString).toSeq
             val input   = Stream.init(chunks)
 
             Parse.runStream(input)(parser).run.map { result =>
@@ -1397,7 +1397,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
         "empty chunks handling" in run {
             val parser = Parse.int
-            val input  = Stream.init(Seq[Text]("", "1", "", "2", ""))
+            val input  = Stream.init(Seq("", "1", "", "2", ""))
             Parse.runStream(input)(parser).run.map { result =>
                 assert(result == Chunk(12))
             }
@@ -1405,7 +1405,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
         "partial token across chunks" in run {
             val parser = Parse.int
-            val input  = Stream.init(Seq[Text]("1", "2", "34", "5"))
+            val input  = Stream.init(Seq("1", "2", "34", "5"))
             Parse.runStream(input)(parser).run.map { result =>
                 assert(result == Chunk(12345))
             }
@@ -1413,10 +1413,10 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
         "complex token splitting" in run {
             val parser = Parse.literal("hello world")
-            val input  = Stream.init(Seq[Text]("he", "llo", " wo", "rld"))
+            val input  = Stream.init(Seq("he", "llo", " wo", "rld"))
             Parse.runStream(input)(parser).run.map { result =>
                 assert(result.size == 1)
-                assert(result(0).is("hello world"))
+                assert(result(0) == ("hello world"))
             }
         }
 
@@ -1429,7 +1429,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     _ <- Parse.literal(",")
                 yield n
 
-            val input = Stream.init(Seq[Text]("1,", " 2 ,", "  3,"))
+            val input = Stream.init(Seq("1,", " 2 ,", "  3,"))
             Parse.runStream(input)(parser).run.map { result =>
                 assert(result == Chunk(1, 2, 3))
             }
@@ -1443,7 +1443,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     _ <- Parse.literal(']')
                 yield n
 
-            val input = Stream.init(Seq[Text]("[1]", "[2", "]", "[3]"))
+            val input = Stream.init(Seq("[1]", "[2", "]", "[3]"))
             Parse.runStream(input)(numberList).run.map { result =>
                 assert(result == Chunk(1, 2, 3))
             }
@@ -1454,7 +1454,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 Parse.literal("foo bar").andThen(1),
                 Parse.literal("foo baz").andThen(2)
             )
-            val input = Stream.init(Seq[Text]("foo ", "ba", "z"))
+            val input = Stream.init(Seq("foo ", "ba", "z"))
             Parse.runStream(input)(parser).run.map { result =>
                 assert(result == Chunk(2))
             }
@@ -1467,7 +1467,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     _ <- Parse.attempt(Parse.literal(' '))
                     _ <- Var.update[Int](_ + 1)
                 yield r
-            val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
+            val input = Stream.init(Seq("1", "2 3", "4 5"))
             Var.runTuple(0)(Parse.runStream(input)(parser).run).map { (count, result) =>
                 assert(result == Chunk(12, 34, 5))
                 assert(count == 3)
@@ -1481,7 +1481,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     separator <- Env.get[Char]
                     _         <- Parse.attempt(Parse.literal(separator))
                 yield r
-            val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
+            val input = Stream.init(Seq("1", "2 3", "4 5"))
             Env.run(' ')(Parse.runStream(input)(parser).run).map { result =>
                 assert(result == Chunk(12, 34, 5))
             }
