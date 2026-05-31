@@ -1,0 +1,72 @@
+package kyo
+
+import kyo.internal.tasty.symbol.SymbolId
+
+/** Plan-mandated tests for Phase 08 (leaves 165-169): Position.show, Pickle.show, Flag.show, Flags.isEmpty, Name.isEmpty.
+  *
+  * Pins: INV-002.
+  */
+class SmallTypeShowTest extends Test:
+
+    // ── Leaf 165: position-show ───────────────────────────────────────────────
+    // Given: Position(Maybe.Present("Foo.scala"), 10, 5)
+    // When: p.show
+    // Then: returns "Foo.scala:10:5"
+    "Leaf 165: Position.show returns file:line:column" in run {
+        val p = Tasty.Position(Maybe("Foo.scala"), 10, 5)
+        assert(p.show == "Foo.scala:10:5", s"Expected 'Foo.scala:10:5', got '${p.show}'")
+        succeed
+    }
+
+    // Absent file case
+    "Leaf 165b: Position.show uses <unknown> when sourceFile is Absent" in run {
+        val p = Tasty.Position(Maybe.Absent, 3, 1)
+        assert(p.show == "<unknown>:3:1", s"Expected '<unknown>:3:1', got '${p.show}'")
+        succeed
+    }
+
+    // ── Leaf 166: pickle-show ─────────────────────────────────────────────────
+    // Given: Pickle("uuid-1", Version(0, 0, 0), Chunk(1.toByte, 2.toByte))
+    // When: pk.show
+    // Then: returns "Pickle(uuid-1 v0.0.0 2B)"
+    "Leaf 166: Pickle.show returns Pickle(<uuid> v<version> <n>B)" in run {
+        val pk = Tasty.Pickle("uuid-1", Tasty.Version(0, 0, 0), Chunk(1.toByte, 2.toByte))
+        assert(pk.show == "Pickle(uuid-1 v0.0.0 2B)", s"Expected 'Pickle(uuid-1 v0.0.0 2B)', got '${pk.show}'")
+        succeed
+    }
+
+    // ── Leaf 167: flag-show-name ──────────────────────────────────────────────
+    // Given: Flag.Final
+    // When: f.show
+    // Then: returns "Final"
+    "Leaf 167: Flag.show returns the flag name" in run {
+        assert(Tasty.Flag.Final.show == "Final", s"Expected 'Final', got '${Tasty.Flag.Final.show}'")
+        assert(Tasty.Flag.Sealed.show == "Sealed")
+        assert(Tasty.Flag.Abstract.show == "Abstract")
+        succeed
+    }
+
+    // ── Leaf 168: flags-empty ─────────────────────────────────────────────────
+    // Given: Flags.empty and Flags(Flag.Final)
+    // When: .isEmpty on each
+    // Then: true and false respectively
+    "Leaf 168: Flags.isEmpty returns true for empty and false for non-empty" in run {
+        assert(Tasty.Flags.empty.isEmpty, "Flags.empty.isEmpty must be true")
+        assert(!Tasty.Flags(Tasty.Flag.Final).isEmpty, "Flags(Flag.Final).isEmpty must be false")
+        succeed
+    }
+
+    // ── Leaf 169: name-isEmpty ────────────────────────────────────────────────
+    // Given: Name("") and Name("Foo")
+    // When: .isEmpty on each
+    // Then: true and false respectively
+    "Leaf 169: Name.isEmpty returns true for empty and false for non-empty" in run {
+        val emptyName = Tasty.Name("")
+        val fooName   = Tasty.Name("Foo")
+        // The isEmpty extension is defined in object Name; imported via implicit scope.
+        assert(emptyName.isEmpty, "Name(\"\").isEmpty must be true")
+        assert(!fooName.isEmpty, "Name(\"Foo\").isEmpty must be false")
+        succeed
+    }
+
+end SmallTypeShowTest

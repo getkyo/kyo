@@ -72,12 +72,25 @@ object Tasty:
         extension (n: Name)
             /** Decode the interned bytes to a String (lazily cached). Pure post-init: OnceCell.get() is referentially transparent. */
             def asString: String = n.string.get()
+
+            /** True when the decoded string is empty. */
+            def isEmpty: Boolean =
+                import Name.asString
+                n.asString.isEmpty
         end extension
     end Name
 
     final class Flags(val bits: Long) extends AnyVal:
         def contains(flag: Flag): Boolean = (bits & flag.bit) != 0L
         def |(other: Flags): Flags        = new Flags(bits | other.bits)
+
+        /** True when no flag bits are set. Equivalent to `this == Flags.empty`. */
+        def isEmpty: Boolean = bits == 0L
+
+        /** Human-readable representation: `Flags.empty.show == "Flags()"`. Delegates to `toString`. */
+        def show: String = toString
+
+    end Flags
 
     object Flags:
         /** The empty flag set (no modifiers).
@@ -88,10 +101,21 @@ object Tasty:
           * }}}
           */
         val empty: Flags = new Flags(0L)
+
+        /** Convenience constructor: combine one or more flags into a `Flags` value. */
+        def apply(head: Flag, rest: Flag*): Flags =
+            var bits = head.bit
+            rest.foreach(f => bits |= f.bit)
+            new Flags(bits)
+        end apply
     end Flags
 
     final class Flag(val bit: Long, val name: String):
         override def toString: String = name
+
+        /** Human-readable flag name. Equivalent to `toString`. */
+        def show: String = name
+    end Flag
 
     object Flag:
         // Core access flags (bits 0-15)
@@ -215,7 +239,15 @@ object Tasty:
       * file; column 1 = first character of the line). `Absent` for classfile symbols and for TASTy symbols in a file without a Positions
       * section.
       */
-    final case class Position(sourceFile: Maybe[String], line: Int, column: Int)
+    final case class Position(sourceFile: Maybe[String], line: Int, column: Int):
+        /** Human-readable representation: `file:line:column`, or `<unknown>:line:column` when `sourceFile` is absent. */
+        def show: String =
+            val file = sourceFile match
+                case Maybe.Present(f) => f
+                case Maybe.Absent     => "<unknown>"
+            s"$file:$line:$column"
+        end show
+    end Position
 
     /** A Scala annotation as it appears on a [[Type]] (`Type.Annotated`).
       *
@@ -225,7 +257,21 @@ object Tasty:
       * `annotationType` is resolved best-effort during pass 1 and may be a placeholder symbol. Equality and hashing are structural over
       * both fields (case class auto-generation).
       */
-    final case class Annotation(annotationType: Type, args: Maybe[Tree])
+    final case class Annotation(annotationType: Type, args: Maybe[Tree]):
+
+        /** Decoded annotation argument trees as a typed Chunk.
+          *
+          * When `args` holds a `Tree.Apply(_, applyArgs)`, returns the argument list. When `args` holds any other tree, wraps it in a
+          * single-element Chunk. When `args` is `Absent`, returns an empty Chunk.
+          */
+        def argList: Chunk[Tree] = args match
+            case Maybe.Present(tree) =>
+                tree match
+                    case Tree.Apply(_, applyArgs) => applyArgs
+                    case _                        => Chunk(tree)
+            case Maybe.Absent => Chunk.empty
+
+    end Annotation
 
     object Annotation:
         /** CanEqual instance for structural equality comparisons in tests. */
@@ -243,7 +289,23 @@ object Tasty:
         nestMembers: Chunk[Symbol],
         paramNames: Chunk[(Name, Chunk[Name])],
         runtimeTypeAnnotations: Chunk[JavaAnnotation]
-    )
+    ):
+        /** True when `ACC_PUBLIC` (0x0001) is set in `accessFlags`. */
+        def isJvmPublic: Boolean = (accessFlags & 0x0001) != 0
+
+        /** True when `ACC_PRIVATE` (0x0002) is set in `accessFlags`. */
+        def isJvmPrivate: Boolean = (accessFlags & 0x0002) != 0
+
+        /** True when `ACC_PROTECTED` (0x0004) is set in `accessFlags`. */
+        def isJvmProtected: Boolean = (accessFlags & 0x0004) != 0
+
+        /** True when `ACC_STATIC` (0x0008) is set in `accessFlags`. */
+        def isJvmStatic: Boolean = (accessFlags & 0x0008) != 0
+
+        /** True when `ACC_FINAL` (0x0010) is set in `accessFlags`. */
+        def isJvmFinal: Boolean = (accessFlags & 0x0010) != 0
+
+    end JavaMetadata
 
     final case class JavaAnnotation(annotationClass: Symbol, values: Map[Name, JavaAnnotation.Value])
     object JavaAnnotation:
@@ -390,6 +452,42 @@ object Tasty:
         def isSubtypeOf(other: Type)(using cp: Classpath): SubtypeVerdict =
             kyo.internal.tasty.type_.Subtyping.isSubtype(this, other, cp, budget = 64)
 
+        /** First-level structural children of this Type. Leaf cases return an empty Chunk. */
+        def children: Chunk[Type] = this match
+            case Applied(base, args)      => base +: args
+            case TypeLambda(_, body)      => Chunk(body)
+            case Function(params, ret, _) => params :+ ret
+            case Tuple(elements)          => elements
+            case ByName(t)                => Chunk(t)
+            case Repeated(t)              => Chunk(t)
+            case Array(t)                 => Chunk(t)
+            case Refinement(p, _, i)      => Chunk(p, i)
+            case Rec(p)                   => Chunk(p)
+            case RecThis(rec)             => Chunk(rec)
+            case AndType(l, r)            => Chunk(l, r)
+            case OrType(l, r)             => Chunk(l, r)
+            case Annotated(u, _)          => Chunk(u)
+            case SuperType(s, m)          => Chunk(s, m)
+            case Wildcard(lo, hi)         => Chunk(lo, hi)
+            case Skolem(u)                => Chunk(u)
+            case MatchType(b, sc, cases)  => Chunk(b, sc) ++ cases
+            case FlexibleType(u)          => Chunk(u)
+            case _                        => Chunk.empty
+
+        /** Visit this type and every structural descendant in pre-order (self first). */
+        def foreach(f: Type => Unit): Unit =
+            f(this)
+            children.foreach(_.foreach(f))
+        end foreach
+
+        /** Resolve the symbol referenced by this Type's nominal head, when present.
+          *
+          * `Type.Named(id)` resolves to `cp.symbol(id)`. All other shapes return `Maybe.Absent`.
+          */
+        def symbolMaybe(using cp: Classpath): Maybe[Symbol] = this match
+            case Type.Named(id) => Maybe(cp.symbol(id))
+            case _              => Maybe.Absent
+
         /** Human-readable formatting; resolves Named ids to symbol names via the Classpath. */
         def show(using cp: Classpath): String =
             import Name.asString
@@ -469,6 +567,10 @@ object Tasty:
             foreach((t: Tree) => acc = f(acc, t))
             acc
         end foldLeft
+
+        /** True when any node in the subtree (including this node) satisfies `p`. Pre-order short-circuits on first match. */
+        def exists(p: Tree => Boolean): Boolean =
+            p(this) || children.exists(_.exists(p))
 
         /** Human-readable formatting; resolves symbols and types via the Classpath. */
         def show(using cp: Classpath): String =
@@ -1397,10 +1499,11 @@ object Tasty:
                         case tp: TypeParam => Chunk(tp)
                         case _             => Chunk.empty
 
-            /** The return type derived from declaredType.
+            /** The return type derived from `declaredType`.
               *
-              * For a Type.Function the result component is extracted. For any other declared type the value is returned as-is. Documented
-              * as best-effort per Q-002 resolution.
+              * When `declaredType` is `Type.Function(params, result, isContext)`, returns `result`. For any other declared type shape the
+              * value is returned as-is. Best-effort per Q-002 resolution: a method whose type is not yet a Function (e.g., a Scala 2 stub)
+              * returns the raw declared type.
               */
             def returnType(using cp: Classpath): Maybe[Type] =
                 declaredType.map:
@@ -1552,6 +1655,13 @@ object Tasty:
             variance: Variance
         ) extends TypeLike:
             def scaladoc: Maybe[String] = Maybe.Absent
+
+            /** The variance sigil as a one-character String: `""` for Invariant, `"+"` for Covariant, `"-"` for Contravariant. */
+            def varianceLabel: String = variance match
+                case Variance.Invariant     => ""
+                case Variance.Covariant     => "+"
+                case Variance.Contravariant => "-"
+
         end TypeParam
 
         final case class Parameter private[kyo] (
@@ -1637,6 +1747,12 @@ object Tasty:
 
         end Package
 
+        /** An unresolved or placeholder symbol.
+          *
+          * `flags` always equals `Flags.empty` in practice; the default is intentional so that call sites that construct a minimal sentinel
+          * (id, name, ownerId) do not need to supply flags explicitly. The `copy` method will preserve `Flags.empty` when flags is omitted,
+          * which is the correct behavior for unresolved symbols.
+          */
         final case class Unresolved private[kyo] (
             id: SymbolId,
             name: Name,
@@ -1683,7 +1799,10 @@ object Tasty:
 
     // ── Pickle (in-memory TASTy + classfile bytes) ──────────────────────────
 
-    final case class Pickle(uuid: String, version: Version, bytes: Chunk[Byte])
+    final case class Pickle(uuid: String, version: Version, bytes: Chunk[Byte]):
+        /** Human-readable summary: `Pickle(<uuid> v<version> <n>B)`. */
+        def show: String = s"Pickle($uuid v${version.show} ${bytes.length}B)"
+    end Pickle
 
     // ── Classpath ───────────────────────────────────────────────────────────
 
@@ -1845,6 +1964,13 @@ object Tasty:
           */
         def findModule(name: String): Maybe[ModuleDescriptor] =
             Maybe(moduleIndex.get(name).orNull)
+
+        /** All JPMS module descriptors loaded into this classpath.
+          *
+          * Pure O(n) accessor over the immutable `moduleIndex` values where n is the number of loaded `module-info.class` files.
+          */
+        def modules: Chunk[ModuleDescriptor] =
+            Chunk.from(moduleIndex.values.toSeq)
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
           *
@@ -2303,6 +2429,11 @@ object Tasty:
             cp.copy(errors = newErrors)
 
     end Classpath
+
+    // ── SymbolId re-export ───────────────────────────────────────────────────
+
+    /** Re-export `kyo.internal.tasty.symbol.SymbolId` so callers can write `Tasty.SymbolId` without importing the internal package. */
+    type SymbolId = kyo.internal.tasty.symbol.SymbolId
 
     // ── FQN helper ──────────────────────────────────────────────────────────
 
