@@ -58,8 +58,7 @@ class TastySymbolTest extends Test:
     ): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         InternalClasspath.allocate.flatMap: rawCp =>
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
-                    val cp = Tasty.Classpath.wrap(rawCp)
+                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: cp =>
                     ClasspathTestHelpers.assignHomesForTest(rawCp)
                     cp
 

@@ -79,14 +79,13 @@ class SnapshotRoundTripTest extends Test:
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         InternalClasspath.allocate.flatMap: rawCp =>
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
-                    Tasty.Classpath.wrap(rawCp)
+                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp)
 
     /** Write a snapshot of the fixture classpath to the given FileSource cache dir. */
     private def writeSnapshot(cacheSrc: MemoryFileSource)(using Frame): String < (Sync & Async & Scope & Abort[TastyError]) =
         val digest = Array[Byte](1, 2, 3, 4, 5, 6, 7, 8)
         openClasspath(fixtureSource()).flatMap: cp =>
-            SnapshotWriter.write(Tasty.Classpath.unwrap(cp), "cache", digest, cacheSrc).map: _ =>
+            SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
                 val hex = DigestComputer.toHexString(digest)
                 s"cache/$hex.krfl"
     end writeSnapshot
@@ -186,7 +185,7 @@ class SnapshotRoundTripTest extends Test:
         Scope.run:
             Abort.run[TastyError](openClasspath(fixtureSource()).flatMap: cp =>
                 val digest = Array[Byte](1, 2, 3, 4, 5, 6, 7, 8)
-                SnapshotWriter.write(Tasty.Classpath.unwrap(cp), "cache", digest, failSrc)).map:
+                SnapshotWriter.write(cp, "cache", digest, failSrc)).map:
                 case Result.Success(_) =>
                     fail("Expected SnapshotIoError for failing FileSource")
                 case Result.Failure(e) =>
@@ -208,10 +207,9 @@ class SnapshotRoundTripTest extends Test:
             Abort.run[TastyError | Timeout](
                 Async.timeout(5.seconds)(
                     openClasspath(fixtureSource()).flatMap: cp =>
-                        val rawCp = Tasty.Classpath.unwrap(cp)
                         Async.zip[TastyError, Unit, Unit, Any](
-                            SnapshotWriter.write(rawCp, "cache", digest, cacheSrc),
-                            SnapshotWriter.write(rawCp, "cache", digest, cacheSrc)
+                            SnapshotWriter.write(cp, "cache", digest, cacheSrc),
+                            SnapshotWriter.write(cp, "cache", digest, cacheSrc)
                         ).map(_ => ())
                 )
             ).map:
@@ -249,7 +247,7 @@ class SnapshotRoundTripTest extends Test:
                 openClasspath(fixtureSource()).flatMap: coldCp =>
                     val coldClasses = coldCp.topLevelClasses
                     // Write snapshot
-                    SnapshotWriter.write(Tasty.Classpath.unwrap(coldCp), "cache", digest, cacheSrc).andThen:
+                    SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:
                         // Warm load: read from snapshot
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
@@ -282,7 +280,7 @@ class SnapshotRoundTripTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openClasspath(fixtureSource()).flatMap: cp =>
-                    SnapshotWriter.write(Tasty.Classpath.unwrap(cp), "cache", digest, cacheSrc)
+                    SnapshotWriter.write(cp, "cache", digest, cacheSrc)
             ).map:
                 case Result.Success(_) =>
                     val snapBytes = cacheSrc.getBytes(snapPath)
@@ -374,7 +372,7 @@ class SnapshotRoundTripTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openClasspath(fixtureSource()).flatMap: cp =>
-                    SnapshotWriter.write(Tasty.Classpath.unwrap(cp), "cache", digest, cacheSrc).map: _ =>
+                    SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
                         cacheSrc.getBytes(snapPath)
@@ -401,7 +399,7 @@ class SnapshotRoundTripTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openClasspath(fixtureSource()).flatMap: cp =>
-                    SnapshotWriter.write(Tasty.Classpath.unwrap(cp), "cache", digest, cacheSrc).andThen:
+                    SnapshotWriter.write(cp, "cache", digest, cacheSrc).andThen:
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
                         InternalClasspath.allocate.flatMap: rawCp =>
@@ -430,8 +428,8 @@ class SnapshotRoundTripTest extends Test:
                 InternalClasspath.allocate.flatMap: rawCp =>
                     Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
                         // Open an empty classpath (no roots, no files): transitions to Ready immediately with empty state
-                        ClasspathOrchestrator.openInto(Seq.empty, false, emptySrc, 1, rawCp).andThen:
-                            SnapshotWriter.write(rawCp, "cache", digest, cacheSrc).map: _ =>
+                        ClasspathOrchestrator.openInto(Seq.empty, false, emptySrc, 1, rawCp).flatMap: cp =>
+                            SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
                                 val hex      = DigestComputer.toHexString(digest)
                                 val snapPath = s"cache/$hex.krfl"
                                 cacheSrc.getBytes(snapPath)
@@ -483,10 +481,10 @@ class SnapshotRoundTripTest extends Test:
                 // Cold open: build from TASTy to capture expected values.
                 InternalClasspath.allocate.flatMap: rawCpCold =>
                     Scope.ensure(Sync.defer(InternalClasspath.close(rawCpCold))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, tastySource, 1, rawCpCold).andThen:
+                        ClasspathOrchestrator.openInto(Seq("root"), false, tastySource, 1, rawCpCold).flatMap: coldCp =>
                             rawCpCold.allTopLevelClasses.flatMap: coldClasses =>
                                 // Write snapshot.
-                                SnapshotWriter.write(rawCpCold, "cache", digest, cacheSrc).andThen:
+                                SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:
                                     val hex      = DigestComputer.toHexString(digest)
                                     val snapPath = s"cache/$hex.krfl"
                                     // Warm load from snapshot.
@@ -636,7 +634,8 @@ class SnapshotRoundTripTest extends Test:
                     Chunk.empty,
                     Map.empty
                 )
-                SnapshotWriter.write(rawCpCold, "cache", digest, cacheSrc).andThen:
+                val coldCp = Tasty.Classpath.wrap(rawCpCold)
+                SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:
                     val hex      = DigestComputer.toHexString(digest)
                     val snapPath = s"cache/$hex.krfl"
                     InternalClasspath.allocate.flatMap: rawCpWarm =>

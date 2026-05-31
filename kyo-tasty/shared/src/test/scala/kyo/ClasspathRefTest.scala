@@ -23,7 +23,7 @@ class ClasspathRefTest extends Test:
             ref.assign(cp)
             val got = ref.get()
             assert(
-                Tasty.Classpath.unwrap(got) eq Tasty.Classpath.unwrap(cp),
+                got eq cp,
                 "Expected ref.get() to return the assigned Classpath"
             )
     }

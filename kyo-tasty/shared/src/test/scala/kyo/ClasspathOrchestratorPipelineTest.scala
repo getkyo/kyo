@@ -71,8 +71,7 @@ class ClasspathOrchestratorPipelineTest extends Test:
     )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         InternalClasspath.allocate.flatMap: rawCp =>
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(roots, strict, src, concurrency, rawCp).map: _ =>
-                    val cp = Tasty.Classpath.wrap(rawCp)
+                ClasspathOrchestrator.openInto(roots, strict, src, concurrency, rawCp).map: cp =>
                     ClasspathTestHelpers.assignHomesForTest(rawCp)
                     cp
 
@@ -82,9 +81,8 @@ class ClasspathOrchestratorPipelineTest extends Test:
     "T1: pipeline produces correct symbol set for fixture classpath" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                val rawCp = Tasty.Classpath.unwrap(cp)
                 // plan: phase-02 inline; sym.name.asString used (simple name); Phase 09 restores fullName.
-                Sync.defer(rawCp.allSymbols.map(_.name.asString).toSet)).map:
+                Sync.defer(cp.symbols.map(_.name.asString).toSet)).map:
                 case Result.Success(names) =>
                     assert(names.exists(_.contains("PlainClass")), s"Expected PlainClass in symbol names, got: $names")
                 case Result.Failure(e) =>
@@ -117,11 +115,9 @@ class ClasspathOrchestratorPipelineTest extends Test:
             Abort.run[TastyError](
                 openFixtureClasspath(fixtureSource()).flatMap: cp1 =>
                     openFixtureClasspath(fixtureSource()).flatMap: cp2 =>
-                        val raw1 = Tasty.Classpath.unwrap(cp1)
-                        val raw2 = Tasty.Classpath.unwrap(cp2)
                         Sync.defer:
-                            val size1 = raw1.allSymbols.size
-                            val size2 = raw2.allSymbols.size
+                            val size1 = cp1.symbols.size
+                            val size2 = cp2.symbols.size
                             (size1, size2)
             ).map:
                 case Result.Success((size1, size2)) =>
@@ -174,7 +170,7 @@ class ClasspathOrchestratorPipelineTest extends Test:
             src.add(s"root/File$i.tasty", bytes)
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(src, concurrency = 2).flatMap: cp =>
-                Sync.defer(Tasty.Classpath.unwrap(cp).allSymbols.size)).map:
+                Sync.defer(cp.symbols.size)).map:
                 case Result.Success(count) =>
                     // Each PlainClass.tasty decodes at least one symbol; 110 identical files decode 110 * n symbols
                     assert(count > 0, s"T6: Expected non-zero symbol count after pipeline with 110 entries, got $count")
@@ -191,12 +187,10 @@ class ClasspathOrchestratorPipelineTest extends Test:
             Abort.run[TastyError](
                 openFixtureClasspath(fixtureSource()).flatMap: cp1 =>
                     openFixtureClasspath(fixtureSource()).flatMap: cp2 =>
-                        val raw1 = Tasty.Classpath.unwrap(cp1)
-                        val raw2 = Tasty.Classpath.unwrap(cp2)
                         Sync.defer:
                             // plan: phase-02 inline; uses simple name; Phase 09 restores fullName.
-                            val names1 = raw1.allSymbols.map(_.name.asString).toSet
-                            val names2 = raw2.allSymbols.map(_.name.asString).toSet
+                            val names1 = cp1.symbols.map(_.name.asString).toSet
+                            val names2 = cp2.symbols.map(_.name.asString).toSet
                             (names1, names2)
             ).map:
                 case Result.Success((names1, names2)) =>
@@ -217,7 +211,7 @@ class ClasspathOrchestratorPipelineTest extends Test:
             src.add(s"root/Entry$i.tasty", bytes)
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(src, concurrency = 2).flatMap: cp =>
-                Sync.defer(Tasty.Classpath.unwrap(cp).allSymbols.size)).map:
+                Sync.defer(cp.symbols.size)).map:
                 case Result.Success(count) =>
                     assert(count > 0, s"T8: Expected non-zero symbol count after pipeline with 100 entries at concurrency=2, got $count")
                 case Result.Failure(e) =>

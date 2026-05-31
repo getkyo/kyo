@@ -148,6 +148,30 @@ final class Classpath private[tasty] (
         end match
     end allSymbols
 
+    /** Read the full fqnIndex as Map[String, SymbolId] for case-class construction (Phase 06 bridge). */
+    private[kyo] def readFqnIdMap(using AllowUnsafe): Map[String, SymbolId] =
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready => s.fqnIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap
+            case _                        => Map.empty
+
+    /** Read the full packageIndex as Map[String, SymbolId] for case-class construction (Phase 06 bridge). */
+    private[kyo] def readPackageIdMap(using AllowUnsafe): Map[String, SymbolId] =
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready => s.packageIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap
+            case _                        => Map.empty
+
+    /** Read the full moduleIndex as Map[String, Tasty.ModuleDescriptor] for case-class construction (Phase 06 bridge). */
+    private[kyo] def readModuleIndex(using AllowUnsafe): Map[String, Tasty.ModuleDescriptor] =
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready => s.moduleIndex.toMap
+            case _                        => Map.empty
+
+    /** Read the canonical TypeArena for case-class construction (Phase 06 bridge). */
+    private[kyo] def readCanonical(using AllowUnsafe): kyo.internal.tasty.type_.TypeArena =
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready => s.canonical
+            case _                        => kyo.internal.tasty.type_.TypeArena.canonical()
+
     /** Look up a symbol by SymbolId index.
       *
       * plan: phase-05; provides O(1) SymbolId->Symbol lookup for Subtyping and show. Phase 06 replaces this with the case-class field
@@ -233,5 +257,16 @@ object Classpath:
       */
     private[kyo] val sentinelUnresolved: Tasty.Symbol =
         Tasty.Symbol.make(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("<unresolved>"))
+
+    /** Sentinel internal Classpath instance used as the initial value of the internalCp bridge field in Tasty.Classpath.
+      *
+      * Phase 07 removes the internalCp field and this sentinel.
+      */
+    private[kyo] val sentinelInternal: Classpath =
+        // flow-allow: §839 case 3; module-load singleton init; Frame.internal is required for val initialization inside package kyo.
+        given Frame = Frame.internal
+        import AllowUnsafe.embrace.danger
+        Sync.Unsafe.evalOrThrow(AtomicRef.init[State](State.Closed).map(ref => new Classpath(ref)))
+    end sentinelInternal
 
 end Classpath

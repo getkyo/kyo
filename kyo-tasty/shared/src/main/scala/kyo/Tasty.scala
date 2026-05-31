@@ -872,9 +872,170 @@ object Tasty:
 
     // ── Classpath ───────────────────────────────────────────────────────────
 
-    opaque type Classpath = kyo.internal.tasty.query.Classpath
+    /** Immutable snapshot of a fully-loaded TASTy classpath.
+      *
+      * All fields are plain immutable values populated once during `open` and never mutated. Reading any field after `open` returns is a
+      * pure operation with no effect row and no `AllowUnsafe`. The sole exception is `decodeBody`, which decodes AST bytes on demand and
+      * carries `Sync & Abort[TastyError]`.
+      *
+      * Constructor is `private[Tasty]`; instances are obtained exclusively via `Classpath.open`, `Classpath.openCached`,
+      * `Classpath.fromPickles`, or `Classpath.fromPicklesWithSymbols`.
+      *
+      * Pins: INV-003 (Classpath case class fields immutable post-construction), INV-004 (bodyMemo excluded from equality).
+      */
+    final case class Classpath private[Tasty] (
+        symbols: Chunk[Symbol],
+        rootSymbolId: SymbolId,
+        topLevelClassIds: Chunk[SymbolId],
+        packageIds: Chunk[SymbolId],
+        fqnIndex: Map[String, SymbolId],
+        packageIndex: Map[String, SymbolId],
+        subclassIndex: Map[SymbolId, Chunk[SymbolId]],
+        companionIndex: Map[SymbolId, SymbolId],
+        moduleIndex: Map[String, ModuleDescriptor],
+        errors: Chunk[TastyError],
+        canonical: kyo.internal.tasty.type_.TypeArena
+    ):
+        // NOT a constructor parameter -- excluded from auto-generated equals / hashCode / copy / unapply.
+        // A cp.copy(...) call produces a new Classpath with a fresh empty memo; this is correct because
+        // memoized decode results are an optimization, not observable state.
+        private lazy val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Either[TastyError, Tree]] =
+            new java.util.concurrent.ConcurrentHashMap()
+
+        // Bridge back to the internal state-machine Classpath for Phase 06 compatibility.
+        // NOT a constructor parameter; excluded from equals/hashCode/copy/unapply.
+        // This var is a Phase 06 bridge; Phase 07 removes the internal state machine and this field.
+        private[kyo] var internalCp: kyo.internal.tasty.query.Classpath =
+            kyo.internal.tasty.query.Classpath.sentinelInternal
+
+        /** O(1) Symbol lookup by SymbolId. Returns the Symbol at index `id.value`. Returns a sentinel Unresolved symbol for out-of-range or
+          * unassigned ids (id.value == -1, or id.value >= symbols.length).
+          */
+        def symbol(id: SymbolId): Symbol =
+            val idx = SymbolId.value(id)
+            if idx >= 0 && idx < symbols.length then symbols(idx)
+            else Classpath.sentinelUnresolved
+        end symbol
+
+        /** Look up a class symbol by fully-qualified dotted name.
+          *
+          * Pure O(1) lookup in the immutable fqnIndex. Returns `Absent` if the FQN is not registered in this classpath.
+          *
+          * Example:
+          * {{{
+          *   val sym = cp.findClass("scala.Predef")
+          *   sym.isPresent == true
+          * }}}
+          */
+        def findClass(fqn: String): Maybe[Symbol] =
+            fqnIndex.get(fqn) match
+                case Some(id) => Maybe(symbol(id))
+                case None     => Maybe.Absent
+
+        /** Look up a package symbol by fully-qualified dotted name.
+          *
+          * Pure O(1) lookup in the immutable packageIndex. Returns `Absent` if the package is not in this classpath.
+          */
+        def findPackage(fqn: String): Maybe[Symbol] =
+            packageIndex.get(fqn) match
+                case Some(id) => Maybe(symbol(id))
+                case None     => Maybe.Absent
+
+        /** All package symbols in this classpath.
+          *
+          * Pure accessor over the immutable `packageIds` Chunk. Each id is resolved to a Symbol via `symbol(id)`.
+          *
+          * Example:
+          * {{{
+          *   val pkgs = cp.packages
+          *   pkgs.nonEmpty == true
+          * }}}
+          */
+        def packages: Chunk[Symbol] = packageIds.map(symbol)
+
+        /** All top-level class symbols (not packages) in this classpath.
+          *
+          * Pure accessor over the immutable `topLevelClassIds` Chunk. Each id is resolved to a Symbol via `symbol(id)`.
+          *
+          * Example:
+          * {{{
+          *   val classes = cp.topLevelClasses
+          *   classes.nonEmpty == true
+          * }}}
+          */
+        def topLevelClasses: Chunk[Symbol] = topLevelClassIds.map(symbol)
+
+        /** Look up a JPMS module descriptor by module name (e.g., "java.base").
+          *
+          * Returns `Present(descriptor)` if a `module-info.class` with the given module name was found in the classpath roots. Returns
+          * `Absent` if no matching module was found.
+          *
+          * Pure O(1) lookup in the immutable moduleIndex.
+          */
+        def findModule(name: String): Maybe[ModuleDescriptor] =
+            Maybe(moduleIndex.get(name).orNull)
+
+        /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
+          *
+          * Converts the binary name to a dotted FQN and delegates to `findClass`.
+          *
+          * Pure O(1) lookup; no I/O.
+          */
+        def findClassByBinary(binaryName: String): Maybe[Symbol] =
+            val fqn = binaryName.replace('/', '.').replace('$', '.')
+            findClass(fqn)
+
+        /** Decode the body bytes of `sym` into a `Tree`, memoizing the result.
+          *
+          * Returns `Absent` for symbols whose `bodyRecord` slot is `Absent` (Package, Java, and symbols without an AST body slice). Fails
+          * with `TastyError.MalformedSection` on corrupt body bytes.
+          *
+          * Memoization: the first call for a given `sym` decodes the bytes and stores the result (success or failure) in `bodyMemo`. All
+          * subsequent calls for the same `sym` return the stored result without re-decoding. The memo is keyed by `sym.id` (SymbolId) and
+          * is per-Classpath instance; `cp.copy(...)` produces a fresh memo.
+          *
+          * Called by `Symbol.body(using cp, frame)`. INV-010: AllowUnsafe does not appear on this signature.
+          */
+        def decodeBody(sym: Symbol)(using Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+            sym.bodyRecord match
+                case Maybe.Absent => Sync.defer(Maybe.Absent)
+                case Maybe.Present(blob) =>
+                    Sync.Unsafe.defer:
+                        val cached = bodyMemo.get(sym.id)
+                        if cached ne null then
+                            cached match
+                                case Right(t) => Maybe(t)
+                                case Left(e)  => Abort.fail(e)
+                        else
+                            val result: Either[TastyError, Tree] =
+                                try
+                                    val syms = symbols
+                                    Right(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
+                                        blob,
+                                        sym,
+                                        idx => if idx >= 0 && idx < syms.length then syms(idx) else sym
+                                    ))
+                                catch
+                                    case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                        Left(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
+                                    case _: ArrayIndexOutOfBoundsException =>
+                                        Left(TastyError.MalformedSection("ASTs", "truncated body", 0L))
+                            bodyMemo.put(sym.id, result)
+                            result match
+                                case Right(t) => Maybe(t)
+                                case Left(e)  => Abort.fail(e)
+                        end if
+
+        /** Package-private memo size for test verification. NOT part of the public API. */
+        private[kyo] def bodyMemoSize: Int = bodyMemo.size()
+
+    end Classpath
 
     object Classpath:
+
+        /** Sentinel symbol returned by `Classpath.symbol` for out-of-range or unassigned ids. */
+        val sentinelUnresolved: Symbol =
+            Symbol.make(SymbolKind.Unresolved, Flags.empty, Name("<unresolved>"))
 
         /** Open a classpath from directory/file roots. Soft-fail mode (errors accumulate in `cp.errors`).
           *
@@ -915,51 +1076,86 @@ object Tasty:
         def openCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
             openCachedImpl(roots, cacheDir)
 
-        /** Wrap a raw InternalClasspath as the public Classpath opaque type. For use by internal test helpers only. */
-        private[kyo] def wrap(cp: kyo.internal.tasty.query.Classpath): Classpath = cp
+        /** Build a Classpath case class from a fully-loaded internal Classpath (Ready state).
+          *
+          * Reads the Ready state fields via AllowUnsafe and constructs the immutable case class. For use by internal test helpers that
+          * allocate an internal Classpath and transition it to Ready via openInto. Phase 07 removes this bridge once the internal state
+          * machine is deleted.
+          */
+        private[kyo] def wrap(rawCp: kyo.internal.tasty.query.Classpath): Classpath =
+            // flow-allow: §839 case 3; post-open AllowUnsafe read to extract Ready state for immutable case-class construction.
+            // Uses private[kyo] accessors on the internal Classpath to avoid accessing private[tasty] State.Ready fields directly.
+            import AllowUnsafe.embrace.danger
+            val symsArr = rawCp.allSymbols
+            val topSym  = rawCp.pureTopLevelClasses
+            val pkgSym  = rawCp.purePackages
+            val errors  = rawCp.accumulatedErrors
+            // Build fqnIndex and packageIndex by reading all FQNs via pureClass.
+            // Phase 06: the internal Classpath exposes readAllFqnMap/readAllPackageMap helpers.
+            val fqnId  = rawCp.readFqnIdMap
+            val pkgId  = rawCp.readPackageIdMap
+            val modIdx = rawCp.readModuleIndex
+            val canon  = rawCp.readCanonical
+            val rootId = if symsArr.nonEmpty then SymbolId(0) else SymbolId(-1)
+            val topIds = Chunk.from(topSym.map(_.id))
+            val pkgIds = Chunk.from(pkgSym.map(_.id))
+            val cp = new Classpath(
+                symbols = symsArr,
+                rootSymbolId = rootId,
+                topLevelClassIds = topIds,
+                packageIds = pkgIds,
+                fqnIndex = fqnId,
+                packageIndex = pkgId,
+                subclassIndex = Map.empty,  // plan: phase-06 stub; populated in Phase 07
+                companionIndex = Map.empty, // plan: phase-06 stub; populated in Phase 07
+                moduleIndex = modIdx,
+                errors = errors,
+                canonical = canon
+            )
+            cp.internalCp = rawCp
+            cp
+        end wrap
 
-        /** Unwrap the public Classpath opaque type to the internal representation. For use by internal test helpers only. */
-        private[kyo] def unwrap(cp: Classpath): kyo.internal.tasty.query.Classpath = cp
+        /** Return the internal Classpath backing this case class instance (Phase 06 bridge). Phase 07 removes this. */
+        private[kyo] def unwrap(cp: Classpath): kyo.internal.tasty.query.Classpath = cp.internalCp
 
         /** Create a classpath from pre-parsed in-memory pickles. */
         def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < Sync =
-            kyo.internal.tasty.query.Classpath.allocate.map: cp =>
-                // flow-allow: §839 case 3; single-threaded Sync.map lambda; atomic state write to fresh Classpath.
-                import AllowUnsafe.embrace.danger
-                kyo.internal.tasty.query.Classpath.transitionToReady(
-                    cp,
-                    allSymbols = Chunk.empty,
-                    topLevelClasses = Chunk.empty,
-                    packages = Chunk.empty,
+            Sync.defer:
+                Classpath(
+                    symbols = Chunk.empty,
+                    rootSymbolId = SymbolId(-1),
+                    topLevelClassIds = Chunk.empty,
+                    packageIds = Chunk.empty,
                     fqnIndex = Map.empty,
                     packageIndex = Map.empty,
-                    canonical = TypeArena.canonical(),
+                    subclassIndex = Map.empty,  // plan: phase-06 stub; populated in Phase 07
+                    companionIndex = Map.empty, // plan: phase-06 stub; populated in Phase 07
+                    moduleIndex = Map.empty,
                     errors = Chunk.empty,
-                    moduleIndex = Map.empty
+                    canonical = TypeArena.canonical()
                 )
-                cp
 
         /** Create a test-only classpath from a pre-built symbols array.
           *
-          * plan: phase-05 test helper; symbols(i).id.value must equal i for cp.symbol(id) to resolve correctly. Only callable from within
-          * package kyo (private[kyo]).
+          * plan: phase-06; symbols(i).id.value must equal i for cp.symbol(id) to resolve correctly. Only callable from within package kyo
+          * (private[kyo]).
           */
         private[kyo] def fromPicklesWithSymbols(symbols: Chunk[Symbol])(using Frame): Classpath < Sync =
-            kyo.internal.tasty.query.Classpath.allocate.map: cp =>
-                // flow-allow: §839 case 3; single-threaded Sync.map lambda; atomic state write to fresh Classpath.
-                import AllowUnsafe.embrace.danger
-                kyo.internal.tasty.query.Classpath.transitionToReady(
-                    cp,
-                    allSymbols = symbols,
-                    topLevelClasses = Chunk.empty,
-                    packages = Chunk.empty,
+            Sync.defer:
+                Classpath(
+                    symbols = symbols,
+                    rootSymbolId = if symbols.nonEmpty then SymbolId(0) else SymbolId(-1),
+                    topLevelClassIds = Chunk.empty,
+                    packageIds = Chunk.empty,
                     fqnIndex = Map.empty,
                     packageIndex = Map.empty,
-                    canonical = TypeArena.canonical(),
+                    subclassIndex = Map.empty,  // plan: phase-06 stub; populated in Phase 07
+                    companionIndex = Map.empty, // plan: phase-06 stub; populated in Phase 07
+                    moduleIndex = Map.empty,
                     errors = Chunk.empty,
-                    moduleIndex = Map.empty
+                    canonical = TypeArena.canonical()
                 )
-                cp
 
         /** Internal: open implementation, delegates to ClasspathOrchestrator. */
         private def openImpl(
@@ -995,167 +1191,70 @@ object Tasty:
                     source.exists(snapshotPath).flatMap: exists =>
                         if exists then
                             // Try to load from snapshot using mmap on JVM/Native, heap on JS.
-                            kyo.internal.tasty.query.Classpath.allocate.flatMap: cp =>
-                                Scope.ensure(Sync.Unsafe.defer {
-                                    // flow-allow: §839 case 3; Scope finalizer; atomic state write to close Classpath.
-                                    kyo.internal.tasty.query.Classpath.close(cp)
-                                }).andThen:
-                                    Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source, cp)).flatMap:
-                                        case Result.Success(_) =>
-                                            cp
-                                        case Result.Failure(_) | Result.Panic(_) =>
-                                            // Snapshot unreadable; fall through to normal open
-                                            openImpl(roots, strict = false)
+                            kyo.internal.tasty.query.Classpath.allocate.flatMap: rawCp =>
+                                // No Scope.ensure(close) needed: the case class has no Closed state.
+                                Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source, rawCp)).flatMap:
+                                    case Result.Success(_) =>
+                                        Sync.Unsafe.defer:
+                                            import AllowUnsafe.embrace.danger
+                                            Classpath.wrap(rawCp)
+                                    case Result.Failure(_) | Result.Panic(_) =>
+                                        // Snapshot unreadable; fall through to normal open
+                                        openImpl(roots, strict = false)
                         else
                             // No snapshot; open normally then write snapshot
                             openImpl(roots, strict = false).flatMap: cp =>
                                 Abort.run[TastyError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen(cp)
         end openCachedImpl
 
+        /** Internal factory for constructing a Tasty.Classpath case class from the finalized data produced by ClasspathOrchestrator.
+          *
+          * Called from ClasspathOrchestrator.finalizeMerge (package kyo.internal.tasty.query) which cannot access the private[Tasty]
+          * constructor directly. Phase 07 removes this bridge once the orchestrator is inlined into Tasty.scala.
+          */
+        private[kyo] def make(
+            symbols: Chunk[Symbol],
+            rootSymbolId: SymbolId,
+            topLevelClassIds: Chunk[SymbolId],
+            packageIds: Chunk[SymbolId],
+            fqnIndex: Map[String, SymbolId],
+            packageIndex: Map[String, SymbolId],
+            subclassIndex: Map[SymbolId, Chunk[SymbolId]],
+            companionIndex: Map[SymbolId, SymbolId],
+            moduleIndex: Map[String, ModuleDescriptor],
+            errors: Chunk[TastyError],
+            canonical: kyo.internal.tasty.type_.TypeArena,
+            internalCpBridge: kyo.internal.tasty.query.Classpath
+        ): Classpath =
+            val cp = new Classpath(
+                symbols = symbols,
+                rootSymbolId = rootSymbolId,
+                topLevelClassIds = topLevelClassIds,
+                packageIds = packageIds,
+                fqnIndex = fqnIndex,
+                packageIndex = packageIndex,
+                subclassIndex = subclassIndex,
+                companionIndex = companionIndex,
+                moduleIndex = moduleIndex,
+                errors = errors,
+                canonical = canonical
+            )
+            cp.internalCp = internalCpBridge
+            cp
+        end make
+
+        /** CanEqual instance for structural equality comparisons in tests. */
+        given CanEqual[Classpath, Classpath] = CanEqual.canEqualAny
+
+        /** Test helper: copy a Classpath with a new errors field.
+          *
+          * Equivalent to cp.copy(errors = newErrors) but accessible from tests outside object Tasty. Phase 07 removes this once the copy
+          * method becomes public.
+          */
+        private[kyo] def copyWithErrors(cp: Classpath, newErrors: Chunk[TastyError]): Classpath =
+            cp.copy(errors = newErrors)
+
     end Classpath
-
-    extension (cp: Classpath)
-        /** Look up a Symbol by its SymbolId.
-          *
-          * Pure O(1) accessor; returns the Symbol at index `id.value` in the allSymbols array. Returns a sentinel Unresolved symbol when
-          * `id` is -1 or out-of-range (e.g. unresolved cross-file references during decode).
-          *
-          * Valid after `open` returns (Ready state). Phase 06 replaces this bridge implementation with a direct IndexedSeq index on the
-          * Classpath case-class field.
-          */
-        def symbol(id: SymbolId): Symbol = cp.symbol(id)
-
-        /** Look up a class symbol by fully-qualified dotted name.
-          *
-          * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns. After close, returns
-          * whatever heap state is there (closed-state enforcement is Symbol.body only).
-          *
-          * Example:
-          * {{{
-          *   val sym = cp.findClass("scala.Predef")
-          *   sym.isPresent == true
-          * }}}
-          */
-        def findClass(fqn: String): Maybe[Symbol] =
-            // flow-allow: §839 case 3 -- post-open immutable fqnIndex lookup; populated during open, before any user access.
-            given AllowUnsafe = AllowUnsafe.embrace.danger
-            cp.pureClass(fqn)
-        end findClass
-
-        /** Look up a package symbol by fully-qualified dotted name.
-          *
-          * Pure accessor: reads from the immutable packageIndex HashMap in Ready state. Valid after `open` returns.
-          */
-        def findPackage(fqn: String): Maybe[Symbol] =
-            // flow-allow: §839 case 3 -- post-open immutable packageIndex lookup; populated during open, before any user access.
-            given AllowUnsafe = AllowUnsafe.embrace.danger
-            cp.purePackage(fqn)
-        end findPackage
-
-        /** All package symbols in this classpath.
-          *
-          * Pure accessor: reads from the immutable packages Chunk in Ready state. Valid after `open` returns.
-          *
-          * Example:
-          * {{{
-          *   val pkgs = cp.packages
-          *   pkgs.nonEmpty == true
-          * }}}
-          */
-        def packages: Chunk[Symbol] =
-            // flow-allow: §839 case 3 -- post-open immutable packages Chunk lookup; populated during open, before any user access.
-            given AllowUnsafe = AllowUnsafe.embrace.danger
-            cp.purePackages
-        end packages
-
-        /** All top-level class symbols (not packages) in this classpath.
-          *
-          * Pure accessor: reads from the immutable topLevelClasses Chunk in Ready state. Valid after `open` returns.
-          *
-          * Example:
-          * {{{
-          *   val classes = cp.topLevelClasses
-          *   classes.nonEmpty == true
-          * }}}
-          */
-        def topLevelClasses: Chunk[Symbol] =
-            // flow-allow: §839 case 3 -- post-open immutable topLevelClasses Chunk lookup; populated during open, before any user access.
-            given AllowUnsafe = AllowUnsafe.embrace.danger
-            cp.pureTopLevelClasses
-        end topLevelClasses
-
-        /** Errors accumulated during loading (soft-fail mode).
-          *
-          * Pure accessor: reads from immutable error state populated during classpath open. Empty for clean classpaths.
-          */
-        def errors: Chunk[TastyError] =
-            // flow-allow: §839 case 3 -- post-open accumulated errors; monotone append-only during open, immutable after.
-            given AllowUnsafe = AllowUnsafe.embrace.danger
-            cp.accumulatedErrors
-        end errors
-
-        /** Look up a JPMS module descriptor by module name (e.g., "java.base").
-          *
-          * Returns `Present(descriptor)` if a `module-info.class` with the given module name was found in the classpath roots. Returns
-          * `Absent` if no matching module was found.
-          *
-          * Pure accessor: reads from the immutable moduleIndex HashMap in Ready state. Valid after `open` returns.
-          */
-        def findModule(name: String): Maybe[ModuleDescriptor] =
-            // flow-allow: §839 case 3 -- post-open immutable moduleIndex lookup; populated during open, before any user access.
-            given AllowUnsafe = AllowUnsafe.embrace.danger
-            cp.pureModule(name)
-        end findModule
-
-        /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
-          *
-          * Converts the binary name to a dotted FQN and delegates to `findClass`.
-          *
-          * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns.
-          */
-        def findClassByBinary(binaryName: String): Maybe[Symbol] =
-            // flow-allow: §839 case 3 -- post-open immutable fqnIndex lookup via binary name conversion; populated during open.
-            given AllowUnsafe = AllowUnsafe.embrace.danger
-            val fqn           = binaryName.replace('/', '.').replace('$', '.')
-            cp.pureClass(fqn)
-        end findClassByBinary
-
-        /** Decode the body bytes of `sym` into a `Tree`.
-          *
-          * Returns `Absent` for symbols whose `body` constructor parameter is `Absent` (Package, Java, and symbols without an AST body
-          * slice). Fails with `TastyError.MalformedSection` on corrupt body bytes.
-          *
-          * Called by `Symbol.body(using cp, frame)`. Phase 06 replaces this non-memoizing bridge with a memoizing implementation backed by
-          * a `private lazy val bodyMemo: ConcurrentHashMap` on the Classpath case class introduced in that phase.
-          *
-          * plan: phase-04 bridge; no memoization. AllowUnsafe is acquired internally to read the Ready state and to invoke
-          * TreeUnpickler.decodeSync; it does NOT appear on the public signature (INV-010).
-          */
-        def decodeBody(sym: Symbol)(using Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-            sym.bodyRecord match
-                case Maybe.Absent => Sync.defer(Maybe.Absent)
-                case Maybe.Present(blob) =>
-                    Sync.Unsafe.defer:
-                        // flow-allow: §839 case 3; post-open AllowUnsafe read to obtain allSymbols for
-                        // the symbol-lookup lambda passed to TreeUnpickler.decodeSync.
-                        given AllowUnsafe             = AllowUnsafe.embrace.danger
-                        val syms: Chunk[Tasty.Symbol] = cp.allSymbols
-                        try
-                            val tree = kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
-                                blob,
-                                sym,
-                                idx => if idx >= 0 && idx < syms.length then syms(idx) else sym
-                            )
-                            Maybe(tree)
-                        catch
-                            case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                Abort.fail(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
-                            case _: ArrayIndexOutOfBoundsException =>
-                                Abort.fail(TastyError.MalformedSection("ASTs", "truncated body", 0L))
-                        end try
-        end decodeBody
-
-    end extension
 
     // ── FQN helper ──────────────────────────────────────────────────────────
 

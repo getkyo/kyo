@@ -93,8 +93,8 @@ class SnapshotRoundTripJvmTest extends Test:
                     val origClasses = origCp.topLevelClasses
                     InternalClasspath.allocate.flatMap: rawCp =>
                         Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                            ClasspathOrchestrator.openInto(Seq("root"), false, fixtSrc, 1, rawCp).andThen:
-                                SnapshotWriter.write(rawCp, tmpDir, digest, platSrc).andThen:
+                            ClasspathOrchestrator.openInto(Seq("root"), false, fixtSrc, 1, rawCp).flatMap: cp =>
+                                SnapshotWriter.write(cp, tmpDir, digest, platSrc).andThen:
                                     val hex      = DigestComputer.toHexString(digest)
                                     val snapPath = s"$tmpDir/$hex.krfl"
                                     InternalClasspath.allocate.flatMap: rawCp2 =>

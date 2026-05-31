@@ -1,7 +1,6 @@
 package kyo.internal.tasty.type_
 
 import kyo.*
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.symbol.SymbolId
 
 /** Subtype checking for `Tasty.Type` values.
@@ -61,7 +60,7 @@ object Subtyping:
       * @param budget
       *   remaining Rec-unfolding steps; 0 means return Unknown
       */
-    def isSubtype(sub: Tasty.Type, sup: Tasty.Type, cp: InternalClasspath, budget: Int): SubtypeVerdict =
+    def isSubtype(sub: Tasty.Type, sup: Tasty.Type, cp: Tasty.Classpath, budget: Int): SubtypeVerdict =
         if budget <= 0 then Unknown
         else
             // Any is supertype of everything
@@ -182,7 +181,7 @@ object Subtyping:
     private def isNamedSubNamed(
         subId: SymbolId,
         supId: SymbolId,
-        cp: InternalClasspath,
+        cp: Tasty.Classpath,
         budget: Int
     ): SubtypeVerdict =
         val parents = cp.symbol(subId).parentTypes
@@ -193,7 +192,7 @@ object Subtyping:
     private def checkParents(
         parents: Chunk[Tasty.Type],
         supId: SymbolId,
-        cp: InternalClasspath,
+        cp: Tasty.Classpath,
         budget: Int
     ): SubtypeVerdict =
         if parents.isEmpty then NotSub
@@ -237,7 +236,7 @@ object Subtyping:
         subArgs: Chunk[Tasty.Type],
         supArgs: Chunk[Tasty.Type],
         baseSymOpt: Maybe[Tasty.Symbol],
-        cp: InternalClasspath,
+        cp: Tasty.Classpath,
         budget: Int
     ): SubtypeVerdict =
         // plan: phase-02 inline; variance lookup deferred to Phase 09.
@@ -249,7 +248,7 @@ object Subtyping:
         supArgs: Chunk[Tasty.Type],
         typeParamsOpt: Maybe[Chunk[Tasty.Symbol]],
         idx: Int,
-        cp: InternalClasspath,
+        cp: Tasty.Classpath,
         budget: Int
     ): SubtypeVerdict =
         if idx >= subArgs.length then Sub

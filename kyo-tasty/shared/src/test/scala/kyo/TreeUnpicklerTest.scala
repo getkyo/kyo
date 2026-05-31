@@ -58,8 +58,7 @@ class TreeUnpicklerTest extends Test:
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
         InternalClasspath.allocate.flatMap: rawCp =>
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
-                    val cp = Tasty.Classpath.wrap(rawCp)
+                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: cp =>
                     ClasspathTestHelpers.assignHomesForTest(rawCp)
                     cp
     end openPlainClassCp

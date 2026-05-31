@@ -111,23 +111,27 @@ object ClasspathOrchestrator:
         strict: Boolean,
         source: FileSource,
         concurrency: Int
-    )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+    )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         Classpath.allocate.flatMap: cp =>
             Scope.ensure(Sync.Unsafe.defer {
-                // Unsafe: atomic state write; called from Scope finalizer.
+                // Unsafe: atomic state write; called from Scope finalizer. The internal cp is still closed
+                // for cleanup; the public Tasty.Classpath case class has no Closed state.
+                // AllowUnsafe is provided by Sync.Unsafe.defer; no explicit import needed.
                 Classpath.close(cp)
             }).andThen:
-                openInto(roots, strict, source, concurrency, cp).andThen:
-                    cp
+                openInto(roots, strict, source, concurrency, cp)
 
-    /** Open into a pre-allocated Classpath. Also used by `openCached` to reuse snapshot data. */
+    /** Open into a pre-allocated Classpath. Returns the public Tasty.Classpath case class built by finalizeMerge.
+      *
+      * Also used by `openCached` tests to reuse snapshot data.
+      */
     private[kyo] def openInto(
         roots: Seq[String],
         strict: Boolean,
         source: FileSource,
         concurrency: Int,
         cp: Classpath
-    )(using Frame): Unit < (Sync & Async & Scope & Abort[TastyError]) =
+    )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         // Validate roots exist first (both strict and soft-fail report FileNotFound immediately)
         Kyo.foreach(roots): root =>
             source.exists(root).flatMap: ex =>
@@ -155,7 +159,7 @@ object ClasspathOrchestrator:
         source: FileSource,
         concurrency: Int,
         cp: Classpath
-    )(using Frame): Unit < (Sync & Async & Abort[TastyError]) =
+    )(using Frame): Tasty.Classpath < (Sync & Async & Abort[TastyError]) =
         val decodeConcurrency = concurrency.max(1)
         val rootCount         = roots.size.max(1)
         val entryCap          = decodeConcurrency * 4
@@ -226,41 +230,41 @@ object ClasspathOrchestrator:
                                     Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
                                 Async.foreach(stages, 3): stage =>
                                     stage
-                                .andThen(finalizeMerge(mergeState, source, strict, cp))
-                                    .andThen:
-                                        if timingEnabled then
-                                            Sync.Unsafe.defer:
-                                                val t_end       = java.lang.System.nanoTime()
-                                                val t0          = t_start.get()
-                                                val tList       = t_listEnd.get()
-                                                val tDec        = t_decodeEnd.get()
-                                                val tMrg        = t_mergeEnd.get()
-                                                val listMs      = if tList > 0 then (tList - t0) / 1_000_000L else -1L
-                                                val decodeMs    = if tDec > 0 then (tDec - t0) / 1_000_000L else -1L
-                                                val mergeMs     = if tMrg > 0 then (tMrg - t0) / 1_000_000L else -1L
-                                                val totalMs     = (t_end - t0) / 1_000_000L
-                                                val finalizeMs  = if tMrg > 0 then (t_end - tMrg) / 1_000_000L else -1L
-                                                val jars        = TastyPerfStats.jarOpens.get()
-                                                val entries     = TastyPerfStats.entryReads.get()
-                                                val bytesRaw    = TastyPerfStats.bytesRead.get()
-                                                val bytesMB     = bytesRaw / (1024L * 1024L)
-                                                val constructMs = TastyPerfStats.jarConstructNs.get() / 1_000_000L
-                                                val readMs      = TastyPerfStats.jarReadNs.get() / 1_000_000L
-                                                val headerMs    = TastyPerfStats.tastyHeaderNs.get() / 1_000_000L
-                                                val namesMs     = TastyPerfStats.nameUnpicklerNs.get() / 1_000_000L
-                                                val sectionMs   = TastyPerfStats.sectionIndexNs.get() / 1_000_000L
-                                                val attrMs      = TastyPerfStats.attributeUnpicklerNs.get() / 1_000_000L
-                                                val astMs       = TastyPerfStats.astPass1Ns.get() / 1_000_000L
-                                                val posMs       = TastyPerfStats.positionsUnpicklerNs.get() / 1_000_000L
-                                                val commentsMs  = TastyPerfStats.commentsUnpicklerNs.get() / 1_000_000L
-                                                java.lang.System.err.println(
-                                                    s"[kyo-tasty] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars (construct=${constructMs}ms read=${readMs}ms) entries=$entries bytes=${bytesMB}MB"
-                                                )
-                                                java.lang.System.err.println(
-                                                    s"[kyo-tasty]   decode-breakdown: header=${headerMs}ms names=${namesMs}ms section=${sectionMs}ms attr=${attrMs}ms ast=${astMs}ms pos=${posMs}ms comments=${commentsMs}ms"
-                                                )
-                                        else
-                                            Kyo.unit
+                                .andThen(finalizeMerge(mergeState, source, strict, cp)).flatMap: result =>
+                                    (if timingEnabled then
+                                         Sync.Unsafe.defer:
+                                             val t_end       = java.lang.System.nanoTime()
+                                             val t0          = t_start.get()
+                                             val tList       = t_listEnd.get()
+                                             val tDec        = t_decodeEnd.get()
+                                             val tMrg        = t_mergeEnd.get()
+                                             val listMs      = if tList > 0 then (tList - t0) / 1_000_000L else -1L
+                                             val decodeMs    = if tDec > 0 then (tDec - t0) / 1_000_000L else -1L
+                                             val mergeMs     = if tMrg > 0 then (tMrg - t0) / 1_000_000L else -1L
+                                             val totalMs     = (t_end - t0) / 1_000_000L
+                                             val finalizeMs  = if tMrg > 0 then (t_end - tMrg) / 1_000_000L else -1L
+                                             val jars        = TastyPerfStats.jarOpens.get()
+                                             val entries     = TastyPerfStats.entryReads.get()
+                                             val bytesRaw    = TastyPerfStats.bytesRead.get()
+                                             val bytesMB     = bytesRaw / (1024L * 1024L)
+                                             val constructMs = TastyPerfStats.jarConstructNs.get() / 1_000_000L
+                                             val readMs      = TastyPerfStats.jarReadNs.get() / 1_000_000L
+                                             val headerMs    = TastyPerfStats.tastyHeaderNs.get() / 1_000_000L
+                                             val namesMs     = TastyPerfStats.nameUnpicklerNs.get() / 1_000_000L
+                                             val sectionMs   = TastyPerfStats.sectionIndexNs.get() / 1_000_000L
+                                             val attrMs      = TastyPerfStats.attributeUnpicklerNs.get() / 1_000_000L
+                                             val astMs       = TastyPerfStats.astPass1Ns.get() / 1_000_000L
+                                             val posMs       = TastyPerfStats.positionsUnpicklerNs.get() / 1_000_000L
+                                             val commentsMs  = TastyPerfStats.commentsUnpicklerNs.get() / 1_000_000L
+                                             java.lang.System.err.println(
+                                                 s"[kyo-tasty] cold-load: list=${listMs}ms decode=${decodeMs}ms merge=${mergeMs}ms finalize=${finalizeMs}ms total=${totalMs}ms | jars=$jars (construct=${constructMs}ms read=${readMs}ms) entries=$entries bytes=${bytesMB}MB"
+                                             )
+                                             java.lang.System.err.println(
+                                                 s"[kyo-tasty]   decode-breakdown: header=${headerMs}ms names=${namesMs}ms section=${sectionMs}ms attr=${attrMs}ms ast=${astMs}ms pos=${posMs}ms comments=${commentsMs}ms"
+                                             )
+                                     else
+                                         Kyo.unit
+                                    ).andThen(result)
         }
     end runPhaseAB
 
@@ -383,7 +387,7 @@ object ClasspathOrchestrator:
         source: FileSource,
         strict: Boolean,
         cp: Classpath
-    )(using Frame): Unit < Sync =
+    )(using Frame): Tasty.Classpath < Sync =
         val canonical    = TypeArena.canonical()
         val fileResults  = state.fileResults.toSeq
         val fqnIndex     = state.fqnIndex
@@ -569,6 +573,9 @@ object ClasspathOrchestrator:
                         case b: Classpath.State.Building => accErrors ++= b.errors
                         case _                           => ()
 
+                    val finalErrors = Chunk.from(accErrors)
+
+                    // Transition internal cp to Ready for backward compat (tests that use rawCp.allSymbols etc.)
                     Classpath.transitionToReady(
                         cp,
                         Chunk.from(finalSymbols),
@@ -577,8 +584,30 @@ object ClasspathOrchestrator:
                         newFqnIndex,
                         newPackageIndex,
                         canonical,
-                        Chunk.from(accErrors),
+                        finalErrors,
                         moduleIndex
+                    )
+
+                    // Build the public Tasty.Classpath case class from the finalized data.
+                    val symsChunk = Chunk.from(finalSymbols)
+                    val fqnIdIdx  = newFqnIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap
+                    val pkgIdIdx  = newPackageIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap
+                    val topIds    = Chunk.from(newTopLevelCls.map(_.id))
+                    val pkgIds    = Chunk.from(newPackages.map(_.id))
+                    val rootId    = if finalSymbols.nonEmpty then SymbolId(0) else SymbolId(-1)
+                    Tasty.Classpath.make(
+                        symbols = symsChunk,
+                        rootSymbolId = rootId,
+                        topLevelClassIds = topIds,
+                        packageIds = pkgIds,
+                        fqnIndex = fqnIdIdx,
+                        packageIndex = pkgIdIdx,
+                        subclassIndex = Map.empty,  // plan: phase-06 stub; populated in Phase 07
+                        companionIndex = Map.empty, // plan: phase-06 stub; populated in Phase 07
+                        moduleIndex = moduleIndex,
+                        errors = finalErrors,
+                        canonical = canonical,
+                        internalCpBridge = cp
                     )
             }
     end finalizeMerge

@@ -4,7 +4,6 @@ import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
-import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable
 
 /** Phase 04 plan-mandated tests pinning the effect-row contract for Symbol.
@@ -63,8 +62,7 @@ class TastyEffectRowTest extends Test:
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
         InternalClasspath.allocate.flatMap: rawCp =>
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
-                    val cp = Tasty.Classpath.wrap(rawCp)
+                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: cp =>
                     ClasspathTestHelpers.assignHomesForTest(rawCp)
                     cp
     end openSomeObjectCp
@@ -153,47 +151,39 @@ class TastyEffectRowTest extends Test:
         succeed
     }
 
-    // ── Leaf 6: Symbol.body delegates to cp.decodeBody (structural equality) ─
+    // ── Leaf 6: Symbol.body delegates to cp.decodeBody (reference equality via memoization) ─
 
     // Given: a Symbol sym with a non-empty body in a loaded Classpath cp.
     // When: sym.body(using cp, frame) and cp.decodeBody(sym) are both evaluated.
-    // Then: both return structurally equal Maybe[Tree] values.
+    // Then: both calls return the SAME Tree instance (reference-equal via bodyMemo memoization).
     //
-    // NOTE: Phase 04 does NOT memoize. The plan's leaf-6 description says "reference-equal" but
-    // that is the Phase 06 post-condition (once ConcurrentHashMap memoization is added). For
-    // Phase 04 we assert structural equality (==) only. This decision is recorded in decisions.md D-01.
+    // Phase 06 restores the reference-equality assertion deferred in Phase 04 D-02. The bodyMemo
+    // ConcurrentHashMap guarantees that the first decode result is stored and returned on all
+    // subsequent calls, producing the same object reference.
     //
-    // Pins: INV-005 (body delegates to Classpath.decodeBody).
-    "Leaf 6: Symbol.body delegates to cp.decodeBody (structural equality)" in run {
+    // Pins: INV-005 (body delegates to Classpath.decodeBody) + INV-004 (bodyMemo memoization).
+    "Leaf 6: Symbol.body and cp.decodeBody return the same Tree instance via bodyMemo" in run {
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectCp.flatMap: cp =>
-                    // Find a symbol that has a body (a Val named "value" in SomeObject).
-                    // flow-allow: §839 case 3; unwrap to access allSymbols for test assertions.
-                    val rawCp   = Tasty.Classpath.unwrap(cp)
-                    val allSyms = rawCp.allSymbols
-                    val valSym  = allSyms.toSeq.find(s => s.kind == Tasty.SymbolKind.Val && s.bodyRecord.isDefined)
+                    val allSyms = cp.symbols
+                    val valSym  = allSyms.find(s => s.kind == Tasty.SymbolKind.Val && s.bodyRecord.isDefined)
                     valSym match
                         case None =>
                             // If no Val with a body is found, the test is inconclusive but not failed.
-                            // The SomeObject fixture has a `val value = 42` which should have a body.
                             Kyo.lift(succeed)
                         case Some(sym) =>
                             for
                                 viaMethod <- sym.body(using cp)
                                 viaDirect <- cp.decodeBody(sym)
                             yield
-                                // Both calls must produce Present (not Absent).
-                                // Phase 04 does NOT memoize so the two Tree instances are
-                                // not reference-equal and are not structurally equal (Symbol
-                                // instances with id=-1 use identity equality). We assert that
-                                // both decode successfully and produce the same Tree *class*.
-                                // Phase 06 adds memoization and reference equality.
                                 assert(viaMethod.isDefined, "sym.body must return Present")
                                 assert(viaDirect.isDefined, "cp.decodeBody must return Present")
+                                // Phase 06: bodyMemo memoizes the result; both calls return the SAME Tree instance.
                                 assert(
-                                    (viaMethod.get.getClass: Class[?]) eq (viaDirect.get.getClass: Class[?]),
-                                    s"sym.body and cp.decodeBody must decode to the same Tree class; got: ${viaMethod.get.getClass.getSimpleName} vs ${viaDirect.get.getClass.getSimpleName}"
+                                    viaMethod.get.asInstanceOf[AnyRef] eq viaDirect.get.asInstanceOf[AnyRef],
+                                    s"sym.body and cp.decodeBody must return the same Tree instance (bodyMemo memoization); " +
+                                        s"got different instances of ${viaMethod.get.getClass.getSimpleName}"
                                 )
                                 succeed
                     end match

@@ -75,8 +75,7 @@ class QueryApiTest extends Test:
     ): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         InternalClasspath.allocate.flatMap: rawCp =>
             Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), strict, src, 1, rawCp).map: _ =>
-                    val cp = Tasty.Classpath.wrap(rawCp)
+                ClasspathOrchestrator.openInto(Seq("root"), strict, src, 1, rawCp).map: cp =>
                     ClasspathTestHelpers.assignHomesForTest(rawCp)
                     cp
 
@@ -192,7 +191,7 @@ class QueryApiTest extends Test:
     "direct symbol iteration returns symbols from fixture classpath" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                Sync.defer(Tasty.Classpath.unwrap(cp).allSymbols)).map:
+                Sync.defer(cp.symbols)).map:
                 case Result.Success(syms) =>
                     assert(syms.nonEmpty, "Expected at least one symbol from fixture classpath")
                 case Result.Failure(e) =>
@@ -205,7 +204,7 @@ class QueryApiTest extends Test:
     "direct filter to Method kind returns only method symbols" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                Sync.defer(Tasty.Classpath.unwrap(cp).allSymbols.filter(_.kind == Tasty.SymbolKind.Method))).map:
+                Sync.defer(cp.symbols.filter(_.kind == Tasty.SymbolKind.Method))).map:
                 case Result.Success(syms) =>
                     assert(
                         syms.forall(_.kind == Tasty.SymbolKind.Method),
@@ -221,7 +220,7 @@ class QueryApiTest extends Test:
     "direct filter by Inline flag returns only inline symbols" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                Sync.defer(Tasty.Classpath.unwrap(cp).allSymbols.filter(_.flags.contains(Tasty.Flag.Inline)))).map:
+                Sync.defer(cp.symbols.filter(_.flags.contains(Tasty.Flag.Inline)))).map:
                 case Result.Success(syms) =>
                     assert(
                         syms.forall(_.flags.contains(Tasty.Flag.Inline)),
@@ -237,7 +236,7 @@ class QueryApiTest extends Test:
     "direct filter by name finds symbols named PlainClass" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                Sync.defer(Tasty.Classpath.unwrap(cp).allSymbols.filter(_.name.asString == "PlainClass"))).map:
+                Sync.defer(cp.symbols.filter(_.name.asString == "PlainClass"))).map:
                 case Result.Success(syms) =>
                     assert(
                         syms.forall(_.name.asString == "PlainClass"),
@@ -253,7 +252,7 @@ class QueryApiTest extends Test:
     "direct map over symbols produces names" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                Sync.defer(Tasty.Classpath.unwrap(cp).allSymbols.map(_.name))).map:
+                Sync.defer(cp.symbols.map(_.name))).map:
                 case Result.Success(names) =>
                     assert(names.forall(_.isInstanceOf[Tasty.Name]))
                 case Result.Failure(e) =>
@@ -266,8 +265,7 @@ class QueryApiTest extends Test:
     "direct allSymbols count is consistent across two calls" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                val rawCp = Tasty.Classpath.unwrap(cp)
-                Sync.defer((rawCp.allSymbols.size, rawCp.allSymbols.size))).map:
+                Sync.defer((cp.symbols.size, cp.symbols.size))).map:
                 case Result.Success((count1, count2)) =>
                     assert(
                         count1 == count2,
@@ -535,10 +533,8 @@ class QueryApiTest extends Test:
             Abort.run[TastyError](openFixtureClasspath(src).flatMap: cp =>
                 cp.findClass("kyo.fixtures.GenericBox") match
                     case Present(sym) =>
-                        val rawCp = Tasty.Classpath.unwrap(cp)
-                        import AllowUnsafe.embrace.danger
                         val tpIds  = sym.typeParamIds
-                        val allSym = rawCp.allSymbols
+                        val allSym = cp.symbols
                         assert(
                             tpIds.length == 1,
                             s"Expected 1 typeParamId for GenericBox[A] but got ${tpIds.length}"
@@ -560,10 +556,8 @@ class QueryApiTest extends Test:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Present(sym) =>
-                        val rawCp = Tasty.Classpath.unwrap(cp)
-                        import AllowUnsafe.embrace.danger
                         val declIds = sym.declarationIds
-                        val allSym  = rawCp.allSymbols
+                        val allSym  = cp.symbols
                         assert(declIds.nonEmpty, s"Expected non-empty declarationIds for PlainClass but got empty")
                         val names = declIds.map(id => allSym(id.value).name.asString).toSet
                         assert(
@@ -692,10 +686,8 @@ class QueryApiTest extends Test:
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))
                     case Present(classSym) =>
-                        val rawCp = Tasty.Classpath.unwrap(cp)
-                        import AllowUnsafe.embrace.danger
                         val declIds = classSym.declarationIds
-                        val allSym  = rawCp.allSymbols
+                        val allSym  = cp.symbols
                         val xOpt    = declIds.map(id => allSym(id.value)).find(s => s.name.asString == "x")
                         xOpt match
                             case None =>
@@ -727,10 +719,8 @@ class QueryApiTest extends Test:
                 cp.findClass("kyo.fixtures.SomeTrait") match
                     case Absent => Abort.fail(TastyError.NotImplemented("SomeTrait not found"))
                     case Present(traitSym) =>
-                        val rawCp = Tasty.Classpath.unwrap(cp)
-                        import AllowUnsafe.embrace.danger
                         val declIds = traitSym.declarationIds
-                        val allSym  = rawCp.allSymbols
+                        val allSym  = cp.symbols
                         val computeOpt = declIds.map(id => allSym(id.value)).find(s =>
                             s.name.asString == "compute" && s.kind == Tasty.SymbolKind.Method
                         )
@@ -757,8 +747,7 @@ class QueryApiTest extends Test:
         src.add("root/FixtureClasses$package.tasty", kyo.fixtures.Embedded.fixtureClassesPackageTasty)
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(src).flatMap: cp =>
-                import AllowUnsafe.embrace.danger
-                val syms = Tasty.Classpath.unwrap(cp).allSymbols.filter(_.name.asString == "StringList")
+                val syms = cp.symbols.filter(_.name.asString == "StringList")
                 syms.headMaybe match
                     case Absent             => Abort.fail(TastyError.NotImplemented("No StringList symbol found"))
                     case Present(stringSym) => Kyo.lift(stringSym.declaredType)).map:
@@ -825,10 +814,8 @@ class QueryApiTest extends Test:
                     openFixtureClasspath(fixtureSource()).flatMap: cp =>
                         cp.findClass("kyo.fixtures.PlainClass") match
                             case Present(sym) =>
-                                val rawCp = Tasty.Classpath.unwrap(cp)
-                                import AllowUnsafe.embrace.danger
                                 val declIds = sym.declarationIds
-                                val allSym  = rawCp.allSymbols
+                                val allSym  = cp.symbols
                                 declIds.map(id => allSym(id.value)).find(s => s.name.asString == "x") match
                                     case Some(xSym) => Kyo.lift(xSym)
                                     case None       => Kyo.lift(sym)

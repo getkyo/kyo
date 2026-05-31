@@ -255,7 +255,7 @@ class SubtypeTest extends Test:
         val stringType = Tasty.Type.Named(stringSym.id)
         val intType    = Tasty.Type.Named(intSym.id)
         makeTestClasspath(Chunk(stringSym, intSym)).map: cp =>
-            val result = kyo.internal.tasty.type_.Subtyping.isSubtype(stringType, intType, Tasty.Classpath.unwrap(cp), budget = 0)
+            val result = kyo.internal.tasty.type_.Subtyping.isSubtype(stringType, intType, cp, budget = 0)
             assert(result == Tasty.SubtypeVerdict.Unknown)
     }
 

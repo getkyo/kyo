@@ -2,7 +2,6 @@ package kyo.internal.tasty.snapshot
 
 import java.io.ByteArrayOutputStream
 import kyo.*
-import kyo.internal.tasty.query.Classpath
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable
@@ -35,7 +34,7 @@ object SnapshotWriter:
       *   FileSource used to create the cache directory if needed and to write the snapshot
       */
     def write(
-        cp: Classpath,
+        cp: Tasty.Classpath,
         cacheDir: String,
         digest: Array[Byte],
         source: FileSource
@@ -57,19 +56,20 @@ object SnapshotWriter:
     end write
 
     /** Serialize a Classpath to KRFL bytes, embedding the given input digest in the file header. */
-    private def serialize(cp: Classpath, digest: Array[Byte]): Array[Byte] =
-        // flow-allow: §839 case 3; snapshot serialization boundary; single-fiber synchronous read of immutable Ready-state data.
-        import AllowUnsafe.embrace.danger
-        val (allSymbols, fqnBySymbol) = cp.stateRef.unsafe.get() match
-            case s: Classpath.State.Ready =>
-                // plan: phase-02 inline; sym.fullName deferred to Phase 09.
-                // Build a reverse map symbol->fqn from the classpath's fqnIndex so snapshot FQNs are
-                // the real registered FQNs (e.g. "test.Foo"), not just simple names ("Foo").
-                // Symbols without an fqnIndex entry get an empty FQN (they will not be pureClass-lookup-able).
-                val rev = new java.util.IdentityHashMap[Tasty.Symbol, String]()
-                s.fqnIndex.foreach { case (fqn, sym) => rev.put(sym, fqn) }
-                (s.allSymbols, rev)
-            case _ => (Chunk.empty[Tasty.Symbol], new java.util.IdentityHashMap[Tasty.Symbol, String]())
+    private def serialize(cp: Tasty.Classpath, digest: Array[Byte]): Array[Byte] =
+        // Direct field reads from the immutable case class; no AllowUnsafe needed.
+        val allSymbols = cp.symbols
+        // Build a reverse map SymbolId->fqn from the classpath's fqnIndex so snapshot FQNs are
+        // the real registered FQNs (e.g. "test.Foo"), not just simple names ("Foo").
+        // Symbols without an fqnIndex entry get an empty FQN (they will not be findClass-lookup-able).
+        val fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String] =
+            val rev = new java.util.IdentityHashMap[Tasty.Symbol, String]()
+            cp.fqnIndex.foreach { case (fqn, id) =>
+                val sym = cp.symbol(id)
+                rev.put(sym, fqn)
+            }
+            rev
+        end fqnBySymbol
 
         val symbolList = allSymbols.toSeq
 
@@ -118,10 +118,8 @@ object SnapshotWriter:
                     symBodyEnds(idx) = 0
         end for
 
-        // Collect errors
-        val errors = cp.stateRef.unsafe.get() match
-            case s: Classpath.State.Ready => s.errors
-            case _                        => Chunk.empty
+        // Collect errors directly from the immutable case class field.
+        val errors = cp.errors
 
         // --- Build section payloads ---
 

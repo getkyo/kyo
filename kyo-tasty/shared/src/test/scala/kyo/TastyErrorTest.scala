@@ -111,17 +111,13 @@ class TastyErrorTest extends Test:
         val err: TastyError.SymbolNotFound = TastyError.SymbolNotFound("missing.X")
         assert(err.fqn == "missing.X", s"Expected fqn 'missing.X' but got: ${err.fqn}")
         Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
-            val internalCp = Tasty.Classpath.unwrap(cp)
-            Abort.run[TastyError](internalCp.lookupClass("missing.X")).map: result =>
-                result match
-                    case Result.Success(Maybe.Absent) =>
-                        succeed
-                    case Result.Success(Maybe.Present(sym)) =>
-                        fail(s"Expected Absent but got Present($sym)")
-                    case Result.Failure(e) =>
-                        fail(s"Expected Success(Absent) but got Failure($e)")
-                    case Result.Panic(t) =>
-                        throw t
+            val result = cp.findClass("missing.X")
+            result match
+                case Maybe.Absent =>
+                    succeed
+                case Maybe.Present(sym) =>
+                    fail(s"Expected Absent but got Present($sym)")
+            end match
     }
 
 end TastyErrorTest

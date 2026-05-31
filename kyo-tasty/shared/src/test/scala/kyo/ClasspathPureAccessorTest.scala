@@ -64,6 +64,8 @@ class ClasspathPureAccessorTest extends Test:
                 ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
                     ClasspathTestHelpers.assignHomesForTest(rawCp)
                     rawCp
+    // note: openInto now returns Tasty.Classpath; we discard the result with .map: _ => rawCp
+    // since this test specifically exercises the internal state-machine accessors on rawCp.
 
     // Test 1 (INV-001): every Classpath pure accessor signature carries (using AllowUnsafe).
     // Given: a Ready classpath; AllowUnsafe in scope via import at class level.
