@@ -2,12 +2,14 @@ package kyo
 
 /** Configuration for an MCP server or client.
   *
-  * `McpConfig.default` is the recommended starting point; override individual fields via
-  * the fluent setter methods. Call `McpConfig.require(config)` before passing to `McpServer.init`
-  * to validate field constraints.
+  * `McpConfig.default` is the recommended starting point; override individual fields via the fluent
+  * setter methods. Call `McpConfig.require(config)` before passing to `McpServer.init` to validate
+  * field constraints.
   *
-  * Phase 1 stub: default body uses `JsonRpcHandler.Config.default` for the `jsonRpc` slot.
-  * Phase 4 replaces `defaultJsonRpcConfig` with the four MCP-specific policy overrides.
+  * The `jsonRpc` field is pre-populated by `McpConfig.defaultJsonRpcConfig` with MCP-specific policy
+  * adapters for cancellation, progress, and unknown-method handling. The capability gate slot is left
+  * `Absent` here; `McpEngine.initServer` (Phase 5) sets it after computing the server's advertised
+  * capabilities from registered routes.
   *
   * @param serverInfo                 identification advertised in the `initialize` response
   * @param instructions               optional server instructions for the client
@@ -57,19 +59,46 @@ object McpConfig:
         case Off
     end CapabilityGateMode
 
-    /** Default configuration using auto-derived capabilities and MCP policy overrides.
-      * Phase 4 replaces `defaultJsonRpcConfig` with real policy adapters.
+    /** JSON-RPC handler config used by `default`.
+      *
+      * Populates three MCP-specific policy slots (INV-002):
+      *   - `cancellation`: MCP `notifications/cancelled` cancellation protocol
+      *   - `progress`: MCP `notifications/progress` with `_meta.progressToken` extraction (INV-007)
+      *   - `unknownMethod`: strict preset (reject unknown notifications) per Q-016
+      *
+      * The `gate` slot is `Absent` here. `McpEngine.initServer` (Phase 5) sets it after computing
+      * the server's advertised capabilities from registered routes or `McpConfig.declaredCapabilities`.
+      *
+      * Declared before `default` to avoid Scala object initialization order issues: `default` uses
+      * `McpConfig.defaultJsonRpcConfig` as a default parameter value, which must be initialized first.
       */
+    val defaultJsonRpcConfig: JsonRpcHandler.Config =
+        JsonRpcHandler.Config.default
+            .cancellation(internal.mcp.McpCancellationPolicy.default)
+            .progress(internal.mcp.McpProgressPolicy.default)
+            .unknownMethod(internal.mcp.McpUnknownMethodPolicy.default)
+            .codec(JsonRpcCodec.Strict2_0)
+            .requestTimeout(Duration.Infinity)
+
+    /** Default configuration using auto-derived capabilities and MCP-specific policy adapters. */
     val default: McpConfig = McpConfig()
 
     /** Validates that `config` satisfies all required constraints.
-      * Phase 4 fills the real validation body; Phase 1 stub is a no-op.
+      *
+      * Checks:
+      *   - `supportedProtocolVersions` is non-empty.
+      *   - `handshakeTimeout` is positive.
+      *   - Delegates to `JsonRpcHandler.Config.require` for the `jsonRpc` slot.
       */
-    def require(c: McpConfig): Unit = ()
-
-    /** JSON-RPC handler config used by `default`.
-      * Phase 1 stub; Phase 4 overrides the four MCP-specific policy slots.
-      */
-    val defaultJsonRpcConfig: JsonRpcHandler.Config = JsonRpcHandler.Config.default
+    def require(c: McpConfig): Unit =
+        if c.supportedProtocolVersions.isEmpty then
+            throw new IllegalArgumentException("McpConfig.supportedProtocolVersions must be non-empty")
+        if c.handshakeTimeout.toMillis <= 0 then
+            throw new IllegalArgumentException(
+                s"McpConfig.handshakeTimeout must be > 0, got ${c.handshakeTimeout}"
+            )
+        end if
+        JsonRpcHandler.Config.require(c.jsonRpc)
+    end require
 
 end McpConfig
