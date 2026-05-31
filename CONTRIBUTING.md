@@ -693,7 +693,6 @@ Kyo achieves zero-cost abstractions through opaque types. When designing a new t
 | Opaque over JVM type   | `Instant = JInstant`                         | Existing class               | Wrapping a well-tested JVM type with a safer/simpler API      |
 | Opaque over union      | `Maybe[A] = Absent \| Present[A]`            | Union of subtypes            | Discriminated types where the success path avoids boxing      |
 | Opaque over array      | `Span[A] = Array[? <: A]`                    | Mutable array                | Immutable view of array data without copying                  |
-| Opaque with lazy ops   | `Text = String \| Op`                        | String or deferred operation | When operations can be deferred until materialization          |
 | Opaque over Unsafe     | `Channel[A] = Channel.Unsafe[A]`             | Unsafe implementation        | Concurrent types with safe/unsafe tiers (see Unsafe Boundary) |
 | Effect alias           | `Async <: (Sync & Async.Join)`               | Subtype bounds               | Composing effects via subtype relationships                   |
 | Subtype-bounded opaque | `Queue.Unbounded[A] <: Queue[A] = Queue[A]`  | Parent opaque                | Expressing subtype relationships between opaque types         |

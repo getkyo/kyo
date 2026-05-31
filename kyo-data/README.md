@@ -593,30 +593,13 @@ val s: String = three.get[String]
 
 `NotIntersection[A]` is macro-derived evidence that `A` is not an intersection type. It is used by `TypeMap.get` and other surfaces that need a single, non-composite key. User code typically does not write `NotIntersection` directly; the compiler summons it as a constraint on type parameters.
 
-## Text and rendering
+## Rendering and formatting
 
-When code needs printable output (logs, error messages, diagnostic dumps), `toString` is rarely the right answer for opaque types and structural data. `kyo-data` provides `Text` for cheap string concatenation, `Render[A]` for customizable text representations, `Ansi` extensions for terminal formatting, and `Base64` for byte-to-string encoding.
-
-### Cheap concatenation
-
-`Text` is an opaque type over `String | Op`, where `Op` is an internal rope-like structure used for cheap concatenation. Plain strings stay as `String`; concatenation produces an `Op` and is O(1); the underlying characters are materialized only when the `Text` is rendered to a `String`.
-
-```scala
-import kyo.*
-
-val a: Text  = Text("hello, ")
-val b: Text  = "world" // String widens to Text
-val ab: Text = a + b
-
-val length: Int      = ab.length
-val rendered: String = ab.show
-```
-
-`Text` supports indexing, slicing, length, comparison, and case conversion. Character predicates are passed as `Text.Predicate`, an SAM trait.
+When code needs printable output (logs, error messages, diagnostic dumps), `toString` is rarely the right answer for opaque types and structural data. `kyo-data` provides `Render[A]` for customizable string representations, `Ansi` extensions for terminal formatting, and `Base64` for byte-to-string encoding.
 
 ### Customizable rendering
 
-`Render[A]` is the type class that produces a `Text` for a value. `kyo-data` opaque types (`Maybe`, `Result`, `Record`, ...) define explicit `Render` instances so their printed form reflects their semantic structure, not the underlying erased value.
+`Render[A]` is the type class that produces a `String` for a value. `kyo-data` opaque types (`Maybe`, `Result`, `Record`, ...) define explicit `Render` instances so their printed form reflects their semantic structure, not the underlying erased value.
 
 ```scala
 import kyo.*
@@ -626,7 +609,7 @@ case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 val alice = User(1, "Alice", "alice@example.com", Instant.Epoch)
 
 val text: String = Render[User].asString(alice)
-val also: String = Render.asText(alice).show // via summoned Render
+val also: String = Render.asString(alice) // via summoned Render
 ```
 
 `Render` derives automatically for product and sum types whose components all have `Render` instances. The fallback `Render` from `LowPriorityRenders` uses `toString`. `Render.from` builds a custom instance from a function.
@@ -636,23 +619,23 @@ import kyo.*
 
 case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 
-given Render[User] = Render.from(u => Text(s"User(${u.id}, ${u.name})"))
+given Render[User] = Render.from(u => s"User(${u.id}, ${u.name})")
 ```
 
-`Rendered` is an opaque-type wrapper that converts implicitly from any value with a `Render` instance, and is a subtype of `Text`. The `t` string interpolator on `StringContext` takes `Rendered*` arguments, so any value with a `Render` can be interpolated without an explicit call:
+`Rendered` is an opaque-type wrapper that converts implicitly from any value with a `Render` instance, and is a subtype of `String`. The `render` string interpolator on `StringContext` takes `Rendered*` arguments, so any value with a `Render` can be interpolated without an explicit call:
 
 ```scala
 import kyo.*
 
 case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 
-val alice      = User(1, "Alice", "alice@example.com", Instant.Epoch)
-val line: Text = t"signed in: $alice at ${alice.signedUpAt}"
+val alice        = User(1, "Alice", "alice@example.com", Instant.Epoch)
+val line: String = render"signed in: $alice at ${alice.signedUpAt}"
 ```
 
 ### Terminal color and formatting
 
-`Ansi` provides extension methods on `String` and `Text` for ANSI color and formatting (`red`, `green`, `bold`, `dim`, ...) and a `highlight` helper used by `Frame.render` to format source-context error messages. There is also a `stripAnsi` extension that removes any ANSI escape sequences from a string.
+`Ansi` provides extension methods on `String` for ANSI color and formatting (`red`, `green`, `bold`, `dim`, ...) and a `highlight` helper used by `Frame.render` to format source-context error messages. There is also a `stripAnsi` extension that removes any ANSI escape sequences from a string.
 
 ```scala
 import kyo.*
@@ -718,7 +701,6 @@ When `kyo-config` is on the classpath, kyo-data types can be used directly as `F
 | `Span[A]` | comma-separated | `"1,2,3"` |
 | `Dict[K,V]` | key=value pairs, comma-separated | `"host=localhost,port=8080"` |
 | `Instant` | ISO-8601 | `"2024-01-15T10:30:00Z"` |
-| `Text` | plain string | `"hello"` |
 | `Record[F]` | key=value pairs, validated against field schema | `"host=localhost,port=8080"` |
 
 Accepted `Duration` unit names include short forms (`ns`, `ms`, `s`, `m`, `h`, `d`) and long forms (`nanos`, `millis`, `seconds`, `minutes`, `hours`, `days`, `weeks`, `months`, `years`). The special values `"infinity"` and `"inf"` parse to `Duration.Infinity`.

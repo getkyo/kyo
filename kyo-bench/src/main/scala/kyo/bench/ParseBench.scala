@@ -29,11 +29,11 @@ class ParseBench extends BaseBench:
     @Benchmark def repeatSpecificCharZIO(bh: Blackhole) = bh.consume(repeatSpecificCharZIOParser.parseString(repeatSpecificCharInput))
 
     val repeatFirstOfCharInput: String = "truefalsemaybemaybenot" * 1000
-    val repeatFirstOfCharKyoParser: Chunk[Text] < Parse[Char] = Parse.repeat(Parse.firstOf(
-        Parse.literal(Text("true")),
-        Parse.literal(Text("false")),
-        Parse.literal(Text("maybe")),
-        Parse.literal(Text("maybenot"))
+    val repeatFirstOfCharKyoParser: Chunk[String] < Parse[Char] = Parse.repeat(Parse.firstOf(
+        Parse.literal("true"),
+        Parse.literal("false"),
+        Parse.literal("maybe"),
+        Parse.literal("maybenot")
     ))
 
     val repeatFirstOfCharZIOParser: Parser[String, Char, ZChunk[String]] = Parser.string("true", "true")

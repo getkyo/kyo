@@ -109,7 +109,7 @@ private[kyo] object ModifierParser:
     // Parses "setup" -> scope=Env("__doc__")
     private def setupTokenParser(acc: Parsed)(using Frame): Parsed < (Parse[Char] & Abort[Doctest.Error.ParseError]) =
         for
-            _ <- Parse.literal(Text("setup"))
+            _ <- Parse.literal("setup")
             _ <- Parse.end[Char]
         yield acc.copy(scope = Maybe.Present(Block.Visibility.Env("__doc__")))
 
@@ -159,15 +159,15 @@ private[kyo] object ModifierParser:
         Frame
     ): Block.Visibility < (Parse[Char] & Abort[Doctest.Error.ParseError]) =
         Parse.firstOf(
-            Parse.literal(Text("isolated")).andThen(Block.Visibility.Isolated: Block.Visibility),
-            Parse.literal(Text("inherited")).andThen(Block.Visibility.Inherited: Block.Visibility),
-            Parse.literal(Text("nested")).andThen(Block.Visibility.Nested: Block.Visibility),
+            Parse.literal("isolated").andThen(Block.Visibility.Isolated: Block.Visibility),
+            Parse.literal("inherited").andThen(Block.Visibility.Inherited: Block.Visibility),
+            Parse.literal("nested").andThen(Block.Visibility.Nested: Block.Visibility),
             envScopeParser(file, line)
         )
 
     private def envScopeParser(file: kyo.Path, line: Int)(using Frame): Block.Visibility < (Parse[Char] & Abort[Doctest.Error.ParseError]) =
         for
-            _      <- Parse.literal(Text("env:"))
+            _      <- Parse.literal("env:")
             name   <- Parse.readWhile[Char](_ => true).map(_.mkString)
             result <- envNameToVisibility(name, file, line)
         yield result
@@ -201,12 +201,12 @@ private[kyo] object ModifierParser:
         Frame
     ): Block.Expectation < (Parse[Char] & Abort[Doctest.Error.ParseError]) =
         Parse.firstOf(
-            Parse.literal(Text("compiles")).andThen(Block.Expectation.Compiles: Block.Expectation),
-            Parse.literal(Text("runs")).andThen(Block.Expectation.Runs: Block.Expectation),
-            Parse.literal(Text("fails-compile")).andThen(Block.Expectation.FailsCompile: Block.Expectation),
-            Parse.literal(Text("warns")).andThen(Block.Expectation.Warns: Block.Expectation),
-            Parse.literal(Text("crashes")).andThen(Block.Expectation.Crashes: Block.Expectation),
-            Parse.literal(Text("skipped")).andThen(Block.Expectation.Skipped: Block.Expectation)
+            Parse.literal("compiles").andThen(Block.Expectation.Compiles: Block.Expectation),
+            Parse.literal("runs").andThen(Block.Expectation.Runs: Block.Expectation),
+            Parse.literal("fails-compile").andThen(Block.Expectation.FailsCompile: Block.Expectation),
+            Parse.literal("warns").andThen(Block.Expectation.Warns: Block.Expectation),
+            Parse.literal("crashes").andThen(Block.Expectation.Crashes: Block.Expectation),
+            Parse.literal("skipped").andThen(Block.Expectation.Skipped: Block.Expectation)
         )
 
     private def parsePlatform(
