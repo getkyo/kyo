@@ -31,6 +31,10 @@ private[kyo] object McpEngine:
         val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe
         val clientCapabilitiesRef = AtomicRef.Unsafe.init[Maybe[McpCapabilities.Client]](Absent)(using AllowUnsafe.embrace.danger).safe
         val clientInfoRef         = AtomicRef.Unsafe.init[Maybe[McpInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
+        // AllowUnsafe: AtomicRef for log level threshold; initialized to Info per §3.9.
+        val logLevelRef = AtomicRef.Unsafe.init[McpLogLevel](McpLogLevel.Info)(using AllowUnsafe.embrace.danger).safe
+        // AllowUnsafe: AtomicRef for resource subscription set; initialized to empty per §3.4.
+        val subscriptionsRef = AtomicRef.Unsafe.init[Set[McpResourceUri]](Set.empty)(using AllowUnsafe.embrace.danger).safe
 
         val catalog    = McpCatalog(userRoutes)
         val serverCaps = catalog.autoDeriveServerCapabilities(config)
@@ -63,9 +67,14 @@ private[kyo] object McpEngine:
             McpBuiltInRoutes.resourceTemplatesList(catalog),
             McpBuiltInRoutes.promptsList(catalog),
             McpBuiltInRoutes.promptsGet(catalog),
-            McpBuiltInRoutes.loggingSetLevel,
             McpBuiltInRoutes.completionComplete(catalog)
-        )
+        ) ++ (if serverCaps.logging.isDefined then Seq(McpBuiltInRoutes.loggingSetLevel(logLevelRef)) else Seq.empty)
+            ++ (if serverCaps.resources.exists(_.subscribe) then
+                    Seq(
+                        McpBuiltInRoutes.resourcesSubscribe(subscriptionsRef),
+                        McpBuiltInRoutes.resourcesUnsubscribe(subscriptionsRef)
+                    )
+                else Seq.empty)
 
         // Register no-op handlers for MCP-protocol notifications that are not user routes.
         // The strict unknown-method policy would reject them; these stubs accept and discard them.
@@ -128,6 +137,15 @@ private[kyo] object McpEngine:
 
                 def notifyResourceUpdatedUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed]) =
                     serverCaps.resources match
+                        case Present(rc) if rc.subscribe =>
+                            subscriptionsRef.get.flatMap { subs =>
+                                if subs.contains(uri) then
+                                    handler.notify[ResourceUpdatedParams](
+                                        "notifications/resources/updated",
+                                        ResourceUpdatedParams(uri.asString)
+                                    )
+                                else Sync.defer(())
+                            }
                         case Present(_) =>
                             handler.notify[ResourceUpdatedParams]("notifications/resources/updated", ResourceUpdatedParams(uri.asString))
                         case Absent =>
@@ -144,15 +162,19 @@ private[kyo] object McpEngine:
                     Frame,
                     Schema[T]
                 ): Unit < (Async & Abort[Closed]) =
-                    val encoded = Structure.encode[T](data)
-                    handler.notify[LogMessageParams](
-                        "notifications/message",
-                        LogMessageParams(
-                            level = level.toString.toLowerCase,
-                            data = encoded,
-                            logger = logger
-                        )
-                    )
+                    logLevelRef.get.flatMap { threshold =>
+                        if level.ordinal >= threshold.ordinal then
+                            val encoded = Structure.encode[T](data)
+                            handler.notify[LogMessageParams](
+                                "notifications/message",
+                                LogMessageParams(
+                                    level = level.toString.toLowerCase,
+                                    data = encoded,
+                                    logger = logger
+                                )
+                            )
+                        else Sync.defer(())
+                    }
                 end notifyLogUnsafe
 
                 def protocolVersionUnsafe: Maybe[McpProtocolVersion] =

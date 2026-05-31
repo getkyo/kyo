@@ -56,6 +56,10 @@ private[kyo] object McpClientEngine:
     final private case class CompleteRequest(ref: McpRoute.CompletionRef, argument: McpRoute.CompletionArg) derives Schema
     final private case class CompleteResponse(completion: McpRoute.CompletionResult) derives Schema
 
+    // Wire types for resources/subscribe and resources/unsubscribe.
+    final private case class SubscribeRequest(uri: String) derives Schema
+    final private case class SubscribeResponse() derives Schema
+
     /** Initializes the MCP client over `transport`.
       *
       * Issues the `initialize` request, awaits the response, persists negotiated state, sends
@@ -83,7 +87,7 @@ private[kyo] object McpClientEngine:
         val serverInfoRef         = AtomicRef.Unsafe.init[Maybe[McpInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
         val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe
 
-        val reverseRoutes = McpReverseDispatch.buildRoutes(routes, config)
+        val reverseRoutes = McpReverseDispatch.buildRoutes(routes, config, capabilities)
 
         for
             handler <- JsonRpcHandler.initUnscoped(transport, reverseRoutes, config.jsonRpc)
@@ -169,6 +173,13 @@ private[kyo] object McpClientEngine:
                 Sync.defer(())
         end new
     end buildClientSentinelServer
+
+    // Wire type for the complete request that includes the optional context field.
+    final private case class CompleteRequestWithContext(
+        ref: McpRoute.CompletionRef,
+        argument: McpRoute.CompletionArg,
+        context: Maybe[McpRoute.CompletionArg.Context] = Absent
+    ) derives Schema
 
     private def buildUnsafe(
         handler: JsonRpcHandler,
@@ -259,10 +270,17 @@ private[kyo] object McpClientEngine:
                         Abort.fail(McpInvalidArgumentError("logging/setLevel", "response", e.message))
                     })
 
-            def completeUnsafe(ref: McpRoute.CompletionRef, arg: McpRoute.CompletionArg)(using
+            def completeUnsafe(
+                ref: McpRoute.CompletionRef,
+                arg: McpRoute.CompletionArg,
+                context: Maybe[McpRoute.CompletionArg.Context]
+            )(using
                 Frame
             ): McpRoute.CompletionResult < (Async & Abort[McpError | Closed]) =
-                handler.call[CompleteRequest, CompleteResponse]("completion/complete", CompleteRequest(ref, arg))
+                handler.call[CompleteRequestWithContext, CompleteResponse](
+                    "completion/complete",
+                    CompleteRequestWithContext(ref, arg, context)
+                )
                     .map(_.completion)
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentError("completion/complete", "response", e.message))
@@ -276,6 +294,20 @@ private[kyo] object McpClientEngine:
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentError("ping", "response", e.message))
+                    })
+
+            def subscribeResourceUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpError | Closed]) =
+                handler.call[SubscribeRequest, SubscribeResponse]("resources/subscribe", SubscribeRequest(uri.asString))
+                    .map(_ => ())
+                    .handle(Abort.recover[JsonRpcError] { e =>
+                        Abort.fail(McpInvalidArgumentError("resources/subscribe", "response", e.message))
+                    })
+
+            def unsubscribeResourceUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpError | Closed]) =
+                handler.call[SubscribeRequest, SubscribeResponse]("resources/unsubscribe", SubscribeRequest(uri.asString))
+                    .map(_ => ())
+                    .handle(Abort.recover[JsonRpcError] { e =>
+                        Abort.fail(McpInvalidArgumentError("resources/unsubscribe", "response", e.message))
                     })
 
             def serverCapabilitiesUnsafe: Maybe[McpCapabilities.Server] =

@@ -3,11 +3,13 @@ package kyo
 /** Named-record paginated list result.
   *
   * Replaces the tuple `(Chunk[A], Maybe[String])` pattern per Audit-A3 / INV-023.
-  * `nextCursor` is `Absent` on the last page.
+  * `nextCursor` is `Absent` on the last page. `meta` carries the optional `_meta`
+  * advisory field from the MCP spec (§3.7); it is omitted from the wire when `Absent`.
   *
   * @tparam A the item type
   */
-final case class McpPage[+A](items: Chunk[A], nextCursor: Maybe[String]) derives CanEqual:
+// flow-allow: Structure carve-out per §11a / INV-021
+final case class McpPage[+A](items: Chunk[A], nextCursor: Maybe[String], meta: Maybe[Structure.Value] = Absent) derives CanEqual:
     /** Returns `true` when there are no further pages. */
     def isLast: Boolean = nextCursor.isEmpty
 

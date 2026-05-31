@@ -52,7 +52,7 @@ class McpRouteTest extends Test:
 
     "completion factory produces a route with Kind.Custom" in run {
         val ref = McpRoute.CompletionRef.Prompt("myPrompt")
-        val r = McpRoute.completion(ref) { (_, arg, _) =>
+        val r = McpRoute.completion(ref) { (_, arg, _, _) =>
             McpRoute.CompletionResult(Chunk(arg.value), Absent, Absent)
         }
         assert(r.kind == McpRoute.Kind.Custom)

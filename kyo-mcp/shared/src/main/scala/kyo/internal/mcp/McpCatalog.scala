@@ -72,7 +72,8 @@ final private[kyo] class McpCatalog(val routes: Seq[McpRoute[?, ?, ?]]):
                         if resourceRoutes.nonEmpty || resourceTemplateRoutes.nonEmpty then
                             Present(
                                 McpCapabilities.ResourcesCapability(
-                                    subscribe = false,
+                                    subscribe =
+                                        resourceRoutes.exists { case c: McpRouteCarrier.Resource[?] => c.subscribable; case _ => false },
                                     listChanged = config.autoNotifyListChanged
                                 )
                             )
@@ -85,7 +86,9 @@ final private[kyo] class McpCatalog(val routes: Seq[McpRoute[?, ?, ?]]):
                         if completionRoutes.nonEmpty then
                             Present(McpCapabilities.CompletionsCapability())
                         else Absent,
-                    logging = Absent,
+                    logging = if routes.exists(_.isInstanceOf[McpRouteCarrier.LoggingHook]) then
+                        Present(McpCapabilities.LoggingCapability())
+                    else Absent,
                     experimental = Map.empty
                 )
 

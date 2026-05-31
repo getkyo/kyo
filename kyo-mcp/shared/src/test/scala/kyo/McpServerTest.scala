@@ -119,7 +119,7 @@ class McpServerTest extends Test:
     // Dispatch-path test: completion/complete routes the request to the registered handler and returns non-empty values.
     "completion/complete dispatches to registered handler and returns handler values (not Chunk.empty)" in run {
         val ref = McpRoute.CompletionRef.Prompt("myPrompt")
-        val completionRoute = McpRoute.completion(ref) { (_, arg, _) =>
+        val completionRoute = McpRoute.completion(ref) { (_, arg, _, _) =>
             McpRoute.CompletionResult(Chunk(arg.value + "-completed"), Absent, Absent)
         }
         JsonRpcTransport.inMemory.map { (ta, _) =>

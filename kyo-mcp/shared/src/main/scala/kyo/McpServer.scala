@@ -51,7 +51,7 @@ object McpServer:
     object SamplingRequest:
 
         /** A single message in the sampling conversation. */
-        final case class Message(role: McpRole, content: McpContent) derives Schema, CanEqual
+        final case class Message(role: McpRole, content: SamplingContent) derives Schema, CanEqual
 
         /** Hints for model selection. */
         final case class ModelPreferences(
@@ -84,19 +84,91 @@ object McpServer:
 
     end SamplingRequest
 
+    /** Content type for `sampling/createMessage` request messages.
+      *
+      * A subset of [[McpContent]] restricted to Text, Image, and Audio only.
+      * EmbeddedResource and ResourceLink are excluded per §3.10 (Option A typed subset, Q2).
+      * Use `toMcpContent` to convert to the broader [[McpContent]] type.
+      */
+    sealed trait SamplingContent derives CanEqual:
+        def toMcpContent: McpContent
+
+    object SamplingContent:
+        /** Text content for a sampling message. */
+        final case class Text(
+            text: String,
+            annotations: McpContent.Annotations = McpContent.Annotations.noop
+        ) extends SamplingContent:
+            def toMcpContent: McpContent = McpContent.Text(text, annotations)
+        end Text
+
+        /** Image content for a sampling message. */
+        final case class Image(
+            data: String,
+            mimeType: McpMimeType,
+            annotations: McpContent.Annotations = McpContent.Annotations.noop
+        ) extends SamplingContent:
+            def toMcpContent: McpContent = McpContent.Image(data, mimeType, annotations)
+        end Image
+
+        /** Audio content for a sampling message. */
+        final case class Audio(
+            data: String,
+            mimeType: McpMimeType,
+            annotations: McpContent.Annotations = McpContent.Annotations.noop
+        ) extends SamplingContent:
+            def toMcpContent: McpContent = McpContent.Audio(data, mimeType, annotations)
+        end Audio
+
+        // Hand-rolled Schema using "type" discriminator for wire compatibility.
+        // flow-allow: Structure carve-out per §11a / INV-021 (hand-rolled Schema body)
+        given Schema[SamplingContent] = internal.McpSamplingContentSchema.schema
+
+    end SamplingContent
+
     /** Result of the `sampling/createMessage` reverse-direction request.
       *
       * @param role       the role of the sampled content
       * @param content    the generated content
       * @param model      the model identifier that produced the response
-      * @param stopReason the reason generation stopped, if known
+      * @param stopReason the reason generation stopped, if known; typed per §3.5
       */
     final case class SamplingResponse(
         role: McpRole,
         content: McpContent,
         model: String,
-        stopReason: Maybe[String] = Absent
-    ) derives Schema, CanEqual
+        stopReason: Maybe[SamplingResponse.StopReason] = Absent
+    ) derives CanEqual
+
+    object SamplingResponse:
+
+        /** Typed stop reason for `sampling/createMessage` responses.
+          *
+          * Wire strings: `"endTurn"` | `"stopSequence"` | `"maxTokens"`.
+          * Unknown wire strings decode tolerantly to `EndTurn` per Q8 decision.
+          */
+        enum StopReason derives CanEqual:
+            case EndTurn, StopSequence, MaxTokens
+
+        object StopReason:
+            given Schema[StopReason] = Schema.stringSchema.transform[StopReason] {
+                case "endTurn"      => StopReason.EndTurn
+                case "stopSequence" => StopReason.StopSequence
+                case "maxTokens"    => StopReason.MaxTokens
+                case _              => StopReason.EndTurn
+            } {
+                case StopReason.EndTurn      => "endTurn"
+                case StopReason.StopSequence => "stopSequence"
+                case StopReason.MaxTokens    => "maxTokens"
+            }
+        end StopReason
+
+    end SamplingResponse
+
+    // Schema for SamplingResponse is placed here (after SamplingResponse.StopReason.given is defined)
+    // so the macro can resolve Schema[StopReason]. Placing it on the case class with `derives Schema`
+    // would run before the companion object is in scope, causing the macro to fail to find Schema[StopReason].
+    given Schema[SamplingResponse] = Schema.derived
 
     /** Parameters for the `elicitation/create` reverse-direction request.
       *

@@ -87,12 +87,15 @@ object McpRoute:
       *
       * `structuredContent` is an INV-021 allowlist pass-through: the MCP spec defines
       * `structuredContent` as an open JSON object for typed tool output (Audit-A9).
+      * `meta` is an INV-021 allowlist pass-through for the MCP spec `_meta` advisory field (§3.7).
       */
     final case class ToolCallResult(
         content: Chunk[McpContent],
         isError: Boolean,
         // flow-allow: Structure carve-out per §11a / INV-021
-        structuredContent: Maybe[Structure.Value]
+        structuredContent: Maybe[Structure.Value],
+        // flow-allow: Structure carve-out per §11a / INV-021
+        meta: Maybe[Structure.Value] = Absent
     ) derives Schema, CanEqual
 
     /** Metadata returned by `McpClient.listResources`.
@@ -147,10 +150,15 @@ object McpRoute:
         required: Boolean
     ) derives Schema, CanEqual
 
-    /** The result of a `prompts/get` request. */
+    /** The result of a `prompts/get` request.
+      *
+      * `meta` is an INV-021 allowlist pass-through for the MCP spec `_meta` advisory field (§3.7).
+      */
     final case class PromptGetResult(
         description: Maybe[String],
-        messages: Chunk[PromptMessage]
+        messages: Chunk[PromptMessage],
+        // flow-allow: Structure carve-out per §11a / INV-021
+        meta: Maybe[Structure.Value] = Absent
     ) derives Schema, CanEqual
 
     /** A single message in a prompt result. */
@@ -170,6 +178,11 @@ object McpRoute:
 
     /** Named argument descriptor for a completion request (Audit-A8 / INV-026). */
     final case class CompletionArg(name: String, value: String) derives Schema, CanEqual
+
+    object CompletionArg:
+        /** Additional context for a completion request, carrying previously filled argument values (§3.17). */
+        final case class Context(arguments: Map[String, String]) derives Schema, CanEqual
+    end CompletionArg
 
     /** The result of a `completion/complete` request. */
     final case class CompletionResult(
@@ -252,13 +265,19 @@ object McpRoute:
         McpRouteCarrier.ToolMulti(name, meta, inSchema, handler, serverRef, underlying)
     end toolMulti
 
-    /** Registers a fixed-URI resource route. */
+    /** Registers a fixed-URI resource route.
+      *
+      * @param subscribe when `true`, this resource opts into the subscription protocol (§3.4 / Q9).
+      *                  The server advertises `resources.subscribe = true` when any resource route
+      *                  sets this flag. Clients may then call `subscribeResource` / `unsubscribeResource`.
+      */
     def resource(
         uri: McpResourceUri,
         name: String,
         description: String = "",
         mimeType: Maybe[McpMimeType] = Absent,
-        annotations: ResourceAnnotations = ResourceAnnotations.noop
+        annotations: ResourceAnnotations = ResourceAnnotations.noop,
+        subscribe: Boolean = false
     )(handler: (McpResourceUri, Context) => Chunk[McpResourceContents] < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
         Frame
     ): McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
@@ -278,7 +297,7 @@ object McpRoute:
             val ctx = new Context(jrCtx, server.safe)
             handler(u, ctx)
         }
-        McpRouteCarrier.Resource(name, meta, handler, serverRef, underlying)
+        McpRouteCarrier.Resource(name, meta, handler, serverRef, underlying, subscribe)
     end resource
 
     /** Registers a URI-template resource route. */
@@ -332,10 +351,19 @@ object McpRoute:
         McpRouteCarrier.Prompt(name, meta, handler, serverRef, underlying)
     end prompt
 
-    /** Registers a completion handler for a prompt or resource. INV-026: `CompletionArg` is a named record. */
+    /** Registers a completion handler for a prompt or resource. INV-026: `CompletionArg` is a named record.
+      *
+      * The handler receives the ref, argument, optional context (carrying previously filled argument values
+      * per §3.17), and the request context.
+      */
     def completion(
         ref: CompletionRef
-    )(handler: (CompletionRef, CompletionArg, Context) => CompletionResult < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
+    )(handler: (
+        CompletionRef,
+        CompletionArg,
+        Maybe[CompletionArg.Context],
+        Context
+    ) => CompletionResult < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
         Frame
     ): McpRoute[(CompletionRef, CompletionArg), CompletionResult, Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
@@ -348,7 +376,7 @@ object McpRoute:
                 throw new IllegalStateException(s"McpServer not initialized for completion '$routeName'")
             )
             val ctx = new Context(jrCtx, server.safe)
-            handler(refAndArg._1, refAndArg._2, ctx)
+            handler(refAndArg._1, refAndArg._2, Absent, ctx)
         }
         McpRouteCarrier.Completion(routeName, ref, handler, serverRef, underlying)
     end completion
@@ -383,6 +411,12 @@ sealed private[kyo] trait McpRouteCarrier[In, Out, +E] extends McpRoute[In, Out,
     private[kyo] def serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
 
 private[kyo] object McpRouteCarrier:
+
+    /** Marker trait for routes that register a logging hook.
+      * Used by [[kyo.internal.mcp.McpCatalog]] to auto-derive the `logging` server capability.
+      * A route that extends this marker causes the catalog to set `logging = Present(...)`.
+      */
+    sealed trait LoggingHook
 
     /** Carrier for a single-content tool route. */
     final class Tool[In, Out <: McpContent] private[kyo] (
@@ -424,7 +458,8 @@ private[kyo] object McpRouteCarrier:
         val resourceMeta: McpRoute.ResourceMeta,
         val handler: (McpResourceUri, McpRoute.Context) => Chunk[McpResourceContents] < (Async & Abort[McpError | JsonRpcResponse.Halt]),
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
-        private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
+        private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?],
+        val subscribable: Boolean = false
     ) extends McpRouteCarrier[McpResourceUri, Chunk[McpResourceContents], Nothing]:
         val kind: McpRoute.Kind = McpRoute.Kind.Resource
         def error[E2](using
@@ -476,6 +511,7 @@ private[kyo] object McpRouteCarrier:
         val handler: (
             McpRoute.CompletionRef,
             McpRoute.CompletionArg,
+            Maybe[McpRoute.CompletionArg.Context],
             McpRoute.Context
         ) => McpRoute.CompletionResult < (Async & Abort[McpError | JsonRpcResponse.Halt]),
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],

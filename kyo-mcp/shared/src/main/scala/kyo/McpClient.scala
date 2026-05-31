@@ -81,7 +81,15 @@ object McpClient:
         def complete(ref: McpRoute.CompletionRef, arg: McpRoute.CompletionArg)(using
             Frame
         ): McpRoute.CompletionResult < (Async & Abort[McpError | Closed]) =
-            self.completeUnsafe(ref, arg)
+            self.completeUnsafe(ref, arg, Absent)
+
+        /** Sends `resources/subscribe` for one URI to the server. */
+        def subscribeResource(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpError | Closed]) =
+            self.subscribeResourceUnsafe(uri)
+
+        /** Sends `resources/unsubscribe` for one URI to the server. */
+        def unsubscribeResource(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpError | Closed]) =
+            self.unsubscribeResourceUnsafe(uri)
 
         /** Sends `notifications/roots/list_changed` to the server. */
         def notifyRootsListChanged(using Frame): Unit < (Async & Abort[Closed]) =
@@ -138,11 +146,13 @@ object McpClient:
             Frame
         ): McpRoute.PromptGetResult < (Async & Abort[McpError | Closed])
         def setLogLevelUnsafe(level: McpLogLevel)(using Frame): Unit < (Async & Abort[McpError | Closed])
-        def completeUnsafe(ref: McpRoute.CompletionRef, arg: McpRoute.CompletionArg)(using
+        def completeUnsafe(ref: McpRoute.CompletionRef, arg: McpRoute.CompletionArg, context: Maybe[McpRoute.CompletionArg.Context])(using
             Frame
         ): McpRoute.CompletionResult < (Async & Abort[McpError | Closed])
         def notifyRootsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
         def pingUnsafe(using Frame): Unit < (Async & Abort[McpError | Closed])
+        def subscribeResourceUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpError | Closed])
+        def unsubscribeResourceUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpError | Closed])
         def serverCapabilitiesUnsafe: Maybe[McpCapabilities.Server]
         def serverInfoUnsafe: Maybe[McpInfo]
         def protocolVersionUnsafe: Maybe[McpProtocolVersion]

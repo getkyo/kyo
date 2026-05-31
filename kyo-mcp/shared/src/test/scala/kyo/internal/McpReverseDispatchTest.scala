@@ -56,7 +56,7 @@ class McpReverseDispatchTest extends Test:
     // requestSampling: server calls sampling/createMessage on client; no client handler returns rejection.
     "server.requestSampling aborts when no client sampling handler" in run {
         val req = McpServer.SamplingRequest(
-            messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpContent.Text("hello"))),
+            messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("hello"))),
             maxTokens = 128
         )
         withPair(Seq.empty, Seq.empty) { (server, _) =>
@@ -109,7 +109,7 @@ class McpReverseDispatchTest extends Test:
     "requestSampling return type is McpServer.SamplingResponse < ... (typed, no Structure.Value)" in run {
         withPair(Seq.empty, Seq.empty) { (server, _) =>
             val req = McpServer.SamplingRequest(
-                messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpContent.Text("q"))),
+                messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("q"))),
                 maxTokens = 16
             )
             val _: McpServer.SamplingResponse < (Async & Abort[McpError | Closed]) = server.requestSampling(req)
@@ -133,7 +133,7 @@ class McpReverseDispatchTest extends Test:
     // that the response is the one returned by the user handler.
     "user-registered sampling route is reached instead of default reject" in run {
         val req = McpServer.SamplingRequest(
-            messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpContent.Text("ping"))),
+            messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("ping"))),
             maxTokens = 8
         )
         val userSamplingRoute =

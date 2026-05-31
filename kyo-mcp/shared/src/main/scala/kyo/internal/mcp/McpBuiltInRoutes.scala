@@ -36,8 +36,13 @@ private[kyo] object McpBuiltInRoutes:
     final private case class PromptsListResult(prompts: Chunk[McpRoute.PromptMeta], nextCursor: Maybe[String] = Absent) derives Schema
 
     // Wire shapes for tools/call dispatcher.
-    final private case class ToolCallParams(name: String, arguments: Structure.Value = Structure.Value.Record(Chunk.empty))
-        derives Schema
+    // flow-allow: Structure carve-out per §11a / INV-021
+    final private case class ToolCallParams(
+        name: String,
+        arguments: Structure.Value = Structure.Value.Record(Chunk.empty),
+        // flow-allow: Structure carve-out per §11a / INV-021
+        meta: Maybe[Structure.Value] = Absent
+    ) derives Schema
     final private case class ToolCallResponse(
         content: Chunk[McpContent],
         isError: Boolean = false,
@@ -52,12 +57,19 @@ private[kyo] object McpBuiltInRoutes:
     // Wire shapes for prompts/get dispatcher.
     final private case class PromptGetParams(name: String, arguments: Map[String, String] = Map.empty) derives Schema
 
-    final private case class CompleteParams(ref: McpRoute.CompletionRef, argument: McpRoute.CompletionArg) derives Schema
+    final private case class CompleteParams(
+        ref: McpRoute.CompletionRef,
+        argument: McpRoute.CompletionArg,
+        context: Maybe[McpRoute.CompletionArg.Context] = Absent
+    ) derives Schema
     final private case class CompleteResult(completion: McpRoute.CompletionResult) derives Schema
 
     // Wire shape for logging/setLevel.
-    final private case class SetLogLevelParams(level: String) derives Schema
+    final private case class SetLogLevelParams(level: McpLogLevel) derives Schema
     final private case class SetLogLevelResult() derives Schema
+
+    // Wire shape for resources/subscribe and resources/unsubscribe.
+    final private case class ResourceSubscribeParams(uri: String) derives Schema
 
     def toolsList(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[ListParams, ToolsListResult]("tools/list") { (params, _) =>
@@ -179,10 +191,27 @@ private[kyo] object McpBuiltInRoutes:
             end match
         }
 
-    def loggingSetLevel(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[SetLogLevelParams, SetLogLevelResult]("logging/setLevel") { (_, _) =>
-            // Accept the setLevel request; log level enforcement is application-level.
-            SetLogLevelResult()
+    def loggingSetLevel(logLevelRef: AtomicRef[McpLogLevel])(using Frame): JsonRpcRoute[?, ?, ?] =
+        JsonRpcRoute.request[SetLogLevelParams, SetLogLevelResult]("logging/setLevel") { (params, _) =>
+            logLevelRef.set(params.level).andThen(SetLogLevelResult())
+        }
+
+    def resourcesSubscribe(subs: AtomicRef[Set[McpResourceUri]])(using Frame): JsonRpcRoute[?, ?, ?] =
+        JsonRpcRoute.request[ResourceSubscribeParams, SetLogLevelResult]("resources/subscribe") { (p, _) =>
+            McpResourceUri.parse(p.uri) match
+                case Absent =>
+                    Abort.fail(McpInvalidArgumentError("resources/subscribe", "uri", s"invalid URI: ${p.uri}"))
+                case Present(uri) =>
+                    subs.getAndUpdate(_ + uri).andThen(SetLogLevelResult())
+        }
+
+    def resourcesUnsubscribe(subs: AtomicRef[Set[McpResourceUri]])(using Frame): JsonRpcRoute[?, ?, ?] =
+        JsonRpcRoute.request[ResourceSubscribeParams, SetLogLevelResult]("resources/unsubscribe") { (p, _) =>
+            McpResourceUri.parse(p.uri) match
+                case Absent =>
+                    Abort.fail(McpInvalidArgumentError("resources/unsubscribe", "uri", s"invalid URI: ${p.uri}"))
+                case Present(uri) =>
+                    subs.getAndUpdate(_ - uri).andThen(SetLogLevelResult())
         }
 
     def completionComplete(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
@@ -198,7 +227,7 @@ private[kyo] object McpBuiltInRoutes:
                         throw new IllegalStateException(s"McpServer not initialized for completion route '${carrier.name}'")
                     )
                     val ctx = new McpRoute.Context(jrCtx, server.safe)
-                    carrier.handler(params.ref, params.argument, ctx).map(r => CompleteResult(r))
+                    carrier.handler(params.ref, params.argument, params.context, ctx).map(r => CompleteResult(r))
                 case None =>
                     // No handler registered for this ref; return empty completion.
                     CompleteResult(McpRoute.CompletionResult(Chunk.empty, Absent, Absent))

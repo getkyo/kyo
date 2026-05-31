@@ -21,17 +21,20 @@ private[kyo] object McpReverseDispatch:
 
     /** Builds the Seq of [[JsonRpcRoute]] instances for client-side reverse-direction handling.
       *
-      * @param userRoutes user-registered routes (sampling/roots/elicitation handlers among others)
-      * @param config     MCP configuration (currently unused; reserved for future gate extension)
+      * @param userRoutes        user-registered routes (sampling/roots/elicitation handlers among others)
+      * @param config            MCP configuration (currently unused; reserved for future gate extension)
+      * @param clientCapabilities the client capabilities advertised during handshake; used to gate
+      *                           default handlers with -32601 when the relevant capability is absent
       * @return route list to pass to [[JsonRpcHandler.initUnscoped]]
       */
     def buildRoutes(
         userRoutes: Seq[McpRoute[?, ?, ?]],
-        config: McpConfig
+        config: McpConfig,
+        clientCapabilities: McpCapabilities.Client
     )(using Frame): Seq[JsonRpcRoute[?, ?, ?]] =
-        val samplingRoute    = buildSamplingRoute(userRoutes)
-        val rootsRoute       = buildRootsRoute(userRoutes)
-        val elicitationRoute = buildElicitationRoute(userRoutes)
+        val samplingRoute    = buildSamplingRoute(userRoutes, clientCapabilities)
+        val rootsRoute       = buildRootsRoute(userRoutes, clientCapabilities)
+        val elicitationRoute = buildElicitationRoute(userRoutes, clientCapabilities)
 
         // Defaults are placed first; user-registered carriers are lifted and appended so that any
         // user route covering sampling/createMessage, roots/list, or elicitation/create overrides
@@ -45,22 +48,47 @@ private[kyo] object McpReverseDispatch:
         Seq(samplingRoute, rootsRoute, elicitationRoute) ++ liftedUserRoutes
     end buildRoutes
 
-    private def buildSamplingRoute(userRoutes: Seq[McpRoute[?, ?, ?]])(using Frame): JsonRpcRoute[?, ?, ?] =
+    private def buildSamplingRoute(userRoutes: Seq[McpRoute[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
+        Frame
+    ): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[McpServer.SamplingRequest, McpServer.SamplingResponse]("sampling/createMessage") { (_, _) =>
-            // Default handler: no user sampling route registered; reject the server request.
-            // Users who want to handle sampling requests register a custom route with
-            // name "sampling/createMessage" via McpRoute.custom[McpServer.SamplingRequest, McpServer.SamplingResponse].
-            Abort.fail(McpSamplingRejectedError("No sampling handler registered on this client."))
+            // Default handler: gate on capability first (-32601), then reject if no user handler.
+            if clientCapabilities.sampling.isEmpty then
+                Abort.fail(McpCapabilityNotAdvertisedError(
+                    "sampling/createMessage",
+                    McpCapabilityName.Sampling,
+                    McpCapabilityNotAdvertisedError.Peer.Client
+                ))
+            else
+                Abort.fail(McpSamplingRejectedError("No sampling handler registered on this client."))
         }
 
-    private def buildRootsRoute(userRoutes: Seq[McpRoute[?, ?, ?]])(using Frame): JsonRpcRoute[?, ?, ?] =
+    private def buildRootsRoute(userRoutes: Seq[McpRoute[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
+        Frame
+    ): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[EmptyParams, McpRootsListResponse]("roots/list") { (_, _) =>
-            McpRootsListResponse(Chunk.empty)
+            if clientCapabilities.roots.isEmpty then
+                Abort.fail(McpCapabilityNotAdvertisedError(
+                    "roots/list",
+                    McpCapabilityName.Roots,
+                    McpCapabilityNotAdvertisedError.Peer.Client
+                ))
+            else
+                McpRootsListResponse(Chunk.empty)
         }
 
-    private def buildElicitationRoute(userRoutes: Seq[McpRoute[?, ?, ?]])(using Frame): JsonRpcRoute[?, ?, ?] =
+    private def buildElicitationRoute(userRoutes: Seq[McpRoute[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
+        Frame
+    ): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[McpServer.ElicitationRequest, McpServer.ElicitationResponse]("elicitation/create") { (_, _) =>
-            Abort.fail(McpElicitationDeclinedError("No elicitation handler registered on this client."))
+            if clientCapabilities.elicitation.isEmpty then
+                Abort.fail(McpCapabilityNotAdvertisedError(
+                    "elicitation/create",
+                    McpCapabilityName.Elicitation,
+                    McpCapabilityNotAdvertisedError.Peer.Client
+                ))
+            else
+                Abort.fail(McpElicitationDeclinedError("No elicitation handler registered on this client."))
         }
 
 end McpReverseDispatch

@@ -13,7 +13,7 @@ class McpSamplingReverseTest extends Test:
                 role = McpRole.Assistant,
                 content = McpContent.text("reply"),
                 model = "model-x",
-                stopReason = Present("endTurn")
+                stopReason = Present(McpServer.SamplingResponse.StopReason.EndTurn)
             )
         }
 
@@ -27,7 +27,7 @@ class McpSamplingReverseTest extends Test:
             ).flatMap { (srv, client) =>
                 srv.requestSampling(
                     McpServer.SamplingRequest(
-                        messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpContent.text("q"))),
+                        messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("q"))),
                         maxTokens = 256
                     )
                 ).flatMap { resp =>
@@ -37,7 +37,7 @@ class McpSamplingReverseTest extends Test:
                     yield
                         assert(resp.role == McpRole.Assistant)
                         assert(resp.model == "model-x")
-                        assert(resp.stopReason == Present("endTurn"))
+                        assert(resp.stopReason == Present(McpServer.SamplingResponse.StopReason.EndTurn))
                     end for
                 }
             }
@@ -54,7 +54,7 @@ class McpSamplingReverseTest extends Test:
                 Abort.run[McpError](
                     srv.requestSampling(
                         McpServer.SamplingRequest(
-                            messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpContent.text("q"))),
+                            messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("q"))),
                             maxTokens = 10
                         )
                     )
