@@ -159,4 +159,20 @@ class McpEnumSchemaTest extends Test:
         assert(schema.segments.isEmpty)
     }
 
+    // ---- Annotations lastModified roundtrip (Phase 07 / INV-302) ----
+
+    "Content.Annotations lastModified Present encodes and round-trips" in {
+        val ann  = McpContent.Annotations(lastModified = Present("2024-01-01T00:00:00Z"))
+        val json = encode(ann)
+        assert(json.contains("\"lastModified\":\"2024-01-01T00:00:00Z\""))
+        val back = roundtrip[McpContent.Annotations](ann)
+        assert(back.lastModified == Present("2024-01-01T00:00:00Z"))
+    }
+
+    "Content.Annotations lastModified Absent omits the key from JSON" in {
+        val ann  = McpContent.Annotations()
+        val json = encode(ann)
+        assert(!json.contains("lastModified"))
+    }
+
 end McpEnumSchemaTest

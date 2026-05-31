@@ -61,7 +61,8 @@ object McpContent:
       */
     final case class Annotations(
         audience: Maybe[Chunk[McpRole]] = Absent,
-        priority: Maybe[Double] = Absent
+        priority: Maybe[Double] = Absent,
+        lastModified: Maybe[String] = Absent
     ) derives Schema, CanEqual
 
     object Annotations:

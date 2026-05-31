@@ -283,6 +283,7 @@ case class McpElicitationDeclinedError(reason: String)(using Frame)
 abstract class McpApplicationError(
     code: Int,
     message: String,
+    // flow-allow: McpApplicationError.data is the user-controlled MCP application-error payload; Structure.Value is the spec contract
     data: Maybe[Structure.Value] = Absent,
     cause: String | Throwable = ""
 )(using Frame)

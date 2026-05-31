@@ -82,7 +82,13 @@ private[kyo] object McpEngine:
         val initializedNotifRoute: JsonRpcRoute[?, ?, ?] =
             JsonRpcRoute.notification[NotifyEmptyParams]("notifications/initialized") { (_, _) => () }
         val rootsListChangedRoute: JsonRpcRoute[?, ?, ?] =
-            JsonRpcRoute.notification[NotifyEmptyParams]("notifications/roots/list_changed") { (_, _) => () }
+            JsonRpcRoute.notification[NotifyEmptyParams]("notifications/roots/list_changed") { (_, _) =>
+                // AllowUnsafe: synchronous read of client capability; notifications are fire-and-forget.
+                val allowed = clientCapabilitiesRef.unsafe.get()(using AllowUnsafe.embrace.danger)
+                    .flatMap(_.roots)
+                    .exists(_.listChanged)
+                if allowed then () else ()
+            }
 
         // MCP 2025-06-18 §3.8: ping must be handled by both client and server.
         // Responds with an empty object to confirm liveness. Registered unconditionally.

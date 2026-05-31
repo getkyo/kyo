@@ -62,7 +62,8 @@ object McpRoute:
         description: Maybe[String],
         inputSchema: Json.JsonSchema,
         outputSchema: Maybe[Json.JsonSchema],
-        annotations: Maybe[ToolAnnotations]
+        annotations: Maybe[ToolAnnotations],
+        title: Maybe[String] = Absent
     ) derives Schema, CanEqual
 
     /** Optional display and behavioral hints for a tool.
@@ -106,7 +107,10 @@ object McpRoute:
         name: String,
         description: Maybe[String],
         mimeType: Maybe[McpMimeType],
-        annotations: Maybe[ResourceAnnotations]
+        annotations: Maybe[ResourceAnnotations],
+        title: Maybe[String] = Absent,
+        lastModified: Maybe[String] = Absent,
+        size: Maybe[Long] = Absent
     ) derives Schema, CanEqual
 
     /** Metadata returned by `McpClient.listResourceTemplates`.
@@ -117,7 +121,8 @@ object McpRoute:
         name: String,
         description: Maybe[String],
         mimeType: Maybe[McpMimeType],
-        annotations: Maybe[ResourceAnnotations]
+        annotations: Maybe[ResourceAnnotations],
+        title: Maybe[String] = Absent
     ) derives Schema, CanEqual
 
     /** Optional display and filtering hints for a resource.
@@ -128,7 +133,8 @@ object McpRoute:
       */
     final case class ResourceAnnotations(
         audience: Maybe[Chunk[McpRole]] = Absent,
-        priority: Maybe[Double] = Absent
+        priority: Maybe[Double] = Absent,
+        lastModified: Maybe[String] = Absent
     ) derives Schema, CanEqual
 
     object ResourceAnnotations:
@@ -140,14 +146,16 @@ object McpRoute:
     final case class PromptMeta(
         name: String,
         description: Maybe[String],
-        arguments: Chunk[PromptArgument]
+        arguments: Chunk[PromptArgument],
+        title: Maybe[String] = Absent
     ) derives Schema, CanEqual
 
     /** A declared argument for a prompt. */
     final case class PromptArgument(
         name: String,
         description: Maybe[String],
-        required: Boolean
+        required: Boolean,
+        title: Maybe[String] = Absent
     ) derives Schema, CanEqual
 
     /** The result of a `prompts/get` request.
