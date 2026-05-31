@@ -514,7 +514,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         succeed
     }
 
-    "Config() default plus LSP-shaped timeout emits no cancel" in run {
+    "Config() default plus timeout emits no cancel" in run {
         val seen = AtomicRef.Unsafe.init[Chunk[JsonRpcEnvelope]](Chunk.empty)(using AllowUnsafe.embrace.danger)
         val slow = JsonRpcRoute.request[Unit, Unit]("slow") { (_, _) => Async.sleep(2.seconds) }
         JsonRpcTransport.inMemory.map { (ta, tb) =>

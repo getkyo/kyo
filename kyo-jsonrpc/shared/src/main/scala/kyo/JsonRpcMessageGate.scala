@@ -91,21 +91,6 @@ object JsonRpcMessageGate:
             end new
         end requireHandshake
 
-        /** Returns a gate that requires the `initialize` request to arrive before any other
-          * request is dispatched. Non-initialize requests arriving before initialization is complete
-          * are rejected with the supplied error response.
-          *
-          * Equivalent to `requireHandshake("initialize", onUninitializedRequest)`.
-          *
-          * @param onUninitializedRequest
-          *   the response to send when a non-initialize request arrives before initialization.
-          */
-        def requireInitialize(
-            onUninitializedRequest: JsonRpcResponse
-        ): JsonRpcMessageGate =
-            requireHandshake("initialize", onUninitializedRequest)
-        end requireInitialize
-
     end server
 
     /** Client-side gate patterns for outbound request pre-processing.

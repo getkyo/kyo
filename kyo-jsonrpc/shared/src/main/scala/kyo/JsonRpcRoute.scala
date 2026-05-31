@@ -82,8 +82,8 @@ object JsonRpcRoute:
       *    the current request.
       *  - `requestId`: the JSON-RPC id of the incoming request, or `Absent` for notifications.
       *  - `extras`: protocol-specific extra fields from the incoming envelope, if any.
-      *  - `progress`: reports a progress notification back to the caller via `$.progress` (LSP) or
-      *    `notifications/progress` (MCP), depending on the active `ProgressPolicy`.
+      *  - `progress`: reports a progress notification back to the caller via the notification method
+      *    configured on the active [[JsonRpcProgressPolicy]].
       *
       * @see [[JsonRpcRoute]]
       * @see [[JsonRpcProgressPolicy]]

@@ -210,32 +210,6 @@ object JsonRpcHandler:
     object Config:
         val default: Config = Config()
 
-        /** Preset for Language Server Protocol (LSP) sessions.
-          *
-          * Wires matched cancellation and progress policies for the LSP dialect in one step.
-          * Equivalent to `Config.default.cancellation(JsonRpcCancellationPolicy.lsp).progress(JsonRpcProgressPolicy.lsp)`.
-          */
-        val lsp: Config = Config.default
-            .cancellation(JsonRpcCancellationPolicy.lsp)
-            .progress(JsonRpcProgressPolicy.lsp)
-
-        /** Preset for Model Context Protocol (MCP) sessions.
-          *
-          * Wires matched cancellation and progress policies for the MCP dialect in one step, and
-          * additionally sets [[JsonRpcUnknownMethodPolicy.minimal]] (the default).
-          * Equivalent to:
-          * {{{
-          * Config.default
-          *   .cancellation(JsonRpcCancellationPolicy.mcp)
-          *   .progress(JsonRpcProgressPolicy.mcp)
-          *   .unknownMethod(JsonRpcUnknownMethodPolicy.minimal)
-          * }}}
-          */
-        val mcp: Config = Config.default
-            .cancellation(JsonRpcCancellationPolicy.mcp)
-            .progress(JsonRpcProgressPolicy.mcp)
-            .unknownMethod(JsonRpcUnknownMethodPolicy.minimal)
-
         def require(c: Config): Unit =
             c.maxInFlight match
                 case Present(n) if n <= 0 =>

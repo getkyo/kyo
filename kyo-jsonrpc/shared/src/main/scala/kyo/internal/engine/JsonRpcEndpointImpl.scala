@@ -377,7 +377,7 @@ final class JsonRpcEndpointImpl private[kyo] (
             case Absent =>
                 Abort.fail(JsonRpcConfigurationError(
                     "progressPolicy",
-                    "required for callWithProgress; pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
+                    "required for callWithProgress; pass Config.progress = Present(<your JsonRpcProgressPolicy>)"
                 ))
             case Present(policy) =>
                 RateLimitEngine.maxInFlightGuard(meter) {
@@ -458,7 +458,7 @@ final class JsonRpcEndpointImpl private[kyo] (
             case Absent =>
                 Stream(Abort.fail[JsonRpcError](JsonRpcConfigurationError(
                     "progressPolicy",
-                    "required for callPartialResults; pass Config.progress = Present(ProgressPolicy.lsp / .mcp)"
+                    "required for callPartialResults; pass Config.progress = Present(<your JsonRpcProgressPolicy>)"
                 )))
             case Present(policy) =>
                 // All setup runs inside the Stream body so the return type is Stream (not Stream < Sync).
@@ -615,8 +615,8 @@ final class JsonRpcEndpointImpl private[kyo] (
                             val abortError =
                                 policy.cancelledError.getOrElse(JsonRpcCustomError(-32800, reason.getOrElse("Request cancelled")))
                             if policy.expectReplyForCancelledRequest then
-                                // LSP: server will still reply; set pendingCancelError so decodeCallback
-                                // completes abortSignal when the reply arrives.
+                                // Policy requires a reply for cancelled requests: set pendingCancelError so
+                                // decodeCallback completes abortSignal when the reply arrives.
                                 // Unsafe: set pendingCancelError from cancel call
                                 // unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
                                 Sync.Unsafe.defer {
@@ -631,7 +631,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                                     )
                                 }
                             else
-                                // MCP/no-reply: complete abortSignal immediately, no reply expected
+                                // Policy expects no reply for cancelled requests: complete abortSignal immediately after enqueuing the cancel notification.
                                 CancellationEngine.buildAndEnqueueOutboundCancel(
                                     id,
                                     reason,
@@ -1091,14 +1091,14 @@ object JsonRpcEndpointImpl:
                                                                                     )(using AllowUnsafe.embrace.danger, frame))
                                                                                 end if
                                                                             case _: InboundEntry.Cancelled =>
-                                                                                // Cancel won CAS; for LSP (expectReplyForCancelledRequest=true)
-                                                                                // the handler still produces a reply, so we send it.
-                                                                                // For MCP the handler was interrupted and should not reply.
+                                                                                // Cancel won the CAS. If the policy demands a reply for cancelled
+                                                                                // requests, send the response anyway; otherwise the handler was
+                                                                                // interrupted and produces no reply.
                                                                                 val mustReply = config.cancellation match
                                                                                     case Present(p) => p.expectReplyForCancelledRequest
                                                                                     case Absent     => false
                                                                                 if mustReply then
-                                                                                    // Unsafe: SendEnvelope bypasses suppress check (LSP always replies)
+                                                                                    // Unsafe: SendEnvelope bypasses suppress check because the policy demands a reply.
                                                                                     // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
                                                                                     discard(writerChannel.unsafe.offer(
                                                                                         WriterMsg.SendEnvelope(responseEnvelope)
@@ -1217,7 +1217,7 @@ object JsonRpcEndpointImpl:
                                                                 case Present(info) =>
                                                                     info.pendingCancelError.get() match
                                                                         case Present(cancelErr) =>
-                                                                            // LSP cancel was issued; reply arrived but caller should see cancel error.
+                                                                            // A reply-demanding cancel was issued; the reply has now arrived but the caller still sees the configured cancel error.
                                                                             // Complete abortSignal with cancel error and Skip the response.
                                                                             // promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
                                                                             info.abortSignal.unsafe.completeDiscard(

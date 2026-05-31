@@ -9,27 +9,81 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     case class TaskResp(done: Boolean) derives Schema, CanEqual
     case class SearchReq(query: String) derives Schema, CanEqual
 
-    // Plain case class for out-of-band LSP progress notification params so Structure.encode
+    // Plain case class for out-of-band progress notification params so Structure.encode
     // produces a flat {"token": ..., "value": ...} record (not a discriminated enum encoding).
-    case class LspProgressParams(token: String, value: String) derives Schema, CanEqual
+    case class ProgressNotifParams(token: String, value: String) derives Schema, CanEqual
 
-    // LSP stamped params include workDoneToken alongside the original fields.
+    // Stamped params include workDoneToken alongside the original fields ($/progress style).
     case class TaskReqWithToken(
         name: String,
         workDoneToken: Maybe[String] = Absent
     ) derives Schema, CanEqual
 
-    // MCP stamped params include _meta with progressToken.
+    // Stamped params include _meta with progressToken (notifications/progress style).
     case class ProgressMeta(progressToken: Maybe[String] = Absent) derives Schema, CanEqual
     case class TaskReqWithMeta(
         name: String,
         `_meta`: Maybe[ProgressMeta] = Absent
     ) derives Schema, CanEqual
 
-    private val lspConfig = JsonRpcHandler.Config(progress = Present(JsonRpcProgressPolicy.lsp))
-    private val mcpConfig = JsonRpcHandler.Config(
-        progress = Present(JsonRpcProgressPolicy.mcp),
-        cancellation = Present(JsonRpcCancellationPolicy.mcp)
+    // Inline reconstruction of progress policies using the generic API.
+    // progressMethod="$/progress", workDoneToken in request params, non-monotonic.
+    private val progressWithWorkDoneToken = JsonRpcProgressPolicy(
+        progressMethod = "$/progress",
+        extractInboundToken = p => JsonRpcProgressPolicy.field(p, "token"),
+        extractRequestToken = p => JsonRpcProgressPolicy.field(p, "workDoneToken"),
+        stampOutboundToken = (p, t) => JsonRpcProgressPolicy.merge(p, Structure.Value.Record(Chunk("workDoneToken" -> t))),
+        encodeProgressParams = (t, v) => Structure.Value.Record(Chunk("token" -> t, "value" -> v)),
+        extractProgressValue = p => JsonRpcProgressPolicy.field(p, "value"),
+        enforceMonotonic = false
+    )
+
+    // progressMethod="notifications/progress", _meta.progressToken in request params, monotonic.
+    private case class CancelWithReasonParams(requestId: JsonRpcId, reason: Maybe[String]) derives Schema, CanEqual
+
+    private val cancelWithReasonEncoder: JsonRpcCancellationPolicy.ParamsEncoder =
+        (id, reason) =>
+            f ?=>
+                Sync.defer(Structure.encode(CancelWithReasonParams(id, reason)))(using f)
+
+    private val cancelWithReasonDecoder: JsonRpcCancellationPolicy.ParamsDecoder =
+        sv =>
+            f ?=>
+                Sync.defer {
+                    Structure.decode[CancelWithReasonParams](sv)(using summon[Schema[CancelWithReasonParams]], f) match
+                        case Result.Success(p) => Present(p.requestId)
+                        case _                 => Absent
+                }(using f)
+
+    private val cancellationWithoutReply = JsonRpcCancellationPolicy(
+        cancelMethod = "notifications/cancelled",
+        encodeParams = cancelWithReasonEncoder,
+        decodeParams = cancelWithReasonDecoder,
+        expectReplyForCancelledRequest = false,
+        cancelledError = Absent,
+        protectedMethods = Set("initialize")
+    )
+
+    private val progressWithMetaToken = JsonRpcProgressPolicy(
+        progressMethod = "notifications/progress",
+        extractInboundToken = p => JsonRpcProgressPolicy.field(p, "progressToken"),
+        extractRequestToken = p =>
+            JsonRpcProgressPolicy.field(p, "_meta").map(meta => JsonRpcProgressPolicy.field(meta, "progressToken")).getOrElse(Absent),
+        stampOutboundToken = (p, t) =>
+            val existingMeta = JsonRpcProgressPolicy.field(p, "_meta").getOrElse(Structure.Value.Record(Chunk.empty))
+            val newMeta      = JsonRpcProgressPolicy.merge(existingMeta, Structure.Value.Record(Chunk("progressToken" -> t)))
+            JsonRpcProgressPolicy.merge(p, Structure.Value.Record(Chunk("_meta" -> newMeta)))
+        ,
+        encodeProgressParams = (t, v) =>
+            JsonRpcProgressPolicy.merge(Structure.Value.Record(Chunk("progressToken" -> t)), v),
+        extractProgressValue = p => Present(p),
+        enforceMonotonic = true
+    )
+
+    private val workDoneTokenConfig = JsonRpcHandler.Config(progress = Present(progressWithWorkDoneToken))
+    private val metaTokenConfig = JsonRpcHandler.Config(
+        progress = Present(progressWithMetaToken),
+        cancellation = Present(cancellationWithoutReply)
     )
 
     private def sendProgress(ctx: JsonRpcRoute.Context, v: Structure.Value)(using Frame): Unit < (Async & Abort[JsonRpcError]) =
@@ -63,7 +117,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
-    "callWithProgress with LSP: handler calls ctx.progress three times, caller observes three progress values" in run {
+    "callWithProgress with workDoneToken policy: handler calls ctx.progress three times, caller observes three progress values" in run {
         val longTask = JsonRpcRoute.request[TaskReq, TaskResp]("longTask") {
             (_, ctx) =>
                 sendProgress(ctx, mkBegin).andThen {
@@ -75,8 +129,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                 }
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(longTask), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(longTask), workDoneTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("longTask", TaskReq("t")).map { pending =>
                         pending.progress.run.map { progressChunks =>
                             pending.result.map { _ =>
@@ -89,7 +143,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "callWithProgress with LSP: stampOutboundToken attaches workDoneToken to params, handler reads token" in run {
+    "callWithProgress with workDoneToken policy: stampOutboundToken attaches workDoneToken to params, handler reads token" in run {
         // Unsafe: AtomicRef.Unsafe.init for token capture across fibers
         val capturedToken = AtomicRef.Unsafe.init[Maybe[String]](Absent)(using AllowUnsafe.embrace.danger)
         val taskMethod = JsonRpcRoute.request[TaskReqWithToken, TaskResp]("task") {
@@ -97,8 +151,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                 Sync.defer(capturedToken.set(params.workDoneToken)(using AllowUnsafe.embrace.danger)).andThen(TaskResp(true))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(taskMethod), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(taskMethod), workDoneTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
                             Sync.defer(capturedToken.get()(using AllowUnsafe.embrace.danger)).map {
@@ -112,7 +166,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "callPartialResults with LSP: handler sends three progress notifications then null final response, stream emits three strings" in run {
+    "callPartialResults with workDoneToken policy: handler sends three progress notifications then null final response, stream emits three strings" in run {
         val searchMethod = JsonRpcRoute.request[SearchReq, Structure.Value]("search") {
             (_, ctx) =>
                 sendProgress(ctx, Structure.Value.Str("result1")).andThen {
@@ -124,8 +178,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                 }
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(searchMethod), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(searchMethod), workDoneTokenConfig).map { _ =>
                     endpointA.callPartialResults[SearchReq, String]("search", SearchReq("q")).run.map { chunks =>
                         assert(chunks.size == 3, s"expected 3 chunks, got ${chunks.size}: $chunks")
                     }
@@ -134,7 +188,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "callWithProgress with MCP: outbound params carry _meta.progressToken, handler receives it" in run {
+    "callWithProgress with metaToken policy: outbound params carry _meta.progressToken, handler receives it" in run {
         // Unsafe: AtomicRef.Unsafe.init for meta capture across fibers
         val capturedMeta = AtomicRef.Unsafe.init[Maybe[ProgressMeta]](Absent)(using AllowUnsafe.embrace.danger)
         val taskMethod = JsonRpcRoute.request[TaskReqWithMeta, TaskResp]("run") {
@@ -142,8 +196,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                 Sync.defer(capturedMeta.set(params.`_meta`)(using AllowUnsafe.embrace.danger)).andThen(TaskResp(true))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, mcpConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(taskMethod), mcpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, metaTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(taskMethod), metaTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("run", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
                             Sync.defer(capturedMeta.get()(using AllowUnsafe.embrace.danger)).map {
@@ -163,8 +217,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         // Unsafe: AtomicBoolean.Unsafe.init for received flag across fibers
         val received = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq.empty, lspConfig).map { endpointB =>
+            JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq.empty, workDoneTokenConfig).map { endpointB =>
                     endpointA.subscribeProgress(token).map { progressStream =>
                         // Wrap the stream to set the flag when at least one value is delivered.
                         val watched = progressStream.map { v =>
@@ -176,9 +230,9 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                             // Use a typed case class so Structure.encode produces a flat JSON object
                             // {"token": "oob-token-1", "value": "ping"} on the wire. Passing
                             // Structure.Value directly would produce a discriminated enum encoding.
-                            endpointB.notify[LspProgressParams](
+                            endpointB.notify[ProgressNotifParams](
                                 "$/progress",
-                                LspProgressParams(tokenStr, "ping")
+                                ProgressNotifParams(tokenStr, "ping")
                             ).andThen {
                                 // Wait until A's reader has delivered the value to the stream consumer.
                                 untilTrue(Sync.defer(received.get()(using AllowUnsafe.embrace.danger))).andThen {
@@ -200,13 +254,13 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         val tokenStr = "oob-token-close"
         val token    = Structure.Value.Str(tokenStr)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq.empty, lspConfig).map { endpointB =>
+            JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq.empty, workDoneTokenConfig).map { endpointB =>
                     endpointA.subscribeProgress(token).map { stream =>
                         endpointA.unsubscribeProgress(token).andThen {
-                            endpointB.notify[LspProgressParams](
+                            endpointB.notify[ProgressNotifParams](
                                 "$/progress",
-                                LspProgressParams(tokenStr, "ignored")
+                                ProgressNotifParams(tokenStr, "ignored")
                             ).andThen {
                                 stream.run.map { chunks =>
                                     assert(chunks.isEmpty, s"expected empty stream after unsubscribe, got $chunks")
@@ -240,7 +294,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "MCP monotonicity: non-monotonic progress value 5.0 between 10.0 and 20.0 is dropped" in run {
+    "enforceMonotonic=true: non-monotonic progress value 5.0 between 10.0 and 20.0 is dropped" in run {
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 sendProgress(ctx, mkProgress(10.0)).andThen {
@@ -252,8 +306,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                 }
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, mcpConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(taskMethod), mcpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, metaTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(taskMethod), metaTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.progress.run.map { chunks =>
                             pending.result.map { _ =>
@@ -275,7 +329,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "LSP non-monotonic: all three progress values pass through in order" in run {
+    "enforceMonotonic=false: all three progress values pass through in order" in run {
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 sendProgress(ctx, mkProgress(10.0)).andThen {
@@ -287,12 +341,12 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                 }
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(taskMethod), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(taskMethod), workDoneTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.progress.run.map { chunks =>
                             pending.result.map { _ =>
-                                assert(chunks.size == 3, s"LSP expected all 3 values, got: $chunks")
+                                assert(chunks.size == 3, s"enforceMonotonic=false: expected all 3 values, got: $chunks")
                             }
                         }
                     }
@@ -317,8 +371,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val capA = new CapturingTransport(ta)
-            JsonRpcHandler.init(capA, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(taskMethod), lspConfig).map { _ =>
+            JsonRpcHandler.init(capA, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(taskMethod), workDoneTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
                             untilTrue(Sync.defer(handlerDone.get()(using AllowUnsafe.embrace.danger))).andThen {
@@ -350,8 +404,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
 
     "out-of-band progress notification with unknown token is silently dropped without error" in run {
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq.empty, lspConfig).map { endpointB =>
+            JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq.empty, workDoneTokenConfig).map { endpointB =>
                     endpointB.notify[Structure.Value](
                         "$/progress",
                         Structure.Value.Record(Chunk(
@@ -372,8 +426,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                 }
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(searchMethod), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(searchMethod), workDoneTokenConfig).map { _ =>
                     endpointA.callPartialResults[SearchReq, String]("search", SearchReq("q")).run.map { chunks =>
                         assert(chunks.nonEmpty, s"expected at least one chunk (partial or final), got $chunks")
                     }
@@ -389,8 +443,8 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             // Wrap B's transport to capture outbound envelopes from B (which include the progress notification).
             val capB = new CapturingTransport(tb)
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(capB, Seq(taskMethod), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(capB, Seq(taskMethod), workDoneTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
                             val progressNotifs = capB.sentList.collect {
@@ -404,7 +458,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "MCP concurrent monotonicity: two concurrent progress calls emit only the one with the larger value" in run {
+    "enforceMonotonic=true concurrent: two concurrent progress calls emit only the one with the larger value" in run {
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 Async.zip[JsonRpcError, Unit, Unit, Any](
@@ -415,15 +469,15 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             // Wrap B's transport to capture outbound envelopes from B (progress notifications come from B).
             val capB = new CapturingTransport(tb)
-            JsonRpcHandler.init(ta, Seq.empty, mcpConfig).map { endpointA =>
-                JsonRpcHandler.init(capB, Seq(taskMethod), mcpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, metaTokenConfig).map { endpointA =>
+                JsonRpcHandler.init(capB, Seq(taskMethod), metaTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
                             val notifCount = capB.sentList.count {
                                 case n: JsonRpcNotification if n.method == "notifications/progress" => true
                                 case _                                                              => false
                             }
-                            assert(notifCount == 1, s"MCP monotonicity: expected 1 notification, got $notifCount")
+                            assert(notifCount == 1, s"enforceMonotonic=true: expected 1 notification, got $notifCount")
                         }
                     }
                 }

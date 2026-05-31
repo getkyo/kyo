@@ -3,16 +3,14 @@ package kyo
 /** Controls how the endpoint responds to incoming requests and notifications for methods
   * that have no registered handler.
   *
-  * Three preset values cover the most common cases:
+  * Two preset values cover the most common cases:
   *  - [[JsonRpcUnknownMethodPolicy.minimal]]: reply `MethodNotFound` on requests, silently drop notifications.
-  *  - [[JsonRpcUnknownMethodPolicy.lsp]]: same as `minimal` but silently ignores notifications whose method name
-  *    starts with `$/` (the LSP meta-method prefix).
   *  - [[JsonRpcUnknownMethodPolicy.strict]]: reply `MethodNotFound` on requests, reject unknown notifications.
   *
   * For custom silent-ignore predicates supply a value for [[ignoreUnknownNotification]]:
   * {{{
   * JsonRpcUnknownMethodPolicy.minimal.copy(
-  *   ignoreUnknownNotification = _.startsWith("$/")
+  *   ignoreUnknownNotification = _.startsWith("internal/")
   * )
   * }}}
   *
@@ -29,7 +27,7 @@ package kyo
   *   ignore).
   * @see [[JsonRpcHandler.Config]]
   */
-// Hub.scala:22 smart-constructor pattern; users select .minimal / .lsp / .strict or copy with custom predicate
+// Hub.scala:22 smart-constructor pattern; users select .minimal / .strict or copy with custom predicate
 final case class JsonRpcUnknownMethodPolicy private[kyo] (
     onUnknownRequest: JsonRpcUnknownMethodPolicy.UnknownAction,
     onUnknownNotification: JsonRpcUnknownMethodPolicy.UnknownAction,
@@ -47,12 +45,6 @@ object JsonRpcUnknownMethodPolicy:
         onUnknownRequest = UnknownAction.ReplyMethodNotFound,
         onUnknownNotification = UnknownAction.Drop,
         ignoreUnknownNotification = _ => false
-    )
-
-    val lsp: JsonRpcUnknownMethodPolicy = JsonRpcUnknownMethodPolicy(
-        onUnknownRequest = UnknownAction.ReplyMethodNotFound,
-        onUnknownNotification = UnknownAction.Drop,
-        ignoreUnknownNotification = _.startsWith("$/")
     )
 
     val strict: JsonRpcUnknownMethodPolicy = JsonRpcUnknownMethodPolicy(

@@ -12,7 +12,7 @@ import kyo.Stream
   *
   * Two preset framers are provided:
   *  - [[JsonRpcFramer.lineDelimited]]: newline-delimited framing, suitable for stdio transports.
-  *  - [[JsonRpcFramer.contentLength]]: `Content-Length` header framing used by LSP over stdio.
+  *  - [[JsonRpcFramer.contentLength]]: `Content-Length` header framing (length-prefixed binary framing pattern).
   *
   * Pass the chosen framer to [[JsonRpcTransport.fromWire]] or [[JsonRpcTransport.stdio]].
   *

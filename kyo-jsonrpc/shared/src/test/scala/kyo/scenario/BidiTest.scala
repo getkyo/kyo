@@ -52,7 +52,7 @@ class BidiTest extends JsonRpcTest:
         }
     }
 
-    "LSP bidi cancel: A cancels call to B; B handler observes cancelled; reply carries -32800; response IS on transport" in run {
+    "bidi cancel with expectReply: A cancels call to B; B handler observes cancelled; reply carries -32800; response IS on transport" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
 
@@ -61,12 +61,29 @@ class BidiTest extends JsonRpcTest:
                 ctx.cancelled.get.andThen(EchoResp(req.text))
         }
 
-        val lspConfig = JsonRpcHandler.Config(cancellation = Present(JsonRpcCancellationPolicy.lsp))
+        // cancelMethod="$/cancelRequest", expectReply=true
+        case class CancelByIdParams(id: JsonRpcId) derives Schema, CanEqual
+        val expectReplyConfig = JsonRpcHandler.Config(cancellation =
+            Present(JsonRpcCancellationPolicy(
+                cancelMethod = "$/cancelRequest",
+                encodeParams = (id, _) => f ?=> Sync.defer(Structure.encode(CancelByIdParams(id)))(using f),
+                decodeParams = sv =>
+                    f ?=>
+                        Sync.defer {
+                            Structure.decode[CancelByIdParams](sv)(using summon[Schema[CancelByIdParams]], f) match
+                                case Result.Success(p) => Present(p.id)
+                                case _                 => Absent
+                        }(using f),
+                expectReplyForCancelledRequest = true,
+                cancelledError = Present(JsonRpcCustomError(-32800, "Request cancelled")(using Frame.internal)),
+                protectedMethods = Set.empty
+            ))
+        )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val capB = new CapturingTransport(tb)
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(capB, Seq(echoOnB), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, expectReplyConfig).map { endpointA =>
+                JsonRpcHandler.init(capB, Seq(echoOnB), expectReplyConfig).map { _ =>
                     val idEncoder =
                         JsonRpcExtrasEncoder(id =>
                             Sync.defer { capturedId.set(Present(id))(using AllowUnsafe.embrace.danger); Absent }
@@ -101,7 +118,7 @@ class BidiTest extends JsonRpcTest:
         }
     }
 
-    "MCP bidi cancel: A cancels call to B; B handler is interrupted; NO response frame on transport" in run {
+    "bidi cancel without expectReply: A cancels call to B; B handler is interrupted; NO response frame on transport" in run {
         // Unsafe: AtomicRef.Unsafe.init for id and promise capture across fibers
         val capturedId   = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val handlerReady = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
@@ -126,19 +143,36 @@ class BidiTest extends JsonRpcTest:
                 }
         }
 
-        val mcpConfig = JsonRpcHandler.Config(cancellation = Present(JsonRpcCancellationPolicy.mcp))
+        // cancelMethod="notifications/cancelled", expectReply=false
+        case class CancelWithReasonParams(requestId: JsonRpcId, reason: Maybe[String]) derives Schema, CanEqual
+        val noReplyConfig = JsonRpcHandler.Config(cancellation =
+            Present(JsonRpcCancellationPolicy(
+                cancelMethod = "notifications/cancelled",
+                encodeParams = (id, reason) => f ?=> Sync.defer(Structure.encode(CancelWithReasonParams(id, reason)))(using f),
+                decodeParams = sv =>
+                    f ?=>
+                        Sync.defer {
+                            Structure.decode[CancelWithReasonParams](sv)(using summon[Schema[CancelWithReasonParams]], f) match
+                                case Result.Success(p) => Present(p.requestId)
+                                case _                 => Absent
+                        }(using f),
+                expectReplyForCancelledRequest = false,
+                cancelledError = Absent,
+                protectedMethods = Set("initialize")
+            ))
+        )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val capB = new CapturingTransport(tb)
-            JsonRpcHandler.init(ta, Seq.empty, mcpConfig).map { endpointA =>
-                JsonRpcHandler.init(capB, Seq(echoOnB), mcpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, noReplyConfig).map { endpointA =>
+                JsonRpcHandler.init(capB, Seq(echoOnB), noReplyConfig).map { _ =>
                     val idEncoder =
                         JsonRpcExtrasEncoder(id =>
                             Sync.defer { capturedId.set(Present(id))(using AllowUnsafe.embrace.danger); Absent }
                         )
                     Fiber.initUnscoped(
                         Abort.run[JsonRpcError | Closed](
-                            endpointA.call[EchoReq, EchoResp]("echo", EchoReq("mcp-test"), idEncoder)
+                            endpointA.call[EchoReq, EchoResp]("echo", EchoReq("cancel-test"), idEncoder)
                         )
                     ).map { callFib =>
                         untilTrue(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined && handlerReady.get()(using
@@ -157,7 +191,10 @@ class BidiTest extends JsonRpcTest:
                                                                     case JsonRpcResponse(rid, _, _, _) => rid != id
                                                                     case _                             => true
                                                                 }
-                                                                assert(noReply, "MCP cancel must produce no response frame on transport")
+                                                                assert(
+                                                                    noReply,
+                                                                    "cancel without expectReply must produce no response frame on transport"
+                                                                )
                                                             }
                                                         }
                                                     case Absent => fail("handlerDone promise not set")
@@ -174,7 +211,7 @@ class BidiTest extends JsonRpcTest:
         }
     }
 
-    "LSP progress round-trip via callWithProgress: handler emits 3 values; caller observes them; result arrives" in run {
+    "progress round-trip via callWithProgress: handler emits 3 values; caller observes them; result arrives" in run {
         // Unsafe: AtomicRef.Unsafe.init for progress value accumulation across fibers
         val progressValues = AtomicRef.Unsafe.init(List.empty[Structure.Value])(using AllowUnsafe.embrace.danger)
 
@@ -192,11 +229,22 @@ class BidiTest extends JsonRpcTest:
                 }
         }
 
-        val lspConfig = JsonRpcHandler.Config(progress = Present(JsonRpcProgressPolicy.lsp))
+        // progressMethod="$/progress", workDoneToken style, non-monotonic
+        val expectReplyConfig = JsonRpcHandler.Config(progress =
+            Present(JsonRpcProgressPolicy(
+                progressMethod = "$/progress",
+                extractInboundToken = p => JsonRpcProgressPolicy.field(p, "token"),
+                extractRequestToken = p => JsonRpcProgressPolicy.field(p, "workDoneToken"),
+                stampOutboundToken = (p, t) => JsonRpcProgressPolicy.merge(p, Structure.Value.Record(Chunk("workDoneToken" -> t))),
+                encodeProgressParams = (t, v) => Structure.Value.Record(Chunk("token" -> t, "value" -> v)),
+                extractProgressValue = p => JsonRpcProgressPolicy.field(p, "value"),
+                enforceMonotonic = false
+            ))
+        )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(workOnB), lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, expectReplyConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(workOnB), expectReplyConfig).map { _ =>
                     endpointA.callWithProgress[WorkReq, WorkResp]("work", WorkReq("task1")).map { pending =>
                         pending.progress.run.map { collected =>
                             pending.result.map { finalResp =>

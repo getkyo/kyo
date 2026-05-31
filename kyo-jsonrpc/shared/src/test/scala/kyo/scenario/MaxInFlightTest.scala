@@ -175,15 +175,30 @@ class MaxInFlightTest extends JsonRpcTest:
         }
     }
 
-    "requestTimeout fires and $/cancelRequest appears on transport with LSP policy" in run {
+    "requestTimeout fires and $/cancelRequest appears on transport with expectReply policy" in run {
         val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
             // Block forever; timeout is the only exit
             Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
         }
 
+        // cancelMethod="$/cancelRequest", expectReply=true
+        case class CancelByIdParams(id: JsonRpcId) derives Schema, CanEqual
         val cfg = JsonRpcHandler.Config(
             requestTimeout = 100.millis,
-            cancellation = Present(JsonRpcCancellationPolicy.lsp)
+            cancellation = Present(JsonRpcCancellationPolicy(
+                cancelMethod = "$/cancelRequest",
+                encodeParams = (id, _) => f ?=> Sync.defer(Structure.encode(CancelByIdParams(id)))(using f),
+                decodeParams = sv =>
+                    f ?=>
+                        Sync.defer {
+                            Structure.decode[CancelByIdParams](sv)(using summon[Schema[CancelByIdParams]], f) match
+                                case Result.Success(p) => Present(p.id)
+                                case _                 => Absent
+                        }(using f),
+                expectReplyForCancelledRequest = true,
+                cancelledError = Present(JsonRpcCustomError(-32800, "Request cancelled")(using Frame.internal)),
+                protectedMethods = Set.empty
+            ))
         )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -314,10 +329,33 @@ class MaxInFlightTest extends JsonRpcTest:
             }
         }
 
+        // cancelMethod="$/cancelRequest", expectReply=true; progressMethod="$/progress", workDoneToken style
+        case class CancelByIdParamsB(id: JsonRpcId) derives Schema, CanEqual
         val cfg = JsonRpcHandler.Config(
             requestTimeout = 1.second,
-            progress = Present(JsonRpcProgressPolicy.lsp),
-            cancellation = Present(JsonRpcCancellationPolicy.lsp),
+            progress = Present(JsonRpcProgressPolicy(
+                progressMethod = "$/progress",
+                extractInboundToken = p => JsonRpcProgressPolicy.field(p, "token"),
+                extractRequestToken = p => JsonRpcProgressPolicy.field(p, "workDoneToken"),
+                stampOutboundToken = (p, t) => JsonRpcProgressPolicy.merge(p, Structure.Value.Record(Chunk("workDoneToken" -> t))),
+                encodeProgressParams = (t, v) => Structure.Value.Record(Chunk("token" -> t, "value" -> v)),
+                extractProgressValue = p => JsonRpcProgressPolicy.field(p, "value"),
+                enforceMonotonic = false
+            )),
+            cancellation = Present(JsonRpcCancellationPolicy(
+                cancelMethod = "$/cancelRequest",
+                encodeParams = (id, _) => f ?=> Sync.defer(Structure.encode(CancelByIdParamsB(id)))(using f),
+                decodeParams = sv =>
+                    f ?=>
+                        Sync.defer {
+                            Structure.decode[CancelByIdParamsB](sv)(using summon[Schema[CancelByIdParamsB]], f) match
+                                case Result.Success(p) => Present(p.id)
+                                case _                 => Absent
+                        }(using f),
+                expectReplyForCancelledRequest = true,
+                cancelledError = Present(JsonRpcCustomError(-32800, "Request cancelled")(using Frame.internal)),
+                protectedMethods = Set.empty
+            )),
             progressResetsTimeout = true
         )
 

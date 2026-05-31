@@ -82,11 +82,11 @@ class HttpStyleTest extends JsonRpcTest:
         }
     }
 
-    "LSP pre-init gate: requests before initialize return -32002; after initialize, methods succeed" in run {
+    "pre-init gate: requests before initialize return -32002; after initialize, methods succeed" in run {
         val serverNotInitialized = JsonRpcImplementationError(-32002, "Server not initialized")
         var initialized          = false
 
-        val lspInitGate: JsonRpcMessageGate = new JsonRpcMessageGate:
+        val initGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 env match
                     case JsonRpcRequest(_, "initialize", _, _) =>
@@ -104,7 +104,7 @@ class HttpStyleTest extends JsonRpcTest:
             (req, _) => HoverResp(s"hover at line ${req.line}")
         }
 
-        val gatedConfig = JsonRpcHandler.Config(gate = Present(lspInitGate))
+        val gatedConfig = JsonRpcHandler.Config(gate = Present(initGate))
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty).map { client =>
                 JsonRpcHandler.init(tb, Seq(initMethod, hoverMethod), gatedConfig).map { _ =>

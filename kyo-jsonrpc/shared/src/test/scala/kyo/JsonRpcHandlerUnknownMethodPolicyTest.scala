@@ -23,9 +23,11 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
             }
         }
 
-    "lsp policy: unknown request returns MethodNotFound code -32601" in run {
-        val lspConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcUnknownMethodPolicy.lsp)
-        mkEndpoints(Seq.empty, Seq.empty, configB = lspConfig).map { (a, _) =>
+    "dollar-slash ignore policy: unknown request returns MethodNotFound code -32601" in run {
+        val dollarSlashConfig = JsonRpcHandler.Config(
+            unknownMethod = JsonRpcUnknownMethodPolicy.minimal.copy(ignoreUnknownNotification = _.startsWith("$/"))
+        )
+        mkEndpoints(Seq.empty, Seq.empty, configB = dollarSlashConfig).map { (a, _) =>
             Abort.run[JsonRpcError | Closed](a.call[Empty, Empty]("unknown/method", Empty())).map {
                 case Result.Failure(e: JsonRpcError) => assert(e.code == -32601)
                 case other                           => fail(s"expected MethodNotFound, got $other")
@@ -33,16 +35,18 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "lsp policy: unknown notification starting with dollar-slash is silently dropped" in run {
+    "dollar-slash ignore policy: unknown notification starting with dollar-slash is silently dropped" in run {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val dollarMethod = JsonRpcRoute.request[Empty, Unit]("$/setTrace") {
             (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
-        val lspConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcUnknownMethodPolicy.lsp)
+        val dollarSlashConfig = JsonRpcHandler.Config(
+            unknownMethod = JsonRpcUnknownMethodPolicy.minimal.copy(ignoreUnknownNotification = _.startsWith("$/"))
+        )
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { a =>
-                JsonRpcHandler.init(tb, Seq.empty, lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, dollarSlashConfig).map { a =>
+                JsonRpcHandler.init(tb, Seq.empty, dollarSlashConfig).map { _ =>
                     a.notify[Empty]("$/setTrace", Empty()).andThen {
                         Async.sleep(80.millis).andThen {
                             Sync.defer(assert(handlerInvoked.get()(using AllowUnsafe.embrace.danger) == 0))
@@ -53,13 +57,15 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "lsp policy: unknown notification not starting with dollar-slash is silently dropped" in run {
+    "dollar-slash ignore policy: unknown notification not starting with dollar-slash is silently dropped" in run {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val lspConfig      = JsonRpcHandler.Config(unknownMethod = JsonRpcUnknownMethodPolicy.lsp)
+        val dollarSlashConfig = JsonRpcHandler.Config(
+            unknownMethod = JsonRpcUnknownMethodPolicy.minimal.copy(ignoreUnknownNotification = _.startsWith("$/"))
+        )
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { a =>
-                JsonRpcHandler.init(tb, Seq.empty, lspConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, dollarSlashConfig).map { a =>
+                JsonRpcHandler.init(tb, Seq.empty, dollarSlashConfig).map { _ =>
                     a.notify[Empty]("unknown/event", Empty()).andThen {
                         Async.sleep(80.millis).andThen {
                             Sync.defer(assert(handlerInvoked.get()(using AllowUnsafe.embrace.danger) == 0))
@@ -265,7 +271,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "gate LSP initialize pattern: allows initialize, rejects others with ServerNotInitialized" in run {
+    "gate initialize pattern: allows initialize, rejects others with ServerNotInitialized" in run {
         val serverNotInitialized = JsonRpcImplementationError(-32002, "ServerNotInitialized")
         val initGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
