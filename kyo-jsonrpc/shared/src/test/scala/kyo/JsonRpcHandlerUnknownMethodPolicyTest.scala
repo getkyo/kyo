@@ -24,7 +24,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
 
     "lsp policy: unknown request returns MethodNotFound code -32601" in run {
-        val lspConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcHandler.UnknownMethodPolicy.lsp)
+        val lspConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcUnknownMethodPolicy.lsp)
         mkEndpoints(Seq.empty, Seq.empty, configB = lspConfig).map { (a, _) =>
             Abort.run[JsonRpcError | Closed](a.call[Empty, Empty]("unknown/method", Empty())).map {
                 case Result.Failure(e: JsonRpcError) => assert(e.code == -32601)
@@ -36,10 +36,10 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     "lsp policy: unknown notification starting with dollar-slash is silently dropped" in run {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val dollarMethod = JsonRpcRoute[Empty, Unit]("$/setTrace") {
+        val dollarMethod = JsonRpcRoute.request[Empty, Unit]("$/setTrace") {
             (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
-        val lspConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcHandler.UnknownMethodPolicy.lsp)
+        val lspConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcUnknownMethodPolicy.lsp)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty, lspConfig).map { _ =>
@@ -56,7 +56,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     "lsp policy: unknown notification not starting with dollar-slash is silently dropped" in run {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val lspConfig      = JsonRpcHandler.Config(unknownMethod = JsonRpcHandler.UnknownMethodPolicy.lsp)
+        val lspConfig      = JsonRpcHandler.Config(unknownMethod = JsonRpcUnknownMethodPolicy.lsp)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty, lspConfig).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty, lspConfig).map { _ =>
@@ -71,14 +71,14 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     }
 
     "strict policy: unknown notification Reject closes engine" in run {
-        val strictConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcHandler.UnknownMethodPolicy.strict)
+        val strictConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcUnknownMethodPolicy.strict)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty, strictConfig).map { b =>
                     a.notify[Empty]("unknown/event", Empty()).andThen {
                         untilTrue(Sync.defer(b.unsafe.asInstanceOf[
                             internal.engine.JsonRpcEndpointImpl
-                        ].config.unknownMethod == JsonRpcHandler.UnknownMethodPolicy.strict)).andThen {
+                        ].config.unknownMethod == JsonRpcUnknownMethodPolicy.strict)).andThen {
                             Async.sleep(150.millis).andThen {
                                 Abort.run[JsonRpcError | Closed](a.call[Empty, Empty]("any/method", Empty())).map {
                                     case Result.Failure(_) => succeed
@@ -98,7 +98,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 JsonRpcMessageGate.Decision.Allow
 
-        val pingMethod = JsonRpcRoute[Ping, Pong]("ping") {
+        val pingMethod = JsonRpcRoute.request[Ping, Pong]("ping") {
             (req, _) => Pong("pong:" + req.msg)
         }
         val gatedConfig = JsonRpcHandler.Config(gate = Present(allowGate))
@@ -121,7 +121,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val pingMethod = JsonRpcRoute[Ping, Pong]("ping") {
+        val pingMethod = JsonRpcRoute.request[Ping, Pong]("ping") {
             (req, _) =>
                 Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen(Pong("pong"))
         }
@@ -150,7 +150,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val eventMethod = JsonRpcRoute[Empty, Unit]("event") {
+        val eventMethod = JsonRpcRoute.request[Empty, Unit]("event") {
             (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         val gatedConfig = JsonRpcHandler.Config(gate = Present(rejectGate))
@@ -178,7 +178,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 JsonRpcMessageGate.Decision.Drop
 
-        val pingMethod = JsonRpcRoute[Ping, Pong]("ping") {
+        val pingMethod = JsonRpcRoute.request[Ping, Pong]("ping") {
             (req, _) => Pong("pong")
         }
         val gatedConfig  = JsonRpcHandler.Config(gate = Present(dropGate))
@@ -205,7 +205,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
                     case _ =>
                         JsonRpcMessageGate.Decision.Allow
 
-        val initMethod = JsonRpcRoute[Ping, Pong]("initialize") {
+        val initMethod = JsonRpcRoute.request[Ping, Pong]("initialize") {
             (req, _) => Pong("initialized:" + req.msg)
         }
         val gatedConfig = JsonRpcHandler.Config(gate = Present(initGate))

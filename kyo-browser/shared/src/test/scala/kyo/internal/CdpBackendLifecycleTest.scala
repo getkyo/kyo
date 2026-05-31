@@ -4,7 +4,7 @@ import CdpTypes.*
 import kyo.*
 import kyo.BrowserElementNotActionableException.Reason
 import kyo.BrowserIFrameInvalidException.Reason as IFrameReason
-import kyo.JsonRpcHandler.IdStrategy
+import kyo.JsonRpcIdStrategy
 import kyo.internal.SharedChrome
 
 /** [[CdpBackend]] lifecycle, close, and connection tests.
@@ -1170,13 +1170,13 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         Scope.run {
             for
                 (clientTransport, server) <- JsonRpcTransport.inMemory
-                versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult](
+                versionMethod = JsonRpcRoute.request[BrowserGetVersionParams, BrowserVersionResult](
                     "Browser.getVersion"
                 ) { (_, _) => testVersionResult }
                 serverCfg = JsonRpcHandler.Config(
                     codec = JsonRpcCodec.Cdp,
                     maxInFlight = Present(8),
-                    idStrategy = IdStrategy.SequentialInt
+                    idStrategy = JsonRpcIdStrategy.SequentialInt
                 )
                 _       <- JsonRpcHandler.init(server, Seq(versionMethod), serverCfg)
                 backend <- CdpBackend.initUnscoped(clientTransport, testLaunchCfg)

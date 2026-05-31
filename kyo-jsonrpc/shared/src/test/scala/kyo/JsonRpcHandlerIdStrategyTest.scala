@@ -7,7 +7,7 @@ class JsonRpcHandlerIdStrategyTest extends JsonRpcTest:
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
     "SequentialLong allocates monotonically increasing JsonRpcId.Num starting at 1" in run {
-        val next = IdStrategyEngine.mkNextId(JsonRpcHandler.IdStrategy.SequentialLong)
+        val next = IdStrategyEngine.mkNextId(JsonRpcIdStrategy.SequentialLong)
         for
             a <- next()
             b <- next()
@@ -20,7 +20,7 @@ class JsonRpcHandlerIdStrategyTest extends JsonRpcTest:
     }
 
     "SequentialInt allocates monotonically increasing JsonRpcId.Num starting at 1" in run {
-        val next = IdStrategyEngine.mkNextId(JsonRpcHandler.IdStrategy.SequentialInt)
+        val next = IdStrategyEngine.mkNextId(JsonRpcIdStrategy.SequentialInt)
         for
             a <- next()
             b <- next()
@@ -35,7 +35,7 @@ class JsonRpcHandlerIdStrategyTest extends JsonRpcTest:
         val counter = AtomicLong.Unsafe.init(99L)(using AllowUnsafe.embrace.danger)
         val custom: () => JsonRpcId < Sync =
             () => Sync.Unsafe.defer(JsonRpcId.Num(counter.incrementAndGet()))
-        val next = IdStrategyEngine.mkNextId(JsonRpcHandler.IdStrategy.Custom(custom))
+        val next = IdStrategyEngine.mkNextId(JsonRpcIdStrategy.Custom(custom))
         for
             a <- next()
             b <- next()
@@ -47,7 +47,7 @@ class JsonRpcHandlerIdStrategyTest extends JsonRpcTest:
 
     "Custom with constant-returning function returns the same id repeatedly" in run {
         val custom: () => JsonRpcId < Sync = () => Sync.defer(JsonRpcId.Str("static"))
-        val next                           = IdStrategyEngine.mkNextId(JsonRpcHandler.IdStrategy.Custom(custom))
+        val next                           = IdStrategyEngine.mkNextId(JsonRpcIdStrategy.Custom(custom))
         for
             a <- next()
             b <- next()

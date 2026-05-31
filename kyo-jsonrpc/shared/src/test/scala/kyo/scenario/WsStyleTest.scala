@@ -34,7 +34,7 @@ class WsStyleTest extends JsonRpcTest:
         // Unsafe: AtomicInt.Unsafe.init as countdown latch (init=2, decrements to 0)
         val notifLatch = AtomicInt.Unsafe.init(2)(using AllowUnsafe.embrace.danger)
 
-        val eventOnA = JsonRpcRoute[EventMsg, Unit]("server/event") {
+        val eventOnA = JsonRpcRoute.request[EventMsg, Unit]("server/event") {
             (msg, _) =>
                 Sync.defer {
                     discard(receivedEvents.getAndUpdate(msg.event :: _)(using AllowUnsafe.embrace.danger))
@@ -42,7 +42,7 @@ class WsStyleTest extends JsonRpcTest:
                 }
         }
 
-        val cmdOnB = JsonRpcRoute[CmdReq, CmdResp]("execute") {
+        val cmdOnB = JsonRpcRoute.request[CmdReq, CmdResp]("execute") {
             (req, _) => CmdResp(s"executed:${req.cmd}")
         }
 
@@ -78,7 +78,7 @@ class WsStyleTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for remaining slot promises
         val slotRest = AtomicRef.Unsafe.init(List.empty[Fiber.Promise[Unit, Any]])(using AllowUnsafe.embrace.danger)
 
-        val pingOnB = JsonRpcRoute[PingReq, PingResp]("ping") { (req, _) =>
+        val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (req, _) =>
             Fiber.Promise.init[Unit, Any].map { entryP =>
                 Fiber.Promise.init[Unit, Any].map { holdP =>
                     Sync.defer {
@@ -146,11 +146,11 @@ class WsStyleTest extends JsonRpcTest:
         }
     }
 
-    "CDP-shape extras: JsonRpcHandler.ExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in run {
+    "CDP-shape extras: JsonRpcExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in run {
         // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
         val capturedExtras = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
 
-        val cmdOnB = JsonRpcRoute[CmdReq, CmdResp]("execute") {
+        val cmdOnB = JsonRpcRoute.request[CmdReq, CmdResp]("execute") {
             (req, ctx) =>
                 Sync.defer(capturedExtras.set(ctx.extras)(using AllowUnsafe.embrace.danger)).andThen(CmdResp(req.cmd))
         }
@@ -168,7 +168,7 @@ class WsStyleTest extends JsonRpcTest:
                     endpointA.call[CmdReq, CmdResp](
                         "execute",
                         CmdReq("doWork"),
-                        JsonRpcHandler.ExtrasEncoder.const(sessionExtras)
+                        JsonRpcExtrasEncoder.const(sessionExtras)
                     ).map { resp =>
                         assert(resp == CmdResp("doWork"))
                         Sync.defer {

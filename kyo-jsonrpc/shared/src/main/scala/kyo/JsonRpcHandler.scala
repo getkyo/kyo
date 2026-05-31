@@ -172,39 +172,6 @@ object JsonRpcHandler:
         val cancel: Unit < (Async & Abort[Closed])
     )
 
-    // --- Backward-compat type aliases for the 5 hoisted types (Phase G) ---
-    // These allow existing callers using qualified form to continue compiling.
-
-    /** @see [[JsonRpcIdStrategy]] */
-    type IdStrategy = JsonRpcIdStrategy
-
-    /** @see [[JsonRpcIdStrategy]] */
-    val IdStrategy: JsonRpcIdStrategy.type = JsonRpcIdStrategy
-
-    /** @see [[JsonRpcUnknownMethodPolicy]] */
-    type UnknownMethodPolicy = JsonRpcUnknownMethodPolicy
-
-    /** @see [[JsonRpcUnknownMethodPolicy]] */
-    val UnknownMethodPolicy: JsonRpcUnknownMethodPolicy.type = JsonRpcUnknownMethodPolicy
-
-    /** @see [[JsonRpcCancellationPolicy]] */
-    type CancellationPolicy = JsonRpcCancellationPolicy
-
-    /** @see [[JsonRpcCancellationPolicy]] */
-    val CancellationPolicy: JsonRpcCancellationPolicy.type = JsonRpcCancellationPolicy
-
-    /** @see [[JsonRpcProgressPolicy]] */
-    type ProgressPolicy = JsonRpcProgressPolicy
-
-    /** @see [[JsonRpcProgressPolicy]] */
-    val ProgressPolicy: JsonRpcProgressPolicy.type = JsonRpcProgressPolicy
-
-    /** @see [[JsonRpcExtrasEncoder]] */
-    type ExtrasEncoder = JsonRpcExtrasEncoder
-
-    /** @see [[JsonRpcExtrasEncoder]] */
-    val ExtrasEncoder: JsonRpcExtrasEncoder.type = JsonRpcExtrasEncoder
-
     /** Configuration for a [[JsonRpcHandler]].
       *
       * Start from [[Config.default]] and override individual fields using the fluent builder

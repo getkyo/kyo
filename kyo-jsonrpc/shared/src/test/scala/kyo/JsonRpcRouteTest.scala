@@ -30,7 +30,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
 
     "handler returns Out and result is encoded as Structure.Value" in run {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
-            val method = JsonRpcRoute[Int, String]("greet") {
+            val method = JsonRpcRoute.request[Int, String]("greet") {
                 (n, _) => s"$n done"
             }
             val params = Structure.encode[Int](42)
@@ -41,7 +41,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
     "handler Abort.fail propagates the failure without transformation" in run {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val err = JsonRpcInvalidParamsError("fail", Absent, Chunk.empty)
-            val method = JsonRpcRoute[Int, String]("fail") {
+            val method = JsonRpcRoute.request[Int, String]("fail") {
                 (_, _) => Abort.fail(err)
             }
             val params = Structure.encode[Int](1)
@@ -51,7 +51,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
 
     "handler panic produces InternalError with panic message in data" in run {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
-            val method = JsonRpcRoute[Int, String]("boom") {
+            val method = JsonRpcRoute.request[Int, String]("boom") {
                 (_, _) => Sync.defer(throw new RuntimeException("boom"))
             }
             val params = Structure.encode[Int](1)
@@ -67,7 +67,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
     "params decode failure produces invalidParams before the handler body runs" in run {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             var handlerCalled = false
-            val method = JsonRpcRoute[Int, String]("typed") {
+            val method = JsonRpcRoute.request[Int, String]("typed") {
                 (_, _) =>
                     handlerCalled = true
                     "ok"
@@ -97,7 +97,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
         val extrasValue = Structure.Value.Record(Chunk("k" -> Structure.Value.Str("v")))
         makeCtx(Absent, Present(extrasValue), Absent).flatMap: ctx =>
             var observed: Maybe[Structure.Value] = Absent
-            val method = JsonRpcRoute[Int, Unit]("obs") {
+            val method = JsonRpcRoute.request[Int, Unit]("obs") {
                 (_, c) => observed = c.extras
             }
             val params = Structure.encode[Int](1)
@@ -114,8 +114,8 @@ class JsonRpcRouteTest extends JsonRpcTest:
     "two routes with same logic produce identical encoded output" in run {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             def handler(n: Int): String < (Async & Abort[JsonRpcError]) = s"result $n"
-            val route1                                                  = JsonRpcRoute[Int, String]("m")((n, _) => handler(n))
-            val route2                                                  = JsonRpcRoute[Int, String]("m")((n, _) => handler(n))
+            val route1                                                  = JsonRpcRoute.request[Int, String]("m")((n, _) => handler(n))
+            val route2                                                  = JsonRpcRoute.request[Int, String]("m")((n, _) => handler(n))
             val params                                                  = Structure.encode[Int](7)
             for
                 r1 <- Abort.run[JsonRpcError | JsonRpcResponse.Halt](route1.handle(params, ctx))
@@ -125,7 +125,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
     }
 
     "dispatch known request returns Present" in run {
-        val addM = JsonRpcRoute[AddReq, AddResp]("add") { (req, _) => AddResp(req.a + req.b) }
+        val addM = JsonRpcRoute.request[AddReq, AddResp]("add") { (req, _) => AddResp(req.a + req.b) }
         Sync.defer(Structure.encode(AddReq(2, 3))).map { params =>
             val ctx =
                 JsonRpcRoute.Context.forTest(
@@ -150,7 +150,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
     }
 
     "dispatch unknown name returns Absent" in run {
-        val addM = JsonRpcRoute[AddReq, AddResp]("add") { (r, _) => AddResp(r.a + r.b) }
+        val addM = JsonRpcRoute.request[AddReq, AddResp]("add") { (r, _) => AddResp(r.a + r.b) }
         val ctx = JsonRpcRoute.Context.forTest(
             Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe,
             Absent,
@@ -189,7 +189,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
     }
 
     "dispatch propagates handler Abort" in run {
-        val m = JsonRpcRoute[Unit, Unit]("err") { (_, _) =>
+        val m = JsonRpcRoute.request[Unit, Unit]("err") { (_, _) =>
             Abort.fail(JsonRpcInvalidParamsError("err", Absent, Chunk.empty))
         }
         Sync.defer(Structure.encode(())).map { params =>
@@ -216,7 +216,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val id       = JsonRpcId(1L)
             val response = JsonRpcResponse.success(id, Structure.Value.Str("early"))
-            val method = JsonRpcRoute[Int, String]("early") { (_, _) =>
+            val method = JsonRpcRoute.request[Int, String]("early") { (_, _) =>
                 JsonRpcResponse.halt(response)
             }
             val params = Structure.encode[Int](1)
@@ -230,7 +230,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
 
     ".error accumulates error mappings on the route" in run {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
-            val base      = JsonRpcRoute[AddReq, AddResp]("add") { (req, _) => AddResp(req.a + req.b) }
+            val base      = JsonRpcRoute.request[AddReq, AddResp]("add") { (req, _) => AddResp(req.a + req.b) }
             val withError = base.error[AddReq](-32001, "Bad request")
             assert(withError.errorMappings.length == 1)
             assert(withError.errorMappings(0).code == -32001)

@@ -33,10 +33,10 @@ class HttpStyleTest extends JsonRpcTest:
     end CapturingTransport
 
     "single server endpoint with add and greet: two sequential calls return correct typed results" in run {
-        val addMethod = JsonRpcRoute[AddReq, AddResp]("add") {
+        val addMethod = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
-        val greetMethod = JsonRpcRoute[GreetReq, GreetResp]("greet") {
+        val greetMethod = JsonRpcRoute.request[GreetReq, GreetResp]("greet") {
             (req, _) => GreetResp(s"Hello, ${req.name}!")
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -56,7 +56,7 @@ class HttpStyleTest extends JsonRpcTest:
     "notification triggers handler and no reply frame arrives on wire" in run {
         // Unsafe: AtomicInt.Unsafe.init for handler run counter
         val handlerRan = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val logMethod = JsonRpcRoute[LogMsg, Unit]("log") {
+        val logMethod = JsonRpcRoute.request[LogMsg, Unit]("log") {
             (_, _) => Sync.defer(discard(handlerRan.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -96,11 +96,11 @@ class HttpStyleTest extends JsonRpcTest:
                     case _ =>
                         JsonRpcMessageGate.Decision.Allow
 
-        val initMethod = JsonRpcRoute[InitReq, InitResp]("initialize") {
+        val initMethod = JsonRpcRoute.request[InitReq, InitResp]("initialize") {
             (req, _) =>
                 Sync.defer { initialized = true }.andThen(InitResp("test-server"))
         }
-        val hoverMethod = JsonRpcRoute[HoverReq, HoverResp]("textDocument/hover") {
+        val hoverMethod = JsonRpcRoute.request[HoverReq, HoverResp]("textDocument/hover") {
             (req, _) => HoverResp(s"hover at line ${req.line}")
         }
 

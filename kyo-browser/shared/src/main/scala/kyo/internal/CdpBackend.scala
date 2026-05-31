@@ -2,16 +2,16 @@ package kyo.internal
 
 import CdpTypes.*
 import kyo.*
-import kyo.JsonRpcHandler.ExtrasEncoder
-import kyo.JsonRpcHandler.IdStrategy
-import kyo.JsonRpcHandler.UnknownMethodPolicy
+import kyo.JsonRpcExtrasEncoder
+import kyo.JsonRpcIdStrategy
+import kyo.JsonRpcUnknownMethodPolicy
 import kyo.internal.cdp.PageDownload
 import kyo.internal.codec.RawJsonParser
 
 /** Runtime CDP backend built atop a [[JsonRpcHandler]]. Owns the per-connection
   * dispatcher tables (frame-event / download-event / dialog handlers / dialog
   * recorders), the dialog drainer fiber, the lastEvaluateParams diagnostic, the
-  * per-session ExtrasEncoder, and the 5 CDP notification handlers. Wire framing,
+  * per-session JsonRpcExtrasEncoder, and the 5 CDP notification handlers. Wire framing,
   * codec dispatch, request correlation, per-call timeout, in-flight metering,
   * drain signal, graceful close, and malformed-envelope routing are owned by the
   * embedded [[JsonRpcHandler]].
@@ -31,7 +31,7 @@ final private[kyo] class CdpBackend private[kyo] (
 ):
 
     /** Typed CDP call. Records lastEvaluateParams on Runtime.evaluate, stamps
-      * sessionId via ExtrasEncoder, recovers engine errors to kyo-browser's
+      * sessionId via JsonRpcExtrasEncoder, recovers engine errors to kyo-browser's
       * typed BrowserReadException tree (INV-017).
       */
     private[kyo] def send[P: Schema, R: Schema](method: String, params: P)(using
@@ -42,10 +42,10 @@ final private[kyo] class CdpBackend private[kyo] (
             then lastEvaluateParams.set(Present(Json.encode(params)))
             else Kyo.unit
         val extras = sessionId match
-            case Present(sid) => ExtrasEncoder.const(
+            case Present(sid) => JsonRpcExtrasEncoder.const(
                     Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str(sid.value)))
                 )
-            case Absent => ExtrasEncoder.empty
+            case Absent => JsonRpcExtrasEncoder.empty
         record.andThen {
             Abort.recover[Closed] { closed =>
                 Abort.fail(BrowserConnectionLostException(
@@ -85,7 +85,7 @@ final private[kyo] class CdpBackend private[kyo] (
         send[P, Unit](method, params)
 
     /** Session-scoped fork. All dispatcher tables and the endpoint are shared
-      * with the parent; only the sessionId field differs. ExtrasEncoder is
+      * with the parent; only the sessionId field differs. JsonRpcExtrasEncoder is
       * recomputed per-call from this field, so the wire byte shape is
       * identical to the legacy CdpClient.withSession.
       */
@@ -200,11 +200,11 @@ private[kyo] object CdpBackend:
                 codec = JsonRpcCodec.Cdp,
                 cancellation = Absent,
                 progress = Absent,
-                unknownMethod = UnknownMethodPolicy.minimal,
+                unknownMethod = JsonRpcUnknownMethodPolicy.minimal,
                 gate = Absent,
                 maxInFlight = Present(maxInFlight),
                 requestTimeout = launchCfg.requestTimeout,
-                idStrategy = IdStrategy.SequentialInt,
+                idStrategy = JsonRpcIdStrategy.SequentialInt,
                 progressResetsTimeout = false
             )
             endpoint <- JsonRpcHandler.init(
@@ -461,11 +461,11 @@ private[kyo] object CdpBackend:
                 codec = JsonRpcCodec.Cdp,
                 cancellation = Absent,
                 progress = Absent,
-                unknownMethod = UnknownMethodPolicy.minimal,
+                unknownMethod = JsonRpcUnknownMethodPolicy.minimal,
                 gate = Absent,
                 maxInFlight = Present(maxInFlight),
                 requestTimeout = launchCfg.requestTimeout,
-                idStrategy = IdStrategy.SequentialInt,
+                idStrategy = JsonRpcIdStrategy.SequentialInt,
                 progressResetsTimeout = false
             )
             endpoint <- JsonRpcHandler.init(
@@ -577,7 +577,7 @@ private[kyo] object CdpBackend:
         })
 
     /** Dialog drainer: consumes dialogQueue, allocates negative ids from
-      * dialogIdCounter (disjoint from IdStrategy.SequentialInt's positive
+      * dialogIdCounter (disjoint from JsonRpcIdStrategy.SequentialInt's positive
       * allocator, per INV-018), and writes Page.handleJavaScriptDialog
       * fire-and-forget via endpoint.sendUnmatched.
       */
@@ -591,10 +591,10 @@ private[kyo] object CdpBackend:
                 dialogQueue.stream().foreach { case (accept, promptText, sessionId) =>
                     dialogIdCounter.getAndIncrement.map { id =>
                         val extras = sessionId match
-                            case Present(sid) => ExtrasEncoder.const(
+                            case Present(sid) => JsonRpcExtrasEncoder.const(
                                     Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str(sid.value)))
                                 )
-                            case Absent => ExtrasEncoder.empty
+                            case Absent => JsonRpcExtrasEncoder.empty
                         Abort.run[Closed](
                             endpoint.sendUnmatched(
                                 "Page.handleJavaScriptDialog",

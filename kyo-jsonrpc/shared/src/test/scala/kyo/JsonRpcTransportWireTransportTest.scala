@@ -5,7 +5,7 @@ import kyo.Maybe.Absent
 class JsonRpcTransportWireTransportTest extends JsonRpcTest:
 
     "empty wire transport produces no bytes" in run {
-        val wire   = JsonRpcTransport.WireTransport.empty
+        val wire   = JsonRpcWireTransport.empty
         val result = wire.incoming.run
         result.map { chunks =>
             assert(chunks.isEmpty)
@@ -16,22 +16,22 @@ class JsonRpcTransportWireTransportTest extends JsonRpcTest:
         for
             aToBChan <- Channel.initUnscoped[Chunk[Byte]](64)
             bToAChan <- Channel.initUnscoped[Chunk[Byte]](64)
-            wireA = new JsonRpcTransport.WireTransport:
+            wireA = new JsonRpcWireTransport:
                 def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
                     aToBChan.put(bytes)
                 def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
                     bToAChan.stream()
                 def close(using Frame): Unit < Async =
                     aToBChan.close.andThen(bToAChan.close).unit
-            wireB = new JsonRpcTransport.WireTransport:
+            wireB = new JsonRpcWireTransport:
                 def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
                     bToAChan.put(bytes)
                 def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
                     aToBChan.stream()
                 def close(using Frame): Unit < Async =
                     bToAChan.close.andThen(aToBChan.close).unit
-            transportA   = new internal.transport.WireTransportAdapter(wireA, JsonRpcTransport.Framer.lineDelimited, JsonRpcCodec.Strict2_0)
-            transportB   = new internal.transport.WireTransportAdapter(wireB, JsonRpcTransport.Framer.lineDelimited, JsonRpcCodec.Strict2_0)
+            transportA   = new internal.transport.WireTransportAdapter(wireA, JsonRpcFramer.lineDelimited, JsonRpcCodec.Strict2_0)
+            transportB   = new internal.transport.WireTransportAdapter(wireB, JsonRpcFramer.lineDelimited, JsonRpcCodec.Strict2_0)
             sentEnvelope = JsonRpcRequest(JsonRpcId.Num(1L), "ping", Absent, Absent)
             receiverFiber <- Fiber.initUnscoped(Abort.run[Closed](transportB.incoming.take(1).run))
             _             <- transportA.send(sentEnvelope)

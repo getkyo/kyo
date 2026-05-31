@@ -2,8 +2,8 @@ package kyo.internal
 
 import CdpTypes.*
 import kyo.*
-import kyo.JsonRpcHandler.ExtrasEncoder
-import kyo.JsonRpcHandler.IdStrategy
+import kyo.JsonRpcExtrasEncoder
+import kyo.JsonRpcIdStrategy
 import kyo.internal.cdp.PageDownload
 
 /** Smoke tests for the Phase 01 [[CdpBackend]] runtime class.
@@ -36,13 +36,13 @@ class CdpBackendSmokeTest extends Test:
         serverTransport: JsonRpcTransport,
         extraMethods: Seq[JsonRpcRoute[?, ?, ?]] = Seq.empty
     )(using Frame): JsonRpcHandler < (Async & Scope) =
-        val versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult](
+        val versionMethod = JsonRpcRoute.request[BrowserGetVersionParams, BrowserVersionResult](
             "Browser.getVersion"
         ) { (_, _) => testVersionResult }
         val config = JsonRpcHandler.Config(
             codec = JsonRpcCodec.Cdp,
             maxInFlight = Present(8),
-            idStrategy = IdStrategy.SequentialInt
+            idStrategy = JsonRpcIdStrategy.SequentialInt
         )
         JsonRpcHandler.init(serverTransport, versionMethod +: extraMethods, config)
     end mkServerEndpoint
@@ -89,7 +89,7 @@ class CdpBackendSmokeTest extends Test:
 
     "send writes wire bytes that match legacy CDP envelope shape" in run {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
-            val navigateMethod = JsonRpcRoute[NavigateParams, NavigateResult](
+            val navigateMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
                 "Page.navigate"
             ) { (_, ctx) =>
                 capturedExtrasRef.set(Present(ctx.extras)).map(_ => NavigateResult("frame-1"))
@@ -112,9 +112,9 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "session-scoped backend stamps sessionId via ExtrasEncoder" in run {
+    "session-scoped backend stamps sessionId via JsonRpcExtrasEncoder" in run {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
-            val navigateMethod = JsonRpcRoute[NavigateParams, NavigateResult](
+            val navigateMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
                 "Page.navigate"
             ) { (_, ctx) =>
                 capturedExtrasRef.set(Present(ctx.extras)).map(_ => NavigateResult("frame-2"))
@@ -151,7 +151,7 @@ class CdpBackendSmokeTest extends Test:
                                 serverEndpoint.notify[JavascriptDialogOpeningParams](
                                     "Page.javascriptDialogOpening",
                                     JavascriptDialogOpeningParams(url = "http://a.com", message = "hi", `type` = "alert"),
-                                    ExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("s1"))))
+                                    JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("s1"))))
                                 )
                             ).andThen {
                                 untilTrue(recorder.get.map(_.nonEmpty)).andThen {
@@ -171,7 +171,7 @@ class CdpBackendSmokeTest extends Test:
 
     "Page.javascriptDialogOpening auto-dismisses when no handler is registered" in run {
         AtomicRef.init[Maybe[Long]](Absent).map { capturedDismissId =>
-            val handleDialogMethod = JsonRpcRoute[HandleJavaScriptDialogParams, Unit](
+            val handleDialogMethod = JsonRpcRoute.request[HandleJavaScriptDialogParams, Unit](
                 "Page.handleJavaScriptDialog"
             ) { (_, ctx) =>
                 // Capture the request id to verify the drainer sent the auto-dismiss
@@ -185,7 +185,7 @@ class CdpBackendSmokeTest extends Test:
                         serverEndpoint.notify[JavascriptDialogOpeningParams](
                             "Page.javascriptDialogOpening",
                             JavascriptDialogOpeningParams(url = "http://x.com", message = "alert!", `type` = "alert"),
-                            ExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("unknown"))))
+                            JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("unknown"))))
                         )
                     ).andThen {
                         untilTrue(capturedDismissId.get.map(_.isDefined)).andThen {
@@ -210,7 +210,7 @@ class CdpBackendSmokeTest extends Test:
                         val params = ExecutionContextCreatedParams(
                             ExecutionContextDescription(1, ExecutionContextAuxData(isDefault = true, frameId = "frame1"))
                         )
-                        val extras = ExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("frame1"))))
+                        val extras = JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("frame1"))))
                         Abort.run[Closed](
                             serverEndpoint.notify[ExecutionContextCreatedParams](
                                 "Runtime.executionContextCreated",
@@ -250,7 +250,7 @@ class CdpBackendSmokeTest extends Test:
                             url = "http://example.com/file.pdf",
                             suggestedFilename = "x.pdf"
                         )
-                        val extras = ExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("dl"))))
+                        val extras = JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("dl"))))
                         Abort.run[Closed](
                             serverEndpoint.notify[PageDownload.DownloadWillBeginWire](
                                 "Page.downloadWillBegin",
@@ -290,7 +290,7 @@ class CdpBackendSmokeTest extends Test:
 
     "dialog drainer issues sendUnmatched with negative JsonRpcId.Num" in run {
         AtomicRef.init[Maybe[Long]](Absent).map { capturedIdRef =>
-            val handleDialogMethod = JsonRpcRoute[HandleJavaScriptDialogParams, Unit](
+            val handleDialogMethod = JsonRpcRoute.request[HandleJavaScriptDialogParams, Unit](
                 "Page.handleJavaScriptDialog"
             ) { (_, ctx) =>
                 ctx.requestId match

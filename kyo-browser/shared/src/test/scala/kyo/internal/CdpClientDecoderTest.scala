@@ -1,7 +1,7 @@
 package kyo.internal
 
 import kyo.*
-import kyo.JsonRpcHandler.IdStrategy
+import kyo.JsonRpcIdStrategy
 import kyo.internal.CdpTypes.*
 
 /** Behavior-equivalent replacement for the deleted `CdpClient.decodeCdpMessage` tests.
@@ -37,13 +37,13 @@ class CdpClientDecoderTest extends kyo.Test:
         extraServerMethods: Seq[JsonRpcRoute[?, ?, ?]] = Seq.empty
     )(using Frame): (CdpBackend, JsonRpcTransport) < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
         JsonRpcTransport.inMemory.map { (clientTransport, serverTransport) =>
-            val versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult](
+            val versionMethod = JsonRpcRoute.request[BrowserGetVersionParams, BrowserVersionResult](
                 "Browser.getVersion"
             ) { (_, _) => testVersionResult }
             val config = JsonRpcHandler.Config(
                 codec = JsonRpcCodec.Cdp,
                 maxInFlight = Present(8),
-                idStrategy = IdStrategy.SequentialInt
+                idStrategy = JsonRpcIdStrategy.SequentialInt
             )
             JsonRpcHandler.init(serverTransport, versionMethod +: extraServerMethods, config).andThen {
                 CdpBackend.initUnscoped(clientTransport, testLaunchCfg).map { backend =>
@@ -60,7 +60,7 @@ class CdpClientDecoderTest extends kyo.Test:
         // Server responds with a typed JSON-RPC error.
         // Equivalent wire shape: `{"id": 1, "error": {"code": -32602, "message": "Invalid params"}}`.
         Scope.run {
-            val errorMethod = JsonRpcRoute[CdpNoParams, GetTargetsResult](
+            val errorMethod = JsonRpcRoute.request[CdpNoParams, GetTargetsResult](
                 "Target.getTargets"
             ) { (_, _) =>
                 Abort.fail(JsonRpcInvalidParamsError("[test]", Maybe.Absent, Chunk.empty))
@@ -128,7 +128,7 @@ class CdpClientDecoderTest extends kyo.Test:
     "decodeCdpMessage: error-id branch surfaces BrowserProtocolErrorException (4a)" in run {
         // Same shape as case 1; verifies the same pipeline at a different method site.
         Scope.run {
-            val errorMethod = JsonRpcRoute[AttachParams, AttachResult](
+            val errorMethod = JsonRpcRoute.request[AttachParams, AttachResult](
                 "Target.attachToTarget"
             ) { (_, _) =>
                 Abort.fail(JsonRpcMethodNotFoundError("[test]", Chunk.empty))
@@ -265,10 +265,10 @@ class CdpClientDecoderTest extends kyo.Test:
     // ─────────────────────────────────────────────────────────────────────────
 
     "eventWhitelist: non-whitelisted notification is silently dropped by the endpoint" in run {
-        // An unregistered notification method is handled by `JsonRpcHandler.UnknownMethodPolicy.minimal` which discards it.
+        // An unregistered notification method is handled by `JsonRpcUnknownMethodPolicy.minimal` which discards it.
         // Equivalent to the old `Exchange.Message.Skip` for a non-whitelisted event.
         Scope.run {
-            val getTargetsMethod = JsonRpcRoute[CdpNoParams, GetTargetsResult](
+            val getTargetsMethod = JsonRpcRoute.request[CdpNoParams, GetTargetsResult](
                 "Target.getTargets"
             ) { (_, _) => GetTargetsResult(targetInfos = Seq.empty) }
             mkBackendAndServerTransport(Seq(getTargetsMethod)).map { (backend, serverTransport) =>

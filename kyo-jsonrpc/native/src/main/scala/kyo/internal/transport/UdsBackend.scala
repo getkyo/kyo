@@ -15,7 +15,7 @@ private[kyo] object UdsBackend:
 
     def connect(
         sockPath: Path,
-        framer: JsonRpcTransport.Framer = JsonRpcTransport.Framer.lineDelimited,
+        framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
         codec: JsonRpcCodec = JsonRpcCodec.Strict2_0
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         Abort.fail(new UnsupportedOperationException(

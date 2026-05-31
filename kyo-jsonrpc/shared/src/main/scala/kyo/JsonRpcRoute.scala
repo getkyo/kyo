@@ -20,7 +20,7 @@ import kyo.Structure
   * Chain [[error]] to register typed domain errors that the handler may abort with. Domain errors
   * are mapped to JSON-RPC error responses using the registered code and message:
   * {{{
-  * val route = JsonRpcRoute[Req, Resp]("doThing")(handler)
+  * val route = JsonRpcRoute.request[Req, Resp]("doThing")(handler)
   *   .error[NotFound](-32001, "Not found")
   *   .error[Forbidden](-32002, "Forbidden")
   * // route: JsonRpcRoute[Req, Resp, NotFound | Forbidden]
@@ -127,12 +127,6 @@ object JsonRpcRoute:
         val capturedSchemaOut: Schema[Out] = summon[Schema[Out]]
         new RequestRoute[In, Out, Nothing](name, capturedSchemaIn, capturedSchemaOut, handler, Chunk.empty)
     end request
-
-    /** Alias for [[request]] for backward compatibility. */
-    inline def apply[In: Schema, Out: Schema](name: String)(
-        handler: (In, JsonRpcRoute.Context) => Out < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])
-    )(using Frame): JsonRpcRoute[In, Out, Nothing] =
-        request[In, Out](name)(handler)
 
     def notification[In: Schema](name: String)(
         handler: (In, JsonRpcRoute.Context) => Unit < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])

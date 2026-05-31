@@ -25,21 +25,6 @@ end JsonRpcTransport
 
 object JsonRpcTransport:
 
-    // --- Backward-compat type aliases for the 2 hoisted types (Phase G) ---
-    // These allow existing callers using the qualified form to continue compiling.
-
-    /** @see [[JsonRpcWireTransport]] */
-    type WireTransport = JsonRpcWireTransport
-
-    /** @see [[JsonRpcWireTransport]] */
-    val WireTransport: JsonRpcWireTransport.type = JsonRpcWireTransport
-
-    /** @see [[JsonRpcFramer]] */
-    type Framer = JsonRpcFramer
-
-    /** @see [[JsonRpcFramer]] */
-    val Framer: JsonRpcFramer.type = JsonRpcFramer
-
     /** Pair of cross-wired in-memory transports for tests.
       *
       * Returns (a, b) where a.send -> b.incoming and b.send -> a.incoming.

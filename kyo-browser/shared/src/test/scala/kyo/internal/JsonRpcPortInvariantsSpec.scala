@@ -2,9 +2,9 @@ package kyo.internal
 
 import CdpTypes.*
 import kyo.*
-import kyo.JsonRpcHandler.ExtrasEncoder
-import kyo.JsonRpcHandler.IdStrategy
-import kyo.JsonRpcHandler.UnknownMethodPolicy
+import kyo.JsonRpcExtrasEncoder
+import kyo.JsonRpcIdStrategy
+import kyo.JsonRpcUnknownMethodPolicy
 
 /** Invariant smoke tests for Phase 01 of the kyo-browser CDP client port to kyo-jsonrpc.
   *
@@ -47,7 +47,7 @@ class JsonRpcPortInvariantsSpec extends Test:
         serverTransport: JsonRpcTransport,
         extraMethods: Seq[JsonRpcRoute[?, ?, ?]] = Seq.empty
     )(using Frame): JsonRpcHandler < (Async & Scope) =
-        val versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult](
+        val versionMethod = JsonRpcRoute.request[BrowserGetVersionParams, BrowserVersionResult](
             "Browser.getVersion"
         ) { (_, _) => testVersionResult }
         JsonRpcHandler.init(
@@ -56,7 +56,7 @@ class JsonRpcPortInvariantsSpec extends Test:
             JsonRpcHandler.Config(
                 codec = JsonRpcCodec.Cdp,
                 maxInFlight = Present(8),
-                idStrategy = IdStrategy.SequentialInt
+                idStrategy = JsonRpcIdStrategy.SequentialInt
             )
         )
     end mkServerEndpoint
@@ -178,12 +178,12 @@ class JsonRpcPortInvariantsSpec extends Test:
         end if
     }
 
-    // --- INV-015: per-sessionId routing via ExtrasEncoder + ctx.extras ---
+    // --- INV-015: per-sessionId routing via JsonRpcExtrasEncoder + ctx.extras ---
 
-    "INV-015: round-trip exercises ExtrasEncoder and ctx.extras routing" in run {
+    "INV-015: round-trip exercises JsonRpcExtrasEncoder and ctx.extras routing" in run {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
             AtomicRef.init[Maybe[CdpEvent.Generic]](Absent).map { frameEventRef =>
-                val navigateMethod = JsonRpcRoute[NavigateParams, NavigateResult](
+                val navigateMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
                     "Page.navigate"
                 ) { (_, ctx) =>
                     capturedExtrasRef.set(Present(ctx.extras)).map(_ => NavigateResult("frame-rt"))
@@ -212,7 +212,7 @@ class JsonRpcPortInvariantsSpec extends Test:
                                 val createdParams = ExecutionContextCreatedParams(
                                     ExecutionContextDescription(1, ExecutionContextAuxData(isDefault = true, frameId = "rt"))
                                 )
-                                val extras = ExtrasEncoder.const(
+                                val extras = JsonRpcExtrasEncoder.const(
                                     Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("rt")))
                                 )
                                 Abort.run[Closed](
@@ -281,7 +281,7 @@ class JsonRpcPortInvariantsSpec extends Test:
     }
 
     "INV-017: JsonRpcError at send surfaces as BrowserProtocolErrorException" in run {
-        val errorMethod = JsonRpcRoute[NavigateParams, NavigateResult](
+        val errorMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
             "Page.navigate"
         ) { (_, _) =>
             Abort.fail(JsonRpcMethodNotFoundError("Page.navigate", Chunk.empty))
@@ -304,14 +304,14 @@ class JsonRpcPortInvariantsSpec extends Test:
         // Use a very short requestTimeout; server handles getVersion probe but NEVER replies to Page.navigate
         // Server uses Drop policy for unknown requests so no MethodNotFound reply is sent.
         val timeoutCfg = testLaunchCfg.copy(requestTimeout = 200.millis)
-        val dropPolicy = UnknownMethodPolicy(
-            onUnknownRequest = UnknownMethodPolicy.UnknownAction.Drop,
-            onUnknownNotification = UnknownMethodPolicy.UnknownAction.Drop,
+        val dropPolicy = JsonRpcUnknownMethodPolicy(
+            onUnknownRequest = JsonRpcUnknownMethodPolicy.UnknownAction.Drop,
+            onUnknownNotification = JsonRpcUnknownMethodPolicy.UnknownAction.Drop,
             dollarPrefixOverride = false
         )
         Scope.run {
             JsonRpcTransport.inMemory.map { (client, server) =>
-                val versionMethod = JsonRpcRoute[BrowserGetVersionParams, BrowserVersionResult](
+                val versionMethod = JsonRpcRoute.request[BrowserGetVersionParams, BrowserVersionResult](
                     "Browser.getVersion"
                 ) { (_, _) => testVersionResult }
                 JsonRpcHandler.init(
@@ -321,7 +321,7 @@ class JsonRpcPortInvariantsSpec extends Test:
                         codec = JsonRpcCodec.Cdp,
                         unknownMethod = dropPolicy,
                         maxInFlight = Present(8),
-                        idStrategy = IdStrategy.SequentialInt
+                        idStrategy = JsonRpcIdStrategy.SequentialInt
                     )
                 ).map { _ =>
                     CdpBackend.initUnscoped(client, timeoutCfg).map { backend =>
@@ -347,14 +347,14 @@ class JsonRpcPortInvariantsSpec extends Test:
     "INV-018: dialogIdCounter starts at Int.MinValue and produces negative ids disjoint from SequentialInt" in run {
         AtomicRef.init[Maybe[Long]](Absent).map { dialogIdRef =>
             AtomicRef.init[Maybe[Long]](Absent).map { regularIdRef =>
-                val handleDialogMethod = JsonRpcRoute[HandleJavaScriptDialogParams, Unit](
+                val handleDialogMethod = JsonRpcRoute.request[HandleJavaScriptDialogParams, Unit](
                     "Page.handleJavaScriptDialog"
                 ) { (_, ctx) =>
                     ctx.requestId match
                         case Present(JsonRpcId.Num(n)) => dialogIdRef.set(Present(n))
                         case _                         => Kyo.unit
                 }
-                val navigateMethod = JsonRpcRoute[NavigateParams, NavigateResult](
+                val navigateMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
                     "Page.navigate"
                 ) { (_, ctx) =>
                     ctx.requestId match

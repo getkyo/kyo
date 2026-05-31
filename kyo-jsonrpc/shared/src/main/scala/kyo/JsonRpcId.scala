@@ -15,7 +15,7 @@ import scala.annotation.nowarn
   *  - [[JsonRpcId.apply(s: String)]]: string id.
   *
   * Used in [[JsonRpcRequest.id]], [[JsonRpcResponse.id]], [[JsonRpcMalformedMessage.id]],
-  * [[JsonRpcHandler.cancel]], [[JsonRpcHandler.Pending.id]], [[JsonRpcHandler.ExtrasEncoder]],
+  * [[JsonRpcHandler.cancel]], [[JsonRpcHandler.Pending.id]], [[JsonRpcExtrasEncoder]],
   * and [[JsonRpcRoute.Context.requestId]].
   *
   * @see [[JsonRpcRequest]]
