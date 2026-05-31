@@ -40,7 +40,7 @@ class CdpBackendSmokeTest extends Test:
             "Browser.getVersion"
         ) { (_, _) => testVersionResult }
         val config = JsonRpcHandler.Config(
-            codec = JsonRpcCodec.Cdp,
+            codec = JsonRpcCodec.Lenient,
             maxInFlight = Present(8),
             idStrategy = JsonRpcIdStrategy.SequentialInt
         )

@@ -70,7 +70,7 @@ class WsStyleTest extends JsonRpcTest:
         }
     }
 
-    "CDP-shape maxInFlight=8: 9th call parks until one of the first 8 is manually completed" in run {
+    "Lenient maxInFlight=8: 9th call parks until one of the first 8 is manually completed" in run {
         // Unsafe: AtomicRef.Unsafe.init for promise accumulation across fibers
         val entryPromises = AtomicRef.Unsafe.init(List.empty[Fiber.Promise[Unit, Any]])(using AllowUnsafe.embrace.danger)
         // Unsafe: AtomicRef.Unsafe.init for first-slot promise capture
@@ -92,16 +92,16 @@ class WsStyleTest extends JsonRpcTest:
             }
         }
 
-        val cdpConfig = JsonRpcHandler.Config(
-            codec = JsonRpcCodec.Cdp,
+        val lenientConfig = JsonRpcHandler.Config(
+            codec = JsonRpcCodec.Lenient,
             cancellation = Absent,
             progress = Absent,
             maxInFlight = Present(8)
         )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, cdpConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(pingOnB), cdpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, lenientConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(pingOnB), lenientConfig).map { _ =>
                     Kyo.foreach(Chunk.from(1 to 8)) { n =>
                         Fiber.initUnscoped(
                             Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(n)))
@@ -146,7 +146,7 @@ class WsStyleTest extends JsonRpcTest:
         }
     }
 
-    "CDP-shape extras: JsonRpcExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in run {
+    "Lenient extras: JsonRpcExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in run {
         // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
         val capturedExtras = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
 
@@ -156,15 +156,15 @@ class WsStyleTest extends JsonRpcTest:
         }
 
         val sessionExtras = Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("s1")))
-        val cdpConfig = JsonRpcHandler.Config(
-            codec = JsonRpcCodec.Cdp,
+        val lenientConfig = JsonRpcHandler.Config(
+            codec = JsonRpcCodec.Lenient,
             cancellation = Absent,
             progress = Absent
         )
 
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, cdpConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(cmdOnB), cdpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, lenientConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(cmdOnB), lenientConfig).map { _ =>
                     endpointA.call[CmdReq, CmdResp](
                         "execute",
                         CmdReq("doWork"),

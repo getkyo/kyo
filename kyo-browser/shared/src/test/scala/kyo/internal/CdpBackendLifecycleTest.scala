@@ -1174,7 +1174,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                     "Browser.getVersion"
                 ) { (_, _) => testVersionResult }
                 serverCfg = JsonRpcHandler.Config(
-                    codec = JsonRpcCodec.Cdp,
+                    codec = JsonRpcCodec.Lenient,
                     maxInFlight = Present(8),
                     idStrategy = JsonRpcIdStrategy.SequentialInt
                 )

@@ -10,8 +10,8 @@ import kyo.Sync
   * Two built-in codec instances are provided:
   *  - [[JsonRpcCodec.Strict2_0]]: strict JSON-RPC 2.0 encoding; the `"jsonrpc":"2.0"` field
   *    is required on decode and emitted on encode.
-  *  - [[JsonRpcCodec.Cdp]]: Chrome DevTools Protocol dialect without the `"jsonrpc"` version
-  *    field.
+  *  - [[JsonRpcCodec.Lenient]]: omits the `"jsonrpc"` version field on encode; accepts messages
+  *    without it on decode.
   *
   * Set via [[JsonRpcHandler.Config.codec]]. Custom implementations can be provided by
   * implementing this trait.
@@ -26,7 +26,7 @@ end JsonRpcCodec
 
 object JsonRpcCodec:
     val Strict2_0: JsonRpcCodec = internal.codec.JsonRpcCodecImpl.Strict2_0
-    val Cdp: JsonRpcCodec       = internal.codec.JsonRpcCodecImpl.Cdp
+    val Lenient: JsonRpcCodec   = internal.codec.JsonRpcCodecImpl.Lenient
 
     /** The default codec: strict JSON-RPC 2.0 encoding.
       * Matches the value used by [[JsonRpcHandler.Config.default]].

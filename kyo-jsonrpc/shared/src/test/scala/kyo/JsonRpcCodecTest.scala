@@ -115,10 +115,10 @@ class JsonRpcCodecTest extends JsonRpcTest:
             end match
     }
 
-    "Cdp encode stamps extras at top level without jsonrpc field" in run {
+    "Lenient encode stamps extras at top level without jsonrpc field" in run {
         val extras = Present(Record(Chunk("sessionId" -> Str("s1"))))
         val env    = JsonRpcRequest(JsonRpcId.Num(2L), "m", Absent, extras)
-        Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(env)).map: result =>
+        Abort.run[JsonRpcError](JsonRpcCodec.Lenient.encode(env)).map: result =>
             val sv = getSuccess(result)
             sv match
                 case Record(fields) =>
@@ -129,23 +129,23 @@ class JsonRpcCodecTest extends JsonRpcTest:
             end match
     }
 
-    "Cdp encode fails with invalidRequest when extras contains reserved key" in run {
+    "Lenient encode fails with invalidRequest when extras contains reserved key" in run {
         val badExtras = Present(Record(Chunk("method" -> Str("hijack"))))
         val env       = JsonRpcRequest(JsonRpcId.Num(1L), "legit", Absent, badExtras)
-        Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(env)).map: result =>
+        Abort.run[JsonRpcError](JsonRpcCodec.Lenient.encode(env)).map: result =>
             result match
                 case Result.Failure(e) => assert(e.code == -32600)
                 case _                 => fail(s"expected failure, got $result")
     }
 
-    "Cdp decode harvests unknown top-level fields into extras" in run {
+    "Lenient decode harvests unknown top-level fields into extras" in run {
         val raw = Record(Chunk(
             "id"        -> Integer(2L),
             "method"    -> Str("Page.navigate"),
             "params"    -> Record(Chunk("url" -> Str("https://example.com"))),
             "sessionId" -> Str("abc123")
         ))
-        JsonRpcCodec.Cdp.decode(raw).map: decoded =>
+        JsonRpcCodec.Lenient.decode(raw).map: decoded =>
             assert(decoded == JsonRpcRequest(
                 JsonRpcId.Num(2L),
                 "Page.navigate",
@@ -163,8 +163,8 @@ class JsonRpcCodecTest extends JsonRpcTest:
     "extras Absent versus Present Null are distinct on the wire" in run {
         val envAbsent = JsonRpcRequest(JsonRpcId.Num(1L), "m", Absent, Absent)
         val envNull   = JsonRpcRequest(JsonRpcId.Num(1L), "m", Absent, Present(Null))
-        Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(envAbsent)).flatMap: rAbsent =>
-            Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(envNull)).map: rNull =>
+        Abort.run[JsonRpcError](JsonRpcCodec.Lenient.encode(envAbsent)).flatMap: rAbsent =>
+            Abort.run[JsonRpcError](JsonRpcCodec.Lenient.encode(envNull)).map: rNull =>
                 val vAbsent = getSuccess(rAbsent)
                 val vNull   = getSuccess(rNull)
                 assert(vAbsent != vNull)
@@ -182,16 +182,16 @@ class JsonRpcCodecTest extends JsonRpcTest:
         assert(err.data == Present(Str("user")))
     }
 
-    "Cdp omits jsonrpc field and Strict2_0 always includes it" in run {
+    "Lenient omits jsonrpc field and Strict2_0 always includes it" in run {
         val env = JsonRpcRequest(JsonRpcId.Num(1L), "m", Absent, Absent)
         Abort.run[JsonRpcError](JsonRpcCodec.Strict2_0.encode(env)).flatMap: rStrict =>
-            Abort.run[JsonRpcError](JsonRpcCodec.Cdp.encode(env)).map: rCdp =>
-                val vStrict = getSuccess(rStrict)
-                val vCdp    = getSuccess(rCdp)
+            Abort.run[JsonRpcError](JsonRpcCodec.Lenient.encode(env)).map: rLenient =>
+                val vStrict  = getSuccess(rStrict)
+                val vLenient = getSuccess(rLenient)
                 vStrict match
                     case Record(sf) => assert(sf.exists(_._1 == "jsonrpc"))
                     case _          => fail("expected Record")
-                vCdp match
+                vLenient match
                     case Record(cf) => assert(!cf.exists(_._1 == "jsonrpc"))
                     case _          => fail("expected Record")
     }
@@ -209,24 +209,24 @@ class JsonRpcCodecTest extends JsonRpcTest:
         }
     }
 
-    "Cdp decoder recovers id from malformed response" in run {
+    "Lenient decoder recovers id from malformed response" in run {
         val raw = Structure.Value.Record(Chunk(
             "id"     -> Structure.Value.Integer(99),
             "result" -> Structure.Value.Record(Chunk("x" -> Structure.Value.Integer(1))),
             "error"  -> Structure.Value.Str("boom")
         ))
-        JsonRpcCodec.Cdp.decode(raw).map {
+        JsonRpcCodec.Lenient.decode(raw).map {
             case JsonRpcMalformedMessage(Present(JsonRpcId.Num(99)), _, _) => succeed
             case other                                                     => fail(s"expected Malformed-with-id, got $other")
         }
     }
 
-    "Cdp decoder emits Malformed for non-Record error field" in run {
+    "Lenient decoder emits Malformed for non-Record error field" in run {
         val raw = Structure.Value.Record(Chunk(
             "id"    -> Structure.Value.Integer(7),
             "error" -> Structure.Value.Str("stringy error")
         ))
-        JsonRpcCodec.Cdp.decode(raw).map {
+        JsonRpcCodec.Lenient.decode(raw).map {
             case JsonRpcMalformedMessage(Present(JsonRpcId.Num(7)), reason, _) =>
                 assert(reason.nonEmpty)
             case other => fail(s"expected Malformed-with-id for non-Record error, got $other")

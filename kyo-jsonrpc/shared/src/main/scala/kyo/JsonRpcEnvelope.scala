@@ -28,8 +28,9 @@ sealed trait JsonRpcEnvelope derives CanEqual
   * The framework routes this to the matching registered handler and sends a [[JsonRpcResponse]]
   * with the same id when the handler completes.
   *
-  * The `extras` field carries any non-standard fields present in the wire object (e.g. CDP
-  * `sessionId`). The codec populates this from fields not defined by the base JSON-RPC 2.0 spec.
+  * The `extras` field carries any non-standard fields present in the wire object (e.g.
+  * protocol-extension fields like `sessionId` or `_meta`). The codec populates this from
+  * fields not defined by the base JSON-RPC 2.0 spec.
   *
   * Extends [[JsonRpcEnvelope]]; exhaustive pattern matching over all envelope kinds is supported.
   *
@@ -114,8 +115,9 @@ end JsonRpcResponse
   * field (or an id field explicitly set to null). The framework dispatches this to the matching
   * registered handler and does not send any reply.
   *
-  * The `extras` field carries any non-standard fields present in the wire object (e.g. CDP
-  * `sessionId`). The codec populates this from fields not defined by the base JSON-RPC 2.0 spec.
+  * The `extras` field carries any non-standard fields present in the wire object (e.g.
+  * protocol-extension fields like `sessionId` or `_meta`). The codec populates this from
+  * fields not defined by the base JSON-RPC 2.0 spec.
   *
   * Extends [[JsonRpcEnvelope]]; exhaustive pattern matching over all envelope kinds is supported.
   *

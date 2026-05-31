@@ -4,7 +4,7 @@ import kyo.*
 
 private[kyo] object JsonRpcCodecImpl:
 
-    private val cdpReservedKeys: Set[String] =
+    private val reservedKeys: Set[String] =
         Set("id", "method", "params", "result", "error", "jsonrpc")
 
     val Strict2_0: JsonRpcCodec = new JsonRpcCodec:
@@ -120,7 +120,7 @@ private[kyo] object JsonRpcCodecImpl:
 
     end Strict2_0
 
-    val Cdp: JsonRpcCodec = new JsonRpcCodec:
+    val Lenient: JsonRpcCodec = new JsonRpcCodec:
 
         def encode(env: JsonRpcEnvelope)(using Frame): Structure.Value < (Sync & Abort[JsonRpcError]) =
             env match
@@ -164,7 +164,7 @@ private[kyo] object JsonRpcCodecImpl:
                 case Absent =>
                     Sync.defer(Structure.Value.Record(base))
                 case Present(Structure.Value.Record(extraFields)) =>
-                    val badKey = extraFields.iterator.map(_._1).find(cdpReservedKeys.contains)
+                    val badKey = extraFields.iterator.map(_._1).find(reservedKeys.contains)
                     // Iterator.find() returns scala.Option; match arms are interop, not kyo code
                     badKey match
                         // scala.Option arm; interop with Iterator.find (covered by comment above match)
@@ -191,7 +191,7 @@ private[kyo] object JsonRpcCodecImpl:
             Sync.defer:
                 raw match
                     case Structure.Value.Record(fields) =>
-                        val known = cdpReservedKeys
+                        val known = reservedKeys
 
                         def getStr(key: String): Maybe[String] =
                             Maybe.fromOption(fields.iterator.collectFirst { case (k, Structure.Value.Str(s)) if k == key => s })
@@ -252,6 +252,6 @@ private[kyo] object JsonRpcCodecImpl:
                         JsonRpcMalformedMessage(Absent, "expected a Record", other)
         end decode
 
-    end Cdp
+    end Lenient
 
 end JsonRpcCodecImpl

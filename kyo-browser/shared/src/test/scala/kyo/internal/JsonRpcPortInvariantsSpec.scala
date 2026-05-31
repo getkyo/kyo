@@ -54,7 +54,7 @@ class JsonRpcPortInvariantsSpec extends Test:
             serverTransport,
             versionMethod +: extraMethods,
             JsonRpcHandler.Config(
-                codec = JsonRpcCodec.Cdp,
+                codec = JsonRpcCodec.Lenient,
                 maxInFlight = Present(8),
                 idStrategy = JsonRpcIdStrategy.SequentialInt
             )
@@ -318,7 +318,7 @@ class JsonRpcPortInvariantsSpec extends Test:
                     server,
                     Seq(versionMethod),
                     JsonRpcHandler.Config(
-                        codec = JsonRpcCodec.Cdp,
+                        codec = JsonRpcCodec.Lenient,
                         unknownMethod = dropPolicy,
                         maxInFlight = Present(8),
                         idStrategy = JsonRpcIdStrategy.SequentialInt

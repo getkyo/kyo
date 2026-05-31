@@ -349,10 +349,10 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     AddResp(req.a + req.b)
                 }
         }
-        val cdpConfig = JsonRpcHandler.Config(codec = JsonRpcCodec.Cdp)
+        val lenientConfig = JsonRpcHandler.Config(codec = JsonRpcCodec.Lenient)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, cdpConfig).map { a =>
-                JsonRpcHandler.init(tb, Seq(echoMethod), cdpConfig).map { _ =>
+            JsonRpcHandler.init(ta, Seq.empty, lenientConfig).map { a =>
+                JsonRpcHandler.init(tb, Seq(echoMethod), lenientConfig).map { _ =>
                     a.call[AddReq, AddResp]("add", AddReq(1, 1), JsonRpcExtrasEncoder.const(extrasValue)).map { _ =>
                         Sync.defer(assert(seen.get()(using AllowUnsafe.embrace.danger) == Present(extrasValue)))
                     }
@@ -482,8 +482,8 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     }
 
     "Config fluent setter codec round-trips" in run {
-        val cfg = JsonRpcHandler.Config.default.codec(JsonRpcCodec.Cdp)
-        assert(cfg.codec eq JsonRpcCodec.Cdp)
+        val cfg = JsonRpcHandler.Config.default.codec(JsonRpcCodec.Lenient)
+        assert(cfg.codec eq JsonRpcCodec.Lenient)
     }
 
     "Config fluent setter idStrategy round-trips" in run {

@@ -189,7 +189,7 @@ private[kyo] object CdpBackend:
             transport <- (Abort.recover[HttpException] { e =>
                 Abort.fail(BrowserConnectionLostException(s"WS transport setup: ${e.getMessage}", Absent))
             } {
-                JsonRpcHttpTransport.webSocket(url, HttpHeaders.empty, JsonRpcCodec.Cdp)
+                JsonRpcHttpTransport.webSocket(url, HttpHeaders.empty, JsonRpcCodec.Lenient)
             }: JsonRpcTransport < (Async & Scope & Abort[BrowserReadException]))
             dialogMethod         <- buildDialogMethod(dialogHandlers, dialogQueue, dialogRecorders)
             frameCreatedMethod   <- buildFrameCreatedMethod(frameEventDispatchers)
@@ -197,7 +197,7 @@ private[kyo] object CdpBackend:
             downloadWillMethod   <- buildDownloadWillMethod(downloadEventDispatchers)
             downloadProgMethod   <- buildDownloadProgressMethod(downloadEventDispatchers)
             config = JsonRpcHandler.Config(
-                codec = JsonRpcCodec.Cdp,
+                codec = JsonRpcCodec.Lenient,
                 cancellation = Absent,
                 progress = Absent,
                 unknownMethod = JsonRpcUnknownMethodPolicy.minimal,
@@ -458,7 +458,7 @@ private[kyo] object CdpBackend:
             downloadWillMethod       <- buildDownloadWillMethod(downloadEventDispatchers)
             downloadProgMethod       <- buildDownloadProgressMethod(downloadEventDispatchers)
             config = JsonRpcHandler.Config(
-                codec = JsonRpcCodec.Cdp,
+                codec = JsonRpcCodec.Lenient,
                 cancellation = Absent,
                 progress = Absent,
                 unknownMethod = JsonRpcUnknownMethodPolicy.minimal,
