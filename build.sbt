@@ -228,6 +228,7 @@ lazy val kyoJVM: Project = project
         `kyo-flow`.jvm,
         `kyo-jsonrpc`.jvm,
         `kyo-jsonrpc-http`.jvm,
+        `kyo-mcp`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -282,6 +283,7 @@ lazy val kyoJS = project
         `kyo-flow`.js,
         `kyo-jsonrpc`.js,
         `kyo-jsonrpc-http`.js,
+        `kyo-mcp`.js,
         `kyo-browser`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
@@ -317,6 +319,7 @@ lazy val kyoNative = project
         `kyo-flow`.native,
         `kyo-jsonrpc`.native,
         `kyo-jsonrpc-http`.native,
+        `kyo-mcp`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
@@ -734,6 +737,17 @@ lazy val `kyo-jsonrpc` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-schema`)
         .in(file("kyo-jsonrpc"))
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-mcp` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-mcp"))
+        .dependsOn(`kyo-jsonrpc`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
