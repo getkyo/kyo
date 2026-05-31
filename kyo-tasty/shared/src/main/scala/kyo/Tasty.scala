@@ -1332,7 +1332,16 @@ object Tasty:
             body: Type,
             typeParamIds: Chunk[SymbolId],
             annotations: Chunk[Annotation]
-        ) extends TypeLike
+        ) extends TypeLike:
+
+            /** Resolve the type parameter symbols of this type alias. */
+            override def typeParams(using cp: Classpath): Chunk[TypeParam] =
+                typeParamIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case tp: TypeParam => Chunk(tp)
+                        case _             => Chunk.empty
+
+        end TypeAlias
 
         final case class OpaqueType private[kyo] (
             id: SymbolId,
@@ -1345,7 +1354,16 @@ object Tasty:
             bounds: TypeBounds,
             typeParamIds: Chunk[SymbolId],
             annotations: Chunk[Annotation]
-        ) extends TypeLike
+        ) extends TypeLike:
+
+            /** Resolve the type parameter symbols of this opaque type. */
+            override def typeParams(using cp: Classpath): Chunk[TypeParam] =
+                typeParamIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case tp: TypeParam => Chunk(tp)
+                        case _             => Chunk.empty
+
+        end OpaqueType
 
         final case class AbstractType private[kyo] (
             id: SymbolId,
@@ -1381,6 +1399,26 @@ object Tasty:
             annotations: Chunk[Annotation]
         ) extends TermLike:
             def scaladoc: Maybe[String] = Maybe.Absent
+
+            /** Resolve the default argument symbol for this parameter, if any. */
+            def defaultArg(using cp: Classpath): Maybe[Symbol] =
+                defaultArgId.map(cp.symbol)
+
+            /** True when this parameter is an implicit / given parameter. */
+            def isImplicit: Boolean = flags.contains(Flag.Given)
+
+            /** True when this parameter's declared type is a by-name type (Type.ByName wrapper). */
+            def isByName: Boolean =
+                declaredType match
+                    case _: Type.ByName => true
+                    case _              => false
+
+            /** True when this parameter's declared type is a repeated (varargs) type (Type.Repeated wrapper). */
+            def isRepeated: Boolean =
+                declaredType match
+                    case _: Type.Repeated => true
+                    case _                => false
+
         end Parameter
 
         final case class Package private[kyo] (
@@ -1392,6 +1430,45 @@ object Tasty:
         ) extends Symbol:
             def scaladoc: Maybe[String]         = Maybe.Absent
             def sourcePosition: Maybe[Position] = Maybe.Absent
+
+            /** All direct member symbols of this package as an unfiltered Chunk[Symbol]. */
+            def members(using cp: Classpath): Chunk[Symbol] = memberIds.map(cp.symbol)
+
+            /** All class members of this package. */
+            def classes(using cp: Classpath): Chunk[Class] =
+                memberIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case c: Class => Chunk(c)
+                        case _        => Chunk.empty
+
+            /** All trait members of this package. */
+            def traits(using cp: Classpath): Chunk[Trait] =
+                memberIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case t: Trait => Chunk(t)
+                        case _        => Chunk.empty
+
+            /** All object members of this package. */
+            def objects(using cp: Classpath): Chunk[Object] =
+                memberIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case o: Object => Chunk(o)
+                        case _         => Chunk.empty
+
+            /** All class-like members (classes, traits, objects) of this package. */
+            def classLike(using cp: Classpath): Chunk[ClassLike] =
+                memberIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case c: ClassLike => Chunk(c)
+                        case _            => Chunk.empty
+
+            /** All sub-package members of this package. */
+            def subpackages(using cp: Classpath): Chunk[Package] =
+                memberIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case p: Package => Chunk(p)
+                        case _          => Chunk.empty
+
         end Package
 
         final case class Unresolved private[kyo] (
