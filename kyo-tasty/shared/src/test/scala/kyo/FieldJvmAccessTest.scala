@@ -1,0 +1,117 @@
+package kyo
+
+import kyo.internal.tasty.symbol.SymbolId
+
+/** Plan-mandated tests for Phase 04 (leaves 82-83): Field JVM accessor predicates.
+  *
+  * Field is Java-classfile-level (no Scala body). The isJvmPublic / isJvmPrivate / isJvmProtected / isJvmStatic / isJvmFinal predicates
+  * read the JVM access flags from JavaMetadata.accessFlags. Leaf 82 tests isJvmPublic with a real javaMetadata value. Leaf 83 tests
+  * isJvmStatic returning false when javaMetadata is Absent.
+  *
+  * Pins: INV-002.
+  */
+class FieldJvmAccessTest extends Test:
+
+    import AllowUnsafe.embrace.danger
+
+    // ACC_PUBLIC = 0x0001, ACC_PRIVATE = 0x0002, ACC_PROTECTED = 0x0004,
+    // ACC_STATIC = 0x0008, ACC_FINAL = 0x0010
+
+    private def makeFieldWithAccess(id: Int, name: String, accessFlags: Int): Tasty.Symbol.Field =
+        val meta = Tasty.JavaMetadata(
+            throwsTypes = Chunk.empty,
+            annotations = Chunk.empty,
+            enclosingMethod = Maybe.Absent,
+            accessFlags = accessFlags,
+            recordComponents = Chunk.empty,
+            bootstrapMethods = Chunk.empty,
+            nestHost = Maybe.Absent,
+            nestMembers = Chunk.empty,
+            paramNames = Chunk.empty,
+            runtimeTypeAnnotations = Chunk.empty
+        )
+        Tasty.Symbol.Field(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(0),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe(meta),
+            Chunk.empty
+        )
+    end makeFieldWithAccess
+
+    private def makeFieldNoMeta(id: Int, name: String): Tasty.Symbol.Field =
+        Tasty.Symbol.Field(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(0),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty
+        )
+
+    // ── Leaf 82: isJvmPublic ──────────────────────────────────────────────────
+    // Given: Field with javaMetadata.accessFlags = ACC_PUBLIC (0x0001)
+    // When: f.isJvmPublic
+    // Then: true
+    // Pins: INV-002
+    "Leaf 82: isJvmPublic: returns true when ACC_PUBLIC bit is set in accessFlags" in run {
+        val field = makeFieldWithAccess(id = 1, name = "F", accessFlags = 0x0001)
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
+            assert(field.isJvmPublic, "isJvmPublic must be true when ACC_PUBLIC (0x0001) is set")
+            assert(!field.isJvmPrivate, "isJvmPrivate must be false when only ACC_PUBLIC is set")
+            assert(!field.isJvmProtected, "isJvmProtected must be false when only ACC_PUBLIC is set")
+            assert(!field.isJvmStatic, "isJvmStatic must be false when only ACC_PUBLIC is set")
+            assert(!field.isJvmFinal, "isJvmFinal must be false when only ACC_PUBLIC is set")
+            succeed
+    }
+
+    // ── Leaf 83: isJvmStatic-absent-javaMetadata ─────────────────────────────
+    // Given: Field with javaMetadata=Maybe.Absent
+    // When: f.isJvmStatic
+    // Then: false
+    // Pins: INV-002
+    "Leaf 83: isJvmStatic-absent-javaMetadata: returns false when javaMetadata is Absent" in run {
+        val field = makeFieldNoMeta(id = 1, name = "G")
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
+            assert(!field.isJvmStatic, "isJvmStatic must be false when javaMetadata is Absent")
+            assert(!field.isJvmPublic, "isJvmPublic must be false when javaMetadata is Absent")
+            assert(!field.isJvmPrivate, "isJvmPrivate must be false when javaMetadata is Absent")
+            assert(!field.isJvmProtected, "isJvmProtected must be false when javaMetadata is Absent")
+            assert(!field.isJvmFinal, "isJvmFinal must be false when javaMetadata is Absent")
+            succeed
+    }
+
+    // ── Additional coverage: all five predicates across multiple flag combinations ──
+
+    "Field JVM access flags: private static final combination" in run {
+        // ACC_PRIVATE=0x0002, ACC_STATIC=0x0008, ACC_FINAL=0x0010
+        val field = makeFieldWithAccess(id = 1, name = "CONSTANT", accessFlags = 0x0002 | 0x0008 | 0x0010)
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
+            assert(!field.isJvmPublic, "isJvmPublic must be false for private static final")
+            assert(field.isJvmPrivate, "isJvmPrivate must be true for private static final")
+            assert(!field.isJvmProtected, "isJvmProtected must be false for private static final")
+            assert(field.isJvmStatic, "isJvmStatic must be true for private static final")
+            assert(field.isJvmFinal, "isJvmFinal must be true for private static final")
+            succeed
+    }
+
+    "Field JVM access flags: protected field" in run {
+        // ACC_PROTECTED=0x0004
+        val field = makeFieldWithAccess(id = 1, name = "protectedField", accessFlags = 0x0004)
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
+            assert(!field.isJvmPublic, "isJvmPublic must be false for protected field")
+            assert(!field.isJvmPrivate, "isJvmPrivate must be false for protected field")
+            assert(field.isJvmProtected, "isJvmProtected must be true for protected field")
+            assert(!field.isJvmStatic, "isJvmStatic must be false for protected field")
+            assert(!field.isJvmFinal, "isJvmFinal must be false for protected field")
+            succeed
+    }
+
+end FieldJvmAccessTest

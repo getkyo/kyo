@@ -1214,7 +1214,43 @@ object Tasty:
             annotations: Chunk[Annotation],
             body: Maybe[SymbolBody],
             javaMetadata: Maybe[JavaMetadata]
-        ) extends TermLike
+        ) extends TermLike:
+
+            /** Resolve parameter lists, narrowing each element to Symbol.Parameter. */
+            def paramLists(using cp: Classpath): Chunk[Chunk[Parameter]] =
+                paramListIds.map: list =>
+                    list.flatMap: id =>
+                        cp.symbol(id) match
+                            case p: Parameter => Chunk(p)
+                            case _            => Chunk.empty
+
+            /** Resolve type parameter symbols for this method. */
+            override def typeParams(using cp: Classpath): Chunk[TypeParam] =
+                typeParamIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case tp: TypeParam => Chunk(tp)
+                        case _             => Chunk.empty
+
+            /** The return type derived from declaredType.
+              *
+              * For a Type.Function the result component is extracted. For any other declared type the value is returned as-is. Documented
+              * as best-effort per Q-002 resolution.
+              */
+            def returnType(using cp: Classpath): Maybe[Type] =
+                declaredType.map:
+                    case Type.Function(_, result, _) => result
+                    case other                       => other
+
+            /** True when this method is a constructor (name == "<init>"). */
+            def isConstructor: Boolean =
+                import Name.asString
+                name.asString == "<init>"
+
+            /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
+            def bodyTree(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+                cp.decodeBody(this)
+
+        end Method
 
         final case class Val private[kyo] (
             id: SymbolId,
@@ -1226,7 +1262,13 @@ object Tasty:
             declaredType: Maybe[Type],
             annotations: Chunk[Annotation],
             body: Maybe[SymbolBody]
-        ) extends TermLike
+        ) extends TermLike:
+
+            /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
+            def bodyTree(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+                cp.decodeBody(this)
+
+        end Val
 
         final case class Var private[kyo] (
             id: SymbolId,
@@ -1238,7 +1280,13 @@ object Tasty:
             declaredType: Maybe[Type],
             annotations: Chunk[Annotation],
             body: Maybe[SymbolBody]
-        ) extends TermLike
+        ) extends TermLike:
+
+            /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
+            def bodyTree(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+                cp.decodeBody(this)
+
+        end Var
 
         final case class Field private[kyo] (
             id: SymbolId,
@@ -1250,7 +1298,29 @@ object Tasty:
             declaredType: Maybe[Type],
             javaMetadata: Maybe[JavaMetadata],
             javaAnnotations: Chunk[JavaAnnotation]
-        ) extends TermLike
+        ) extends TermLike:
+
+            /** True when the JVM field access flags include ACC_PUBLIC (0x0001). Returns false when javaMetadata is absent. */
+            def isJvmPublic: Boolean =
+                javaMetadata.map(m => (m.accessFlags & 0x0001) != 0).getOrElse(false)
+
+            /** True when the JVM field access flags include ACC_PRIVATE (0x0002). Returns false when javaMetadata is absent. */
+            def isJvmPrivate: Boolean =
+                javaMetadata.map(m => (m.accessFlags & 0x0002) != 0).getOrElse(false)
+
+            /** True when the JVM field access flags include ACC_PROTECTED (0x0004). Returns false when javaMetadata is absent. */
+            def isJvmProtected: Boolean =
+                javaMetadata.map(m => (m.accessFlags & 0x0004) != 0).getOrElse(false)
+
+            /** True when the JVM field access flags include ACC_STATIC (0x0008). Returns false when javaMetadata is absent. */
+            def isJvmStatic: Boolean =
+                javaMetadata.map(m => (m.accessFlags & 0x0008) != 0).getOrElse(false)
+
+            /** True when the JVM field access flags include ACC_FINAL (0x0010). Returns false when javaMetadata is absent. */
+            def isJvmFinal: Boolean =
+                javaMetadata.map(m => (m.accessFlags & 0x0010) != 0).getOrElse(false)
+
+        end Field
 
         final case class TypeAlias private[kyo] (
             id: SymbolId,
