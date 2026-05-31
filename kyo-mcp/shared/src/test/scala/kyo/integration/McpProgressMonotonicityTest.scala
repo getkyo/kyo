@@ -17,12 +17,12 @@ class McpProgressMonotonicityTest extends Test:
         // AllowUnsafe: AtomicInt.Unsafe.init for thread-safe invocation counter across fibers.
         val invocationCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
-        val workerRoute = McpRoute.tool[WorkReq]("work") { (req, ctx) =>
+        val workerRoute = McpRoute.tool[WorkReq]("work").handler { req =>
             // Progress calls return Unit < (Async & Abort[Closed]); widen to the handler effect row.
             Abort.run[Closed](
-                ctx.progress(1.0, Present(3.0), Absent)
-                    .andThen(ctx.progress(2.0, Present(3.0), Absent))
-                    .andThen(ctx.progress(3.0, Present(3.0), Absent))
+                Mcp.progress(1.0, Present(3.0), Absent)
+                    .andThen(Mcp.progress(2.0, Present(3.0), Absent))
+                    .andThen(Mcp.progress(3.0, Present(3.0), Absent))
             ).andThen {
                 Sync.defer(discard(invocationCount.incrementAndGet()(using AllowUnsafe.embrace.danger)))
                     .andThen(McpContent.Text(s"done-${req.n}"))

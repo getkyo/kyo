@@ -12,7 +12,7 @@ class McpCompletionContextTest extends Test:
     "completion handler receives Maybe[CompletionArg.Context] from CompleteParams" in run {
         val capturedContext = makeContextRef
         val ref             = McpRoute.CompletionRef.Prompt("myPrompt")
-        val completionRoute = McpRoute.completion(ref) { (_, arg, ctx, _) =>
+        val completionRoute = McpRoute.completion(ref).handlerWith { (_, arg, ctx) =>
             Sync.defer {
                 capturedContext.unsafe.set(ctx)(using AllowUnsafe.embrace.danger)
                 McpRoute.CompletionResult(Chunk(arg.value + "-ok"), Absent, Absent)

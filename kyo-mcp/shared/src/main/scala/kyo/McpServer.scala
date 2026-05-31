@@ -338,17 +338,17 @@ object McpServer:
     // --- Scoped init quartet ---
 
     /** Initialises a server using `routes` and `McpConfig.default`, releasing it when the `Scope` exits. */
-    def init(transport: JsonRpcTransport, routes: McpRoute[?, ?, ?]*)(using Frame): McpServer < (Async & Scope) =
+    def init(transport: JsonRpcTransport, routes: McpHandler[?, ?, ?]*)(using Frame): McpServer < (Async & Scope) =
         init(transport, routes, McpConfig.default)
 
     /** Initialises a server using `routes` and the supplied `config`, releasing it when the `Scope` exits. */
-    def init(transport: JsonRpcTransport, config: McpConfig)(routes: McpRoute[?, ?, ?]*)(using Frame): McpServer < (Async & Scope) =
+    def init(transport: JsonRpcTransport, config: McpConfig)(routes: McpHandler[?, ?, ?]*)(using Frame): McpServer < (Async & Scope) =
         init(transport, routes, config)
 
     /** Initialises a server from a `Seq` of routes and optional config, releasing it when the `Scope` exits. */
     def init(
         transport: JsonRpcTransport,
-        routes: Seq[McpRoute[?, ?, ?]],
+        routes: Seq[McpHandler[?, ?, ?]],
         config: McpConfig = McpConfig.default
     )(using Frame): McpServer < (Async & Scope) =
         McpConfig.require(config)
@@ -358,13 +358,13 @@ object McpServer:
     end init
 
     /** Initialises a server and immediately applies `f`, releasing the server when the `Scope` exits. */
-    def initWith[A, S](transport: JsonRpcTransport, routes: McpRoute[?, ?, ?]*)(f: McpServer => A < S)(using
+    def initWith[A, S](transport: JsonRpcTransport, routes: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
         Frame
     ): A < (S & Async & Scope) =
         init(transport, routes*).map(f)
 
     /** Initialises a server with `config` and immediately applies `f`, releasing the server when the `Scope` exits. */
-    def initWith[A, S](transport: JsonRpcTransport, config: McpConfig)(routes: McpRoute[?, ?, ?]*)(f: McpServer => A < S)(using
+    def initWith[A, S](transport: JsonRpcTransport, config: McpConfig)(routes: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
         Frame
     ): A < (S & Async & Scope) =
         init(transport, config)(routes*).map(f)
@@ -372,17 +372,17 @@ object McpServer:
     // --- Unscoped init ---
 
     /** Initialises a server using `routes` and `McpConfig.default` without a managed `Scope`. */
-    def initUnscoped(transport: JsonRpcTransport, routes: McpRoute[?, ?, ?]*)(using Frame): McpServer < Async =
+    def initUnscoped(transport: JsonRpcTransport, routes: McpHandler[?, ?, ?]*)(using Frame): McpServer < Async =
         initUnscoped(transport, routes, McpConfig.default)
 
     /** Initialises a server using `routes` and the supplied `config` without a managed `Scope`. */
-    def initUnscoped(transport: JsonRpcTransport, config: McpConfig)(routes: McpRoute[?, ?, ?]*)(using Frame): McpServer < Async =
+    def initUnscoped(transport: JsonRpcTransport, config: McpConfig)(routes: McpHandler[?, ?, ?]*)(using Frame): McpServer < Async =
         initUnscoped(transport, routes, config)
 
     /** Initialises a server from a `Seq` of routes without a managed `Scope`. */
     def initUnscoped(
         transport: JsonRpcTransport,
-        routes: Seq[McpRoute[?, ?, ?]],
+        routes: Seq[McpHandler[?, ?, ?]],
         config: McpConfig = McpConfig.default
     )(using Frame): McpServer < Async =
         McpConfig.require(config)
@@ -390,13 +390,13 @@ object McpServer:
     end initUnscoped
 
     /** Initialises an unscoped server and immediately applies `f`. */
-    def initUnscopedWith[A, S](transport: JsonRpcTransport, routes: McpRoute[?, ?, ?]*)(f: McpServer => A < S)(using
+    def initUnscopedWith[A, S](transport: JsonRpcTransport, routes: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
         Frame
     ): A < (S & Async) =
         initUnscoped(transport, routes*).map(f)
 
     /** Initialises an unscoped server with `config` and immediately applies `f`. */
-    def initUnscopedWith[A, S](transport: JsonRpcTransport, config: McpConfig)(routes: McpRoute[?, ?, ?]*)(f: McpServer => A < S)(using
+    def initUnscopedWith[A, S](transport: JsonRpcTransport, config: McpConfig)(routes: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
         Frame
     ): A < (S & Async) =
         initUnscoped(transport, config)(routes*).map(f)

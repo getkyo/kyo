@@ -18,7 +18,7 @@ class McpResourceSubscribeTest extends Test:
         val notSubscribedCounter = makeCounter
 
         // Route that counts notifications/resources/updated for uri1.
-        val updatedRoute = McpRoute.custom[ResUpdated]("notifications/resources/updated") { (msg, _) =>
+        val updatedRoute = McpRoute.custom[ResUpdated]("notifications/resources/updated").handler { msg =>
             Sync.defer {
                 if msg.uri == uri1.asString then
                     discard(subscribedCounter.incrementAndGet()(using AllowUnsafe.embrace.danger))
@@ -28,7 +28,7 @@ class McpResourceSubscribeTest extends Test:
         }
 
         val resourceRoute =
-            McpRoute.resource(uri1, "res1", subscribe = true)((_, _) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
+            McpRoute.resource(uri1, "res1", subscribe = true).handler((_) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
@@ -56,12 +56,12 @@ class McpResourceSubscribeTest extends Test:
     "after unsubscribeResource, no further notifications for the URI" in run {
         val counter = makeCounter
 
-        val updatedRoute = McpRoute.custom[ResUpdated]("notifications/resources/updated") { (_, _) =>
+        val updatedRoute = McpRoute.custom[ResUpdated]("notifications/resources/updated").handler { _ =>
             Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
 
         val resourceRoute =
-            McpRoute.resource(uri1, "res1", subscribe = true)((_, _) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
+            McpRoute.resource(uri1, "res1", subscribe = true).handler((_) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
@@ -90,12 +90,12 @@ class McpResourceSubscribeTest extends Test:
     "subscribe=false resource does not gate on subscriptions; always sends updates" in run {
         val counter = makeCounter
 
-        val updatedRoute = McpRoute.custom[ResUpdated]("notifications/resources/updated") { (_, _) =>
+        val updatedRoute = McpRoute.custom[ResUpdated]("notifications/resources/updated").handler { _ =>
             Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
 
         // Resource without subscribe=true; server capability has subscribe=false.
-        val resourceRoute = McpRoute.resource(uri1, "res1")((_, _) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
+        val resourceRoute = McpRoute.resource(uri1, "res1").handler((_) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](

@@ -9,8 +9,8 @@ import kyo.*
   *   - `roots/list`: server asks client for its registered roots
   *   - `elicitation/create`: server asks client for a structured elicitation
   *
-  * For each method, user-registered [[McpRoute]] carriers are searched first. When no user
-  * route covers the method, a default handler returns a rejection response.
+  * For each method, user-registered [[McpHandler]] carriers are searched first. When no user
+  * handler covers the method, a default handler returns a rejection response.
   *
   * `private[kyo]` so only [[McpClientEngine]] references it.
   */
@@ -21,34 +21,36 @@ private[kyo] object McpReverseDispatch:
 
     /** Builds the Seq of [[JsonRpcRoute]] instances for client-side reverse-direction handling.
       *
-      * @param userRoutes        user-registered routes (sampling/roots/elicitation handlers among others)
-      * @param config            MCP configuration (currently unused; reserved for future gate extension)
+      * Defaults are placed first; user-registered handlers (lifted via [[McpHandlerLift]]) are
+      * appended so they override the default-reject fallback on a same-method collision.
+      *
+      * @param userHandlers       user-registered handlers (sampling/roots/elicitation handlers among others)
+      * @param config             MCP configuration (currently unused; reserved for future gate extension)
       * @param clientCapabilities the client capabilities advertised during handshake; used to gate
       *                           default handlers with -32601 when the relevant capability is absent
+      * @param serverRef          the forward reference holding the sentinel "server" used to bind into
+      *                           `Mcp.local` for each handler invocation
       * @return route list to pass to [[JsonRpcHandler.initUnscoped]]
       */
     def buildRoutes(
-        userRoutes: Seq[McpRoute[?, ?, ?]],
+        userHandlers: Seq[McpHandler[?, ?, ?]],
         config: McpConfig,
-        clientCapabilities: McpCapabilities.Client
+        clientCapabilities: McpCapabilities.Client,
+        serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
     )(using Frame): Seq[JsonRpcRoute[?, ?, ?]] =
-        val samplingRoute    = buildSamplingRoute(userRoutes, clientCapabilities)
-        val rootsRoute       = buildRootsRoute(userRoutes, clientCapabilities)
-        val elicitationRoute = buildElicitationRoute(userRoutes, clientCapabilities)
+        val samplingRoute    = buildSamplingRoute(userHandlers, clientCapabilities)
+        val rootsRoute       = buildRootsRoute(userHandlers, clientCapabilities)
+        val elicitationRoute = buildElicitationRoute(userHandlers, clientCapabilities)
 
-        // Defaults are placed first; user-registered carriers are lifted and appended so that any
-        // user route covering sampling/createMessage, roots/list, or elicitation/create overrides
-        // the default-reject fallback. JsonRpcHandler routes are stored in a Map keyed by method
-        // name with last-write-wins semantics (JsonRpcEndpointImpl.scala:772), so later entries
-        // override earlier ones for the same method.
-        val liftedUserRoutes: Seq[JsonRpcRoute[?, ?, ?]] = userRoutes.collect {
-            case c: McpRouteCarrier[?, ?, ?] => c.underlying
-        }
+        // User-registered handlers are lifted (each dispatch wrapped in Mcp.local.let) and appended;
+        // JsonRpcHandler routes are stored in a Map keyed by method name with last-write-wins
+        // semantics (JsonRpcEndpointImpl.scala:772), so later entries override earlier ones.
+        val liftedUserRoutes: Seq[JsonRpcRoute[?, ?, ?]] = userHandlers.map(h => McpHandlerLift.lift(h, serverRef))
 
         Seq(samplingRoute, rootsRoute, elicitationRoute) ++ liftedUserRoutes
     end buildRoutes
 
-    private def buildSamplingRoute(userRoutes: Seq[McpRoute[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
+    private def buildSamplingRoute(userHandlers: Seq[McpHandler[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
         Frame
     ): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[McpServer.SamplingRequest, McpServer.SamplingResponse]("sampling/createMessage") { (_, _) =>
@@ -63,7 +65,7 @@ private[kyo] object McpReverseDispatch:
                 Abort.fail(McpSamplingRejectedException("No sampling handler registered on this client."))
         }
 
-    private def buildRootsRoute(userRoutes: Seq[McpRoute[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
+    private def buildRootsRoute(userHandlers: Seq[McpHandler[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
         Frame
     ): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[EmptyParams, McpRootsListResponse]("roots/list") { (_, _) =>
@@ -77,7 +79,7 @@ private[kyo] object McpReverseDispatch:
                 McpRootsListResponse(Chunk.empty)
         }
 
-    private def buildElicitationRoute(userRoutes: Seq[McpRoute[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
+    private def buildElicitationRoute(userHandlers: Seq[McpHandler[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
         Frame
     ): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[McpServer.ElicitationRequest, McpServer.ElicitationResponse]("elicitation/create") { (_, _) =>

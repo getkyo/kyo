@@ -8,7 +8,7 @@ class McpSamplingReverseTest extends Test:
     // Client-side route that handles sampling/createMessage requests from the server.
     // Registered as a custom route on the client; McpReverseDispatch builds the handler.
     private val samplingRoute =
-        McpRoute.custom[McpServer.SamplingRequest]("sampling/createMessage") { (req, _) =>
+        McpRoute.custom[McpServer.SamplingRequest]("sampling/createMessage").handler { req =>
             McpServer.SamplingResponse(
                 role = McpRole.Assistant,
                 content = McpContent.text("reply"),

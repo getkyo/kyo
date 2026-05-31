@@ -51,9 +51,9 @@ class McpProgressNotificationWireTest extends Test:
     }
 
     "integration: tool handler emitting ctx.progress completes without error" in run {
-        val workerRoute = McpRoute.tool[WorkReq]("work") { (req, ctx) =>
+        val workerRoute = McpRoute.tool[WorkReq]("work").handler { req =>
             Abort.run[Closed](
-                ctx.progress(0.5, Present(1.0), Absent)
+                Mcp.progress(0.5, Present(1.0), Absent)
             ).andThen(McpContent.Text(s"done-${req.n}"))
         }
 

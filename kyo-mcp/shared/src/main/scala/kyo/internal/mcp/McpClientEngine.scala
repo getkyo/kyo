@@ -78,7 +78,7 @@ private[kyo] object McpClientEngine:
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
-        routes: Seq[McpRoute[?, ?, ?]],
+        handlers: Seq[McpHandler[?, ?, ?]],
         config: McpConfig
     )(using Frame): McpClient.Unsafe < (Async & Abort[McpException | Closed]) =
         // AllowUnsafe: three AtomicRef for negotiated state shared across handler fibers.
@@ -86,8 +86,11 @@ private[kyo] object McpClientEngine:
         val serverCapabilitiesRef = AtomicRef.Unsafe.init[Maybe[McpCapabilities.Server]](Absent)(using AllowUnsafe.embrace.danger).safe
         val serverInfoRef         = AtomicRef.Unsafe.init[Maybe[McpInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
         val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe
+        // AllowUnsafe: forward reference holding the sentinel "server" used to bind into Mcp.local
+        // during client-side reverse-direction dispatch.
+        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
 
-        val reverseRoutes = McpReverseDispatch.buildRoutes(routes, config, capabilities)
+        val reverseRoutes = McpReverseDispatch.buildRoutes(handlers, config, capabilities, serverRef)
 
         for
             handler <- JsonRpcHandler.initUnscoped(transport, reverseRoutes, config.jsonRpc)
@@ -103,14 +106,11 @@ private[kyo] object McpClientEngine:
             _ <- handler.notify[InitializedParams]("notifications/initialized", InitializedParams())
         yield
             val unsafe = buildUnsafe(handler, serverCapabilitiesRef, serverInfoRef, negotiatedVersionRef)
-            // Write the forward reference into every user route carrier so their handlers can resolve ctx.server.
-            // On the client side the "server" is a no-op sentinel (user handlers must not call ctx.server from
-            // client-side routes; the ref is populated to avoid an IllegalStateException during dispatch).
-            // AllowUnsafe: synchronous write of forward reference immediately after client construction.
+            // Publish the sentinel server (which rejects reverse-direction calls) so that client-side
+            // reverse-direction handlers can still bind a context into Mcp.local without panic.
+            // AllowUnsafe: synchronous write of forward reference immediately after construction.
             val sentinelServer = buildClientSentinelServer(handler)
-            routes.foreach { case c: McpRouteCarrier[?, ?, ?] =>
-                c.serverRef.unsafe.set(Present(sentinelServer))(using AllowUnsafe.embrace.danger)
-            }
+            serverRef.unsafe.set(Present(sentinelServer))(using AllowUnsafe.embrace.danger)
             unsafe
         end for
     end initClient

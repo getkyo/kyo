@@ -6,12 +6,12 @@ class McpServerTest extends Test:
     case class EchoReq(msg: String) derives Schema, CanEqual
     case class EchoResp(msg: String) derives Schema, CanEqual
 
-    private val toolRoute = McpRoute.tool[EchoReq]("echo") { (req, _) =>
+    private val toolRoute = McpRoute.tool[EchoReq]("echo").handler { req =>
         McpContent.Text(req.msg)
     }
 
     private val resourceUri   = McpResourceUri.parse("file:///data").get
-    private val resourceRoute = McpRoute.resource(resourceUri, "data")((_, _) => Chunk.empty)
+    private val resourceRoute = McpRoute.resource(resourceUri, "data").handler((_) => Chunk.empty)
 
     // T-009: McpServer.init prepends engine-owned initialize route at index 0.
     "init with two user routes: initialize route is registered in the handler (INV-004)" in run {
@@ -119,7 +119,7 @@ class McpServerTest extends Test:
     // Dispatch-path test: completion/complete routes the request to the registered handler and returns non-empty values.
     "completion/complete dispatches to registered handler and returns handler values (not Chunk.empty)" in run {
         val ref = McpRoute.CompletionRef.Prompt("myPrompt")
-        val completionRoute = McpRoute.completion(ref) { (_, arg, _, _) =>
+        val completionRoute = McpRoute.completion(ref).handler { arg =>
             McpRoute.CompletionResult(Chunk(arg.value + "-completed"), Absent, Absent)
         }
         JsonRpcTransport.inMemory.map { (ta, _) =>

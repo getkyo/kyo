@@ -190,7 +190,7 @@ object McpClient:
     // --- Scoped init quartet (INV-014: parameter order = transport, clientInfo, capabilities, routes*) ---
 
     /** Initialises a client using `routes` and `McpConfig.default`, releasing it when the `Scope` exits. */
-    def init(transport: JsonRpcTransport, clientInfo: McpInfo, capabilities: McpCapabilities.Client, routes: McpRoute[?, ?, ?]*)(using
+    def init(transport: JsonRpcTransport, clientInfo: McpInfo, capabilities: McpCapabilities.Client, routes: McpHandler[?, ?, ?]*)(using
         Frame
     ): McpClient < (Async & Scope & Abort[McpException | Closed]) =
         init(transport, clientInfo, capabilities, routes, McpConfig.default)
@@ -200,7 +200,7 @@ object McpClient:
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
-        routes: Seq[McpRoute[?, ?, ?]],
+        routes: Seq[McpHandler[?, ?, ?]],
         config: McpConfig = McpConfig.default
     )(using Frame): McpClient < (Async & Scope & Abort[McpException | Closed]) =
         McpConfig.require(config)
@@ -217,7 +217,7 @@ object McpClient:
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
         config: McpConfig
-    )(routes: McpRoute[?, ?, ?]*)(using Frame): McpClient < (Async & Scope & Abort[McpException | Closed]) =
+    )(routes: McpHandler[?, ?, ?]*)(using Frame): McpClient < (Async & Scope & Abort[McpException | Closed]) =
         init(transport, clientInfo, capabilities, routes, config)
 
     /** Initialises a client and immediately applies `f`, releasing the client when the `Scope` exits. */
@@ -225,7 +225,7 @@ object McpClient:
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
-        routes: McpRoute[?, ?, ?]*
+        routes: McpHandler[?, ?, ?]*
     )(f: McpClient => A < S)(using Frame): A < (S & Async & Scope & Abort[McpException | Closed]) =
         init(transport, clientInfo, capabilities, routes*).map(f)
 
@@ -235,7 +235,7 @@ object McpClient:
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
         config: McpConfig
-    )(routes: McpRoute[?, ?, ?]*)(f: McpClient => A < S)(using Frame): A < (S & Async & Scope & Abort[McpException | Closed]) =
+    )(routes: McpHandler[?, ?, ?]*)(f: McpClient => A < S)(using Frame): A < (S & Async & Scope & Abort[McpException | Closed]) =
         init(transport, clientInfo, capabilities, config)(routes*).map(f)
 
     // --- Unscoped init ---
@@ -245,7 +245,7 @@ object McpClient:
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
-        routes: McpRoute[?, ?, ?]*
+        routes: McpHandler[?, ?, ?]*
     )(using Frame): McpClient < (Async & Abort[McpException | Closed]) =
         initUnscoped(transport, clientInfo, capabilities, routes, McpConfig.default)
 
@@ -254,7 +254,7 @@ object McpClient:
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
-        routes: Seq[McpRoute[?, ?, ?]],
+        routes: Seq[McpHandler[?, ?, ?]],
         config: McpConfig = McpConfig.default
     )(using Frame): McpClient < (Async & Abort[McpException | Closed]) =
         McpConfig.require(config)
@@ -267,7 +267,7 @@ object McpClient:
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
         config: McpConfig
-    )(routes: McpRoute[?, ?, ?]*)(using Frame): McpClient < (Async & Abort[McpException | Closed]) =
+    )(routes: McpHandler[?, ?, ?]*)(using Frame): McpClient < (Async & Abort[McpException | Closed]) =
         initUnscoped(transport, clientInfo, capabilities, routes, config)
 
     /** Initialises an unscoped client and immediately applies `f`. */
@@ -275,7 +275,7 @@ object McpClient:
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
-        routes: McpRoute[?, ?, ?]*
+        routes: McpHandler[?, ?, ?]*
     )(f: McpClient => A < S)(using Frame): A < (S & Async & Abort[McpException | Closed]) =
         initUnscoped(transport, clientInfo, capabilities, routes*).map(f)
 
@@ -285,7 +285,7 @@ object McpClient:
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
         config: McpConfig
-    )(routes: McpRoute[?, ?, ?]*)(f: McpClient => A < S)(using Frame): A < (S & Async & Abort[McpException | Closed]) =
+    )(routes: McpHandler[?, ?, ?]*)(f: McpClient => A < S)(using Frame): A < (S & Async & Abort[McpException | Closed]) =
         initUnscoped(transport, clientInfo, capabilities, config)(routes*).map(f)
 
 end McpClient

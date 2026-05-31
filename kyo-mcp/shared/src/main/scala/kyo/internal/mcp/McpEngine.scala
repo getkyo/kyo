@@ -5,14 +5,15 @@ import kyo.*
 /** Composes all MCP engine components into a live `McpServer.Unsafe` instance.
   *
   * Wiring order (Decision 10):
-  *   1. Build `McpCatalog` from user routes.
+  *   1. Build `McpCatalog` from user handlers.
   *   2. Auto-derive or use declared `McpCapabilities.Server`.
   *   3. Build `McpHandshakeGate` and `McpCapabilityGate`; compose them.
-  *   4. Build engine-owned routes (initialize, five builtins).
-  *   5. Lift user `McpRoute` instances to `JsonRpcRoute` via their `underlying` field.
+  *   4. Build engine-owned routes (initialize, builtins).
+  *   5. Lift user `McpHandler` instances to `JsonRpcRoute` via their `underlying` field,
+  *      wrapping each dispatch in `Mcp.local.let(Present(ctx))` so route handlers can reach
+  *      the per-request context through the `Mcp.*` accessors.
   *   6. Call `JsonRpcHandler.initUnscoped` with all routes.
-  *   7. Write the `serverRef` so route carriers can resolve `ctx.server`.
-  *   8. Return the concrete `McpServer.Unsafe` anonymous class.
+  *   7. Return the concrete `McpServer.Unsafe` anonymous class.
   */
 private[kyo] object McpEngine:
 
@@ -23,7 +24,7 @@ private[kyo] object McpEngine:
 
     def initServer(
         transport: JsonRpcTransport,
-        userRoutes: Seq[McpRoute[?, ?, ?]],
+        userHandlers: Seq[McpHandler[?, ?, ?]],
         config: McpConfig
     )(using Frame): McpServer.Unsafe < Async =
         // AllowUnsafe: AtomicRef for post-handshake state shared across handler fibers.
@@ -35,8 +36,11 @@ private[kyo] object McpEngine:
         val logLevelRef = AtomicRef.Unsafe.init[McpServer.LogLevel](McpServer.LogLevel.Info)(using AllowUnsafe.embrace.danger).safe
         // AllowUnsafe: AtomicRef for resource subscription set; initialized to empty per §3.4.
         val subscriptionsRef = AtomicRef.Unsafe.init[Set[McpResourceUri]](Set.empty)(using AllowUnsafe.embrace.danger).safe
+        // AllowUnsafe: forward reference holding the live McpServer.Unsafe so each dispatch can
+        // bind it into Mcp.local. Populated synchronously after JsonRpcHandler.initUnscoped completes.
+        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
 
-        val catalog    = McpCatalog(userRoutes)
+        val catalog    = McpCatalog(userHandlers)
         val serverCaps = catalog.autoDeriveServerCapabilities(config)
 
         val handshakeGate  = McpHandshakeGate.server(config.handshakeOrder)
@@ -61,13 +65,13 @@ private[kyo] object McpEngine:
 
         val builtinRoutes: Seq[JsonRpcRoute[?, ?, ?]] = Seq(
             McpBuiltInRoutes.toolsList(catalog),
-            McpBuiltInRoutes.toolsCall(catalog),
+            McpBuiltInRoutes.toolsCall(catalog, serverRef),
             McpBuiltInRoutes.resourcesList(catalog),
-            McpBuiltInRoutes.resourcesRead(catalog),
+            McpBuiltInRoutes.resourcesRead(catalog, serverRef),
             McpBuiltInRoutes.resourceTemplatesList(catalog),
             McpBuiltInRoutes.promptsList(catalog),
-            McpBuiltInRoutes.promptsGet(catalog),
-            McpBuiltInRoutes.completionComplete(catalog)
+            McpBuiltInRoutes.promptsGet(catalog, serverRef),
+            McpBuiltInRoutes.completionComplete(catalog, serverRef)
         ) ++ (if serverCaps.logging.isDefined then Seq(McpBuiltInRoutes.loggingSetLevel(logLevelRef)) else Seq.empty)
             ++ (if serverCaps.resources.exists(_.subscribe) then
                     Seq(
@@ -95,9 +99,9 @@ private[kyo] object McpEngine:
         val pingRoute: JsonRpcRoute[?, ?, ?] =
             JsonRpcRoute.request[NotifyEmptyParams, NotifyEmptyParams]("ping") { (_, _) => NotifyEmptyParams() }
 
-        // Lift user McpRoute carriers to JsonRpcRoute.
-        // initialize is at index 0 (INV-004); builtins follow; user routes last.
-        val userJsonRpcRoutes: Seq[JsonRpcRoute[?, ?, ?]] = userRoutes.map(_.underlying)
+        // Lift user McpHandler carriers to JsonRpcRoute, wrapping each dispatch in Mcp.local.let
+        // so the handler closure can reach the per-request context through Mcp.*.
+        val userJsonRpcRoutes: Seq[JsonRpcRoute[?, ?, ?]] = userHandlers.map(h => McpHandlerLift.lift(h, serverRef))
         val allRoutes: Seq[JsonRpcRoute[?, ?, ?]] =
             Seq(initializeRoute, initializedNotifRoute, rootsListChangedRoute, pingRoute) ++ builtinRoutes ++ userJsonRpcRoutes
 
@@ -204,11 +208,9 @@ private[kyo] object McpEngine:
 
             end unsafe
 
-            // Write the forward reference into every user route carrier so their handlers can resolve ctx.server (Decision 2).
-            // AllowUnsafe: synchronous write of forward reference immediately after server construction.
-            userRoutes.foreach { case c: McpRouteCarrier[?, ?, ?] =>
-                c.serverRef.unsafe.set(Present(unsafe))(using AllowUnsafe.embrace.danger)
-            }
+            // Publish the live server into the forward reference so each dispatch can bind it into
+            // Mcp.local. AllowUnsafe: synchronous write of forward reference immediately after construction.
+            serverRef.unsafe.set(Present(unsafe))(using AllowUnsafe.embrace.danger)
             unsafe
         }
     end initServer

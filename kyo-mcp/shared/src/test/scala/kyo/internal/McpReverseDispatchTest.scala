@@ -19,8 +19,8 @@ class McpReverseDispatchTest extends Test:
 
     // Paired transport helper: server starts first so its dispatch loop is ready for client initialize.
     private def withPair[A, S](
-        serverRoutes: Seq[McpRoute[?, ?, ?]],
-        clientRoutes: Seq[McpRoute[?, ?, ?]]
+        serverRoutes: Seq[McpHandler[?, ?, ?]],
+        clientRoutes: Seq[McpHandler[?, ?, ?]]
     )(f: (McpServer, McpClient) => A < S)(using Frame): A < (S & Async & Scope & Abort[McpException | Closed]) =
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             McpServer.init(ta, serverRoutes*).flatMap { server =>
@@ -137,7 +137,7 @@ class McpReverseDispatchTest extends Test:
             maxTokens = 8
         )
         val userSamplingRoute =
-            McpRoute.custom[McpServer.SamplingRequest]("sampling/createMessage") { (_, _) =>
+            McpRoute.custom[McpServer.SamplingRequest]("sampling/createMessage").handler { _ =>
                 McpServer.SamplingResponse(McpRole.Assistant, McpContent.Text("pong"), "test-model")
             }
         withPair(Seq.empty, Seq(userSamplingRoute)) { (server, _) =>

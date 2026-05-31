@@ -17,11 +17,11 @@ Model Context Protocol implementation for building MCP servers and clients on to
 Routes are typed by user case classes (`Schema[In]` derives the wire decoder AND the `tools/list` `inputSchema` advertisement in one move), errors fan out into a sealed hierarchy keyed by pipeline stage, and the reverse direction (server-initiated `sampling/createMessage`, `roots/list`, `elicitation/create`) is reachable from any handler via the per-request `Context`. The same JSON-RPC transports that ship with `kyo-jsonrpc` (`stdio`, paired in-memory, custom byte-stream lifts) carry MCP traffic without ceremony.
 
 ```scala
-val addTool: McpRoute[AddIn, McpContent, Nothing] =
+val addTool: McpHandler[AddIn, McpContent, McpException] =
     McpRoute.tool[AddIn](
         name        = "add",
         description = "Adds two integers"
-    ) { (in, _) =>
+    ).handler { in =>
         McpContent.text(s"${in.a + in.b}")
     }
 ```
@@ -35,11 +35,11 @@ The single tool above is a full server route. The next sections wire it into a l
 The minimal end-to-end server: define one route, start `JsonRpcTransport.stdio()`, hand both to `McpServer.initWith`, and keep the process alive.
 
 ```scala
-val addTool: McpRoute[AddIn, McpContent, Nothing] =
+val addTool: McpHandler[AddIn, McpContent, McpException] =
     McpRoute.tool[AddIn](
         name        = "add",
         description = "Adds two integers"
-    ) { (in, _) =>
+    ).handler { in =>
         McpContent.text(s"${in.a + in.b}")
     }
 
@@ -105,16 +105,18 @@ Each cursor-paginated list returns `McpClient.Page[A](items, nextCursor, meta)` 
 
 ## Routes
 
-`McpRoute[In, Out, +E]` is a single sealed top-level trait with role-tagged factories on the companion. Every factory captures the `Schema` evidence it needs at registration time; the engine wires the same underlying JSON-RPC route through whichever MCP method maps to the route's `Kind`. Five kinds cover the standard MCP surface: `tool`, `resource`, `resourceTemplate`, `prompt`, `completion`. A sixth kind, `custom`, lets you bolt a raw typed JSON-RPC method into the same engine for protocol extensions.
+`McpRoute[In]` is a sealed metadata-only trait with role-tagged factories on the companion. Calling `.handler[Out](f)` on a route produces an `McpHandler[In, Out, +E]` that pairs the route with its implementation. The split mirrors `HttpRoute` vs `HttpHandler` in `kyo-http`: a route is the typed contract, a handler is the contract plus its closure. The engine consumes `McpHandler` values; user code rarely names `McpRoute` directly.
 
-The handler signature is locked across every factory: `(In, McpRoute.Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt])`. The `Context` argument carries the per-request fields needed for cancellation, progress, and reverse-direction calls; see the `Context` subsection further down.
+Five kinds cover the standard MCP surface: `tool`, `resource`, `resourceTemplate`, `prompt`, `completion`. A sixth kind, `custom`, lets you bolt a raw typed JSON-RPC method into the same engine for protocol extensions.
+
+The handler closure receives `In` and returns `Out < (Async & Abort[McpException | JsonRpcResponse.Halt])`. The per-request context is reachable through the `Mcp.*` accessors (`Mcp.server`, `Mcp.progress`, `Mcp.requestId`, `Mcp.cancelled`, `Mcp.extras`) rather than an explicit parameter; see the `per-request context` subsection further down.
 
 ### Tool routes
 
 `McpRoute.tool[In]` is the single-content tool factory: the handler returns a value `<: McpContent` and the engine wraps it in a `ToolCallResult` with `content = Chunk(out)`. The `Out` type parameter is inferred from the handler's return type via clause interleaving, so the call site only needs `[In]`. `McpRoute.toolMulti[In]` is the multi-content sibling: the handler returns a full `ToolCallResult` and is free to emit multiple content leaves and a `structuredContent` payload.
 
 ```scala
-val weatherTool: McpRoute[Weather, McpContent, Nothing] =
+val weatherTool: McpHandler[Weather, McpContent, McpException] =
     McpRoute.tool[Weather](
         name        = "weather",
         description = "Looks up weather for a city",
@@ -125,7 +127,7 @@ val weatherTool: McpRoute[Weather, McpContent, Nothing] =
             idempotentHint  = Present(true),
             openWorldHint   = Present(true)
         )
-    ) { (req, _) =>
+    ).handler { req =>
         McpContent.text(s"Sunny in ${req.city}")
     }
 ```
@@ -139,13 +141,13 @@ The `ToolAnnotations` record captures the spec's display and behavioural hints; 
 `McpRoute.resource(uri, name, ...)` registers a fixed-URI resource; `McpRoute.resourceTemplate(uriTemplate, name, ...)` registers an RFC 6570 URI-template resource matching every URI that fits the pattern. Both handlers return `Chunk[McpResourceContents]`; both URI inputs are typed opaque values (`McpResourceUri` for full URIs, `McpResourceUriTemplate` for templates), never raw `String` (INV-022).
 
 ```scala
-val readme: McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
+val readme: McpHandler[McpResourceUri, Chunk[McpResourceContents], McpException] =
     McpRoute.resource(
         uri         = McpResourceUri("file:///README.md"),
         name        = "readme",
         description = "Project README",
         mimeType    = Present(McpMimeType("text/markdown"))
-    ) { (uri, _) =>
+    ).handler { uri =>
         Chunk(McpResourceContents.text(uri, "Hello, world!", Present(McpMimeType("text/markdown"))))
     }
 ```
@@ -165,7 +167,7 @@ The same parse-vs-apply pattern (and a final `.asString` accessor for wire conve
 `McpRoute.prompt(name, description, arguments)` registers a prompt the client can fetch by name. The handler receives `Map[String, String]` (the arguments the client sent) and returns `PromptGetResult`.
 
 ```scala
-val explainPrompt: McpRoute[Map[String, String], McpRoute.PromptGetResult, Nothing] =
+val explainPrompt: McpHandler[Map[String, String], McpRoute.PromptGetResult, McpException] =
     McpRoute.prompt(
         name        = "explain",
         description = "Explain a topic",
@@ -174,7 +176,7 @@ val explainPrompt: McpRoute[Map[String, String], McpRoute.PromptGetResult, Nothi
             description = Present("topic to explain"),
             required    = true
         ))
-    ) { (args, _) =>
+    ).handler { args =>
         val topic = args.getOrElse("topic", "")
         McpRoute.PromptGetResult(
             description = Present(s"Explain $topic"),
@@ -190,11 +192,11 @@ The declared `arguments` populate the `prompts/list` advertisement. The runtime 
 
 ### Completion routes
 
-`McpRoute.completion(ref)` registers a completion provider for a prompt or resource URI. The handler receives the `CompletionRef`, a `CompletionArg(name, value)` (the named record from Audit-A8 / INV-026), and produces a `CompletionResult`.
+`McpRoute.completion(ref)` registers a completion provider for a prompt or resource URI. `.handler` binds a closure that receives a `CompletionArg(name, value)` (the named record from Audit-A8 / INV-026) and produces a `CompletionResult`. Use `.handlerWith` when the handler also needs the `CompletionRef` or the optional previously-filled-arguments `Context`.
 
 ```scala
-val topicCompletion: McpRoute[(McpRoute.CompletionRef, McpRoute.CompletionArg), McpRoute.CompletionResult, Nothing] =
-    McpRoute.completion(McpRoute.CompletionRef.Prompt("explain")) { (_, arg, _, _) =>
+val topicCompletion: McpHandler[(McpRoute.CompletionRef, McpRoute.CompletionArg), McpRoute.CompletionResult, McpException] =
+    McpRoute.completion(McpRoute.CompletionRef.Prompt("explain")).handler { arg =>
         McpRoute.CompletionResult(
             values  = Chunk("kyo", "scala", "mcp").filter(_.startsWith(arg.value)),
             total   = Absent,
@@ -205,29 +207,31 @@ val topicCompletion: McpRoute[(McpRoute.CompletionRef, McpRoute.CompletionArg), 
 
 `CompletionRef` is a sealed enum with two cases: `Prompt(name)` and `Resource(uri)`. `CompletionArg.name` is the argument the client is completing; `CompletionArg.value` is the partial value the user has typed so far.
 
-The fourth handler parameter is `Maybe[CompletionArg.Context]`, which carries the previously-filled argument values for this completion request per spec §3.17. `McpClient.complete(ref, arg)` currently forwards `Absent` for context, so handlers that inspect it will receive `Absent` when called via the built-in client.
+When you need the previously-filled argument values (per spec §3.17), use `.handlerWith { (ref, arg, contextOpt) => ... }` instead of `.handler { arg => ... }`. `McpClient.complete(ref, arg)` currently forwards `Absent` for context, so handlers that inspect it will receive `Absent` when called via the built-in client.
 
-`McpRoute[In, Out, +E].error[E2](code, message)` adds an entry to the route's typed error channel; the handler then aborts with values of type `E2` and the engine maps them to the spec'd JSON-RPC error code on the wire.
+`McpHandler[In, Out, +E].error[E2](code, message)` adds an entry to the handler's typed error channel; the handler then aborts with values of type `E2` and the engine maps them to the spec'd JSON-RPC error code on the wire.
 
 ### Custom routes
 
-`McpRoute.custom[In, Out](method)` is the escape hatch for MCP extensions and vendor-specific methods. The handler is identical to the built-in factories; the only thing the engine does differently is treat the route as `Kind.Custom` (no capability auto-derivation, no entry in the standard `*/list` advertisements).
+`McpRoute.custom[In](method).handler[Out](f)` is the escape hatch for MCP extensions and vendor-specific methods. The handler is identical in shape to the built-in factories; the only thing the engine does differently is treat the route as `Kind.Custom` (no capability auto-derivation, no entry in the standard `*/list` advertisements).
 
 ### The per-request context
 
-Every handler receives an `McpRoute.Context`. The context exposes four fields and one method:
+Handler closures take only the typed `In` parameter; per-request fields are reached through the `Mcp.*` accessors, each of which reads from a per-request `Local` the engine binds at dispatch time:
 
-- `cancelled: Fiber.Promise[Unit, Sync]`: completes when the peer cancels this request. Race it against the handler's work.
-- `requestId: Maybe[JsonRpcId]`: the JSON-RPC id of the inbound request (`Absent` for notifications).
-- `extras: Maybe[Structure.Value]`: protocol-specific extra fields from the inbound envelope.
-- `server: McpServer`: the live server handle, for reverse-direction calls (`requestSampling`, `requestRoots`, `requestElicitation`) and notifications. INV-024: this is the safe opaque type, never `McpServer.Unsafe`.
-- `progress(progress, total, message)`: reports an MCP-shaped progress notification keyed on the `_meta.progressToken` the client supplied. A no-op when the client did not supply a token, and silently dropped per `McpProgressPolicy` when no `progressToken` was extracted by the engine.
+- `Mcp.cancelled`: yields the `Fiber.Promise[Unit, Sync]` that completes when the peer cancels this request. Race it against the handler's work.
+- `Mcp.requestId`: the JSON-RPC id of the inbound request (`Absent` for notifications).
+- `Mcp.extras`: protocol-specific extra fields from the inbound envelope.
+- `Mcp.server`: the live `McpServer` handle for reverse-direction calls (`requestSampling`, `requestRoots`, `requestElicitation`) and notifications. INV-024: typed `McpServer`, never `McpServer.Unsafe`.
+- `Mcp.progress(progress, total, message)`: reports an MCP-shaped progress notification keyed on the `_meta.progressToken` the client supplied. A no-op when the client did not supply a token, and silently dropped per `McpProgressPolicy` when no `progressToken` was extracted by the engine.
 
-`server.requestSampling(req)` lets a tool handler ask the client to run an LLM completion mid-handler; `server.requestElicitation(req)` lets the handler collect additional user input. Both use the typed request and response records (`McpServer.SamplingRequest` / `McpServer.SamplingResponse`, `McpServer.ElicitationRequest` / `McpServer.ElicitationResponse`); the reverse-direction wire shape is owned by the library.
+`Mcp.server.flatMap(_.requestSampling(req))` lets a tool handler ask the client to run an LLM completion mid-handler; `Mcp.server.flatMap(_.requestElicitation(req))` lets the handler collect additional user input. Both use the typed request and response records (`McpServer.SamplingRequest` / `McpServer.SamplingResponse`, `McpServer.ElicitationRequest` / `McpServer.ElicitationResponse`); the reverse-direction wire shape is owned by the library.
+
+Calling any `Mcp.*` accessor outside an active route handler raises an `IllegalStateException` (kernel panic). This is a programmer-error path, not a domain failure, so the accessors do not widen handler effect rows with a typed `Abort`.
 
 ### Why one trait, not three concrete types
 
-The engine wiring is identical for every route kind: each one ultimately becomes a `JsonRpcRoute` registered on the underlying `JsonRpcHandler`. Carrying a single sealed `McpRoute` lets `McpServer.init(transport, routes*)` accept a heterogeneous varargs list (one tool, two resources, three prompts) without an artificial LUB or a wrapper type. The role-tagged factories carry the kind discriminator on the value, not the type.
+The engine wiring is identical for every route kind: each one ultimately becomes a `JsonRpcRoute` registered on the underlying `JsonRpcHandler`. Carrying a single sealed `McpHandler` lets `McpServer.init(transport, handlers*)` accept a heterogeneous varargs list (one tool, two resources, three prompts) without an artificial LUB or a wrapper type. The role-tagged factories carry the kind discriminator on the value, not the type.
 
 ## Errors
 
@@ -312,8 +316,8 @@ A live MCP server can also originate requests to the client. The three spec-defi
 - `requestElicitation(req)`: collect additional input from the user. Requires the client's `elicitation` capability.
 
 ```scala
-val askLLM: McpRoute[Weather, McpContent, Nothing] =
-    McpRoute.tool[Weather]("askLLM") { (req, ctx) =>
+val askLLM: McpHandler[Weather, McpContent, McpException] =
+    McpRoute.tool[Weather]("askLLM").handler { req =>
         val sampling = McpServer.SamplingRequest(
             messages         = Chunk(McpServer.SamplingRequest.Message(
                 role    = McpRole.User,
@@ -325,7 +329,7 @@ val askLLM: McpRoute[Weather, McpContent, Nothing] =
             )),
             maxTokens        = 256
         )
-        Abort.run[Closed](ctx.server.requestSampling(sampling)).map {
+        Mcp.server.flatMap(srv => Abort.run[Closed](srv.requestSampling(sampling))).map {
             case Result.Success(resp) => resp.content match
                 case t: McpContent.Text => McpContent.text(t.text)
                 case _                  => McpContent.text("(non-text response)")
@@ -358,7 +362,7 @@ The minimal server above uses `stdio()` for exactly the standard MCP deployment 
 
 ```scala
 val pairedTest: McpClient.Page[McpRoute.ToolMeta] < (Async & Scope & Abort[McpException | Closed]) =
-    val addTool = McpRoute.tool[AddIn]("add") { (in, _) =>
+    val addTool = McpRoute.tool[AddIn]("add").handler { in =>
         McpContent.text(s"${in.a + in.b}")
     }
     JsonRpcTransport.inMemory.map { (serverT, clientT) =>

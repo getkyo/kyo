@@ -1,63 +1,63 @@
 package kyo.internal.mcp
 
 import kyo.*
-import kyo.McpRouteCarrier
 
-/** Frozen snapshot of user-registered routes built once at `McpServer.init` time.
+/** Frozen snapshot of user-registered handlers built once at `McpServer.init` time.
   *
-  * Partitions routes by `McpRoute.Kind` for engine dispatch and for the built-in
+  * Partitions handlers by `McpRoute.Kind` for engine dispatch and for the built-in
   * list endpoints. No mutation is possible after construction (INV-018).
   *
   * Auto-derives `McpCapabilities.Server` when `McpConfig.declaredCapabilities` is
-  * `Absent`, using registered route counts and `config.autoNotifyListChanged` (INV-019).
+  * `Absent`, using registered handler counts and `config.autoNotifyListChanged` (INV-019).
   */
-final private[kyo] class McpCatalog(val routes: Seq[McpRoute[?, ?, ?]]):
+final private[kyo] class McpCatalog(val handlers: Seq[McpHandler[?, ?, ?]]):
 
     // Partition at construction time; allocation is bounded to init, not per-request.
-    val toolRoutes: Seq[McpRoute[?, ?, ?]] =
-        routes.filter(_.kind == McpRoute.Kind.Tool)
+    val toolHandlers: Seq[McpHandler[?, ?, ?]] =
+        handlers.filter(_.kind == McpRoute.Kind.Tool)
 
-    val resourceRoutes: Seq[McpRoute[?, ?, ?]] =
-        routes.filter(_.kind == McpRoute.Kind.Resource)
+    val resourceHandlers: Seq[McpHandler[?, ?, ?]] =
+        handlers.filter(_.kind == McpRoute.Kind.Resource)
 
-    val resourceTemplateRoutes: Seq[McpRoute[?, ?, ?]] =
-        routes.filter(_.kind == McpRoute.Kind.ResourceTemplate)
+    val resourceTemplateHandlers: Seq[McpHandler[?, ?, ?]] =
+        handlers.filter(_.kind == McpRoute.Kind.ResourceTemplate)
 
-    val promptRoutes: Seq[McpRoute[?, ?, ?]] =
-        routes.filter(_.kind == McpRoute.Kind.Prompt)
+    val promptHandlers: Seq[McpHandler[?, ?, ?]] =
+        handlers.filter(_.kind == McpRoute.Kind.Prompt)
 
-    // Completion routes use Kind.Custom per Decision 13.
-    val completionRoutes: Seq[McpRoute[?, ?, ?]] =
-        routes.filter(_.kind == McpRoute.Kind.Custom)
+    // Completion handlers use Kind.Custom per Decision 13.
+    val completionHandlers: Seq[McpHandler[?, ?, ?]] =
+        handlers.collect { case h: McpHandler.CompletionHandler[?] => h }
 
-    /** Extracts `ToolMeta` from a tool route carrier. */
-    def toolMetaOf(r: McpRoute[?, ?, ?]): McpRoute.ToolMeta =
-        r match
-            case c: McpRouteCarrier.Tool[?, ?] => c.toolMeta
-            case _                             => throw new IllegalStateException(s"expected Tool carrier for route '${r.name}'")
+    /** Extracts `ToolMeta` from a tool handler. */
+    def toolMetaOf(h: McpHandler[?, ?, ?]): McpRoute.ToolMeta =
+        h match
+            case c: McpHandler.ToolHandler[?, ?, ?]   => c.toolMeta
+            case c: McpHandler.ToolMultiHandler[?, ?] => c.toolMeta
+            case _                                    => throw new IllegalStateException(s"expected Tool handler for route '${h.name}'")
 
-    /** Extracts `ResourceMeta` from a resource route carrier. */
-    def resourceMetaOf(r: McpRoute[?, ?, ?]): McpRoute.ResourceMeta =
-        r match
-            case c: McpRouteCarrier.Resource[?] => c.resourceMeta
-            case _                              => throw new IllegalStateException(s"expected Resource carrier for route '${r.name}'")
+    /** Extracts `ResourceMeta` from a resource handler. */
+    def resourceMetaOf(h: McpHandler[?, ?, ?]): McpRoute.ResourceMeta =
+        h match
+            case c: McpHandler.ResourceHandler[?] => c.resourceMeta
+            case _                                => throw new IllegalStateException(s"expected Resource handler for route '${h.name}'")
 
-    /** Extracts `ResourceTemplateMeta` from a resource template route carrier. */
-    def resourceTemplateMetaOf(r: McpRoute[?, ?, ?]): McpRoute.ResourceTemplateMeta =
-        r match
-            case c: McpRouteCarrier.ResourceTemplate[?] => c.resourceTemplateMeta
-            case _ => throw new IllegalStateException(s"expected ResourceTemplate carrier for route '${r.name}'")
+    /** Extracts `ResourceTemplateMeta` from a resource template handler. */
+    def resourceTemplateMetaOf(h: McpHandler[?, ?, ?]): McpRoute.ResourceTemplateMeta =
+        h match
+            case c: McpHandler.ResourceTemplateHandler[?] => c.resourceTemplateMeta
+            case _ => throw new IllegalStateException(s"expected ResourceTemplate handler for route '${h.name}'")
 
-    /** Extracts `PromptMeta` from a prompt route carrier. */
-    def promptMetaOf(r: McpRoute[?, ?, ?]): McpRoute.PromptMeta =
-        r match
-            case c: McpRouteCarrier.Prompt[?] => c.promptMeta
-            case _                            => throw new IllegalStateException(s"expected Prompt carrier for route '${r.name}'")
+    /** Extracts `PromptMeta` from a prompt handler. */
+    def promptMetaOf(h: McpHandler[?, ?, ?]): McpRoute.PromptMeta =
+        h match
+            case c: McpHandler.PromptHandler[?] => c.promptMeta
+            case _                              => throw new IllegalStateException(s"expected Prompt handler for route '${h.name}'")
 
-    /** Auto-derives `McpCapabilities.Server` from registered routes and `config`.
+    /** Auto-derives `McpCapabilities.Server` from registered handlers and `config`.
       *
       * When `config.declaredCapabilities` is `Present(c)`, returns `c` verbatim (INV-019).
-      * Otherwise derives from registered route kinds and `config.autoNotifyListChanged`.
+      * Otherwise derives from registered handler kinds and `config.autoNotifyListChanged`.
       */
     def autoDeriveServerCapabilities(config: McpConfig): McpCapabilities.Server =
         config.declaredCapabilities match
@@ -65,28 +65,30 @@ final private[kyo] class McpCatalog(val routes: Seq[McpRoute[?, ?, ?]]):
             case Absent =>
                 McpCapabilities.Server(
                     tools =
-                        if toolRoutes.nonEmpty then
+                        if toolHandlers.nonEmpty then
                             Present(McpCapabilities.ToolsCapability(listChanged = config.autoNotifyListChanged))
                         else Absent,
                     resources =
-                        if resourceRoutes.nonEmpty || resourceTemplateRoutes.nonEmpty then
+                        if resourceHandlers.nonEmpty || resourceTemplateHandlers.nonEmpty then
                             Present(
                                 McpCapabilities.ResourcesCapability(
-                                    subscribe =
-                                        resourceRoutes.exists { case c: McpRouteCarrier.Resource[?] => c.subscribable; case _ => false },
+                                    subscribe = resourceHandlers.exists {
+                                        case c: McpHandler.ResourceHandler[?] => c.subscribable
+                                        case _                                => false
+                                    },
                                     listChanged = config.autoNotifyListChanged
                                 )
                             )
                         else Absent,
                     prompts =
-                        if promptRoutes.nonEmpty then
+                        if promptHandlers.nonEmpty then
                             Present(McpCapabilities.PromptsCapability(listChanged = config.autoNotifyListChanged))
                         else Absent,
                     completions =
-                        if completionRoutes.nonEmpty then
+                        if completionHandlers.nonEmpty then
                             Present(McpCapabilities.CompletionsCapability())
                         else Absent,
-                    logging = if routes.exists(_.isInstanceOf[McpRouteCarrier.LoggingHook]) then
+                    logging = if handlers.exists(_.isInstanceOf[McpHandler.LoggingHook]) then
                         Present(McpCapabilities.LoggingCapability())
                     else Absent,
                     experimental = Map.empty

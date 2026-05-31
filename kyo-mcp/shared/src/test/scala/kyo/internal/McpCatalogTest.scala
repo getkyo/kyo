@@ -11,37 +11,37 @@ class McpCatalogTest extends Test:
 
     "empty catalog has no routes in any partition" in run {
         val catalog = McpCatalog(Seq.empty)
-        assert(catalog.toolRoutes.isEmpty)
-        assert(catalog.resourceRoutes.isEmpty)
-        assert(catalog.resourceTemplateRoutes.isEmpty)
-        assert(catalog.promptRoutes.isEmpty)
-        assert(catalog.completionRoutes.isEmpty)
+        assert(catalog.toolHandlers.isEmpty)
+        assert(catalog.resourceHandlers.isEmpty)
+        assert(catalog.resourceTemplateHandlers.isEmpty)
+        assert(catalog.promptHandlers.isEmpty)
+        assert(catalog.completionHandlers.isEmpty)
     }
 
-    "tool routes are partitioned into toolRoutes" in run {
-        val r       = McpRoute.tool[Unit]("myTool")((_, _) => McpContent.Text("ok"))
+    "tool routes are partitioned into toolHandlers" in run {
+        val r       = McpRoute.tool[Unit]("myTool").handler((_) => McpContent.Text("ok"))
         val catalog = McpCatalog(Seq(r))
-        assert(catalog.toolRoutes.size == 1)
-        assert(catalog.toolRoutes.head.name == "myTool")
-        assert(catalog.resourceRoutes.isEmpty)
+        assert(catalog.toolHandlers.size == 1)
+        assert(catalog.toolHandlers.head.name == "myTool")
+        assert(catalog.resourceHandlers.isEmpty)
     }
 
-    "resource routes are partitioned into resourceRoutes" in run {
-        val r       = McpRoute.resource(testUri, "myResource")((_, _) => Chunk.empty)
+    "resource routes are partitioned into resourceHandlers" in run {
+        val r       = McpRoute.resource(testUri, "myResource").handler((_) => Chunk.empty)
         val catalog = McpCatalog(Seq(r))
-        assert(catalog.resourceRoutes.size == 1)
-        assert(catalog.toolRoutes.isEmpty)
+        assert(catalog.resourceHandlers.size == 1)
+        assert(catalog.toolHandlers.isEmpty)
     }
 
-    "prompt routes are partitioned into promptRoutes" in run {
-        val r       = McpRoute.prompt("myPrompt")((_, _) => McpRoute.PromptGetResult(Absent, Chunk.empty))
+    "prompt routes are partitioned into promptHandlers" in run {
+        val r       = McpRoute.prompt("myPrompt").handler((_) => McpRoute.PromptGetResult(Absent, Chunk.empty))
         val catalog = McpCatalog(Seq(r))
-        assert(catalog.promptRoutes.size == 1)
-        assert(catalog.toolRoutes.isEmpty)
+        assert(catalog.promptHandlers.size == 1)
+        assert(catalog.toolHandlers.isEmpty)
     }
 
     "toolMetaOf returns ToolMeta with correct name and description" in run {
-        val r       = McpRoute.tool[Unit]("calc", "A calculator")((_, _) => McpContent.Text("0"))
+        val r       = McpRoute.tool[Unit]("calc", "A calculator").handler((_) => McpContent.Text("0"))
         val catalog = McpCatalog(Seq(r))
         val meta    = catalog.toolMetaOf(r)
         assert(meta.name == "calc")
@@ -50,7 +50,7 @@ class McpCatalogTest extends Test:
 
     "autoDeriveServerCapabilities with Absent declaredCapabilities and one tool route" in run {
         val config  = McpConfig.default.autoNotifyListChanged(true)
-        val r       = McpRoute.tool[Unit]("t")((_, _) => McpContent.Text("x"))
+        val r       = McpRoute.tool[Unit]("t").handler((_) => McpContent.Text("x"))
         val catalog = McpCatalog(Seq(r))
         val caps    = catalog.autoDeriveServerCapabilities(config)
         assert(caps.tools.isDefined)
@@ -61,7 +61,7 @@ class McpCatalogTest extends Test:
 
     "autoDeriveServerCapabilities with Present(empty) returns empty verbatim (INV-019)" in run {
         val config  = McpConfig.default.declaredCapabilities(McpCapabilities.Server())
-        val r       = McpRoute.tool[Unit]("t")((_, _) => McpContent.Text("x"))
+        val r       = McpRoute.tool[Unit]("t").handler((_) => McpContent.Text("x"))
         val catalog = McpCatalog(Seq(r))
         val caps    = catalog.autoDeriveServerCapabilities(config)
         // Should be the explicitly declared empty Server, not auto-derived.
@@ -73,10 +73,10 @@ class McpCatalogTest extends Test:
     "catalog is immutable: no mutation methods on public interface (INV-018)" in run {
         // Compile-time check: McpCatalog has no add/remove/set methods.
         // This test verifies the catalog's routes field is final and size-stable.
-        val r       = McpRoute.tool[Unit]("t")((_, _) => McpContent.Text("x"))
+        val r       = McpRoute.tool[Unit]("t").handler((_) => McpContent.Text("x"))
         val catalog = McpCatalog(Seq(r))
-        val sizeA   = catalog.routes.size
-        val sizeB   = catalog.routes.size
+        val sizeA   = catalog.handlers.size
+        val sizeB   = catalog.handlers.size
         assert(sizeA == sizeB)
         assert(sizeA == 1)
     }

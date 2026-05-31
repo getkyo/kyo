@@ -9,7 +9,7 @@ class McpMetaPassThroughTest extends Test:
 
     "ToolCallResult meta field round-trips through the wire" in run {
         val metaVal = Structure.encode(Map("echo" -> "bar"))
-        val toolRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
+        val toolRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
             McpRoute.ToolCallResult(
                 content = Chunk(McpContent.text(s"${in.a + in.b}")),
                 isError = false,
@@ -34,7 +34,7 @@ class McpMetaPassThroughTest extends Test:
     }
 
     "ToolCallResult meta defaults to Absent when not set" in run {
-        val toolRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
+        val toolRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
             McpRoute.ToolCallResult(
                 content = Chunk(McpContent.text(s"${in.a + in.b}")),
                 isError = false,

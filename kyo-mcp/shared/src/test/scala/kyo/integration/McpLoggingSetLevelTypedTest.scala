@@ -15,7 +15,7 @@ class McpLoggingSetLevelTypedTest extends Test:
     "setLogLevel(Warning) drops subsequent notifyLog(Info) messages" in run {
         val counter = makeCounter
         // Register a client-side notification handler for notifications/message to count arrivals.
-        val logNotifRoute = McpRoute.custom[LogMsg]("notifications/message") { (_, _) =>
+        val logNotifRoute = McpRoute.custom[LogMsg]("notifications/message").handler { _ =>
             Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
 
@@ -47,7 +47,7 @@ class McpLoggingSetLevelTypedTest extends Test:
 
     "notifyLog before setLogLevel uses Info default threshold" in run {
         val counter = makeCounter
-        val logNotifRoute = McpRoute.custom[LogMsg]("notifications/message") { (_, _) =>
+        val logNotifRoute = McpRoute.custom[LogMsg]("notifications/message").handler { _ =>
             Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
 

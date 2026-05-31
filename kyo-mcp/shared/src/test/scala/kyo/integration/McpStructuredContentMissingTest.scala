@@ -8,7 +8,7 @@ class McpStructuredContentMissingTest extends Test:
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
     case class Sum(value: Int) derives Schema, CanEqual
 
-    private val textOnlyRoute = McpRoute.toolMulti[AddIn]("text-only-tool") { (in, _) =>
+    private val textOnlyRoute = McpRoute.toolMulti[AddIn]("text-only-tool").handler { in =>
         McpRoute.ToolCallResult(
             content = Chunk(McpContent.text(s"${in.a + in.b}")),
             isError = false,

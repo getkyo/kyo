@@ -9,13 +9,13 @@ class McpUnknownMethodStrictRejectTest extends Test:
     case class EmptyParams() derives Schema, CanEqual
     case class EmptyResult() derives Schema, CanEqual
 
-    private val tool1 = McpRoute.tool[AddIn]("a") { (in, _) =>
+    private val tool1 = McpRoute.tool[AddIn]("a").handler { in =>
         McpContent.Text(s"${in.a}")
     }
-    private val tool2 = McpRoute.tool[AddIn]("b") { (in, _) =>
+    private val tool2 = McpRoute.tool[AddIn]("b").handler { in =>
         McpContent.Text(s"${in.b}")
     }
-    private val tool3 = McpRoute.tool[AddIn]("c") { (_, _) =>
+    private val tool3 = McpRoute.tool[AddIn]("c").handler { _ =>
         McpContent.Text("c")
     }
 

@@ -1,30 +1,27 @@
 package kyo
 
-/** Typed route descriptor for the MCP route DSL.
+/** Metadata-only route descriptor for the MCP route DSL.
+  *
+  * `McpRoute[In]` carries only the descriptive surface of an MCP endpoint (name, kind,
+  * schema, capability hints, annotations). The closure that implements the route lives on
+  * [[McpHandler]], produced by calling `.handler[Out](f)` (or `.handlerWith[Out]` for the
+  * completion factory which needs additional handler parameters).
+  *
+  * This split mirrors `HttpRoute` vs `HttpHandler` in `kyo-http`: a route is the typed
+  * contract, a handler is the contract paired with an implementation.
   *
   * Users construct routes via the companion factory methods: `tool`, `toolMulti`, `resource`,
   * `resourceTemplate`, `prompt`, `completion`, `custom`. Each factory captures the `Schema`
   * evidence at construction time so the engine can encode/decode request and response payloads.
   *
-  * The `+E` type parameter accumulates user-domain error types registered via `.error[E2]`.
-  * Domain errors abort the handler and are encoded as JSON-RPC error responses.
+  * Factory clauses interleave `[In](...)(using Schema[In])` and `.handler[Out](f)(using Schema[Out])`
+  * so call sites only need to annotate `[In]`; `Out` is inferred from the handler's return type.
   *
-  * Factory methods use clause interleaving on `[In](...)(using Schema[In])[Out](handler)(using Schema[Out])`
-  * so the user can write `McpRoute.tool[AddIn]("add") { (in, _) => ... }` and the compiler infers
-  * `Out` from the handler's return type. The explicit `[In, Out]` form remains valid for callers
-  * that prefer to pin both type arguments.
-  *
-  * Mirrors `JsonRpcRoute[In, Out, +E]` at kyo-jsonrpc/.../JsonRpcRoute.scala:42.
-  *
-  * @tparam In  the request parameter type
-  * @tparam Out the response result type
-  * @tparam E   the union of user-registered domain error types
+  * @tparam In the request parameter type
   */
-sealed trait McpRoute[In, Out, +E]:
+sealed trait McpRoute[In]:
     def name: String
     def kind: McpRoute.Kind
-    def error[E2](using schema: Schema[E2], tag: ConcreteTag[E2])(code: Int, message: String): McpRoute[In, Out, E | E2]
-    private[kyo] def underlying: JsonRpcRoute[?, ?, ?]
 end McpRoute
 
 object McpRoute:
@@ -32,29 +29,6 @@ object McpRoute:
     /** The operational category of a route. */
     enum Kind derives CanEqual:
         case Tool, Resource, ResourceTemplate, Prompt, Notification, Custom
-
-    /** Per-request context supplied to every route handler by the engine.
-      *
-      * Provides access to the underlying `JsonRpcRoute.Context` (cancellation, requestId, extras)
-      * and to the live `McpServer` handle for reverse-direction calls.
-      *
-      * The constructor is `private[kyo]`; handlers receive instances only from the engine.
-      * INV-024: `server` is typed `McpServer` (safe opaque), never `McpServer.Unsafe`.
-      */
-    final class Context private[kyo] (val underlying: JsonRpcRoute.Context, val server: McpServer):
-        export underlying.cancelled
-        export underlying.extras
-        export underlying.requestId
-
-        /** Reports a progress notification back to the caller. */
-        def progress(
-            progress: Double,
-            total: Maybe[Double] = Absent,
-            message: Maybe[String] = Absent
-        )(using Frame): Unit < (Async & Abort[Closed]) =
-            internal.mcp.McpProgressPolicy.report(underlying, progress, total, message)
-
-    end Context
 
     /** Metadata returned by `McpClient.listTools`. */
     final case class ToolMeta(
@@ -207,55 +181,18 @@ object McpRoute:
     private inline def resourceAnnotationsMaybe(a: ResourceAnnotations): Maybe[ResourceAnnotations] =
         if a == ResourceAnnotations.noop then Absent else Present(a)
 
-    /** Registers a single-content tool route.
+    /** Registers a single-content tool route descriptor.
       *
-      * The handler receives a typed `In` parameter and returns a single `Out <: McpContent`.
-      * INV-020: distinct from `toolMulti` which returns `ToolCallResult`.
-      *
-      * Clause interleaving lets callers write `McpRoute.tool[AddIn]("add") { ... }` and the
-      * compiler infers `Out` from the handler's return type. The explicit `[In, Out]` form
-      * also compiles for callers that prefer to pin both type arguments.
+      * Call `.handler[Out](f)` on the returned value to bind a handler closure and produce an
+      * [[McpHandler]]. `Out <: McpContent`; the engine wraps the handler's return in a
+      * `ToolCallResult` with `content = Chunk(out)`. INV-020: distinct from `toolMulti` which
+      * returns `ToolCallResult` directly.
       */
     def tool[In](
         name: String,
         description: String = "",
         annotations: ToolAnnotations = ToolAnnotations.noop
-    )(using
-        inSchema: Schema[In]
-    )[Out <: McpContent](
-        handler: (In, Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt])
-    )(using outSchema: Schema[Out], frame: Frame): McpRoute[In, Out, Nothing] =
-        // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
-        val meta = ToolMeta(
-            name = name,
-            description = if description.isEmpty then Absent else Present(description),
-            inputSchema = Json.jsonSchema[In],
-            outputSchema = Present(Json.jsonSchema[Out]),
-            annotations = toolAnnotationsMaybe(annotations)
-        )
-        val underlying = JsonRpcRoute.request[In, ToolCallResult](name) { (in, jrCtx) =>
-            val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                throw new IllegalStateException(s"McpServer not initialized for tool '$name'")
-            )
-            val ctx = new Context(jrCtx, server.safe)
-            handler(in, ctx).map(out => ToolCallResult(Chunk(out), isError = false, structuredContent = Absent))
-        }(using inSchema, summon[Schema[ToolCallResult]])
-        McpRouteCarrier.Tool(name, meta, inSchema, outSchema, handler, serverRef, underlying)
-    end tool
-
-    /** Registers a multi-content tool route returning a `ToolCallResult`. INV-020. */
-    def toolMulti[In](
-        name: String,
-        description: String = "",
-        annotations: ToolAnnotations = ToolAnnotations.noop
-    )(using
-        inSchema: Schema[In]
-    )(
-        handler: (In, Context) => ToolCallResult < (Async & Abort[McpException | JsonRpcResponse.Halt])
-    )(using Frame): McpRoute[In, ToolCallResult, Nothing] =
-        // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
+    )(using inSchema: Schema[In]): ToolRoute[In] =
         val meta = ToolMeta(
             name = name,
             description = if description.isEmpty then Absent else Present(description),
@@ -263,17 +200,32 @@ object McpRoute:
             outputSchema = Absent,
             annotations = toolAnnotationsMaybe(annotations)
         )
-        val underlying = JsonRpcRoute.request[In, ToolCallResult](name) { (in, jrCtx) =>
-            val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                throw new IllegalStateException(s"McpServer not initialized for toolMulti '$name'")
-            )
-            val ctx = new Context(jrCtx, server.safe)
-            handler(in, ctx)
-        }(using inSchema, summon[Schema[ToolCallResult]])
-        McpRouteCarrier.ToolMulti(name, meta, inSchema, handler, serverRef, underlying)
+        ToolRoute(meta, inSchema)
+    end tool
+
+    /** Registers a multi-content tool route descriptor. INV-020.
+      *
+      * Call `.handler(f)` on the returned value to bind a handler closure that returns
+      * `ToolCallResult` directly (no engine wrapping).
+      */
+    def toolMulti[In](
+        name: String,
+        description: String = "",
+        annotations: ToolAnnotations = ToolAnnotations.noop
+    )(using inSchema: Schema[In]): ToolMultiRoute[In] =
+        val meta = ToolMeta(
+            name = name,
+            description = if description.isEmpty then Absent else Present(description),
+            inputSchema = Json.jsonSchema[In],
+            outputSchema = Absent,
+            annotations = toolAnnotationsMaybe(annotations)
+        )
+        ToolMultiRoute(meta, inSchema)
     end toolMulti
 
-    /** Registers a fixed-URI resource route.
+    /** Registers a fixed-URI resource route descriptor.
+      *
+      * Call `.handler(f)` on the returned value to bind a handler closure.
       *
       * @param subscribe when `true`, this resource opts into the subscription protocol (§3.4 / Q9).
       *                  The server advertises `resources.subscribe = true` when any resource route
@@ -286,11 +238,7 @@ object McpRoute:
         mimeType: Maybe[McpMimeType] = Absent,
         annotations: ResourceAnnotations = ResourceAnnotations.noop,
         subscribe: Boolean = false
-    )(handler: (McpResourceUri, Context) => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]))(using
-        Frame
-    ): McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
-        // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
+    ): ResourceRoute =
         val meta = ResourceMeta(
             uri = uri,
             name = name,
@@ -298,28 +246,20 @@ object McpRoute:
             mimeType = mimeType,
             annotations = resourceAnnotationsMaybe(annotations)
         )
-        val underlying = JsonRpcRoute.request[McpResourceUri, Chunk[McpResourceContents]](uri.asString) { (u, jrCtx) =>
-            val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                throw new IllegalStateException(s"McpServer not initialized for resource '${uri.asString}'")
-            )
-            val ctx = new Context(jrCtx, server.safe)
-            handler(u, ctx)
-        }
-        McpRouteCarrier.Resource(name, meta, handler, serverRef, underlying, subscribe)
+        ResourceRoute(meta, subscribe)
     end resource
 
-    /** Registers a URI-template resource route. */
+    /** Registers a URI-template resource route descriptor.
+      *
+      * Call `.handler(f)` on the returned value to bind a handler closure.
+      */
     def resourceTemplate(
         uriTemplate: McpResourceUriTemplate,
         name: String,
         description: String = "",
         mimeType: Maybe[McpMimeType] = Absent,
         annotations: ResourceAnnotations = ResourceAnnotations.noop
-    )(handler: (McpResourceUri, Context) => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]))(using
-        Frame
-    ): McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
-        // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
+    ): ResourceTemplateRoute =
         val meta = ResourceTemplateMeta(
             uriTemplate = uriTemplate,
             name = name,
@@ -327,206 +267,156 @@ object McpRoute:
             mimeType = mimeType,
             annotations = resourceAnnotationsMaybe(annotations)
         )
-        val underlying = JsonRpcRoute.request[McpResourceUri, Chunk[McpResourceContents]](uriTemplate.asString) { (u, jrCtx) =>
-            val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                throw new IllegalStateException(s"McpServer not initialized for resourceTemplate '${uriTemplate.asString}'")
-            )
-            val ctx = new Context(jrCtx, server.safe)
-            handler(u, ctx)
-        }
-        McpRouteCarrier.ResourceTemplate(name, meta, handler, serverRef, underlying)
+        ResourceTemplateRoute(meta)
     end resourceTemplate
 
-    /** Registers a prompt route. */
+    /** Registers a prompt route descriptor.
+      *
+      * Call `.handler(f)` on the returned value to bind a handler closure receiving the typed
+      * `Map[String, String]` argument map.
+      */
     def prompt(
         name: String,
         description: String = "",
         arguments: Chunk[PromptArgument] = Chunk.empty
-    )(handler: (Map[String, String], Context) => PromptGetResult < (Async & Abort[McpException | JsonRpcResponse.Halt]))(using
-        Frame
-    ): McpRoute[Map[String, String], PromptGetResult, Nothing] =
-        // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
+    ): PromptRoute =
         val meta =
             PromptMeta(name = name, description = if description.isEmpty then Absent else Present(description), arguments = arguments)
-        val underlying = JsonRpcRoute.request[Map[String, String], PromptGetResult](name) { (args, jrCtx) =>
-            val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                throw new IllegalStateException(s"McpServer not initialized for prompt '$name'")
-            )
-            val ctx = new Context(jrCtx, server.safe)
-            handler(args, ctx)
-        }
-        McpRouteCarrier.Prompt(name, meta, handler, serverRef, underlying)
+        PromptRoute(meta)
     end prompt
 
-    /** Registers a completion handler for a prompt or resource. INV-026: `CompletionArg` is a named record.
+    /** Registers a completion handler descriptor for a prompt or resource. INV-026.
       *
-      * The handler receives the ref, argument, optional context (carrying previously filled argument values
-      * per §3.17), and the request context.
+      * Call `.handler(f)` for a 1-arg handler `(arg) => ...`, or `.handlerWith(f)` for the full
+      * 3-arg `(ref, arg, contextOpt) => ...` shape that needs the previously-filled argument
+      * values per §3.17.
       */
-    def completion(
-        ref: CompletionRef
-    )(handler: (
-        CompletionRef,
-        CompletionArg,
-        Maybe[CompletionArg.Context],
-        Context
-    ) => CompletionResult < (Async & Abort[McpException | JsonRpcResponse.Halt]))(using
-        Frame
-    ): McpRoute[(CompletionRef, CompletionArg), CompletionResult, Nothing] =
-        // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
-        val routeName = ref match
+    def completion(ref: CompletionRef): CompletionRoute =
+        CompletionRoute(ref)
+
+    /** Registers a custom method route descriptor.
+      *
+      * Call `.handler[Out](f)` on the returned value. The compiler infers `Out` from the handler's
+      * return type via clause interleaving.
+      */
+    def custom[In](method: String)(using inSchema: Schema[In]): CustomRoute[In] =
+        CustomRoute(method, inSchema)
+
+    // --- Concrete route-descriptor types ---
+
+    /** Single-content tool route descriptor. */
+    final class ToolRoute[In] private[kyo] (
+        val toolMeta: ToolMeta,
+        private[kyo] val inSchema: Schema[In]
+    ) extends McpRoute[In]:
+        val name: String = toolMeta.name
+        val kind: Kind   = Kind.Tool
+
+        /** Binds a handler closure returning a single `Out <: McpContent` leaf. The engine wraps
+          * the result in a `ToolCallResult` with `content = Chunk(out)`.
+          */
+        inline def handler[Out <: McpContent](
+            f: In => Out < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, McpException] =
+            McpHandler.makeTool(this, outSchema, f)
+    end ToolRoute
+
+    /** Multi-content tool route descriptor. */
+    final class ToolMultiRoute[In] private[kyo] (
+        val toolMeta: ToolMeta,
+        private[kyo] val inSchema: Schema[In]
+    ) extends McpRoute[In]:
+        val name: String = toolMeta.name
+        val kind: Kind   = Kind.Tool
+
+        /** Binds a handler closure returning a full `ToolCallResult`. */
+        inline def handler(
+            f: In => ToolCallResult < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using frame: Frame): McpHandler[In, ToolCallResult, McpException] =
+            McpHandler.makeToolMulti(this, f)
+    end ToolMultiRoute
+
+    /** Fixed-URI resource route descriptor. */
+    final class ResourceRoute private[kyo] (
+        val resourceMeta: ResourceMeta,
+        val subscribable: Boolean
+    ) extends McpRoute[McpResourceUri]:
+        val name: String = resourceMeta.name
+        val kind: Kind   = Kind.Resource
+
+        /** Binds a handler closure that takes the resolved URI and returns the resource contents. */
+        inline def handler(
+            f: McpResourceUri => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using frame: Frame): McpHandler[McpResourceUri, Chunk[McpResourceContents], McpException] =
+            McpHandler.makeResource(this, f)
+    end ResourceRoute
+
+    /** URI-template resource route descriptor. */
+    final class ResourceTemplateRoute private[kyo] (
+        val resourceTemplateMeta: ResourceTemplateMeta
+    ) extends McpRoute[McpResourceUri]:
+        val name: String = resourceTemplateMeta.name
+        val kind: Kind   = Kind.ResourceTemplate
+
+        inline def handler(
+            f: McpResourceUri => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using frame: Frame): McpHandler[McpResourceUri, Chunk[McpResourceContents], McpException] =
+            McpHandler.makeResourceTemplate(this, f)
+    end ResourceTemplateRoute
+
+    /** Prompt route descriptor. */
+    final class PromptRoute private[kyo] (
+        val promptMeta: PromptMeta
+    ) extends McpRoute[Map[String, String]]:
+        val name: String = promptMeta.name
+        val kind: Kind   = Kind.Prompt
+
+        inline def handler(
+            f: Map[String, String] => PromptGetResult < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using frame: Frame): McpHandler[Map[String, String], PromptGetResult, McpException] =
+            McpHandler.makePrompt(this, f)
+    end PromptRoute
+
+    /** Completion route descriptor. */
+    final class CompletionRoute private[kyo] (
+        val ref: CompletionRef
+    ) extends McpRoute[(CompletionRef, CompletionArg)]:
+        val name: String = ref match
             case CompletionRef.Prompt(n)   => s"completion/prompt/$n"
             case CompletionRef.Resource(u) => s"completion/resource/${u.asString}"
-        val underlying = JsonRpcRoute.request[(CompletionRef, CompletionArg), CompletionResult](routeName) { (refAndArg, jrCtx) =>
-            val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                throw new IllegalStateException(s"McpServer not initialized for completion '$routeName'")
-            )
-            val ctx = new Context(jrCtx, server.safe)
-            handler(refAndArg._1, refAndArg._2, Absent, ctx)
-        }
-        McpRouteCarrier.Completion(routeName, ref, handler, serverRef, underlying)
-    end completion
+        val kind: Kind = Kind.Custom
 
-    /** Registers a custom method route.
-      *
-      * Clause interleaving lets callers write `McpRoute.custom[In](method) { ... }` and the
-      * compiler infers `Out` from the handler's return type.
-      */
-    def custom[In](method: String)(using
-        inSchema: Schema[In]
-    )[Out](
-        handler: (In, Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt])
-    )(using outSchema: Schema[Out], frame: Frame): McpRoute[In, Out, Nothing] =
-        // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
-        val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
-        val underlying = JsonRpcRoute.request[In, Out](method) { (in, jrCtx) =>
-            val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                throw new IllegalStateException(s"McpServer not initialized for custom method '$method'")
-            )
-            val ctx = new Context(jrCtx, server.safe)
-            handler(in, ctx)
-        }(using inSchema, outSchema)
-        McpRouteCarrier.Custom(method, method, handler, serverRef, underlying)
-    end custom
+        /** Binds a 1-arg handler receiving only the `CompletionArg`. The `ref` and optional
+          * `Context` are discarded.
+          */
+        inline def handler(
+            f: CompletionArg => CompletionResult < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using frame: Frame): McpHandler[(CompletionRef, CompletionArg), CompletionResult, McpException] =
+            McpHandler.makeCompletion(this, (_, arg, _) => f(arg))
+
+        /** Binds the full 3-arg handler receiving `(ref, arg, contextOpt)` per §3.17. */
+        inline def handlerWith(
+            f: (
+                CompletionRef,
+                CompletionArg,
+                Maybe[CompletionArg.Context]
+            ) => CompletionResult < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using frame: Frame): McpHandler[(CompletionRef, CompletionArg), CompletionResult, McpException] =
+            McpHandler.makeCompletion(this, f)
+    end CompletionRoute
+
+    /** Custom method route descriptor. */
+    final class CustomRoute[In] private[kyo] (
+        val method: String,
+        private[kyo] val inSchema: Schema[In]
+    ) extends McpRoute[In]:
+        val name: String = method
+        val kind: Kind   = Kind.Custom
+
+        inline def handler[Out](
+            f: In => Out < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, McpException] =
+            McpHandler.makeCustom(this, outSchema, f)
+    end CustomRoute
 
 end McpRoute
-
-// Internal carrier trait: extends McpRoute in the same source file to satisfy the sealed constraint.
-// private[kyo] so engine code in kyo.internal.mcp can pattern-match on the concrete carrier types.
-sealed private[kyo] trait McpRouteCarrier[In, Out, +E] extends McpRoute[In, Out, E]:
-    private[kyo] def serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
-    def error[E2](using schema: Schema[E2], tag: ConcreteTag[E2])(code: Int, message: String): McpRoute[In, Out, E | E2] = this
-
-private[kyo] object McpRouteCarrier:
-
-    /** Marker trait for routes that register a logging hook.
-      * Used by [[kyo.internal.mcp.McpCatalog]] to auto-derive the `logging` server capability.
-      * A route that extends this marker causes the catalog to set `logging = Present(...)`.
-      */
-    sealed trait LoggingHook
-
-    /** Carrier for a single-content tool route. */
-    final class Tool[In, Out <: McpContent] private[kyo] (
-        val name: String,
-        val toolMeta: McpRoute.ToolMeta,
-        val inSchema: Schema[In],
-        val outSchema: Schema[Out],
-        val handler: (In, McpRoute.Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt]),
-        val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
-        private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
-    ) extends McpRouteCarrier[In, Out, Nothing]:
-        val kind: McpRoute.Kind                            = McpRoute.Kind.Tool
-        private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
-    end Tool
-
-    /** Carrier for a multi-content tool route. */
-    final class ToolMulti[In] private[kyo] (
-        val name: String,
-        val toolMeta: McpRoute.ToolMeta,
-        val inSchema: Schema[In],
-        val handler: (In, McpRoute.Context) => McpRoute.ToolCallResult < (Async & Abort[McpException | JsonRpcResponse.Halt]),
-        val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
-        private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
-    ) extends McpRouteCarrier[In, McpRoute.ToolCallResult, Nothing]:
-        val kind: McpRoute.Kind                            = McpRoute.Kind.Tool
-        private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
-    end ToolMulti
-
-    /** Carrier for a fixed-URI resource route. */
-    final class Resource[Out] private[kyo] (
-        val name: String,
-        val resourceMeta: McpRoute.ResourceMeta,
-        val handler: (
-            McpResourceUri,
-            McpRoute.Context
-        ) => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]),
-        val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
-        private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?],
-        val subscribable: Boolean = false
-    ) extends McpRouteCarrier[McpResourceUri, Chunk[McpResourceContents], Nothing]:
-        val kind: McpRoute.Kind                            = McpRoute.Kind.Resource
-        private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
-    end Resource
-
-    /** Carrier for a URI-template resource route. */
-    final class ResourceTemplate[Out] private[kyo] (
-        val name: String,
-        val resourceTemplateMeta: McpRoute.ResourceTemplateMeta,
-        val handler: (
-            McpResourceUri,
-            McpRoute.Context
-        ) => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]),
-        val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
-        private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
-    ) extends McpRouteCarrier[McpResourceUri, Chunk[McpResourceContents], Nothing]:
-        val kind: McpRoute.Kind                            = McpRoute.Kind.ResourceTemplate
-        private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
-    end ResourceTemplate
-
-    /** Carrier for a prompt route. */
-    final class Prompt[Out] private[kyo] (
-        val name: String,
-        val promptMeta: McpRoute.PromptMeta,
-        val handler: (
-            Map[String, String],
-            McpRoute.Context
-        ) => McpRoute.PromptGetResult < (Async & Abort[McpException | JsonRpcResponse.Halt]),
-        val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
-        private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
-    ) extends McpRouteCarrier[Map[String, String], McpRoute.PromptGetResult, Nothing]:
-        val kind: McpRoute.Kind                            = McpRoute.Kind.Prompt
-        private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
-    end Prompt
-
-    /** Carrier for a completion route. */
-    final class Completion private[kyo] (
-        val name: String,
-        val ref: McpRoute.CompletionRef,
-        val handler: (
-            McpRoute.CompletionRef,
-            McpRoute.CompletionArg,
-            Maybe[McpRoute.CompletionArg.Context],
-            McpRoute.Context
-        ) => McpRoute.CompletionResult < (Async & Abort[McpException | JsonRpcResponse.Halt]),
-        val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
-        private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
-    ) extends McpRouteCarrier[(McpRoute.CompletionRef, McpRoute.CompletionArg), McpRoute.CompletionResult, Nothing]:
-        val kind: McpRoute.Kind                            = McpRoute.Kind.Custom
-        private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
-    end Completion
-
-    /** Carrier for a custom method route. */
-    final class Custom[In, Out] private[kyo] (
-        val name: String,
-        val method: String,
-        val handler: (In, McpRoute.Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt]),
-        val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
-        private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
-    ) extends McpRouteCarrier[In, Out, Nothing]:
-        val kind: McpRoute.Kind                            = McpRoute.Kind.Custom
-        private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
-    end Custom
-
-end McpRouteCarrier

@@ -8,10 +8,10 @@ class McpResourceListReadTest extends Test:
     private val fileUri = McpResourceUri.parse("file:///a").get
     private val tmplUri = McpResourceUriTemplate.parse("file:///{x}").get
 
-    private val resRoute = McpRoute.resource(fileUri, "a-file") { (uri, _) =>
+    private val resRoute = McpRoute.resource(fileUri, "a-file").handler { uri =>
         Chunk(McpResourceContents.Text(uri, Absent, "content-a"))
     }
-    private val tmplRoute = McpRoute.resourceTemplate(tmplUri, "file-tmpl") { (uri, _) =>
+    private val tmplRoute = McpRoute.resourceTemplate(tmplUri, "file-tmpl").handler { uri =>
         Chunk(McpResourceContents.Text(uri, Absent, "content-tmpl"))
     }
 

@@ -2,7 +2,7 @@ package kyo.internal.mcp
 
 import kyo.*
 
-/** Eight built-in `JsonRpcRoute` instances that aggregate user-registered routes from `McpCatalog`.
+/** Eight built-in `JsonRpcRoute` instances that aggregate user-registered handlers from `McpCatalog`.
   *
   * Pagination uses a cursor-as-decimal-offset scheme over the frozen catalog snapshot.
   * The cursor string is the decimal representation of the start index (e.g. "100", "200").
@@ -10,6 +10,9 @@ import kyo.*
   * are stable for the lifetime of the server instance.
   *
   * Decision 3: cursor-as-decimal-offset pagination.
+  *
+  * Dispatchers wrap each invocation of a user handler closure in `Mcp.local.let(Present(ctx))`
+  * so the handler can reach the per-request context via `Mcp.*` accessors.
   *
   * Built-in routes provided:
   *   - `tools/list`               list registered tools with pagination
@@ -71,53 +74,57 @@ private[kyo] object McpBuiltInRoutes:
     // Wire shape for resources/subscribe and resources/unsubscribe.
     final private case class ResourceSubscribeParams(uri: String) derives Schema
 
+    // Reads the live server from the forward reference for binding into Mcp.local.
+    private def withCtx[A, S](
+        jrCtx: JsonRpcRoute.Context,
+        serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
+        method: String
+    )(body: => A < S)(using Frame): A < S =
+        // AllowUnsafe: synchronous read of forward server reference (Decision 2 carryover).
+        serverRef.unsafe.get()(using AllowUnsafe.embrace.danger) match
+            case Present(srv) =>
+                Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe)))(body)
+            case Absent =>
+                throw new IllegalStateException(s"McpServer not initialised for '$method'")
+    end withCtx
+
     def toolsList(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[ListParams, ToolsListResult]("tools/list") { (params, _) =>
-            val allMetas     = Chunk.from(catalog.toolRoutes.map(r => catalog.toolMetaOf(r)))
+            val allMetas     = Chunk.from(catalog.toolHandlers.map(h => catalog.toolMetaOf(h)))
             val (page, next) = paginate(allMetas, params.cursor)
             ToolsListResult(page, next)
         }
 
-    def toolsCall(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
+    def toolsCall(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[ToolCallParams, McpRoute.ToolCallResult]("tools/call") { (params, jrCtx) =>
-            val matched = catalog.toolRoutes.collectFirst {
-                case c: McpRouteCarrier.Tool[?, ?] if c.name == params.name   => c.asInstanceOf[McpRouteCarrier.Tool[Any, McpContent]]
-                case c: McpRouteCarrier.ToolMulti[?] if c.name == params.name => null
+            val matchedTool = catalog.toolHandlers.collectFirst {
+                case c: McpHandler.ToolHandler[?, ?, ?] if c.name == params.name =>
+                    c.asInstanceOf[McpHandler.ToolHandler[Any, McpContent, McpException]]
             }
-            val matchedMulti = catalog.toolRoutes.collectFirst {
-                case c: McpRouteCarrier.ToolMulti[?] if c.name == params.name => c.asInstanceOf[McpRouteCarrier.ToolMulti[Any]]
+            val matchedMulti = catalog.toolHandlers.collectFirst {
+                case c: McpHandler.ToolMultiHandler[?, ?] if c.name == params.name =>
+                    c.asInstanceOf[McpHandler.ToolMultiHandler[Any, McpException]]
             }
-            val registeredNames = Chunk.from(catalog.toolRoutes.map(_.name))
-            (matched, matchedMulti) match
+            val registeredNames = Chunk.from(catalog.toolHandlers.map(_.name))
+            (matchedTool, matchedMulti) match
                 case (_, Some(carrier)) =>
-                    // AllowUnsafe: synchronous read of forward server reference (Decision 2).
-                    val server = carrier.serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                        throw new IllegalStateException(s"McpServer not initialized for toolMulti '${params.name}'")
-                    )
-                    val ctx  = new McpRoute.Context(jrCtx, server.safe)
-                    val args = Structure.decode[Any](params.arguments)(using carrier.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
+                    val args =
+                        Structure.decode[Any](params.arguments)(using carrier.toolRoute.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
                     args match
-                        case Result.Success(in) => carrier.handler.asInstanceOf[(
-                                Any,
-                                McpRoute.Context
-                            ) => McpRoute.ToolCallResult < (Async & Abort[McpException | JsonRpcResponse.Halt])](in, ctx)
+                        case Result.Success(in) =>
+                            withCtx(jrCtx, serverRef, "tools/call")(carrier.toolHandler(in))
                         case Result.Failure(e) => Abort.fail(McpInvalidArgumentException("tools/call", "arguments", e.getMessage))
                         case Result.Panic(t)   => Abort.panic(t)
                     end match
                 case (Some(carrier), _) =>
-                    // AllowUnsafe: synchronous read of forward server reference (Decision 2).
-                    val server = carrier.serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                        throw new IllegalStateException(s"McpServer not initialized for tool '${params.name}'")
-                    )
-                    val ctx  = new McpRoute.Context(jrCtx, server.safe)
-                    val args = Structure.decode[Any](params.arguments)(using carrier.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
+                    val args =
+                        Structure.decode[Any](params.arguments)(using carrier.toolRoute.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
                     args match
                         case Result.Success(in) =>
-                            carrier.handler.asInstanceOf[(
-                                Any,
-                                McpRoute.Context
-                            ) => McpContent < (Async & Abort[McpException | JsonRpcResponse.Halt])](in, ctx)
-                                .map(out => McpRoute.ToolCallResult(Chunk(out), isError = false, structuredContent = Absent))
+                            withCtx(jrCtx, serverRef, "tools/call") {
+                                carrier.toolHandler(in)
+                                    .map(out => McpRoute.ToolCallResult(Chunk(out), isError = false, structuredContent = Absent))
+                            }
                         case Result.Failure(e) => Abort.fail(McpInvalidArgumentException("tools/call", "arguments", e.getMessage))
                         case Result.Panic(t)   => Abort.panic(t)
                     end match
@@ -128,31 +135,28 @@ private[kyo] object McpBuiltInRoutes:
 
     def resourcesList(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[ListParams, ResourcesListResult]("resources/list") { (params, _) =>
-            val allMetas     = Chunk.from(catalog.resourceRoutes.map(r => catalog.resourceMetaOf(r)))
+            val allMetas     = Chunk.from(catalog.resourceHandlers.map(h => catalog.resourceMetaOf(h)))
             val (page, next) = paginate(allMetas, params.cursor)
             ResourcesListResult(page, next)
         }
 
-    def resourcesRead(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
+    def resourcesRead(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[ResourceReadParams, ResourceReadResponse]("resources/read") { (params, jrCtx) =>
             val parsedUri = McpResourceUri.parse(params.uri)
             parsedUri match
                 case Absent =>
                     Abort.fail(McpInvalidArgumentException("resources/read", "uri", s"invalid URI: ${params.uri}"))
                 case Present(uri) =>
-                    val matched = catalog.resourceRoutes.collectFirst {
-                        case c: McpRouteCarrier.Resource[?] if c.resourceMeta.uri == uri => c
+                    val matched = catalog.resourceHandlers.collectFirst {
+                        case c: McpHandler.ResourceHandler[?] if c.resourceMeta.uri == uri => c
                     }
                     matched match
                         case Some(carrier) =>
-                            // AllowUnsafe: synchronous read of forward server reference (Decision 2).
-                            val server = carrier.serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                                throw new IllegalStateException(s"McpServer not initialized for resource '${params.uri}'")
-                            )
-                            val ctx = new McpRoute.Context(jrCtx, server.safe)
-                            carrier.handler(uri, ctx).map(contents => ResourceReadResponse(contents))
+                            withCtx(jrCtx, serverRef, "resources/read") {
+                                carrier.resourceHandler(uri).map(contents => ResourceReadResponse(contents))
+                            }
                         case None =>
-                            val registeredUris = Chunk.from(catalog.resourceRoutes.map(r => catalog.resourceMetaOf(r).uri))
+                            val registeredUris = Chunk.from(catalog.resourceHandlers.map(h => catalog.resourceMetaOf(h).uri))
                             Abort.fail(McpUnknownResourceException(uri, registeredUris))
                     end match
             end match
@@ -160,33 +164,28 @@ private[kyo] object McpBuiltInRoutes:
 
     def resourceTemplatesList(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[ListParams, ResourceTemplatesListResult]("resources/templates/list") { (params, _) =>
-            val allMetas     = Chunk.from(catalog.resourceTemplateRoutes.map(r => catalog.resourceTemplateMetaOf(r)))
+            val allMetas     = Chunk.from(catalog.resourceTemplateHandlers.map(h => catalog.resourceTemplateMetaOf(h)))
             val (page, next) = paginate(allMetas, params.cursor)
             ResourceTemplatesListResult(page, next)
         }
 
     def promptsList(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[ListParams, PromptsListResult]("prompts/list") { (params, _) =>
-            val allMetas     = Chunk.from(catalog.promptRoutes.map(r => catalog.promptMetaOf(r)))
+            val allMetas     = Chunk.from(catalog.promptHandlers.map(h => catalog.promptMetaOf(h)))
             val (page, next) = paginate(allMetas, params.cursor)
             PromptsListResult(page, next)
         }
 
-    def promptsGet(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
+    def promptsGet(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[PromptGetParams, McpRoute.PromptGetResult]("prompts/get") { (params, jrCtx) =>
-            val matched = catalog.promptRoutes.collectFirst {
-                case c: McpRouteCarrier.Prompt[?] if c.name == params.name => c
+            val matched = catalog.promptHandlers.collectFirst {
+                case c: McpHandler.PromptHandler[?] if c.name == params.name => c
             }
             matched match
                 case Some(carrier) =>
-                    // AllowUnsafe: synchronous read of forward server reference (Decision 2).
-                    val server = carrier.serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                        throw new IllegalStateException(s"McpServer not initialized for prompt '${params.name}'")
-                    )
-                    val ctx = new McpRoute.Context(jrCtx, server.safe)
-                    carrier.handler(params.arguments, ctx)
+                    withCtx(jrCtx, serverRef, "prompts/get")(carrier.promptHandler(params.arguments))
                 case None =>
-                    val registeredNames = Chunk.from(catalog.promptRoutes.map(_.name))
+                    val registeredNames = Chunk.from(catalog.promptHandlers.map(_.name))
                     Abort.fail(McpUnknownPromptException(params.name, registeredNames))
             end match
         }
@@ -214,20 +213,17 @@ private[kyo] object McpBuiltInRoutes:
                     subs.getAndUpdate(_ - uri).andThen(SetLogLevelResult())
         }
 
-    def completionComplete(catalog: McpCatalog)(using Frame): JsonRpcRoute[?, ?, ?] =
+    def completionComplete(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[CompleteParams, CompleteResult]("completion/complete") { (params, jrCtx) =>
-            // Look up a registered completion route matching params.ref; fall back to empty (non-fatal per spec).
-            val matched = catalog.completionRoutes.collectFirst {
-                case c: McpRouteCarrier.Completion if c.ref == params.ref => c
+            // Look up a registered completion handler matching params.ref; fall back to empty (non-fatal per spec).
+            val matched = catalog.completionHandlers.collectFirst {
+                case c: McpHandler.CompletionHandler[?] if c.ref == params.ref => c
             }
             matched match
                 case Some(carrier) =>
-                    // AllowUnsafe: synchronous read of forward server reference (Decision 2).
-                    val server = carrier.serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
-                        throw new IllegalStateException(s"McpServer not initialized for completion route '${carrier.name}'")
-                    )
-                    val ctx = new McpRoute.Context(jrCtx, server.safe)
-                    carrier.handler(params.ref, params.argument, params.context, ctx).map(r => CompleteResult(r))
+                    withCtx(jrCtx, serverRef, "completion/complete") {
+                        carrier.completionHandler(params.ref, params.argument, params.context).map(r => CompleteResult(r))
+                    }
                 case None =>
                     // No handler registered for this ref; return empty completion.
                     CompleteResult(McpRoute.CompletionResult(Chunk.empty, Absent, Absent))

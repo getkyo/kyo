@@ -13,8 +13,8 @@ class McpClientTest extends Test:
     // Paired transport helper: runs server then client init over in-memory transports.
     // Server's dispatch loop starts first so it is ready to process the client initialize request.
     private def withPair[A, S](
-        serverRoutes: Seq[McpRoute[?, ?, ?]],
-        clientRoutes: Seq[McpRoute[?, ?, ?]]
+        serverRoutes: Seq[McpHandler[?, ?, ?]],
+        clientRoutes: Seq[McpHandler[?, ?, ?]]
     )(f: (McpServer, McpClient) => A < S)(using Frame): A < (S & Async & Scope & Abort[McpException | Closed]) =
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             McpServer.init(ta, serverRoutes*).flatMap { server =>
@@ -27,7 +27,7 @@ class McpClientTest extends Test:
     // T-011: callToolTyped[In, Out] returns the decoded Out when structuredContent = Present.
     // INV-027: typed overload decodes structuredContent.
     "callToolTyped[In, Out] returns typed Out when structuredContent = Present (T-011, INV-027)" in run {
-        val addRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
+        val addRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
             McpRoute.ToolCallResult(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
                 isError = false,
@@ -44,7 +44,7 @@ class McpClientTest extends Test:
     // T-012: callToolTyped[In, Out] aborts with McpToolStructuredMissingException when structuredContent = Absent.
     // INV-027: typed overload must abort when structured content is absent.
     "callToolTyped[In, Out] aborts McpToolStructuredMissingException when structuredContent = Absent (T-012, INV-027)" in run {
-        val addUntypedRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
+        val addUntypedRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
             McpRoute.ToolCallResult(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
                 isError = false,
@@ -65,7 +65,7 @@ class McpClientTest extends Test:
 
     // T-012 untyped: untyped callTool[In] (one type param) returns raw ToolCallResult without aborting.
     "callTool with one type param (untyped) returns raw ToolCallResult when structuredContent = Absent" in run {
-        val addRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
+        val addRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
             McpRoute.ToolCallResult(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
                 isError = false,
@@ -94,7 +94,7 @@ class McpClientTest extends Test:
 
     // INV-023: listTools returns McpClient.Page[ToolMeta] with .items and .nextCursor fields.
     "listTools returns McpClient.Page with .items and .nextCursor (INV-023)" in run {
-        val toolRoute = McpRoute.tool[AddIn]("add") { (in, _) =>
+        val toolRoute = McpRoute.tool[AddIn]("add").handler { in =>
             McpContent.Text(s"${in.a + in.b}")
         }
         withPair(Seq(toolRoute), Seq.empty) { (_, client) =>
@@ -110,7 +110,7 @@ class McpClientTest extends Test:
     // INV-023: McpClient.Page is a named record; verify listResources also returns McpClient.Page.
     "listResources returns McpClient.Page with .items and .nextCursor (INV-023)" in run {
         val uri           = McpResourceUri.parse("file:///data").get
-        val resourceRoute = McpRoute.resource(uri, "data")((_, _) => Chunk.empty)
+        val resourceRoute = McpRoute.resource(uri, "data").handler((_) => Chunk.empty)
         withPair(Seq(resourceRoute), Seq.empty) { (_, client) =>
             client.listResources().map { page =>
                 assert(page.items.size == 1)

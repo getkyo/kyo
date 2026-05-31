@@ -9,7 +9,7 @@ class McpPromptListGetTest extends Test:
         name = "greet",
         description = "greet a user",
         arguments = Chunk(McpRoute.PromptArgument("name", Absent, required = true))
-    ) { (args, _) =>
+    ).handler { args =>
         McpRoute.PromptGetResult(
             description = Absent,
             messages = Chunk(McpRoute.PromptMessage(McpRole.User, McpContent.text(s"hello ${args("name")}")))

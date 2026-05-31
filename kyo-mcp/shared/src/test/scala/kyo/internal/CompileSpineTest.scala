@@ -88,10 +88,10 @@ class CompileSpineTest extends Test:
         assert(arg.value == "gpt-4")
     }
 
-    "McpRoute.Context.server type is McpServer (INV-024 compile check)" in {
-        // Type-level witness: compiles only if Context.server is typed McpServer (not Unsafe).
-        val witness: McpRoute.Context => McpServer = _.server
-        assert(witness != null)
+    "Mcp.server type is McpServer < Sync (INV-024 compile check)" in {
+        // Type-level witness: compiles only if Mcp.server is typed McpServer < Sync (safe opaque).
+        val witness: McpServer < Sync = Mcp.server
+        succeed
     }
 
     "INV-021 allowlist: Structure.Value appears only in the documented carve-out sites" in {
