@@ -26,7 +26,12 @@ final private[kyo] class SymbolDescriptor(
     var typeParamIds: Chunk[Int],
     var declarationIds: Chunk[Int],
     var permittedSubclassIds: Maybe[Chunk[Int]],
-    var body: Maybe[SymbolBody]
+    var body: Maybe[SymbolBody],
+    var annotations: Chunk[Tasty.Annotation] = Chunk.empty,
+    var javaAnnotations: Chunk[Tasty.JavaAnnotation] = Chunk.empty,
+    var paramListIds: Chunk[collection.IndexedSeq[Int]] = Chunk.empty,
+    var bounds: Maybe[Tasty.TypeBounds] = Maybe.Absent,
+    var defaultArgId: Maybe[Int] = Maybe.Absent
 )
 
 /** Internal factory for partial `Tasty.Symbol` instances used during Pass A/B (pre-Pass C).
@@ -51,6 +56,6 @@ private[kyo] object Symbol:
         flags: Tasty.Flags,
         name: Tasty.Name
     ): Tasty.Symbol =
-        Tasty.Symbol.make(kind, flags, name)
+        Tasty.Symbol.makePlaceholder(kind, flags, name)
 
 end Symbol

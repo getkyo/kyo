@@ -54,8 +54,22 @@ class ClasspathFindTest extends Test:
         import kyo.internal.tasty.symbol.SymbolId
         import kyo.internal.tasty.type_.TypeArena
         Sync.defer {
-            val sym       = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Bar"))
-            val symWithId = sym.withId(SymbolId(0), SymbolId(-1))
+            val symWithId = Tasty.Symbol.Class(
+                SymbolId(0),
+                Tasty.Name("Bar"),
+                Tasty.Flags.empty,
+                SymbolId(-1),
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent
+            )
             Tasty.Classpath.make(
                 symbols = Chunk(symWithId),
                 rootSymbolId = SymbolId(-1),

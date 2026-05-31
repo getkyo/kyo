@@ -75,7 +75,12 @@ class TastyEffectRowTest extends Test:
             Abort.run[TastyError](
                 openSomeObjectCp.flatMap: cp =>
                     val allSyms = cp.symbols
-                    val valSym  = allSyms.find(s => s.kind == Tasty.SymbolKind.Val && s.bodyRecord.isDefined)
+                    val valSym = allSyms.find(s =>
+                        (s match
+                            case v: Tasty.Symbol.Val => v.body.isDefined;
+                            case _                   => false
+                        )
+                    )
                     valSym match
                         case None =>
                             // If no Val with a body is found, the test is inconclusive but not failed.

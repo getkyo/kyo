@@ -213,9 +213,10 @@ class UnifiedModelTest extends Test:
         // ClassfileUnpickler.buildRecordComponents calls parseErasedDescriptorType which
         // must produce Type.Array for the "[I" descriptor of the int[] field.
         readClassBytes(kyo.fixtures.Embedded.arrayRecordClass).map: result =>
-            val components = result.classSymbol._javaMetadata
-                .map(_.recordComponents)
-                .getOrElse(Chunk.empty)
+            val components = (result.classSymbol match
+                case c: Tasty.Symbol.ClassLike => c.javaMetadata
+                case _                         => Maybe.Absent
+            ).map(_.recordComponents).getOrElse(Chunk.empty)
             assert(
                 components.nonEmpty,
                 s"Expected non-empty recordComponents for ArrayRecord; got empty. classSymbol=${result.classSymbol.name.asString}"
@@ -328,7 +329,7 @@ class UnifiedModelTest extends Test:
 
     // Test 19: CLASSconst with a known TYPEREFdirect decodes to ConstantType(ClassConst(Named(sym))).
     "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in run {
-        val stringSym  = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("java.lang.String"))
+        val stringSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("java.lang.String"))
         val stringAddr = 10
         val addrMap    = IntMap(stringAddr -> stringSym)
         // CLASSconst (92) is category 3: tag + sub-type.

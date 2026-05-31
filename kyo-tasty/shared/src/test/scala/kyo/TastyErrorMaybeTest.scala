@@ -193,7 +193,7 @@ class TastyErrorMaybeTest extends Test:
         val natZero: Byte             = 0x80.toByte // TASTy single-byte Nat: high bit set, value = low 7 bits = 0
         val sectionBytes: Array[Byte] = Array(unknownCat2Tag, natZero)
 
-        val sym = Tasty.Symbol.make(
+        val sym = Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name("testSym")

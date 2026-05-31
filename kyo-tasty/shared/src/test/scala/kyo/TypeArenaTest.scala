@@ -20,23 +20,22 @@ class TypeArenaTest extends Test:
         SymbolId(id)
     end freshId
 
-    private def makeSym(name: String): Tasty.Symbol =
-        import AllowUnsafe.embrace.danger
-        Tasty.Symbol.fromDescriptor(
-            id = freshId(),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name(name),
-            ownerId = SymbolId(-1),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+    private def makeSym(name: String): Tasty.Symbol.Class =
+        Tasty.Symbol.Class(
+            freshId(),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(-1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
     end makeSym
 

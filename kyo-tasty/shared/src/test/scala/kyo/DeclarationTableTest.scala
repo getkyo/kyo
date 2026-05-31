@@ -11,7 +11,7 @@ class DeclarationTableTest extends Test:
     private def makeSymbol(nameStr: String): Tasty.Symbol =
         // plan: phase-02 bridge; Symbol.make creates a partial Symbol with just kind/flags/name.
         import AllowUnsafe.embrace.danger
-        Tasty.Symbol.make(
+        Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Val,
             Tasty.Flags.empty,
             Tasty.Name(nameStr)

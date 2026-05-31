@@ -113,8 +113,10 @@ class TastySymbolTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym._parentTypes)
-                    case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
+                    case Present(sym) => Kyo.lift(sym match
+                            case c: Tasty.Symbol.ClassLike => c.parentTypes;
+                            case _                         => Chunk.empty[Tasty.Type])
+                    case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(parents) =>
                     assert(
                         parents.nonEmpty,
@@ -157,16 +159,16 @@ class TastySymbolTest extends Test:
 
     // plan: phase-02 bridge; helpers use Symbol.make(kind, flags, name) - owner no longer stored on Symbol.
     private def makeRoot(): Tasty.Symbol =
-        Tasty.Symbol.make(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(""))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(""))
 
     private def makePkg(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.make(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(name))
 
     private def makeClass(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
 
     private def makeModule(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.make(Tasty.SymbolKind.Object, new Tasty.Flags(Tasty.Flag.Module.bit), Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Object, new Tasty.Flags(Tasty.Flag.Module.bit), Tasty.Name(name))
 
     // Test 1 (INV: T1, Symbol.binaryName): nested Scala class produces JVM binary name with '$' separator.
     // Given: synthetic Symbol tree com.example.Outer.Inner where Outer and Inner have SymbolKind.Class.
@@ -175,69 +177,39 @@ class TastySymbolTest extends Test:
     // Pins: T1 (binaryName nested-class coverage).
     "Symbol.binaryName nested class returns com/example/Outer$Inner" in run {
         import kyo.internal.tasty.symbol.SymbolId
-        val comSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(0),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("com"),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+        val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val outerSym = Tasty.Symbol.Class(
+            SymbolId(2),
+            Tasty.Name("Outer"),
+            Tasty.Flags.empty,
+            SymbolId(1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
-        val exampleSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(1),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("example"),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
-        val outerSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(2),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("Outer"),
-            ownerId = SymbolId(1),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
-        val innerSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(3),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("Inner"),
-            ownerId = SymbolId(2),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+        val innerSym = Tasty.Symbol.Class(
+            SymbolId(3),
+            Tasty.Name("Inner"),
+            Tasty.Flags.empty,
+            SymbolId(2),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(comSym, exampleSym, outerSym, innerSym)).map: cp =>
             given Tasty.Classpath = cp
@@ -250,53 +222,23 @@ class TastySymbolTest extends Test:
 
     "Symbol.binaryName top-level class returns com/example/Foo" in run {
         import kyo.internal.tasty.symbol.SymbolId
-        val comSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(0),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("com"),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
-        val exampleSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(1),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("example"),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
-        val fooSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(2),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("Foo"),
-            ownerId = SymbolId(1),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+        val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val fooSym = Tasty.Symbol.Class(
+            SymbolId(2),
+            Tasty.Name("Foo"),
+            Tasty.Flags.empty,
+            SymbolId(1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(comSym, exampleSym, fooSym)).map: cp =>
             given Tasty.Classpath = cp
@@ -331,7 +273,7 @@ class TastySymbolTest extends Test:
     // Pins: T2.
     // plan: phase-02 update; Symbol.make now takes (kind, flags, name) only. sym.owner removed.
     "Symbol.make produces Symbol with correct kind and name" in {
-        val sym = Tasty.Symbol.make(
+        val sym = Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
             Tasty.Name("Foo")
@@ -348,7 +290,13 @@ class TastySymbolTest extends Test:
     // plan: phase-02 update; declaredType is now Maybe[Type], returns Absent for Package (no exception).
     "Symbol.declaredType returns Absent for Package symbols" in {
         val pkg = makePkg("scala", makeRoot())
-        assert(pkg._declaredType.isEmpty, "Expected Absent declaredType for Package symbol")
+        assert(
+            (pkg match
+                case m: Tasty.Symbol.Method => m.declaredType;
+                case _                      => kyo.Maybe.Absent
+            ).isEmpty,
+            "Expected Absent declaredType for Package symbol"
+        )
     }
 
     // Phase 13 T1 gap: declarations returns empty Chunk for a fresh synthetic symbol (no classpath).
@@ -367,8 +315,11 @@ class TastySymbolTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym._declarationIds)
-                    case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
+                    case Present(sym) => Kyo.lift(sym match
+                            case c: Tasty.Symbol.ClassLike => c.declarationIds;
+                            case p: Tasty.Symbol.Package   => p.memberIds;
+                            case _                         => Chunk.empty[kyo.internal.tasty.symbol.SymbolId])
+                    case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(decls) =>
                     assert(decls != null, "Expected non-null Chunk from declarationIds")
                 case Result.Failure(e) =>
@@ -386,8 +337,11 @@ class TastySymbolTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym._typeParamIds)
-                    case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
+                    case Present(sym) => Kyo.lift(sym match
+                            case c: Tasty.Symbol.ClassLike => c.typeParamIds;
+                            case m: Tasty.Symbol.Method    => m.typeParamIds;
+                            case _                         => Chunk.empty[kyo.internal.tasty.symbol.SymbolId])
+                    case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(tps) =>
                     assert(
                         tps != null,
@@ -449,22 +403,7 @@ class TastySymbolTest extends Test:
     // Pins: T4 (root-owned symbol FQN handling).
     "T4: root sentinel Symbol fullName returns its own name" in run {
         import kyo.internal.tasty.symbol.SymbolId
-        val rootSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(0),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name(""),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
+        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(rootSym)).map: cp =>
             given Tasty.Classpath = cp
             val fqn               = rootSym.fullName.asString
@@ -474,25 +413,29 @@ class TastySymbolTest extends Test:
 
     "T4: deeply nested inner class binaryName contains dollar separators" in run {
         import kyo.internal.tasty.symbol.SymbolId
-        val syms = (0 to 5).map: i =>
-            val kind    = if i < 2 then Tasty.SymbolKind.Package else Tasty.SymbolKind.Class
+        val syms: Seq[Tasty.Symbol] = (0 to 5).map: i =>
             val ownerId = if i == 0 then 0 else i - 1
-            Tasty.Symbol.fromDescriptor(
-                id = SymbolId(i),
-                kind = kind,
-                flags = Tasty.Flags.empty,
-                name = Tasty.Name(('A' + i).toChar.toString),
-                ownerId = SymbolId(ownerId),
-                declaredType = Maybe.Absent,
-                scaladoc = Maybe.Absent,
-                sourcePosition = Maybe.Absent,
-                javaMetadata = Maybe.Absent,
-                parentTypes = Chunk.empty,
-                typeParamIds = Chunk.empty,
-                declarationIds = Chunk.empty,
-                permittedSubclassIds = Maybe.Absent,
-                bodyRecord = Maybe.Absent
-            )
+            val n       = Tasty.Name(('A' + i).toChar.toString)
+            if i < 2 then
+                Tasty.Symbol.Package(SymbolId(i), n, Tasty.Flags.empty, SymbolId(ownerId), Chunk.empty)
+            else
+                Tasty.Symbol.Class(
+                    SymbolId(i),
+                    n,
+                    Tasty.Flags.empty,
+                    SymbolId(ownerId),
+                    Maybe.Absent,
+                    Maybe.Absent,
+                    Maybe.Absent,
+                    Chunk.empty,
+                    Chunk.empty,
+                    Chunk.empty,
+                    Maybe.Absent,
+                    Chunk.empty,
+                    Chunk.empty,
+                    Maybe.Absent
+                )
+            end if
         Tasty.Classpath.fromPicklesWithSymbols(Chunk.from(syms)).map: cp =>
             given Tasty.Classpath = cp
             val innermost         = syms.last
@@ -506,23 +449,23 @@ class TastySymbolTest extends Test:
     "Symbol.fullName.asString matches dot-joined segments for a known chain" in run {
         import kyo.internal.tasty.symbol.SymbolId
         val segments = List("com", "example", "MyClass")
-        val syms = segments.zipWithIndex.map: (seg, i) =>
+        val syms: List[Tasty.Symbol.Class] = segments.zipWithIndex.map: (seg, i) =>
             val ownerId = if i == 0 then 0 else i - 1
-            Tasty.Symbol.fromDescriptor(
-                id = SymbolId(i),
-                kind = Tasty.SymbolKind.Class,
-                flags = Tasty.Flags.empty,
-                name = Tasty.Name(seg),
-                ownerId = SymbolId(ownerId),
-                declaredType = Maybe.Absent,
-                scaladoc = Maybe.Absent,
-                sourcePosition = Maybe.Absent,
-                javaMetadata = Maybe.Absent,
-                parentTypes = Chunk.empty,
-                typeParamIds = Chunk.empty,
-                declarationIds = Chunk.empty,
-                permittedSubclassIds = Maybe.Absent,
-                bodyRecord = Maybe.Absent
+            Tasty.Symbol.Class(
+                SymbolId(i),
+                Tasty.Name(seg),
+                Tasty.Flags.empty,
+                SymbolId(ownerId),
+                Maybe.Absent,
+                Maybe.Absent,
+                Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Maybe.Absent
             )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk.from(syms)).map: cp =>
             given Tasty.Classpath = cp
@@ -550,7 +493,7 @@ class TastySymbolTest extends Test:
         )
         val mismatches = kindCases.flatMap { (name, expectedKind) =>
             // plan: phase-02 bridge; Symbol.make(kind, flags, name).
-            val sym = Tasty.Symbol.make(expectedKind, Tasty.Flags.empty, Tasty.Name(name))
+            val sym = Tasty.Symbol.makePlaceholder(expectedKind, Tasty.Flags.empty, Tasty.Name(name))
             if sym.kind == expectedKind then None
             else Some(s"'$name': expected $expectedKind but got ${sym.kind}")
         }

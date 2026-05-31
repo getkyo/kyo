@@ -70,7 +70,12 @@ class ClasspathBodyMemoTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectCp.flatMap: cp =>
-                    val symOpt = cp.symbols.find(s => s.kind == Tasty.SymbolKind.Val && s.bodyRecord.isDefined)
+                    val symOpt = cp.symbols.find(s =>
+                        (s match
+                            case v: Tasty.Symbol.Val => v.body.isDefined;
+                            case _                   => false
+                        )
+                    )
                     symOpt match
                         case None =>
                             // No body symbols; still verify reflexivity and hashCode stability.
@@ -105,7 +110,12 @@ class ClasspathBodyMemoTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectCp.flatMap: cp =>
-                    val symOpt = cp.symbols.find(s => s.kind == Tasty.SymbolKind.Val && s.bodyRecord.isDefined)
+                    val symOpt = cp.symbols.find(s =>
+                        (s match
+                            case v: Tasty.Symbol.Val => v.body.isDefined;
+                            case _                   => false
+                        )
+                    )
                     symOpt match
                         case None =>
                             // No body symbols; test is inconclusive but not failed.
@@ -141,7 +151,12 @@ class ClasspathBodyMemoTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectCp.flatMap: cp =>
-                    val symOpt = cp.symbols.find(s => s.kind == Tasty.SymbolKind.Val && s.bodyRecord.isDefined)
+                    val symOpt = cp.symbols.find(s =>
+                        (s match
+                            case v: Tasty.Symbol.Val => v.body.isDefined;
+                            case _                   => false
+                        )
+                    )
                     symOpt match
                         case None =>
                             // No body symbols; test is inconclusive but not failed.

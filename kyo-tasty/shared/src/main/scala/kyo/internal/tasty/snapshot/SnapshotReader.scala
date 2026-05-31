@@ -4,7 +4,9 @@ import kyo.*
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
+import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolId
+import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -207,23 +209,56 @@ object SnapshotReader:
         val finalSymbols = new Array[Tasty.Symbol](symCount)
         var si           = 0
         while si < symCount do
-            val partial = symsArray(si)
-            finalSymbols(si) = Tasty.Symbol.fromDescriptor(
-                id = partial.id,
+            val partial                  = symsArray(si)
+            val tpIds: Chunk[SymbolId]   = typeParamsByIdx(si)
+            val declIds: Chunk[SymbolId] = declarationsByIdx(si)
+            val d = new SymbolDescriptor(
+                id = partial.id.value,
                 kind = partial.kind,
                 flags = partial.flags,
                 name = partial.name,
-                ownerId = partial.ownerId,
-                declaredType = partial._declaredType,
+                ownerId = partial.ownerId.value,
+                declaredType = partial match
+                    case m: Tasty.Symbol.Method      => m.declaredType
+                    case v: Tasty.Symbol.Val         => v.declaredType
+                    case w: Tasty.Symbol.Var         => w.declaredType
+                    case f: Tasty.Symbol.Field       => f.declaredType
+                    case p: Tasty.Symbol.Parameter   => kyo.Maybe(p.declaredType)
+                    case ta: Tasty.Symbol.TypeAlias  => kyo.Maybe(ta.body)
+                    case ot: Tasty.Symbol.OpaqueType => kyo.Maybe(ot.body)
+                    case _ =>
+                        kyo.Maybe.Absent
+                ,
                 scaladoc = partial.scaladoc,
                 sourcePosition = partial.sourcePosition,
-                javaMetadata = partial._javaMetadata,
+                javaMetadata = partial match
+                    case c: Tasty.Symbol.ClassLike => c.javaMetadata
+                    case f: Tasty.Symbol.Field     => f.javaMetadata
+                    case m: Tasty.Symbol.Method    => m.javaMetadata
+                    case _ =>
+                        kyo.Maybe.Absent
+                ,
                 parentTypes = parentsByIdx(si),
-                typeParamIds = typeParamsByIdx(si),
-                declarationIds = declarationsByIdx(si),
-                permittedSubclassIds = partial._permittedSubclassIds,
-                bodyRecord = partial.bodyRecord
+                typeParamIds = Chunk.from(tpIds.toSeq.map(_.value)),
+                declarationIds = Chunk.from(declIds.toSeq.map(_.value)),
+                permittedSubclassIds = partial match
+                    case c: Tasty.Symbol.Class =>
+                        c.permittedSubclassIds.map(ids => Chunk.from(ids.toSeq.map(_.value)))
+                    case t: Tasty.Symbol.Trait =>
+                        t.permittedSubclassIds.map(ids => Chunk.from(ids.toSeq.map(_.value)))
+                    case _ =>
+                        kyo.Maybe.Absent
+                ,
+                body = partial match
+                    case c: Tasty.Symbol.Class  => c.body
+                    case t: Tasty.Symbol.Trait  => t.body
+                    case o: Tasty.Symbol.Object => o.body
+                    case m: Tasty.Symbol.Method => m.body
+                    case v: Tasty.Symbol.Val    => v.body
+                    case w: Tasty.Symbol.Var    => w.body
+                    case _                      => kyo.Maybe.Absent
             )
+            finalSymbols(si) = TypedSymbolFactory.from(d)
             si += 1
         end while
 
@@ -421,23 +456,56 @@ object SnapshotReader:
         val finalSymbols = new Array[Tasty.Symbol](symCount)
         var j            = 0
         while j < symCount do
-            val partial = symsArray(j)
-            finalSymbols(j) = Tasty.Symbol.fromDescriptor(
-                id = partial.id,
+            val partial                  = symsArray(j)
+            val tpIds: Chunk[SymbolId]   = typeParamsByIdx(j)
+            val declIds: Chunk[SymbolId] = declarationsByIdx(j)
+            val d = new SymbolDescriptor(
+                id = partial.id.value,
                 kind = partial.kind,
                 flags = partial.flags,
                 name = partial.name,
-                ownerId = partial.ownerId,
-                declaredType = partial._declaredType,
+                ownerId = partial.ownerId.value,
+                declaredType = partial match
+                    case m: Tasty.Symbol.Method      => m.declaredType
+                    case v: Tasty.Symbol.Val         => v.declaredType
+                    case w: Tasty.Symbol.Var         => w.declaredType
+                    case f: Tasty.Symbol.Field       => f.declaredType
+                    case p: Tasty.Symbol.Parameter   => kyo.Maybe(p.declaredType)
+                    case ta: Tasty.Symbol.TypeAlias  => kyo.Maybe(ta.body)
+                    case ot: Tasty.Symbol.OpaqueType => kyo.Maybe(ot.body)
+                    case _ =>
+                        kyo.Maybe.Absent
+                ,
                 scaladoc = partial.scaladoc,
                 sourcePosition = partial.sourcePosition,
-                javaMetadata = partial._javaMetadata,
+                javaMetadata = partial match
+                    case c: Tasty.Symbol.ClassLike => c.javaMetadata
+                    case f: Tasty.Symbol.Field     => f.javaMetadata
+                    case m: Tasty.Symbol.Method    => m.javaMetadata
+                    case _ =>
+                        kyo.Maybe.Absent
+                ,
                 parentTypes = parentsByIdx(j),
-                typeParamIds = typeParamsByIdx(j),
-                declarationIds = declarationsByIdx(j),
-                permittedSubclassIds = partial._permittedSubclassIds,
-                bodyRecord = partial.bodyRecord
+                typeParamIds = Chunk.from(tpIds.toSeq.map(_.value)),
+                declarationIds = Chunk.from(declIds.toSeq.map(_.value)),
+                permittedSubclassIds = partial match
+                    case c: Tasty.Symbol.Class =>
+                        c.permittedSubclassIds.map(ids => Chunk.from(ids.toSeq.map(_.value)))
+                    case t: Tasty.Symbol.Trait =>
+                        t.permittedSubclassIds.map(ids => Chunk.from(ids.toSeq.map(_.value)))
+                    case _ =>
+                        kyo.Maybe.Absent
+                ,
+                body = partial match
+                    case c: Tasty.Symbol.Class  => c.body
+                    case t: Tasty.Symbol.Trait  => t.body
+                    case o: Tasty.Symbol.Object => o.body
+                    case m: Tasty.Symbol.Method => m.body
+                    case v: Tasty.Symbol.Val    => v.body
+                    case w: Tasty.Symbol.Var    => w.body
+                    case _                      => kyo.Maybe.Absent
             )
+            finalSymbols(j) = TypedSymbolFactory.from(d)
             j += 1
         end while
 
@@ -578,12 +646,12 @@ object SnapshotReader:
                     ))
                 else
                     kyo.Maybe.Absent
-            created(idx) = Tasty.Symbol.fromDescriptor(
-                id = kyo.internal.tasty.symbol.SymbolId(idx),
+            val desc = new SymbolDescriptor(
+                id = idx,
                 kind = kind,
                 flags = flags,
                 name = name,
-                ownerId = kyo.internal.tasty.symbol.SymbolId(ownerIdVal),
+                ownerId = ownerIdVal,
                 declaredType = kyo.Maybe.Absent,
                 scaladoc = kyo.Maybe.Absent,
                 sourcePosition = kyo.Maybe.Absent,
@@ -592,8 +660,9 @@ object SnapshotReader:
                 typeParamIds = Chunk.empty,
                 declarationIds = Chunk.empty,
                 permittedSubclassIds = kyo.Maybe.Absent,
-                bodyRecord = bodyMaybe
+                body = bodyMaybe
             )
+            created(idx) = TypedSymbolFactory.from(desc)
         end for
 
         val fqnIndex     = mutable.HashMap.empty[String, Tasty.Symbol]
@@ -754,12 +823,12 @@ object SnapshotReader:
                     ))
                 else
                     kyo.Maybe.Absent
-            created(idx) = Tasty.Symbol.fromDescriptor(
-                id = kyo.internal.tasty.symbol.SymbolId(idx),
+            val desc2 = new SymbolDescriptor(
+                id = idx,
                 kind = kind,
                 flags = flags,
                 name = name,
-                ownerId = kyo.internal.tasty.symbol.SymbolId(ownerIdVal),
+                ownerId = ownerIdVal,
                 declaredType = kyo.Maybe.Absent,
                 scaladoc = kyo.Maybe.Absent,
                 sourcePosition = kyo.Maybe.Absent,
@@ -768,8 +837,9 @@ object SnapshotReader:
                 typeParamIds = Chunk.empty,
                 declarationIds = Chunk.empty,
                 permittedSubclassIds = kyo.Maybe.Absent,
-                bodyRecord = bodyMaybe
+                body = bodyMaybe
             )
+            created(idx) = TypedSymbolFactory.from(desc2)
         end for
 
         // Build indices

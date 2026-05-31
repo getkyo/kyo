@@ -187,8 +187,10 @@ class SymbolResolutionTest extends Test:
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym._parentTypes)
-                    case Absent       => Abort.fail(TastyError.MalformedSection("ASTs", "PlainClass not found", 0L))).map:
+                    case Present(sym) => Kyo.lift(sym match
+                            case c: Tasty.Symbol.ClassLike => c.parentTypes;
+                            case _                         => Chunk.empty[Tasty.Type])
+                    case Absent => Abort.fail(TastyError.MalformedSection("ASTs", "PlainClass not found", 0L))).map:
                 case Result.Success(parents) =>
                     assert(parents.nonEmpty, "PlainClass should have at least one parent type (cross-file ref resolved)")
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
@@ -230,98 +232,71 @@ class SymbolResolutionTest extends Test:
 
     import kyo.internal.tasty.symbol.SymbolId
 
-    private def makeClassSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol =
-        Tasty.Symbol.fromDescriptor(
-            id = SymbolId(id),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name(name),
-            ownerId = SymbolId(ownerId),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+    private def makeClassSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Class =
+        Tasty.Symbol.Class(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(ownerId),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
     end makeClassSym9
 
-    private def makePkgSym9(id: Int, name: String): Tasty.Symbol =
-        Tasty.Symbol.fromDescriptor(
-            id = SymbolId(id),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name(name),
-            ownerId = SymbolId(id),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
+    private def makePkgSym9(id: Int, name: String): Tasty.Symbol.Package =
+        Tasty.Symbol.Package(SymbolId(id), Tasty.Name(name), Tasty.Flags.empty, SymbolId(id), Chunk.empty)
     end makePkgSym9
 
-    private def makeMethodSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol =
-        Tasty.Symbol.fromDescriptor(
-            id = SymbolId(id),
-            kind = Tasty.SymbolKind.Method,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name(name),
-            ownerId = SymbolId(ownerId),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+    private def makeMethodSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
+        Tasty.Symbol.Method(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(ownerId),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Maybe.Absent
         )
     end makeMethodSym9
 
-    private def makeValSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol =
-        Tasty.Symbol.fromDescriptor(
-            id = SymbolId(id),
-            kind = Tasty.SymbolKind.Val,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name(name),
-            ownerId = SymbolId(ownerId),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+    private def makeValSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Val =
+        Tasty.Symbol.Val(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(ownerId),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Maybe.Absent
         )
     end makeValSym9
 
-    private def makeVarSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol =
-        Tasty.Symbol.fromDescriptor(
-            id = SymbolId(id),
-            kind = Tasty.SymbolKind.Var,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name(name),
-            ownerId = SymbolId(ownerId),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+    private def makeVarSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Var =
+        Tasty.Symbol.Var(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(ownerId),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Maybe.Absent
         )
     end makeVarSym9
 
@@ -344,7 +319,7 @@ class SymbolResolutionTest extends Test:
     "Phase09: parents extracts only Type.Named entries from parentTypes" in run {
         val symA = makeClassSym9(id = 0, name = "A", ownerId = 0)
         val symB = makeClassSym9(id = 1, name = "B", ownerId = 0)
-        val symC = makeClassSym9(id = 2, name = "C", ownerId = 0).withParentTypes(
+        val symC = makeClassSym9(id = 2, name = "C", ownerId = 0).copy(parentTypes =
             Chunk(
                 Tasty.Type.Named(SymbolId(0)),
                 Tasty.Type.Applied(
@@ -374,7 +349,7 @@ class SymbolResolutionTest extends Test:
         val method2   = makeMethodSym9(id = 2, name = "bar", ownerId = 0)
         val valSym    = makeValSym9(id = 3, name = "x", ownerId = 0)
         val varSym    = makeVarSym9(id = 4, name = "y", ownerId = 0)
-        val withDecls = classSym.withDeclarationIds(Chunk(SymbolId(1), SymbolId(2), SymbolId(3), SymbolId(4)))
+        val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3), SymbolId(4)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, method2, valSym, varSym)).map: cp =>
             given Tasty.Classpath = cp
             val methods           = withDecls.methods
@@ -388,7 +363,7 @@ class SymbolResolutionTest extends Test:
     "Phase09: findMember by string name returns Maybe.Absent when missing" in run {
         val classSym  = makeClassSym9(id = 0, name = "Foo", ownerId = 0)
         val memberSym = makeMethodSym9(id = 1, name = "existingMethod", ownerId = 0)
-        val withDecls = classSym.withDeclarationIds(Chunk(SymbolId(1)))
+        val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, memberSym)).map: cp =>
             given Tasty.Classpath = cp
             val absent            = withDecls.findMember("nope")

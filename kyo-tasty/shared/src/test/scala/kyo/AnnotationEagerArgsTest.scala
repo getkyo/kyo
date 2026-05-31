@@ -19,7 +19,7 @@ class AnnotationEagerArgsTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def makeSym(name: String): Tasty.Symbol =
-        Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
 
     private def encodeNat(n: Int): Array[Byte] =
         if n < 128 then Array((n | 0x80).toByte)

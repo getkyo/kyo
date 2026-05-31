@@ -16,21 +16,21 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
     // be registered in the classpath at index id.value.
     "Annotation case class: annotationType.show returns leaf name 'deprecated', args is Absent" in run {
         import kyo.internal.tasty.symbol.SymbolId
-        val deprecatedSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(0),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("deprecated"),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+        val deprecatedSym = Tasty.Symbol.Class(
+            SymbolId(0),
+            Tasty.Name("deprecated"),
+            Tasty.Flags.empty,
+            SymbolId(0),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(deprecatedSym)).map: cp =>
             given Tasty.Classpath = cp
@@ -70,7 +70,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
     // INV-006: args is a plain Maybe[Tree] field -- no effect row needed.
     "Annotation with Present(tree) args holds the tree as a plain field" in run {
         import AllowUnsafe.embrace.danger
-        val sym  = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
+        val sym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
         val tree = Tasty.Tree.Literal(Tasty.Constant.UnitConst)
         val a    = Tasty.Annotation(Tasty.Type.Named(sym.id), Maybe(tree))
         assert(

@@ -23,15 +23,13 @@ class SubtypeTest extends Test:
     end freshId
 
     /** Build a Symbol with a unique id and the given FQN / parents. */
-    private def makeSym(fqn: String, parents: Chunk[Tasty.Type] = Chunk.empty): Tasty.Symbol =
+    private def makeSym(fqn: String, parents: Chunk[Tasty.Type] = Chunk.empty): Tasty.Symbol.Class =
         val leafName = fqn.split("\\.").last
-        Tasty.Symbol.fromDescriptor(
+        Tasty.Symbol.Class(
             id = freshId(),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
             name = Tasty.Name(leafName),
+            flags = Tasty.Flags.empty,
             ownerId = SymbolId(-1),
-            declaredType = Maybe.Absent,
             scaladoc = Maybe.Absent,
             sourcePosition = Maybe.Absent,
             javaMetadata = Maybe.Absent,
@@ -39,35 +37,30 @@ class SubtypeTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+            annotations = Chunk.empty,
+            javaAnnotations = Chunk.empty,
+            body = Maybe.Absent
         )
     end makeSym
 
-    private def makeCovParam(name: String): Tasty.Symbol =
-        Tasty.Symbol.fromDescriptor(
+    private def makeCovParam(name: String): Tasty.Symbol.TypeParam =
+        Tasty.Symbol.TypeParam(
             id = freshId(),
-            kind = Tasty.SymbolKind.TypeParam,
-            flags = new Tasty.Flags(Tasty.Flag.CoVariant.bit),
             name = Tasty.Name(name),
+            flags = new Tasty.Flags(Tasty.Flag.CoVariant.bit),
             ownerId = SymbolId(-1),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
             sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+            bounds = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
+            variance = Tasty.Variance.Covariant
         )
     end makeCovParam
 
     /** Wire a base-class symbol with the given type params.
       *
-      * Returns the updated symbol with typeParamIds populated. The caller must reassign the `var` holding the symbol.
+      * Returns the updated symbol with typeParamIds populated.
       */
-    private def wireTypeParams(sym: Tasty.Symbol, params: Chunk[Tasty.Symbol]): Tasty.Symbol =
-        sym.withTypeParamIds(params.map(_.id))
+    private def wireTypeParams(sym: Tasty.Symbol.Class, params: Chunk[Tasty.Symbol]): Tasty.Symbol.Class =
+        sym.copy(typeParamIds = params.map(_.id))
 
     /** Build a test Classpath populated with the given symbols, indexed by their id.value.
       *
@@ -78,7 +71,7 @@ class SubtypeTest extends Test:
         val maxId = syms.foldLeft(-1)((m, s) => math.max(m, s.id.value))
         val arr   = new Array[Tasty.Symbol](maxId + 1)
         // Fill with sentinel first
-        val sentinel = Tasty.Symbol.make(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("<sentinel>"))
+        val sentinel = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("<sentinel>"))
         var fi       = 0
         while fi <= maxId do
             arr(fi) = sentinel

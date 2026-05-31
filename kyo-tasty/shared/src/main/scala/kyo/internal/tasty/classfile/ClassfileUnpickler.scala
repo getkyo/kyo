@@ -7,7 +7,9 @@ import kyo.internal.tasty.symbol.Flags as FlagsHelper
 import kyo.internal.tasty.symbol.FqnCanonicalizer
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
+import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolId
+import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -1058,15 +1060,12 @@ object ClassfileUnpickler:
                                                         if permittedSubSym.nonEmpty then
                                                             Maybe(permittedSubSym.map(_ => kyo.internal.tasty.symbol.SymbolId(-1)))
                                                         else Maybe.Absent
-                                                    val classSym = Tasty.Symbol.fromDescriptor(
-                                                        id = kyo.internal.tasty.symbol.SymbolId(-1),
+                                                    val classDesc = new SymbolDescriptor(
+                                                        id = -1,
                                                         kind = kind,
                                                         flags = classFlags,
                                                         name = Tasty.Name(symName),
-                                                        ownerId = kyo.internal.tasty.symbol.SymbolId(-1),
-                                                        // Classfile symbols receive declaredType = Absent here because the symbol id is not yet
-                                                        // assigned (partial symbol with id=-1). The self-referential Type.Named(sym.id) is set
-                                                        // after finalizeMerge in Phase 11 when ids are stable.
+                                                        ownerId = -1,
                                                         declaredType = Maybe.Absent,
                                                         scaladoc = Maybe.Absent,
                                                         sourcePosition = Maybe.Absent,
@@ -1074,9 +1073,12 @@ object ClassfileUnpickler:
                                                         parentTypes = Chunk.empty,
                                                         typeParamIds = Chunk.empty,
                                                         declarationIds = Chunk.empty,
-                                                        permittedSubclassIds = permSubIds,
-                                                        bodyRecord = Maybe.Absent
+                                                        permittedSubclassIds = permSubIds.map(
+                                                            _.map(_.value)
+                                                        ),
+                                                        body = Maybe.Absent
                                                     )
+                                                    val classSym = TypedSymbolFactory.from(classDesc)
                                                     // Parse class-level Signature attribute to extract type parameters.
                                                     parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map: classTypeParams =>
                                                         // Build member symbols (returns pairs of (Symbol, DeclaredType))
@@ -1541,12 +1543,12 @@ object ClassfileUnpickler:
 
                                 val nameBytes = memberName.getBytes(java.nio.charset.StandardCharsets.UTF_8)
                                 val nameEntry = interner.intern(nameBytes, 0, nameBytes.length)
-                                val sym = Tasty.Symbol.fromDescriptor(
-                                    id = SymbolId(-1),
+                                val memberDesc = new SymbolDescriptor(
+                                    id = -1,
                                     kind = kind,
                                     flags = memberFlags,
                                     name = Tasty.Name.wrap(nameEntry),
-                                    ownerId = SymbolId(-1),
+                                    ownerId = -1,
                                     declaredType = Maybe(memberType),
                                     scaladoc = Maybe.Absent,
                                     sourcePosition = Maybe.Absent,
@@ -1555,8 +1557,9 @@ object ClassfileUnpickler:
                                     typeParamIds = Chunk.empty,
                                     declarationIds = Chunk.empty,
                                     permittedSubclassIds = Maybe.Absent,
-                                    bodyRecord = Maybe.Absent
+                                    body = Maybe.Absent
                                 )
+                                val sym = TypedSymbolFactory.from(memberDesc)
                                 (sym, memberType)
 
     private def resolveThrowsTypes(

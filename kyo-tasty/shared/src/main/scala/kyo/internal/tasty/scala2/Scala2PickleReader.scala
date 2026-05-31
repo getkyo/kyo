@@ -3,6 +3,8 @@ package kyo.internal.tasty.scala2
 import kyo.*
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
+import kyo.internal.tasty.symbol.SymbolDescriptor
+import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 
 /** Result produced by Scala2PickleReader for a single Scala 2 pickle.
@@ -528,12 +530,12 @@ object Scala2PickleReader:
     )(using AllowUnsafe): Tasty.Symbol =
         val bytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val entry = interner.intern(bytes, 0, bytes.length)
-        Tasty.Symbol.fromDescriptor(
-            id = kyo.internal.tasty.symbol.SymbolId(-1),
+        val pickleDesc = new SymbolDescriptor(
+            id = -1,
             kind = kind,
             flags = flags,
             name = Tasty.Name.wrap(entry),
-            ownerId = kyo.internal.tasty.symbol.SymbolId(-1),
+            ownerId = -1,
             declaredType = declaredType,
             scaladoc = kyo.Maybe.Absent,
             sourcePosition = kyo.Maybe.Absent,
@@ -542,8 +544,9 @@ object Scala2PickleReader:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = kyo.Maybe.Absent,
-            bodyRecord = kyo.Maybe.Absent
+            body = kyo.Maybe.Absent
         )
+        TypedSymbolFactory.from(pickleDesc)
     end makePickleSymWithType
 
     /** Map Scala 2 pickle flag bits to Tasty.Flags. */

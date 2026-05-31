@@ -52,7 +52,7 @@ class CommentsUnpicklerTest extends Test:
     /** Create a minimal Tasty.Symbol for testing. plan: phase-02 bridge; uses Symbol.make(kind, flags, name). */
     private def makeTestSymbol(nameStr: String): Tasty.Symbol =
         import AllowUnsafe.embrace.danger
-        Tasty.Symbol.make(
+        Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
             Tasty.Name(nameStr)

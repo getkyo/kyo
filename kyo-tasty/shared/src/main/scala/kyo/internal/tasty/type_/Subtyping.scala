@@ -186,7 +186,9 @@ object Subtyping:
         cp: Tasty.Classpath,
         budget: Int
     ): SubtypeVerdict =
-        val parents = cp.symbol(subId)._parentTypes
+        val parents = cp.symbol(subId) match
+            case c: Tasty.Symbol.ClassLike => c.parentTypes
+            case _                         => Chunk.empty[Tasty.Type]
         checkParents(parents, supId, cp, budget)
     end isNamedSubNamed
 

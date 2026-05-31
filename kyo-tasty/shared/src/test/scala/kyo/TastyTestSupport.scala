@@ -18,7 +18,7 @@ trait TastyTestSupport:
       */
     protected def makeNamed(fqn: String): Tasty.Type.Named =
         val leafName = fqn.split("\\.").last
-        val sym = Tasty.Symbol.make(
+        val sym = Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
             Tasty.Name(leafName)

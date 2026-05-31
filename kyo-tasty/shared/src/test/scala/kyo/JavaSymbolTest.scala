@@ -25,6 +25,32 @@ class JavaSymbolTest extends Test:
 
     private val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
 
+    private def symWithId(
+        sym: Tasty.Symbol,
+        id: kyo.internal.tasty.symbol.SymbolId,
+        ownerId: kyo.internal.tasty.symbol.SymbolId
+    ): Tasty.Symbol = sym match
+        case c: Tasty.Symbol.Class         => c.copy(id = id, ownerId = ownerId)
+        case t: Tasty.Symbol.Trait         => t.copy(id = id, ownerId = ownerId)
+        case o: Tasty.Symbol.Object        => o.copy(id = id, ownerId = ownerId)
+        case m: Tasty.Symbol.Method        => m.copy(id = id, ownerId = ownerId)
+        case v: Tasty.Symbol.Val           => v.copy(id = id, ownerId = ownerId)
+        case w: Tasty.Symbol.Var           => w.copy(id = id, ownerId = ownerId)
+        case f: Tasty.Symbol.Field         => f.copy(id = id, ownerId = ownerId)
+        case ta: Tasty.Symbol.TypeAlias    => ta.copy(id = id, ownerId = ownerId)
+        case ot: Tasty.Symbol.OpaqueType   => ot.copy(id = id, ownerId = ownerId)
+        case at: Tasty.Symbol.AbstractType => at.copy(id = id, ownerId = ownerId)
+        case tp: Tasty.Symbol.TypeParam    => tp.copy(id = id, ownerId = ownerId)
+        case p: Tasty.Symbol.Parameter     => p.copy(id = id, ownerId = ownerId)
+        case pk: Tasty.Symbol.Package      => pk.copy(id = id, ownerId = ownerId)
+        case u: Tasty.Symbol.Unresolved    => u.copy(id = id, ownerId = ownerId)
+
+    private def symJavaMetadata(sym: Tasty.Symbol): Maybe[Tasty.JavaMetadata] = sym match
+        case c: Tasty.Symbol.ClassLike => c.javaMetadata
+        case f: Tasty.Symbol.Field     => f.javaMetadata
+        case m: Tasty.Symbol.Method    => m.javaMetadata
+        case _                         => Maybe.Absent
+
     /** Load JDK class bytes by binary path. JVM-only. */
     private def loadJdkClass(binaryPath: String): Array[Byte] =
         TestResourceLoader.loadBytes(binaryPath)
@@ -72,7 +98,7 @@ class JavaSymbolTest extends Test:
         val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, interner2, new TypeArena).flatMap: cr =>
-                val sym = cr.classSymbol.withId(SymbolId(0), SymbolId(0))
+                val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
                     given Tasty.Classpath = cp
                     val s                 = cp.symbols(0)
@@ -93,7 +119,7 @@ class JavaSymbolTest extends Test:
         val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, interner2, new TypeArena).flatMap: cr =>
-                val sym = cr.classSymbol.withId(SymbolId(0), SymbolId(0))
+                val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
                     given Tasty.Classpath = cp
                     val s                 = cp.symbols(0)
@@ -209,7 +235,7 @@ class JavaSymbolTest extends Test:
         import kyo.internal.tasty.symbol.SymbolId
         Abort.run[TastyError]:
             readClass(fooBarClassBytes).flatMap: cr =>
-                val sym = cr.classSymbol.withId(SymbolId(0), SymbolId(0))
+                val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
                     given Tasty.Classpath = cp
                     val s                 = cp.symbols(0)
@@ -245,19 +271,19 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 5: javaMetadata is Present for Java symbols, Absent for TASTy symbols
     // -------------------------------------------------------------------------
-    "sym._javaMetadata: Present for Java, Absent for TASTy" taggedAs jvmOnly in run {
+    "symJavaMetadata(sym): Present for Java, Absent for TASTy" taggedAs jvmOnly in run {
         val bytes = loadJdkClass("java/lang/String.class")
         for
             javaResult <- readClass(bytes)
             tastySym   <- firstClassSymbolFromTasty("PlainClass.tasty")
         yield
             assert(
-                javaResult.classSymbol._javaMetadata.isDefined,
+                symJavaMetadata(javaResult.classSymbol).isDefined,
                 "Expected javaMetadata Present for java.lang.String"
             )
             assert(
-                tastySym._javaMetadata.isEmpty,
-                s"Expected javaMetadata Absent for TASTy PlainClass, got ${tastySym._javaMetadata}"
+                symJavaMetadata(tastySym).isEmpty,
+                s"Expected javaMetadata Absent for TASTy PlainClass, got ${symJavaMetadata(tastySym)}"
             )
         end for
     }
@@ -270,7 +296,7 @@ class JavaSymbolTest extends Test:
         readClass(bytes).map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
                 sym.kind == Tasty.SymbolKind.Method &&
-                    sym._javaMetadata.map(_.throwsTypes.nonEmpty).getOrElse(false)
+                    symJavaMetadata(sym).map(_.throwsTypes.nonEmpty).getOrElse(false)
             assert(
                 methodsWithThrows.nonEmpty,
                 s"Expected at least one method with throwsTypes in ThrowsFixture; symbols=${result.symbols.map(s =>
@@ -289,7 +315,7 @@ class JavaSymbolTest extends Test:
         readClass(bytes).map: result =>
             val sym = result.classSymbol
             assert(sym.flags.contains(Tasty.Flag.Final), "Expected Flag.Final for java.lang.String")
-            val meta = sym._javaMetadata
+            val meta = symJavaMetadata(sym)
             assert(meta.isDefined, "Expected javaMetadata Present for java.lang.String")
             assert(
                 (meta.get.accessFlags & 0x0010) != 0,
@@ -308,7 +334,7 @@ class JavaSymbolTest extends Test:
                 sym.flags.contains(Tasty.Flag.JavaRecord),
                 s"Expected Flag.JavaRecord for PointRecord, flags=${sym.flags.bits}"
             )
-            val meta = sym._javaMetadata
+            val meta = symJavaMetadata(sym)
             assert(meta.isDefined, "Expected javaMetadata Present for PointRecord")
             val components = meta.get.recordComponents
             assert(
@@ -332,7 +358,7 @@ class JavaSymbolTest extends Test:
         val bytes = loadJdkClass("java/lang/Deprecated.class")
         readClass(bytes).map: result =>
             val sym  = result.classSymbol
-            val meta = sym._javaMetadata
+            val meta = symJavaMetadata(sym)
             assert(meta.isDefined, "Expected javaMetadata Present for java.lang.Deprecated")
             val annotations = meta.get.annotations
             assert(annotations.nonEmpty, s"Expected at least one annotation on java.lang.Deprecated; got none")
@@ -354,7 +380,7 @@ class JavaSymbolTest extends Test:
         val bytes = loadFixture("AnonymousFixture$1.class")
         readClass(bytes).map: result =>
             val sym  = result.classSymbol
-            val meta = sym._javaMetadata
+            val meta = symJavaMetadata(sym)
             assert(meta.isDefined, "Expected javaMetadata Present for AnonymousFixture$1")
             val enclosing = meta.get.enclosingMethod
             assert(enclosing.isDefined, s"Expected enclosingMethod Present for AnonymousFixture$$1; got Absent")

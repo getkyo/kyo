@@ -24,10 +24,70 @@ class SubclassesOfTest extends Test:
         Sync.defer {
             val absFlags  = flagsOf(Tasty.Flag.Abstract)
             val concFlags = Tasty.Flags.empty
-            val a         = Tasty.Symbol.make(Tasty.SymbolKind.Class, absFlags, Tasty.Name("A")).withId(SymbolId(0), SymbolId(-1))
-            val b         = Tasty.Symbol.make(Tasty.SymbolKind.Class, absFlags, Tasty.Name("B")).withId(SymbolId(1), SymbolId(-1))
-            val c         = Tasty.Symbol.make(Tasty.SymbolKind.Class, absFlags, Tasty.Name("C")).withId(SymbolId(2), SymbolId(-1))
-            val d         = Tasty.Symbol.make(Tasty.SymbolKind.Class, concFlags, Tasty.Name("D")).withId(SymbolId(3), SymbolId(-1))
+            val a = Tasty.Symbol.Class(
+                SymbolId(0),
+                Tasty.Name("A"),
+                absFlags,
+                SymbolId(-1),
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent
+            )
+            val b = Tasty.Symbol.Class(
+                SymbolId(1),
+                Tasty.Name("B"),
+                absFlags,
+                SymbolId(-1),
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent
+            )
+            val c = Tasty.Symbol.Class(
+                SymbolId(2),
+                Tasty.Name("C"),
+                absFlags,
+                SymbolId(-1),
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent
+            )
+            val d = Tasty.Symbol.Class(
+                SymbolId(3),
+                Tasty.Name("D"),
+                concFlags,
+                SymbolId(-1),
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent
+            )
             Tasty.Classpath.make(
                 symbols = Chunk(a, b, c, d),
                 rootSymbolId = SymbolId(-1),
@@ -55,10 +115,70 @@ class SubclassesOfTest extends Test:
         Sync.defer {
             val absFlags  = flagsOf(Tasty.Flag.Abstract)
             val concFlags = Tasty.Flags.empty
-            val t         = Tasty.Symbol.make(Tasty.SymbolKind.Trait, absFlags, Tasty.Name("T")).withId(SymbolId(0), SymbolId(-1))
-            val impl1     = Tasty.Symbol.make(Tasty.SymbolKind.Class, concFlags, Tasty.Name("Impl1")).withId(SymbolId(1), SymbolId(-1))
-            val impl2     = Tasty.Symbol.make(Tasty.SymbolKind.Class, concFlags, Tasty.Name("Impl2")).withId(SymbolId(2), SymbolId(-1))
-            val abs       = Tasty.Symbol.make(Tasty.SymbolKind.Class, absFlags, Tasty.Name("AbsImpl")).withId(SymbolId(3), SymbolId(-1))
+            val t = Tasty.Symbol.Trait(
+                SymbolId(0),
+                Tasty.Name("T"),
+                absFlags,
+                SymbolId(-1),
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent
+            )
+            val impl1 = Tasty.Symbol.Class(
+                SymbolId(1),
+                Tasty.Name("Impl1"),
+                concFlags,
+                SymbolId(-1),
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent
+            )
+            val impl2 = Tasty.Symbol.Class(
+                SymbolId(2),
+                Tasty.Name("Impl2"),
+                concFlags,
+                SymbolId(-1),
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent
+            )
+            val abs = Tasty.Symbol.Class(
+                SymbolId(3),
+                Tasty.Name("AbsImpl"),
+                absFlags,
+                SymbolId(-1),
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent,
+                Chunk.empty,
+                Chunk.empty,
+                kyo.Maybe.Absent
+            )
             Tasty.Classpath.make(
                 symbols = Chunk(t, impl1, impl2, abs),
                 rootSymbolId = SymbolId(-1),

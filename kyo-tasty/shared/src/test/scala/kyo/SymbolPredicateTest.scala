@@ -21,22 +21,21 @@ class SymbolPredicateTest extends Test:
         kind: Tasty.SymbolKind = Tasty.SymbolKind.Class,
         flags: Tasty.Flags = Tasty.Flags.empty
     ): Tasty.Symbol =
-        Tasty.Symbol.fromDescriptor(
-            id = SymbolId(1),
-            kind = kind,
-            flags = flags,
-            name = Tasty.Name("TestSym"),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
+        Tasty.Symbol.makePlaceholder(kind, flags, Tasty.Name("TestSym")) match
+            case u: Tasty.Symbol.Unresolved    => u.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case c: Tasty.Symbol.Class         => c.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case t: Tasty.Symbol.Trait         => t.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case o: Tasty.Symbol.Object        => o.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case m: Tasty.Symbol.Method        => m.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case v: Tasty.Symbol.Val           => v.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case w: Tasty.Symbol.Var           => w.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case f: Tasty.Symbol.Field         => f.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case ta: Tasty.Symbol.TypeAlias    => ta.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case ot: Tasty.Symbol.OpaqueType   => ot.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case at: Tasty.Symbol.AbstractType => at.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case tp: Tasty.Symbol.TypeParam    => tp.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case p: Tasty.Symbol.Parameter     => p.copy(id = SymbolId(1), ownerId = SymbolId(0))
+            case pk: Tasty.Symbol.Package      => pk.copy(id = SymbolId(1), ownerId = SymbolId(0))
 
     private def flagsOf(flags: Tasty.Flag*): Tasty.Flags =
         flags.foldLeft(Tasty.Flags.empty)((acc, f) => new Tasty.Flags(acc.bits | f.bit))

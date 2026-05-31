@@ -17,6 +17,7 @@ import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolId
+import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import kyo.stats.Attributes
 import scala.collection.mutable
@@ -627,7 +628,10 @@ object ClasspathOrchestrator:
         var i = 0
         while i < symbols.length do
             val s = symbols(i)
-            s._parentTypes.foreach: parent =>
+            (s match
+                case c: Tasty.Symbol.ClassLike => c.parentTypes;
+                case _                         => Chunk.empty
+            ).foreach: parent =>
                 extractNamedId(parent) match
                     case Maybe.Present(pid) if pid.value >= 0 =>
                         val buf = b.getOrElseUpdate(pid, scala.collection.mutable.ArrayBuffer.empty)
@@ -682,22 +686,7 @@ object ClasspathOrchestrator:
         var i   = 0
         while i < count do
             val d = descriptors(i)
-            out(i) = Tasty.Symbol.fromDescriptor(
-                id = SymbolId(d.id),
-                kind = d.kind,
-                flags = d.flags,
-                name = d.name,
-                ownerId = SymbolId(d.ownerId),
-                declaredType = d.declaredType,
-                scaladoc = d.scaladoc,
-                sourcePosition = d.sourcePosition,
-                javaMetadata = d.javaMetadata,
-                parentTypes = d.parentTypes,
-                typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
-                declarationIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_))),
-                permittedSubclassIds = d.permittedSubclassIds.map(_.map(SymbolId(_))),
-                bodyRecord = d.body
-            )
+            out(i) = TypedSymbolFactory.from(d)
             i += 1
         end while
         out

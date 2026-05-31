@@ -392,7 +392,16 @@ class SnapshotRoundTripTest extends Test:
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
                         SnapshotReader.read(snapPath, cacheSrc).map: loadedCp =>
-                            val symWithBodyOpt = loadedCp.symbols.find(_.bodyRecord.isDefined)
+                            val symWithBodyOpt = loadedCp.symbols.find(s =>
+                                s match
+                                    case c: Tasty.Symbol.Class  => c.body.isDefined
+                                    case t: Tasty.Symbol.Trait  => t.body.isDefined
+                                    case o: Tasty.Symbol.Object => o.body.isDefined
+                                    case m: Tasty.Symbol.Method => m.body.isDefined
+                                    case v: Tasty.Symbol.Val    => v.body.isDefined
+                                    case w: Tasty.Symbol.Var    => w.body.isDefined
+                                    case _                      => false
+                            )
                             discard(symWithBodyOpt)
                             succeed
             ).map:
@@ -488,8 +497,14 @@ class SnapshotRoundTripTest extends Test:
                             case Some(warmSym) =>
                                 // plan: phase-02 inline; declarationIds replaces declarations.
                                 // We check declarationIds.length as a proxy.
-                                val coldDeclNames = coldSym._declarationIds.map(_.value.toString).toSet
-                                val warmDeclNames = warmSym._declarationIds.map(_.value.toString).toSet
+                                val coldDeclNames = (coldSym match
+                                    case c: Tasty.Symbol.ClassLike => c.declarationIds;
+                                    case _                         => Chunk.empty
+                                ).map(_.value.toString).toSet
+                                val warmDeclNames = (warmSym match
+                                    case c: Tasty.Symbol.ClassLike => c.declarationIds;
+                                    case _                         => Chunk.empty
+                                ).map(_.value.toString).toSet
                                 if coldDeclNames.nonEmpty && warmDeclNames.isEmpty then
                                     allGood = false
                                     failMsg = s"$coldFqn: cold has declarations $coldDeclNames but warm has none after round-trip"
@@ -498,7 +513,9 @@ class SnapshotRoundTripTest extends Test:
                     assert(allGood, failMsg)
                     // plan: phase-02 inline; parentTypes is always set (Chunk.empty by default).
                     for warmSym <- warmClasses do
-                        val parentsChunk = warmSym._parentTypes
+                        val parentsChunk = warmSym match
+                            case c: Tasty.Symbol.ClassLike => c.parentTypes;
+                            case _                         => Chunk.empty
                         assert(parentsChunk != null, s"${warmSym.name.asString}: parentTypes was null after snapshot load")
                     end for
                     succeed
@@ -522,79 +539,48 @@ class SnapshotRoundTripTest extends Test:
         val digest =
             Array[Byte](0x70.toByte, 0x71.toByte, 0x72.toByte, 0x73.toByte, 0x74.toByte, 0x75.toByte, 0x76.toByte, 0x77.toByte)
 
-        // plan: phase-02 bridge; use Symbol.fromDescriptor to build immutable Symbols with parentTypes.
         import AllowUnsafe.embrace.danger
         import kyo.internal.tasty.symbol.SymbolId
-        val rootSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(0),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name(""),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val pkgSym  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("test"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val barSym = Tasty.Symbol.Class(
+            SymbolId(2),
+            Tasty.Name("Bar"),
+            Tasty.Flags.empty,
+            SymbolId(1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
-        val pkgSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(1),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("test"),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
-        val barSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(2),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("Bar"),
-            ownerId = SymbolId(1),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
-        val fooSym = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(3),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("Foo"),
-            ownerId = SymbolId(1),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk(Tasty.Type.Named(barSym.id)),
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+        val fooSym = Tasty.Symbol.Class(
+            SymbolId(3),
+            Tasty.Name("Foo"),
+            Tasty.Flags.empty,
+            SymbolId(1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk(Tasty.Type.Named(barSym.id)),
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
 
-        val allSyms  = Chunk(rootSym, pkgSym, barSym, fooSym)
-        val topLevel = Chunk(barSym, fooSym)
-        val pkgs     = Chunk(rootSym, pkgSym)
-        val fqnMap   = scala.collection.immutable.Map("test.Bar" -> barSym, "test.Foo" -> fooSym)
-        val pkgMap   = scala.collection.immutable.Map("test" -> pkgSym)
+        val allSyms: Chunk[Tasty.Symbol]  = Chunk(rootSym, pkgSym, barSym, fooSym)
+        val topLevel: Chunk[Tasty.Symbol] = Chunk(barSym, fooSym)
+        val pkgs: Chunk[Tasty.Symbol]     = Chunk(rootSym, pkgSym)
+        val fqnMap                        = scala.collection.immutable.Map[String, Tasty.Symbol]("test.Bar" -> barSym, "test.Foo" -> fooSym)
+        val pkgMap                        = scala.collection.immutable.Map[String, Tasty.Symbol]("test" -> pkgSym)
 
         Abort.run[TastyError]:
             val fqnIdMap = fqnMap.map { case (k, v) => k -> v.id }.toMap
@@ -619,8 +605,10 @@ class SnapshotRoundTripTest extends Test:
                 val snapPath = s"cache/$hex.krfl"
                 SnapshotReader.read(snapPath, cacheSrc).map: warmCp =>
                     warmCp.findClass("test.Foo") match
-                        case Maybe.Present(sym) => sym._parentTypes
-                        case Maybe.Absent       => Abort.fail(TastyError.NotImplemented("test.Foo not found after snapshot load"))
+                        case Maybe.Present(sym) => sym match
+                                case c: Tasty.Symbol.ClassLike => c.parentTypes;
+                                case _                         => Chunk.empty
+                        case Maybe.Absent => Abort.fail(TastyError.NotImplemented("test.Foo not found after snapshot load"))
         .map:
             case Result.Success(parents) =>
                 assert(parents.nonEmpty, "Foo.parents must be non-empty after snapshot round-trip with local Named parent")
@@ -689,53 +677,23 @@ class SnapshotRoundTripTest extends Test:
 
         import AllowUnsafe.embrace.danger
         import kyo.internal.tasty.symbol.SymbolId
-        val rootSym2 = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(0),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name(""),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
-        val pkgSym2 = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(1),
-            kind = Tasty.SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("legacy"),
-            ownerId = SymbolId(0),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
-        )
-        val classSym2 = Tasty.Symbol.fromDescriptor(
-            id = SymbolId(2),
-            kind = Tasty.SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("OldClass"),
-            ownerId = SymbolId(1),
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            bodyRecord = Maybe.Absent
+        val rootSym2 = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val pkgSym2  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("legacy"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val classSym2 = Tasty.Symbol.Class(
+            SymbolId(2),
+            Tasty.Name("OldClass"),
+            Tasty.Flags.empty,
+            SymbolId(1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
 
         val allSyms2 = Chunk(rootSym2, pkgSym2, classSym2)
@@ -856,7 +814,19 @@ class SnapshotRoundTripTest extends Test:
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
                         SnapshotReader.read(snapPath, cacheSrc).map: (warmCp: Tasty.Classpath) =>
-                            (warmCp, warmCp.symbols.find(_.bodyRecord.isDefined))
+                            (
+                                warmCp,
+                                warmCp.symbols.find(s =>
+                                    s match
+                                        case c: Tasty.Symbol.Class  => c.body.isDefined
+                                        case t: Tasty.Symbol.Trait  => t.body.isDefined
+                                        case o: Tasty.Symbol.Object => o.body.isDefined
+                                        case m: Tasty.Symbol.Method => m.body.isDefined
+                                        case v: Tasty.Symbol.Val    => v.body.isDefined
+                                        case w: Tasty.Symbol.Var    => w.body.isDefined
+                                        case _                      => false
+                                )
+                            )
             ).flatMap:
                 case Result.Success((warmCp: Tasty.Classpath, Some(sym: Tasty.Symbol))) =>
                     // Before decodeBody: bodyMemoSize must be 0.

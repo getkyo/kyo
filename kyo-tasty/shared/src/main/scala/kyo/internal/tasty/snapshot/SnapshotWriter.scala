@@ -106,7 +106,15 @@ object SnapshotWriter:
         val symBodyStarts   = new Array[Int](symbolList.size)
         val symBodyEnds     = new Array[Int](symbolList.size)
         for (sym, idx) <- symbolList.zipWithIndex do
-            sym.bodyRecord match
+            (sym match
+                case c: Tasty.Symbol.Class  => c.body
+                case t: Tasty.Symbol.Trait  => t.body
+                case o: Tasty.Symbol.Object => o.body
+                case m: Tasty.Symbol.Method => m.body
+                case v: Tasty.Symbol.Val    => v.body
+                case w: Tasty.Symbol.Var    => w.body
+                case _                      => kyo.Maybe.Absent
+            ) match
                 case kyo.Maybe.Present(b) if b.bodyStart > 0 && b.bodyEnd > b.bodyStart && b.sectionBytes.nonEmpty =>
                     val sliceLen = b.bodyEnd - b.bodyStart
                     bodyBytesBuffer.write(b.sectionBytes, b.bodyStart, sliceLen)
@@ -147,7 +155,10 @@ object SnapshotWriter:
             symbolList,
             symbolId,
             sym =>
-                sym._parentTypes.map:
+                (sym match
+                    case c: Tasty.Symbol.ClassLike => c.parentTypes
+                    case _                         => Chunk.empty
+                ).map:
                     case Tasty.Type.Named(id) => id.value
                     case _                    => -1
         )
@@ -159,7 +170,11 @@ object SnapshotWriter:
             symbolId,
             sym =>
                 import kyo.internal.tasty.symbol.SymbolId
-                sym._declarationIds.map(id => id.value)
+                (sym match
+                    case c: Tasty.Symbol.ClassLike => c.declarationIds
+                    case p: Tasty.Symbol.Package   => p.memberIds
+                    case _                         => Chunk.empty[SymbolId]
+                ).map(id => id.value)
         )
 
         // TPARAMS_ section: for each symbol, store the symbol IDs of its type parameters.
@@ -169,7 +184,13 @@ object SnapshotWriter:
             symbolId,
             sym =>
                 import kyo.internal.tasty.symbol.SymbolId
-                sym._typeParamIds.map(id => id.value)
+                (sym match
+                    case c: Tasty.Symbol.ClassLike   => c.typeParamIds
+                    case m: Tasty.Symbol.Method      => m.typeParamIds
+                    case ta: Tasty.Symbol.TypeAlias  => ta.typeParamIds
+                    case ot: Tasty.Symbol.OpaqueType => ot.typeParamIds
+                    case _                           => Chunk.empty[SymbolId]
+                ).map(id => id.value)
         )
 
         val sections = Seq(
