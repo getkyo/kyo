@@ -1,9 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import kyo.internal.tasty.query.ClasspathRef
-import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
@@ -56,11 +53,8 @@ class TastySymbolTest extends Test:
     private def openFixtureClasspath(src: FileSource)(
         using Frame
     ): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: cp =>
-                    ClasspathTestHelpers.assignHomesForTest(rawCp)
-                    cp
+        ClasspathOrchestrator.open(Seq("root"), false, src, 1)
+    end openFixtureClasspath
 
     private def plainClassSource(): MemoryFileSource =
         val src = MemoryFileSource()

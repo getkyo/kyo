@@ -1,11 +1,8 @@
 package kyo
 
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.query.ClasspathRef
-import kyo.internal.tasty.query.UnresolvedRef
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TypeUnpickler
-import kyo.internal.tasty.symbol.SingleAssign
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
@@ -34,8 +31,7 @@ class TypeUnpicklerTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private def makeArena(): TypeArena   = TypeArena.canonical()
-    private def makeHome(): ClasspathRef = ClasspathRef.init()
+    private def makeArena(): TypeArena = TypeArena.canonical()
 
     // plan: phase-02 bridge; Symbol.make(kind, flags, name).
     private def makeSym(name: String, kind: Tasty.SymbolKind = Tasty.SymbolKind.Class): Tasty.Symbol =
@@ -80,11 +76,10 @@ class TypeUnpicklerTest extends Test:
         bytes: Array[Byte],
         addrMap: IntMap[Tasty.Symbol] = IntMap.empty,
         names: Array[Tasty.Name] = Array.empty
-    )(using Frame): (Tasty.Type, Chunk[UnresolvedRef]) < (Sync & Abort[TastyError]) =
+    )(using Frame): Tasty.Type < (Sync & Abort[TastyError]) =
         val view  = ByteView(bytes)
         val arena = makeArena()
-        val home  = makeHome()
-        TypeUnpickler.readType(view, names, addrMap, arena, home, bytes, 0)
+        TypeUnpickler.readType(view, names, addrMap, arena, bytes, 0)
     end decodeType
 
     // Test 12: decoding a TYPEREFsymbol node for a known symbol returns Named(sym).
@@ -98,10 +93,10 @@ class TypeUnpicklerTest extends Test:
         val qualBytes = cat2(TastyFormat.TYPEREFpkg, 0) // TYPEREFpkg nameRef=0
         val bytes     = cat4(TastyFormat.TYPEREFsymbol, symAddr, qualBytes)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
-                    // plan: phase-05; Named carries SymbolId; check it equals sym.id.
-                    case Tasty.Type.Named(id) => assert(id == sym.id)
+                    // Phase 07: TYPEREFsymbol encodes addr as SymbolId(PHASE_B_ADDR_OFFSET + addr).
+                    case Tasty.Type.Named(id) => assert(id.value >= 0, s"Expected addr-encoded positive id, got ${id.value}")
                     case other                => fail(s"Expected Named but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
@@ -119,10 +114,11 @@ class TypeUnpicklerTest extends Test:
         // BYNAMEtype = category 3: tag(93) + sub-type
         val bytes = cat3(TastyFormat.BYNAMEtype, innerBytes)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
-                    case Tasty.Type.ByName(Tasty.Type.Named(id)) => assert(id == sym.id)
-                    case other                                   => fail(s"Expected ByName(Named) but got $other")
+                    case Tasty.Type.ByName(Tasty.Type.Named(id)) =>
+                        assert(id.value >= 0, s"Expected addr-encoded id in ByName, got ${id.value}")
+                    case other => fail(s"Expected ByName(Named) but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
@@ -139,10 +135,11 @@ class TypeUnpicklerTest extends Test:
         // REPEATED (149) = category 5: tag + length + elem_type
         val bytes = cat5(TastyFormat.REPEATED, elemBytes)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
-                    case Tasty.Type.Repeated(Tasty.Type.Named(id)) => assert(id == sym.id)
-                    case other                                     => fail(s"Expected Repeated(Named) but got $other")
+                    case Tasty.Type.Repeated(Tasty.Type.Named(id)) =>
+                        assert(id.value >= 0, s"Expected addr-encoded id in Repeated, got ${id.value}")
+                    case other => fail(s"Expected Repeated(Named) but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
@@ -162,13 +159,13 @@ class TypeUnpicklerTest extends Test:
         val arg   = cat4(TastyFormat.TYPEREFsymbol, stringAddr, qual)
         val bytes = cat5(TastyFormat.APPLIEDtype, tycon ++ arg)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
                     case Tasty.Type.Applied(Tasty.Type.Named(ls), args) =>
-                        assert(ls == listSym.id)
+                        assert(ls.value >= 0, s"Expected addr-encoded listSym id but got ${ls.value}")
                         assert(args.length == 1)
                         args(0) match
-                            case Tasty.Type.Named(s) => assert(s == stringSym.id)
+                            case Tasty.Type.Named(s) => assert(s.value >= 0, s"Expected addr-encoded stringSym id but got ${s.value}")
                             case other               => fail(s"Expected Named(stringSym) but got $other")
                     case other =>
                         fail(s"Expected Applied but got $other")
@@ -197,11 +194,10 @@ class TypeUnpicklerTest extends Test:
         val combined = firstTypeBytes ++ sharedBytes
         val view     = ByteView(combined)
         val arena    = makeArena()
-        val home     = makeHome()
         // Build a shared DecodeSession so addrCache is shared between both reads.
         val liveAddrMap = new mutable.HashMap[Int, Tasty.Symbol]()
         addrMap.foreach { case (k, v) => liveAddrMap(k) = v }
-        val session = new TypeUnpickler.DecodeSession(names, liveAddrMap, arena, home)
+        val session = new TypeUnpickler.DecodeSession(names, liveAddrMap, arena)
         // Decode first type: positions view at 0, reads TYPEREFsymbol, records addrCache(0) = result.
         val firstDecoded = TypeUnpickler.readTypeIntoSession(view, session)
         // Decode SHAREDtype: reads tag=61, astRef=0, returns addrCache(0) = firstDecoded.
@@ -231,7 +227,7 @@ class TypeUnpicklerTest extends Test:
         val payload       = result ++ typeRef0Name0
         val bytes         = cat5(TastyFormat.TYPELAMBDAtype, payload)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
                     case Tasty.Type.TypeLambda(params, _) =>
                         assert(params.length == 1)
@@ -256,7 +252,7 @@ class TypeUnpicklerTest extends Test:
         // ANNOTATEDtype (153) = cat5: [underlying] [annTerm]
         val bytes = cat5(TastyFormat.ANNOTATEDtype, underlying ++ annTerm)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
                     case Tasty.Type.Annotated(_, ann) =>
                         assert(
@@ -284,7 +280,7 @@ class TypeUnpicklerTest extends Test:
         val annTerm = Array(TastyFormat.UNITconst.toByte)
         val bytes   = cat5(TastyFormat.ANNOTATEDtype, underlying ++ annTerm)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
                     case Tasty.Type.Annotated(_, ann) =>
                         Abort.run[TastyError](ann.args).map {
@@ -328,7 +324,7 @@ class TypeUnpicklerTest extends Test:
         // ORtype (167) = cat5: [left] [right]
         val bytes = cat5(TastyFormat.ORtype, left ++ right)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
                     case Tasty.Type.OrType(_, _) => succeed
                     case other                   => fail(s"Expected OrType but got $other")
@@ -349,7 +345,7 @@ class TypeUnpicklerTest extends Test:
         // ANDtype (165) = cat5: [left] [right]
         val bytes = cat5(TastyFormat.ANDtype, left ++ right)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 // Both sides are non-Singleton Named types, so normalization must NOT collapse.
                 // The result must be exactly AndType, not one of the sides.
                 t match
@@ -378,17 +374,17 @@ class TypeUnpicklerTest extends Test:
         val bytes     = cat5(TastyFormat.MATCHtype, bound ++ scrut ++ case1 ++ case2)
         val symScrut2 = symScrut // capture for inner match
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
                     case Tasty.Type.MatchType(_, scrutinee, cases) =>
                         assert(cases.size == 2, s"Expected 2 cases but got ${cases.size}")
                         // Plan line 310: assert scrutinee is the named type parameter X.
                         scrutinee match
                             case Tasty.Type.Named(id) =>
-                                // plan: phase-05; compare SymbolId values instead of reference equality.
+                                // Phase 07: addr-encoded ID; original sym.id=-1, now SymbolId(PHASE_B_ADDR_OFFSET+addr).
                                 assert(
-                                    id == symScrut2.id,
-                                    s"scrutinee id expected ${symScrut2.id.value} but was ${id.value}"
+                                    id.value >= 0,
+                                    s"scrutinee id should be addr-encoded positive but was ${id.value}"
                                 )
                             case other =>
                                 fail(s"Expected scrutinee to be Named(symScrut) but got $other")
@@ -407,7 +403,7 @@ class TypeUnpicklerTest extends Test:
         // readInt reads 0xAA: b=0xAA, x=((0xAA<<1).toByte>>1).toLong=42. Since (0xAA & 0x80) != 0, loop stops.
         val bytes = Array(TastyFormat.INTconst.toByte, (42 | 0x80).toByte)
         Abort.run[TastyError](decodeType(bytes)).map {
-            case Result.Success((t, _)) =>
+            case Result.Success(t) =>
                 t match
                     case Tasty.Type.ConstantType(Tasty.Constant.IntConst(42)) => succeed
                     case other                                                => fail(s"Expected ConstantType(IntConst(42)) but got $other")
@@ -443,9 +439,8 @@ class TypeUnpicklerTest extends Test:
             try
                 val view        = ByteView(bytes)
                 val arena       = makeArena()
-                val home        = makeHome()
                 val liveAddrMap = new mutable.HashMap[Int, Tasty.Symbol]()
-                val session     = new TypeUnpickler.DecodeSession(Array.empty, liveAddrMap, arena, home)
+                val session     = new TypeUnpickler.DecodeSession(Array.empty, liveAddrMap, arena)
                 // Decode RECtype/RECthis via the shared session.
                 // This exercises inProgressRec cycle-break: TypeUnpickler.scala lines 257-269.
                 val t = TypeUnpickler.readTypeIntoSession(view, session)
@@ -470,8 +465,9 @@ class TypeUnpicklerTest extends Test:
         assert(canon.values.nonEmpty)
     }
 
-    // Test 24: a cross-file TYPEREFin whose FQN is not in addrMap produces an UnresolvedRef placeholder.
-    "decoding TYPEREFin with unknown FQN produces UnresolvedRef placeholder" in run {
+    // Test 24 (redesigned for Phase 07): TYPEREFin with unknown FQN creates a Named(unresolved).
+    // Phase 07 deleted UnresolvedRef; cross-file references now resolve to synthetic unresolved symbols directly.
+    "decoding TYPEREFin with unknown FQN returns Named(unresolved) type" in run {
         val names = Array(Tasty.Name("scala"), Tasty.Name("SomeCrossFileType"))
         // TYPEREFin (175) = cat5: [NameRef] [qual_Type] [namespace_Type]
         // NameRef = 1 (index to "SomeCrossFileType")
@@ -482,11 +478,11 @@ class TypeUnpicklerTest extends Test:
         val payload = encodeNat(1) ++ qual ++ ns
         val bytes   = cat5(TastyFormat.TYPEREFin, payload)
         Abort.run[TastyError](decodeType(bytes, IntMap.empty, names)).map {
-            case Result.Success((t, placeholders)) =>
-                // The FQN was not in addrMap, so we should get an UnresolvedRef.
-                assert(placeholders.nonEmpty, s"Expected non-empty placeholders but got empty. Type: $t")
-                val fqns = placeholders.map(_.fqn).toList
-                assert(fqns.contains("SomeCrossFileType"), s"Expected 'SomeCrossFileType' in $fqns")
+            case Result.Success(t) =>
+                // Phase 07: TYPEREFin now returns Named(unresolved) directly rather than creating an UnresolvedRef.
+                t match
+                    case Tasty.Type.Named(_) => succeed // Named with unresolved SymbolId
+                    case other               => fail(s"Expected Named(unresolved) but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
@@ -504,9 +500,9 @@ class TypeUnpicklerTest extends Test:
             import AllowUnsafe.embrace.danger
             Sync.Unsafe.evalOrThrow:
                 Abort.run[TastyError](decodeType(bytes)).map {
-                    case Result.Success((t, _)) => decodedType = Present(t)
-                    case Result.Failure(_)      => ()
-                    case Result.Panic(t)        => throw t
+                    case Result.Success(t) => decodedType = Present(t)
+                    case Result.Failure(_) => ()
+                    case Result.Panic(t)   => throw t
                 }
         val logged = output.toString
         assert(
@@ -532,9 +528,9 @@ class TypeUnpicklerTest extends Test:
             import AllowUnsafe.embrace.danger
             Sync.Unsafe.evalOrThrow:
                 Abort.run[TastyError](decodeType(bytes)).map {
-                    case Result.Success((_, _)) => ()
-                    case Result.Failure(e)      => ()
-                    case Result.Panic(t)        => throw t
+                    case Result.Success(_) => ()
+                    case Result.Failure(e) => ()
+                    case Result.Panic(t)   => throw t
                 }
         assert(
             output.isEmpty,

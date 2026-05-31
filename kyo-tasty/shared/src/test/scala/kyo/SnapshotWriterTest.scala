@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotFormat
@@ -63,13 +62,11 @@ class SnapshotWriterTest extends Test:
 
         Scope.run:
             Abort.run[TastyError](
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).flatMap: cp =>
-                            SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
-                                val hex      = DigestComputer.toHexString(digest)
-                                val snapPath = s"cache/$hex.krfl"
-                                cacheSrc.files.get(snapPath)
+                ClasspathOrchestrator.open(Seq("root"), false, src, 1).flatMap: cp =>
+                    SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
+                        val hex      = DigestComputer.toHexString(digest)
+                        val snapPath = s"cache/$hex.krfl"
+                        cacheSrc.files.get(snapPath)
             ).map:
                 case Result.Success(Some(bytes)) =>
                     // Parse section index to find PARENTS, MEMBERS, TPARAMS_ lengths.

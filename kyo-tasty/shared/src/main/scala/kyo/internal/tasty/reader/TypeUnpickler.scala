@@ -2,9 +2,6 @@ package kyo.internal.tasty.reader
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.query.ClasspathRef
-import kyo.internal.tasty.query.UnresolvedRef
-import kyo.internal.tasty.symbol.SingleAssign
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.type_.TypeArena
 import kyo.internal.tasty.type_.TypeOps
@@ -20,7 +17,7 @@ import scala.collection.mutable
   *   - addrCache: Addr->Type, used for SHAREDtype back-references.
   *   - inProgressRec: Addr->Rec placeholder, used to break RECtype/RECthis cycles.
   *   - binderAddrMap: Addr->Chunk[Symbol], maps lambda start addr to param symbol list.
-  *   - placeholders: accumulates UnresolvedRef entries for cross-file references.
+  *   - cross-file references: produce Named(SymbolId(-1)) entries directly (UnresolvedRef deleted in Phase 07).
   *
   * Cross-platform: no JVM-only APIs; all bit-pattern conversions use java.lang.Float/Double which are available on Scala.js and Scala
   * Native.
@@ -32,10 +29,19 @@ object TypeUnpickler:
       * Each MATCHCASEtype node is decoded as Applied(Named(MatchCaseSentinel), Chunk(pat, rhs)). Consumers extract pat and rhs by position
       * from the args chunk.
       */
+    /** Phase-B temporary SymbolId offset.
+      *
+      * During Phase B decode, `TERMREFdirect` and `TYPEREFdirect` type nodes reference local symbols by TASTy byte address. Instead of
+      * using `SymbolId(-1)` (which loses the address information), we encode the address as `SymbolId(PHASE_B_ADDR_OFFSET + addr)`. This
+      * preserves the address so that Phase C `finalizeMerge` can remap these to correct final SymbolIds using the file's addrMap.
+      *
+      * The offset (2^28 = 268_435_456) is chosen so that it is far above any realistic classpath symbol count and distinguishable from both
+      * negative sentinel (-1) and final SymbolIds (0 to N-1).
+      */
+    private[kyo] val PHASE_B_ADDR_OFFSET: Int = 1 << 28
+
     val MatchCaseSentinel: Tasty.Symbol =
-        // flow-allow: §839 case 3 -- module-load init; object TypeUnpickler initializer runs once at class load.
-        import AllowUnsafe.embrace.danger
-        Tasty.Symbol.make(
+        InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name("$$MatchCase")
@@ -53,7 +59,7 @@ object TypeUnpickler:
       * @param arena
       *   Per-file TypeArena for hash-consing decoded types.
       * @param home
-      *   ClasspathRef for synthetic symbols (unresolved cross-file refs).
+      *   (formerly ClasspathRef; deleted in Phase 07)
       * @return
       *   The decoded Tasty.Type, interned in `arena`.
       */
@@ -62,32 +68,28 @@ object TypeUnpickler:
         names: Array[Tasty.Name],
         addrMap: IntMap[Tasty.Symbol],
         arena: TypeArena,
-        home: ClasspathRef,
         sectionBytes: Array[Byte],
         sectionOffset: Int
-    )(using frame: Frame)(using AllowUnsafe): (Tasty.Type, Chunk[UnresolvedRef]) < (Sync & Abort[TastyError]) =
+    )(using frame: Frame)(using AllowUnsafe): Tasty.Type < (Sync & Abort[TastyError]) =
         val result =
             try
                 val addrCache     = new mutable.HashMap[Int, Tasty.Type]()
                 val inProgressRec = new mutable.HashMap[Int, Tasty.Type.Rec]()
                 val binderAddrMap = new mutable.HashMap[Int, Chunk[Tasty.Symbol]]()
-                val placeholders  = new mutable.ArrayBuffer[UnresolvedRef]()
                 val ctx =
                     DecodeCtx(
                         names,
                         addrMap,
                         arena,
-                        home,
                         addrCache,
                         inProgressRec,
                         binderAddrMap,
-                        placeholders,
                         sectionBytes,
                         sectionOffset,
                         frame
                     )
                 val t = readTypeNode(view, ctx)
-                Right((t, Chunk.from(placeholders)))
+                Right(t)
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
                     Left(TastyError.MalformedSection("ASTs", s"unexpected end reading type: ${ex.getMessage}", view.position))
@@ -112,14 +114,12 @@ object TypeUnpickler:
         val names: Array[Tasty.Name],
         val addrMap: scala.collection.Map[Int, Tasty.Symbol],
         val arena: TypeArena,
-        val home: ClasspathRef,
         val sectionBytes: Array[Byte],
         val sectionOffset: Int
     ):
         val addrCache: mutable.HashMap[Int, Tasty.Type]              = new mutable.HashMap()
         val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec]      = new mutable.HashMap()
         val binderAddrMap: mutable.HashMap[Int, Chunk[Tasty.Symbol]] = new mutable.HashMap()
-        val placeholders: mutable.ArrayBuffer[UnresolvedRef]         = new mutable.ArrayBuffer()
     end TreeTypeSession
 
     /** Read one type node using a shared TreeTypeSession (called by TreeUnpickler).
@@ -146,11 +146,9 @@ object TypeUnpickler:
                         session.names,
                         session.addrMap,
                         session.arena,
-                        session.home,
                         session.addrCache,
                         session.inProgressRec,
                         session.binderAddrMap,
-                        session.placeholders,
                         session.sectionBytes,
                         session.sectionOffset,
                         callFrame
@@ -163,11 +161,9 @@ object TypeUnpickler:
                 session.names,
                 session.addrMap,
                 session.arena,
-                session.home,
                 session.addrCache,
                 session.inProgressRec,
                 session.binderAddrMap,
-                session.placeholders,
                 session.sectionBytes,
                 session.sectionOffset,
                 callFrame
@@ -190,22 +186,18 @@ object TypeUnpickler:
       */
     private[kyo] def readTypeIntoSession(view: ByteView, session: DecodeSession)(using frame: Frame)(using AllowUnsafe): Tasty.Type =
         // Pass session.liveAddrMap directly -- no per-call IntMap snapshot.
-        // liveAddrMap is the mutable.HashMap being built by AstUnpickler.walkStats.
-        // Locally-defined symbols accumulated so far are visible through the live map.
-        // The immutable IntMap snapshot is built ONCE at end of pass1 (AstUnpickler.runPass1
-        // line ~156) and stored in each TastyOrigin._addrMap for lazy body decode.
+        // Pass session reference for cross-file FQN tracking so Phase C can remap parent types.
         val ctx = DecodeCtx(
             session.names,
             session.liveAddrMap,
             session.arena,
-            session.home,
             session.addrCache,
             session.inProgressRec,
             session.binderAddrMap,
-            session.placeholders,
             null,
             0,
-            frame
+            frame,
+            session
         )
         readTypeNode(view, ctx)
     end readTypeIntoSession
@@ -214,17 +206,27 @@ object TypeUnpickler:
       *
       * `liveAddrMap` is the mutable HashMap being built by AstUnpickler.walkStats. Passing it directly (not as a snapshot) lets type decode
       * find locally-defined symbols as the walk progresses.
+      *
+      * `unresolvedIdToFqn` accumulates mappings from the unique negative SymbolIds assigned to cross-file unresolved symbols to their FQNs.
+      * Phase C uses this map to look up the FQN and resolve to the correct final SymbolId via `fqnIndex`.
       */
     final private[kyo] class DecodeSession(
         val names: Array[Tasty.Name],
         val liveAddrMap: mutable.HashMap[Int, Tasty.Symbol],
-        val arena: TypeArena,
-        val home: ClasspathRef
+        val arena: TypeArena
     ):
         val addrCache: mutable.HashMap[Int, Tasty.Type]              = new mutable.HashMap()
         val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec]      = new mutable.HashMap()
         val binderAddrMap: mutable.HashMap[Int, Chunk[Tasty.Symbol]] = new mutable.HashMap()
-        val placeholders: mutable.ArrayBuffer[UnresolvedRef]         = new mutable.ArrayBuffer()
+        val unresolvedIdToFqn: mutable.HashMap[Int, String]          = new mutable.HashMap()
+        // Counter for unique negative IDs: starts at -2 (to distinguish from SymbolId(-1) which is the sentinel).
+        private var _unresolvedIdCounter: Int = -2
+
+        def nextUnresolvedId(): Int =
+            val id = _unresolvedIdCounter
+            _unresolvedIdCounter -= 1
+            id
+        end nextUnresolvedId
     end DecodeSession
 
     // Internal decode context passed through all recursive calls.
@@ -233,26 +235,40 @@ object TypeUnpickler:
     // addrMap accepts any scala.collection.Map so pass1 can pass liveAddrMap (mutable.HashMap) directly
     // without snapshotting into an IntMap on every type-node decode call.
     // frame: call-site Frame, used for Log.warn in the unknown-tag fallback branch.
+    // session: reference to the owning DecodeSession for cross-file FQN tracking (null in body decode path).
     final private class DecodeCtx(
         val names: Array[Tasty.Name],
         val addrMap: scala.collection.Map[Int, Tasty.Symbol],
         val arena: TypeArena,
-        val home: ClasspathRef,
         val addrCache: mutable.HashMap[Int, Tasty.Type],
         val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec],
         val binderAddrMap: mutable.HashMap[Int, Chunk[Tasty.Symbol]],
-        val placeholders: mutable.ArrayBuffer[UnresolvedRef],
         val sectionBytes: Array[Byte],
         val sectionOffset: Int,
-        val frame: Frame
+        val frame: Frame,
+        val session: DecodeSession | Null = null
     )
 
-    private def makeUnresolvedSym(fqn: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Symbol =
+    private def makeUnresolvedSym(fqn: String)(using AllowUnsafe): Tasty.Symbol =
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name(fqn)
         )
+
+    /** Make a unique negative SymbolId for a cross-file FQN reference and record it in `fqns`.
+      *
+      * The caller must provide a unique negative `id` (obtained via `session.nextUnresolvedId()`). Records `id -> fqn` in `fqns` so Phase C
+      * can resolve `Named(SymbolId(id))` to the correct final SymbolId via fqnIndex lookup.
+      */
+    private def makeTrackedUnresolvedSym(
+        fqn: String,
+        fqns: mutable.HashMap[Int, String],
+        id: Int
+    )(using AllowUnsafe): kyo.internal.tasty.symbol.SymbolId =
+        fqns(id) = fqn
+        kyo.internal.tasty.symbol.SymbolId(id)
+    end makeTrackedUnresolvedSym
 
     /** Decode one type node. tag byte not yet consumed. Records startAddr -> result in addrCache. */
     private def readTypeNode(view: ByteView, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Type =
@@ -291,11 +307,9 @@ object TypeUnpickler:
                                 ctx.names,
                                 ctx.addrMap,
                                 ctx.arena,
-                                ctx.home,
                                 ctx.addrCache,
                                 ctx.inProgressRec,
                                 ctx.binderAddrMap,
-                                ctx.placeholders,
                                 ctx.sectionBytes,
                                 ctx.sectionOffset,
                                 ctx.frame
@@ -311,29 +325,35 @@ object TypeUnpickler:
 
             case TastyFormat.TERMREFdirect =>
                 val astRef = view.readNat()
-                ctx.addrMap.get(astRef) match
-                    case Some(sym) => Tasty.Type.Named(sym.id)
-                    case None      => Tasty.Type.Named(makeUnresolvedSym(s"termref@$astRef", ctx.home).id)
+                // Use PHASE_B_ADDR_OFFSET + addr as a temporary SymbolId so Phase C can remap via addrMap.
+                if ctx.addrMap.contains(astRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + astRef))
+                else Tasty.Type.Named(makeUnresolvedSym(s"termref@$astRef").id)
 
             case TastyFormat.TYPEREFdirect =>
                 val astRef = view.readNat()
-                ctx.addrMap.get(astRef) match
-                    case Some(sym) => Tasty.Type.Named(sym.id)
-                    case None      => Tasty.Type.Named(makeUnresolvedSym(s"typeref@$astRef", ctx.home).id)
+                // Use PHASE_B_ADDR_OFFSET + addr as a temporary SymbolId so Phase C can remap via addrMap.
+                if ctx.addrMap.contains(astRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + astRef))
+                else Tasty.Type.Named(makeUnresolvedSym(s"typeref@$astRef").id)
 
             case TastyFormat.TERMREFpkg =>
                 val nameRef = view.readNat()
                 val fqn     = nameAt(ctx.names, nameRef).asString
-                val ref     = new UnresolvedRef(fqn, SingleAssign.init[Tasty.Type]())
-                ctx.placeholders += ref
-                Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home).id)
+                ctx.session match
+                    case s: DecodeSession =>
+                        Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
+                    case _ =>
+                        Tasty.Type.Named(makeUnresolvedSym(fqn).id)
+                end match
 
             case TastyFormat.TYPEREFpkg =>
                 val nameRef = view.readNat()
                 val fqn     = nameAt(ctx.names, nameRef).asString
-                val ref     = new UnresolvedRef(fqn, SingleAssign.init[Tasty.Type]())
-                ctx.placeholders += ref
-                Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home).id)
+                ctx.session match
+                    case s: DecodeSession =>
+                        Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
+                    case _ =>
+                        Tasty.Type.Named(makeUnresolvedSym(fqn).id)
+                end match
 
             case TastyFormat.RECthis =>
                 val recAddr = view.readNat()
@@ -345,7 +365,7 @@ object TypeUnpickler:
                             case Some(recNode) => Tasty.Type.RecThis(recNode)
                             case None          =>
                                 // The Rec node hasn't been decoded yet; return a placeholder.
-                                Tasty.Type.RecThis(Tasty.Type.Named(makeUnresolvedSym(s"rec@$recAddr", ctx.home).id))
+                                Tasty.Type.RecThis(Tasty.Type.Named(makeUnresolvedSym(s"rec@$recAddr").id))
                 end match
 
             // Constant types (category 2: tag + Nat)
@@ -373,7 +393,7 @@ object TypeUnpickler:
                 val inner = readTypeNode(view, ctx)
                 inner match
                     case Tasty.Type.Named(id) => Tasty.Type.ThisType(id)
-                    case _                    => Tasty.Type.ThisType(makeUnresolvedSym("this-unknown", ctx.home).id)
+                    case _                    => Tasty.Type.ThisType(makeUnresolvedSym("this-unknown").id)
 
             case TastyFormat.CLASSconst =>
                 val inner = readTypeNode(view, ctx)
@@ -387,7 +407,7 @@ object TypeUnpickler:
                 // Cycle-break: allocate a typed placeholder Rec before decoding parent.
                 // inProgressRec is keyed by the RECtype node's start addr so RECthis nodes
                 // encountered during parent decoding can find the placeholder.
-                val sentinelSym                 = makeUnresolvedSym(s"rec-placeholder@$startAddr", ctx.home)
+                val sentinelSym                 = makeUnresolvedSym(s"rec-placeholder@$startAddr")
                 val placeholder: Tasty.Type.Rec = Tasty.Type.Rec(Tasty.Type.Named(sentinelSym.id))
                 ctx.inProgressRec(startAddr) = placeholder
                 val parent = readTypeNode(view, ctx)
@@ -415,9 +435,9 @@ object TypeUnpickler:
                 val astRef = view.readNat()
                 // qual is present but for Named resolution we only need the sym.
                 discard(readTypeNode(view, ctx)) // consume qual
-                ctx.addrMap.get(astRef) match
-                    case Some(sym) => Tasty.Type.Named(sym.id)
-                    case None      => Tasty.Type.Named(makeUnresolvedSym(s"typerefsym@$astRef", ctx.home).id)
+                // Use PHASE_B_ADDR_OFFSET + addr so Phase C can remap via addrMap.
+                if ctx.addrMap.contains(astRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + astRef))
+                else Tasty.Type.Named(makeUnresolvedSym(s"typerefsym@$astRef").id)
 
             case TastyFormat.TYPEREF =>
                 val nameRef = view.readNat()
@@ -446,17 +466,16 @@ object TypeUnpickler:
                 skipToEnd(view, end)
                 val annotation =
                     if ctx.sectionBytes == null then
-                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home).id), Chunk.empty)
+                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann").id), Chunk.empty)
                     else
                         val pickle = Chunk.from(java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, endInt))
                         val annCtx = new Tasty.Annotation.DecodeContext(
                             ctx.names,
                             ctx.addrMap,
-                            ctx.home,
                             ctx.sectionBytes,
                             ctx.sectionOffset
                         )
-                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home).id), pickle, annCtx)
+                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann").id), pickle, annCtx)
                 Tasty.Type.Annotated(underlying, annotation)
 
             case TastyFormat.ANDtype =>
@@ -543,18 +562,31 @@ object TypeUnpickler:
                 view.goto(end)
                 ctx.binderAddrMap.get(binderAddr) match
                     case Some(params) if paramNum < params.length => Tasty.Type.ParamRef(params(paramNum).id, paramNum)
-                    case _ => Tasty.Type.Named(makeUnresolvedSym(s"param@$binderAddr:$paramNum", ctx.home).id)
+                    case _                                        => Tasty.Type.Named(makeUnresolvedSym(s"param@$binderAddr:$paramNum").id)
 
             case TastyFormat.TYPEREFin =>
-                val end     = view.readEnd()
-                val nameRef = view.readNat()
-                discard(readTypeNode(view, ctx)) // qual
+                val end        = view.readEnd()
+                val nameRef    = view.readNat()
+                val simpleName = nameAt(ctx.names, nameRef).asString
+                val qual       = readTypeNode(view, ctx) // decode qual to extract package FQN
                 discard(readTypeNode(view, ctx)) // namespace
                 view.goto(end)
-                val fqn = nameAt(ctx.names, nameRef).asString
-                val ref = new UnresolvedRef(fqn, SingleAssign.init[Tasty.Type]())
-                ctx.placeholders += ref
-                Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home).id)
+                // Reconstruct full FQN: qual_fqn + "." + simpleName.
+                // qual is typically TYPEREFpkg(package_fqn) -> Named(trackedId) where trackedId maps to package_fqn.
+                // For Phase C lookup, use qual_fqn + "." + simpleName.
+                ctx.session match
+                    case s: DecodeSession =>
+                        val qualFqn = qual match
+                            case Tasty.Type.Named(sid) if sid.value < -1 =>
+                                // Tracked cross-file ref: look up fqn from unresolvedIdToFqn
+                                s.unresolvedIdToFqn.getOrElse(sid.value, simpleName)
+                            case _ =>
+                                simpleName
+                        val fullFqn = if qualFqn != simpleName && qualFqn.nonEmpty then qualFqn + "." + simpleName else simpleName
+                        Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
+                    case _ =>
+                        Tasty.Type.Named(makeUnresolvedSym(simpleName).id)
+                end match
 
             case TastyFormat.TERMREFin =>
                 val end     = view.readEnd()
@@ -599,21 +631,21 @@ object TypeUnpickler:
                 // AllowUnsafe is already in scope; evalOrThrow executes the Sync computation synchronously.
                 given Frame = ctx.frame
                 Sync.Unsafe.evalOrThrow(Log.warn(
-                    s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt} in ${ctx.home}"
+                    s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt}"
                 ))
                 val end = view.readEnd()
                 view.goto(end)
-                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other", ctx.home).id)
+                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other").id)
 
             case other =>
                 // Unknown category 1-4 node: log a warning, skip body and return placeholder.
                 // AllowUnsafe is already in scope; evalOrThrow executes the Sync computation synchronously.
                 given Frame = ctx.frame
                 Sync.Unsafe.evalOrThrow(Log.warn(
-                    s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt} in ${ctx.home}"
+                    s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt}"
                 ))
                 skipTreeBody(other, view)
-                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other", ctx.home).id)
+                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other").id)
 
         end match
     end decodeTag

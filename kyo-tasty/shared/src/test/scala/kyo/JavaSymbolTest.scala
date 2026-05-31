@@ -3,7 +3,6 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileResult
 import kyo.internal.tasty.classfile.ClassfileUnpickler
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.reader.AstUnpickler
 import kyo.internal.tasty.reader.FileAttributes
 import kyo.internal.tasty.reader.NameUnpickler
@@ -35,7 +34,7 @@ class JavaSymbolTest extends Test:
         TestResourceLoader.loadBytes(s"/kyo/fixtures/$name")
 
     private def readClass(bytes: Array[Byte])(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init())
+        ClassfileUnpickler.read(bytes, interner, new TypeArena)
 
     /** Load raw bytes for a test resource by path. JVM-only. */
     private def loadResourceBytes(resourcePath: String): Array[Byte] =
@@ -47,7 +46,6 @@ class JavaSymbolTest extends Test:
             case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
             case other              => loadResourceBytes(s"/kyo/fixtures/$other")
         val view  = ByteView(bytes)
-        val home  = ClasspathRef.init()
         val arena = new TypeArena
         for
             _        <- TastyHeader.read(view)
@@ -57,7 +55,7 @@ class JavaSymbolTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
+                    AstUnpickler.readPass1(astView, names, attrs, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
         yield result.symbols.find(_.kind == Tasty.SymbolKind.Class).getOrElse(result.rootSymbol)

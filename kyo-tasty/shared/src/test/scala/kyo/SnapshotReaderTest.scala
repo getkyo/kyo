@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import scala.collection.mutable
@@ -114,13 +113,11 @@ class SnapshotReaderTest extends Test:
         src.add("cache/minor2.krfl", buf)
 
         Abort.run[TastyError]:
-            InternalClasspath.allocate.flatMap: rawCp =>
-                SnapshotReader.read("cache/minor2.krfl", src, rawCp).map: _ =>
-                    // After load: all symbols should have empty parent/typeParam/declaration chunks.
-                    // Since there are 0 symbols, just verify the load succeeded with no error.
-                    val allSyms = rawCp.allSymbols
-                    assert(allSyms.isEmpty, s"Expected no symbols from empty snapshot, got ${allSyms.size}")
-                    succeed
+            SnapshotReader.read("cache/minor2.krfl", src).map: loadedCp =>
+                // After load: all symbols should have empty parent/typeParam/declaration chunks.
+                // Since there are 0 symbols, just verify the load succeeded with no error.
+                assert(loadedCp.symbols.isEmpty, s"Expected no symbols from empty snapshot, got ${loadedCp.symbols.length}")
+                succeed
         .map:
             case Result.Success(r) =>
                 r

@@ -1,8 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
@@ -70,10 +68,7 @@ class SnapshotRoundTripJvmTest extends Test:
     end fixtureSource
 
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
-                    Tasty.Classpath.wrap(rawCp)
+        ClasspathOrchestrator.open(Seq("root"), false, src, 1)
 
     // Test G16a (Phase 16): mmap-loaded snapshot has same FQN set as cold-loaded classpath (jvmOnly).
     // Uses PlatformFileSource (real filesystem) to write the snapshot to a temp file, then
@@ -91,21 +86,15 @@ class SnapshotRoundTripJvmTest extends Test:
             Abort.run[TastyError](
                 openClasspath(fixtSrc).flatMap: origCp =>
                     val origClasses = origCp.topLevelClasses
-                    InternalClasspath.allocate.flatMap: rawCp =>
-                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                            ClasspathOrchestrator.openInto(Seq("root"), false, fixtSrc, 1, rawCp).flatMap: cp =>
-                                SnapshotWriter.write(cp, tmpDir, digest, platSrc).andThen:
-                                    val hex      = DigestComputer.toHexString(digest)
-                                    val snapPath = s"$tmpDir/$hex.krfl"
-                                    InternalClasspath.allocate.flatMap: rawCp2 =>
-                                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCp2))).andThen:
-                                            SnapshotReader.readMapped(snapPath, platSrc, rawCp2).andThen:
-                                                ClasspathTestHelpers.assignHomesForTest(rawCp2)
-                                                rawCp2.allTopLevelClasses.map: warmClasses =>
-                                                    (
-                                                        origClasses.map(_.name.asString).toSet,
-                                                        warmClasses.map(_.name.asString).toSet
-                                                    )
+                    SnapshotWriter.write(origCp, tmpDir, digest, platSrc).andThen:
+                        val hex      = DigestComputer.toHexString(digest)
+                        val snapPath = s"$tmpDir/$hex.krfl"
+                        SnapshotReader.readMapped(snapPath, platSrc).map: warmCp =>
+                            val warmClasses = warmCp.topLevelClasses
+                            (
+                                origClasses.map(_.name.asString).toSet,
+                                warmClasses.map(_.name.asString).toSet
+                            )
             ).map:
                 case Result.Success((origFqns: Set[String] @unchecked, warmFqns: Set[String] @unchecked)) =>
                     assert(

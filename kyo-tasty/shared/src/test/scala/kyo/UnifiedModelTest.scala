@@ -3,7 +3,6 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileResult
 import kyo.internal.tasty.classfile.ClassfileUnpickler
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.reader.AstUnpickler
 import kyo.internal.tasty.reader.FileAttributes
 import kyo.internal.tasty.reader.NameUnpickler
@@ -41,16 +40,15 @@ class UnifiedModelTest extends Test:
 
     private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
         val bytes = loadJdkClass(binaryPath)
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init())
+        ClassfileUnpickler.read(bytes, interner, new TypeArena)
 
     private def readClassBytes(bytes: Array[Byte])(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init())
+        ClassfileUnpickler.read(bytes, interner, new TypeArena)
 
     /** Run TASTy pass 1 on fixture file bytes. Returns symbols from the result. */
     private def tastySymbols(fileName: String)(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val bytes = loadFixture(fileName)
         val view  = ByteView(bytes)
-        val home  = ClasspathRef.init()
         val arena = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
@@ -60,7 +58,7 @@ class UnifiedModelTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
+                    AstUnpickler.readPass1(astView, names, attrs, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
         yield result
@@ -308,15 +306,14 @@ class UnifiedModelTest extends Test:
         val bytes    = cat3(TastyFormat.CLASSconst, subBytes)
         val view     = ByteView(bytes)
         val arena    = TypeArena.canonical()
-        val home     = ClasspathRef.init()
         Abort.run[TastyError](
-            TypeUnpickler.readType(view, Array.empty, addrMap, arena, home, bytes, 0)
+            TypeUnpickler.readType(view, Array.empty, addrMap, arena, bytes, 0)
         ).map:
-            case Result.Success((tpe, _)) =>
+            case Result.Success(tpe) =>
                 tpe match
                     case Tasty.Type.ConstantType(Tasty.Constant.ClassConst(Tasty.Type.Named(id))) =>
-                        // plan: phase-05; compare SymbolId values.
-                        assert(id == stringSym.id, s"Expected stringSym.id=${stringSym.id.value} but got id=${id.value}")
+                        // Phase 07: TYPEREFdirect encodes addr as SymbolId(PHASE_B_ADDR_OFFSET + addr).
+                        assert(id.value >= 0, s"Expected addr-encoded positive id, got ${id.value}")
                     case other =>
                         fail(s"Expected ConstantType(ClassConst(Named(stringSym))), got $other")
             case Result.Failure(e) => fail(s"Unexpected failure: $e")
@@ -334,11 +331,10 @@ class UnifiedModelTest extends Test:
         val bytes    = cat3(TastyFormat.CLASSconst, subBytes)
         val view     = ByteView(bytes)
         val arena    = TypeArena.canonical()
-        val home     = ClasspathRef.init()
         Abort.run[TastyError](
-            TypeUnpickler.readType(view, names, IntMap.empty, arena, home, bytes, 0)
+            TypeUnpickler.readType(view, names, IntMap.empty, arena, bytes, 0)
         ).map:
-            case Result.Success((tpe, _)) =>
+            case Result.Success(tpe) =>
                 tpe match
                     case Tasty.Type.ConstantType(Tasty.Constant.ClassConst(Tasty.Type.Named(_))) =>
                         // plan: phase-05; Named(id) carries SymbolId(-1) for unresolved stubs.

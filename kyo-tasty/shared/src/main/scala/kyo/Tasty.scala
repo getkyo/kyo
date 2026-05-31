@@ -2,7 +2,6 @@ package kyo
 
 import kyo.internal.tasty.binary.Utf8
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.query.TastyStat
 import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
@@ -263,7 +262,6 @@ object Tasty:
         final private[kyo] class DecodeContext(
             val names: Array[Name],
             val addrMap: scala.collection.Map[Int, Symbol],
-            val home: kyo.internal.tasty.query.ClasspathRef,
             val sectionBytes: Array[Byte],
             val sectionOffset: Int
         )
@@ -902,12 +900,6 @@ object Tasty:
         private lazy val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Either[TastyError, Tree]] =
             new java.util.concurrent.ConcurrentHashMap()
 
-        // Bridge back to the internal state-machine Classpath for Phase 06 compatibility.
-        // NOT a constructor parameter; excluded from equals/hashCode/copy/unapply.
-        // This var is a Phase 06 bridge; Phase 07 removes the internal state machine and this field.
-        private[kyo] var internalCp: kyo.internal.tasty.query.Classpath =
-            kyo.internal.tasty.query.Classpath.sentinelInternal
-
         /** O(1) Symbol lookup by SymbolId. Returns the Symbol at index `id.value`. Returns a sentinel Unresolved symbol for out-of-range or
           * unassigned ids (id.value == -1, or id.value >= symbols.length).
           */
@@ -1035,7 +1027,22 @@ object Tasty:
 
         /** Sentinel symbol returned by `Classpath.symbol` for out-of-range or unassigned ids. */
         val sentinelUnresolved: Symbol =
-            Symbol.make(SymbolKind.Unresolved, Flags.empty, Name("<unresolved>"))
+            Symbol(
+                id = SymbolId(-1),
+                kind = SymbolKind.Unresolved,
+                flags = Flags.empty,
+                name = Name("<unresolved>"),
+                ownerId = SymbolId(-1),
+                declaredType = Maybe.Absent,
+                scaladoc = Maybe.Absent,
+                sourcePosition = Maybe.Absent,
+                javaMetadata = Maybe.Absent,
+                parentTypes = Chunk.empty,
+                typeParamIds = Chunk.empty,
+                declarationIds = Chunk.empty,
+                permittedSubclassIds = Maybe.Absent,
+                bodyRecord = Maybe.Absent
+            )
 
         /** Open a classpath from directory/file roots. Soft-fail mode (errors accumulate in `cp.errors`).
           *
@@ -1075,49 +1082,6 @@ object Tasty:
           */
         def openCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
             openCachedImpl(roots, cacheDir)
-
-        /** Build a Classpath case class from a fully-loaded internal Classpath (Ready state).
-          *
-          * Reads the Ready state fields via AllowUnsafe and constructs the immutable case class. For use by internal test helpers that
-          * allocate an internal Classpath and transition it to Ready via openInto. Phase 07 removes this bridge once the internal state
-          * machine is deleted.
-          */
-        private[kyo] def wrap(rawCp: kyo.internal.tasty.query.Classpath): Classpath =
-            // flow-allow: §839 case 3; post-open AllowUnsafe read to extract Ready state for immutable case-class construction.
-            // Uses private[kyo] accessors on the internal Classpath to avoid accessing private[tasty] State.Ready fields directly.
-            import AllowUnsafe.embrace.danger
-            val symsArr = rawCp.allSymbols
-            val topSym  = rawCp.pureTopLevelClasses
-            val pkgSym  = rawCp.purePackages
-            val errors  = rawCp.accumulatedErrors
-            // Build fqnIndex and packageIndex by reading all FQNs via pureClass.
-            // Phase 06: the internal Classpath exposes readAllFqnMap/readAllPackageMap helpers.
-            val fqnId  = rawCp.readFqnIdMap
-            val pkgId  = rawCp.readPackageIdMap
-            val modIdx = rawCp.readModuleIndex
-            val canon  = rawCp.readCanonical
-            val rootId = if symsArr.nonEmpty then SymbolId(0) else SymbolId(-1)
-            val topIds = Chunk.from(topSym.map(_.id))
-            val pkgIds = Chunk.from(pkgSym.map(_.id))
-            val cp = new Classpath(
-                symbols = symsArr,
-                rootSymbolId = rootId,
-                topLevelClassIds = topIds,
-                packageIds = pkgIds,
-                fqnIndex = fqnId,
-                packageIndex = pkgId,
-                subclassIndex = Map.empty,  // plan: phase-06 stub; populated in Phase 07
-                companionIndex = Map.empty, // plan: phase-06 stub; populated in Phase 07
-                moduleIndex = modIdx,
-                errors = errors,
-                canonical = canon
-            )
-            cp.internalCp = rawCp
-            cp
-        end wrap
-
-        /** Return the internal Classpath backing this case class instance (Phase 06 bridge). Phase 07 removes this. */
-        private[kyo] def unwrap(cp: Classpath): kyo.internal.tasty.query.Classpath = cp.internalCp
 
         /** Create a classpath from pre-parsed in-memory pickles. */
         def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < Sync =
@@ -1191,26 +1155,23 @@ object Tasty:
                     source.exists(snapshotPath).flatMap: exists =>
                         if exists then
                             // Try to load from snapshot using mmap on JVM/Native, heap on JS.
-                            kyo.internal.tasty.query.Classpath.allocate.flatMap: rawCp =>
-                                // No Scope.ensure(close) needed: the case class has no Closed state.
-                                Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source, rawCp)).flatMap:
-                                    case Result.Success(_) =>
-                                        Sync.Unsafe.defer:
-                                            import AllowUnsafe.embrace.danger
-                                            Classpath.wrap(rawCp)
-                                    case Result.Failure(_) | Result.Panic(_) =>
-                                        // Snapshot unreadable; fall through to normal open
-                                        openImpl(roots, strict = false)
+                            Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source)).flatMap:
+                                case Result.Success(cp) =>
+                                    cp
+                                case Result.Failure(_) | Result.Panic(_) =>
+                                    // Snapshot unreadable; fall through to normal open
+                                    openImpl(roots, strict = false)
                         else
                             // No snapshot; open normally then write snapshot
                             openImpl(roots, strict = false).flatMap: cp =>
                                 Abort.run[TastyError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen(cp)
         end openCachedImpl
 
-        /** Internal factory for constructing a Tasty.Classpath case class from the finalized data produced by ClasspathOrchestrator.
+        /** Internal factory for constructing a Tasty.Classpath case class from the finalized data produced by ClasspathOrchestrator or
+          * SnapshotReader.
           *
-          * Called from ClasspathOrchestrator.finalizeMerge (package kyo.internal.tasty.query) which cannot access the private[Tasty]
-          * constructor directly. Phase 07 removes this bridge once the orchestrator is inlined into Tasty.scala.
+          * Called from ClasspathOrchestrator.finalizeMerge and SnapshotReader.deserialize (package kyo.internal.tasty.query and
+          * kyo.internal.tasty.snapshot) which cannot access the private[Tasty] constructor directly.
           */
         private[kyo] def make(
             symbols: Chunk[Symbol],
@@ -1223,10 +1184,9 @@ object Tasty:
             companionIndex: Map[SymbolId, SymbolId],
             moduleIndex: Map[String, ModuleDescriptor],
             errors: Chunk[TastyError],
-            canonical: kyo.internal.tasty.type_.TypeArena,
-            internalCpBridge: kyo.internal.tasty.query.Classpath
+            canonical: kyo.internal.tasty.type_.TypeArena
         ): Classpath =
-            val cp = new Classpath(
+            new Classpath(
                 symbols = symbols,
                 rootSymbolId = rootSymbolId,
                 topLevelClassIds = topLevelClassIds,
@@ -1239,8 +1199,6 @@ object Tasty:
                 errors = errors,
                 canonical = canonical
             )
-            cp.internalCp = internalCpBridge
-            cp
         end make
 
         /** CanEqual instance for structural equality comparisons in tests. */

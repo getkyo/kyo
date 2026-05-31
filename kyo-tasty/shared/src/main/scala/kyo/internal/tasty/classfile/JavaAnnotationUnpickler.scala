@@ -2,7 +2,6 @@ package kyo.internal.tasty.classfile
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
 
@@ -27,26 +26,21 @@ object JavaAnnotationUnpickler:
       * The view must be positioned at the u2 num_annotations field (the first byte of annotation data after the attribute header has been
       * consumed).
       *
-      * Note on the `home` parameter: the plan spec (Phase 5b line 406) listed `addrMap: Map[Int, Tasty.Symbol]` as the fourth parameter,
-      * which is a TASTy concept (an address-to-symbol map for TASTy cross-references). Annotations in classfiles resolve class references
-      * via CONSTANT_Class pool entries, not by TASTy addresses. The correct dependency here is `home: ClasspathRef`, which supplies the
-      * namespace context for constructing Unresolved symbols for annotation class references. The addrMap parameter is not applicable for
-      * classfile-derived annotations.
+      * Note: classfile annotations resolve class references via CONSTANT_Class pool entries, not by TASTy addresses. Unresolved symbols for
+      * annotation class references are created directly (Phase 07: ClasspathRef deleted).
       */
     def readAnnotations(
         view: ByteView,
         pool: ConstantPool,
-        interner: Interner,
-        home: ClasspathRef
+        interner: Interner
     )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         Sync.defer(readU2(view)).map: numAnnotations =>
-            readAnnotationList(view, pool, interner, home, numAnnotations, 0, Chunk.empty, depth = 0)
+            readAnnotationList(view, pool, interner, numAnnotations, 0, Chunk.empty, depth = 0)
 
     private def readAnnotationList(
         view: ByteView,
         pool: ConstantPool,
         interner: Interner,
-        home: ClasspathRef,
         total: Int,
         idx: Int,
         acc: Chunk[Tasty.JavaAnnotation],
@@ -54,14 +48,13 @@ object JavaAnnotationUnpickler:
     )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
-            readOneAnnotation(view, pool, interner, home, depth).map: ann =>
-                readAnnotationList(view, pool, interner, home, total, idx + 1, acc.appended(ann), depth)
+            readOneAnnotation(view, pool, interner, depth).map: ann =>
+                readAnnotationList(view, pool, interner, total, idx + 1, acc.appended(ann), depth)
 
     private[classfile] def readOneAnnotation(
         view: ByteView,
         pool: ConstantPool,
         interner: Interner,
-        home: ClasspathRef,
         depth: Int
     )(using Frame, AllowUnsafe): Tasty.JavaAnnotation < (Sync & Abort[TastyError]) =
         if depth > MaxAnnotationDepth then
@@ -73,16 +66,15 @@ object JavaAnnotationUnpickler:
         else
             Sync.defer(readU2(view)).map: typeIdx =>
                 pool.utf8(typeIdx).map: typeDescriptor =>
-                    val annotationClassSym = descriptorToUnresolvedSymbol(typeDescriptor, home)
+                    val annotationClassSym = descriptorToUnresolvedSymbol(typeDescriptor)
                     Sync.defer(readU2(view)).map: numPairs =>
-                        readElementValuePairs(view, pool, interner, home, numPairs, 0, Map.empty, depth).map: values =>
+                        readElementValuePairs(view, pool, interner, numPairs, 0, Map.empty, depth).map: values =>
                             Tasty.JavaAnnotation(annotationClassSym, values)
 
     private def readElementValuePairs(
         view: ByteView,
         pool: ConstantPool,
         interner: Interner,
-        home: ClasspathRef,
         total: Int,
         idx: Int,
         acc: Map[Tasty.Name, Tasty.JavaAnnotation.Value],
@@ -93,14 +85,13 @@ object JavaAnnotationUnpickler:
             Sync.defer(readU2(view)).map: nameIdx =>
                 pool.utf8(nameIdx).map: elemName =>
                     val key = Tasty.Name(elemName)
-                    readElementValue(view, pool, interner, home, depth).map: value =>
-                        readElementValuePairs(view, pool, interner, home, total, idx + 1, acc + (key -> value), depth)
+                    readElementValue(view, pool, interner, depth).map: value =>
+                        readElementValuePairs(view, pool, interner, total, idx + 1, acc + (key -> value), depth)
 
     private def readElementValue(
         view: ByteView,
         pool: ConstantPool,
         interner: Interner,
-        home: ClasspathRef,
         depth: Int
     )(using Frame, AllowUnsafe): Tasty.JavaAnnotation.Value < (Sync & Abort[TastyError]) =
         Sync.defer(readU1(view)).map: tag =>
@@ -159,25 +150,25 @@ object JavaAnnotationUnpickler:
                     }.map: (typeNameIdx, constNameIdx) =>
                         pool.utf8(typeNameIdx).map: typeDescriptor =>
                             pool.utf8(constNameIdx).map: constName =>
-                                val enumTypeSym = descriptorToUnresolvedSymbol(typeDescriptor, home)
+                                val enumTypeSym = descriptorToUnresolvedSymbol(typeDescriptor)
                                 Tasty.JavaAnnotation.Value.EnumVal(enumTypeSym, Tasty.Name(constName))
 
                 case 'c' =>
                     // Class literal: cp -> Utf8 class descriptor e.g. "Ljava/lang/String;"
                     Sync.defer(readU2(view)).map: idx =>
                         pool.utf8(idx).map: classDesc =>
-                            val tpe = descriptorToType(classDesc, home)
+                            val tpe = descriptorToType(classDesc)
                             Tasty.JavaAnnotation.Value.ClassVal(tpe)
 
                 case '@' =>
                     // Nested annotation
-                    readOneAnnotation(view, pool, interner, home, depth + 1).map: nested =>
+                    readOneAnnotation(view, pool, interner, depth + 1).map: nested =>
                         Tasty.JavaAnnotation.Value.AnnotationVal(nested)
 
                 case '[' =>
                     // Array of element_values
                     Sync.defer(readU2(view)).map: numValues =>
-                        readElementValueArray(view, pool, interner, home, numValues, 0, Chunk.empty, depth).map: elems =>
+                        readElementValueArray(view, pool, interner, numValues, 0, Chunk.empty, depth).map: elems =>
                             Tasty.JavaAnnotation.Value.ArrayVal(elems)
 
                 case unknown =>
@@ -192,7 +183,6 @@ object JavaAnnotationUnpickler:
         view: ByteView,
         pool: ConstantPool,
         interner: Interner,
-        home: ClasspathRef,
         total: Int,
         idx: Int,
         acc: Chunk[Tasty.JavaAnnotation.Value],
@@ -200,11 +190,11 @@ object JavaAnnotationUnpickler:
     )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation.Value] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
-            readElementValue(view, pool, interner, home, depth).map: v =>
-                readElementValueArray(view, pool, interner, home, total, idx + 1, acc.appended(v), depth)
+            readElementValue(view, pool, interner, depth).map: v =>
+                readElementValueArray(view, pool, interner, total, idx + 1, acc.appended(v), depth)
 
     /** Convert a field descriptor like "Ljava/lang/Deprecated;" to an Unresolved symbol. */
-    private def descriptorToUnresolvedSymbol(descriptor: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Symbol =
+    private def descriptorToUnresolvedSymbol(descriptor: String)(using AllowUnsafe): Tasty.Symbol =
         val fqn = descriptorToFqn(descriptor)
         SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
@@ -214,8 +204,8 @@ object JavaAnnotationUnpickler:
     end descriptorToUnresolvedSymbol
 
     /** Convert a class descriptor to a Tasty.Type.Named wrapping an Unresolved symbol. */
-    private def descriptorToType(descriptor: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Type =
-        Tasty.Type.Named(descriptorToUnresolvedSymbol(descriptor, home).id)
+    private def descriptorToType(descriptor: String)(using AllowUnsafe): Tasty.Type =
+        Tasty.Type.Named(descriptorToUnresolvedSymbol(descriptor).id)
 
     /** Strip "L" prefix and ";" suffix, replace "/" with ".". For non-L descriptors (primitives), return as-is.
       */

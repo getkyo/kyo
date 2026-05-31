@@ -527,17 +527,14 @@ class JvmFileSourceTest extends Test:
 
     // Phase 24b - T8 Test 3: mmap arena close during Symbol.body access.
     //
-    // Opens a classpath inside a Scope using the in-memory fixture (same bytes that the shared
-    // TreeUnpicklerTest uses), finds a declaration symbol that has a non-zero body slice, captures
-    // that symbol, then exits the Scope (which closes the classpath). Calling sym.body after scope
-    // exit must return TastyError.ClasspathClosed. This exercises the isClosed guard added in Phase
-    // 02d and the IllegalStateException -> ClasspathClosed mapping for mmap-backed reads.
+    // Phase 07: Tasty.Classpath is a pure case class with no Closed state. The old "ClasspathClosed
+    // after scope exit" test is no longer applicable. This replacement test verifies that a classpath
+    // opened inside a Scope remains accessible (as an immutable case class) after the Scope exits,
+    // and that Scope.ensure cleanup runs without error.
     //
-    // Pins: T8 (mmap arena close path).
-    "P24b-T3: sym.body after classpath close returns ClasspathClosed (mmap arena close path)" taggedAs jvmOnly in run {
-        import kyo.internal.tasty.query.Classpath as InternalClasspath
+    // Pins: Phase 07 deletion of state machine (no Closed state on Tasty.Classpath).
+    "P24b-T3: Tasty.Classpath remains accessible after scope exits (no Closed state)" taggedAs jvmOnly in run {
         import kyo.internal.tasty.query.ClasspathOrchestrator
-        import kyo.internal.tasty.query.ClasspathTestHelpers
         import kyo.internal.tasty.query.FileSource
         import scala.collection.mutable
 
@@ -568,25 +565,21 @@ class JvmFileSourceTest extends Test:
         val src = MemSrc()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
 
-        // Unsafe: Sync.Unsafe.defer provides AllowUnsafe for close() and allSymbols().
-        val captureResult: Result[TastyError, Tasty.Symbol] < Async =
-            Scope.run:
-                Abort.run[TastyError]:
-                    InternalClasspath.allocate.flatMap: rawCp =>
-                        Scope.ensure(Sync.Unsafe.defer(InternalClasspath.close(rawCp))).andThen:
-                            ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).flatMap: _ =>
-                                ClasspathTestHelpers.assignHomesForTest(rawCp)
-                                Sync.Unsafe.defer:
-                                    val syms = rawCp.allSymbols
-                                    // plan: phase-02 inline; use sym.body.isDefined instead of sym.origin.
-                                    val symWithBody = syms.find: s =>
-                                        s.bodyRecord.isDefined
-                                    symWithBody
-                                .flatMap:
-                                    case Some(s) => Kyo.lift(s)
-                                    case None    => Abort.fail(TastyError.NotImplemented("no symbol with body slice"))
-        captureResult.map:
-            case _ => pending // plan: phase-02; sym.body as effectful method added in Phase 04
+        // Open a classpath inside a Scope; capture the immutable case class.
+        // After Scope exits, the case class remains fully accessible (no Closed state).
+        var capturedCp: Tasty.Classpath = null
+        val openResult: Result[TastyError, Unit] < Async =
+            Abort.run[TastyError]:
+                Scope.run:
+                    ClasspathOrchestrator.open(Seq("root"), false, src, 1).map: cp =>
+                        capturedCp = cp
+        openResult.map:
+            case Result.Success(_) =>
+                // After scope exit, the immutable case class is still valid (no Closed state).
+                assert(capturedCp != null, "Classpath should have been captured")
+                assert(capturedCp.symbols.nonEmpty, "Classpath should have symbols")
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
             case Result.Panic(t) =>
                 throw t
     }

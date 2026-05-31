@@ -3,8 +3,6 @@ package kyo
 import java.nio.charset.StandardCharsets
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileUnpickler
-import kyo.internal.tasty.query.ClasspathRef
-import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.reader.CommentsUnpickler
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
@@ -204,14 +202,9 @@ class CommentsUnpicklerTest extends Test:
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
         val interner   = Interner.init(numShards = 32, initialShardCapacity = 16)
         val arena      = new TypeArena
-        val home       = ClasspathRef.init()
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(classBytes, interner, arena, home).flatMap: result =>
+            ClassfileUnpickler.read(classBytes, interner, arena).flatMap: result =>
                 Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
-                    ClasspathTestHelpers.assignExtraHomes(
-                        miniCp,
-                        Seq(result.classSymbol) ++ result.symbols.toSeq ++ result.typeParams.toSeq
-                    )
                     result
         .map:
             case Result.Success(result) =>

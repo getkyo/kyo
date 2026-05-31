@@ -1,15 +1,14 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
-/** Tests for Phase 02b: Classpath pure accessors carry (using AllowUnsafe) (INV-001).
+/** Tests for Tasty.Classpath pure accessors post Phase 07.
   *
-  * Verifies that each Classpath accessor signature has been migrated from inner import-danger to (using AllowUnsafe), and that the
-  * accessors behave correctly on a Ready classpath built from the embedded fixture.
+  * The internal Classpath state machine (Building/Ready/Closed) was deleted in Phase 07. All tests here verify the public Tasty.Classpath
+  * case class accessors behave correctly. The internal pureClass/purePackage/allSymbols methods are gone; the equivalents are findClass,
+  * findPackage, and symbols on Tasty.Classpath.
   */
 class ClasspathPureAccessorTest extends Test:
 
@@ -56,57 +55,15 @@ class ClasspathPureAccessorTest extends Test:
         src
     end fixtureSource
 
-    private def openFixtureClasspath(src: FileSource)(
-        using Frame
-    ): InternalClasspath < (Sync & Async & Scope & Abort[TastyError]) =
-        InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: _ =>
-                    ClasspathTestHelpers.assignHomesForTest(rawCp)
-                    rawCp
-    // note: openInto now returns Tasty.Classpath; we discard the result with .map: _ => rawCp
-    // since this test specifically exercises the internal state-machine accessors on rawCp.
-
-    // Test 1 (INV-001): every Classpath pure accessor signature carries (using AllowUnsafe).
-    // Given: a Ready classpath; AllowUnsafe in scope via import at class level.
-    // When: all 10 accessors (pureClass, purePackage, pureModule, pureTopLevelClasses, purePackages,
-    //        accumulatedErrors, allSymbols, isClosed, transitionToReady, close) are invoked.
-    // Then: all return without compile error (proves each carries (using AllowUnsafe)); allSymbols is non-empty.
-    // Pins: INV-001 (Classpath case).
-    "all 10 Classpath pure accessors are callable with (using AllowUnsafe) in scope" in run {
-        Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(fixtureSource()).map: rawCp =>
-                val cls      = rawCp.pureClass("kyo.fixtures.PlainClass")
-                val pkg      = rawCp.purePackage("kyo.fixtures")
-                val mod      = rawCp.pureModule("anything")
-                val topLevel = rawCp.pureTopLevelClasses
-                val packages = rawCp.purePackages
-                val errors   = rawCp.accumulatedErrors
-                val syms     = rawCp.allSymbols
-                val closed   = rawCp.isClosed
-                (cls, pkg, mod, topLevel, packages, errors, syms, closed)).map:
-                case Result.Success((cls, _, _, topLevel, _, errors, syms, closed)) =>
-                    assert(cls.isDefined, "pureClass should return Present for known FQN")
-                    assert(topLevel.nonEmpty, "pureTopLevelClasses should be non-empty")
-                    assert(errors.isEmpty, "accumulatedErrors should be empty for clean classpath")
-                    assert(syms.nonEmpty, "allSymbols should be non-empty")
-                    assert(!closed, "isClosed should be false while scope is still open")
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure: $e")
-                case Result.Panic(t) =>
-                    throw t
-    }
-
-    // Test 2 (INV-001): pureClass returns Present on a Ready classpath.
-    // Given: fixture classpath containing PlainClass.tasty; AllowUnsafe in scope.
-    // When: rawCp.pureClass("kyo.fixtures.PlainClass").
+    // Test 1: findClass returns Present on an open classpath.
+    // Given: fixture classpath containing PlainClass.tasty.
+    // When: cp.findClass("kyo.fixtures.PlainClass").
     // Then: result is Maybe.Present(sym) with sym.name.asString == "PlainClass".
-    // plan: phase-02 inline; sym.fullName not available until Phase 09; check simple name.
-    // Pins: INV-001.
-    "pureClass returns Present for a known FQN on Ready classpath" in run {
+    // Pins: INV-003 (Classpath case class fields immutable post-construction).
+    "findClass returns Present for a known FQN" in run {
         Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(fixtureSource()).map: rawCp =>
-                rawCp.pureClass("kyo.fixtures.PlainClass")).map:
+            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+                cp.findClass("kyo.fixtures.PlainClass")).map:
                 case Result.Success(Present(sym)) =>
                     assert(
                         sym.name.asString == "PlainClass",
@@ -120,50 +77,60 @@ class ClasspathPureAccessorTest extends Test:
                     throw t
     }
 
-    // Test 3 (INV-001): transitionToReady followed by pureClass returns Present.
-    // Given: fresh InternalClasspath allocated by InternalClasspath.allocate (Building state); AllowUnsafe in scope.
-    // When: ClasspathOrchestrator.openInto (which calls transitionToReady internally) transitions state to Ready;
-    //       then rawCp.pureClass("kyo.fixtures.PlainClass") called.
-    // Then: returns Maybe.Present(_).
-    // Pins: INV-001.
-    "after transitionToReady, pureClass returns Present for the indexed symbol" in run {
+    // Test 2: symbols is non-empty after open.
+    // Given: fixture classpath.
+    // When: cp.symbols.
+    // Then: non-empty.
+    // Pins: INV-003.
+    "symbols is non-empty after open" in run {
         Scope.run:
-            Abort.run[TastyError](
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, fixtureSource(), 1, rawCp).map: _ =>
-                            rawCp.pureClass("kyo.fixtures.PlainClass")
-            ).map:
-                case Result.Success(Present(_)) =>
-                    succeed
-                case Result.Success(Absent) =>
-                    fail("Expected Present after transitionToReady but got Absent")
+            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+                cp.symbols).map:
+                case Result.Success(syms) =>
+                    assert(syms.nonEmpty, "symbols should be non-empty after loading a classpath")
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
                     throw t
     }
 
-    // Test 4 (INV-001): close then isClosed returns true.
-    // Given: Ready classpath; AllowUnsafe in scope.
-    // When: InternalClasspath.close(rawCp); then rawCp.isClosed.
-    // Then: returns true.
-    // Pins: INV-001.
-    "close then isClosed returns true" in run {
+    // Test 3: Tasty.Classpath has no Closed state; the case class is accessible after Scope exits.
+    // Given: classpath opened inside a Scope.
+    // When: Scope exits (cleanup runs).
+    // Then: the Tasty.Classpath case class is still accessible (immutable value).
+    // Pins: Phase 07 (deletion of internal Classpath state machine; no Closed state on Tasty.Classpath).
+    "Tasty.Classpath is accessible after Scope exits (no Closed state)" in run {
+        var capturedCp: Tasty.Classpath = null
         Abort.run[TastyError]:
             Scope.run:
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, fixtureSource(), 1, rawCp).map: _ =>
-                            rawCp
+                ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+                    capturedCp = cp
         .map:
-            case Result.Success(rawCp) =>
-                val closed = rawCp.isClosed
-                assert(closed, "Expected isClosed == true after Scope exits (close finalizer ran)")
+            case Result.Success(_) =>
+                assert(capturedCp != null, "Classpath should have been captured")
+                assert(capturedCp.symbols.nonEmpty, "symbols should still be accessible after Scope exits")
+                assert(capturedCp.errors.isEmpty, "errors should be empty for clean classpath")
             case Result.Failure(e) =>
                 fail(s"Unexpected failure: $e")
             case Result.Panic(t) =>
                 throw t
+    }
+
+    // Test 4: topLevelClasses is non-empty.
+    // Given: fixture classpath.
+    // When: cp.topLevelClasses.
+    // Then: non-empty.
+    // Pins: INV-003.
+    "topLevelClasses is non-empty after open" in run {
+        Scope.run:
+            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+                cp.topLevelClasses).map:
+                case Result.Success(classes) =>
+                    assert(classes.nonEmpty, "topLevelClasses should be non-empty")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
     }
 
 end ClasspathPureAccessorTest

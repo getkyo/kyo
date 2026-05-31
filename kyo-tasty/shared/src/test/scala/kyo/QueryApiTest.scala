@@ -1,10 +1,7 @@
 package kyo
 
 import kyo.internal.tasty.classfile.ClassfileUnpickler
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import kyo.internal.tasty.query.ClasspathRef
-import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
@@ -73,11 +70,8 @@ class QueryApiTest extends Test:
     private def openFixtureClasspath(src: FileSource, strict: Boolean = false)(
         using Frame
     ): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), strict, src, 1, rawCp).map: cp =>
-                    ClasspathTestHelpers.assignHomesForTest(rawCp)
-                    cp
+        ClasspathOrchestrator.open(Seq("root"), strict, src, 1)
+    end openFixtureClasspath
 
     // Test 1: fromPickles(Seq.empty) succeeds; findClass("anything") returns Absent
     "fromPickles(Seq.empty) succeeds and findClass returns Absent" in run {
@@ -277,41 +271,34 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Test 15: After scope exits, ClasspathClosed is returned
-    "ClasspathClosed after outer Scope.run exits" in run {
-        // Hold a raw InternalClasspath reference across the scope boundary to verify it is closed
-        val rawRef = new java.util.concurrent.atomic.AtomicReference[InternalClasspath](null)
+    // Test 15: Phase 07 - Tasty.Classpath is a pure case class with no Closed state.
+    // The old "ClasspathClosed after outer Scope.run exits" test is replaced with a test that verifies
+    // the Classpath case class remains accessible after the Scope exits.
+    "Tasty.Classpath remains accessible after Scope exits (no Closed state)" in run {
+        var capturedCp: Tasty.Classpath = null
         Abort.run[TastyError]:
             Scope.run:
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, fixtureSource(), 1, rawCp).map: _ =>
-                            rawRef.set(rawCp)
-            .andThen:
-                rawRef.get().checkOpen
+                ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).map: cp =>
+                    capturedCp = cp
         .map:
             case Result.Success(_) =>
-                fail("Expected ClasspathClosed error")
+                assert(capturedCp != null, "Classpath should have been captured")
+                assert(capturedCp.symbols.nonEmpty, "Classpath should have symbols after Scope exits")
             case Result.Failure(e) =>
-                e match
-                    case TastyError.ClasspathClosed => succeed
-                    case other                      => fail(s"Expected ClasspathClosed but got: $other")
+                fail(s"Unexpected failure: $e")
             case Result.Panic(t) =>
                 throw t
     }
 
-    // Test 16: State transitions verified via observable behavior
-    // After openInto the classpath is in Ready state; findClass works. Before, it would fail with ClasspathBuilding.
-    "classpath state transitions verified via findClass behavior" in run {
+    // Test 16: findClass works after open.
+    "findClass returns Present after open" in run {
         Abort.run[TastyError]:
             Scope.run:
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, fixtureSource(), 1, rawCp).andThen:
-                            rawCp.lookupClass("kyo.fixtures.PlainClass")
+                ClasspathOrchestrator.open(Seq("root"), false, fixtureSource(), 1).flatMap: cp =>
+                    Kyo.lift(cp.findClass("kyo.fixtures.PlainClass"))
         .map:
             case Result.Success(Present(_)) => succeed
-            case Result.Success(Absent)     => fail("Expected PlainClass to be found after openInto (Ready state)")
+            case Result.Success(Absent)     => fail("Expected PlainClass to be found")
             case Result.Failure(e)          => fail(s"Unexpected failure: $e")
             case Result.Panic(t)            => throw t
     }
@@ -371,13 +358,11 @@ class QueryApiTest extends Test:
         src.add("root/PlainClass3.tasty", kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, src, 3, rawCp).andThen:
-                            rawCp.allTopLevelClasses
+                ClasspathOrchestrator.open(Seq("root"), false, src, 3).map: cp =>
+                    cp.topLevelClasses
             ).map:
                 case Result.Success(classes) =>
-                    assert(classes.nonEmpty, s"Expected at least one class after opening 3 files, got ${classes.size}")
+                    assert(classes.nonEmpty, s"Expected at least one class after opening 3 files, got ${classes.length}")
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
@@ -391,14 +376,10 @@ class QueryApiTest extends Test:
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3))
         Scope.run:
             Abort.run[TastyError](
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, src, 2, rawCp).andThen:
-                            rawCp.allTopLevelClasses.flatMap: classes =>
-                                Sync.defer(rawCp.accumulatedErrors).map: errs =>
-                                    (classes, errs)
+                ClasspathOrchestrator.open(Seq("root"), false, src, 2).map: cp =>
+                    (cp.topLevelClasses, cp.errors)
             ).map:
-                case Result.Success((classes: Chunk[Tasty.Symbol], errs: Chunk[TastyError])) =>
+                case Result.Success((classes, errs)) =>
                     assert(errs.size >= 1, s"Expected at least 1 error for corrupt file, got: ${errs.size}")
                     assert(classes.nonEmpty, s"Expected valid classes to be present, got empty")
                 case Result.Failure(e) =>
@@ -473,9 +454,7 @@ class QueryApiTest extends Test:
 
         Scope.run:
             Abort.run[TastyError]:
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, tracked, 2, rawCp).andThen(rawCp)
+                ClasspathOrchestrator.open(Seq("root"), false, tracked, 2)
             .map: _ =>
                 import AllowUnsafe.embrace.danger
                 val finalCount = counter.get()
@@ -604,14 +583,12 @@ class QueryApiTest extends Test:
     "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" taggedAs jvmOnly in run {
         val bytes    = kyo.fixtures.Embedded.arrayRecordClass
         val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
-        val home     = ClasspathRef.init()
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(bytes, interner, new TypeArena, home).flatMap: cr =>
+            ClassfileUnpickler.read(bytes, interner, new TypeArena).flatMap: cr =>
                 // Create a mini-classpath so home.isAssigned is true and checkOpen passes.
                 // assignExtraHomes covers the class symbol and all members; since all symbols share
                 // the same ClasspathRef instance, calling home.assign separately is redundant.
                 Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
-                    ClasspathTestHelpers.assignExtraHomes(miniCp, cr.classSymbol +: cr.symbols.toSeq)
                     cr
         .flatMap:
             case Result.Success(cr) =>
@@ -766,11 +743,9 @@ class QueryApiTest extends Test:
     "Phase 5: Java classfile field declaredType returns Array type for int[] values" taggedAs jvmOnly in run {
         val bytes    = kyo.fixtures.Embedded.arrayRecordClass
         val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
-        val home     = ClasspathRef.init()
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(bytes, interner, new TypeArena, home).flatMap: cr =>
+            ClassfileUnpickler.read(bytes, interner, new TypeArena).flatMap: cr =>
                 Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
-                    ClasspathTestHelpers.assignExtraHomes(miniCp, cr.classSymbol +: cr.symbols.toSeq)
                     cr
         .flatMap:
             case Result.Success(cr) =>

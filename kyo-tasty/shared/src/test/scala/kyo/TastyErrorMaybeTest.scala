@@ -1,8 +1,6 @@
 package kyo
 
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.query.Classpath as InternalClasspath
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TreeUnpickler
 import kyo.internal.tasty.snapshot.SnapshotFormat
@@ -143,35 +141,34 @@ class TastyErrorMaybeTest extends Test:
         src.add("cache/test.krfl", snapshotBytes)
 
         Abort.run[TastyError]:
-            InternalClasspath.allocate.flatMap: rawCp =>
-                SnapshotReader.read("cache/test.krfl", src, rawCp).map: _ =>
-                    val errors = rawCp.accumulatedErrors
-                    // Recognized string must map to the concrete variant, not NotImplemented.
-                    val fileNotFoundEntries = errors.filter:
-                        case TastyError.FileNotFound(_) => true
-                        case _                          => false
-                    assert(
-                        fileNotFoundEntries.length == 1,
-                        s"Expected exactly one FileNotFound entry; got: $errors"
-                    )
-                    // Unrecognized string must map to NotImplemented.
-                    val notImplEntries = errors.filter:
-                        case TastyError.NotImplemented(_) => true
-                        case _                            => false
-                    assert(
-                        notImplEntries.length == 1,
-                        s"Expected exactly one NotImplemented entry; got: $errors"
-                    )
-                    // Verify the NotImplemented feature string contains "deserialized: " prefix.
-                    notImplEntries.head match
-                        case TastyError.NotImplemented(feature) =>
-                            assert(
-                                feature.startsWith("deserialized: "),
-                                s"NotImplemented feature should start with 'deserialized: ' but got: $feature"
-                            )
-                        case _ => ()
-                    end match
-                    succeed
+            SnapshotReader.read("cache/test.krfl", src).map: loadedCp =>
+                val errors = loadedCp.errors
+                // Recognized string must map to the concrete variant, not NotImplemented.
+                val fileNotFoundEntries = errors.filter:
+                    case TastyError.FileNotFound(_) => true
+                    case _                          => false
+                assert(
+                    fileNotFoundEntries.length == 1,
+                    s"Expected exactly one FileNotFound entry; got: $errors"
+                )
+                // Unrecognized string must map to NotImplemented.
+                val notImplEntries = errors.filter:
+                    case TastyError.NotImplemented(_) => true
+                    case _                            => false
+                assert(
+                    notImplEntries.length == 1,
+                    s"Expected exactly one NotImplemented entry; got: $errors"
+                )
+                // Verify the NotImplemented feature string contains "deserialized: " prefix.
+                notImplEntries.head match
+                    case TastyError.NotImplemented(feature) =>
+                        assert(
+                            feature.startsWith("deserialized: "),
+                            s"NotImplemented feature should start with 'deserialized: ' but got: $feature"
+                        )
+                    case _ => ()
+                end match
+                succeed
         .map:
             case Result.Success(r) => r
             case Result.Failure(e) => fail(s"Unexpected failure: $e")
@@ -247,20 +244,19 @@ class TastyErrorMaybeTest extends Test:
         src.add("cache/forward.krfl", snapshotBytes)
 
         Abort.run[TastyError]:
-            InternalClasspath.allocate.flatMap: rawCp =>
-                SnapshotReader.read("cache/forward.krfl", src, rawCp).map: _ =>
-                    val errors = rawCp.accumulatedErrors
-                    assert(errors.length == 1, s"Expected 1 accumulated error but got: $errors")
-                    errors.head match
-                        case TastyError.NotImplemented(feature) =>
-                            assert(
-                                feature.contains("QuantumEntanglementError"),
-                                s"Expected feature string to contain the original message but got: $feature"
-                            )
-                            succeed
-                        case other =>
-                            fail(s"Expected TastyError.NotImplemented but got: $other")
-                    end match
+            SnapshotReader.read("cache/forward.krfl", src).map: loadedCp =>
+                val errors = loadedCp.errors
+                assert(errors.length == 1, s"Expected 1 accumulated error but got: $errors")
+                errors.head match
+                    case TastyError.NotImplemented(feature) =>
+                        assert(
+                            feature.contains("QuantumEntanglementError"),
+                            s"Expected feature string to contain the original message but got: $feature"
+                        )
+                        succeed
+                    case other =>
+                        fail(s"Expected TastyError.NotImplemented but got: $other")
+                end match
         .map:
             case Result.Success(r) => r
             case Result.Failure(e) => fail(s"Unexpected failure loading snapshot: $e")

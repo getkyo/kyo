@@ -4,7 +4,6 @@ import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileFormat
 import kyo.internal.tasty.classfile.ConstantPool
 import kyo.internal.tasty.classfile.JavaAnnotationUnpickler
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.symbol.Interner
 
 /** Tests for JavaAnnotationUnpickler (Phase 21b T2 coverage).
@@ -65,8 +64,7 @@ class JavaAnnotationUnpicklerTest extends Test:
                     0x00, 0x00  // num_element_value_pairs = 0
                 )
                 val annView = ByteView(annBytes)
-                val home    = ClasspathRef.init()
-                Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool, interner, home)).map:
+                Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool, interner)).map:
                     case Result.Failure(err) => fail(s"readAnnotations failed: $err")
                     case Result.Panic(ex)    => fail(s"readAnnotations panicked: $ex")
                     case Result.Success(anns) =>
@@ -127,8 +125,7 @@ class JavaAnnotationUnpicklerTest extends Test:
                     0x04 // element 1: String at #4 ("b")
                 )
                 val annView = ByteView(annBytes)
-                val home    = ClasspathRef.init()
-                Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool, interner, home)).map:
+                Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool, interner)).map:
                     case Result.Failure(err) => fail(s"readAnnotations failed: $err")
                     case Result.Panic(ex)    => fail(s"readAnnotations panicked: $ex")
                     case Result.Success(anns) =>

@@ -1,8 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
@@ -69,11 +67,8 @@ class ClasspathOrchestratorPipelineTest extends Test:
         strict: Boolean = false,
         concurrency: Int = 2
     )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(roots, strict, src, concurrency, rawCp).map: cp =>
-                    ClasspathTestHelpers.assignHomesForTest(rawCp)
-                    cp
+        ClasspathOrchestrator.open(roots, strict, src, concurrency)
+    end openFixtureClasspath
 
     // T1: pipeline-produced Classpath contains known FQNs from the fixture.
     // Asserts that the new pipeline implementation produces a correct symbol set on a known fixture:

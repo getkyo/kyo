@@ -4,7 +4,6 @@ import kyo.internal.Platform
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileResult
 import kyo.internal.tasty.classfile.ClassfileUnpickler
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.reader.AstUnpickler
 import kyo.internal.tasty.reader.FileAttributes
 import kyo.internal.tasty.reader.NameUnpickler
@@ -30,7 +29,7 @@ class ClassfileReaderTest extends Test:
 
     private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
         val bytes = loadClassBytes(binaryPath)
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init())
+        ClassfileUnpickler.read(bytes, interner, new TypeArena)
 
     /** Load raw bytes for a test resource by path. Works on JVM only. */
     private def loadResourceBytes(resourcePath: String): Array[Byte] =
@@ -39,7 +38,6 @@ class ClassfileReaderTest extends Test:
     /** Run TASTy pass 1 on raw TASTy bytes and return the first non-root class symbol. */
     private def firstClassSymbolFromTasty(bytes: Array[Byte])(using Frame): Tasty.Symbol < (Sync & Abort[TastyError]) =
         val view  = ByteView(bytes)
-        val home  = ClasspathRef.init()
         val arena = new TypeArena
         for
             _        <- TastyHeader.read(view)
@@ -49,7 +47,7 @@ class ClassfileReaderTest extends Test:
             result <- sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, home, arena)
+                    AstUnpickler.readPass1(astView, names, attrs, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
         yield result.symbols.find(_.kind == Tasty.SymbolKind.Class).getOrElse(result.rootSymbol)
@@ -176,7 +174,7 @@ class ClassfileReaderTest extends Test:
             0x00.toByte,
             0x3d.toByte // major = 61 (Java 17)
         )
-        Abort.run(ClassfileUnpickler.read(badBytes, interner, new TypeArena, ClasspathRef.init())).map: result =>
+        Abort.run(ClassfileUnpickler.read(badBytes, interner, new TypeArena)).map: result =>
             result match
                 case Result.Failure(TastyError.ClassfileFormatError(_, reason, _)) =>
                     assert(reason.contains("magic") || reason.contains("0xdeadbeef"), s"Unexpected reason: $reason")
@@ -392,7 +390,7 @@ class ClassfileReaderTest extends Test:
         out.write(typeAnnBody)
         out.flush()
         val bytes = buf.toByteArray
-        ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init()).map: result =>
+        ClassfileUnpickler.read(bytes, interner, new TypeArena).map: result =>
             val md = result.classSymbol.javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
             assert(
                 md.runtimeTypeAnnotations.nonEmpty,

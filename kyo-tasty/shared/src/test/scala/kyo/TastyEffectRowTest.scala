@@ -1,8 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
@@ -60,11 +58,7 @@ class TastyEffectRowTest extends Test:
     private def openSomeObjectCp(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         val src = MemoryFileSource()
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
-        InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp).map: cp =>
-                    ClasspathTestHelpers.assignHomesForTest(rawCp)
-                    cp
+        ClasspathOrchestrator.open(Seq("root"), false, src, 1)
     end openSomeObjectCp
 
     // ── Leaf 4: Symbol.body is the only public Symbol method returning a kyo effect ──

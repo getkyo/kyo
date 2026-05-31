@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.SymbolId
@@ -46,12 +45,7 @@ class ClasspathImmutabilityTest extends Test:
     private def openFixtureClasspath(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
-        InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer {
-                import AllowUnsafe.embrace.danger
-                InternalClasspath.close(rawCp)
-            }).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp)
+        ClasspathOrchestrator.open(Seq("root"), false, src, 1)
     end openFixtureClasspath
 
     // ── Leaf 1: Classpath constructor fields are immutable ───────────────────

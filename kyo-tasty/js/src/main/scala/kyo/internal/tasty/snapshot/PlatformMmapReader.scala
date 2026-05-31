@@ -8,9 +8,8 @@ object PlatformMmapReader:
 
     def readMapped(
         path: String,
-        source: FileSource,
-        cp: kyo.internal.tasty.query.Classpath
-    )(using Frame): Unit < (Sync & Abort[TastyError] & Scope) =
-        SnapshotReader.read(path, source, cp)
+        source: FileSource
+    )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError] & Scope) =
+        SnapshotReader.read(path, source)
 
 end PlatformMmapReader

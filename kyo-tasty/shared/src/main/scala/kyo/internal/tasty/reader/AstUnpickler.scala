@@ -2,8 +2,6 @@ package kyo.internal.tasty.reader
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.query.ClasspathRef
-import kyo.internal.tasty.query.UnresolvedRef
 import kyo.internal.tasty.symbol.Flags as InternalFlags
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolKind as InternalSymbolKind
@@ -28,9 +26,9 @@ import scala.collection.mutable
   *   - qualified-modifier sub-tree skip (CRITICAL): PRIVATEqualified (98) and PROTECTEDqualified (99) are category 3 (tag + sub-AST). The
   *     modifier loop skips their sub-AST via skipTree(). Failing to do this corrupts the cursor.
   *
-  * Phase 4 note: Pass1Result.placeholders carries cross-file UnresolvedRef entries accumulated by TypeUnpickler during type decode.
-  * AstUnpickler itself does not populate placeholders; they are populated when TypeUnpickler.readType is called for signature/parent
-  * positions.
+  * Phase 4 note: TypeUnpickler resolves cross-file type references by creating synthetic unresolved symbols directly. The UnresolvedRef
+  * mechanism was deleted in Phase 07; cross-file references now become Named(SymbolId(-1)) entries resolved at Phase C finalizeMerge via
+  * fqnIndex lookup.
   */
 object AstUnpickler:
 
@@ -41,7 +39,7 @@ object AstUnpickler:
       * @param addrMap
       *   Map from TASTy byte address to symbol, for cross-symbol type references.
       * @param placeholders
-      *   Cross-file UnresolvedRef entries collected by TypeUnpickler during type decode.
+      *   (deleted in Phase 07; UnresolvedRef mechanism removed)
       * @param rootSymbol
       *   The synthetic root Package sentinel (empty name, no owner). Used as the top-level owner for package-level definitions.
       * @param parentsBySymbol
@@ -68,7 +66,6 @@ object AstUnpickler:
     final case class Pass1Result(
         symbols: Chunk[Tasty.Symbol],
         addrMap: IntMap[Tasty.Symbol],
-        placeholders: Chunk[UnresolvedRef],
         rootSymbol: Tasty.Symbol,
         parentsBySymbol: mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Type]],
         childrenByOwner: mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Symbol]],
@@ -77,7 +74,11 @@ object AstUnpickler:
         bodyDataByAddr: mutable.HashMap[Tasty.Symbol, (Int, Int)],
         sectionBytes: Array[Byte],
         sectionOffset: Int,
-        names: Array[Tasty.Name]
+        names: Array[Tasty.Name],
+        /** Cross-file FQN -> unique negative SymbolId mappings accumulated by TypeUnpickler during Phase B. Phase C uses this to resolve
+          * Named(SymbolId(negId)) parent types to final SymbolIds via fqnIndex.
+          */
+        unresolvedIdToFqn: mutable.HashMap[Int, String]
     )
 
     /** Run pass 1 over the AST section.
@@ -88,8 +89,6 @@ object AstUnpickler:
       *   0-based name array produced by NameUnpickler.
       * @param attrs
       *   file attributes (isJava flag used to set JavaDefined on symbols).
-      * @param home
-      *   ClasspathRef stored in each symbol.
       * @param arena
       *   Per-file TypeArena used by TypeUnpickler to hash-cons decoded types.
       *
@@ -101,11 +100,10 @@ object AstUnpickler:
         view: ByteView,
         names: Array[Tasty.Name],
         attrs: FileAttributes,
-        home: ClasspathRef,
         arena: TypeArena
     )(using frame: Frame): Pass1Result < (Sync & Abort[TastyError]) =
         Sync.Unsafe.defer:
-            try Right(runPass1(view, names, attrs, home, arena)(using frame, summon[AllowUnsafe]))
+            try Right(runPass1(view, names, attrs, arena)(using frame, summon[AllowUnsafe]))
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
                     Left(TastyError.MalformedSection("ASTs", s"unexpected end: ${ex.getMessage}", view.position))
@@ -123,7 +121,6 @@ object AstUnpickler:
         view: ByteView,
         names: Array[Tasty.Name],
         attrs: FileAttributes,
-        home: ClasspathRef,
         arena: TypeArena
     )(using Frame, AllowUnsafe): Pass1Result =
         val addrMap         = new mutable.HashMap[Int, Tasty.Symbol]()
@@ -147,8 +144,8 @@ object AstUnpickler:
         val sectionEnd    = view.position + view.remaining
         val sectionBytes  = view.allBytes
         // Phase 1: collect symbols. The typeSession holds the live addrMap so type decode can find
-        // locally-defined symbols as the walk progresses. Cross-file refs produce UnresolvedRef entries.
-        val typeSession = new TypeUnpickler.DecodeSession(names, addrMap, arena, home)
+        // locally-defined symbols as the walk progresses.
+        val typeSession = new TypeUnpickler.DecodeSession(names, addrMap, arena)
         walkStats(
             view,
             sectionEnd,
@@ -156,7 +153,6 @@ object AstUnpickler:
             sectionBytes,
             sectionOffset,
             attrs,
-            home,
             addrMap,
             allSymbols,
             ownerStack,
@@ -188,7 +184,6 @@ object AstUnpickler:
         Pass1Result(
             symbols = Chunk.from(allSymbols.tail), // exclude root
             addrMap = intMap,
-            placeholders = Chunk.from(typeSession.placeholders),
             rootSymbol = root,
             parentsBySymbol = parentsBySymbol,
             childrenByOwner = childrenChunks,
@@ -197,7 +192,8 @@ object AstUnpickler:
             bodyDataByAddr = bodyDataByAddr,
             sectionBytes = sectionBytes,
             sectionOffset = sectionOffset,
-            names = names
+            names = names,
+            unresolvedIdToFqn = typeSession.unresolvedIdToFqn
         )
     end runPass1
 
@@ -220,7 +216,6 @@ object AstUnpickler:
         sectionBytes: Array[Byte],
         sectionOffset: Int,
         attrs: FileAttributes,
-        home: ClasspathRef,
         addrMap: mutable.HashMap[Int, Tasty.Symbol],
         allSymbols: mutable.ArrayBuffer[Tasty.Symbol],
         ownerStack: mutable.ArrayDeque[Tasty.Symbol],
@@ -256,7 +251,6 @@ object AstUnpickler:
                         sectionBytes,
                         sectionOffset,
                         attrs,
-                        home,
                         addrMap,
                         allSymbols,
                         ownerStack,
@@ -315,7 +309,6 @@ object AstUnpickler:
                         sectionBytes,
                         sectionOffset,
                         attrs,
-                        home,
                         addrMap,
                         allSymbols,
                         ownerStack,
@@ -385,7 +378,6 @@ object AstUnpickler:
                             sectionBytes,
                             sectionOffset,
                             attrs,
-                            home,
                             addrMap,
                             allSymbols,
                             ownerStack,
@@ -475,8 +467,8 @@ object AstUnpickler:
     /** Decode one type node from `view` into `typeSession`, if a type node is present before `end`.
       *
       * Checks if the next byte is a type-tag (not a modifier tag). If so, calls TypeUnpickler.readTypeIntoSession to decode it, collecting
-      * any cross-file UnresolvedRef placeholders. If decoding fails (malformed type tree), skips to `end` silently to avoid corrupting the
-      * outer walk.
+      * any cross-file type references (as synthetic unresolved symbols). If decoding fails (malformed type tree), skips to `end` silently
+      * to avoid corrupting the outer walk.
       *
       * Returns the decoded type if present and successful, Absent otherwise.
       */
@@ -549,7 +541,7 @@ object AstUnpickler:
       * beginning.
       *
       * Returns the decoded parent types as a buffer. The caller records them into `parentsBySymbol` keyed by the class symbol. Parent types
-      * may contain proxy types (UnresolvedRef slots) for cross-file parents; these are resolved during Phase C.
+      * may contain Named(SymbolId(-1)) for cross-file parents; these are resolved during Phase C finalizeMerge via fqnIndex lookup.
       */
     private def decodeTemplateParents(
         parentScanView: ByteView,

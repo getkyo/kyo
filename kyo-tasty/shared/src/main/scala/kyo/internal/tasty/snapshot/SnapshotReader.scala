@@ -2,42 +2,34 @@ package kyo.internal.tasty.snapshot
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.query.Classpath
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
-/** Reads a KRFL snapshot file and populates a `Classpath` from it.
+/** Reads a KRFL snapshot file and builds a `Tasty.Classpath` from it.
   *
   * Validation:
   *   - Wrong magic (not "KRFL") -> `TastyError.SnapshotFormatError`.
   *   - Major version mismatch -> `TastyError.SnapshotVersionMismatch`; caller falls through to full decode.
   *   - Minor version too new -> loads successfully (add-only sections are skipped).
-  *
-  * Home assignment: each reconstructed symbol gets a `ClasspathRef` that is populated after this method returns by the caller (the
-  * `Tasty.Classpath.open` wrapper in `Tasty.scala`, which can see through the opaque type alias).
   */
 object SnapshotReader:
 
-    /** Read a snapshot from `path` and populate `cp`.
+    /** Read a snapshot from `path` and return a fully-constructed `Tasty.Classpath`.
       *
       * @param path
       *   absolute path to the `.krfl` file
       * @param source
       *   FileSource for reading the bytes
-      * @param cp
-      *   the Classpath to populate (must still be in Building state)
       */
     def read(
         path: String,
-        source: FileSource,
-        cp: Classpath
-    )(using Frame): Unit < (Sync & Abort[TastyError]) =
+        source: FileSource
+    )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
         source.read(path).flatMap: bytes =>
-            readBytes(path, bytes, cp)
+            readBytes(path, bytes)
 
     /** Read a snapshot preferring a memory-mapped path on JVM/Native; falls back to heap read on JS.
       *
@@ -47,26 +39,19 @@ object SnapshotReader:
       */
     def readMapped(
         path: String,
-        source: FileSource,
-        cp: Classpath
-    )(using Frame): Unit < (Sync & Abort[TastyError] & Scope) =
-        PlatformMmapReader.readMapped(path, source, cp)
+        source: FileSource
+    )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError] & Scope) =
+        PlatformMmapReader.readMapped(path, source)
 
     /** Deserialize a KRFL snapshot from an already-opened ByteView (mmap path).
       *
       * Called by platform-specific PlatformMmapReader implementations (JVM, Native). The `view` covers the entire snapshot file content
-      * mapped into memory. Symbols with body bytes get a TastyOrigin with `bodyView` set to a sub-view into the mapped region so that
-      * sym.body reads directly from mapped memory without an eager copy.
+      * mapped into memory. Returns a fully-constructed Tasty.Classpath.
       */
     private[snapshot] def readMappedView(
         path: String,
-        view: ByteView,
-        cp: Classpath
-    ): Unit =
-        // Extract bytes for header validation and section parsing.
-        // We read only the header bytes (32 + section count + section index) eagerly; BODY_BYTES is left in mapped memory.
-        // For simplicity, use the view's allBytes (empty for Mapped) and fall back to an array copy for header/names/symbols.
-        // The key optimization: body byte slices use sub-views into the mapped region, avoiding eager copy.
+        view: ByteView
+    ): Tasty.Classpath =
         val magic0 = view.peekByte(0)
         val magic1 = view.peekByte(1)
         val magic2 = view.peekByte(2)
@@ -81,7 +66,7 @@ object SnapshotReader:
                 Tasty.Version(SnapshotFormat.majorVersion, SnapshotFormat.minorVersion, 0)
             )
         end if
-        deserializeMapped(path, view, cp)
+        deserializeMapped(path, view)
     end readMappedView
 
     /** Thrown by readMappedView when the snapshot major version doesn't match. */
@@ -90,12 +75,11 @@ object SnapshotReader:
         val supported: Tasty.Version
     ) extends java.io.IOException(s"version mismatch: found=$found supported=$supported")
 
-    /** Deserialize KRFL bytes into the Classpath. */
+    /** Deserialize KRFL bytes into a new Tasty.Classpath. */
     private def readBytes(
         path: String,
-        bytes: Array[Byte],
-        cp: Classpath
-    )(using Frame): Unit < (Sync & Abort[TastyError]) =
+        bytes: Array[Byte]
+    )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
         Sync.defer:
             if bytes.length < 4 || bytes(0) != 'K' || bytes(1) != 'R' || bytes(2) != 'F' || bytes(3) != 'L' then
                 Abort.fail(TastyError.SnapshotFormatError(path, "wrong magic, expected KRFL", 0L))
@@ -110,15 +94,14 @@ object SnapshotReader:
                         )
                     )
                 else
-                    deserialize(path, bytes, cp)
+                    deserialize(path, bytes)
                 end if
 
-    /** Deserialize section payloads into the Classpath. */
+    /** Deserialize section payloads into a new Tasty.Classpath. */
     private def deserialize(
         path: String,
-        bytes: Array[Byte],
-        cp: Classpath
-    ): Unit =
+        bytes: Array[Byte]
+    ): Tasty.Classpath =
         // flow-allow: §839 case 3; snapshot-deserialize boundary; single-fiber synchronous symbol graph reconstruction.
         import AllowUnsafe.embrace.danger
         // Parse section index (starts at offset 32)
@@ -264,16 +247,24 @@ object SnapshotReader:
         }
 
         val canonical = TypeArena.canonical()
-        Classpath.transitionToReady(
-            cp,
-            Chunk.from(finalSymbols),
-            finalTopLevelCls,
-            finalPackages,
-            finalFqnIndex,
-            finalPackageIndex,
-            canonical,
-            errors,
-            Map.empty
+        val symsChunk = Chunk.from(finalSymbols)
+        val fqnIdIdx  = finalFqnIndex.map { case (k, v) => k -> v.id }.toMap
+        val pkgIdIdx  = finalPackageIndex.map { case (k, v) => k -> v.id }.toMap
+        val topIds    = finalTopLevelCls.map(_.id)
+        val pkgIds    = finalPackages.map(_.id)
+        val rootId    = if symsChunk.nonEmpty then SymbolId(0) else SymbolId(-1)
+        Tasty.Classpath.make(
+            symbols = symsChunk,
+            rootSymbolId = rootId,
+            topLevelClassIds = topIds,
+            packageIds = pkgIds,
+            fqnIndex = fqnIdIdx,
+            packageIndex = pkgIdIdx,
+            subclassIndex = Map.empty,
+            companionIndex = Map.empty,
+            moduleIndex = Map.empty,
+            errors = errors,
+            canonical = canonical
         )
     end deserialize
 
@@ -318,7 +309,7 @@ object SnapshotReader:
       * memory: TastyOrigin.bodyView for each symbol is a sub-view into the mapped region. After the backing Arena is closed, sym.body reads
       * from the mapped view and throws IllegalStateException, which Symbol.body catches as ClasspathClosed.
       */
-    private def deserializeMapped(path: String, view: ByteView, cp: Classpath): Unit =
+    private def deserializeMapped(path: String, view: ByteView): Tasty.Classpath =
         // flow-allow: §839 case 3; snapshot-deserialize-mmap boundary; single-fiber synchronous symbol graph reconstruction.
         import AllowUnsafe.embrace.danger
         // Read the section index from the view.
@@ -465,17 +456,25 @@ object SnapshotReader:
             val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then finalSymbols(idx) else v
         }
 
-        val canonical = TypeArena.canonical()
-        Classpath.transitionToReady(
-            cp,
-            Chunk.from(finalSymbols),
-            newTopLevelCls,
-            newPackages,
-            newFqnIndex,
-            newPackageIndex,
-            canonical,
-            errors,
-            Map.empty
+        val canonical  = TypeArena.canonical()
+        val symsChunk2 = Chunk.from(finalSymbols)
+        val fqnIdIdx2  = newFqnIndex.map { case (k, v) => k -> v.id }.toMap
+        val pkgIdIdx2  = newPackageIndex.map { case (k, v) => k -> v.id }.toMap
+        val topIds2    = newTopLevelCls.map(_.id)
+        val pkgIds2    = newPackages.map(_.id)
+        val rootId2    = if symsChunk2.nonEmpty then SymbolId(0) else SymbolId(-1)
+        Tasty.Classpath.make(
+            symbols = symsChunk2,
+            rootSymbolId = rootId2,
+            topLevelClassIds = topIds2,
+            packageIds = pkgIds2,
+            fqnIndex = fqnIdIdx2,
+            packageIndex = pkgIdIdx2,
+            subclassIndex = Map.empty,
+            companionIndex = Map.empty,
+            moduleIndex = Map.empty,
+            errors = errors,
+            canonical = canonical
         )
     end deserializeMapped
 

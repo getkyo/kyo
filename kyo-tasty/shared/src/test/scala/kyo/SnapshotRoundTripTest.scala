@@ -1,9 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import kyo.internal.tasty.query.ClasspathRef
-import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
@@ -77,9 +74,7 @@ class SnapshotRoundTripTest extends Test:
 
     /** Open a classpath from the in-memory source into a `Tasty.Classpath`. */
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, src, 1, rawCp)
+        ClasspathOrchestrator.open(Seq("root"), false, src, 1)
 
     /** Write a snapshot of the fixture classpath to the given FileSource cache dir. */
     private def writeSnapshot(cacheSrc: MemoryFileSource)(using Frame): String < (Sync & Async & Scope & Abort[TastyError]) =
@@ -98,11 +93,9 @@ class SnapshotRoundTripTest extends Test:
                 writeSnapshot(cacheSrc).flatMap: snapshotPath =>
                     openClasspath(fixtureSource()).flatMap: origCp =>
                         val origClasses = origCp.topLevelClasses
-                        InternalClasspath.allocate.flatMap: rawCp =>
-                            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                                SnapshotReader.read(snapshotPath, cacheSrc, rawCp).andThen:
-                                    rawCp.allTopLevelClasses.map: loadedClasses =>
-                                        (origClasses, loadedClasses)
+                        SnapshotReader.read(snapshotPath, cacheSrc).map: loadedCp =>
+                            val loadedClasses = loadedCp.topLevelClasses
+                            (origClasses, loadedClasses)
             ).map:
                 case Result.Success((origClasses: Chunk[Tasty.Symbol], loadedClasses: Chunk[Tasty.Symbol])) =>
                     val origFqns   = origClasses.map(_.name.asString).toSet
@@ -122,8 +115,7 @@ class SnapshotRoundTripTest extends Test:
         val cacheSrc = MemoryFileSource()
         cacheSrc.add("cache/bad.krfl", Array[Byte]('X', 'Y', 'Z', 'W', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
         Abort.run[TastyError]:
-            InternalClasspath.allocate.flatMap: rawCp =>
-                SnapshotReader.read("cache/bad.krfl", cacheSrc, rawCp)
+            SnapshotReader.read("cache/bad.krfl", cacheSrc)
         .map:
             case Result.Success(_) =>
                 fail("Expected SnapshotFormatError for wrong magic")
@@ -151,8 +143,7 @@ class SnapshotRoundTripTest extends Test:
         cacheSrc.add("cache/badver.krfl", badVersionBytes)
 
         Abort.run[TastyError]:
-            InternalClasspath.allocate.flatMap: rawCp =>
-                SnapshotReader.read("cache/badver.krfl", cacheSrc, rawCp)
+            SnapshotReader.read("cache/badver.krfl", cacheSrc)
         .map:
             case Result.Success(_) =>
                 fail("Expected SnapshotVersionMismatch for wrong major version")
@@ -251,11 +242,9 @@ class SnapshotRoundTripTest extends Test:
                         // Warm load: read from snapshot
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
-                        InternalClasspath.allocate.flatMap: rawCp =>
-                            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                                SnapshotReader.read(snapPath, cacheSrc, rawCp).andThen:
-                                    rawCp.allTopLevelClasses.map: warmClasses =>
-                                        (coldClasses, warmClasses)
+                        SnapshotReader.read(snapPath, cacheSrc).map: warmCp =>
+                            val warmClasses = warmCp.topLevelClasses
+                            (coldClasses, warmClasses)
             ).map:
                 case Result.Success((coldClasses: Chunk[Tasty.Symbol], warmClasses: Chunk[Tasty.Symbol])) =>
                     val coldFqns = coldClasses.map(_.name.asString).toSet
@@ -402,15 +391,10 @@ class SnapshotRoundTripTest extends Test:
                     SnapshotWriter.write(cp, "cache", digest, cacheSrc).andThen:
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
-                        InternalClasspath.allocate.flatMap: rawCp =>
-                            Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                                SnapshotReader.read(snapPath, cacheSrc, rawCp).andThen:
-                                    ClasspathTestHelpers.assignHomesForTest(rawCp)
-                                    // plan: phase-02 inline; use sym.body.isDefined instead of sym.origin match.
-                                    // sym.body as an effectful decode is deferred to Phase 04; mark as succeed.
-                                    val symWithBodyOpt = rawCp.allSymbols.toSeq.find(_.bodyRecord.isDefined)
-                                    discard(symWithBodyOpt)
-                                    succeed
+                        SnapshotReader.read(snapPath, cacheSrc).map: loadedCp =>
+                            val symWithBodyOpt = loadedCp.symbols.find(_.bodyRecord.isDefined)
+                            discard(symWithBodyOpt)
+                            succeed
             ).map:
                 case Result.Success(r) => r
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
@@ -425,14 +409,12 @@ class SnapshotRoundTripTest extends Test:
         val emptySrc = MemoryFileSource()
         Scope.run:
             Abort.run[TastyError](
-                InternalClasspath.allocate.flatMap: rawCp =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                        // Open an empty classpath (no roots, no files): transitions to Ready immediately with empty state
-                        ClasspathOrchestrator.openInto(Seq.empty, false, emptySrc, 1, rawCp).flatMap: cp =>
-                            SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
-                                val hex      = DigestComputer.toHexString(digest)
-                                val snapPath = s"cache/$hex.krfl"
-                                cacheSrc.getBytes(snapPath)
+                // Open an empty classpath (no roots, no files): transitions to Ready immediately with empty state
+                ClasspathOrchestrator.open(Seq.empty, false, emptySrc, 1).flatMap: cp =>
+                    SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
+                        val hex      = DigestComputer.toHexString(digest)
+                        val snapPath = s"cache/$hex.krfl"
+                        cacheSrc.getBytes(snapPath)
             ).flatMap:
                 case Result.Success(Some(bytes)) =>
                     // Parse section index and find BODY_BYTES length
@@ -449,17 +431,15 @@ class SnapshotRoundTripTest extends Test:
                     end while
                     assert(bodyLen == 0, s"BODY_BYTES section must be empty (length 0) for classfile-only classpath; got $bodyLen")
                     // Also verify the snapshot loads without error
-                    InternalClasspath.allocate.flatMap: rawCp2 =>
-                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCp2))).andThen:
-                            val hex      = DigestComputer.toHexString(digest)
-                            val snapPath = s"cache/$hex.krfl"
-                            Abort.run[TastyError](SnapshotReader.read(snapPath, cacheSrc, rawCp2)).map:
-                                case Result.Success(_) =>
-                                    succeed
-                                case Result.Failure(e) =>
-                                    fail(s"Reading empty-body snapshot must not fail: $e")
-                                case Result.Panic(t) =>
-                                    throw t
+                    val hex2     = DigestComputer.toHexString(digest)
+                    val snapPath = s"cache/$hex2.krfl"
+                    Abort.run[TastyError](SnapshotReader.read(snapPath, cacheSrc)).map:
+                        case Result.Success(_) =>
+                            succeed
+                        case Result.Failure(e) =>
+                            fail(s"Reading empty-body snapshot must not fail: $e")
+                        case Result.Panic(t) =>
+                            throw t
                 case Result.Success(None) =>
                     fail("Snapshot file not found after write")
                 case Result.Failure(e) =>
@@ -479,21 +459,16 @@ class SnapshotRoundTripTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 // Cold open: build from TASTy to capture expected values.
-                InternalClasspath.allocate.flatMap: rawCpCold =>
-                    Scope.ensure(Sync.defer(InternalClasspath.close(rawCpCold))).andThen:
-                        ClasspathOrchestrator.openInto(Seq("root"), false, tastySource, 1, rawCpCold).flatMap: coldCp =>
-                            rawCpCold.allTopLevelClasses.flatMap: coldClasses =>
-                                // Write snapshot.
-                                SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:
-                                    val hex      = DigestComputer.toHexString(digest)
-                                    val snapPath = s"cache/$hex.krfl"
-                                    // Warm load from snapshot.
-                                    InternalClasspath.allocate.flatMap: rawCpWarm =>
-                                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCpWarm))).andThen:
-                                            SnapshotReader.read(snapPath, cacheSrc, rawCpWarm).andThen:
-                                                ClasspathTestHelpers.assignHomesForTest(rawCpWarm)
-                                                rawCpWarm.allTopLevelClasses.map: warmClasses =>
-                                                    (coldClasses, warmClasses)
+                ClasspathOrchestrator.open(Seq("root"), false, tastySource, 1).flatMap: coldCp =>
+                    val coldClasses = coldCp.topLevelClasses
+                    // Write snapshot.
+                    SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:
+                        val hex      = DigestComputer.toHexString(digest)
+                        val snapPath = s"cache/$hex.krfl"
+                        // Warm load from snapshot.
+                        SnapshotReader.read(snapPath, cacheSrc).map: warmCp =>
+                            val warmClasses = warmCp.topLevelClasses
+                            (coldClasses, warmClasses)
             ).map:
                 case Result.Success(pair) =>
                     val (coldClasses, warmClasses) = pair
@@ -622,28 +597,30 @@ class SnapshotRoundTripTest extends Test:
         val pkgMap   = scala.collection.immutable.Map("test" -> pkgSym)
 
         Abort.run[TastyError]:
-            InternalClasspath.allocate.flatMap: rawCpCold =>
-                InternalClasspath.transitionToReady(
-                    rawCpCold,
-                    allSyms,
-                    topLevel,
-                    pkgs,
-                    fqnMap,
-                    pkgMap,
-                    TypeArena.canonical(),
-                    Chunk.empty,
-                    Map.empty
-                )
-                val coldCp = Tasty.Classpath.wrap(rawCpCold)
-                SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:
-                    val hex      = DigestComputer.toHexString(digest)
-                    val snapPath = s"cache/$hex.krfl"
-                    InternalClasspath.allocate.flatMap: rawCpWarm =>
-                        SnapshotReader.read(snapPath, cacheSrc, rawCpWarm).andThen:
-                            // plan: phase-02 inline; pureClass uses AllowUnsafe.
-                            rawCpWarm.pureClass("test.Foo") match
-                                case Maybe.Present(sym) => Kyo.lift(sym.parentTypes)
-                                case Maybe.Absent       => Abort.fail(TastyError.NotImplemented("test.Foo not found after snapshot load"))
+            val fqnIdMap = fqnMap.map { case (k, v) => k -> v.id }.toMap
+            val pkgIdMap = pkgMap.map { case (k, v) => k -> v.id }.toMap
+            val topIds   = topLevel.map(_.id)
+            val pkgIds   = pkgs.map(_.id)
+            val coldCp = Tasty.Classpath.make(
+                symbols = allSyms,
+                rootSymbolId = SymbolId(0),
+                topLevelClassIds = topIds,
+                packageIds = pkgIds,
+                fqnIndex = fqnIdMap,
+                packageIndex = pkgIdMap,
+                subclassIndex = Map.empty,
+                companionIndex = Map.empty,
+                moduleIndex = Map.empty,
+                errors = Chunk.empty,
+                canonical = kyo.internal.tasty.type_.TypeArena.canonical()
+            )
+            SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:
+                val hex      = DigestComputer.toHexString(digest)
+                val snapPath = s"cache/$hex.krfl"
+                SnapshotReader.read(snapPath, cacheSrc).map: warmCp =>
+                    warmCp.findClass("test.Foo") match
+                        case Maybe.Present(sym) => sym.parentTypes
+                        case Maybe.Absent       => Abort.fail(TastyError.NotImplemented("test.Foo not found after snapshot load"))
         .map:
             case Result.Success(parents) =>
                 assert(parents.nonEmpty, "Foo.parents must be non-empty after snapshot round-trip with local Named parent")

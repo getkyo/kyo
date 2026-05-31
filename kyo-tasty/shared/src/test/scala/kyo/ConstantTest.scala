@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TypeUnpickler
 import kyo.internal.tasty.symbol.Constant
@@ -32,10 +31,9 @@ class ConstantTest extends Test:
             )
 
     private def makeSession(names: Array[Tasty.Name]): TypeUnpickler.DecodeSession =
-        val home    = ClasspathRef.init()
         val arena   = TypeArena.canonical()
         val addrMap = new mutable.HashMap[Int, Tasty.Symbol]()
-        new TypeUnpickler.DecodeSession(names, addrMap, arena, home)
+        new TypeUnpickler.DecodeSession(names, addrMap, arena)
     end makeSession
 
     // Test 1 (T2, Constant): STRINGconst decodes via name table.

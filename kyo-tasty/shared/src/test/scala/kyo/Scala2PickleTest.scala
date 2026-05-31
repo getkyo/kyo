@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.internal.tasty.classfile.ClassfileUnpickler
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.scala2.Scala2PickleReader
 import kyo.internal.tasty.scala2.Scala2PickleResult
 import kyo.internal.tasty.symbol.Interner
@@ -91,7 +90,7 @@ class Scala2PickleTest extends Test:
       * Scala2PickleReader invocation (since we can't inject a custom attribute into a JDK classfile at test time).
       */
     private def readPickleDirect(pickleBytes: Array[Byte])(using Frame): Scala2PickleResult < (Sync & Abort[TastyError]) =
-        Scala2PickleReader.readRaw(pickleBytes, interner, new TypeArena, ClasspathRef.init())
+        Scala2PickleReader.readRaw(pickleBytes, interner, new TypeArena)
 
     // -------------------------------------------------------------------------
     // Test 1: ScalaSig attribute -> Flag.Scala2 on all symbols
@@ -188,7 +187,7 @@ class Scala2PickleTest extends Test:
     "Test 5: Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" taggedAs jvmOnly in run {
         // Read a real JDK classfile that has no ScalaSig attribute (java/lang/Object.class)
         val bytes  = TestResourceLoader.loadBytes("java/lang/Object.class")
-        val result = ClassfileUnpickler.read(bytes, interner, new TypeArena, ClasspathRef.init())
+        val result = ClassfileUnpickler.read(bytes, interner, new TypeArena)
         result.map: r =>
             val sym = r.classSymbol
             assert(!sym.flags.contains(Tasty.Flag.Scala2), s"Expected no Flag.Scala2 on Java classfile; got flags=${sym.flags.bits}")

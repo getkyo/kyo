@@ -9,12 +9,11 @@ object PlatformMmapReader:
 
     def readMapped(
         path: String,
-        source: FileSource,
-        cp: kyo.internal.tasty.query.Classpath
-    )(using Frame): Unit < (Sync & Abort[TastyError] & Scope) =
+        source: FileSource
+    )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError] & Scope) =
         JvmMmapReader.open(path).flatMap: mappedView =>
             Sync.defer:
-                try SnapshotReader.readMappedView(path, mappedView, cp)
+                try SnapshotReader.readMappedView(path, mappedView)
                 catch
                     case ex: SnapshotReader.VersionMismatchException =>
                         Abort.fail(TastyError.SnapshotVersionMismatch(ex.found, ex.supported))

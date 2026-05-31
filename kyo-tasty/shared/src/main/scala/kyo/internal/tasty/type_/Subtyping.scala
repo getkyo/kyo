@@ -34,8 +34,8 @@ import kyo.internal.tasty.symbol.SymbolId
   *
   * The budget applies only to Rec unfolding, not to structural recursion depth over other ADT cases.
   *
-  * Pure: all parent-chain lookups read from pre-populated `_parents` SingleAssign slots (write-once, referentially transparent post-init).
-  * No Sync, Abort, or AllowUnsafe effects are required.
+  * Pure: all parent-chain lookups read from the immutable `parentTypes` field on Symbol (populated during Phase C construction). No Sync,
+  * Abort, or AllowUnsafe effects are required.
   */
 object Subtyping:
 

@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.SymbolId
@@ -50,12 +49,7 @@ class ClasspathBodyMemoTest extends Test:
     end makeSomeObjectSource
 
     private def openSomeObjectCp(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        InternalClasspath.allocate.flatMap: rawCp =>
-            Scope.ensure(Sync.defer {
-                import AllowUnsafe.embrace.danger
-                InternalClasspath.close(rawCp)
-            }).andThen:
-                ClasspathOrchestrator.openInto(Seq("root"), false, makeSomeObjectSource(), 1, rawCp)
+        ClasspathOrchestrator.open(Seq("root"), false, makeSomeObjectSource(), 1)
     end openSomeObjectCp
 
     // ── Leaf 2: bodyMemo excluded from equality ───────────────────────────────
