@@ -3,7 +3,7 @@ package kyo
 /** Tests for spec-divergent enum Schemas using hand-rolled `Schema.stringSchema.transform` (Phase 3).
   *
   * Pins INV-010: all four wire-divergent enums (`McpRole`, `McpLogLevel`,
-  * `McpElicitationResponse.Action`, `McpSamplingRequest.IncludeContext`) use `transform`,
+  * `McpServer.ElicitationResponse.Action`, `McpServer.SamplingRequest.IncludeContext`) use `transform`,
   * not `derives Schema`. The lint assertions (JVM-only) read each source file and verify
   * zero `derives Schema` lines on the enum declaration.
   */
@@ -83,50 +83,58 @@ class McpEnumSchemaTest extends Test:
         assert(cases.forall(lvl => roundtrip[McpLogLevel](lvl) == lvl))
     }
 
-    // ---- McpElicitationResponse.Action ----
+    // ---- McpServer.ElicitationResponse.Action ----
 
     "Action.Accept encodes to \"accept\"" in {
-        assert(encode[McpElicitationResponse.Action](McpElicitationResponse.Action.Accept) == "\"accept\"")
+        assert(encode[McpServer.ElicitationResponse.Action](McpServer.ElicitationResponse.Action.Accept) == "\"accept\"")
     }
 
     "Action.Decline encodes to \"decline\"" in {
-        assert(encode[McpElicitationResponse.Action](McpElicitationResponse.Action.Decline) == "\"decline\"")
+        assert(encode[McpServer.ElicitationResponse.Action](McpServer.ElicitationResponse.Action.Decline) == "\"decline\"")
     }
 
     "Action.Cancel encodes to \"cancel\"" in {
-        assert(encode[McpElicitationResponse.Action](McpElicitationResponse.Action.Cancel) == "\"cancel\"")
+        assert(encode[McpServer.ElicitationResponse.Action](McpServer.ElicitationResponse.Action.Cancel) == "\"cancel\"")
     }
 
     "Action round-trips" in {
-        assert(roundtrip[McpElicitationResponse.Action](McpElicitationResponse.Action.Accept) == McpElicitationResponse.Action.Accept)
-        assert(roundtrip[McpElicitationResponse.Action](McpElicitationResponse.Action.Decline) == McpElicitationResponse.Action.Decline)
-        assert(roundtrip[McpElicitationResponse.Action](McpElicitationResponse.Action.Cancel) == McpElicitationResponse.Action.Cancel)
+        assert(roundtrip[McpServer.ElicitationResponse.Action](
+            McpServer.ElicitationResponse.Action.Accept
+        ) == McpServer.ElicitationResponse.Action.Accept)
+        assert(roundtrip[McpServer.ElicitationResponse.Action](
+            McpServer.ElicitationResponse.Action.Decline
+        ) == McpServer.ElicitationResponse.Action.Decline)
+        assert(roundtrip[McpServer.ElicitationResponse.Action](
+            McpServer.ElicitationResponse.Action.Cancel
+        ) == McpServer.ElicitationResponse.Action.Cancel)
     }
 
-    // ---- McpSamplingRequest.IncludeContext ----
+    // ---- McpServer.SamplingRequest.IncludeContext ----
 
     "IncludeContext.None encodes to \"none\"" in {
-        assert(encode[McpSamplingRequest.IncludeContext](McpSamplingRequest.IncludeContext.None) == "\"none\"")
+        assert(encode[McpServer.SamplingRequest.IncludeContext](McpServer.SamplingRequest.IncludeContext.None) == "\"none\"")
     }
 
     "IncludeContext.ThisServer encodes to \"thisServer\"" in {
-        assert(encode[McpSamplingRequest.IncludeContext](McpSamplingRequest.IncludeContext.ThisServer) == "\"thisServer\"")
+        assert(encode[McpServer.SamplingRequest.IncludeContext](McpServer.SamplingRequest.IncludeContext.ThisServer) == "\"thisServer\"")
     }
 
     "IncludeContext.AllServers encodes to \"allServers\"" in {
-        assert(encode[McpSamplingRequest.IncludeContext](McpSamplingRequest.IncludeContext.AllServers) == "\"allServers\"")
+        assert(encode[McpServer.SamplingRequest.IncludeContext](McpServer.SamplingRequest.IncludeContext.AllServers) == "\"allServers\"")
     }
 
     "IncludeContext round-trips" in {
         assert(
-            roundtrip[McpSamplingRequest.IncludeContext](McpSamplingRequest.IncludeContext.None) == McpSamplingRequest.IncludeContext.None
+            roundtrip[McpServer.SamplingRequest.IncludeContext](
+                McpServer.SamplingRequest.IncludeContext.None
+            ) == McpServer.SamplingRequest.IncludeContext.None
         )
-        assert(roundtrip[McpSamplingRequest.IncludeContext](
-            McpSamplingRequest.IncludeContext.ThisServer
-        ) == McpSamplingRequest.IncludeContext.ThisServer)
-        assert(roundtrip[McpSamplingRequest.IncludeContext](
-            McpSamplingRequest.IncludeContext.AllServers
-        ) == McpSamplingRequest.IncludeContext.AllServers)
+        assert(roundtrip[McpServer.SamplingRequest.IncludeContext](
+            McpServer.SamplingRequest.IncludeContext.ThisServer
+        ) == McpServer.SamplingRequest.IncludeContext.ThisServer)
+        assert(roundtrip[McpServer.SamplingRequest.IncludeContext](
+            McpServer.SamplingRequest.IncludeContext.AllServers
+        ) == McpServer.SamplingRequest.IncludeContext.AllServers)
     }
 
     // ---- Lint: no `derives Schema` on any of the four enums (JVM-only) ----
@@ -142,12 +150,12 @@ class McpEnumSchemaTest extends Test:
     }
 
     "Action Schema uses transform (segments are empty, not a derived enum schema)" in {
-        val schema = summon[Schema[McpElicitationResponse.Action]]
+        val schema = summon[Schema[McpServer.ElicitationResponse.Action]]
         assert(schema.segments.isEmpty)
     }
 
     "IncludeContext Schema uses transform (segments are empty, not a derived enum schema)" in {
-        val schema = summon[Schema[McpSamplingRequest.IncludeContext]]
+        val schema = summon[Schema[McpServer.SamplingRequest.IncludeContext]]
         assert(schema.segments.isEmpty)
     }
 

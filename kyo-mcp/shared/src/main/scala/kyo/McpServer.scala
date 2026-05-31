@@ -8,6 +8,11 @@ package kyo
   *
   * INV-012: `McpServer = McpServer.Unsafe` (opaque identity).
   *
+  * Reverse-direction request/response records (`SamplingRequest`, `SamplingResponse`,
+  * `ElicitationRequest`, `ElicitationResponse`) and the `Root` record live inside this
+  * companion because every consumer (`requestSampling`, `requestElicitation`, `requestRoots`)
+  * is a method on `McpServer`. Nesting them here keeps the top-level `kyo.*` namespace small.
+  *
   * @see [[McpServer.init]]
   * @see [[McpServer.initUnscoped]]
   */
@@ -15,18 +20,151 @@ opaque type McpServer = McpServer.Unsafe
 
 object McpServer:
 
+    /** Parameters for the `sampling/createMessage` reverse-direction request.
+      *
+      * The `metadata` field is an INV-021 allowlist pass-through: the MCP spec defines
+      * `_meta` as an open JSON object, so the user receives it as `Structure.Value` rather
+      * than a typed shape.
+      *
+      * @param messages          the conversation turns to continue
+      * @param modelPreferences  optional model selection hints and cost/speed/intelligence weights
+      * @param systemPrompt      optional system prompt to include
+      * @param includeContext    whether to include server/client context in the message
+      * @param temperature       sampling temperature hint
+      * @param maxTokens         maximum tokens for the sampled response
+      * @param stopSequences     sequences that halt generation early
+      * @param metadata          spec-defined open `_meta` field (INV-021 allowlist pass-through per §11a)
+      */
+    // flow-allow: Structure carve-out per §11a / INV-021
+    final case class SamplingRequest(
+        messages: Chunk[SamplingRequest.Message],
+        modelPreferences: Maybe[SamplingRequest.ModelPreferences] = Absent,
+        systemPrompt: Maybe[String] = Absent,
+        includeContext: Maybe[SamplingRequest.IncludeContext] = Absent,
+        temperature: Maybe[Double] = Absent,
+        maxTokens: Int,
+        stopSequences: Chunk[String] = Chunk.empty,
+        // flow-allow: Structure carve-out per §11a / INV-021
+        metadata: Maybe[Structure.Value] = Absent
+    ) derives Schema, CanEqual
+
+    object SamplingRequest:
+
+        /** A single message in the sampling conversation. */
+        final case class Message(role: McpRole, content: McpContent) derives Schema, CanEqual
+
+        /** Hints for model selection. */
+        final case class ModelPreferences(
+            hints: Chunk[ModelHint] = Chunk.empty,
+            costPriority: Maybe[Double] = Absent,
+            speedPriority: Maybe[Double] = Absent,
+            intelligencePriority: Maybe[Double] = Absent
+        ) derives Schema, CanEqual
+
+        /** A model name hint for selection. */
+        final case class ModelHint(name: Maybe[String] = Absent) derives Schema, CanEqual
+
+        /** Controls how much context from the server or all servers is included. */
+        enum IncludeContext derives CanEqual:
+            case None, ThisServer, AllServers
+
+        object IncludeContext:
+            // Wire strings use camelCase and do not match toString.toLowerCase (INV-010).
+            // None is qualified as IncludeContext.None to avoid shadowing scala.None.
+            given Schema[IncludeContext] = Schema.stringSchema.transform[IncludeContext] {
+                case "none"       => IncludeContext.None
+                case "thisServer" => IncludeContext.ThisServer
+                case "allServers" => IncludeContext.AllServers
+            } {
+                case IncludeContext.None       => "none"
+                case IncludeContext.ThisServer => "thisServer"
+                case IncludeContext.AllServers => "allServers"
+            }
+        end IncludeContext
+
+    end SamplingRequest
+
+    /** Result of the `sampling/createMessage` reverse-direction request.
+      *
+      * @param role       the role of the sampled content
+      * @param content    the generated content
+      * @param model      the model identifier that produced the response
+      * @param stopReason the reason generation stopped, if known
+      */
+    final case class SamplingResponse(
+        role: McpRole,
+        content: McpContent,
+        model: String,
+        stopReason: Maybe[String] = Absent
+    ) derives Schema, CanEqual
+
+    /** Parameters for the `elicitation/create` reverse-direction request.
+      *
+      * The server sends this to the client when it needs to collect additional information
+      * from the end user. `requestedSchema` is a JSON Schema document describing the
+      * expected response structure.
+      *
+      * @param message         human-readable message shown to the user
+      * @param requestedSchema JSON Schema describing the expected response shape
+      */
+    final case class ElicitationRequest(
+        message: String,
+        requestedSchema: Json.JsonSchema
+    ) derives Schema, CanEqual
+
+    /** Result of the `elicitation/create` reverse-direction request.
+      *
+      * The `content` field is an INV-021 allowlist pass-through: the MCP spec leaves the
+      * elicitation response payload as an open JSON object, so it is surfaced as
+      * `Maybe[Structure.Value]`.
+      *
+      * @param action  whether the user accepted, declined, or cancelled the elicitation
+      * @param content the user-supplied content when action is Accept (INV-021 allowlist per §11a)
+      */
+    // flow-allow: Structure carve-out per §11a / INV-021
+    final case class ElicitationResponse(
+        action: ElicitationResponse.Action,
+        // flow-allow: Structure carve-out per §11a / INV-021
+        content: Maybe[Structure.Value] = Absent
+    ) derives Schema, CanEqual
+
+    object ElicitationResponse:
+
+        /** The user's decision regarding the elicitation request. */
+        enum Action derives CanEqual:
+            case Accept, Decline, Cancel
+
+        object Action:
+            // Wire strings: "accept" | "decline" | "cancel" (INV-010).
+            // capitalize maps lowercase wire string to Scala case name: "accept" -> "Accept".
+            given Schema[Action] = Schema.stringSchema.transform(s => Action.valueOf(s.capitalize))(
+                _.toString.toLowerCase
+            )
+        end Action
+
+    end ElicitationResponse
+
+    /** A root entry returned by the client in response to a `roots/list` request.
+      *
+      * INV-022: `uri` is typed `McpResourceUri`, not raw `String`, per Audit-A2.
+      *
+      * @param uri  the root URI
+      * @param name optional human-readable name for the root
+      */
+    final case class Root(uri: McpResourceUri, name: Maybe[String] = Absent) derives Schema, CanEqual
+
     extension (self: McpServer)
 
         /** Sends `sampling/createMessage` to the connected client. */
-        def requestSampling(req: McpSamplingRequest)(using Frame): McpSamplingResponse < (Async & Abort[McpError | Closed]) =
+        def requestSampling(req: SamplingRequest)(using Frame): SamplingResponse < (Async & Abort[McpError | Closed]) =
             self.requestSamplingUnsafe(req)
 
         /** Sends `roots/list` to the connected client. */
-        def requestRoots(using Frame): Chunk[McpRoot] < (Async & Abort[McpError | Closed]) =
+        def requestRoots(using Frame): Chunk[Root] < (Async & Abort[McpError | Closed]) =
             self.requestRootsUnsafe
 
         /** Sends `elicitation/create` to the connected client. */
-        def requestElicitation(req: McpElicitationRequest)(using Frame): McpElicitationResponse < (Async & Abort[McpError | Closed]) =
+        def requestElicitation(req: ElicitationRequest)(using Frame): ElicitationResponse < (Async & Abort[McpError | Closed]) =
             self.requestElicitationUnsafe(req)
 
         /** Sends `notifications/tools/list_changed`. */
@@ -88,9 +226,9 @@ object McpServer:
     end extension
 
     abstract class Unsafe:
-        def requestSamplingUnsafe(req: McpSamplingRequest)(using Frame): McpSamplingResponse < (Async & Abort[McpError | Closed])
-        def requestRootsUnsafe(using Frame): Chunk[McpRoot] < (Async & Abort[McpError | Closed])
-        def requestElicitationUnsafe(req: McpElicitationRequest)(using Frame): McpElicitationResponse < (Async & Abort[McpError | Closed])
+        def requestSamplingUnsafe(req: SamplingRequest)(using Frame): SamplingResponse < (Async & Abort[McpError | Closed])
+        def requestRootsUnsafe(using Frame): Chunk[Root] < (Async & Abort[McpError | Closed])
+        def requestElicitationUnsafe(req: ElicitationRequest)(using Frame): ElicitationResponse < (Async & Abort[McpError | Closed])
         def notifyToolsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
         def notifyResourcesListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
         def notifyResourceUpdatedUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed])

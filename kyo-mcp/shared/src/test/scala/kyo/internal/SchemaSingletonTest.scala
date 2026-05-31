@@ -30,15 +30,15 @@ class SchemaSingletonTest extends Test:
         assert(s1 eq s2)
     }
 
-    "Schema[McpElicitationResponse.Action] is a singleton val (INV-013)" in {
-        val s1 = summon[Schema[McpElicitationResponse.Action]]
-        val s2 = summon[Schema[McpElicitationResponse.Action]]
+    "Schema[McpServer.ElicitationResponse.Action] is a singleton val (INV-013)" in {
+        val s1 = summon[Schema[McpServer.ElicitationResponse.Action]]
+        val s2 = summon[Schema[McpServer.ElicitationResponse.Action]]
         assert(s1 eq s2)
     }
 
-    "Schema[McpSamplingRequest.IncludeContext] is a singleton val (INV-013)" in {
-        val s1 = summon[Schema[McpSamplingRequest.IncludeContext]]
-        val s2 = summon[Schema[McpSamplingRequest.IncludeContext]]
+    "Schema[McpServer.SamplingRequest.IncludeContext] is a singleton val (INV-013)" in {
+        val s1 = summon[Schema[McpServer.SamplingRequest.IncludeContext]]
+        val s2 = summon[Schema[McpServer.SamplingRequest.IncludeContext]]
         assert(s1 eq s2)
     }
 

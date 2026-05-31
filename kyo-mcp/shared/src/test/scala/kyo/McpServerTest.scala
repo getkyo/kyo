@@ -6,8 +6,8 @@ class McpServerTest extends Test:
     case class EchoReq(msg: String) derives Schema, CanEqual
     case class EchoResp(msg: String) derives Schema, CanEqual
 
-    private val toolRoute = McpRoute.tool[EchoReq, McpContent.Text]("echo") { (req, _) =>
-        McpContent.Text(req.msg, Absent)
+    private val toolRoute = McpRoute.tool[EchoReq]("echo") { (req, _) =>
+        McpContent.Text(req.msg)
     }
 
     private val resourceUri   = McpResourceUri.parse("file:///data").get

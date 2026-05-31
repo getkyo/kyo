@@ -7,5 +7,5 @@ import kyo.*
   * Used internally by the roots route; not part of the user-facing API surface.
   */
 final private[kyo] case class McpRootsListResponse(
-    roots: Chunk[McpRoot]
+    roots: Chunk[McpServer.Root]
 ) derives Schema

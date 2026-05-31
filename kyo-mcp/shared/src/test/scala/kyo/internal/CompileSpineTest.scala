@@ -71,7 +71,7 @@ class CompileSpineTest extends Test:
 
     "McpContent sealed leaves are constructable" in {
         val t: McpContent = McpContent.text("hi")
-        val i: McpContent = McpContent.image("b64", "image/png")
+        val i: McpContent = McpContent.image("b64", McpMimeType("image/png"))
         assert(t.isInstanceOf[McpContent.Text])
         assert(i.isInstanceOf[McpContent.Image])
     }
@@ -97,8 +97,8 @@ class CompileSpineTest extends Test:
     "INV-021 allowlist: Structure.Value appears only in the documented carve-out sites" in {
         // Positive assertion: the carve-out types compile and Structure.Value is a valid type.
         // The six annotated sites (all carrying flow-allow: §11a / INV-021) are:
-        // 1. McpElicitationResponse.content: Maybe[Structure.Value]
-        // 2. McpSamplingRequest.metadata: Maybe[Structure.Value]
+        // 1. McpServer.ElicitationResponse.content: Maybe[Structure.Value]
+        // 2. McpServer.SamplingRequest.metadata: Maybe[Structure.Value]
         // 3. McpCapabilities.Server.experimental: Map[String, Structure.Value]
         // 4. McpCapabilities.Client.experimental: Map[String, Structure.Value]
         // 5. McpRoute.ToolCallResult.structuredContent: Maybe[Structure.Value]

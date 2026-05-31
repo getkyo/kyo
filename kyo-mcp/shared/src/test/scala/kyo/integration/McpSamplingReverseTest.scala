@@ -8,8 +8,8 @@ class McpSamplingReverseTest extends Test:
     // Client-side route that handles sampling/createMessage requests from the server.
     // Registered as a custom route on the client; McpReverseDispatch builds the handler.
     private val samplingRoute =
-        McpRoute.custom[McpSamplingRequest, McpSamplingResponse]("sampling/createMessage") { (req, _) =>
-            McpSamplingResponse(
+        McpRoute.custom[McpServer.SamplingRequest]("sampling/createMessage") { (req, _) =>
+            McpServer.SamplingResponse(
                 role = McpRole.Assistant,
                 content = McpContent.text("reply"),
                 model = "model-x",
@@ -26,8 +26,8 @@ class McpSamplingReverseTest extends Test:
                 McpClient.initUnscoped(tc, McpInfo("s"), clientCaps, samplingRoute)
             ).flatMap { (srv, client) =>
                 srv.requestSampling(
-                    McpSamplingRequest(
-                        messages = Chunk(McpSamplingRequest.Message(McpRole.User, McpContent.text("q"))),
+                    McpServer.SamplingRequest(
+                        messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpContent.text("q"))),
                         maxTokens = 256
                     )
                 ).flatMap { resp =>
@@ -53,8 +53,8 @@ class McpSamplingReverseTest extends Test:
             ).flatMap { (srv, client) =>
                 Abort.run[McpError](
                     srv.requestSampling(
-                        McpSamplingRequest(
-                            messages = Chunk(McpSamplingRequest.Message(McpRole.User, McpContent.text("q"))),
+                        McpServer.SamplingRequest(
+                            messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpContent.text("q"))),
                             maxTokens = 10
                         )
                     )

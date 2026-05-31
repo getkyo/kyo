@@ -19,7 +19,7 @@ class McpCatalogTest extends Test:
     }
 
     "tool routes are partitioned into toolRoutes" in run {
-        val r       = McpRoute.tool[Unit, McpContent.Text]("myTool")((_, _) => McpContent.Text("ok", Absent))
+        val r       = McpRoute.tool[Unit]("myTool")((_, _) => McpContent.Text("ok"))
         val catalog = McpCatalog(Seq(r))
         assert(catalog.toolRoutes.size == 1)
         assert(catalog.toolRoutes.head.name == "myTool")
@@ -41,7 +41,7 @@ class McpCatalogTest extends Test:
     }
 
     "toolMetaOf returns ToolMeta with correct name and description" in run {
-        val r       = McpRoute.tool[Unit, McpContent.Text]("calc", "A calculator", Absent)((_, _) => McpContent.Text("0", Absent))
+        val r       = McpRoute.tool[Unit]("calc", "A calculator")((_, _) => McpContent.Text("0"))
         val catalog = McpCatalog(Seq(r))
         val meta    = catalog.toolMetaOf(r)
         assert(meta.name == "calc")
@@ -50,7 +50,7 @@ class McpCatalogTest extends Test:
 
     "autoDeriveServerCapabilities with Absent declaredCapabilities and one tool route" in run {
         val config  = McpConfig.default.autoNotifyListChanged(true)
-        val r       = McpRoute.tool[Unit, McpContent.Text]("t")((_, _) => McpContent.Text("x", Absent))
+        val r       = McpRoute.tool[Unit]("t")((_, _) => McpContent.Text("x"))
         val catalog = McpCatalog(Seq(r))
         val caps    = catalog.autoDeriveServerCapabilities(config)
         assert(caps.tools.isDefined)
@@ -61,7 +61,7 @@ class McpCatalogTest extends Test:
 
     "autoDeriveServerCapabilities with Present(empty) returns empty verbatim (INV-019)" in run {
         val config  = McpConfig.default.declaredCapabilities(McpCapabilities.Server())
-        val r       = McpRoute.tool[Unit, McpContent.Text]("t")((_, _) => McpContent.Text("x", Absent))
+        val r       = McpRoute.tool[Unit]("t")((_, _) => McpContent.Text("x"))
         val catalog = McpCatalog(Seq(r))
         val caps    = catalog.autoDeriveServerCapabilities(config)
         // Should be the explicitly declared empty Server, not auto-derived.
@@ -73,7 +73,7 @@ class McpCatalogTest extends Test:
     "catalog is immutable: no mutation methods on public interface (INV-018)" in run {
         // Compile-time check: McpCatalog has no add/remove/set methods.
         // This test verifies the catalog's routes field is final and size-stable.
-        val r       = McpRoute.tool[Unit, McpContent.Text]("t")((_, _) => McpContent.Text("x", Absent))
+        val r       = McpRoute.tool[Unit]("t")((_, _) => McpContent.Text("x"))
         val catalog = McpCatalog(Seq(r))
         val sizeA   = catalog.routes.size
         val sizeB   = catalog.routes.size

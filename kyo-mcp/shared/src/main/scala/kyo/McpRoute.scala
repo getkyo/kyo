@@ -9,6 +9,11 @@ package kyo
   * The `+E` type parameter accumulates user-domain error types registered via `.error[E2]`.
   * Domain errors abort the handler and are encoded as JSON-RPC error responses.
   *
+  * Factory methods use clause interleaving on `[In](...)(using Schema[In])[Out](handler)(using Schema[Out])`
+  * so the user can write `McpRoute.tool[AddIn]("add") { (in, _) => ... }` and the compiler infers
+  * `Out` from the handler's return type. The explicit `[In, Out]` form remains valid for callers
+  * that prefer to pin both type arguments.
+  *
   * Mirrors `JsonRpcRoute[In, Out, +E]` at kyo-jsonrpc/.../JsonRpcRoute.scala:42.
   *
   * @tparam In  the request parameter type
@@ -60,14 +65,23 @@ object McpRoute:
         annotations: Maybe[ToolAnnotations]
     ) derives Schema, CanEqual
 
-    /** Optional display and behavioral hints for a tool. */
+    /** Optional display and behavioral hints for a tool.
+      *
+      * `ToolAnnotations.noop` is the empty record used as the default parameter for every tool
+      * factory; the factory translates `.noop` into `Absent` on the wire so the field is omitted.
+      */
     final case class ToolAnnotations(
-        title: Maybe[String],
-        readOnlyHint: Maybe[Boolean],
-        destructiveHint: Maybe[Boolean],
-        idempotentHint: Maybe[Boolean],
-        openWorldHint: Maybe[Boolean]
+        title: Maybe[String] = Absent,
+        readOnlyHint: Maybe[Boolean] = Absent,
+        destructiveHint: Maybe[Boolean] = Absent,
+        idempotentHint: Maybe[Boolean] = Absent,
+        openWorldHint: Maybe[Boolean] = Absent
     ) derives Schema, CanEqual
+
+    object ToolAnnotations:
+        /** The empty annotations record used as the factory default. */
+        val noop: ToolAnnotations = ToolAnnotations()
+    end ToolAnnotations
 
     /** The result of a `tools/call` request.
       *
@@ -88,7 +102,7 @@ object McpRoute:
         uri: McpResourceUri,
         name: String,
         description: Maybe[String],
-        mimeType: Maybe[String],
+        mimeType: Maybe[McpMimeType],
         annotations: Maybe[ResourceAnnotations]
     ) derives Schema, CanEqual
 
@@ -99,15 +113,25 @@ object McpRoute:
         uriTemplate: McpResourceUriTemplate,
         name: String,
         description: Maybe[String],
-        mimeType: Maybe[String],
+        mimeType: Maybe[McpMimeType],
         annotations: Maybe[ResourceAnnotations]
     ) derives Schema, CanEqual
 
-    /** Optional display and filtering hints for a resource. */
+    /** Optional display and filtering hints for a resource.
+      *
+      * `ResourceAnnotations.noop` is the empty record used as the default parameter for every
+      * resource and resource-template factory; the factory translates `.noop` into `Absent` on
+      * the wire so the field is omitted.
+      */
     final case class ResourceAnnotations(
-        audience: Maybe[Chunk[McpRole]],
-        priority: Maybe[Double]
+        audience: Maybe[Chunk[McpRole]] = Absent,
+        priority: Maybe[Double] = Absent
     ) derives Schema, CanEqual
+
+    object ResourceAnnotations:
+        /** The empty resource annotations record used as the factory default. */
+        val noop: ResourceAnnotations = ResourceAnnotations()
+    end ResourceAnnotations
 
     /** Metadata returned by `McpClient.listPrompts`. */
     final case class PromptMeta(
@@ -151,18 +175,30 @@ object McpRoute:
 
     // --- Factory methods ---
 
+    // Helpers: translate the noop sentinel into the wire-friendly Maybe shape used by the meta records.
+    private inline def toolAnnotationsMaybe(a: ToolAnnotations): Maybe[ToolAnnotations] =
+        if a == ToolAnnotations.noop then Absent else Present(a)
+    private inline def resourceAnnotationsMaybe(a: ResourceAnnotations): Maybe[ResourceAnnotations] =
+        if a == ResourceAnnotations.noop then Absent else Present(a)
+
     /** Registers a single-content tool route.
       *
       * The handler receives a typed `In` parameter and returns a single `Out <: McpContent`.
       * INV-020: distinct from `toolMulti` which returns `ToolCallResult`.
+      *
+      * Clause interleaving lets callers write `McpRoute.tool[AddIn]("add") { ... }` and the
+      * compiler infers `Out` from the handler's return type. The explicit `[In, Out]` form
+      * also compiles for callers that prefer to pin both type arguments.
       */
-    def tool[In: Schema, Out <: McpContent: Schema](
+    def tool[In](
         name: String,
         description: String = "",
-        annotations: Maybe[ToolAnnotations] = Absent
-    )(handler: (In, Context) => Out < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using Frame): McpRoute[In, Out, Nothing] =
-        val inSchema  = summon[Schema[In]]
-        val outSchema = summon[Schema[Out]]
+        annotations: ToolAnnotations = ToolAnnotations.noop
+    )(using
+        inSchema: Schema[In]
+    )[Out <: McpContent](
+        handler: (In, Context) => Out < (Async & Abort[McpError | JsonRpcResponse.Halt])
+    )(using outSchema: Schema[Out], frame: Frame): McpRoute[In, Out, Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
         val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
         val meta = ToolMeta(
@@ -170,7 +206,7 @@ object McpRoute:
             description = if description.isEmpty then Absent else Present(description),
             inputSchema = Json.jsonSchema[In],
             outputSchema = Present(Json.jsonSchema[Out]),
-            annotations = annotations
+            annotations = toolAnnotationsMaybe(annotations)
         )
         val underlying = JsonRpcRoute.request[In, ToolCallResult](name) { (in, jrCtx) =>
             val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
@@ -183,14 +219,15 @@ object McpRoute:
     end tool
 
     /** Registers a multi-content tool route returning a `ToolCallResult`. INV-020. */
-    def toolMulti[In: Schema](
+    def toolMulti[In](
         name: String,
         description: String = "",
-        annotations: Maybe[ToolAnnotations] = Absent
-    )(handler: (In, Context) => ToolCallResult < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
-        Frame
-    ): McpRoute[In, ToolCallResult, Nothing] =
-        val inSchema = summon[Schema[In]]
+        annotations: ToolAnnotations = ToolAnnotations.noop
+    )(using
+        inSchema: Schema[In]
+    )(
+        handler: (In, Context) => ToolCallResult < (Async & Abort[McpError | JsonRpcResponse.Halt])
+    )(using Frame): McpRoute[In, ToolCallResult, Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
         val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
         val meta = ToolMeta(
@@ -198,7 +235,7 @@ object McpRoute:
             description = if description.isEmpty then Absent else Present(description),
             inputSchema = Json.jsonSchema[In],
             outputSchema = Absent,
-            annotations = annotations
+            annotations = toolAnnotationsMaybe(annotations)
         )
         val underlying = JsonRpcRoute.request[In, ToolCallResult](name) { (in, jrCtx) =>
             val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
@@ -215,8 +252,8 @@ object McpRoute:
         uri: McpResourceUri,
         name: String,
         description: String = "",
-        mimeType: Maybe[String] = Absent,
-        annotations: Maybe[ResourceAnnotations] = Absent
+        mimeType: Maybe[McpMimeType] = Absent,
+        annotations: ResourceAnnotations = ResourceAnnotations.noop
     )(handler: (McpResourceUri, Context) => Chunk[McpResourceContents] < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
         Frame
     ): McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
@@ -227,7 +264,7 @@ object McpRoute:
             name = name,
             description = if description.isEmpty then Absent else Present(description),
             mimeType = mimeType,
-            annotations = annotations
+            annotations = resourceAnnotationsMaybe(annotations)
         )
         val underlying = JsonRpcRoute.request[McpResourceUri, Chunk[McpResourceContents]](uri.asString) { (u, jrCtx) =>
             val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
@@ -244,8 +281,8 @@ object McpRoute:
         uriTemplate: McpResourceUriTemplate,
         name: String,
         description: String = "",
-        mimeType: Maybe[String] = Absent,
-        annotations: Maybe[ResourceAnnotations] = Absent
+        mimeType: Maybe[McpMimeType] = Absent,
+        annotations: ResourceAnnotations = ResourceAnnotations.noop
     )(handler: (McpResourceUri, Context) => Chunk[McpResourceContents] < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
         Frame
     ): McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
@@ -256,7 +293,7 @@ object McpRoute:
             name = name,
             description = if description.isEmpty then Absent else Present(description),
             mimeType = mimeType,
-            annotations = annotations
+            annotations = resourceAnnotationsMaybe(annotations)
         )
         val underlying = JsonRpcRoute.request[McpResourceUri, Chunk[McpResourceContents]](uriTemplate.asString) { (u, jrCtx) =>
             val server = serverRef.unsafe.get()(using AllowUnsafe.embrace.danger).getOrElse(
@@ -311,12 +348,16 @@ object McpRoute:
         McpRouteCarrier.Completion(routeName, ref, handler, serverRef, underlying)
     end completion
 
-    /** Registers a custom method route. */
-    def custom[In: Schema, Out: Schema](method: String)(
+    /** Registers a custom method route.
+      *
+      * Clause interleaving lets callers write `McpRoute.custom[In](method) { ... }` and the
+      * compiler infers `Out` from the handler's return type.
+      */
+    def custom[In](method: String)(using
+        inSchema: Schema[In]
+    )[Out](
         handler: (In, Context) => Out < (Async & Abort[McpError | JsonRpcResponse.Halt])
-    )(using Frame): McpRoute[In, Out, Nothing] =
-        val inSchema  = summon[Schema[In]]
-        val outSchema = summon[Schema[Out]]
+    )(using outSchema: Schema[Out], frame: Frame): McpRoute[In, Out, Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
         val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
         val underlying = JsonRpcRoute.request[In, Out](method) { (in, jrCtx) =>

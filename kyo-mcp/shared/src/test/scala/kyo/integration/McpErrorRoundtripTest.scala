@@ -17,7 +17,7 @@ class McpErrorRoundtripTest extends Test:
     private val failUri = McpResourceUri.parse("file:///fail").get
 
     "tool call aborts with McpError when server handler fails (T-021, INV-003)" in run {
-        val errRoute = McpRoute.tool[FailReq, McpContent.Text]("fail") { (_, _) =>
+        val errRoute = McpRoute.tool[FailReq]("fail") { (_, _) =>
             Abort.fail(McpToolExecutionError(tool = "fail", reason = "intentional", cause = ""))
         }
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>

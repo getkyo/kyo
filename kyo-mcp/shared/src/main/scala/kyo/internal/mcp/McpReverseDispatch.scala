@@ -46,10 +46,10 @@ private[kyo] object McpReverseDispatch:
     end buildRoutes
 
     private def buildSamplingRoute(userRoutes: Seq[McpRoute[?, ?, ?]])(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[McpSamplingRequest, McpSamplingResponse]("sampling/createMessage") { (_, _) =>
+        JsonRpcRoute.request[McpServer.SamplingRequest, McpServer.SamplingResponse]("sampling/createMessage") { (_, _) =>
             // Default handler: no user sampling route registered; reject the server request.
             // Users who want to handle sampling requests register a custom route with
-            // name "sampling/createMessage" via McpRoute.custom[McpSamplingRequest, McpSamplingResponse].
+            // name "sampling/createMessage" via McpRoute.custom[McpServer.SamplingRequest, McpServer.SamplingResponse].
             Abort.fail(McpSamplingRejectedError("No sampling handler registered on this client."))
         }
 
@@ -59,7 +59,7 @@ private[kyo] object McpReverseDispatch:
         }
 
     private def buildElicitationRoute(userRoutes: Seq[McpRoute[?, ?, ?]])(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[McpElicitationRequest, McpElicitationResponse]("elicitation/create") { (_, _) =>
+        JsonRpcRoute.request[McpServer.ElicitationRequest, McpServer.ElicitationResponse]("elicitation/create") { (_, _) =>
             Abort.fail(McpElicitationDeclinedError("No elicitation handler registered on this client."))
         }
 

@@ -9,14 +9,14 @@ class McpUnknownMethodStrictRejectTest extends Test:
     case class EmptyParams() derives Schema, CanEqual
     case class EmptyResult() derives Schema, CanEqual
 
-    private val tool1 = McpRoute.tool[AddIn, McpContent.Text]("a") { (in, _) =>
-        McpContent.Text(s"${in.a}", Absent)
+    private val tool1 = McpRoute.tool[AddIn]("a") { (in, _) =>
+        McpContent.Text(s"${in.a}")
     }
-    private val tool2 = McpRoute.tool[AddIn, McpContent.Text]("b") { (in, _) =>
-        McpContent.Text(s"${in.b}", Absent)
+    private val tool2 = McpRoute.tool[AddIn]("b") { (in, _) =>
+        McpContent.Text(s"${in.b}")
     }
-    private val tool3 = McpRoute.tool[AddIn, McpContent.Text]("c") { (_, _) =>
-        McpContent.Text("c", Absent)
+    private val tool3 = McpRoute.tool[AddIn]("c") { (_, _) =>
+        McpContent.Text("c")
     }
 
     "unknown method foo/bar is rejected with JsonRpcError code -32601 (T-022, Q-016)" in run {

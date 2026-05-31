@@ -18,7 +18,7 @@ Routes are typed by user case classes (`Schema[In]` derives the wire decoder AND
 
 ```scala
 val addTool: McpRoute[AddIn, McpContent, Nothing] =
-    McpRoute.tool[AddIn, McpContent](
+    McpRoute.tool[AddIn](
         name        = "add",
         description = "Adds two integers"
     ) { (in, _) =>
@@ -36,7 +36,7 @@ The minimal end-to-end server: define one route, start `JsonRpcTransport.stdio()
 
 ```scala
 val addTool: McpRoute[AddIn, McpContent, Nothing] =
-    McpRoute.tool[AddIn, McpContent](
+    McpRoute.tool[AddIn](
         name        = "add",
         description = "Adds two integers"
     ) { (in, _) =>
@@ -107,20 +107,20 @@ The handler signature is locked across every factory: `(In, McpRoute.Context) =>
 
 ### Tool routes
 
-`McpRoute.tool[In, Out <: McpContent]` is the single-content tool factory: the handler returns a value `<: McpContent` and the engine wraps it in a `ToolCallResult` with `content = Chunk(out)`. `McpRoute.toolMulti[In]` is the multi-content sibling: the handler returns a full `ToolCallResult` and is free to emit multiple content leaves and a `structuredContent` payload.
+`McpRoute.tool[In]` is the single-content tool factory: the handler returns a value `<: McpContent` and the engine wraps it in a `ToolCallResult` with `content = Chunk(out)`. The `Out` type parameter is inferred from the handler's return type via clause interleaving, so the call site only needs `[In]`. `McpRoute.toolMulti[In]` is the multi-content sibling: the handler returns a full `ToolCallResult` and is free to emit multiple content leaves and a `structuredContent` payload.
 
 ```scala
 val weatherTool: McpRoute[Weather, McpContent, Nothing] =
-    McpRoute.tool[Weather, McpContent](
+    McpRoute.tool[Weather](
         name        = "weather",
         description = "Looks up weather for a city",
-        annotations = Present(McpRoute.ToolAnnotations(
+        annotations = McpRoute.ToolAnnotations(
             title           = Present("Weather Lookup"),
             readOnlyHint    = Present(true),
             destructiveHint = Absent,
             idempotentHint  = Present(true),
             openWorldHint   = Present(true)
-        ))
+        )
     ) { (req, _) =>
         McpContent.text(s"Sunny in ${req.city}")
     }
@@ -138,9 +138,9 @@ val readme: McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
         uri         = McpResourceUri("file:///README.md"),
         name        = "readme",
         description = "Project README",
-        mimeType    = Present("text/markdown")
+        mimeType    = Present(McpMimeType("text/markdown"))
     ) { (uri, _) =>
-        Chunk(McpResourceContents.text(uri, "Hello, world!", Present("text/markdown")))
+        Chunk(McpResourceContents.text(uri, "Hello, world!", Present(McpMimeType("text/markdown"))))
     }
 ```
 
@@ -205,7 +205,7 @@ Every handler receives an `McpRoute.Context`. The context exposes four fields an
 - `server: McpServer`: the live server handle, for reverse-direction calls (`requestSampling`, `requestRoots`, `requestElicitation`) and notifications. INV-024: this is the safe opaque type, never `McpServer.Unsafe`.
 - `progress(current, total, message)`: reports an MCP-shaped progress notification keyed on the `_meta.progressToken` the client supplied. A no-op when the client did not supply a token.
 
-`server.requestSampling(req)` lets a tool handler ask the client to run an LLM completion mid-handler; `server.requestElicitation(req)` lets the handler collect additional user input. Both use the typed request and response records (`McpSamplingRequest` / `McpSamplingResponse`, `McpElicitationRequest` / `McpElicitationResponse`); the reverse-direction wire shape is owned by the library.
+`server.requestSampling(req)` lets a tool handler ask the client to run an LLM completion mid-handler; `server.requestElicitation(req)` lets the handler collect additional user input. Both use the typed request and response records (`McpServer.SamplingRequest` / `McpServer.SamplingResponse`, `McpServer.ElicitationRequest` / `McpServer.ElicitationResponse`); the reverse-direction wire shape is owned by the library.
 
 ### Why one trait, not three concrete types
 
@@ -298,9 +298,9 @@ A live MCP server can also originate requests to the client. The three spec-defi
 
 ```scala
 val askLLM: McpRoute[Weather, McpContent, Nothing] =
-    McpRoute.tool[Weather, McpContent]("askLLM") { (req, ctx) =>
-        val sampling = McpSamplingRequest(
-            messages  = Chunk(McpSamplingRequest.Message(
+    McpRoute.tool[Weather]("askLLM") { (req, ctx) =>
+        val sampling = McpServer.SamplingRequest(
+            messages  = Chunk(McpServer.SamplingRequest.Message(
                 role    = McpRole.User,
                 content = McpContent.text(s"What is the weather like in ${req.city}?")
             )),
@@ -316,7 +316,7 @@ val askLLM: McpRoute[Weather, McpContent, Nothing] =
     }
 ```
 
-The reverse-direction surface is fully typed end-to-end: `McpSamplingRequest`, `McpSamplingResponse`, `McpElicitationRequest`, `McpElicitationResponse`, `McpRoot`. The only `Structure.Value` slots are the spec-open `metadata` / `content` fields whose shape is genuinely open (INV-021 allowlist).
+The reverse-direction surface is fully typed end-to-end: `McpServer.SamplingRequest`, `McpServer.SamplingResponse`, `McpServer.ElicitationRequest`, `McpServer.ElicitationResponse`, `McpServer.Root`. The only `Structure.Value` slots are the spec-open `metadata` / `content` fields whose shape is genuinely open (INV-021 allowlist).
 
 Notifications (`server.notifyToolsListChanged`, `server.notifyResourcesListChanged`, `server.notifyResourceUpdated(uri)`, `server.notifyPromptsListChanged`, `server.notifyLog(level, data, logger)`) are the fire-and-forget mirrors. Each is gated by the matching capability advertisement.
 
@@ -333,7 +333,7 @@ The minimal server above uses `stdio()` for exactly the standard MCP deployment 
 
 ```scala
 val pairedTest: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpError | Closed]) =
-    val addTool = McpRoute.tool[AddIn, McpContent]("add") { (in, _) =>
+    val addTool = McpRoute.tool[AddIn]("add") { (in, _) =>
         McpContent.text(s"${in.a + in.b}")
     }
     JsonRpcTransport.inMemory.map { (serverT, clientT) =>

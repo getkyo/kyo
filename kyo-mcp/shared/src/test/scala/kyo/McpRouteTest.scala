@@ -8,8 +8,8 @@ class McpRouteTest extends Test:
 
     // INV-020: tool and toolMulti are separate factories with distinct Out types.
     "tool factory produces a route with Kind.Tool (INV-020)" in run {
-        val r = McpRoute.tool[AddIn, McpContent.Text]("add") { (in, _) =>
-            McpContent.Text(s"${in.a + in.b}", Absent)
+        val r = McpRoute.tool[AddIn]("add") { (in, _) =>
+            McpContent.Text(s"${in.a + in.b}")
         }
         assert(r.kind == McpRoute.Kind.Tool)
         assert(r.name == "add")
@@ -17,7 +17,7 @@ class McpRouteTest extends Test:
 
     "toolMulti factory produces a route with Kind.Tool and ToolCallResult Out (INV-020)" in run {
         val r = McpRoute.toolMulti[AddIn]("addMulti") { (in, _) =>
-            McpRoute.ToolCallResult(Chunk(McpContent.Text(s"${in.a + in.b}", Absent)), isError = false, structuredContent = Absent)
+            McpRoute.ToolCallResult(Chunk(McpContent.Text(s"${in.a + in.b}")), isError = false, structuredContent = Absent)
         }
         assert(r.kind == McpRoute.Kind.Tool)
         assert(r.name == "addMulti")
@@ -28,9 +28,9 @@ class McpRouteTest extends Test:
         // Build a route that captures the Context and checks the server field type.
         // The compile-time assertion is: ctx.server must be assignable to McpServer.
         var capturedCtx: McpRoute.Context = null
-        val r = McpRoute.tool[Unit, McpContent.Text]("probe") { (_, ctx) =>
+        val r = McpRoute.tool[Unit]("probe") { (_, ctx) =>
             capturedCtx = ctx
-            McpContent.Text("ok", Absent)
+            McpContent.Text("ok")
         }
         // The type of ctx.server is McpServer (safe opaque).
         // We verify the type compiles without casting.
@@ -72,13 +72,13 @@ class McpRouteTest extends Test:
     }
 
     "custom factory produces a route with Kind.Custom" in run {
-        val r = McpRoute.custom[Unit, Unit]("myMethod")((_, _) => ())
+        val r = McpRoute.custom[Unit]("myMethod")((_, _) => ())
         assert(r.kind == McpRoute.Kind.Custom)
         assert(r.name == "myMethod")
     }
 
     "tool route underlying method name matches tool name" in run {
-        val r = McpRoute.tool[Unit, McpContent.Text]("myTool")((_, _) => McpContent.Text("", Absent))
+        val r = McpRoute.tool[Unit]("myTool")((_, _) => McpContent.Text(""))
         assert(r.underlying.name == "myTool")
     }
 

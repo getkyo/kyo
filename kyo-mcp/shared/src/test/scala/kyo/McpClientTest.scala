@@ -29,7 +29,7 @@ class McpClientTest extends Test:
     "callToolTyped[In, Out] returns typed Out when structuredContent = Present (T-011, INV-027)" in run {
         val addRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
             McpRoute.ToolCallResult(
-                content = Chunk(McpContent.Text(s"${in.a + in.b}", Absent)),
+                content = Chunk(McpContent.Text(s"${in.a + in.b}")),
                 isError = false,
                 structuredContent = Present(Structure.encode(Sum(in.a + in.b)))
             )
@@ -46,7 +46,7 @@ class McpClientTest extends Test:
     "callToolTyped[In, Out] aborts McpToolStructuredMissingError when structuredContent = Absent (T-012, INV-027)" in run {
         val addUntypedRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
             McpRoute.ToolCallResult(
-                content = Chunk(McpContent.Text(s"${in.a + in.b}", Absent)),
+                content = Chunk(McpContent.Text(s"${in.a + in.b}")),
                 isError = false,
                 structuredContent = Absent
             )
@@ -67,7 +67,7 @@ class McpClientTest extends Test:
     "callTool with one type param (untyped) returns raw ToolCallResult when structuredContent = Absent" in run {
         val addRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
             McpRoute.ToolCallResult(
-                content = Chunk(McpContent.Text(s"${in.a + in.b}", Absent)),
+                content = Chunk(McpContent.Text(s"${in.a + in.b}")),
                 isError = false,
                 structuredContent = Absent
             )
@@ -94,8 +94,8 @@ class McpClientTest extends Test:
 
     // INV-023: listTools returns McpPage[ToolMeta] with .items and .nextCursor fields.
     "listTools returns McpPage with .items and .nextCursor (INV-023)" in run {
-        val toolRoute = McpRoute.tool[AddIn, McpContent.Text]("add") { (in, _) =>
-            McpContent.Text(s"${in.a + in.b}", Absent)
+        val toolRoute = McpRoute.tool[AddIn]("add") { (in, _) =>
+            McpContent.Text(s"${in.a + in.b}")
         }
         withPair(Seq(toolRoute), Seq.empty) { (_, client) =>
             client.listTools().map { page =>

@@ -8,7 +8,7 @@ class McpCapabilityDerivationTest extends Test:
 
     private val testUri = McpResourceUri.parse("file:///x").get
 
-    private val toolRoute     = McpRoute.tool[Unit, McpContent.Text]("t")((_, _) => McpContent.Text("", Absent))
+    private val toolRoute     = McpRoute.tool[Unit]("t")((_, _) => McpContent.Text(""))
     private val resourceRoute = McpRoute.resource(testUri, "r")((_, _) => Chunk.empty)
     private val promptRoute   = McpRoute.prompt("p")((_, _) => McpRoute.PromptGetResult(Absent, Chunk.empty))
 

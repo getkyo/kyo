@@ -7,11 +7,11 @@ class McpHandshakeRoundtripTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
 
-    private val route1 = McpRoute.tool[AddIn, McpContent.Text]("add") { (in, _) =>
-        McpContent.Text(s"${in.a + in.b}", Absent)
+    private val route1 = McpRoute.tool[AddIn]("add") { (in, _) =>
+        McpContent.Text(s"${in.a + in.b}")
     }
-    private val route2 = McpRoute.tool[AddIn, McpContent.Text]("sub") { (in, _) =>
-        McpContent.Text(s"${in.a - in.b}", Absent)
+    private val route2 = McpRoute.tool[AddIn]("sub") { (in, _) =>
+        McpContent.Text(s"${in.a - in.b}")
     }
     private val clientInfo = McpInfo("calc")
     private val clientCaps = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))

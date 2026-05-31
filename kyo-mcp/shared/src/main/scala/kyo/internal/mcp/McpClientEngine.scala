@@ -124,15 +124,17 @@ private[kyo] object McpClientEngine:
             private def reject[A](method: String)(using Frame): A < (Async & Abort[McpError | Closed]) =
                 Abort.fail(McpSamplingRejectedError(s"ctx.server.$method is not available in client-side route handlers"))
 
-            def requestSamplingUnsafe(req: McpSamplingRequest)(using Frame): McpSamplingResponse < (Async & Abort[McpError | Closed]) =
+            def requestSamplingUnsafe(req: McpServer.SamplingRequest)(using
+                Frame
+            ): McpServer.SamplingResponse < (Async & Abort[McpError | Closed]) =
                 reject("requestSampling")
 
-            def requestRootsUnsafe(using Frame): Chunk[McpRoot] < (Async & Abort[McpError | Closed]) =
+            def requestRootsUnsafe(using Frame): Chunk[McpServer.Root] < (Async & Abort[McpError | Closed]) =
                 reject("requestRoots")
 
-            def requestElicitationUnsafe(req: McpElicitationRequest)(using
+            def requestElicitationUnsafe(req: McpServer.ElicitationRequest)(using
                 Frame
-            ): McpElicitationResponse < (Async & Abort[McpError | Closed]) =
+            ): McpServer.ElicitationResponse < (Async & Abort[McpError | Closed]) =
                 reject("requestElicitation")
 
             def notifyToolsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =

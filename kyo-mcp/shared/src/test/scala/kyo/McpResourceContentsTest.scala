@@ -43,12 +43,12 @@ class McpResourceContentsTest extends Test:
     }
 
     "Text with mimeType round-trips correctly" in {
-        val rc = McpResourceContents.Text(sampleUri, Present("text/plain"), "content")
+        val rc = McpResourceContents.Text(sampleUri, Present(McpMimeType("text/plain")), "content")
         assert(roundtrip[McpResourceContents](rc) == rc)
     }
 
     "Blob with mimeType round-trips correctly" in {
-        val rc = McpResourceContents.Blob(sampleUri, Present("application/octet-stream"), "aGVsbG8=")
+        val rc = McpResourceContents.Blob(sampleUri, Present(McpMimeType("application/octet-stream")), "aGVsbG8=")
         assert(roundtrip[McpResourceContents](rc) == rc)
     }
 

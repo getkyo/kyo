@@ -54,22 +54,24 @@ private[kyo] object McpCapabilityGate:
 
     // Returns the missing capability name, or Absent if the method is admitted.
     // Methods not in the capability map always return Absent (admitted).
-    private def missingCapability(method: String, caps: McpCapabilities.Server): Maybe[String] =
+    // For sub-flags (e.g. resources.subscribe) the missing capability is still the parent
+    // McpCapabilityName; the gate-rejection message names the broader capability.
+    private def missingCapability(method: String, caps: McpCapabilities.Server): Maybe[McpCapabilityName] =
         if method == "tools/list" || method == "tools/call" then
-            if caps.tools.isDefined then Absent else Present("tools")
+            if caps.tools.isDefined then Absent else Present(McpCapabilityName.Tools)
         else if method == "resources/list" || method == "resources/templates/list" || method == "resources/read" then
-            if caps.resources.isDefined then Absent else Present("resources")
+            if caps.resources.isDefined then Absent else Present(McpCapabilityName.Resources)
         else if method == "resources/subscribe" then
             caps.resources match
                 case Present(r) if r.subscribe => Absent
-                case _                         => Present("resources.subscribe")
+                case _                         => Present(McpCapabilityName.Resources)
             end match
         else if method == "prompts/list" || method == "prompts/get" then
-            if caps.prompts.isDefined then Absent else Present("prompts")
+            if caps.prompts.isDefined then Absent else Present(McpCapabilityName.Prompts)
         else if method == "completion/complete" then
-            if caps.completions.isDefined then Absent else Present("completions")
+            if caps.completions.isDefined then Absent else Present(McpCapabilityName.Completions)
         else if method == "logging/setLevel" then
-            if caps.logging.isDefined then Absent else Present("logging")
+            if caps.logging.isDefined then Absent else Present(McpCapabilityName.Logging)
         else
             // Method not in the capability map; always admit
             Absent

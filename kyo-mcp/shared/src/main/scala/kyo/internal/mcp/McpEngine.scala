@@ -84,23 +84,25 @@ private[kyo] object McpEngine:
         JsonRpcHandler.initUnscoped(transport, allRoutes, jsonRpcConfig).map { handler =>
             val unsafe: McpServer.Unsafe = new McpServer.Unsafe:
 
-                def requestSamplingUnsafe(req: McpSamplingRequest)(using Frame): McpSamplingResponse < (Async & Abort[McpError | Closed]) =
-                    handler.call[McpSamplingRequest, McpSamplingResponse]("sampling/createMessage", req)
+                def requestSamplingUnsafe(req: McpServer.SamplingRequest)(using
+                    Frame
+                ): McpServer.SamplingResponse < (Async & Abort[McpError | Closed]) =
+                    handler.call[McpServer.SamplingRequest, McpServer.SamplingResponse]("sampling/createMessage", req)
                         .handle(Abort.recover[JsonRpcError] { e =>
                             Abort.fail(McpSamplingRejectedError(e.message))
                         })
 
-                def requestRootsUnsafe(using Frame): Chunk[McpRoot] < (Async & Abort[McpError | Closed]) =
+                def requestRootsUnsafe(using Frame): Chunk[McpServer.Root] < (Async & Abort[McpError | Closed]) =
                     handler.call[NotifyEmptyParams, McpRootsListResponse]("roots/list", NotifyEmptyParams())
                         .map(_.roots)
                         .handle(Abort.recover[JsonRpcError] { e =>
                             Abort.fail(McpInvalidArgumentError("roots/list", "response", e.message))
                         })
 
-                def requestElicitationUnsafe(req: McpElicitationRequest)(using
+                def requestElicitationUnsafe(req: McpServer.ElicitationRequest)(using
                     Frame
-                ): McpElicitationResponse < (Async & Abort[McpError | Closed]) =
-                    handler.call[McpElicitationRequest, McpElicitationResponse]("elicitation/create", req)
+                ): McpServer.ElicitationResponse < (Async & Abort[McpError | Closed]) =
+                    handler.call[McpServer.ElicitationRequest, McpServer.ElicitationResponse]("elicitation/create", req)
                         .handle(Abort.recover[JsonRpcError] { e =>
                             Abort.fail(McpElicitationDeclinedError(e.message))
                         })

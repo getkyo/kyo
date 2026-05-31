@@ -7,8 +7,8 @@ class McpCapabilityAdvertisementTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
 
-    private val toolRoute = McpRoute.tool[AddIn, McpContent.Text]("add") { (in, _) =>
-        McpContent.Text(s"${in.a + in.b}", Absent)
+    private val toolRoute = McpRoute.tool[AddIn]("add") { (in, _) =>
+        McpContent.Text(s"${in.a + in.b}")
     }
 
     "tool call aborts with McpCapabilityNotAdvertisedError when tools capability is absent (T-015, INV-015)" in run {
