@@ -69,7 +69,7 @@ val program: McpRoute.ToolCallResult < (Async & Scope & Abort[McpError | Closed]
     yield result
 ```
 
-`McpInfo(name = "calc-tester")` uses the Audit-B2 default for `version` (`"0.0.0"`); ship a real version string in production code. `McpCapabilities.Client()` advertises no client capabilities (the zero-arg call works because all four fields default to `Absent` or `Map.empty`).
+`McpInfo(name = "calc-tester")` uses the Audit-B2 default for `version` (`"0.0.0"`); ship a real version string in production code. `McpInfo` also carries an optional `title: Maybe[String]` (§3.20) for a human-readable display name distinct from the wire-stable `name`. `McpCapabilities.Client()` advertises no client capabilities (the zero-arg call works because all four fields default to `Absent` or `Map.empty`).
 
 `client.callTool[AddIn]` is the untyped overload: the server's `ToolCallResult` is returned verbatim (`content: Chunk[McpContent]`, `isError: Boolean`, `structuredContent: Maybe[Structure.Value]`). When the tool produces a typed result and you want the engine to decode it for you, use the typed overload:
 
@@ -86,7 +86,11 @@ val typed: Sum < (Async & Scope & Abort[McpError | Closed]) =
 
 The typed overload aborts with `McpToolStructuredMissingError` when the server returns `ToolCallResult.structuredContent = Absent`; reach for the untyped variant when the tool emits unstructured content. `callTool[In]` and `callToolTyped[In, Out]` are distinct names so Scala 3 extension-method resolution is unambiguous: the compiler can tell them apart without inspecting the type-argument list.
 
-The remaining client surface is a small set of typed extension methods, each named after the underlying MCP request: `listTools`, `listResources`, `listResourceTemplates`, `readResource`, `listPrompts`, `getPrompt`, `complete`, `setLogLevel`, `notifyRootsListChanged`. Each is fully callable at the safe tier and returns a typed result:
+The remaining client surface is a small set of typed extension methods, each named after the underlying MCP request: `listTools`, `listResources`, `listResourceTemplates`, `readResource`, `listPrompts`, `getPrompt`, `complete`, `setLogLevel`, `subscribeResource`, `unsubscribeResource`, `ping`, `notifyRootsListChanged`. Each is fully callable at the safe tier and returns a typed result. (`subscribeResource(uri)` / `unsubscribeResource(uri)` ride the spec's resource-subscription protocol and only succeed when the server has at least one route declared with `subscribe = true`; `ping` is a `Unit`-returning handshake-liveness check.)
+
+`setLogLevel(level: McpLogLevel)` takes the typed log level (eight cases Debug through Emergency); the server-side `notifyLog(level, data, logger)` matches.
+
+The list-shaped methods return `McpPage[A]` which also provides factories `McpPage.empty[A]` and `McpPage.of(items, next)` plus a `.isLast` predicate for cursor-based iteration.
 
 ```scala
 val tools: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpError | Closed]) =
@@ -97,7 +101,7 @@ val tools: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpError | Closed
     }
 ```
 
-Each cursor-paginated list returns `McpPage[A](items, nextCursor)` so the page boundary is named, not the tuple-positional `(Chunk[A], Maybe[String])` shape (Audit-A3 / INV-023).
+Each cursor-paginated list returns `McpPage[A](items, nextCursor, meta)` so the page boundary is named, not the tuple-positional `(Chunk[A], Maybe[String])` shape (Audit-A3 / INV-023). The `meta: Maybe[Structure.Value]` field is the spec §3.7 advisory carve-out; the same `_meta` passthrough also rides on `ToolCallResult` and `PromptGetResult` and is the only place the typed API hands you the raw JSON shape.
 
 ## Routes
 
@@ -128,6 +132,8 @@ val weatherTool: McpRoute[Weather, McpContent, Nothing] =
 
 The `ToolAnnotations` record captures the spec's display and behavioural hints; every field is optional. Pick `tool` when one content leaf suffices; reach for `toolMulti` when the tool emits a mixed bag (text plus an image, say) or wants to populate the typed `structuredContent` slot that `callToolTyped[In, Out]` decodes against.
 
+`ToolAnnotations.noop` is the empty-record default; the factory translates equality with `.noop` into wire-`Absent` so the field is omitted from the JSON envelope. `ResourceAnnotations.noop` follows the same noop-omit pattern.
+
 ### Resource routes
 
 `McpRoute.resource(uri, name, ...)` registers a fixed-URI resource; `McpRoute.resourceTemplate(uriTemplate, name, ...)` registers an RFC 6570 URI-template resource matching every URI that fits the pattern. Both handlers return `Chunk[McpResourceContents]`; both URI inputs are typed opaque values (`McpResourceUri` for full URIs, `McpResourceUriTemplate` for templates), never raw `String` (INV-022).
@@ -144,7 +150,15 @@ val readme: McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
     }
 ```
 
+`McpResourceContents.text(uri, text, mimeType)` and `McpResourceContents.blob(uri, blob, mimeType)` are the two factories for resource read results; pick `text` for UTF-8 payloads and `blob` for base64-encoded binary.
+
+`McpContent` has five cases (`Text`, `Image`, `Audio`, `EmbeddedResource`, `ResourceLink`); `ResourceLink(uri, name, ...)` is the typed link variant for search-style tools that point into the resource catalogue rather than embedding payload inline.
+
 `McpResourceUri.parse(s)` is the validated user-facing constructor: it returns `Absent` when `s` is empty or whitespace. `McpResourceUri.apply(s)` is the trusted call-site constructor used at the library boundary and inside this README's doctest blocks. Use `parse` for any URI that comes from outside your code; use `apply` only when you have already validated the string.
+
+The same parse-vs-apply pattern (and a final `.asString` accessor for wire conversion) applies to `McpResourceUriTemplate`, `McpMimeType`, and `McpProtocolVersion`; all four opaque newtypes share the same shape.
+
+`McpRoute.resource(..., subscribe = false)` is the default; passing `subscribe = true` on a per-resource basis is what causes the server to advertise `resources.subscribe = true` and accept `subscribeResource` calls from the client. A client `subscribeResource` against a server with no opted-in route is rejected by the capability gate.
 
 ### Prompt routes
 
@@ -180,7 +194,7 @@ The declared `arguments` populate the `prompts/list` advertisement. The runtime 
 
 ```scala
 val topicCompletion: McpRoute[(McpRoute.CompletionRef, McpRoute.CompletionArg), McpRoute.CompletionResult, Nothing] =
-    McpRoute.completion(McpRoute.CompletionRef.Prompt("explain")) { (_, arg, _) =>
+    McpRoute.completion(McpRoute.CompletionRef.Prompt("explain")) { (_, arg, _, _) =>
         McpRoute.CompletionResult(
             values  = Chunk("kyo", "scala", "mcp").filter(_.startsWith(arg.value)),
             total   = Absent,
@@ -190,6 +204,10 @@ val topicCompletion: McpRoute[(McpRoute.CompletionRef, McpRoute.CompletionArg), 
 ```
 
 `CompletionRef` is a sealed enum with two cases: `Prompt(name)` and `Resource(uri)`. `CompletionArg.name` is the argument the client is completing; `CompletionArg.value` is the partial value the user has typed so far.
+
+The fourth handler parameter is `Maybe[CompletionArg.Context]`, which carries the previously-filled argument values for this completion request per spec §3.17. `McpClient.complete(ref, arg)` currently forwards `Absent` for context, so handlers that inspect it will receive `Absent` when called via the built-in client.
+
+`McpRoute[In, Out, +E].error[E2](code, message)` adds an entry to the route's typed error channel; the handler then aborts with values of type `E2` and the engine maps them to the spec'd JSON-RPC error code on the wire.
 
 ### Custom routes
 
@@ -203,7 +221,7 @@ Every handler receives an `McpRoute.Context`. The context exposes four fields an
 - `requestId: Maybe[JsonRpcId]`: the JSON-RPC id of the inbound request (`Absent` for notifications).
 - `extras: Maybe[Structure.Value]`: protocol-specific extra fields from the inbound envelope.
 - `server: McpServer`: the live server handle, for reverse-direction calls (`requestSampling`, `requestRoots`, `requestElicitation`) and notifications. INV-024: this is the safe opaque type, never `McpServer.Unsafe`.
-- `progress(current, total, message)`: reports an MCP-shaped progress notification keyed on the `_meta.progressToken` the client supplied. A no-op when the client did not supply a token.
+- `progress(progress, total, message)`: reports an MCP-shaped progress notification keyed on the `_meta.progressToken` the client supplied. A no-op when the client did not supply a token, and silently dropped per `McpProgressPolicy` when no `progressToken` was extracted by the engine.
 
 `server.requestSampling(req)` lets a tool handler ask the client to run an LLM completion mid-handler; `server.requestElicitation(req)` lets the handler collect additional user input. Both use the typed request and response records (`McpServer.SamplingRequest` / `McpServer.SamplingResponse`, `McpServer.ElicitationRequest` / `McpServer.ElicitationResponse`); the reverse-direction wire shape is owned by the library.
 
@@ -245,7 +263,7 @@ Three application-error leaves ship with the library: `McpToolExecutionError(too
 
 Pipeline stage is the only axis along which an error-handling caller actually wants to fan out. A flat enum forces every caller to enumerate every leaf even when the only distinction that matters is "the handshake never completed" vs "the handler aborted". The sealed traits keep pattern-matching by stage one line long while the leaf case classes preserve the precise diagnostic for logging.
 
-## Capabilities
+## The capability gate
 
 MCP peers advertise their feature set during the handshake. `McpCapabilities.Server` is what the server sends in the `initialize` response; `McpCapabilities.Client` is what the client sends in the `initialize` request. Each is a typed record with optional fields per capability domain (`tools`, `resources`, `prompts`, `logging`, `completions` on the server side; `sampling`, `roots`, `elicitation` on the client side).
 
@@ -262,6 +280,8 @@ val explicitCaps: McpConfig =
 ```
 
 Once the handshake completes, `server.clientCapabilities` and `client.serverCapabilities` expose the negotiated record as `Maybe[McpCapabilities.{Client, Server}]` (`Absent` before the handshake finishes). The handler-time `Context` does not expose capabilities directly because routes that depend on an opt-in capability are dispatch-gated by `McpConfig.capabilityGate` ; if a client calls a method whose required capability the server did not advertise (or vice versa), the engine fails with `McpCapabilityNotAdvertisedError` before the handler runs.
+
+The `capabilityName: McpCapabilityName` field on `McpCapabilityNotAdvertisedError` (and the enum's eight cases: Tools, Resources, Prompts, Sampling, Roots, Logging, Completions, Elicitation) lets handler code pattern-match on which capability the peer required.
 
 ## Lifecycle
 
@@ -300,11 +320,15 @@ A live MCP server can also originate requests to the client. The three spec-defi
 val askLLM: McpRoute[Weather, McpContent, Nothing] =
     McpRoute.tool[Weather]("askLLM") { (req, ctx) =>
         val sampling = McpServer.SamplingRequest(
-            messages  = Chunk(McpServer.SamplingRequest.Message(
+            messages         = Chunk(McpServer.SamplingRequest.Message(
                 role    = McpRole.User,
-                content = McpContent.text(s"What is the weather like in ${req.city}?")
+                content = McpServer.SamplingContent.Text(s"What is the weather like in ${req.city}?")
             )),
-            maxTokens = 256
+            modelPreferences = Present(McpServer.SamplingRequest.ModelPreferences(
+                hints           = Chunk(McpServer.SamplingRequest.ModelHint(name = Present("claude-3-5-sonnet"))),
+                intelligencePriority = Present(0.8)
+            )),
+            maxTokens        = 256
         )
         Abort.run[Closed](ctx.server.requestSampling(sampling)).map {
             case Result.Success(resp) => resp.content match
@@ -315,6 +339,12 @@ val askLLM: McpRoute[Weather, McpContent, Nothing] =
         }
     }
 ```
+
+`SamplingRequest.includeContext` accepts the enum `IncludeContext.{None, ThisServer, AllServers}`; `ElicitationResponse.action` carries `ElicitationResponse.Action.{Accept, Decline, Cancel}` so handler code can pattern-match on the user's choice.
+
+`SamplingRequest.Message.content` is typed `SamplingContent`, a sealed subset of `McpContent` covering only `Text`, `Image`, and `Audio`. The wider `EmbeddedResource` and `ResourceLink` cases are disallowed in sampling requests; call `samplingContent.toMcpContent` to lift back to the broader type when forwarding the response into a normal tool result.
+
+`SamplingResponse.stopReason` is `Maybe[SamplingResponse.StopReason]` with cases `EndTurn`, `StopSequence`, `MaxTokens`. The schema decodes any unrecognised wire string to `EndTurn`, so callers that need to distinguish "server said endTurn" from "server said something we don't recognise" must inspect the underlying envelope.
 
 The reverse-direction surface is fully typed end-to-end: `McpServer.SamplingRequest`, `McpServer.SamplingResponse`, `McpServer.ElicitationRequest`, `McpServer.ElicitationResponse`, `McpServer.Root`. The only `Structure.Value` slots are the spec-open `metadata` / `content` fields whose shape is genuinely open (INV-021 allowlist).
 
@@ -362,6 +392,8 @@ val tuned: McpConfig =
 The fluent setters (`serverInfo`, `instructions`, `supportedProtocolVersions`, `declaredCapabilities`, `handshakeTimeout`, `handshakeOrder`, `capabilityGate`, `autoNotifyListChanged`, `jsonRpc`) each return a new `McpConfig` with the named field overridden. Pass the result to `McpServer.init(transport, config)(routes*)` or `McpClient.init(transport, info, caps, config)(routes*)`.
 
 `McpConfig.require(c)` validates the config (non-empty `supportedProtocolVersions`, positive `handshakeTimeout`, and delegates to `JsonRpcHandler.Config.require` for the embedded JSON-RPC slot). Every `init` variant calls it; an invalid config throws `IllegalArgumentException` at init time, not lazily.
+
+`supportedProtocolVersions: Chunk[McpProtocolVersion]` accepts the typed protocol-version newtype; use `McpProtocolVersion.parse(wireString)` to construct from external input and `.asString` to recover the wire form.
 
 ### Handshake order and capability gate
 
