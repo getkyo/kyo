@@ -57,16 +57,29 @@ private[kyo] object McpEngine:
 
         val builtinRoutes: Seq[JsonRpcRoute[?, ?, ?]] = Seq(
             McpBuiltInRoutes.toolsList(catalog),
+            McpBuiltInRoutes.toolsCall(catalog),
             McpBuiltInRoutes.resourcesList(catalog),
+            McpBuiltInRoutes.resourcesRead(catalog),
             McpBuiltInRoutes.resourceTemplatesList(catalog),
             McpBuiltInRoutes.promptsList(catalog),
+            McpBuiltInRoutes.promptsGet(catalog),
+            McpBuiltInRoutes.loggingSetLevel,
             McpBuiltInRoutes.completionComplete(catalog)
         )
+
+        // Register no-op handlers for MCP-protocol notifications that are not user routes.
+        // The strict unknown-method policy would reject them; these stubs accept and discard them.
+        // The handshake gate already processes notifications/initialized via beforeDispatch.
+        val initializedNotifRoute: JsonRpcRoute[?, ?, ?] =
+            JsonRpcRoute.notification[NotifyEmptyParams]("notifications/initialized") { (_, _) => () }
+        val rootsListChangedRoute: JsonRpcRoute[?, ?, ?] =
+            JsonRpcRoute.notification[NotifyEmptyParams]("notifications/roots/list_changed") { (_, _) => () }
 
         // Lift user McpRoute carriers to JsonRpcRoute.
         // initialize is at index 0 (INV-004); builtins follow; user routes last.
         val userJsonRpcRoutes: Seq[JsonRpcRoute[?, ?, ?]] = userRoutes.map(_.underlying)
-        val allRoutes: Seq[JsonRpcRoute[?, ?, ?]]         = Seq(initializeRoute) ++ builtinRoutes ++ userJsonRpcRoutes
+        val allRoutes: Seq[JsonRpcRoute[?, ?, ?]] =
+            Seq(initializeRoute, initializedNotifRoute, rootsListChangedRoute) ++ builtinRoutes ++ userJsonRpcRoutes
 
         JsonRpcHandler.initUnscoped(transport, allRoutes, jsonRpcConfig).map { handler =>
             val unsafe: McpServer.Unsafe = new McpServer.Unsafe:

@@ -107,94 +107,137 @@ object McpClient:
     end extension
 
     abstract class Unsafe:
-        def listToolsUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.ToolMeta] < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.listToolsUnsafe stub: body filled in Phase 6")
+        def listToolsUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.ToolMeta] < (Async & Abort[McpError | Closed])
         def callToolUnsafe[In](name: String, arguments: In)(using
             Frame,
             Schema[In]
-        ): McpRoute.ToolCallResult < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.callToolUnsafe stub: body filled in Phase 6")
+        ): McpRoute.ToolCallResult < (Async & Abort[McpError | Closed])
         def callToolTypedUnsafe[In, Out](name: String, arguments: In)(using
             Frame,
             Schema[In],
             Schema[Out]
-        ): Out < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.callToolTypedUnsafe stub: body filled in Phase 6")
-        def listResourcesUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.ResourceMeta] < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.listResourcesUnsafe stub: body filled in Phase 6")
+        ): Out < (Async & Abort[McpError | Closed])
+        def listResourcesUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.ResourceMeta] < (Async & Abort[McpError | Closed])
         def listResourceTemplatesUnsafe(cursor: Maybe[String])(using
             Frame
-        ): McpPage[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.listResourceTemplatesUnsafe stub: body filled in Phase 6")
-        def readResourceUnsafe(uri: McpResourceUri)(using Frame): Chunk[McpResourceContents] < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.readResourceUnsafe stub: body filled in Phase 6")
-        def listPromptsUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.PromptMeta] < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.listPromptsUnsafe stub: body filled in Phase 6")
+        ): McpPage[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpError | Closed])
+        def readResourceUnsafe(uri: McpResourceUri)(using Frame): Chunk[McpResourceContents] < (Async & Abort[McpError | Closed])
+        def listPromptsUnsafe(cursor: Maybe[String])(using Frame): McpPage[McpRoute.PromptMeta] < (Async & Abort[McpError | Closed])
         def getPromptUnsafe(name: String, arguments: Map[String, String])(using
             Frame
-        ): McpRoute.PromptGetResult < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.getPromptUnsafe stub: body filled in Phase 6")
-        def setLogLevelUnsafe(level: McpLogLevel)(using Frame): Unit < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.setLogLevelUnsafe stub: body filled in Phase 6")
+        ): McpRoute.PromptGetResult < (Async & Abort[McpError | Closed])
+        def setLogLevelUnsafe(level: McpLogLevel)(using Frame): Unit < (Async & Abort[McpError | Closed])
         def completeUnsafe(ref: McpRoute.CompletionRef, arg: McpRoute.CompletionArg)(using
             Frame
-        ): McpRoute.CompletionResult < (Async & Abort[McpError | Closed]) =
-            throw new NotImplementedError("McpClient.completeUnsafe stub: body filled in Phase 6")
-        def notifyRootsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
-            throw new NotImplementedError("McpClient.notifyRootsListChangedUnsafe stub: body filled in Phase 6")
-        def serverCapabilitiesUnsafe: Maybe[McpCapabilities.Server] =
-            throw new NotImplementedError("McpClient.serverCapabilitiesUnsafe stub: body filled in Phase 6")
-        def serverInfoUnsafe: Maybe[McpInfo] =
-            throw new NotImplementedError("McpClient.serverInfoUnsafe stub: body filled in Phase 6")
-        def protocolVersionUnsafe: Maybe[McpProtocolVersion] =
-            throw new NotImplementedError("McpClient.protocolVersionUnsafe stub: body filled in Phase 6")
-        def underlyingUnsafe: JsonRpcHandler =
-            throw new NotImplementedError("McpClient.underlyingUnsafe stub: body filled in Phase 6")
-        def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async =
-            throw new NotImplementedError("McpClient.closeUnsafe stub: body filled in Phase 6")
+        ): McpRoute.CompletionResult < (Async & Abort[McpError | Closed])
+        def notifyRootsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
+        def serverCapabilitiesUnsafe: Maybe[McpCapabilities.Server]
+        def serverInfoUnsafe: Maybe[McpInfo]
+        def protocolVersionUnsafe: Maybe[McpProtocolVersion]
+        def underlyingUnsafe: JsonRpcHandler
+        def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async
         final def safe: McpClient = this
     end Unsafe
 
     // --- Scoped init quartet (INV-014: parameter order = transport, clientInfo, capabilities, routes*) ---
 
+    /** Initialises a client using `routes` and `McpConfig.default`, releasing it when the `Scope` exits. */
     def init(transport: JsonRpcTransport, clientInfo: McpInfo, capabilities: McpCapabilities.Client, routes: McpRoute[?, ?, ?]*)(using
         Frame
-    ): McpClient < (Async & Scope) =
-        throw new NotImplementedError("McpClient.init stub: body filled in Phase 6")
+    ): McpClient < (Async & Scope & Abort[McpError | Closed]) =
+        init(transport, clientInfo, capabilities, routes, McpConfig.default)
 
+    /** Initialises a client from a `Seq` of routes and optional config, releasing it when the `Scope` exits. */
     def init(
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
         routes: Seq[McpRoute[?, ?, ?]],
         config: McpConfig = McpConfig.default
-    )(using Frame): McpClient < (Async & Scope) =
-        throw new NotImplementedError("McpClient.init(seq, config) stub: body filled in Phase 6")
+    )(using Frame): McpClient < (Async & Scope & Abort[McpError | Closed]) =
+        McpConfig.require(config)
+        Scope.acquireRelease(
+            internal.mcp.McpClientEngine.initClient(transport, clientInfo, capabilities, routes, config).map(_.safe)
+        )(_.closeNow)
+    end init
 
+    /** Initialises a client using `routes` and `config` (curried), releasing it when the `Scope` exits.
+      * Mirrors the McpServer.init(transport, config)(routes*) W2 curried overload.
+      */
+    def init(
+        transport: JsonRpcTransport,
+        clientInfo: McpInfo,
+        capabilities: McpCapabilities.Client,
+        config: McpConfig
+    )(routes: McpRoute[?, ?, ?]*)(using Frame): McpClient < (Async & Scope & Abort[McpError | Closed]) =
+        init(transport, clientInfo, capabilities, routes, config)
+
+    /** Initialises a client and immediately applies `f`, releasing the client when the `Scope` exits. */
     def initWith[A, S](
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
         routes: McpRoute[?, ?, ?]*
-    )(f: McpClient => A < S)(using Frame): A < (S & Async & Scope) =
-        throw new NotImplementedError("McpClient.initWith stub: body filled in Phase 6")
+    )(f: McpClient => A < S)(using Frame): A < (S & Async & Scope & Abort[McpError | Closed]) =
+        init(transport, clientInfo, capabilities, routes*).map(f)
+
+    /** Initialises a client with `config` and immediately applies `f` (curried W2 overload). */
+    def initWith[A, S](
+        transport: JsonRpcTransport,
+        clientInfo: McpInfo,
+        capabilities: McpCapabilities.Client,
+        config: McpConfig
+    )(routes: McpRoute[?, ?, ?]*)(f: McpClient => A < S)(using Frame): A < (S & Async & Scope & Abort[McpError | Closed]) =
+        init(transport, clientInfo, capabilities, config)(routes*).map(f)
 
     // --- Unscoped init ---
 
+    /** Initialises a client using `routes` and `McpConfig.default` without a managed `Scope`. */
     def initUnscoped(
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
         routes: McpRoute[?, ?, ?]*
-    )(using Frame): McpClient < Async =
-        throw new NotImplementedError("McpClient.initUnscoped stub: body filled in Phase 6")
+    )(using Frame): McpClient < (Async & Abort[McpError | Closed]) =
+        initUnscoped(transport, clientInfo, capabilities, routes, McpConfig.default)
 
+    /** Initialises a client from a `Seq` of routes without a managed `Scope`. */
+    def initUnscoped(
+        transport: JsonRpcTransport,
+        clientInfo: McpInfo,
+        capabilities: McpCapabilities.Client,
+        routes: Seq[McpRoute[?, ?, ?]],
+        config: McpConfig = McpConfig.default
+    )(using Frame): McpClient < (Async & Abort[McpError | Closed]) =
+        McpConfig.require(config)
+        internal.mcp.McpClientEngine.initClient(transport, clientInfo, capabilities, routes, config).map(_.safe)
+    end initUnscoped
+
+    /** Initialises an unscoped client using `routes` and `config` (curried W2 overload). */
+    def initUnscoped(
+        transport: JsonRpcTransport,
+        clientInfo: McpInfo,
+        capabilities: McpCapabilities.Client,
+        config: McpConfig
+    )(routes: McpRoute[?, ?, ?]*)(using Frame): McpClient < (Async & Abort[McpError | Closed]) =
+        initUnscoped(transport, clientInfo, capabilities, routes, config)
+
+    /** Initialises an unscoped client and immediately applies `f`. */
     def initUnscopedWith[A, S](
         transport: JsonRpcTransport,
         clientInfo: McpInfo,
         capabilities: McpCapabilities.Client,
         routes: McpRoute[?, ?, ?]*
-    )(f: McpClient => A < S)(using Frame): A < (S & Async) =
-        throw new NotImplementedError("McpClient.initUnscopedWith stub: body filled in Phase 6")
+    )(f: McpClient => A < S)(using Frame): A < (S & Async & Abort[McpError | Closed]) =
+        initUnscoped(transport, clientInfo, capabilities, routes*).map(f)
+
+    /** Initialises an unscoped client with `config` and immediately applies `f` (curried W2 overload). */
+    def initUnscopedWith[A, S](
+        transport: JsonRpcTransport,
+        clientInfo: McpInfo,
+        capabilities: McpCapabilities.Client,
+        config: McpConfig
+    )(routes: McpRoute[?, ?, ?]*)(f: McpClient => A < S)(using Frame): A < (S & Async & Abort[McpError | Closed]) =
+        initUnscoped(transport, clientInfo, capabilities, config)(routes*).map(f)
 
 end McpClient
