@@ -70,29 +70,8 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 11: SymbolKind.Package appears for both Java and Scala contexts
     // -------------------------------------------------------------------------
-    "SymbolKind.Package: Java classfile owner chain and Scala TASTy both produce Package symbols" taggedAs jvmOnly in run {
-        // Java: the class symbol for an inner class has Package symbols in its owner chain.
-        val mapEntryBytes = loadJdkClass("java/util/Map$Entry.class")
-        readClassBytes(mapEntryBytes).map: javaResult =>
-            val javaClassSym = javaResult.classSymbol
-            // Walk owner chain to find Package symbols (use eq for reference equality on Symbol)
-            def collectOwners(sym: Tasty.Symbol, acc: List[Tasty.Symbol]): List[Tasty.Symbol] =
-                if sym == null || sym.owner == null || (sym.owner eq sym) then acc
-                else collectOwners(sym.owner, sym.owner :: acc)
-            val owners     = collectOwners(javaClassSym, Nil)
-            val hasJavaPkg = owners.exists(_.kind == Tasty.SymbolKind.Package)
-            assert(
-                hasJavaPkg,
-                s"Expected a Package symbol in owner chain of java.util.Map.Entry; owners: ${owners.map(o => o.name.asString + ":" + o.kind).mkString(", ")}"
-            )
-            // Scala: PlainClass.tasty lives in package kyo.fixtures
-            tastySymbols("PlainClass.tasty").map: tastyResult =>
-                val allSyms     = tastyResult.symbols
-                val hasScalaPkg = allSyms.exists(_.kind == Tasty.SymbolKind.Package)
-                assert(
-                    hasScalaPkg,
-                    s"Expected a Package symbol in Scala TASTy symbols; kinds: ${allSyms.map(_.kind).distinct.mkString(", ")}"
-                )
+    "SymbolKind.Package: Java classfile owner chain and Scala TASTy both produce Package symbols" taggedAs jvmOnly in {
+        pending // plan: phase-02; sym.owner deferred to Phase 09
     }
 
     // -------------------------------------------------------------------------
@@ -205,7 +184,7 @@ class UnifiedModelTest extends Test:
         // ClassfileUnpickler.buildRecordComponents calls parseErasedDescriptorType which
         // must produce Type.Array for the "[I" descriptor of the int[] field.
         readClassBytes(kyo.fixtures.Embedded.arrayRecordClass).map: result =>
-            val components = result.classSymbol.javaSpecific
+            val components = result.classSymbol.javaMetadata
                 .map(_.recordComponents)
                 .getOrElse(Chunk.empty)
             assert(
@@ -246,16 +225,11 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     "full SymbolKind matrix: each non-Unresolved kind has at least one symbol in fixtures" taggedAs jvmOnly in run {
         // Collect kinds from a classfile result (classSymbol + members + owner chain)
+        // plan: phase-02 bridge; sym.owner is removed; collect kinds from classSymbol + members only.
         def kindsFromClassResult(r: ClassfileResult): Set[Tasty.SymbolKind] =
             val buf = scala.collection.mutable.Set[Tasty.SymbolKind]()
             buf += r.classSymbol.kind
             r.symbols.toList.foreach(s => buf += s.kind)
-            var cur = r.classSymbol.owner
-            while cur != null && !(cur.owner eq cur) && cur.owner != null do
-                buf += cur.kind
-                cur = cur.owner
-            end while
-            if cur != null then buf += cur.kind
             buf.toSet
         end kindsFromClassResult
 
@@ -325,15 +299,7 @@ class UnifiedModelTest extends Test:
 
     // Test 19: CLASSconst with a known TYPEREFdirect decodes to ConstantType(ClassConst(Named(sym))).
     "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in run {
-        val stringSym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("java.lang.String"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val stringSym  = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("java.lang.String"))
         val stringAddr = 10
         val addrMap    = IntMap(stringAddr -> stringSym)
         // CLASSconst (92) is category 3: tag + sub-type.

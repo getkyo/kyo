@@ -10,40 +10,10 @@ import kyo.internal.tasty.type_.TypeOps
 class TypeOpsTest extends Test:
 
     private def makeNamedSym(fqn: String): Tasty.Type.Named =
-        import AllowUnsafe.embrace.danger
-        val parts = fqn.split("\\.").toList
-        val root = Tasty.Symbol.make(
-            Tasty.SymbolKind.Package,
-            Tasty.Flags.empty,
-            Tasty.Name(""),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
-        parts.foldLeft(root) { (owner, part) =>
-            Tasty.Symbol.make(
-                Tasty.SymbolKind.Class,
-                Tasty.Flags.empty,
-                Tasty.Name(part),
-                owner,
-                ClasspathRef.init(),
-                Tasty.Symbol.TastyOrigin.empty,
-                Absent
-            )
-        }
-        val finalSym = parts.foldLeft(root) { (owner, part) =>
-            Tasty.Symbol.make(
-                Tasty.SymbolKind.Class,
-                Tasty.Flags.empty,
-                Tasty.Name(part),
-                owner,
-                ClasspathRef.init(),
-                Tasty.Symbol.TastyOrigin.empty,
-                Absent
-            )
-        }
-        Tasty.Type.Named(finalSym)
+        // plan: phase-02 bridge; Symbol.make(kind, flags, name) - owner not stored.
+        val leafName = fqn.split("\\.").last
+        val sym      = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(leafName))
+        Tasty.Type.Named(sym)
     end makeNamedSym
 
     private val A: Tasty.Type = makeNamedSym("A")

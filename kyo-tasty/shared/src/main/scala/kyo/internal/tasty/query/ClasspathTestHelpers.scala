@@ -3,35 +3,18 @@ package kyo.internal.tasty.query
 import kyo.AllowUnsafe
 import kyo.Tasty
 
-/** Internal test helpers for assigning Classpath home references to symbols.
+/** Internal test helpers for classpath-related test setup.
   *
-  * These helpers are used by test code to wire up a dummy or in-memory classpath reference so that resolving accessors (e.g. `sym.parents`,
-  * `sym.declaredType`) can call `checkOpen` without failing. Production code uses the full orchestration path in `ClasspathOrchestrator`.
-  *
-  * Kept separate from `Classpath.scala` to avoid polluting the production API file with test-only surface.
+  * plan: phase-02 bridge; the assignHomesForTest / assignExtraHomes methods operated on Symbol.home (ClasspathRef slots) which are removed
+  * in Phase 02. These methods are now no-ops since Symbol no longer carries a ClasspathRef. The stubs remain for source compatibility until
+  * Phase 07 removes them along with ClasspathRef.
   */
 object ClasspathTestHelpers:
 
-    /** Assign homes for all symbols in `cp` to `cp`. For internal test helpers only. */
-    private[kyo] def assignHomesForTest(cp: Classpath): Unit =
-        // flow-allow: §839 case 3; test-helper boundary; single-fiber synchronous home assignment after classpath construction.
-        given AllowUnsafe = AllowUnsafe.embrace.danger
-        val syms          = cp.allSymbols
-        val seen          = new java.util.HashSet[ClasspathRef]()
-        var i             = 0
-        while i < syms.length do
-            val ref = syms(i).home
-            if seen.add(ref) then ref.assign(Tasty.Classpath.wrap(cp))
-            i += 1
-        end while
-    end assignHomesForTest
+    /** No-op stub. Symbol.home is removed in Phase 02; home assignment no longer required. */
+    private[kyo] def assignHomesForTest(cp: Classpath): Unit = ()
 
-    /** Assign the given extra symbols' ClasspathRef slots to `cp`. For internal test helpers only. */
-    private[kyo] def assignExtraHomes(cp: Tasty.Classpath, extra: Seq[Tasty.Symbol]): Unit =
-        // flow-allow: §839 case 3; test-helper boundary; single-fiber synchronous home assignment after classpath construction.
-        given AllowUnsafe = AllowUnsafe.embrace.danger
-        for sym <- extra do
-            if !sym.home.isAssigned then sym.home.assign(cp)
-    end assignExtraHomes
+    /** No-op stub. Symbol.home is removed in Phase 02; home assignment no longer required. */
+    private[kyo] def assignExtraHomes(cp: Tasty.Classpath, extra: Seq[Tasty.Symbol]): Unit = ()
 
 end ClasspathTestHelpers

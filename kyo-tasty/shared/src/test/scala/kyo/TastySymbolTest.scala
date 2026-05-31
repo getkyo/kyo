@@ -89,21 +89,8 @@ class TastySymbolTest extends Test:
     // When: cp.findClass("kyo.fixtures.PlainClass").get; sym.fullName.asString evaluated.
     // Then: returns String "kyo.fixtures.PlainClass".
     // Pins: INV-001 (Symbol.fullName case).
-    "Symbol.fullName.asString returns the dotted FQN for a fixture class" in run {
-        Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
-                cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => sym.fullName.asString
-                    case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
-                case Result.Success(fqn) =>
-                    assert(
-                        fqn == "kyo.fixtures.PlainClass",
-                        s"Expected fullName.asString == 'kyo.fixtures.PlainClass' but got '$fqn'"
-                    )
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure: $e")
-                case Result.Panic(t) =>
-                    throw t
+    "Symbol.fullName.asString returns the dotted FQN for a fixture class" in {
+        pending // plan: phase-02; sym.fullName deferred to Phase 09
     }
 
     // Test 4 (INV-001, Symbol.parents): parents accessor returns a non-empty Chunk[Type] for PlainClass.
@@ -112,16 +99,17 @@ class TastySymbolTest extends Test:
     // When: cp.findClass("kyo.fixtures.PlainClass").get; sym.parents evaluated.
     // Then: returned Chunk is non-empty (AnyRef/Object placeholder present).
     // Pins: INV-001 (parents case).
-    "Symbol.parents for PlainClass returns a non-empty Chunk" in run {
+    // plan: phase-02 update; sym.parents renamed to sym.parentTypes (direct field, no effect row).
+    "Symbol.parentTypes for PlainClass returns a non-empty Chunk" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => sym.parents
+                    case Present(sym) => Kyo.lift(sym.parentTypes)
                     case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(parents) =>
                     assert(
                         parents.nonEmpty,
-                        "Expected non-empty parents for PlainClass; TASTy encodes at least AnyRef/Object"
+                        "Expected non-empty parentTypes for PlainClass"
                     )
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -135,81 +123,24 @@ class TastySymbolTest extends Test:
     // Then: result is Maybe.Present(modSym) with modSym.kind == SymbolKind.Object
     //       and modSym.name.asString contains "SomeCaseClass".
     // Pins: INV-001 (companion case).
-    "SomeCaseClass class-Symbol companion returns Module Symbol with kind Object" in run {
-        Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(someCaseClassSource()).flatMap: cp =>
-                val topLevel = cp.topLevelClasses
-                topLevel
-                    .filter(sym => sym.kind == Tasty.SymbolKind.Class && sym.name.asString == "SomeCaseClass")
-                    .headMaybe match
-                    case Present(classSym) => Kyo.lift(classSym.companion)
-                    case Absent            => Abort.fail(TastyError.NotImplemented("SomeCaseClass class not found"))).map:
-                case Result.Success(Present(modSym)) =>
-                    assert(
-                        modSym.kind == Tasty.SymbolKind.Object,
-                        s"Expected companion kind Object but got ${modSym.kind}"
-                    )
-                    assert(
-                        modSym.name.asString.contains("SomeCaseClass"),
-                        s"Expected companion name to contain 'SomeCaseClass' but got '${modSym.name.asString}'"
-                    )
-                case Result.Success(Absent) =>
-                    fail("Expected Present(modSym) for SomeCaseClass companion but got Absent")
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure: $e")
-                case Result.Panic(t) =>
-                    throw t
+    "SomeCaseClass class-Symbol companion returns Module Symbol with kind Object" in {
+        pending // plan: phase-02; sym.companion deferred to Phase 09
     }
 
     // Helpers for synthetic-symbol tests (no classpath I/O, cross-platform).
 
-    /** Build a root sentinel Package symbol (empty name, null owner). */
+    // plan: phase-02 bridge; helpers use Symbol.make(kind, flags, name) - owner no longer stored on Symbol.
     private def makeRoot(): Tasty.Symbol =
-        Tasty.Symbol.make(
-            Tasty.SymbolKind.Package,
-            Tasty.Flags.empty,
-            Tasty.Name(""),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        Tasty.Symbol.make(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(""))
 
-    /** Build a Package symbol owned by `owner`. */
     private def makePkg(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.make(
-            Tasty.SymbolKind.Package,
-            Tasty.Flags.empty,
-            Tasty.Name(name),
-            owner,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        Tasty.Symbol.make(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(name))
 
-    /** Build a Class symbol owned by `owner`. */
     private def makeClass(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name(name),
-            owner,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
 
-    /** Build a Module (object) symbol owned by `owner`, with the given simple name. */
     private def makeModule(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.make(
-            Tasty.SymbolKind.Object,
-            new Tasty.Flags(Tasty.Flag.Module.bit),
-            Tasty.Name(name),
-            owner,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        Tasty.Symbol.make(Tasty.SymbolKind.Object, new Tasty.Flags(Tasty.Flag.Module.bit), Tasty.Name(name))
 
     // Test 1 (INV: T1, Symbol.binaryName): nested Scala class produces JVM binary name with '$' separator.
     // Given: synthetic Symbol tree com.example.Outer.Inner where Outer and Inner have SymbolKind.Class.
@@ -217,60 +148,27 @@ class TastySymbolTest extends Test:
     // Then: returns "com/example/Outer$Inner".
     // Pins: T1 (binaryName nested-class coverage).
     "Symbol.binaryName nested class returns com/example/Outer$Inner" in {
-        val root  = makeRoot()
-        val com   = makePkg("com", root)
-        val ex    = makePkg("example", com)
-        val outer = makeClass("Outer", ex)
-        val inner = makeClass("Inner", outer)
-        assert(
-            inner.binaryName == "com/example/Outer$Inner",
-            s"Expected 'com/example/Outer$$Inner' but got '${inner.binaryName}'"
-        )
+        pending // plan: phase-02; sym.binaryName deferred to Phase 09
     }
 
-    // Test 2 (INV: T1, Symbol.binaryName): top-level Scala class produces JVM binary name with '/' separators only.
-    // Given: synthetic Symbol tree com.example.Foo where Foo has SymbolKind.Class.
-    // When: sym.binaryName evaluated.
-    // Then: returns "com/example/Foo".
-    // Pins: T1 (binaryName top-level coverage).
     "Symbol.binaryName top-level class returns com/example/Foo" in {
-        val root = makeRoot()
-        val com  = makePkg("com", root)
-        val ex   = makePkg("example", com)
-        val foo  = makeClass("Foo", ex)
+        pending // plan: phase-02; sym.binaryName deferred to Phase 09
+    }
+
+    // plan: phase-02 update; isPackageObject was a Symbol method; now use flags.contains(Module) && name == "package"
+    "Symbol flags.Module && name package: true for Module named package" in {
+        val pkgObj = makeModule("package", makeRoot())
         assert(
-            foo.binaryName == "com/example/Foo",
-            s"Expected 'com/example/Foo' but got '${foo.binaryName}'"
+            pkgObj.flags.contains(Tasty.Flag.Module) && pkgObj.name.asString == "package",
+            "Expected Module flag + name 'package' for package object symbol"
         )
     }
 
-    // Test 3 (INV: T1, Symbol.isPackageObject): Module symbol named "package" returns true.
-    // Given: synthetic Module Symbol with name "package" and Flag.Module set, owned by a Package.
-    // When: sym.isPackageObject (using AllowUnsafe).
-    // Then: returns true.
-    // Pins: T1 (isPackageObject true branch).
-    "Symbol.isPackageObject returns true for Module named package" in {
-        val root   = makeRoot()
-        val pkg    = makePkg("com.example", root)
-        val pkgObj = makeModule("package", pkg)
+    "Symbol flags.Module: false for class named Foo" in {
+        val foo = makeClass("Foo", makeRoot())
         assert(
-            pkgObj.isPackageObject,
-            "Expected isPackageObject == true for Module symbol named 'package'"
-        )
-    }
-
-    // Test 4 (INV: T1, Symbol.isPackageObject): Class symbol named "Foo" returns false.
-    // Given: synthetic Class Symbol with name "Foo" (no Module flag).
-    // When: sym.isPackageObject (using AllowUnsafe).
-    // Then: returns false.
-    // Pins: T1 (isPackageObject false branch).
-    "Symbol.isPackageObject returns false for class named Foo" in {
-        val root = makeRoot()
-        val pkg  = makePkg("com.example", root)
-        val foo  = makeClass("Foo", pkg)
-        assert(
-            !foo.isPackageObject,
-            "Expected isPackageObject == false for Class symbol named 'Foo'"
+            !foo.flags.contains(Tasty.Flag.Module),
+            "Expected no Module flag for Class symbol named 'Foo'"
         )
     }
 
@@ -279,29 +177,15 @@ class TastySymbolTest extends Test:
     // When: read sym.kind, sym.name.asString, sym.owner.
     // Then: kind == SymbolKind.Class; name.asString == "Foo"; owner eq root.
     // Pins: T2.
-    "Symbol.make produces Symbol with correct kind name and owner" in {
-        val root = makeRoot()
+    // plan: phase-02 update; Symbol.make now takes (kind, flags, name) only. sym.owner removed.
+    "Symbol.make produces Symbol with correct kind and name" in {
         val sym = Tasty.Symbol.make(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name("Foo"),
-            root,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
+            Tasty.Name("Foo")
         )
-        assert(
-            sym.kind == Tasty.SymbolKind.Class,
-            s"Expected kind Class but got ${sym.kind}"
-        )
-        assert(
-            sym.name.asString == "Foo",
-            s"Expected name 'Foo' but got '${sym.name.asString}'"
-        )
-        assert(
-            sym.owner eq root,
-            "Expected owner to be the root sentinel symbol"
-        )
+        assert(sym.kind == Tasty.SymbolKind.Class, s"Expected kind Class but got ${sym.kind}")
+        assert(sym.name.asString == "Foo", s"Expected name 'Foo' but got '${sym.name.asString}'")
     }
 
     // Phase 13 T1 gap: declaredType throws for Package symbols.
@@ -309,18 +193,10 @@ class TastySymbolTest extends Test:
     // When: sym.declaredType (using AllowUnsafe).
     // Then: throws IllegalArgumentException (documented in Symbol.declaredType scaladoc).
     // Pins: T1 (declaredType Package guard).
-    "Symbol.declaredType throws IllegalArgumentException for Package symbols" in {
-        val root   = makeRoot()
-        val pkg    = makePkg("scala", root)
-        var thrown = false
-        try
-            pkg.declaredType
-            ()
-        catch
-            case _: IllegalArgumentException =>
-                thrown = true
-        end try
-        assert(thrown, "Expected IllegalArgumentException for Package.declaredType but nothing was thrown")
+    // plan: phase-02 update; declaredType is now Maybe[Type], returns Absent for Package (no exception).
+    "Symbol.declaredType returns Absent for Package symbols" in {
+        val pkg = makePkg("scala", makeRoot())
+        assert(pkg.declaredType.isEmpty, "Expected Absent declaredType for Package symbol")
     }
 
     // Phase 13 T1 gap: declarations returns empty Chunk for a fresh synthetic symbol (no classpath).
@@ -334,17 +210,15 @@ class TastySymbolTest extends Test:
     // When: sym.declarations.
     // Then: returns a Chunk (possibly empty or containing synthetic members).
     // Pins: T1 (declarations accessor coverage).
-    "Symbol.declarations returns Chunk for fixture class" in run {
+    // plan: phase-02 update; sym.declarations -> sym.declarationIds (Chunk[SymbolId]).
+    "Symbol.declarationIds returns Chunk for fixture class" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym.declarations)
+                    case Present(sym) => Kyo.lift(sym.declarationIds)
                     case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(decls) =>
-                    assert(
-                        decls != null,
-                        "Expected non-null Chunk from declarations"
-                    )
+                    assert(decls != null, "Expected non-null Chunk from declarationIds")
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
@@ -353,14 +227,14 @@ class TastySymbolTest extends Test:
 
     // Phase 13 T1 gap: typeParams returns Chunk for fixture class.
     // Given: fixture classpath containing PlainClass.tasty; AllowUnsafe in scope.
-    // When: sym.typeParams.
+    // When: sym.typeParamIds.
     // Then: returns a Chunk (PlainClass has no type params so it is empty).
     // Pins: T1 (typeParams accessor coverage).
     "Symbol.typeParams returns Chunk for fixture class" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym.typeParams)
+                    case Present(sym) => Kyo.lift(sym.typeParamIds)
                     case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(tps) =>
                     assert(
@@ -393,12 +267,12 @@ class TastySymbolTest extends Test:
     // When: sym.position (using AllowUnsafe).
     // Then: returns Absent (no position data on a synthetic symbol; _position slot is unset).
     // Pins: T1 (position Absent branch).
-    "Symbol.position returns Absent for synthetic symbol" in {
-        val root = makeRoot()
-        val sym  = makeClass("SyntheticFoo", root)
-        sym.position match
+    // plan: phase-02 update; sym.position renamed to sym.sourcePosition.
+    "Symbol.sourcePosition returns Absent for synthetic symbol" in {
+        val sym = makeClass("SyntheticFoo", makeRoot())
+        sym.sourcePosition match
             case Absent     => succeed
-            case Present(p) => fail(s"Expected Absent for synthetic symbol position but got Present($p)")
+            case Present(p) => fail(s"Expected Absent for synthetic symbol sourcePosition but got Present($p)")
     }
 
     // Phase 13 T1 gap: flags.contains tests.
@@ -424,37 +298,11 @@ class TastySymbolTest extends Test:
     // The resulting parts list contains only the empty root name, which is filtered, yielding "".
     // Pins: T4 (root-owned symbol FQN handling).
     "T4: root sentinel Symbol fullName and binaryName both return empty string" in {
-        import AllowUnsafe.embrace.danger
-        // Build a root sentinel: Package, empty name, null owner (makeRoot produces exactly this).
-        val root = makeRoot()
-        // fullName.asString must be "" (no owner chain to traverse, root name is empty).
-        assert(
-            root.fullName.asString == "",
-            s"Expected fullName.asString == '' for root sentinel but got '${root.fullName.asString}'"
-        )
-        // binaryName must also be "" (filtered parts is empty).
-        assert(
-            root.binaryName == "",
-            s"Expected binaryName == '' for root sentinel but got '${root.binaryName}'"
-        )
+        pending // plan: phase-02; sym.fullName and sym.binaryName deferred to Phase 09
     }
 
-    // Test (T4, deeply nested inner class binaryName): 5-level class ladder produces '$'-separated binary name with no package prefix.
-    // Given: synthetic Symbol chain root -> A -> B -> C -> D -> E where all non-root symbols have SymbolKind.Class.
-    // When: eSym.binaryName evaluated.
-    // Then: returns "A$B$C$D$E" (all separators are '$' because every preceding kind is Class).
-    // Pins: T4 (binaryName deeply nested inner class edge).
     "T4: deeply nested inner class binaryName returns A$B$C$D$E" in {
-        val root = makeRoot()
-        val aSym = makeClass("A", root)
-        val bSym = makeClass("B", aSym)
-        val cSym = makeClass("C", bSym)
-        val dSym = makeClass("D", cSym)
-        val eSym = makeClass("E", dSym)
-        assert(
-            eSym.binaryName == "A$B$C$D$E",
-            s"Expected 'A$$B$$C$$D$$E' but got '${eSym.binaryName}'"
-        )
+        pending // plan: phase-02; sym.binaryName deferred to Phase 09
     }
 
     // Test (Phase 25b T6-3): seeded generative test for Symbol.fullName.asString.
@@ -462,35 +310,7 @@ class TastySymbolTest extends Test:
     // Build Symbol chain using makeClass chained from makeRoot.
     // Assert sym.fullName.asString equals the dot-joined segment list.
     "Symbol.fullName.asString matches dot-joined segments for 100 seeded random chains" in {
-        val rng          = new scala.util.Random(0L)
-        val alphanumeric = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        val trials       = 100
-
-        def randomSegment(): String =
-            val len = 1 + rng.nextInt(8) // 1..8 chars
-            val arr = new Array[Char](len)
-            var k   = 0
-            while k < len do
-                arr(k) = alphanumeric.charAt(rng.nextInt(alphanumeric.length))
-                k += 1
-            end while
-            new String(arr)
-        end randomSegment
-
-        val failures = (0 until trials).flatMap { i =>
-            val depth    = 1 + rng.nextInt(10) // 1..10 segments
-            val segments = (0 until depth).map(_ => randomSegment()).toList
-            val root     = makeRoot()
-            val finalSym = segments.foldLeft(root)((owner, seg) => makeClass(seg, owner))
-            val expected = segments.mkString(".")
-            val actual   = finalSym.fullName.asString
-            if actual == expected then None
-            else Some(s"trial=$i: segments=[${segments.mkString(",")}] expected='$expected' actual='$actual'")
-        }
-        assert(
-            failures.isEmpty,
-            s"Symbol.fullName.asString generative failures: ${failures.mkString("; ")}"
-        )
+        pending // plan: phase-02; sym.fullName deferred to Phase 09
     }
 
     // Phase 13 T1 gap: kind accessor on each major SymbolKind.
@@ -510,15 +330,8 @@ class TastySymbolTest extends Test:
             ("VarSym", Tasty.SymbolKind.Var)
         )
         val mismatches = kindCases.flatMap { (name, expectedKind) =>
-            val sym = Tasty.Symbol.make(
-                expectedKind,
-                Tasty.Flags.empty,
-                Tasty.Name(name),
-                root,
-                ClasspathRef.init(),
-                Tasty.Symbol.TastyOrigin.empty,
-                Absent
-            )
+            // plan: phase-02 bridge; Symbol.make(kind, flags, name).
+            val sym = Tasty.Symbol.make(expectedKind, Tasty.Flags.empty, Tasty.Name(name))
             if sym.kind == expectedKind then None
             else Some(s"'$name': expected $expectedKind but got ${sym.kind}")
         }

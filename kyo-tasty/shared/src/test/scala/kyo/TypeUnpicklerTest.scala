@@ -37,16 +37,9 @@ class TypeUnpicklerTest extends Test:
     private def makeArena(): TypeArena   = TypeArena.canonical()
     private def makeHome(): ClasspathRef = ClasspathRef.init()
 
+    // plan: phase-02 bridge; Symbol.make(kind, flags, name).
     private def makeSym(name: String, kind: Tasty.SymbolKind = Tasty.SymbolKind.Class): Tasty.Symbol =
-        Tasty.Symbol.make(
-            kind,
-            Tasty.Flags.empty,
-            Tasty.Name(name),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        Tasty.Symbol.make(kind, Tasty.Flags.empty, Tasty.Name(name))
 
     /** Encode an unsigned Nat in dotty's TASTy big-endian base-128 format.
       *
@@ -464,18 +457,10 @@ class TypeUnpicklerTest extends Test:
             case Tasty.Type.Rec(_) => succeed
             case other             => fail(s"Expected Tasty.Type.Rec(...) but got $other")
         // Also verify TypeArena merge handles Rec/RecThis without overflow.
-        val arena = makeArena()
-        val sentinel = Tasty.Symbol.make(
-            Tasty.SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name("s"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
-        val rec     = Tasty.Type.Rec(Tasty.Type.Named(sentinel))
-        val recThis = Tasty.Type.RecThis(rec)
+        val arena    = makeArena()
+        val sentinel = Tasty.Symbol.make(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("s"))
+        val rec      = Tasty.Type.Rec(Tasty.Type.Named(sentinel))
+        val recThis  = Tasty.Type.RecThis(rec)
         arena.intern(rec)
         arena.intern(recThis)
         val canon = TypeArena.canonical()

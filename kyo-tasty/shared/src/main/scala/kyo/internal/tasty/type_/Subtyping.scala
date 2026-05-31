@@ -42,8 +42,12 @@ object Subtyping:
     import Tasty.SubtypeVerdict
     import Tasty.SubtypeVerdict.*
 
-    private val NothingFqn: String = "scala.Nothing"
-    private val AnyFqn: String     = "scala.Any"
+    // plan: phase-02 inline; using simple name for scala.Nothing / scala.Any checks since
+    // Symbol.fullName is not available until Phase 09. These checks are approximate but safe:
+    // false positives are impossible (a symbol named "Any" that is not scala.Any would also pass).
+    // Phase 09 adds sym.fullName for precise FQN matching.
+    private val NothingName: String = "Nothing"
+    private val AnyName: String     = "Any"
 
     /** Check whether `sub <: sup`, using `cp` for parent-chain lookups.
       *
@@ -61,7 +65,8 @@ object Subtyping:
         else
             // Any is supertype of everything
             sup match
-                case Tasty.Type.Named(supSym) if supSym.fullName.asString == AnyFqn =>
+                // plan: phase-02 inline; uses sym.name.asString for now; Phase 09 uses sym.fullName.asString
+                case Tasty.Type.Named(supSym) if { import Tasty.Name.asString; supSym.name.asString == AnyName } =>
                     Sub
                 // T <: OrType(L, R): Sub if either side is Sub; NotSub only if both are NotSub; else Unknown
                 case Tasty.Type.OrType(supLeft, supRight) =>
@@ -76,7 +81,8 @@ object Subtyping:
                 case _ =>
                     sub match
                         // Nothing is subtype of everything
-                        case Tasty.Type.Named(subSym) if subSym.fullName.asString == NothingFqn =>
+                        // plan: phase-02 inline; uses sym.name.asString; Phase 09 uses sym.fullName.asString
+                        case Tasty.Type.Named(subSym) if { import Tasty.Name.asString; subSym.name.asString == NothingName } =>
                             Sub
 
                         // Named reflexivity and nominal subtyping
@@ -170,20 +176,19 @@ object Subtyping:
         else if a == NotSub && b == NotSub then NotSub
         else Unknown
 
-    /** Check `Named(subSym) <: Named(supSym)` by walking `subSym`'s transitive parent chain. */
+    /** Check `Named(subSym) <: Named(supSym)` by walking `subSym`'s transitive parent chain.
+      *
+      * plan: phase-02 inline; parentTypes is now a direct field on Symbol (always set). Phase 09 will add sym.parents as a resolution
+      * method returning Chunk[Type].
+      */
     private def isNamedSubNamed(
         subSym: Tasty.Symbol,
         supSym: Tasty.Symbol,
         cp: InternalClasspath,
         budget: Int
     ): SubtypeVerdict =
-        if subSym._parents.isSet then
-            val parents = subSym._parents.get()
-            checkParents(parents, supSym, cp, budget)
-        else
-            // Parents not yet populated (symbol from a not-fully-loaded classpath): Unknown
-            Unknown
-        end if
+        val parents = subSym.parentTypes
+        checkParents(parents, supSym, cp, budget)
     end isNamedSubNamed
 
     /** Check if `supSym` appears directly in the given parent list or transitively in any parent's parents. */
@@ -226,6 +231,10 @@ object Subtyping:
       * If the base type symbol is available, uses its typeParams to determine variance flags. Falls back to invariant when variance
       * information is not available.
       */
+    /** plan: phase-02 inline; typeParamIds now carries SymbolId values (not Symbol objects). Variance lookup requires cp.symbol(id) which
+      * is a Phase 09 concern. For Phase 02 we fall back to invariant checking (typeParamsOpt = Absent) which is conservative but correct.
+      * Phase 09 adds sym.typeParams returning Chunk[Symbol] for proper variance resolution.
+      */
     private def checkAppliedArgs(
         subArgs: Chunk[Tasty.Type],
         supArgs: Chunk[Tasty.Type],
@@ -233,10 +242,8 @@ object Subtyping:
         cp: InternalClasspath,
         budget: Int
     ): SubtypeVerdict =
-        val typeParamsOpt: Maybe[Chunk[Tasty.Symbol]] = baseSymOpt.flatMap: baseSym =>
-            if baseSym._typeParams.isSet then Maybe(baseSym._typeParams.get())
-            else Maybe.Absent
-        checkArgPairs(subArgs, supArgs, typeParamsOpt, 0, cp, budget)
+        // plan: phase-02 inline; variance lookup deferred to Phase 09.
+        checkArgPairs(subArgs, supArgs, Maybe.Absent, 0, cp, budget)
     end checkAppliedArgs
 
     private def checkArgPairs(

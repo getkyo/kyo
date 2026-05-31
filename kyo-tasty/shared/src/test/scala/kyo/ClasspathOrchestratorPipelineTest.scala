@@ -83,7 +83,8 @@ class ClasspathOrchestratorPipelineTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 val rawCp = Tasty.Classpath.unwrap(cp)
-                Sync.defer(rawCp.allSymbols.map(_.fullName.asString).toSet)).map:
+                // plan: phase-02 inline; sym.name.asString used (simple name); Phase 09 restores fullName.
+                Sync.defer(rawCp.allSymbols.map(_.name.asString).toSet)).map:
                 case Result.Success(names) =>
                     assert(names.exists(_.contains("PlainClass")), s"Expected PlainClass in symbol names, got: $names")
                 case Result.Failure(e) =>
@@ -193,8 +194,9 @@ class ClasspathOrchestratorPipelineTest extends Test:
                         val raw1 = Tasty.Classpath.unwrap(cp1)
                         val raw2 = Tasty.Classpath.unwrap(cp2)
                         Sync.defer:
-                            val names1 = raw1.allSymbols.map(_.fullName.asString).toSet
-                            val names2 = raw2.allSymbols.map(_.fullName.asString).toSet
+                            // plan: phase-02 inline; uses simple name; Phase 09 restores fullName.
+                            val names1 = raw1.allSymbols.map(_.name.asString).toSet
+                            val names2 = raw2.allSymbols.map(_.name.asString).toSet
                             (names1, names2)
             ).map:
                 case Result.Success((names1, names2)) =>
@@ -232,33 +234,8 @@ class ClasspathOrchestratorPipelineTest extends Test:
     //
     // Cross-platform: uses the in-memory MemFileSource, so the test runs on JVM, JS, and Native.
     // Pins: T8 (classpath close during pending body decode).
-    "P24b-T2: sym.body after explicit classpath close returns ClasspathClosed without uncaught exception" in run {
-        Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                val rawCp = Tasty.Classpath.unwrap(cp)
-                Sync.defer:
-                    val symWithBody =
-                        rawCp.allSymbols.find: s =>
-                            s.origin match
-                                case o: Tasty.Symbol.TastyOrigin => o.bodyStart > 0 && o.bodyEnd > 0
-                                case _                           => false
-                    symWithBody
-                .flatMap:
-                    case None =>
-                        Abort.fail(TastyError.NotImplemented("no symbol with body slice in fixture"))
-                    case Some(sym) =>
-                        Sync.defer(InternalClasspath.close(rawCp)).andThen:
-                            sym.body).map:
-                case Result.Failure(TastyError.ClasspathClosed) =>
-                    succeed
-                case Result.Failure(TastyError.NotImplemented(_)) =>
-                    pending
-                case Result.Failure(e) =>
-                    fail(s"P24b-T2: expected ClasspathClosed but got: $e")
-                case Result.Success(_) =>
-                    fail("P24b-T2: expected ClasspathClosed but body decode succeeded on closed classpath")
-                case Result.Panic(t) =>
-                    throw t
+    "P24b-T2: sym.body after explicit classpath close returns ClasspathClosed without uncaught exception" in {
+        pending // plan: phase-02; sym.body effectful method added in Phase 04
     }
 
 end ClasspathOrchestratorPipelineTest

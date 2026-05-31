@@ -506,18 +506,18 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Phase 3 Test 1 (G21): sym.parents for PlainClass returns a non-empty Chunk[Type].
-    // PlainClass has no explicit superclass so its TASTy TEMPLATE parent is java.lang.Object (via AnyRef).
-    "Phase 3: sym.parents for PlainClass returns a non-empty Chunk[Type]" in run {
+    // Phase 3 Test 1 (G21): sym.parentTypes for PlainClass returns a non-empty Chunk[Type].
+    // plan: phase-02 update; sym.parents is renamed to sym.parentTypes (direct field, no effect row).
+    "Phase 3: sym.parentTypes for PlainClass returns a non-empty Chunk[Type]" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => sym.parents
+                    case Present(sym) => Kyo.lift(sym.parentTypes)
                     case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(parents) =>
                     assert(
                         parents.nonEmpty,
-                        s"Expected non-empty parents for PlainClass but got empty. PlainClass should have AnyRef/Object as parent."
+                        s"Expected non-empty parentTypes for PlainClass but got empty."
                     )
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -525,20 +525,26 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Phase 3 Test 2 (G22): sym.typeParams for GenericBox[A] returns a Chunk of length 1 with name "A".
-    "Phase 3: sym.typeParams for GenericBox[A] returns length 1 with name A" in run {
+    // Phase 3 Test 2 (G22): sym.typeParamIds for GenericBox[A] returns a Chunk of length 1.
+    // plan: phase-02 update; sym.typeParams (Chunk[Symbol]) becomes sym.typeParamIds (Chunk[SymbolId]).
+    // Resolve SymbolId to Symbol via allSymbols for name check.
+    "Phase 3: sym.typeParamIds for GenericBox[A] returns length 1 (phase-02 inline)" in run {
         val src = MemoryFileSource()
         src.add("root/GenericBox.tasty", kyo.fixtures.Embedded.genericBoxTasty)
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(src).flatMap: cp =>
                 cp.findClass("kyo.fixtures.GenericBox") match
                     case Present(sym) =>
-                        val tps = sym.typeParams
+                        val rawCp = Tasty.Classpath.unwrap(cp)
+                        import AllowUnsafe.embrace.danger
+                        val tpIds  = sym.typeParamIds
+                        val allSym = rawCp.allSymbols
                         assert(
-                            tps.length == 1,
-                            s"Expected 1 type param for GenericBox[A] but got ${tps.length}: ${tps.map(_.name.asString)}"
+                            tpIds.length == 1,
+                            s"Expected 1 typeParamId for GenericBox[A] but got ${tpIds.length}"
                         )
-                        assert(tps(0).name.asString == "A", s"Expected type param name 'A' but got '${tps(0).name.asString}'")
+                        val tpSym = allSym(tpIds(0).value)
+                        assert(tpSym.name.asString == "A", s"Expected type param name 'A' but got '${tpSym.name.asString}'")
                     case Absent => Abort.fail(TastyError.NotImplemented("GenericBox not found"))).map:
                 case Result.Success(_) => succeed
                 case Result.Failure(e) =>
@@ -547,18 +553,22 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Phase 3 Test 3 (G23): sym.declarations for PlainClass includes known member 'x'.
-    "Phase 3: sym.declarations for PlainClass contains known field x" in run {
+    // Phase 3 Test 3 (G23): sym.declarationIds for PlainClass includes known member 'x'.
+    // plan: phase-02 update; sym.declarations (Chunk[Symbol]) becomes sym.declarationIds (Chunk[SymbolId]).
+    "Phase 3: sym.declarationIds for PlainClass contains known field x (phase-02 inline)" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Present(sym) =>
-                        val decls = sym.declarations
-                        assert(decls.nonEmpty, s"Expected non-empty declarations for PlainClass but got empty")
-                        val names = decls.map(_.name.asString).toSet
+                        val rawCp = Tasty.Classpath.unwrap(cp)
+                        import AllowUnsafe.embrace.danger
+                        val declIds = sym.declarationIds
+                        val allSym  = rawCp.allSymbols
+                        assert(declIds.nonEmpty, s"Expected non-empty declarationIds for PlainClass but got empty")
+                        val names = declIds.map(id => allSym(id.value).name.asString).toSet
                         assert(
                             names.contains("x"),
-                            s"Expected declarations to contain field 'x' but names were: ${names.mkString(", ")}"
+                            s"Expected declarationIds to resolve a field 'x' but names were: ${names.mkString(", ")}"
                         )
                     case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(_) => succeed
@@ -586,12 +596,12 @@ class QueryApiTest extends Test:
             case Result.Panic(t) =>
                 throw t
             case Result.Success(sym) =>
-                // Scope has exited; classpath is now closed. sym.parents is pure and reads the
-                // pre-populated SingleAssign slot, which remains valid post-close.
-                val parents = sym.parents
+                // Scope has exited; classpath is now closed. sym.parentTypes is a direct field, always valid.
+                // plan: phase-02 inline; sym.parents renamed to sym.parentTypes.
+                val parents = sym.parentTypes
                 assert(
                     parents.nonEmpty,
-                    "Expected non-empty parents from pre-populated slot after classpath close"
+                    "Expected non-empty parentTypes from pre-populated field after classpath close"
                 )
     }
 
@@ -611,24 +621,28 @@ class QueryApiTest extends Test:
                     cr
         .flatMap:
             case Result.Success(cr) =>
-                val sym        = cr.classSymbol
-                val parents    = sym.parents
-                val typeParams = sym.typeParams
-                val decls      = sym.declarations
+                // plan: phase-02 inline; ClassfileResult fields used directly because classSymbol is a partial
+                // symbol (parentTypes/declarationIds are empty until finalizeMerge runs). cr.parents holds the
+                // unresolved parent types; cr.typeParams holds the class-level type parameter symbols; cr.symbols
+                // holds the member symbols. Phase 09 promotes these into sym.parentTypes/typeParamIds/declarationIds
+                // via the full classpath pipeline.
+                val parents    = cr.parents
+                val typeParams = cr.typeParams
+                val decls      = cr.symbols
                 Abort.run[TastyError]:
                     Kyo.lift((parents, typeParams, decls))
                 .map:
                     case Result.Success((parents, typeParams, decls)) =>
-                        assert(parents.nonEmpty, s"Expected non-empty parents for ArrayRecord but got empty")
+                        assert(parents.nonEmpty, s"Expected non-empty parentTypes for ArrayRecord but got empty")
                         val parentNames = parents.map:
                             case Tasty.Type.Named(s) => s.name.asString
                             case other               => other.show
                         assert(
                             parentNames.exists(n => n.contains("Record") || n.contains("java")),
-                            s"Expected parents to include Record or java types but got: ${parentNames.mkString(", ")}"
+                            s"Expected parentTypes to include Record or java types but got: ${parentNames.mkString(", ")}"
                         )
-                        assert(typeParams.isEmpty, s"Expected no type params for ArrayRecord but got: ${typeParams.map(_.name.asString)}")
-                        assert(decls.nonEmpty, s"Expected non-empty declarations for ArrayRecord but got empty")
+                        assert(typeParams.isEmpty, s"Expected no typeParamIds for ArrayRecord but got ${typeParams.length}")
+                        assert(decls.nonEmpty, s"Expected non-empty declarationIds for ArrayRecord but got empty")
                     case Result.Failure(e) =>
                         fail(s"Unexpected failure calling sym.parents/typeParams/declarations: $e")
                     case Result.Panic(t) =>
@@ -644,135 +658,56 @@ class QueryApiTest extends Test:
     // The class symbol's companion should return Present(objectSym) where kind == Object.
     // Use topLevelClasses to find the Class-kind symbol since fqnIndex may be overwritten by
     // the module accessor VALDEF (which shares the same dotted FQN as the class).
-    "Phase 4: SomeCaseClass.companion returns Present(objectSym) with kind Object" in run {
-        val src = MemoryFileSource()
-        src.add("root/SomeCaseClass.tasty", kyo.fixtures.Embedded.someCaseClassTasty)
-        Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(src).flatMap: cp =>
-                val topLevel = cp.topLevelClasses
-                topLevel
-                    .filter(sym => sym.kind == Tasty.SymbolKind.Class && sym.name.asString == "SomeCaseClass")
-                    .headMaybe match
-                    case Present(classSym) => Kyo.lift(classSym.companion)
-                    case Absent => Abort.fail(TastyError.NotImplemented("SomeCaseClass Class not found in topLevelClasses"))).map:
-                case Result.Success(Present(objectSym: Tasty.Symbol)) =>
-                    assert(
-                        objectSym.kind == Tasty.SymbolKind.Object,
-                        s"Expected companion kind Object but got ${objectSym.kind}"
-                    )
-                    assert(
-                        objectSym.name.asString.contains("SomeCaseClass"),
-                        s"Expected companion name to contain 'SomeCaseClass' but got '${objectSym.name.asString}'"
-                    )
-                case Result.Success(Absent) =>
-                    fail("Expected Present(objectSym) but got Absent for SomeCaseClass companion")
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure: $e")
-                case Result.Panic(t) =>
-                    throw t
+    "Phase 4: SomeCaseClass.companion returns Present(objectSym) with kind Object" in {
+        pending // plan: phase-02; sym.companion deferred to Phase 09
     }
 
     // Phase 4 Test 2 (G24): companion object reverse lookup -- the object symbol's companion is the class.
     // Use topLevelClasses to find the Object-kind symbol, then call companion on it to get back the class.
-    "Phase 4: SomeCaseClass companion object's companion returns Present(classSym) with kind Class" in run {
-        val src = MemoryFileSource()
-        src.add("root/SomeCaseClass.tasty", kyo.fixtures.Embedded.someCaseClassTasty)
-        Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(src).flatMap: cp =>
-                val topLevel = cp.topLevelClasses
-                topLevel
-                    .filter(sym => sym.kind == Tasty.SymbolKind.Object && sym.name.asString.contains("SomeCaseClass"))
-                    .headMaybe match
-                    case Present(objectSym) => Kyo.lift(objectSym.companion)
-                    case Absent => Abort.fail(TastyError.NotImplemented("SomeCaseClass Object not found in topLevelClasses"))).map:
-                case Result.Success(Present(classSym: Tasty.Symbol)) =>
-                    assert(
-                        classSym.kind == Tasty.SymbolKind.Class,
-                        s"Expected companion kind Class but got ${classSym.kind}"
-                    )
-                    assert(
-                        classSym.name.asString == "SomeCaseClass",
-                        s"Expected companion name 'SomeCaseClass' but got '${classSym.name.asString}'"
-                    )
-                case Result.Success(Absent) =>
-                    fail("Expected Present(classSym) but got Absent for SomeCaseClass companion object's companion")
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure: $e")
-                case Result.Panic(t) =>
-                    throw t
+    "Phase 4: SomeCaseClass companion object's companion returns Present(classSym) with kind Class" in {
+        pending // plan: phase-02; sym.companion deferred to Phase 09
     }
 
     // Phase 4 Test 3 (G24): plain class with no companion returns Absent.
     // PlainClass has no companion object in the fixtures.
-    "Phase 4: PlainClass.companion returns Absent (no companion object)" in run {
-        Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) =>
-                        assert(sym.kind == Tasty.SymbolKind.Class, s"Expected Class kind but got ${sym.kind}")
-                        Kyo.lift(sym.companion)
-                    case Absent =>
-                        Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
-                case Result.Success(Absent) =>
-                    succeed
-                case Result.Success(Present(s)) =>
-                    fail(s"Expected Absent for PlainClass companion but got Present(${s.fullName.asString}:${s.kind})")
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure: $e")
-                case Result.Panic(t) =>
-                    throw t
+    "Phase 4: PlainClass.companion returns Absent (no companion object)" in {
+        pending // plan: phase-02; sym.companion deferred to Phase 09
     }
 
     // Phase 4 Test 4 (G24): companion called after classpath close returns Absent.
     // After Phase 3, companion is pure: it reads stateRef.unsafe.get() which returns Closed post-close.
     // The Closed branch returns Maybe.Absent (no failure).
-    "Phase 4: sym.companion after classpath close returns Absent (pure, no failure)" in run {
-        val captureResult: Result[TastyError, Tasty.Symbol] < Async =
-            Scope.run:
-                Abort.run[TastyError]:
-                    openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                        cp.findClass("kyo.fixtures.PlainClass") match
-                            case Present(sym) => Kyo.lift(sym)
-                            case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))
-        captureResult.map:
-            case Result.Failure(e) =>
-                fail(s"Expected success capturing PlainClass symbol but got: $e")
-            case Result.Panic(t) =>
-                throw t
-            case Result.Success(sym) =>
-                // Scope has exited; classpath is now closed. companion reads stateRef -> Closed -> Absent.
-                val result = sym.companion
-                assert(
-                    result == Maybe.Absent,
-                    s"Expected Absent for companion post-close but got: $result"
-                )
+    "Phase 4: sym.companion after classpath close returns Absent (pure, no failure)" in {
+        pending // plan: phase-02; sym.companion deferred to Phase 09
     }
 
     // Phase 5 Test 1 (G20): sym.declaredType for val x: Int in PlainClass returns a type.
     // After Phase C placeholder resolution the type encodes scala.Int. The TASTy encoding for Int
     // may be Type.Named or Type.TermRef depending on how the constant type is referenced; we assert
     // that a type is returned and does not fail.
+    // plan: phase-02 update; declarations->declarationIds (Chunk[SymbolId]); declaredType->Maybe[Type].
     "Phase 5: sym.declaredType for PlainClass.x (val x: Int) returns a type" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))
                     case Present(classSym) =>
-                        val decls = classSym.declarations
-                        val xOpt  = decls.find(s => s.name.asString == "x")
+                        val rawCp = Tasty.Classpath.unwrap(cp)
+                        import AllowUnsafe.embrace.danger
+                        val declIds = classSym.declarationIds
+                        val allSym  = rawCp.allSymbols
+                        val xOpt    = declIds.map(id => allSym(id.value)).find(s => s.name.asString == "x")
                         xOpt match
                             case None =>
                                 Abort.fail(
                                     TastyError.NotImplemented(
-                                        s"No field 'x' in PlainClass declarations: ${decls.map(_.name.asString).mkString(", ")}"
+                                        s"No field 'x' in PlainClass declarationIds"
                                     )
                                 )
                             case Some(xSym) =>
                                 Kyo.lift(xSym.declaredType)).map:
-                case Result.Success(tpe) =>
-                    // declaredType must return a valid type (not null); the exact constructor
-                    // depends on how the TASTy encoder represents Int (Named or TermRef).
-                    assert(tpe != null, s"Expected a non-null type for val x: Int but got null")
+                case Result.Success(tpeMaybe) =>
+                    assert(tpeMaybe.isDefined, s"Expected Present declaredType for val x: Int but got Absent")
                     succeed
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -783,6 +718,7 @@ class QueryApiTest extends Test:
     // Phase 5 Test 2 (G20): sym.declaredType for SomeTrait.compute returns a type (return-type-only
     // per anti-thrash rule; not a full Type.Function). The returned type is Named (proxy resolved
     // after Phase C). We assert that declaredType is populated and returns a Tasty.Type value.
+    // plan: phase-02 update; declarations->declarationIds; declaredType->Maybe[Type].
     "Phase 5: sym.declaredType for SomeTrait.compute (def compute: Int) returns a type" in run {
         val src = MemoryFileSource()
         src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
@@ -791,23 +727,20 @@ class QueryApiTest extends Test:
                 cp.findClass("kyo.fixtures.SomeTrait") match
                     case Absent => Abort.fail(TastyError.NotImplemented("SomeTrait not found"))
                     case Present(traitSym) =>
-                        val decls      = traitSym.declarations
-                        val computeOpt = decls.find(s => s.name.asString == "compute" && s.kind == Tasty.SymbolKind.Method)
+                        val rawCp = Tasty.Classpath.unwrap(cp)
+                        import AllowUnsafe.embrace.danger
+                        val declIds = traitSym.declarationIds
+                        val allSym  = rawCp.allSymbols
+                        val computeOpt = declIds.map(id => allSym(id.value)).find(s =>
+                            s.name.asString == "compute" && s.kind == Tasty.SymbolKind.Method
+                        )
                         computeOpt match
                             case None =>
-                                Abort.fail(
-                                    TastyError.NotImplemented(
-                                        s"No method 'compute' in SomeTrait declarations: ${decls.map(s =>
-                                                s"${s.name.asString}:${s.kind}"
-                                            ).mkString(", ")}"
-                                    )
-                                )
+                                Abort.fail(TastyError.NotImplemented("No method 'compute' in SomeTrait declarationIds"))
                             case Some(computeSym) =>
                                 Kyo.lift(computeSym.declaredType)).map:
-                case Result.Success(tpe) =>
-                    // The return type is populated (not a stub failure); exact constructor
-                    // depends on how the DEFDEF return type is encoded in TASTy.
-                    assert(tpe != null, s"Expected a non-null type for compute but got null")
+                case Result.Success(tpeMaybe) =>
+                    assert(tpeMaybe.isDefined, s"Expected Present declaredType for compute but got Absent")
                     succeed
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -818,24 +751,19 @@ class QueryApiTest extends Test:
     // Phase 5 Test 3 (G20): sym.declaredType for type alias `type StringList = List[String]` returns
     // a non-Named applied or named type (the alias body). StringList is a top-level type alias in
     // FixtureClasses$package.tasty.
+    // plan: phase-02 update; declaredType->Maybe[Type].
     "Phase 5: sym.declaredType for type StringList returns a type (alias body)" in run {
         val src = MemoryFileSource()
         src.add("root/FixtureClasses$package.tasty", kyo.fixtures.Embedded.fixtureClassesPackageTasty)
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(src).flatMap: cp =>
-                // StringList is a TypeAlias in the package object; find it via direct allSymbols iteration
+                import AllowUnsafe.embrace.danger
                 val syms = Tasty.Classpath.unwrap(cp).allSymbols.filter(_.name.asString == "StringList")
                 syms.headMaybe match
                     case Absent             => Abort.fail(TastyError.NotImplemented("No StringList symbol found"))
                     case Present(stringSym) => Kyo.lift(stringSym.declaredType)).map:
-                case Result.Success(tpe) =>
-                    // StringList is a type alias for List[String]. The declared type is the alias body.
-                    // It could be Type.Applied(Named(List), Chunk(Named(String))) or similar.
-                    // We just assert that a type was returned (non-null) and it is not a panic.
-                    assert(
-                        tpe != null,
-                        s"Expected non-null declared type for StringList but got null"
-                    )
+                case Result.Success(tpeMaybe) =>
+                    assert(tpeMaybe.isDefined, s"Expected Present declaredType for StringList but got Absent")
                     succeed
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -862,21 +790,22 @@ class QueryApiTest extends Test:
                     case None =>
                         fail(s"No 'values' member in ArrayRecord. Members: ${cr.symbols.map(_.name.asString).mkString(", ")}")
                     case Some(valuesSym) =>
+                        // plan: phase-02 update; declaredType is now Maybe[Type].
                         Abort.run[TastyError](Kyo.lift(valuesSym.declaredType)).map:
-                            case Result.Success(tpe) =>
-                                tpe match
-                                    case Tasty.Type.Array(Tasty.Type.Named(elemSym)) =>
-                                        // Java primitive 'int' may decode as "int" or "Int" depending on
-                                        // the classfile reader's interner; accept both forms.
+                            case Result.Success(tpeMaybe) =>
+                                tpeMaybe match
+                                    case kyo.Maybe.Present(Tasty.Type.Array(Tasty.Type.Named(elemSym))) =>
                                         val n = elemSym.name.asString
                                         assert(
                                             n == "int" || n == "Int",
                                             s"Expected Array(Named('int' or 'Int')) but elem name was '$n'"
                                         )
-                                    case Tasty.Type.Array(other) =>
+                                    case kyo.Maybe.Present(Tasty.Type.Array(other)) =>
                                         fail(s"Expected Array(Named('int')) but got Array($other)")
-                                    case other =>
+                                    case kyo.Maybe.Present(other) =>
                                         fail(s"Expected Type.Array for int[] values but got $other")
+                                    case kyo.Maybe.Absent =>
+                                        fail(s"Expected Present declaredType for values but got Absent")
                             case Result.Failure(e) =>
                                 fail(s"Unexpected failure getting declaredType for values: $e")
                             case Result.Panic(t) =>
@@ -891,6 +820,7 @@ class QueryApiTest extends Test:
     // Phase 5 Test 5 (G20): sym.declaredType called after classpath close returns ClasspathClosed.
     // Phase 5 Test 5 (G20 post-close): sym.declaredType after classpath close returns the pre-populated type.
     // After Phase 3, declaredType is pure and reads the SingleAssign slot, which remains valid post-close.
+    // plan: phase-02 update; declarationIds used; declaredType is Maybe[Type].
     "Phase 5: sym.declaredType after classpath close returns pre-populated type (no failure)" in run {
         val captureResult: Result[TastyError, Tasty.Symbol] < Async =
             Scope.run:
@@ -898,8 +828,11 @@ class QueryApiTest extends Test:
                     openFixtureClasspath(fixtureSource()).flatMap: cp =>
                         cp.findClass("kyo.fixtures.PlainClass") match
                             case Present(sym) =>
-                                val decls = sym.declarations
-                                decls.find(s => s.name.asString == "x") match
+                                val rawCp = Tasty.Classpath.unwrap(cp)
+                                import AllowUnsafe.embrace.danger
+                                val declIds = sym.declarationIds
+                                val allSym  = rawCp.allSymbols
+                                declIds.map(id => allSym(id.value)).find(s => s.name.asString == "x") match
                                     case Some(xSym) => Kyo.lift(xSym)
                                     case None       => Kyo.lift(sym)
                             case Absent =>
@@ -910,10 +843,8 @@ class QueryApiTest extends Test:
             case Result.Panic(t) =>
                 throw t
             case Result.Success(sym) =>
-                // Scope has exited; classpath is now closed. declaredType is pure and reads
-                // the pre-populated SingleAssign slot, which remains valid post-close.
-                val tpe = sym.declaredType
-                assert(tpe != null, "Expected non-null declaredType from pre-populated slot after classpath close")
+                val tpeMaybe = sym.declaredType
+                assert(tpeMaybe.isDefined, "Expected Present declaredType from pre-populated field after classpath close")
     }
 
     // Test G19 (Phase 13): InconsistentClasspath uses java.util.UUID for both UUID fields

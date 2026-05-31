@@ -8,6 +8,7 @@ import kyo.internal.tasty.symbol.Flags as FlagsHelper
 import kyo.internal.tasty.symbol.FqnCanonicalizer
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
+import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -66,41 +67,9 @@ object ClassfileUnpickler:
         home: ClasspathRef,
         path: String
     )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
-        readFromRaw(view, interner, arena, home, path).map: result =>
-            // Populate _parents, _typeParams, _declarations, _declaredType on the class symbol and member symbols.
-            // Unsafe: SingleAssign.set() and isSet are unsafe-tier helpers; AllowUnsafe proof flows from method signature.
-            // Note: Scala 2 pickle symbols (from Scala2PickleReader) have their slots pre-wired; we skip already-set slots.
-            if !result.classSymbol._parents.isSet then result.classSymbol._parents.set(result.parents)
-            if !result.classSymbol._typeParams.isSet then result.classSymbol._typeParams.set(result.typeParams)
-            if !result.classSymbol._declarations.isSet then result.classSymbol._declarations.set(result.symbols)
-            // Class symbol's declaredType is Type.Named(classSymbol) itself.
-            if !result.classSymbol._declaredType.isSet then
-                result.classSymbol._declaredType.set(Tasty.Type.Named(result.classSymbol))
-            // Java classfiles have no Comments section; scaladoc is always Absent for classfile symbols.
-            if !result.classSymbol._scaladoc.isSet then result.classSymbol._scaladoc.set(Maybe.Absent)
-            // Java classfiles have no TASTy Positions section; position is always Absent for classfile symbols.
-            if !result.classSymbol._position.isSet then result.classSymbol._position.set(Maybe.Absent)
-            for memberSym <- result.symbols do
-                if !memberSym._parents.isSet then memberSym._parents.set(Chunk.empty)
-                if !memberSym._typeParams.isSet then memberSym._typeParams.set(Chunk.empty)
-                if !memberSym._declarations.isSet then memberSym._declarations.set(Chunk.empty)
-                if !memberSym._scaladoc.isSet then memberSym._scaladoc.set(Maybe.Absent)
-                if !memberSym._position.isSet then memberSym._position.set(Maybe.Absent)
-                // Assign _declaredType from memberTypes map if available.
-                if !memberSym._declaredType.isSet then
-                    result.memberTypes.get(memberSym) match
-                        case Some(t) => memberSym._declaredType.set(t)
-                        case None    => ()
-                end if
-            end for
-            for tpSym <- result.typeParams do
-                if !tpSym._parents.isSet then tpSym._parents.set(Chunk.empty)
-                if !tpSym._typeParams.isSet then tpSym._typeParams.set(Chunk.empty)
-                if !tpSym._declarations.isSet then tpSym._declarations.set(Chunk.empty)
-                if !tpSym._scaladoc.isSet then tpSym._scaladoc.set(Maybe.Absent)
-                if !tpSym._position.isSet then tpSym._position.set(Maybe.Absent)
-            end for
-            result
+        // plan: phase-02 bridge; slot fills removed (Symbol is now immutable); ClasspathOrchestrator
+        // Pass C constructs fully-populated Symbols from ClassfileResult data via materializeSymbols.
+        readFromRaw(view, interner, arena, home, path)
 
     private def readFromRaw(
         view: ByteView,
@@ -172,11 +141,7 @@ object ClassfileUnpickler:
         SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
-            Tasty.Name(simpleName),
-            null,
-            home,
-            Tasty.Symbol.JavaOrigin,
-            Absent
+            Tasty.Name(simpleName)
         )
     end makeUnresolvedSymbol
 
@@ -184,11 +149,7 @@ object ClassfileUnpickler:
         val sym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
-            Tasty.Name(binaryName.replace('/', '.')),
-            null,
-            home,
-            Tasty.Symbol.JavaOrigin,
-            Absent
+            Tasty.Name(binaryName.replace('/', '.'))
         )
         Tasty.Type.Named(sym)
     end unresolvedType
@@ -1105,18 +1066,29 @@ object ClassfileUnpickler:
                                                                 paramNames = Chunk.empty,
                                                                 runtimeTypeAnnotations = allTypeAnns
                                                             )
-                                                            val classSym = SymbolFactory.makeSymbol(
-                                                                kind,
-                                                                classFlags,
-                                                                Tasty.Name(symName),
-                                                                symOwner,
-                                                                home,
-                                                                Tasty.Symbol.JavaOrigin,
-                                                                Present(classMetadata)
+                                                            // plan: phase-02 bridge; use fromDescriptor to include javaMetadata directly.
+                                                            // permittedSubclassIds uses SymbolId(-1) placeholders for now (Phase 07 resolves).
+                                                            val permSubIds: Maybe[Chunk[kyo.internal.tasty.symbol.SymbolId]] =
+                                                                if permittedSubSym.nonEmpty then
+                                                                    Maybe(permittedSubSym.map(_ => kyo.internal.tasty.symbol.SymbolId(-1)))
+                                                                else Maybe.Absent
+                                                            val classSym = Tasty.Symbol.fromDescriptor(
+                                                                id = kyo.internal.tasty.symbol.SymbolId(-1),
+                                                                kind = kind,
+                                                                flags = classFlags,
+                                                                name = Tasty.Name(symName),
+                                                                ownerId = kyo.internal.tasty.symbol.SymbolId(-1),
+                                                                // plan: phase-02; self-referential declaredType deferred to Phase 09.
+                                                                declaredType = Maybe.Absent,
+                                                                scaladoc = Maybe.Absent,
+                                                                sourcePosition = Maybe.Absent,
+                                                                javaMetadata = Maybe(classMetadata),
+                                                                parentTypes = Chunk.empty,
+                                                                typeParamIds = Chunk.empty,
+                                                                declarationIds = Chunk.empty,
+                                                                permittedSubclassIds = permSubIds,
+                                                                body = Maybe.Absent
                                                             )
-                                                            // Wire _permittedSubclasses on the class symbol if the attribute was present.
-                                                            if permittedSubSym.nonEmpty then
-                                                                classSym._permittedSubclasses.set(Present(permittedSubSym))
                                                             // Parse class-level Signature attribute to extract type parameters.
                                                             parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map:
                                                                 classTypeParams =>
@@ -1341,11 +1313,7 @@ object ClassfileUnpickler:
                 SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Class,
                     new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
-                    Tasty.Name(outerSimpleName),
-                    grandParent,
-                    home,
-                    Tasty.Symbol.JavaOrigin,
-                    Absent
+                    Tasty.Name(outerSimpleName)
                 )
             case _ =>
                 // Top-level outer class: parse the package prefix and class name
@@ -1355,11 +1323,7 @@ object ClassfileUnpickler:
                 SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Class,
                     new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
-                    Tasty.Name(className),
-                    pkgSymbol,
-                    home,
-                    Tasty.Symbol.JavaOrigin,
-                    Absent
+                    Tasty.Name(className)
                 )
         end match
     end buildPackageOwnerChain
@@ -1379,11 +1343,7 @@ object ClassfileUnpickler:
                 cur = SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Package,
                     new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
-                    Tasty.Name(segments(i)),
-                    cur,
-                    home,
-                    Tasty.Symbol.JavaOrigin,
-                    Absent
+                    Tasty.Name(segments(i))
                 )
                 i += 1
             end while
@@ -1409,11 +1369,7 @@ object ClassfileUnpickler:
                     val enclosingClassSym = SymbolFactory.makeSymbol(
                         Tasty.SymbolKind.Unresolved,
                         new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
-                        Tasty.Name(enclosingName),
-                        enclosingOwner,
-                        home,
-                        Tasty.Symbol.JavaOrigin,
-                        Absent
+                        Tasty.Name(enclosingName)
                     )
                     enclosingMethodIdx match
                         case Absent =>
@@ -1501,11 +1457,7 @@ object ClassfileUnpickler:
         val sym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
-            Tasty.Name(fqn.split("\\.").last),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.JavaOrigin,
-            Absent
+            Tasty.Name(fqn.split("\\.").last)
         )
         Tasty.Type.Named(sym)
     end primType
@@ -1617,14 +1569,22 @@ object ClassfileUnpickler:
 
                                 val nameBytes = memberName.getBytes(java.nio.charset.StandardCharsets.UTF_8)
                                 val nameEntry = interner.intern(nameBytes, 0, nameBytes.length)
-                                val sym = SymbolFactory.makeSymbol(
-                                    kind,
-                                    memberFlags,
-                                    Tasty.Name.wrap(nameEntry),
-                                    owner,
-                                    home,
-                                    Tasty.Symbol.JavaOrigin,
-                                    Present(metadata)
+                                // plan: phase-02 bridge; include javaMetadata in member symbol.
+                                val sym = Tasty.Symbol.fromDescriptor(
+                                    id = SymbolId(-1),
+                                    kind = kind,
+                                    flags = memberFlags,
+                                    name = Tasty.Name.wrap(nameEntry),
+                                    ownerId = SymbolId(-1),
+                                    declaredType = Maybe(memberType),
+                                    scaladoc = Maybe.Absent,
+                                    sourcePosition = Maybe.Absent,
+                                    javaMetadata = Maybe(metadata),
+                                    parentTypes = Chunk.empty,
+                                    typeParamIds = Chunk.empty,
+                                    declarationIds = Chunk.empty,
+                                    permittedSubclassIds = Maybe.Absent,
+                                    body = Maybe.Absent
                                 )
                                 (sym, memberType)
 
@@ -1648,11 +1608,7 @@ object ClassfileUnpickler:
                 val exSym = SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Unresolved,
                     new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
-                    Tasty.Name(binaryName.replace('/', '.')),
-                    null,
-                    ClasspathRef.init(),
-                    Tasty.Symbol.JavaOrigin,
-                    Absent
+                    Tasty.Name(binaryName.replace('/', '.'))
                 )
                 resolveThrowsList(pool, path, idxs, i + 1, acc.appended(Tasty.Type.Named(exSym)))
 

@@ -43,18 +43,23 @@ object AstUnpickler:
       * @param placeholders
       *   Cross-file UnresolvedRef entries collected by TypeUnpickler during type decode.
       * @param rootSymbol
-      *   The synthetic root Package sentinel (empty name, null owner). Used as the top-level owner for package-level definitions. Excluded
-      *   from `symbols` (which only contains user-declared definitions) but retained here so downstream resolvers can walk the full owner
-      *   chain back to root without needing to reconstruct it.
+      *   The synthetic root Package sentinel (empty name, no owner). Used as the top-level owner for package-level definitions.
       * @param parentsBySymbol
-      *   Pre-indexed map from each class-like symbol to its parent types, as decoded from TEMPLATE parent_Type entries during pass 1.
-      *   Parent types may be proxy types with unresolved SingleAssign slots for cross-file parents; slots are populated during Phase C
-      *   placeholder resolution in mergeResults. This map is consumed by mergeResults to assign `Symbol._parents` after G13 resolution
-      *   completes.
+      *   Pre-indexed map from each class-like symbol to its parent types. Consumed by Pass C.
       * @param childrenByOwner
-      *   Pre-indexed map from each symbol to its directly-owned child symbols, built by grouping all symbols by their `owner` field. Used
-      *   by mergeResults to assign `Symbol._declarations` (after filtering out TypeParam-kinded children per the declarations contract) and
-      *   `Symbol._typeParams` (TypeParam-kinded children only).
+      *   Pre-indexed map from each symbol to its directly-owned child symbols.
+      * @param typeBySymbol
+      *   Pre-indexed map from each symbol to its declared type. Consumed by Pass C.
+      * @param ownerBySymbol
+      *   Map from each symbol to its owner symbol (the partial Symbol used during Pass 1). Used by Pass C to build ownerId fields. plan:
+      *   phase-02 bridge; removed in Phase 07 when AstUnpickler produces SymbolDescriptors directly.
+      * @param bodyDataByAddr
+      *   Map from TASTy byte address to (bodyStart, bodyEnd) for symbols that have a body. File-level body data. plan: phase-02 bridge;
+      *   removed in Phase 07 when AstUnpickler produces SymbolDescriptors with body field.
+      * @param sectionBytes
+      *   The raw AST section bytes for this file (shared across all symbols). For Pass C SymbolBody construction.
+      * @param sectionOffset
+      *   Absolute byte offset where the AST section starts. For SymbolBody.sectionOffset.
       */
     /** Fields `addrMap`, `parentsBySymbol`, `childrenByOwner`, and `typeBySymbol` are `mutable.HashMap` instances. They are safe because
       * `Pass1Result` is produced by a single decoder fiber and consumed by the single-threaded merger fiber after the channel put/take
@@ -67,7 +72,12 @@ object AstUnpickler:
         rootSymbol: Tasty.Symbol,
         parentsBySymbol: mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Type]],
         childrenByOwner: mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Symbol]],
-        typeBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Type]
+        typeBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Type],
+        ownerBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Symbol],
+        bodyDataByAddr: mutable.HashMap[Tasty.Symbol, (Int, Int)],
+        sectionBytes: Array[Byte],
+        sectionOffset: Int,
+        names: Array[Tasty.Name]
     )
 
     /** Run pass 1 over the AST section.
@@ -121,11 +131,15 @@ object AstUnpickler:
         val ownerStack      = new mutable.ArrayDeque[Tasty.Symbol]()
         val parentsBySymbol = new mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Type]]()
         val typeBySymbol    = new mutable.HashMap[Tasty.Symbol, Tasty.Type]()
+        // plan: phase-02 bridge; ownerBySymbol and bodyDataByAddr track per-symbol data that was
+        // previously stored on Symbol.owner and Symbol.TastyOrigin. Pass C reads these to build
+        // ownerId and body fields on the final immutable Symbols.
+        val ownerBySymbol  = new mutable.HashMap[Tasty.Symbol, Tasty.Symbol]()
+        val bodyDataByAddr = new mutable.HashMap[Tasty.Symbol, (Int, Int)]()
 
-        // Synthetic root: a Package symbol with empty name; its owner is null (termination sentinel).
-        val rootName   = Tasty.Name("")
-        val rootOrigin = Tasty.Symbol.TastyOrigin.empty
-        val root       = InternalSymbol.makeSymbol(Tasty.SymbolKind.Package, Tasty.Flags.empty, rootName, null, home, rootOrigin, Absent)
+        // Synthetic root: a Package symbol with empty name; owns itself (self-referential sentinel).
+        val rootName = Tasty.Name("")
+        val root     = InternalSymbol.makeSymbol(Tasty.SymbolKind.Package, Tasty.Flags.empty, rootName)
         ownerStack.append(root)
         allSymbols += root
 
@@ -148,30 +162,22 @@ object AstUnpickler:
             ownerStack,
             typeSession,
             parentsBySymbol,
-            typeBySymbol
+            typeBySymbol,
+            ownerBySymbol,
+            bodyDataByAddr
         )
 
         // Convert the mutable addrMap to an immutable IntMap once, after walkStats completes.
         // IntMap uses primitive Int keys; no autoboxing on .get(Int) lookups.
         val intMap = IntMap.from(addrMap.iterator)
 
-        // Populate the addrMap SingleAssign on every TastyOrigin in this file now that the full addrMap is known.
-        // This allows TreeUnpickler (called lazily from Symbol.body) to resolve IDENT/SELECT addr references.
-        for sym <- allSymbols do
-            sym.origin match
-                case o: Tasty.Symbol.TastyOrigin =>
-                    if !o._addrMap.isSet then
-                        o._addrMap.set(intMap)
-                case _ => ()
-        end for
-
-        // Build childrenByOwner: group all non-root symbols by their owner.
+        // Build childrenByOwner: group all non-root symbols by their owner (from ownerBySymbol).
         val childrenByOwnerBuf = new mutable.HashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Symbol]]()
         for sym <- allSymbols.tail do // skip root
-            val owner = sym.owner
-            if owner != null then
-                childrenByOwnerBuf.getOrElseUpdate(owner, new mutable.ArrayBuffer[Tasty.Symbol]()) += sym
-            end if
+            ownerBySymbol.get(sym) match
+                case Some(owner) =>
+                    childrenByOwnerBuf.getOrElseUpdate(owner, new mutable.ArrayBuffer[Tasty.Symbol]()) += sym
+                case None => ()
         end for
 
         // Convert ArrayBuffer values to Chunk, producing the final mutable.HashMap for Pass1Result.
@@ -186,7 +192,12 @@ object AstUnpickler:
             rootSymbol = root,
             parentsBySymbol = parentsBySymbol,
             childrenByOwner = childrenChunks,
-            typeBySymbol = typeBySymbol
+            typeBySymbol = typeBySymbol,
+            ownerBySymbol = ownerBySymbol,
+            bodyDataByAddr = bodyDataByAddr,
+            sectionBytes = sectionBytes,
+            sectionOffset = sectionOffset,
+            names = names
         )
     end runPass1
 
@@ -196,7 +207,11 @@ object AstUnpickler:
     /** Walk all stats (top-level definitions) until position reaches `end`. Mirrors dotty indexStats.
       *
       * @param sectionBytes
-      *   The raw AST section bytes (from view.allBytes) stored in each symbol's TastyOrigin for lazy body decode.
+      *   The raw AST section bytes (from view.allBytes). plan: phase-02 bridge; used by Pass C to build SymbolBody.
+      * @param ownerBySymbol
+      *   Accumulator: maps each symbol to its owner partial symbol. plan: phase-02 bridge; feeds Pass C ownerId.
+      * @param bodyDataByAddr
+      *   Accumulator: maps each symbol to (bodyStart, bodyEnd) bytes within sectionBytes.
       */
     private def walkStats(
         view: ByteView,
@@ -211,7 +226,9 @@ object AstUnpickler:
         ownerStack: mutable.ArrayDeque[Tasty.Symbol],
         typeSession: TypeUnpickler.DecodeSession,
         parentsBySymbol: mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Type]],
-        typeBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Type]
+        typeBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Type],
+        ownerBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Symbol],
+        bodyDataByAddr: mutable.HashMap[Tasty.Symbol, (Int, Int)]
     )(using Frame, AllowUnsafe): Unit =
         while view.position < end do
             val nodeAddr = view.positionInt
@@ -223,25 +240,12 @@ object AstUnpickler:
                     // Path is the package term reference: TERMREFpkg (cat2: tag+NameRef) or
                     // SELECT (cat4: tag+NameRef+qual) for nested packages (kyo.fixtures etc.).
                     // Decode the innermost simple name from the path.
-                    val pkgName = extractPackageName(view, names)
-                    val owner   = currentOwner(ownerStack)
-                    val origin = Tasty.Symbol.TastyOrigin.init(
-                        view.positionInt,
-                        Math.toIntExact(payloadEnd),
-                        sectionBytes,
-                        names,
-                        sectionOffset,
-                        null
-                    )
-                    val sym = InternalSymbol.makeSymbol(
-                        Tasty.SymbolKind.Package,
-                        Tasty.Flags.empty,
-                        pkgName,
-                        owner,
-                        home,
-                        origin,
-                        Absent
-                    )
+                    val pkgName   = extractPackageName(view, names)
+                    val owner     = currentOwner(ownerStack)
+                    val bodyStart = view.positionInt
+                    val sym       = InternalSymbol.makeSymbol(Tasty.SymbolKind.Package, Tasty.Flags.empty, pkgName)
+                    ownerBySymbol(sym) = owner
+                    bodyDataByAddr(sym) = (bodyStart, Math.toIntExact(payloadEnd))
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     ownerStack.append(sym)
@@ -258,7 +262,9 @@ object AstUnpickler:
                         ownerStack,
                         typeSession,
                         parentsBySymbol,
-                        typeBySymbol
+                        typeBySymbol,
+                        ownerBySymbol,
+                        bodyDataByAddr
                     )
                     discard(ownerStack.removeLast())
                     view.goto(payloadEnd)
@@ -275,15 +281,9 @@ object AstUnpickler:
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val kind     = InternalSymbolKind.fromValdefFlags(flagBits)
                     val flags    = new Tasty.Flags(flagBits)
-                    val origin = Tasty.Symbol.TastyOrigin.init(
-                        Math.toIntExact(payloadBody),
-                        Math.toIntExact(payloadEnd),
-                        sectionBytes,
-                        names,
-                        sectionOffset,
-                        null
-                    )
-                    val sym = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
+                    val sym      = InternalSymbol.makeSymbol(kind, flags, symName)
+                    ownerBySymbol(sym) = owner
+                    bodyDataByAddr(sym) = (Math.toIntExact(payloadBody), Math.toIntExact(payloadEnd))
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     valTpe match
@@ -299,15 +299,9 @@ object AstUnpickler:
                     val payloadBody = view.position
                     val flagBits    = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags       = new Tasty.Flags(flagBits)
-                    val origin = Tasty.Symbol.TastyOrigin.init(
-                        Math.toIntExact(payloadBody),
-                        Math.toIntExact(payloadEnd),
-                        sectionBytes,
-                        names,
-                        sectionOffset,
-                        null
-                    )
-                    val sym = InternalSymbol.makeSymbol(Tasty.SymbolKind.Method, flags, symName, owner, home, origin, Absent)
+                    val sym         = InternalSymbol.makeSymbol(Tasty.SymbolKind.Method, flags, symName)
+                    ownerBySymbol(sym) = owner
+                    bodyDataByAddr(sym) = (Math.toIntExact(payloadBody), Math.toIntExact(payloadEnd))
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     // Recurse into DEFDEF body to discover type params and value params.
@@ -327,7 +321,9 @@ object AstUnpickler:
                         ownerStack,
                         typeSession,
                         parentsBySymbol,
-                        typeBySymbol
+                        typeBySymbol,
+                        ownerBySymbol,
+                        bodyDataByAddr
                     )
                     discard(ownerStack.removeLast())
                     // Capture the DEFDEF return type by scanning a fresh sub-view:
@@ -371,16 +367,9 @@ object AstUnpickler:
                         val flagBits = readModifiers(view, payloadEnd)
                         val kind     = InternalSymbolKind.fromTypedefTemplateFlags(flagBits)
                         val flags    = new Tasty.Flags(flagBits)
-                        val origin =
-                            Tasty.Symbol.TastyOrigin.init(
-                                Math.toIntExact(templateBodyStart),
-                                Math.toIntExact(templatePayloadEnd),
-                                sectionBytes,
-                                names,
-                                sectionOffset,
-                                null
-                            )
-                        val sym = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
+                        val sym      = InternalSymbol.makeSymbol(kind, flags, symName)
+                        ownerBySymbol(sym) = owner
+                        bodyDataByAddr(sym) = (Math.toIntExact(templateBodyStart), Math.toIntExact(templatePayloadEnd))
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
                         // Record parent types for this class symbol (used by mergeResults for _parents assignment).
@@ -402,15 +391,15 @@ object AstUnpickler:
                             ownerStack,
                             typeSession,
                             parentsBySymbol,
-                            typeBySymbol
+                            typeBySymbol,
+                            ownerBySymbol,
+                            bodyDataByAddr
                         )
                         discard(ownerStack.removeLast())
                         // Class-like TYPEDEF: declaredType is Type.Named(sym) assigned in mergeResults.
                         view.goto(payloadEnd)
                     else
                         // Type-level TYPEDEF: decode the type body instead of skipping it.
-                        // nextTag is the type body tag (e.g. TYPEBOUNDS for abstract types, TYPEREF for aliases).
-                        // The position is already at the type tag byte; decode via readTypeIntoSession.
                         val typeLevelTpe =
                             try Present(TypeUnpickler.readTypeIntoSession(view, typeSession))
                             catch
@@ -422,16 +411,9 @@ object AstUnpickler:
                         val flagBits = readModifiers(view, payloadEnd)
                         val kind     = InternalSymbolKind.fromTypedefTypeFlagsAndBody(flagBits, nextTag)
                         val flags    = new Tasty.Flags(flagBits)
-                        // Type-level TYPEDEF has no body to decode; bodyStart == bodyEnd == payloadEnd sentinel.
-                        val origin = Tasty.Symbol.TastyOrigin.init(
-                            Math.toIntExact(payloadEnd),
-                            Math.toIntExact(payloadEnd),
-                            sectionBytes,
-                            names,
-                            sectionOffset,
-                            null
-                        )
-                        val sym = InternalSymbol.makeSymbol(kind, flags, symName, owner, home, origin, Absent)
+                        // Type-level TYPEDEF: no body to decode; bodyStart == bodyEnd == payloadEnd sentinel.
+                        val sym = InternalSymbol.makeSymbol(kind, flags, symName)
+                        ownerBySymbol(sym) = owner
                         addrMap(nodeAddr) = sym
                         allSymbols += sym
                         typeLevelTpe match
@@ -449,15 +431,8 @@ object AstUnpickler:
                     val tpBounds = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
                     val flagBits = readModifiers(view, payloadEnd)
                     val flags    = new Tasty.Flags(flagBits)
-                    val origin = Tasty.Symbol.TastyOrigin.init(
-                        Math.toIntExact(payloadEnd),
-                        Math.toIntExact(payloadEnd),
-                        sectionBytes,
-                        names,
-                        sectionOffset,
-                        null
-                    )
-                    val sym = InternalSymbol.makeSymbol(Tasty.SymbolKind.TypeParam, flags, symName, owner, home, origin, Absent)
+                    val sym      = InternalSymbol.makeSymbol(Tasty.SymbolKind.TypeParam, flags, symName)
+                    ownerBySymbol(sym) = owner
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     tpBounds match
@@ -474,15 +449,8 @@ object AstUnpickler:
                     val paramTpe = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags    = new Tasty.Flags(flagBits)
-                    val origin = Tasty.Symbol.TastyOrigin.init(
-                        Math.toIntExact(payloadEnd),
-                        Math.toIntExact(payloadEnd),
-                        sectionBytes,
-                        names,
-                        sectionOffset,
-                        null
-                    )
-                    val sym = InternalSymbol.makeSymbol(Tasty.SymbolKind.Parameter, flags, symName, owner, home, origin, Absent)
+                    val sym      = InternalSymbol.makeSymbol(Tasty.SymbolKind.Parameter, flags, symName)
+                    ownerBySymbol(sym) = owner
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
                     paramTpe match

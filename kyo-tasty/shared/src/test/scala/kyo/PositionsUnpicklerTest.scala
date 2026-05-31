@@ -51,18 +51,13 @@ class PositionsUnpicklerTest extends Test:
         ((n & 0x3f) | 0x80).toByte
     end encNegInt
 
-    /** Create a minimal Tasty.Symbol for testing. */
+    /** Create a minimal Tasty.Symbol for testing. plan: phase-02 bridge. */
     private def makeTestSymbol(nameStr: String): Tasty.Symbol =
-        val home   = ClasspathRef.init()
-        val origin = Tasty.Symbol.TastyOrigin.empty
+        import AllowUnsafe.embrace.danger
         Tasty.Symbol.make(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name(nameStr),
-            null,
-            home,
-            origin,
-            Absent
+            Tasty.Name(nameStr)
         )
     end makeTestSymbol
 
@@ -165,14 +160,14 @@ class PositionsUnpicklerTest extends Test:
         .map:
             case Result.Success(result) =>
                 assert(
-                    !result.classSymbol.position.isDefined,
-                    s"Expected Absent position for classfile symbol but got ${result.classSymbol.position}"
+                    !result.classSymbol.sourcePosition.isDefined,
+                    s"Expected Absent position for classfile symbol but got ${result.classSymbol.sourcePosition}"
                 )
-                val memberFailures = result.symbols.filter(_.position.isDefined)
+                val memberFailures = result.symbols.filter(_.sourcePosition.isDefined)
                 assert(
                     memberFailures.isEmpty,
                     s"Expected all member symbols to have Absent position but found ${memberFailures.length} with Present: " +
-                        memberFailures.map(s => s"'${s.name.asString}'=${s.position}").mkString(", ")
+                        memberFailures.map(s => s"'${s.name.asString}'=${s.sourcePosition}").mkString(", ")
                 )
             case Result.Failure(e) =>
                 fail(s"Expected success but got failure: $e")

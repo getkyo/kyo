@@ -87,7 +87,7 @@ class SymbolResolutionTest extends Test:
                 case Result.Success((Present(sym1), Present(sym2))) =>
                     assert(
                         sym1 eq sym2,
-                        s"Concurrent findClass calls must return reference-equal symbols; got different instances for ${sym1.fullName.asString}"
+                        s"Concurrent findClass calls must return reference-equal symbols; got different instances for ${sym1.name.asString}"
                     )
                 case Result.Success((Absent, _)) | Result.Success((_, Absent)) =>
                     fail("Expected both concurrent findClass calls to return Present")
@@ -110,8 +110,8 @@ class SymbolResolutionTest extends Test:
                 )).map:
                 case Result.Success((Present(sym1), Absent)) =>
                     assert(
-                        sym1.fullName.asString.contains("PlainClass"),
-                        s"Expected PlainClass symbol, got: ${sym1.fullName.asString}"
+                        sym1.name.asString.contains("PlainClass"),
+                        s"Expected PlainClass symbol, got: ${sym1.name.asString}"
                     )
                 case Result.Success((Absent, _)) =>
                     fail("Expected PlainClass to be found")
@@ -153,8 +153,8 @@ class SymbolResolutionTest extends Test:
                 case Result.Success((Present(sym1), Present(sym2))) =>
                     assert(sym1 ne sym2, "Symbols from different Classpath instances must not be reference-equal")
                     assert(
-                        sym1.fullName.asString == sym2.fullName.asString,
-                        s"Symbols from different Classpath instances must have same FQN: ${sym1.fullName.asString} vs ${sym2.fullName.asString}"
+                        sym1.name.asString == sym2.name.asString,
+                        s"Symbols from different Classpath instances must have same FQN: ${sym1.name.asString} vs ${sym2.name.asString}"
                     )
                 case Result.Success((Absent, _)) | Result.Success((_, Absent)) =>
                     fail("Expected both Classpath instances to return Present for PlainClass")
@@ -212,14 +212,12 @@ class SymbolResolutionTest extends Test:
                     val placeholder = plainResult.placeholders(0)
                     val fqn         = placeholder.fqn
                     // Create a synthetic Class symbol representing the "found" class in fqnIndex.
+                    // plan: phase-02 bridge; Symbol.make(kind, flags, name) only.
+                    import AllowUnsafe.embrace.danger
                     val syntheticSym = Tasty.Symbol.make(
                         Tasty.SymbolKind.Class,
                         Tasty.Flags.empty,
-                        Tasty.Name(fqn),
-                        null,
-                        kyo.internal.tasty.query.ClasspathRef.init(),
-                        Tasty.Symbol.TastyOrigin.empty,
-                        Maybe.Absent
+                        Tasty.Name(fqn)
                     )
                     // Manually simulate Phase C: fqnIndex contains the class -> set slot.
                     import AllowUnsafe.embrace.danger
@@ -274,14 +272,12 @@ class SymbolResolutionTest extends Test:
                     val placeholder = plainResult.placeholders(0)
                     val fqn         = placeholder.fqn
                     // Simulate Phase C: fqn not in fqnIndex -> synthesize Unresolved sentinel.
+                    // plan: phase-02 bridge; Symbol.make(kind, flags, name) only.
+                    import AllowUnsafe.embrace.danger
                     val unresolvedSym = Tasty.Symbol.make(
                         Tasty.SymbolKind.Unresolved,
                         Tasty.Flags.empty,
-                        Tasty.Name(fqn),
-                        null,
-                        kyo.internal.tasty.query.ClasspathRef.init(),
-                        Tasty.Symbol.TastyOrigin.empty,
-                        Maybe.Absent
+                        Tasty.Name(fqn)
                     )
                     placeholder.replaceSlot.set(Tasty.Type.Named(unresolvedSym))
                     val resolved = placeholder.replaceSlot.get()

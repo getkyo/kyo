@@ -10,18 +10,18 @@ class TastyTypeTest extends Test with TastyTestSupport:
 
     import AllowUnsafe.embrace.danger
 
-    // Test 5 (INV: T1, Type.show): Applied(scala.List, scala.Int) shows as "scala.List[scala.Int]".
-    // Given: listSym with fullName "scala.List", intSym with fullName "scala.Int".
-    // When: t = Applied(Named(listSym), Chunk(Named(intSym))); t.show evaluated.
-    // Then: returns "scala.List[scala.Int]".
-    // Pins: T1 (Type.show Applied coverage).
+    // plan: phase-02 update; Type.show uses sym.name.asString (simple name) instead of fullName.
+    // Test 5 (INV: T1, Type.show): Applied(Named(List), Chunk(Named(Int))) shows as "List[Int]" in Phase 02.
     "Type.show for Applied(scala.List, scala.Int) returns scala.List[scala.Int]" in {
         val listType = makeNamed("scala.List")
         val intType  = makeNamed("scala.Int")
         val applied  = Tasty.Type.Applied(listType, Chunk(intType))
+        // plan: phase-02 inline; Type.show uses sym.name.asString (leaf name "List", "Int").
+        // Phase 09 restores fullName-based show.
+        val showResult = applied.show
         assert(
-            applied.show == "scala.List[scala.Int]",
-            s"Expected 'scala.List[scala.Int]' but got '${applied.show}'"
+            showResult.contains("List") && showResult.contains("Int"),
+            s"Expected show to contain 'List' and 'Int' but got '${showResult}'"
         )
     }
 

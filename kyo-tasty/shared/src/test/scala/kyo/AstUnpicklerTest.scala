@@ -242,8 +242,9 @@ class AstUnpicklerTest extends Test:
         }
     }
 
-    // Test 16: sym.owner for a method symbol is the class symbol.
-    "pass 1 on PlainClass.tasty: method symbol's owner is the class symbol" in run {
+    // Test 16: method symbol's owner is tracked in ownerBySymbol map.
+    // plan: phase-02 update; sym.owner is removed; use r.ownerBySymbol instead.
+    "pass 1 on PlainClass.tasty: method symbol's owner is the class symbol (via ownerBySymbol)" in run {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -254,10 +255,11 @@ class AstUnpicklerTest extends Test:
                     assert(methodSymOpt.isDefined, "No Method symbol")
                     val classSym  = classSymOpt.get
                     val methodSym = methodSymOpt.get
-                    // Method's owner should be the class symbol
+                    // Method's owner is tracked in ownerBySymbol
+                    val ownerOpt = r.ownerBySymbol.get(methodSym)
                     assert(
-                        methodSym.owner eq classSym,
-                        s"Method owner is ${Option(methodSym.owner).map(_.name.asString).orNull} but expected PlainClass"
+                        ownerOpt.exists(_ eq classSym),
+                        s"Method owner in ownerBySymbol should be PlainClass but was ${ownerOpt.map(_.name.asString).orNull}"
                     )
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
@@ -266,8 +268,9 @@ class AstUnpicklerTest extends Test:
         }
     }
 
-    // Test 17: sym.fullName for a nested class is the dotted form.
-    "pass 1 on Outer.tasty: Inner class has dotted fullName" in run {
+    // Test 17: Inner class owner chain is tracked in ownerBySymbol.
+    // plan: phase-02 update; sym.fullName removed; test owner chain instead.
+    "pass 1 on Outer.tasty: Inner class owner is tracked in ownerBySymbol" in run {
         val bytes = loadFixtureBytes("Outer.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -278,11 +281,11 @@ class AstUnpicklerTest extends Test:
                         s"No symbol named 'Inner'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
                     )
                     val inner    = innerOpt.get
-                    val fullName = inner.fullName.asString
-                    // fullName must be the exact dotted FQN as specified in the plan.
+                    val ownerOpt = r.ownerBySymbol.get(inner)
+                    assert(ownerOpt.isDefined, s"Inner class has no owner in ownerBySymbol")
                     assert(
-                        fullName == "kyo.fixtures.Outer.Inner",
-                        s"fullName expected 'kyo.fixtures.Outer.Inner' but was '$fullName'"
+                        ownerOpt.get.name.asString == "Outer",
+                        s"Inner class owner expected 'Outer' but was '${ownerOpt.map(_.name.asString).orNull}'"
                     )
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
@@ -292,21 +295,20 @@ class AstUnpicklerTest extends Test:
     }
 
     // Test 18: body slices (bodyStart, bodyEnd) for a DEFDEF are non-zero.
-    "pass 1 on PlainClass.tasty: Method symbol body slice (bodyStart, bodyEnd) is non-zero" in run {
+    // plan: phase-02 update; TastyOrigin removed; use bodyDataByAddr instead.
+    "pass 1 on PlainClass.tasty: Method symbol body slice (bodyStart, bodyEnd) is non-zero (via bodyDataByAddr)" in run {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
                     val methodOpt = r.symbols.find(_.kind == Tasty.SymbolKind.Method)
                     assert(methodOpt.isDefined, "No Method symbol found")
-                    val method = methodOpt.get
-                    method.origin match
-                        case Tasty.Symbol.TastyOrigin(bodyStart, bodyEnd) =>
-                            assert(bodyStart > 0, s"bodyStart should be > 0 but was $bodyStart")
-                            assert(bodyEnd > bodyStart, s"bodyEnd ($bodyEnd) should be > bodyStart ($bodyStart)")
-                        case Tasty.Symbol.JavaOrigin =>
-                            fail("Expected TastyOrigin but got JavaOrigin")
-                    end match
+                    val method      = methodOpt.get
+                    val bodyDataOpt = r.bodyDataByAddr.get(method)
+                    assert(bodyDataOpt.isDefined, "Method symbol not found in bodyDataByAddr")
+                    val (bodyStart, bodyEnd) = bodyDataOpt.get
+                    assert(bodyStart > 0, s"bodyStart should be > 0 but was $bodyStart")
+                    assert(bodyEnd > bodyStart, s"bodyEnd ($bodyEnd) should be > bodyStart ($bodyStart)")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -594,29 +596,21 @@ class AstUnpicklerTest extends Test:
         }
     }
 
-    // T-P4-3: TastyOrigin.addrMap returns a non-empty map after pass1 sets it.
-    // Accesses origin._addrMap via AllowUnsafe and verifies it was populated by AstUnpickler.
-    "T-P4-3: TastyOrigin.addrMap is populated after pass1 completes" in run {
+    // T-P4-3: addrMap is populated after pass1 completes.
+    // plan: phase-02 update; TastyOrigin.addrMap removed; use r.addrMap (Pass1Result.addrMap) instead.
+    "T-P4-3: addrMap is populated after pass1 completes (via Pass1Result.addrMap)" in run {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
             result match
                 case Result.Success(r) =>
                     import AllowUnsafe.embrace.danger
-                    val classSymOpt = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Tasty.SymbolKind.Class)
-                    assert(classSymOpt.isDefined, "No PlainClass symbol found")
-                    val classSym = classSymOpt.get
-                    classSym.origin match
-                        case o: Tasty.Symbol.TastyOrigin =>
-                            val am = o.addrMap
-                            assert(am.nonEmpty, "TastyOrigin.addrMap should be non-empty after pass1")
-                            val foundPlainClass = am.values.exists(s =>
-                                s.name.asString == "PlainClass" && s.kind == Tasty.SymbolKind.Class
-                            )
-                            assert(foundPlainClass, "TastyOrigin.addrMap should contain the PlainClass symbol")
-                        case Tasty.Symbol.JavaOrigin =>
-                            fail("Expected TastyOrigin but got JavaOrigin")
-                    end match
+                    val am = r.addrMap
+                    assert(am.nonEmpty, "Pass1Result.addrMap should be non-empty after pass1")
+                    val foundPlainClass = am.values.exists(s =>
+                        s.name.asString == "PlainClass" && s.kind == Tasty.SymbolKind.Class
+                    )
+                    assert(foundPlainClass, "Pass1Result.addrMap should contain the PlainClass symbol")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>

@@ -51,18 +51,13 @@ class CommentsUnpicklerTest extends Test:
     private def buildSection(entries: (Int, String)*): Array[Byte] =
         entries.toArray.flatMap((addr, text) => encEntry(addr, text))
 
-    /** Create a minimal Tasty.Symbol for testing. */
+    /** Create a minimal Tasty.Symbol for testing. plan: phase-02 bridge; uses Symbol.make(kind, flags, name). */
     private def makeTestSymbol(nameStr: String): Tasty.Symbol =
-        val home   = ClasspathRef.init()
-        val origin = Tasty.Symbol.TastyOrigin.empty
+        import AllowUnsafe.embrace.danger
         Tasty.Symbol.make(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name(nameStr),
-            null,
-            home,
-            origin,
-            Absent
+            Tasty.Name(nameStr)
         )
     end makeTestSymbol
 
@@ -131,11 +126,11 @@ class CommentsUnpicklerTest extends Test:
                 throw t
     }
 
-    // ── Test 4: symbol with no comment has scaladoc==Absent; with comment has Present ─
+    // ── Test 4: symbol with no comment has no map entry; with comment has an entry ─
 
-    // Phase 6 Test 4: after CommentsUnpickler populates _scaladoc, a symbol with no comment has
-    // scaladoc == Absent and a symbol with a comment has scaladoc == Present(text).
-    "CommentsUnpickler: symbol with comment gets Present; symbol without comment gets Absent" in run {
+    // Phase 6 Test 4 (plan: phase-02 update): CommentsUnpickler returns a Map[Symbol, String].
+    // A symbol at an addr that has a comment entry appears in the map; one without does not.
+    "CommentsUnpickler: symbol with comment appears in returned map; symbol without does not" in run {
         val symWithDoc    = makeTestSymbol("WithDoc")
         val symWithoutDoc = makeTestSymbol("WithoutDoc")
         val addrMap       = IntMap(1 -> symWithDoc, 2 -> symWithoutDoc)
@@ -144,25 +139,17 @@ class CommentsUnpicklerTest extends Test:
         val view    = ByteView(payload)
         Abort.run[TastyError](CommentsUnpickler.read(view, addrMap)).map:
             case Result.Success(comments) =>
-                // Simulate mergeResults: assign _scaladoc from commentsBySymbol
-                import AllowUnsafe.embrace.danger
-                for (sym, text) <- comments do
-                    if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe(text))
-                // Symbols not in the comment map get Absent
-                if !symWithDoc._scaladoc.isSet then symWithDoc._scaladoc.set(Maybe.Absent)
-                if !symWithoutDoc._scaladoc.isSet then symWithoutDoc._scaladoc.set(Maybe.Absent)
-                // Verify
                 assert(
-                    symWithDoc.scaladoc.isDefined,
-                    s"Expected symWithDoc.scaladoc to be Present but got ${symWithDoc.scaladoc}"
+                    comments.contains(symWithDoc),
+                    s"Expected symWithDoc to appear in comments map but it was absent"
                 )
                 assert(
-                    symWithDoc.scaladoc.get.contains("documented"),
-                    s"Expected scaladoc text to contain 'documented' but got ${symWithDoc.scaladoc}"
+                    comments(symWithDoc).contains("documented"),
+                    s"Expected scaladoc text to contain 'documented' but got ${comments(symWithDoc)}"
                 )
                 assert(
-                    !symWithoutDoc.scaladoc.isDefined,
-                    s"Expected symWithoutDoc.scaladoc to be Absent but got ${symWithoutDoc.scaladoc}"
+                    !comments.contains(symWithoutDoc),
+                    s"Expected symWithoutDoc to be absent from comments map but it was present"
                 )
             case Result.Failure(e) =>
                 fail(s"Expected success but got failure: $e")

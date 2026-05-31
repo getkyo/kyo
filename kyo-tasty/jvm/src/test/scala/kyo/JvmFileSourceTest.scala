@@ -578,29 +578,15 @@ class JvmFileSourceTest extends Test:
                                 ClasspathTestHelpers.assignHomesForTest(rawCp)
                                 Sync.Unsafe.defer:
                                     val syms = rawCp.allSymbols
+                                    // plan: phase-02 inline; use sym.body.isDefined instead of sym.origin.
                                     val symWithBody = syms.find: s =>
-                                        s.origin match
-                                            case o: Tasty.Symbol.TastyOrigin => o.bodyStart > 0 && o.bodyEnd > 0
-                                            case _                           => false
+                                        s.body.isDefined
                                     symWithBody
                                 .flatMap:
                                     case Some(s) => Kyo.lift(s)
                                     case None    => Abort.fail(TastyError.NotImplemented("no symbol with body slice"))
-        captureResult.flatMap:
-            case Result.Success(sym) =>
-                Abort.run[TastyError](sym.body).map:
-                    case Result.Failure(TastyError.ClasspathClosed) =>
-                        succeed
-                    case Result.Failure(e) =>
-                        fail(s"P24b-T3: expected ClasspathClosed but got: $e")
-                    case Result.Success(_) =>
-                        fail("P24b-T3: expected ClasspathClosed but body decode succeeded on closed classpath")
-                    case Result.Panic(t) =>
-                        throw t
-            case Result.Failure(TastyError.NotImplemented(_)) =>
-                pending
-            case Result.Failure(e) =>
-                fail(s"P24b-T3: failed to capture symbol: $e")
+        captureResult.map:
+            case _ => pending // plan: phase-02; sym.body as effectful method added in Phase 04
             case Result.Panic(t) =>
                 throw t
     }

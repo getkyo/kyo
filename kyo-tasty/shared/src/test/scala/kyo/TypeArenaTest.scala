@@ -11,15 +11,7 @@ class TypeArenaTest extends Test:
 
     private def makeSym(name: String): Tasty.Symbol =
         import AllowUnsafe.embrace.danger
-        Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name(name),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
     end makeSym
 
     // Test 1: intern called twice with structurally identical Type.Named(sym) returns the same reference.

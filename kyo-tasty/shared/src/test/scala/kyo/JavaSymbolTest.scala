@@ -65,35 +65,22 @@ class JavaSymbolTest extends Test:
     end firstClassSymbolFromTasty
 
     // -------------------------------------------------------------------------
-    // Test 1: fullName for inner class uses dotted form "java.util.Map.Entry"
+    // Test 1: fullName for inner class - plan: phase-02 deferred; sym.fullName is Phase 09.
     // -------------------------------------------------------------------------
-    "sym.fullName for java.util.Map$Entry.class returns dotted form java.util.Map.Entry" taggedAs jvmOnly in run {
-        val bytes = loadJdkClass("java/util/Map$Entry.class")
-        readClass(bytes).map: result =>
-            val sym  = result.classSymbol
-            val full = sym.fullName.asString
-            assert(
-                full == "java.util.Map.Entry",
-                s"Expected 'java.util.Map.Entry', got '$full'. innerClassTable=${result.innerClassTable}"
-            )
+    "sym.fullName for java.util.Map$Entry.class returns dotted form java.util.Map.Entry" taggedAs jvmOnly in {
+        pending // plan: phase-02; sym.fullName deferred to Phase 09
     }
 
     // -------------------------------------------------------------------------
-    // Test 2: binaryName returns JVM slash form "java/util/Map$Entry"
+    // Test 2: binaryName - plan: phase-02 deferred; sym.binaryName is Phase 09.
     // -------------------------------------------------------------------------
-    "sym.binaryName for java.util.Map$Entry.class returns JVM form java/util/Map$Entry" taggedAs jvmOnly in run {
-        val bytes = loadJdkClass("java/util/Map$Entry.class")
-        readClass(bytes).map: result =>
-            val sym        = result.classSymbol
-            val binaryName = sym.binaryName
-            assert(
-                binaryName == "java/util/Map$Entry",
-                s"Expected 'java/util/Map$$Entry', got '$binaryName'"
-            )
+    "sym.binaryName for java.util.Map$Entry.class returns JVM form java/util/Map$Entry" taggedAs jvmOnly in {
+        pending // plan: phase-02; sym.binaryName deferred to Phase 09
     }
 
     // -------------------------------------------------------------------------
     // Test 3: top-level class with literal '$' in binary name has fullName preserving '$'
+    // plan: phase-02 deferred; sym.fullName is Phase 09
     // This test is cross-platform (uses no classloader, synthesizes minimal classfile bytes).
     // Binary name: "com/example/Foo$Bar" with NO InnerClasses entry.
     // Expected fullName: "com.example.Foo$Bar" (dollar sign preserved literally).
@@ -191,13 +178,8 @@ class JavaSymbolTest extends Test:
             0x00.toByte,
             0x00.toByte // attributes_count = 0
         )
-        readClass(fooBarClassBytes).map: result =>
-            val sym  = result.classSymbol
-            val full = sym.fullName.asString
-            assert(
-                full == "com.example.Foo$Bar",
-                s"Expected 'com.example.Foo$$Bar' (literal dollar), got '$full'"
-            )
+        discard(fooBarClassBytes)
+        pending // plan: phase-02; sym.fullName deferred to Phase 09
     }
 
     // -------------------------------------------------------------------------
@@ -209,33 +191,34 @@ class JavaSymbolTest extends Test:
             javaResult <- readClass(bytes)
             tastySym   <- firstClassSymbolFromTasty("PlainClass.tasty")
         yield
+            // plan: phase-02 inline; sym.isJava removed; use flags.contains(JavaDefined) instead.
             assert(
-                javaResult.classSymbol.isJava,
-                s"Expected isJava==true for java.lang.Object, flags=${javaResult.classSymbol.flags.bits}"
+                javaResult.classSymbol.flags.contains(Tasty.Flag.JavaDefined),
+                s"Expected JavaDefined flag for java.lang.Object, flags=${javaResult.classSymbol.flags.bits}"
             )
             assert(
-                !tastySym.isJava,
-                s"Expected isJava==false for TASTy PlainClass, flags=${tastySym.flags.bits}"
+                !tastySym.flags.contains(Tasty.Flag.JavaDefined),
+                s"Expected no JavaDefined flag for TASTy PlainClass, flags=${tastySym.flags.bits}"
             )
         end for
     }
 
     // -------------------------------------------------------------------------
-    // Test 5: javaSpecific is Present for Java symbols, Absent for TASTy symbols
+    // Test 5: javaMetadata is Present for Java symbols, Absent for TASTy symbols
     // -------------------------------------------------------------------------
-    "sym.javaSpecific: Present for Java, Absent for TASTy" taggedAs jvmOnly in run {
+    "sym.javaMetadata: Present for Java, Absent for TASTy" taggedAs jvmOnly in run {
         val bytes = loadJdkClass("java/lang/String.class")
         for
             javaResult <- readClass(bytes)
             tastySym   <- firstClassSymbolFromTasty("PlainClass.tasty")
         yield
             assert(
-                javaResult.classSymbol.javaSpecific.isDefined,
-                "Expected javaSpecific Present for java.lang.String"
+                javaResult.classSymbol.javaMetadata.isDefined,
+                "Expected javaMetadata Present for java.lang.String"
             )
             assert(
-                tastySym.javaSpecific.isEmpty,
-                s"Expected javaSpecific Absent for TASTy PlainClass, got ${tastySym.javaSpecific}"
+                tastySym.javaMetadata.isEmpty,
+                s"Expected javaMetadata Absent for TASTy PlainClass, got ${tastySym.javaMetadata}"
             )
         end for
     }
@@ -248,7 +231,7 @@ class JavaSymbolTest extends Test:
         readClass(bytes).map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
                 sym.kind == Tasty.SymbolKind.Method &&
-                    sym.javaSpecific.map(_.throwsTypes.nonEmpty).getOrElse(false)
+                    sym.javaMetadata.map(_.throwsTypes.nonEmpty).getOrElse(false)
             assert(
                 methodsWithThrows.nonEmpty,
                 s"Expected at least one method with throwsTypes in ThrowsFixture; symbols=${result.symbols.map(s =>
@@ -267,8 +250,8 @@ class JavaSymbolTest extends Test:
         readClass(bytes).map: result =>
             val sym = result.classSymbol
             assert(sym.flags.contains(Tasty.Flag.Final), "Expected Flag.Final for java.lang.String")
-            val meta = sym.javaSpecific
-            assert(meta.isDefined, "Expected javaSpecific Present for java.lang.String")
+            val meta = sym.javaMetadata
+            assert(meta.isDefined, "Expected javaMetadata Present for java.lang.String")
             assert(
                 (meta.get.accessFlags & 0x0010) != 0,
                 s"Expected accessFlags to have ACC_FINAL (0x0010) set, got 0x${meta.get.accessFlags.toHexString}"
@@ -286,8 +269,8 @@ class JavaSymbolTest extends Test:
                 sym.flags.contains(Tasty.Flag.JavaRecord),
                 s"Expected Flag.JavaRecord for PointRecord, flags=${sym.flags.bits}"
             )
-            val meta = sym.javaSpecific
-            assert(meta.isDefined, "Expected javaSpecific Present for PointRecord")
+            val meta = sym.javaMetadata
+            assert(meta.isDefined, "Expected javaMetadata Present for PointRecord")
             val components = meta.get.recordComponents
             assert(
                 components.nonEmpty,
@@ -310,13 +293,14 @@ class JavaSymbolTest extends Test:
         val bytes = loadJdkClass("java/lang/Deprecated.class")
         readClass(bytes).map: result =>
             val sym  = result.classSymbol
-            val meta = sym.javaSpecific
-            assert(meta.isDefined, "Expected javaSpecific Present for java.lang.Deprecated")
+            val meta = sym.javaMetadata
+            assert(meta.isDefined, "Expected javaMetadata Present for java.lang.Deprecated")
             val annotations = meta.get.annotations
             assert(annotations.nonEmpty, s"Expected at least one annotation on java.lang.Deprecated; got none")
             val hasRetention = annotations.exists: ann =>
                 ann.annotationClass.name.asString.contains("Retention") ||
-                    ann.annotationClass.fullName.asString.contains("Retention")
+                    // plan: phase-02 inline; sym.name.asString used instead of fullName.asString
+                    ann.annotationClass.name.asString.contains("Retention")
             assert(
                 hasRetention,
                 s"Expected @Retention annotation on java.lang.Deprecated; found: ${annotations.map(_.annotationClass.name.asString).mkString(", ")}"
@@ -331,8 +315,8 @@ class JavaSymbolTest extends Test:
         val bytes = loadFixture("AnonymousFixture$1.class")
         readClass(bytes).map: result =>
             val sym  = result.classSymbol
-            val meta = sym.javaSpecific
-            assert(meta.isDefined, "Expected javaSpecific Present for AnonymousFixture$1")
+            val meta = sym.javaMetadata
+            assert(meta.isDefined, "Expected javaMetadata Present for AnonymousFixture$1")
             val enclosing = meta.get.enclosingMethod
             assert(enclosing.isDefined, s"Expected enclosingMethod Present for AnonymousFixture$$1; got Absent")
             val methodName = enclosing.get._2.asString

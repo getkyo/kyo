@@ -15,6 +15,8 @@ import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
+import kyo.internal.tasty.symbol.SymbolDescriptor
+import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import kyo.stats.Attributes
 import scala.collection.mutable
@@ -54,6 +56,9 @@ object ClasspathOrchestrator:
     /** Fields `parentsBySymbol`, `childrenByOwner`, and `typeBySymbol` are `mutable.HashMap` instances. They are safe because `FileResult`
       * is written by a single decoder fiber and consumed exclusively by the single-threaded merger fiber after the channel put/take
       * provides a happens-before edge.
+      *
+      * plan: phase-02 bridge fields ownerBySymbol, bodyDataByAddr, sectionBytes, sectionOffset, names -- fed from AstUnpickler Pass1Result
+      * to ClasspathOrchestrator Pass C; removed in Phase 07 when the pipeline fully uses SymbolDescriptor.
       */
     final private case class FileResult(
         fqns: Chunk[(String, Tasty.Symbol)],
@@ -64,7 +69,12 @@ object ClasspathOrchestrator:
         childrenByOwner: mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Symbol]],
         typeBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Type],
         commentsBySymbol: Map[Tasty.Symbol, String],
-        positionsBySymbol: Map[Tasty.Symbol, Tasty.Position]
+        positionsBySymbol: Map[Tasty.Symbol, Tasty.Position],
+        ownerBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Symbol],
+        bodyDataByAddr: mutable.HashMap[Tasty.Symbol, (Int, Int)],
+        sectionBytes: Array[Byte],
+        sectionOffset: Int,
+        fileNames: Array[Tasty.Name]
     )
 
     /** Tagged union for results flowing through the result channel.
@@ -320,6 +330,17 @@ object ClasspathOrchestrator:
     private def mergeOneInto(state: MergeState, result: DecodeResult): Unit =
         result match
             case FileResultCase(fr) =>
+                // plan: phase-02 bridge; add ALL symbols (including members) to allSyms so that
+                // finalizeMerge can look them up by index when building typeParamIds/declarationIds.
+                // First add all symbols from ownerBySymbol (covers all non-root AST symbols).
+                val seenSyms = new java.util.HashSet[Tasty.Symbol]()
+                for sym <- fr.ownerBySymbol.keys do
+                    if seenSyms.add(sym) then state.allSyms += sym
+                end for
+                for sym <- fr.ownerBySymbol.values do
+                    if seenSyms.add(sym) then state.allSyms += sym
+                end for
+
                 for (fqn, sym) <- fr.fqns do
                     val indexKey = if sym.kind == Tasty.SymbolKind.Object && !fqn.endsWith("$") then fqn + "$" else fqn
                     val existing = state.fqnIndex.get(indexKey)
@@ -332,7 +353,7 @@ object ClasspathOrchestrator:
                                 sym.kind == Tasty.SymbolKind.Trait || sym.kind == Tasty.SymbolKind.Object
                             newIsStructural || !prevIsStructural
                     if shouldStore then state.fqnIndex(indexKey) = sym
-                    state.allSyms += sym
+                    if seenSyms.add(sym) then state.allSyms += sym
                     sym.kind match
                         case Tasty.SymbolKind.Package =>
                             state.packages += sym
@@ -348,10 +369,14 @@ object ClasspathOrchestrator:
             case ModuleInfoCase(name, md) =>
                 state.moduleIndex(name) = md
 
-    /** Phase C: placeholder resolution + final Classpath transition.
+    /** Phase C: placeholder resolution + SymbolDescriptor construction + Classpath transition.
       *
-      * Runs once after the merger has drained the result channel. Resolves cross-file type references, assigns _parents / _typeParams /
-      * _declarations / _declaredType / _scaladoc / _position, and transitions the Classpath from Building to Ready.
+      * Runs once after the merger has drained the result channel. Resolves cross-file type references, builds SymbolDescriptors from the
+      * accumulated per-file data, calls materializeSymbols to produce the final immutable Symbol case-class instances, and transitions the
+      * Classpath from Building to Ready.
+      *
+      * plan: phase-02 impl; the SymbolDescriptor accumulation in this method is the Pass C replacement for the old slot-fill loops. Phase
+      * 07 removes the partial-Symbol pipeline entirely and wires AstUnpickler to produce SymbolDescriptors directly.
       */
     private def finalizeMerge(
         state: MergeState,
@@ -363,7 +388,7 @@ object ClasspathOrchestrator:
         val fileResults  = state.fileResults.toSeq
         val fqnIndex     = state.fqnIndex
         val packageIndex = state.packageIndex
-        val allSyms      = state.allSyms
+        val allPartial   = state.allSyms // partial Symbols from Pass 1-2
         val topLevelCls  = state.topLevelCls
         val packages     = state.packages
         val accErrors    = state.accErrors
@@ -386,80 +411,211 @@ object ClasspathOrchestrator:
                             placeholder.replaceSlot.set(Tasty.Type.Named(makeUnresolvedSym(placeholder.fqn)))
                 end for
         }.andThen:
-            TastyStat.scope.traceSpan("finalize.assignSymbolFields") {
+            TastyStat.scope.traceSpan("finalize.materializeSymbols") {
                 Sync.Unsafe.defer:
-                    // After G13 placeholder resolution: assign _parents, _typeParams, _declarations on TASTy symbols.
+                    // Build a map from partial Symbol -> its final SymbolId (index in allPartial).
+                    // This allows Pass C to convert ownerBySymbol references to integer SymbolId values.
+                    val symbolIdMap = new java.util.HashMap[Tasty.Symbol, Int](allPartial.length * 2)
+                    var i           = 0
+                    for sym <- allPartial do
+                        symbolIdMap.put(sym, i)
+                        i += 1
+                    end for
+
+                    // Build SymbolDescriptors from the accumulated per-file data.
+                    val count = allPartial.length
+                    val descs = new Array[SymbolDescriptor](count)
+                    i = 0
+                    for partialSym <- allPartial do
+                        val id = i
+                        // Compute ownerId: look up the partial owner's index in symbolIdMap.
+                        // The root symbol owns itself (self-referential sentinel = id == ownerId).
+                        // If the owner is not in symbolIdMap (e.g. null for root), use self as sentinel.
+                        descs(i) = new SymbolDescriptor(
+                            id = id,
+                            kind = partialSym.kind,
+                            flags = partialSym.flags,
+                            name = partialSym.name,
+                            ownerId = id, // default: self-referential (root sentinel); overridden below
+                            declaredType = Maybe.Absent,
+                            scaladoc = Maybe.Absent,
+                            sourcePosition = Maybe.Absent,
+                            javaMetadata = Maybe.Absent,
+                            parentTypes = Chunk.empty,
+                            typeParamIds = Chunk.empty,
+                            declarationIds = Chunk.empty,
+                            permittedSubclassIds = Maybe.Absent,
+                            body = Maybe.Absent
+                        )
+                        i += 1
+                    end for
+
+                    // Fill in ownerId from ownerBySymbol maps in each FileResult.
+                    for fr <- fileResults do
+                        for (sym, owner) <- fr.ownerBySymbol do
+                            val symIdx   = symbolIdMap.get(sym)
+                            val ownerIdx = symbolIdMap.getOrDefault(owner, symIdx) // self-ref if owner not found
+                            if symIdx >= 0 && symIdx < count then
+                                descs(symIdx).ownerId = ownerIdx
+                        end for
+                    end for
+
+                    // Fill in parentTypes from parentsBySymbol.
                     for fr <- fileResults do
                         for (sym, parents) <- fr.parentsBySymbol do
-                            sym._parents.set(parents)
+                            val idx = symbolIdMap.get(sym)
+                            if idx >= 0 && idx < count then
+                                descs(idx).parentTypes = parents
                         end for
                     end for
+
+                    // Fill in typeParamIds and declarationIds from childrenByOwner.
                     for fr <- fileResults do
                         for (sym, children) <- fr.childrenByOwner do
-                            val typeParams   = children.filter(_.kind == Tasty.SymbolKind.TypeParam)
-                            val declarations = children.filter(_.kind != Tasty.SymbolKind.TypeParam)
-                            sym._typeParams.set(typeParams)
-                            sym._declarations.set(declarations)
+                            val idx = symbolIdMap.get(sym)
+                            if idx >= 0 && idx < count then
+                                val typeParams   = children.filter(_.kind == Tasty.SymbolKind.TypeParam)
+                                val declarations = children.filter(_.kind != Tasty.SymbolKind.TypeParam)
+                                descs(idx).typeParamIds = typeParams.map(c => symbolIdMap.getOrDefault(c, -1)).filter(_ >= 0)
+                                descs(idx).declarationIds = declarations.map(c => symbolIdMap.getOrDefault(c, -1)).filter(_ >= 0)
+                            end if
                         end for
                     end for
 
-                    // Phase 5 (G20): assign _declaredType AFTER Phase C placeholder resolution.
+                    // Fill in declaredType from typeBySymbol (after placeholder resolution).
                     for fr <- fileResults do
                         for (sym, t) <- fr.typeBySymbol do
-                            if !sym._declaredType.isSet then sym._declaredType.set(t)
+                            val idx = symbolIdMap.get(sym)
+                            if idx >= 0 && idx < count && descs(idx).declaredType.isEmpty then
+                                descs(idx).declaredType = Maybe(t)
                         end for
                     end for
 
-                    // Phase 6 (G3): assign _scaladoc from commentsBySymbol.
+                    // Default declaredType for Class/Trait/Object (Type.Named(self)).
+                    i = 0
+                    for sym <- allPartial do
+                        if descs(i).declaredType.isEmpty then
+                            val k = sym.kind
+                            if k == Tasty.SymbolKind.Class || k == Tasty.SymbolKind.Trait || k == Tasty.SymbolKind.Object then
+                                descs(i).declaredType = Maybe(Tasty.Type.Named(sym))
+                        end if
+                        i += 1
+                    end for
+
+                    // Fill in scaladoc from commentsBySymbol.
                     for fr <- fileResults do
                         for (sym, text) <- fr.commentsBySymbol do
-                            if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe(text))
+                            val idx = symbolIdMap.get(sym)
+                            if idx >= 0 && idx < count && descs(idx).scaladoc.isEmpty then
+                                descs(idx).scaladoc = Maybe(text)
                         end for
                     end for
 
-                    // Phase 7 (G2): assign _position from positionsBySymbol.
+                    // Fill in sourcePosition from positionsBySymbol.
                     for fr <- fileResults do
                         for (sym, pos) <- fr.positionsBySymbol do
-                            if !sym._position.isSet then sym._position.set(Maybe(pos))
+                            val idx = symbolIdMap.get(sym)
+                            if idx >= 0 && idx < count && descs(idx).sourcePosition.isEmpty then
+                                descs(idx).sourcePosition = Maybe(pos)
                         end for
                     end for
 
-                    // Single pass over allSyms: fill defaults for all fields not set by the per-file loops above.
-                    // _declaredType fallback: Class/Trait/Object symbols without an explicit type get a self-referential Named type.
-                    for sym <- allSyms do
-                        if !sym._parents.isSet then sym._parents.set(Chunk.empty)
-                        if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
-                        if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
-                        if !sym._declaredType.isSet then
-                            if sym.kind == Tasty.SymbolKind.Class ||
-                                sym.kind == Tasty.SymbolKind.Trait ||
-                                sym.kind == Tasty.SymbolKind.Object
-                            then sym._declaredType.set(Tasty.Type.Named(sym))
-                        end if
-                        if !sym._scaladoc.isSet then sym._scaladoc.set(Maybe.Absent)
-                        if !sym._position.isSet then sym._position.set(Maybe.Absent)
+                    // Fill in body data (SymbolBody) from bodyDataByAddr and file-level section data.
+                    for fr <- fileResults do
+                        for (sym, (bodyStart, bodyEnd)) <- fr.bodyDataByAddr do
+                            val idx = symbolIdMap.get(sym)
+                            if idx >= 0 && idx < count && bodyStart > 0 && bodyEnd > bodyStart then
+                                // Build addrMap: convert IntMap[partial Symbol] to IntMap[SymbolId]
+                                // using symbolIdMap. This is done lazily per symbol.
+                                // For Phase 02, build a per-file IntMap[SymbolId] once and share it.
+                                // (built below for the full file addrMap)
+                                descs(idx).body = Maybe(Tasty.SymbolBody(
+                                    bodyStart = bodyStart,
+                                    bodyEnd = bodyEnd,
+                                    sectionBytes = fr.sectionBytes,
+                                    names = fr.fileNames,
+                                    sectionOffset = fr.sectionOffset,
+                                    addrMap = scala.collection.immutable.IntMap.empty // populated in next pass
+                                ))
+                            end if
+                        end for
                     end for
-            }.andThen:
-                TastyStat.scope.traceSpan("finalize.transitionToReady") {
-                    Sync.Unsafe.defer:
-                        // Add errors accumulated during Building state (e.g., from root validation)
-                        cp.stateRef.unsafe.get() match
-                            case b: Classpath.State.Building => accErrors ++= b.errors
-                            case _                           => ()
 
-                        Classpath.transitionToReady(
-                            cp,
-                            Chunk.from(allSyms),
-                            Chunk.from(topLevelCls),
-                            Chunk.from(packages),
-                            fqnIndex,
-                            packageIndex,
-                            canonical,
-                            Chunk.from(accErrors),
-                            moduleIndex
-                        )
-                }
+                    // Materialize final immutable Symbols from SymbolDescriptors.
+                    val finalSymbols = materializeSymbols(descs, count)
+
+                    // Update fqnIndex, packageIndex, topLevelCls, packages to point to final Symbols.
+                    // The keys in state.fqnIndex are FQN strings pointing to partial Symbols;
+                    // replace each partial Symbol value with its corresponding final Symbol.
+                    val newFqnIndex = state.fqnIndex.map { case (fqn, partial) =>
+                        val idx = symbolIdMap.getOrDefault(partial, -1)
+                        if idx >= 0 then (fqn, finalSymbols(idx)) else (fqn, partial)
+                    }
+                    val newPackageIndex = state.packageIndex.map { case (pkg, partial) =>
+                        val idx = symbolIdMap.getOrDefault(partial, -1)
+                        if idx >= 0 then (pkg, finalSymbols(idx)) else (pkg, partial)
+                    }
+                    val newTopLevelCls = topLevelCls.map { partial =>
+                        val idx = symbolIdMap.getOrDefault(partial, -1)
+                        if idx >= 0 then finalSymbols(idx) else partial
+                    }
+                    val newPackages = packages.map { partial =>
+                        val idx = symbolIdMap.getOrDefault(partial, -1)
+                        if idx >= 0 then finalSymbols(idx) else partial
+                    }
+
+                    // Add errors accumulated during Building state.
+                    cp.stateRef.unsafe.get() match
+                        case b: Classpath.State.Building => accErrors ++= b.errors
+                        case _                           => ()
+
+                    Classpath.transitionToReady(
+                        cp,
+                        Chunk.from(finalSymbols),
+                        Chunk.from(newTopLevelCls),
+                        Chunk.from(newPackages),
+                        newFqnIndex,
+                        newPackageIndex,
+                        canonical,
+                        Chunk.from(accErrors),
+                        moduleIndex
+                    )
+            }
     end finalizeMerge
+
+    /** Construct final immutable Symbols from SymbolDescriptors.
+      *
+      * Each SymbolDescriptor's int fields (ownerId, typeParamIds, declarationIds) become SymbolId values. This is the single-shot
+      * materialization step of Pass C.
+      */
+    private def materializeSymbols(
+        descriptors: Array[SymbolDescriptor],
+        count: Int
+    )(using AllowUnsafe): Array[Tasty.Symbol] =
+        val out = new Array[Tasty.Symbol](count)
+        var i   = 0
+        while i < count do
+            val d = descriptors(i)
+            out(i) = Tasty.Symbol.fromDescriptor(
+                id = SymbolId(d.id),
+                kind = d.kind,
+                flags = d.flags,
+                name = d.name,
+                ownerId = SymbolId(d.ownerId),
+                declaredType = d.declaredType,
+                scaladoc = d.scaladoc,
+                sourcePosition = d.sourcePosition,
+                javaMetadata = d.javaMetadata,
+                parentTypes = d.parentTypes,
+                typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
+                declarationIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_))),
+                permittedSubclassIds = d.permittedSubclassIds.map(_.map(SymbolId(_))),
+                body = d.body
+            )
+            i += 1
+        end while
+        out
+    end materializeSymbols
 
     /** Read bytes and decode a single TASTy file. Returns FileResult. */
     private def readAndDecodeTastyFile(
@@ -501,7 +657,12 @@ object ClasspathOrchestrator:
             mutable.HashMap.empty[Tasty.Symbol, Chunk[Tasty.Symbol]],
             mutable.HashMap.empty[Tasty.Symbol, Tasty.Type],
             Map.empty,
-            Map.empty
+            Map.empty,
+            mutable.HashMap.empty[Tasty.Symbol, Tasty.Symbol],
+            mutable.HashMap.empty[Tasty.Symbol, (Int, Int)],
+            Array.empty[Byte],
+            0,
+            Array.empty[Tasty.Name]
         )
 
     /** Wrap a synchronous Kyo computation, adding elapsed nanoseconds to `counter` after it completes.
@@ -562,8 +723,12 @@ object ClasspathOrchestrator:
                 case Absent =>
                     Sync.defer(Map.empty[Tasty.Symbol, Tasty.Position]))
         yield
+            // plan: phase-02 bridge; computeFqn walks the ownerBySymbol chain to build the dotted FQN.
+            // Replaces the old sym.fullName OnceCell that walked sym.owner. Phase 09 adds Symbol.fullName
+            // as a member method once Classpath is a pure case class.
+            val ownerBySymbol = pass1Result.ownerBySymbol
             val pairs = pass1Result.symbols.flatMap: sym =>
-                val fqn = nameToString(sym.fullName)
+                val fqn = computeFqn(sym, ownerBySymbol)
                 if fqn.nonEmpty then Chunk((fqn, sym)) else Chunk.empty
             FileResult(
                 pairs,
@@ -574,10 +739,36 @@ object ClasspathOrchestrator:
                 pass1Result.childrenByOwner,
                 pass1Result.typeBySymbol,
                 commentsBySymbol,
-                positionsBySymbol
+                positionsBySymbol,
+                pass1Result.ownerBySymbol,
+                pass1Result.bodyDataByAddr,
+                pass1Result.sectionBytes,
+                pass1Result.sectionOffset,
+                pass1Result.names
             )
         end for
     end decodeTastyBytes
+
+    /** Compute the dotted FQN for `sym` by walking the ownerBySymbol chain.
+      *
+      * plan: phase-02 bridge; replaces sym.fullName. Deleted in Phase 09 when Symbol gains a fullName member.
+      */
+    private def computeFqn(
+        sym: Tasty.Symbol,
+        ownerBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Symbol]
+    )(using AllowUnsafe): String =
+        import Tasty.Name.asString
+        val parts = new scala.collection.mutable.ArrayBuffer[String]()
+        var cur   = sym
+        // Sentinel: the root symbol owns itself (added as self-ref) or doesn't appear in ownerBySymbol.
+        val visited = new java.util.HashSet[Tasty.Symbol]()
+        while cur != null && visited.add(cur) do
+            val n = cur.name.asString
+            if n.nonEmpty then parts.prepend(n)
+            cur = ownerBySymbol.getOrElse(cur, null)
+        end while
+        parts.filter(_.nonEmpty).mkString(".")
+    end computeFqn
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
     private def nameToString(n: Tasty.Name)(using AllowUnsafe): String =
@@ -593,11 +784,7 @@ object ClasspathOrchestrator:
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name(fqn),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
+            Tasty.Name(fqn)
         )
 
 end ClasspathOrchestrator

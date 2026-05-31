@@ -53,35 +53,36 @@ object TreeUnpickler:
         readTree(view, decodeCtx)
     end decodeAnnotationTerm
 
-    /** Synchronously decode the body byte slice for `sym` (described by `origin`) into a Tree.
+    /** Synchronously decode the body byte slice for `sym` into a Tree.
       *
-      * Called from the OnceCell init lambda; must not use Kyo effects. Throws DecodeException or ArrayIndexOutOfBoundsException on error.
+      * plan: phase-02 new signature; accepts SymbolBody and a symbol lookup function to resolve SymbolId -> Symbol for IDENT/SELECT
+      * references. Phase 04 wires this via cp.decodeBody.
       *
-      * @param origin
-      *   the TastyOrigin carrying sectionBytes, bodyStart, bodyEnd, names, and addrMap.
+      * @param body
+      *   the SymbolBody carrying sectionBytes, bodyStart, bodyEnd, names, sectionOffset, and addrMap.
       * @param sym
-      *   the symbol whose body is being decoded; used to determine body-slice layout (VALDEF / DEFDEF / class / package).
+      *   the symbol whose body is being decoded; used to determine body-slice layout.
+      * @param symbolLookup
+      *   function from SymbolId.value (Int) to Tasty.Symbol; used to build the addrMap for type decode.
       */
-    def decodeSync(origin: Tasty.Symbol.TastyOrigin, sym: Tasty.Symbol)(using AllowUnsafe): Tasty.Tree =
-        val addrMap = origin.addrMap
-        val names   = origin.names
-        // Prefer the pre-constructed ByteView (mmap-backed) if present; otherwise build from sectionBytes.
-        // Reading from a closed mmap arena throws IllegalStateException, which Symbol.body maps to ClasspathClosed.
-        val (view, bytes) = origin.bodyView match
-            case bv: kyo.internal.tasty.binary.ByteView =>
-                val sub = bv.subView(origin.bodyStart, origin.bodyEnd)
-                (sub, origin.sectionBytes)
-            case null =>
-                val b = origin.sectionBytes
-                if b == null || b.isEmpty then
-                    // No cursor: the symbol has no body bytes to position into.
-                    throw new DecodeException("body bytes not available (snapshot-loaded symbol)", 0L)
-                end if
-                (ByteView(b, origin.bodyStart, origin.bodyEnd), b)
+    def decodeSync(
+        body: Tasty.SymbolBody,
+        sym: Tasty.Symbol,
+        symbolLookup: Int => Tasty.Symbol
+    )(using AllowUnsafe): Tasty.Tree =
+        val names = body.names
+        val bytes = body.sectionBytes
+        if bytes == null || bytes.isEmpty then
+            throw new DecodeException("body bytes not available (snapshot-loaded symbol)", 0L)
+        end if
+        val view = ByteView(bytes, body.bodyStart, body.bodyEnd)
+        // Build addrMap: convert IntMap[SymbolId] -> Map[Int, Symbol] via symbolLookup.
+        val addrMap: scala.collection.Map[Int, Tasty.Symbol] =
+            body.addrMap.map { case (addr, sid) => (addr, symbolLookup(sid.value)) }
         val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
         val dummyHome     = ClasspathRef.init()
         val dummyArena    = TypeArena.canonical()
-        val typeSession   = new TypeUnpickler.TreeTypeSession(names, addrMap, dummyArena, dummyHome, bytes, origin.sectionOffset)
+        val typeSession   = new TypeUnpickler.TreeTypeSession(names, addrMap, dummyArena, dummyHome, bytes, body.sectionOffset)
         val ctx = DecodeCtx(
             names,
             addrMap,
@@ -89,7 +90,7 @@ object TreeUnpickler:
             typeSession,
             treeAddrCache
         )
-        decodeSymBody(sym, view, origin.bodyEnd, ctx)
+        decodeSymBody(sym, view, body.bodyEnd, ctx)
     end decodeSync
 
     /** Decode a body slice whose layout depends on the symbol kind.
@@ -1183,11 +1184,7 @@ object TreeUnpickler:
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name(name),
-            null,
-            home,
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
+            Tasty.Name(name)
         )
     end makeUnresolvedSym
 

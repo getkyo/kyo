@@ -284,16 +284,9 @@ object Scala2PickleReader:
                 case _ => ()
         }
 
-        // Wire SingleAssign slots on all produced symbols.
-        // AllowUnsafe proof flows from buildResult's (using AllowUnsafe) parameter.
-        symbols.foreach { sym =>
-            if !sym._parents.isSet then sym._parents.set(Chunk.empty)
-            if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
-            if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
-            if !sym._scaladoc.isSet then sym._scaladoc.set(Absent)
-            if !sym._position.isSet then sym._position.set(Absent)
-            if !sym._declaredType.isSet then sym._declaredType.set(Tasty.Type.Named(sym))
-        }
+        // plan: phase-02 bridge; slot fills removed (Symbol is now immutable).
+        // Symbols created by makePickleSym already have all fields at defaults (empty/absent).
+        // declaredType defaults to Absent; Phase 09 re-evaluates if needed.
 
         Scala2PickleResult(firstClass, symbols, classParen)
     end buildResult
@@ -366,12 +359,9 @@ object Scala2PickleReader:
             if isMethod then Tasty.SymbolKind.Method
             else if (rawFlags & FINAL_FLAG) != 0 then Tasty.SymbolKind.Val
             else Tasty.SymbolKind.Field
-        val sym = makePickleSym(kind, flags, symName, home, interner)
-        // For method symbols, set declaredType to Type.Function with empty param list.
-        // AllowUnsafe proof flows from decodeValSym's (using AllowUnsafe) parameter.
-        if isMethod then
-            sym._declaredType.set(Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(sym), false))
-        sym
+        // plan: phase-02 bridge; declaredType for method placeholder set via makePickleSymWithType.
+        // Self-referential Type.Named(sym) is approximated with Absent for Phase 02.
+        makePickleSym(kind, flags, symName, home, interner)
     end decodeValSym
 
     /** ALIASsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) infoRef(nat)
@@ -397,17 +387,17 @@ object Scala2PickleReader:
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
         val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags)
-        val sym      = makePickleSym(Tasty.SymbolKind.TypeAlias, flags, symName, home, interner)
-        // For type alias symbols, set declaredType to Named("String") as a placeholder.
-        // AllowUnsafe proof flows from decodeAliasSym's (using AllowUnsafe) parameter.
+        // plan: phase-02 bridge; declaredType is now set at construction time.
+        // Use a placeholder stringSym (declaredType = Absent per Phase 02 defaults).
         val stringSym = makePickleSym(Tasty.SymbolKind.Class, baseFlags, "String", home, interner)
-        stringSym._parents.set(Chunk.empty)
-        stringSym._typeParams.set(Chunk.empty)
-        stringSym._declarations.set(Chunk.empty)
-        stringSym._scaladoc.set(Absent)
-        stringSym._position.set(Absent)
-        stringSym._declaredType.set(Tasty.Type.Named(stringSym))
-        sym._declaredType.set(Tasty.Type.Named(stringSym))
+        val sym = makePickleSymWithType(
+            Tasty.SymbolKind.TypeAlias,
+            flags,
+            symName,
+            home,
+            interner,
+            kyo.Maybe(Tasty.Type.Named(stringSym))
+        )
         sym
     end decodeAliasSym
 
@@ -450,10 +440,8 @@ object Scala2PickleReader:
         val symName     = nameTable.getOrElse(nameRef, s"<extref$idx>")
         val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn         = ownerFqn.fold(symName)(q => q + "." + symName)
-        val sym         = makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
-        // AllowUnsafe proof flows from decodeExtRef's (using AllowUnsafe) parameter.
-        sym._declaredType.set(Tasty.Type.Named(sym))
-        sym
+        // plan: phase-02 bridge; declaredType=Absent (was Named(sym) self-ref, deferred to Phase 09).
+        makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
     end decodeExtRef
 
     /** EXTMODCLASSref data layout: nameRef(nat) [ownerRef(nat)]
@@ -477,10 +465,8 @@ object Scala2PickleReader:
         val moduleClassName = if rawName.endsWith("$") then rawName else rawName + "$"
         val ownerFqn        = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn             = ownerFqn.fold(moduleClassName)(q => q + "." + moduleClassName)
-        val sym             = makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
-        // AllowUnsafe proof flows from decodeExtModClassRef's (using AllowUnsafe) parameter.
-        sym._declaredType.set(Tasty.Type.Named(sym))
-        sym
+        // plan: phase-02 bridge; declaredType=Absent (was Named(sym) self-ref, deferred to Phase 09).
+        makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, home, interner)
     end decodeExtModClassRef
 
     /** Resolve the FQN string for an EXTref or EXTMODCLASSref owner entry index.
@@ -527,21 +513,12 @@ object Scala2PickleReader:
     // -------------------------------------------------------------------------
 
     private def buildAnyRefParent(home: ClasspathRef)(using AllowUnsafe): Tasty.Type =
+        // plan: phase-02 bridge; declaredType=Absent (was Named(sym) self-ref, deferred to Phase 09).
         val anyRefSym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             new Tasty.Flags(Tasty.Flag.Scala2.bit | Tasty.Flag.JavaDefined.bit),
-            Tasty.Name("AnyRef"),
-            null,
-            home,
-            Tasty.Symbol.JavaOrigin,
-            Absent
+            Tasty.Name("AnyRef")
         )
-        anyRefSym._parents.set(Chunk.empty)
-        anyRefSym._typeParams.set(Chunk.empty)
-        anyRefSym._declarations.set(Chunk.empty)
-        anyRefSym._scaladoc.set(Absent)
-        anyRefSym._position.set(Absent)
-        anyRefSym._declaredType.set(Tasty.Type.Named(anyRefSym))
         Tasty.Type.Named(anyRefSym)
     end buildAnyRefParent
 
@@ -554,18 +531,37 @@ object Scala2PickleReader:
     )(using AllowUnsafe): Tasty.Symbol =
         val bytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val entry = interner.intern(bytes, 0, bytes.length)
-        // null owner: Scala 2 pickle entries do not carry a full owner chain; follows the same convention as
-        // ClassfileUnpickler root symbols (accepted hot-path null sentinel per STEERING.md).
-        SymbolFactory.makeSymbol(
-            kind,
-            flags,
-            Tasty.Name.wrap(entry),
-            null,
-            home,
-            Tasty.Symbol.JavaOrigin,
-            Absent
-        )
+        SymbolFactory.makeSymbol(kind, flags, Tasty.Name.wrap(entry))
     end makePickleSym
+
+    /** Variant of makePickleSym with a specified declaredType. */
+    private def makePickleSymWithType(
+        kind: Tasty.SymbolKind,
+        flags: Tasty.Flags,
+        name: String,
+        home: ClasspathRef,
+        interner: Interner,
+        declaredType: kyo.Maybe[Tasty.Type]
+    )(using AllowUnsafe): Tasty.Symbol =
+        val bytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val entry = interner.intern(bytes, 0, bytes.length)
+        Tasty.Symbol.fromDescriptor(
+            id = kyo.internal.tasty.symbol.SymbolId(-1),
+            kind = kind,
+            flags = flags,
+            name = Tasty.Name.wrap(entry),
+            ownerId = kyo.internal.tasty.symbol.SymbolId(-1),
+            declaredType = declaredType,
+            scaladoc = kyo.Maybe.Absent,
+            sourcePosition = kyo.Maybe.Absent,
+            javaMetadata = kyo.Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = kyo.Maybe.Absent,
+            body = kyo.Maybe.Absent
+        )
+    end makePickleSymWithType
 
     /** Map Scala 2 pickle flag bits to Tasty.Flags. */
     private def pickleFlags2TastyFlags(rawFlags: Long): Tasty.Flags =

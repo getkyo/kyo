@@ -20,24 +20,36 @@ import kyo.Tasty
   */
 object TypeOps:
 
+    // These FQN constants are preserved for Phase 09 reference but unused in Phase 02.
+    // plan: phase-02 inline; Phase 09 restores FQN-based matching.
     private val FunctionPrefix        = "scala.Function"
     private val ContextFunctionPrefix = "scala.ContextFunction"
     private val TuplePrefix           = "scala.Tuple"
     private val ArrayFqn              = "scala.Array"
     private val SingletonFqn          = "scala.Singleton"
 
+    // plan: phase-02 inline; uses sym.name.asString (simple name) instead of sym.fullName.asString (FQN).
+    // This is a conservative approximation: e.g., "Function1" matches even if not in scala package.
+    // Phase 09 restores FQN-based matching once Symbol.fullName is available as a resolution method.
+    private val FunctionSimple        = "Function"
+    private val ContextFunctionSimple = "ContextFunction"
+    private val TupleSimple           = "Tuple"
+    private val ArraySimple           = "Array"
+    private val SingletonSimple       = "Singleton"
+
     /** Smart constructor for APPLIEDtype normalization. */
     def applied(base: Tasty.Type, args: Chunk[Tasty.Type])(using AllowUnsafe): Tasty.Type =
         base match
             case Tasty.Type.Named(sym) =>
-                val fqn = sym.fullName.asString
-                if fqn.startsWith(FunctionPrefix) && isDigitSuffix(fqn, FunctionPrefix.length) then
+                import Tasty.Name.asString
+                val n = sym.name.asString
+                if n.startsWith(FunctionSimple) && isDigitSuffix(n, FunctionSimple.length) then
                     Tasty.Type.Function(args.dropRight(1), args.last, false)
-                else if fqn.startsWith(ContextFunctionPrefix) && isDigitSuffix(fqn, ContextFunctionPrefix.length) then
+                else if n.startsWith(ContextFunctionSimple) && isDigitSuffix(n, ContextFunctionSimple.length) then
                     Tasty.Type.Function(args.dropRight(1), args.last, true)
-                else if fqn.startsWith(TuplePrefix) && isDigitSuffix(fqn, TuplePrefix.length) then
+                else if n.startsWith(TupleSimple) && isDigitSuffix(n, TupleSimple.length) then
                     Tasty.Type.Tuple(args)
-                else if fqn == ArrayFqn && args.length == 1 then
+                else if n == ArraySimple && args.length == 1 then
                     Tasty.Type.Array(args.head)
                 else
                     Tasty.Type.Applied(base, args)
@@ -50,9 +62,9 @@ object TypeOps:
     /** Smart constructor for ANDtype normalization: collapse AndType(Singleton, X) or AndType(X, Singleton) to X. */
     def andType(left: Tasty.Type, right: Tasty.Type)(using AllowUnsafe): Tasty.Type =
         (left, right) match
-            case (Tasty.Type.Named(sym), _) if sym.fullName.asString == SingletonFqn => right
-            case (_, Tasty.Type.Named(sym)) if sym.fullName.asString == SingletonFqn => left
-            case _                                                                   => Tasty.Type.AndType(left, right)
+            case (Tasty.Type.Named(sym), _) if { import Tasty.Name.asString; sym.name.asString == SingletonSimple } => right
+            case (_, Tasty.Type.Named(sym)) if { import Tasty.Name.asString; sym.name.asString == SingletonSimple } => left
+            case _ => Tasty.Type.AndType(left, right)
         end match
     end andType
 

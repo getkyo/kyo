@@ -98,7 +98,8 @@ class ClasspathPureAccessorTest extends Test:
     // Test 2 (INV-001): pureClass returns Present on a Ready classpath.
     // Given: fixture classpath containing PlainClass.tasty; AllowUnsafe in scope.
     // When: rawCp.pureClass("kyo.fixtures.PlainClass").
-    // Then: result is Maybe.Present(sym) with sym.fullName.asString == "kyo.fixtures.PlainClass".
+    // Then: result is Maybe.Present(sym) with sym.name.asString == "PlainClass".
+    // plan: phase-02 inline; sym.fullName not available until Phase 09; check simple name.
     // Pins: INV-001.
     "pureClass returns Present for a known FQN on Ready classpath" in run {
         Scope.run:
@@ -106,8 +107,8 @@ class ClasspathPureAccessorTest extends Test:
                 rawCp.pureClass("kyo.fixtures.PlainClass")).map:
                 case Result.Success(Present(sym)) =>
                     assert(
-                        sym.fullName.asString == "kyo.fixtures.PlainClass",
-                        s"Expected fullName 'kyo.fixtures.PlainClass' but got '${sym.fullName.asString}'"
+                        sym.name.asString == "PlainClass",
+                        s"Expected name 'PlainClass' but got '${sym.name.asString}'"
                     )
                 case Result.Success(Absent) =>
                     fail("Expected Present(sym) for kyo.fixtures.PlainClass but got Absent")

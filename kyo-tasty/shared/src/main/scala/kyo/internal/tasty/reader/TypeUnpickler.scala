@@ -38,11 +38,7 @@ object TypeUnpickler:
         Tasty.Symbol.make(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name("$$MatchCase"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
+            Tasty.Name("$$MatchCase")
         )
     end MatchCaseSentinel
 
@@ -255,11 +251,7 @@ object TypeUnpickler:
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name(fqn),
-            null,
-            home,
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
+            Tasty.Name(fqn)
         )
 
     /** Decode one type node. tag byte not yet consumed. Records startAddr -> result in addrCache. */
@@ -673,11 +665,7 @@ object TypeUnpickler:
                     InternalSymbol.makeSymbol(
                         Tasty.SymbolKind.TypeParam,
                         Tasty.Flags.empty,
-                        symName,
-                        null,
-                        ctx.home,
-                        Tasty.Symbol.TastyOrigin.empty,
-                        Absent
+                        symName
                     )
             paramSyms += sym
         end while
@@ -716,11 +704,7 @@ object TypeUnpickler:
                         InternalSymbol.makeSymbol(
                             Tasty.SymbolKind.Parameter,
                             Tasty.Flags.empty,
-                            symName,
-                            null,
-                            ctx.home,
-                            Tasty.Symbol.TastyOrigin.empty,
-                            Absent
+                            symName
                         )
                 paramSyms += sym
             end if

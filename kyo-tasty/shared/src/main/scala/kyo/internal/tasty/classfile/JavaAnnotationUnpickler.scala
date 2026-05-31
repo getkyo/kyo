@@ -209,11 +209,7 @@ object JavaAnnotationUnpickler:
         SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name(fqn),
-            null,
-            home,
-            Tasty.Symbol.JavaOrigin,
-            Absent
+            Tasty.Name(fqn)
         )
     end descriptorToUnresolvedSymbol
 

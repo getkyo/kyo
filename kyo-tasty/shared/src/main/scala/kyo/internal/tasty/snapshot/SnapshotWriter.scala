@@ -59,9 +59,16 @@ object SnapshotWriter:
     private def serialize(cp: Classpath, digest: Array[Byte]): Array[Byte] =
         // flow-allow: §839 case 3; snapshot serialization boundary; single-fiber synchronous read of immutable Ready-state data.
         import AllowUnsafe.embrace.danger
-        val allSymbols = cp.stateRef.unsafe.get() match
-            case s: Classpath.State.Ready => s.allSymbols
-            case _                        => Chunk.empty
+        val (allSymbols, fqnBySymbol) = cp.stateRef.unsafe.get() match
+            case s: Classpath.State.Ready =>
+                // plan: phase-02 inline; sym.fullName deferred to Phase 09.
+                // Build a reverse map symbol->fqn from the classpath's fqnIndex so snapshot FQNs are
+                // the real registered FQNs (e.g. "test.Foo"), not just simple names ("Foo").
+                // Symbols without an fqnIndex entry get an empty FQN (they will not be pureClass-lookup-able).
+                val rev = new java.util.IdentityHashMap[Tasty.Symbol, String]()
+                s.fqnIndex.foreach { case (fqn, sym) => rev.put(sym, fqn) }
+                (s.allSymbols, rev)
+            case _ => (Chunk.empty[Tasty.Symbol], new java.util.IdentityHashMap[Tasty.Symbol, String]())
 
         val symbolList = allSymbols.toSeq
 
@@ -88,26 +95,20 @@ object SnapshotWriter:
             internName(nameToStr(sym.name))
 
         val symFqns = symbolList.map: sym =>
-            internName(nameToStr(sym.fullName))
+            val fqn = fqnBySymbol.get(sym)
+            if fqn != null && fqn.nonEmpty then internName(fqn)
+            else internName(nameToStr(sym.name)) // fallback: simple name for non-indexed symbols
 
-        // Collect body byte slices for TASTy-origin symbols.
-        // Each entry is (relativeBodyStart: Int, relativeBodyEnd: Int) into the BODY_BYTES section.
-        // Symbols without a valid body (Java, Package, zero-bodyStart) get (0, 0).
-        // Pre-size to 128 MB: profiling a 122-root / 5 949-TASTy-file classpath (kyo-bench full
-        // classpath, 250 MB uncompressed) showed body-byte output slightly above 64 MB per snapshot
-        // write. The default BAOS capacity is 32 bytes; growing from 32 B to that size by doubling
-        // generates ~319 MB of intermediate byte[] copies in a 3-iteration profile window. 128 MB
-        // fits the measured peak with no intermediate copies and only one lazy backing allocation.
+        // Collect body byte slices from Symbol.body: Maybe[SymbolBody].
         val bodyBytesBuffer = new java.io.ByteArrayOutputStream(128 * 1024 * 1024)
         var runningOffset   = 0
         val symBodyStarts   = new Array[Int](symbolList.size)
         val symBodyEnds     = new Array[Int](symbolList.size)
         for (sym, idx) <- symbolList.zipWithIndex do
-            sym.origin match
-                case o: Tasty.Symbol.TastyOrigin
-                    if o.bodyStart > 0 && o.bodyEnd > o.bodyStart && o.sectionBytes.nonEmpty =>
-                    val sliceLen = o.bodyEnd - o.bodyStart
-                    bodyBytesBuffer.write(o.sectionBytes, o.bodyStart, sliceLen)
+            sym.body match
+                case kyo.Maybe.Present(b) if b.bodyStart > 0 && b.bodyEnd > b.bodyStart && b.sectionBytes.nonEmpty =>
+                    val sliceLen = b.bodyEnd - b.bodyStart
+                    bodyBytesBuffer.write(b.sectionBytes, b.bodyStart, sliceLen)
                     symBodyStarts(idx) = runningOffset
                     symBodyEnds(idx) = runningOffset + sliceLen
                     runningOffset += sliceLen
@@ -142,35 +143,34 @@ object SnapshotWriter:
 
         // PARENTS section: for each symbol, store the list of symbol IDs of Named parent types.
         // Non-Named parents (complex types) are encoded as -1 and skipped on read.
+        // plan: phase-02 inline; parentTypes is now a direct field; Named(sym) still has Symbol ref.
         val parentsBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
             sym =>
-                if sym._parents.isSet then
-                    sym._parents.get().map:
-                        case Tasty.Type.Named(s) => symbolId.getOrElse(s, -1)
-                        case _                   => -1
-                else Chunk.empty
+                sym.parentTypes.map:
+                    case Tasty.Type.Named(s) => symbolId.getOrElse(s, -1)
+                    case _                   => -1
         )
 
         // MEMBERS section: for each symbol, store the symbol IDs of its declarations.
+        // plan: phase-02 inline; declarationIds carries SymbolId.value directly.
         val membersBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
             sym =>
-                if sym._declarations.isSet then
-                    sym._declarations.get().map(s => symbolId.getOrElse(s, -1))
-                else Chunk.empty
+                import kyo.internal.tasty.symbol.SymbolId
+                sym.declarationIds.map(id => id.value)
         )
 
         // TPARAMS_ section: for each symbol, store the symbol IDs of its type parameters.
+        // plan: phase-02 inline; typeParamIds carries SymbolId.value directly.
         val tparamsBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
             sym =>
-                if sym._typeParams.isSet then
-                    sym._typeParams.get().map(s => symbolId.getOrElse(s, -1))
-                else Chunk.empty
+                import kyo.internal.tasty.symbol.SymbolId
+                sym.typeParamIds.map(id => id.value)
         )
 
         val sections = Seq(
@@ -298,7 +298,11 @@ object SnapshotWriter:
             SnapshotFormat.writeInt64LE(buf, pos + 1, sym.flags.bits)
             SnapshotFormat.writeInt32LE(buf, pos + 9, nameId)
             SnapshotFormat.writeInt32LE(buf, pos + 13, fqnId)
-            val ownerId = if sym.owner != null then symbolId.getOrElse(sym.owner, -1) else -1
+            // plan: phase-02 inline; sym.ownerId.value is the index into the symbols array.
+            // For self-referential root (ownerId == id), write -1 to indicate no owner.
+            import kyo.internal.tasty.symbol.SymbolId
+            val ownerIdx = sym.ownerId.value
+            val ownerId  = if ownerIdx == sym.id.value then -1 else ownerIdx
             SnapshotFormat.writeInt32LE(buf, pos + 17, ownerId)
             SnapshotFormat.writeInt32LE(buf, pos + 21, bodyStarts(idx))
             SnapshotFormat.writeInt32LE(buf, pos + 25, bodyEnds(idx))
@@ -337,8 +341,7 @@ object SnapshotWriter:
         symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
         refsOf: Tasty.Symbol => Chunk[Int]
     ): Array[Byte] =
-        // Unsafe: _parents / _declarations / _typeParams are SingleAssign slots; read under AllowUnsafe
-        // already imported in the serialize() caller context.
+        // plan: phase-02 inline; parentTypes / declarationIds / typeParamIds are direct fields on Symbol.
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
         // Collect valid entries: (symIdx, filteredRefs) where filteredRefs is non-empty.

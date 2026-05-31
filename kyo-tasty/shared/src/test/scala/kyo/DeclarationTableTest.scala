@@ -1,8 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.symbol.DeclarationTable
-import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 
 /** Tests for DeclarationTable: flat-array vs HashMap cutover, and AtomicRef CAS-swap visibility.
   *
@@ -11,17 +9,12 @@ import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 class DeclarationTableTest extends Test:
 
     private def makeSymbol(nameStr: String): Tasty.Symbol =
+        // plan: phase-02 bridge; Symbol.make creates a partial Symbol with just kind/flags/name.
         import AllowUnsafe.embrace.danger
-        val home   = ClasspathRef.init()
-        val origin = Tasty.Symbol.TastyOrigin.empty
         Tasty.Symbol.make(
             Tasty.SymbolKind.Val,
             Tasty.Flags.empty,
-            Tasty.Name(nameStr),
-            null,
-            home,
-            origin,
-            Absent
+            Tasty.Name(nameStr)
         )
     end makeSymbol
 

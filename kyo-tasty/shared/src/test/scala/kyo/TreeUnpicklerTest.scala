@@ -66,6 +66,24 @@ class TreeUnpicklerTest extends Test:
 
     // ── Pass-1 helper ─────────────────────────────────────────────────────────
 
+    /** Build a SymbolBody from Pass1Result for a given symbol, or None if not found. */
+    private def symbolBody(sym: Tasty.Symbol, pass1: AstUnpickler.Pass1Result): Maybe[Tasty.SymbolBody] =
+        pass1.bodyDataByAddr.get(sym) match
+            case Some((bodyStart, bodyEnd)) =>
+                Maybe(Tasty.SymbolBody(
+                    bodyStart = bodyStart,
+                    bodyEnd = bodyEnd,
+                    sectionBytes = pass1.sectionBytes,
+                    names = pass1.names,
+                    sectionOffset = pass1.sectionOffset,
+                    addrMap = scala.collection.immutable.IntMap.empty
+                ))
+            case None => Maybe.Absent
+
+    /** Dummy symbolLookup for Phase 02 tree decode (addrMap is empty; this is never called). */
+    private val dummyLookup: Int => Tasty.Symbol =
+        _ => Tasty.Symbol.make(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("unresolved"))
+
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val view     = ByteView(bytes)
         val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
@@ -130,10 +148,10 @@ class TreeUnpicklerTest extends Test:
                             s"No 'value' Val symbol in SomeObject. Symbols: ${pass1.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
                         )
                     case Some(sym) =>
-                        import AllowUnsafe.embrace.danger
-                        sym.origin match
-                            case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 =>
-                                val tree = TreeUnpickler.decodeSync(o, sym)
+                        // plan: phase-02 bridge; use symbolBody(sym, pass1) instead of sym.origin match.
+                        symbolBody(sym, pass1) match
+                            case Present(body) =>
+                                val tree = TreeUnpickler.decodeSync(body, sym, dummyLookup)
                                 val isInt42AtTopLevel = tree match
                                     case Tasty.Tree.Literal(Tasty.Constant.IntConst(42)) =>
                                         true
@@ -149,11 +167,9 @@ class TreeUnpicklerTest extends Test:
                                     isInt42AtTopLevel,
                                     s"Expected top-level Literal/Block/Typed/ValDef with IntConst(42), got: $tree"
                                 )
-                            case o: Tasty.Symbol.TastyOrigin =>
-                                // No body slice for this particular symbol -- acceptable for a constructor param.
+                            case Absent =>
+                                // No body slice -- acceptable for a val without RHS.
                                 succeed
-                            case _ =>
-                                fail("Expected TastyOrigin for SomeObject.value")
                         end match
                 end match
             case Result.Failure(e) =>
@@ -184,10 +200,9 @@ class TreeUnpicklerTest extends Test:
                 import AllowUnsafe.embrace.danger
                 val methodSyms = pass1.symbols.filter(_.kind == Tasty.SymbolKind.Method)
                 val decodedBodies = methodSyms.flatMap: sym =>
-                    sym.origin match
-                        case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 && o.bodyEnd > o.bodyStart =>
-                            Chunk(sym -> TreeUnpickler.decodeSync(o, sym))
-                        case _ => Chunk.empty
+                    symbolBody(sym, pass1) match
+                        case Present(body) => Chunk(sym -> TreeUnpickler.decodeSync(body, sym, dummyLookup))
+                        case Absent        => Chunk.empty
                 val allNonNull = decodedBodies.forall((_, tree) => tree != null)
                 // Each method body must contain at least one Apply, Ident, or Literal node.
                 // A body that consists only of unrecognized tags would produce a structurally empty tree
@@ -215,10 +230,9 @@ class TreeUnpicklerTest extends Test:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
                 val allBodies = pass1.symbols.flatMap: sym =>
-                    sym.origin match
-                        case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 && o.bodyEnd > o.bodyStart =>
-                            Chunk(TreeUnpickler.decodeSync(o, sym))
-                        case _ => Chunk.empty
+                    symbolBody(sym, pass1) match
+                        case Present(body) => Chunk(TreeUnpickler.decodeSync(body, sym, dummyLookup))
+                        case Absent        => Chunk.empty
                 val allNonNull = allBodies.forall(_ != null)
                 assert(allNonNull, "A decoded body was null in baseClassTasty")
                 // If any If node is found, verify it has 3 non-null subtrees.
@@ -242,10 +256,9 @@ class TreeUnpicklerTest extends Test:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
                 val allBodies = pass1.symbols.flatMap: sym =>
-                    sym.origin match
-                        case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 && o.bodyEnd > o.bodyStart =>
-                            Chunk(TreeUnpickler.decodeSync(o, sym))
-                        case _ => Chunk.empty
+                    symbolBody(sym, pass1) match
+                        case Present(body) => Chunk(TreeUnpickler.decodeSync(body, sym, dummyLookup))
+                        case Absent        => Chunk.empty
                 val allNonNull = allBodies.forall(_ != null)
                 assert(allNonNull, "A decoded body was null in colorTasty")
                 // If any Match is found, verify it has non-empty cases and each CaseDef is non-null.
@@ -273,12 +286,12 @@ class TreeUnpicklerTest extends Test:
                 import AllowUnsafe.embrace.danger
                 var count = 0
                 pass1.symbols.foreach: sym =>
-                    sym.origin match
-                        case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 && o.bodyEnd > o.bodyStart =>
-                            val tree = TreeUnpickler.decodeSync(o, sym)
+                    symbolBody(sym, pass1) match
+                        case Present(body) =>
+                            val tree = TreeUnpickler.decodeSync(body, sym, dummyLookup)
                             assert(tree != null, s"body of ${sym.name.asString} was null")
                             count += 1
-                        case _ => ()
+                        case Absent => ()
                 succeed
             case Result.Failure(e) =>
                 fail(s"Unexpected failure: $e")
@@ -288,57 +301,14 @@ class TreeUnpicklerTest extends Test:
 
     // ── Test 6: Java symbol returns NotImplemented ───────────────────────────
 
-    "Test 6: sym.body for a Java symbol returns Abort.fail(NotImplemented)" in run {
-        val javaSym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Method,
-            Tasty.Flags.empty,
-            Tasty.Name("javaMethod"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.JavaOrigin,
-            Absent
-        )
-        Abort.run[TastyError](javaSym.body).map:
-            case Result.Failure(TastyError.NotImplemented(msg)) =>
-                assert(msg.contains("Java"), s"Expected 'Java' in NotImplemented message, got: $msg")
-            case other =>
-                fail(s"Expected Abort.fail(NotImplemented) for Java symbol, got: $other")
+    "Test 6: sym.body for a Java symbol returns Abort.fail(NotImplemented)" in {
+        pending // plan: phase-02; sym.body effectful method added in Phase 04; Java symbol check deferred
     }
 
     // ── Test 7: body called after classpath close returns ClasspathClosed ─────
 
-    "Test 7: sym.body after classpath close returns Abort.fail(ClasspathClosed)" in run {
-        // Capture the symbol from inside the scope, then call body after scope exits (classpath closed).
-        val captureResult: Result[TastyError, Tasty.Symbol] < Async =
-            Scope.run:
-                Abort.run[TastyError]:
-                    openPlainClassCp.flatMap: cp =>
-                        cp.findClass("kyo.fixtures.PlainClass") match
-                            case Present(sym) => Kyo.lift(sym)
-                            case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found in fixture"))
-        captureResult.flatMap:
-            case Result.Success(sym) =>
-                // Scope has exited; classpath is closed. body should return ClasspathClosed.
-                Abort.run[TastyError](sym.body).map:
-                    case Result.Failure(TastyError.ClasspathClosed) =>
-                        succeed
-                    case Result.Failure(TastyError.NotImplemented(_)) =>
-                        // Symbol has no body (e.g. class itself) -- acceptable.
-                        succeed
-                    case Result.Failure(e) =>
-                        fail(s"Expected ClasspathClosed or NotImplemented, got: $e")
-                    case Result.Success(_) =>
-                        // If the body decoded despite close, that is a race but not a hard error.
-                        succeed
-                    case Result.Panic(t) =>
-                        throw t
-            case Result.Failure(TastyError.NotImplemented(_)) =>
-                // PlainClass not loaded (unlikely but possible in cross-platform).
-                succeed
-            case Result.Failure(e) =>
-                fail(s"Failed to capture PlainClass symbol: $e")
-            case Result.Panic(t) =>
-                throw t
+    "Test 7: sym.body after classpath close returns Abort.fail(ClasspathClosed)" in {
+        pending // plan: phase-02; sym.body effectful method added in Phase 04
     }
 
     // ── Test 8: truncated body slice does not panic the runtime ───────────────
@@ -351,28 +321,19 @@ class TreeUnpicklerTest extends Test:
                     case None =>
                         succeed
                     case Some(sym) =>
-                        sym.origin match
-                            case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 =>
-                                import AllowUnsafe.embrace.danger
-                                val truncated = Tasty.Symbol.TastyOrigin.init(
-                                    o.bodyStart,
-                                    o.bodyStart + 1,
-                                    o.sectionBytes,
-                                    o.names,
-                                    o.sectionOffset,
-                                    null
-                                )
-                                truncated._addrMap.set(scala.collection.immutable.IntMap.empty)
-                                // decodeSync should either succeed (single-byte literal) or throw a caught exception.
+                        // plan: phase-02 bridge; use symbolBody + truncated body.
+                        symbolBody(sym, pass1) match
+                            case Present(body) =>
+                                val truncated = body.copy(bodyEnd = body.bodyStart + 1)
                                 val ok =
                                     try
-                                        TreeUnpickler.decodeSync(truncated, sym)
-                                        true // single-byte literal decoded fine
+                                        TreeUnpickler.decodeSync(truncated, sym, dummyLookup)
+                                        true
                                     catch
                                         case _: TreeUnpickler.DecodeException  => true
                                         case _: ArrayIndexOutOfBoundsException => true
                                 assert(ok, "Expected either success or a known decode exception on 1-byte body")
-                            case _ =>
+                            case Absent =>
                                 succeed
                 end match
             case Result.Failure(e) =>
@@ -391,17 +352,15 @@ class TreeUnpicklerTest extends Test:
                     case None =>
                         succeed
                     case Some(sym) =>
-                        import AllowUnsafe.embrace.danger
-                        sym.origin match
-                            case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 =>
-                                val tree1 = sym._bodyOnce.get()
-                                val tree2 = sym._bodyOnce.get()
-                                assert(
-                                    tree1 eq tree2,
-                                    s"Expected reference-equal Trees, got distinct objects: $tree1 vs $tree2"
-                                )
-                            case _ =>
-                                succeed
+                        // plan: phase-02 bridge; use decodeSync twice to verify identical output (not memoized via OnceCell).
+                        symbolBody(sym, pass1) match
+                            case Present(body) =>
+                                val tree1 = TreeUnpickler.decodeSync(body, sym, dummyLookup)
+                                val tree2 = TreeUnpickler.decodeSync(body, sym, dummyLookup)
+                                // In Phase 02, trees are freshly decoded each call (no memoization yet).
+                                // We just verify both decode without crash.
+                                assert(tree1 != null && tree2 != null, "Both tree decodes must be non-null")
+                            case Absent => succeed
                         end match
                 end match
             case Result.Failure(e) =>
@@ -412,44 +371,8 @@ class TreeUnpicklerTest extends Test:
 
     // ── Test 10: regression: sym.body after Scope close returns ClasspathClosed ──
 
-    "sym.body after Scope close returns Abort.fail(ClasspathClosed)" in run {
-        // Open a classpath inside a Scope, find a method symbol with a body, exit the
-        // Scope (which closes the classpath), then assert body returns ClasspathClosed.
-        val captureResult: Result[TastyError, Tasty.Symbol] < Async =
-            Scope.run:
-                Abort.run[TastyError]:
-                    openPlainClassCp.flatMap: cp =>
-                        cp.findClass("kyo.fixtures.PlainClass") match
-                            case Present(classSym) =>
-                                // Find a declaration with a non-zero body slice (a method).
-                                val memberWithBody = classSym.declarations.find: s =>
-                                    s.origin match
-                                        case o: Tasty.Symbol.TastyOrigin => o.bodyStart > 0 && o.bodyEnd > 0
-                                        case _                           => false
-                                memberWithBody match
-                                    case Some(sym) => Kyo.lift(sym)
-                                    case None      => Abort.fail(TastyError.NotImplemented("no member with body in PlainClass"))
-                            case Absent =>
-                                Abort.fail(TastyError.NotImplemented("PlainClass not found in fixture"))
-        captureResult.flatMap:
-            case Result.Success(sym) =>
-                // Scope has exited; classpath is closed. body must return ClasspathClosed.
-                Abort.run[TastyError](sym.body).map:
-                    case Result.Failure(TastyError.ClasspathClosed) =>
-                        succeed
-                    case Result.Failure(e) =>
-                        fail(s"Expected ClasspathClosed but got: $e")
-                    case Result.Success(_) =>
-                        fail("Expected ClasspathClosed but body decode succeeded on closed classpath")
-                    case Result.Panic(t) =>
-                        throw t
-            case Result.Failure(TastyError.NotImplemented(msg)) =>
-                // No member with a body found; treat as a test infrastructure limitation.
-                pending
-            case Result.Failure(e) =>
-                fail(s"Failed to capture symbol: $e")
-            case Result.Panic(t) =>
-                throw t
+    "sym.body after Scope close returns Abort.fail(ClasspathClosed)" in {
+        pending // plan: phase-02; sym.body effectful method added in Phase 04
     }
 
     // ── Phase 17 Tests (INV-014, M2) ─────────────────────────────────────────────
@@ -466,14 +389,11 @@ class TreeUnpicklerTest extends Test:
     "Phase17-A: annotation with real decodeCtx and UNITconst pickle decodes to Literal(UnitConst)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
+        // plan: phase-02 bridge; Symbol.make(kind, flags, name).
         val sym = Tasty.Symbol.make(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name("Int"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
+            Tasty.Name("Int")
         )
         val names   = Array(Tasty.Name("scala"))
         val addrMap = IntMap(1 -> sym)
@@ -501,15 +421,7 @@ class TreeUnpicklerTest extends Test:
     // Then: returns Tree.Unknown(-1, 0) (the empty-pickle branch).
     "Phase17-B: annotation with non-null decodeCtx but empty argsPickle returns Tree.Unknown(-1,0)" in run {
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Foo"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val sym       = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
         val names     = Array(Tasty.Name("test"))
         val addrMap   = IntMap.empty[Tasty.Symbol]
         val home      = ClasspathRef.init()
@@ -535,15 +447,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18a-1: PRIVATE byte decodes to Tree.Modifier(Flag.Private)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Dummy"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val sym          = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val names        = Array(Tasty.Name("dummy"))
         val addrMap      = IntMap.empty[Tasty.Symbol]
         val home         = ClasspathRef.init()
@@ -569,15 +473,7 @@ class TreeUnpicklerTest extends Test:
     //       "unknown category-1 modifier tag 50".
     "Phase18a-2: unrecognised category-1 byte yields Failure(MalformedSection)" in run {
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Dummy"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val sym     = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val names   = Array(Tasty.Name("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
         val home    = ClasspathRef.init()
@@ -607,15 +503,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18a-debt-1: OBJECT byte decodes to Tree.Modifier(Flag.Module)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Dummy"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val sym    = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val pickle = Chunk(TastyFormat.OBJECT.toByte)
         val decodeCtx =
             new Tasty.Annotation.DecodeContext(
@@ -634,15 +522,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18a-debt-2: TRAIT byte decodes to Tree.Modifier(Flag.Trait)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Dummy"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val sym    = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val pickle = Chunk(TastyFormat.TRAIT.toByte)
         val decodeCtx =
             new Tasty.Annotation.DecodeContext(
@@ -661,15 +541,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18a-debt-3: ENUM byte decodes to Tree.Modifier(Flag.Enum)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Dummy"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val sym    = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val pickle = Chunk(TastyFormat.ENUM.toByte)
         val decodeCtx =
             new Tasty.Annotation.DecodeContext(
@@ -694,15 +566,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18b-1: SHAREDtype + nat(42) decodes to Tree.Shared(42)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Dummy"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val sym     = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val names   = Array(Tasty.Name("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
         val home    = ClasspathRef.init()
@@ -729,15 +593,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18b-2: INTconst + int(7) decodes to Tree.Literal(Constant.IntConst(7))" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Dummy"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val sym     = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val names   = Array(Tasty.Name("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
         val home    = ClasspathRef.init()
@@ -781,24 +637,8 @@ class TreeUnpicklerTest extends Test:
     "Phase18c-1: APPLIEDtype decodes tycon + one arg into Tree.AppliedType" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val listSym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("List"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
-        val intSym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Int"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val listSym = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("List"))
+        val intSym  = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Int"))
         val names   = Array(Tasty.Name("scala"))
         val addrMap = IntMap(1 -> listSym, 2 -> intSym)
         val home    = ClasspathRef.init()
@@ -842,22 +682,14 @@ class TreeUnpicklerTest extends Test:
     "Phase18c-2: MATCHtype with 2 case nodes decodes into Tree.MatchType with cases.length==2" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        def makeSym(n: String) = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name(n),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
-        val boundSym = makeSym("Bound")
-        val scrutSym = makeSym("Scrut")
-        val case1Sym = makeSym("Case1")
-        val case2Sym = makeSym("Case2")
-        val names    = Array(Tasty.Name("scala"))
-        val addrMap  = IntMap(1 -> boundSym, 2 -> scrutSym, 3 -> case1Sym, 4 -> case2Sym)
-        val home     = ClasspathRef.init()
+        def makeSym(n: String) = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(n))
+        val boundSym           = makeSym("Bound")
+        val scrutSym           = makeSym("Scrut")
+        val case1Sym           = makeSym("Case1")
+        val case2Sym           = makeSym("Case2")
+        val names              = Array(Tasty.Name("scala"))
+        val addrMap            = IntMap(1 -> boundSym, 2 -> scrutSym, 3 -> case1Sym, 4 -> case2Sym)
+        val home               = ClasspathRef.init()
         // MATCHtype(190=0xBE) Length(8=0x88) TERMREFdirect nat(1) TERMREFdirect nat(2)
         //   TERMREFdirect nat(3) TERMREFdirect nat(4)
         val pickle = Chunk[Byte](
@@ -895,15 +727,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18d-1: TERMREFpkg + nameRef decodes to Tree.TermRefPkg(Name(scala))" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Dummy"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
+        val sym = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         // names array: indices 0-4 are placeholders, index 5 = Name("scala").
         val names = Array(
             Tasty.Name("a"),
@@ -939,27 +763,11 @@ class TreeUnpicklerTest extends Test:
     "Phase18d-2: SELECTin with nameRef + qual + owner decodes to Tree.SelectIn" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val listSym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("List"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
-        val scalaSym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("scala"),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
-        val names   = Array(Tasty.Name("map"))
-        val addrMap = IntMap(1 -> listSym, 2 -> scalaSym)
-        val home    = ClasspathRef.init()
+        val listSym  = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("List"))
+        val scalaSym = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("scala"))
+        val names    = Array(Tasty.Name("map"))
+        val addrMap  = IntMap(1 -> listSym, 2 -> scalaSym)
+        val home     = ClasspathRef.init()
         // SELECTin = 176 (0xB0), length-prefixed (cat 5).
         // Payload: nameRef=nat(0)=0x80, TERMREFdirect=62 nat(1)=0x81, TERMREFdirect=62 nat(2)=0x82 => 6 bytes.
         // Length nat(6): single-byte stop-bit = 6 | 0x80 = 0x86.
@@ -1011,9 +819,10 @@ class TreeUnpicklerTest extends Test:
                     case None =>
                         succeed
                     case Some(sym) =>
-                        sym.origin match
-                            case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 =>
-                                val tree = TreeUnpickler.decodeSync(o, sym)
+                        // plan: phase-02 bridge; use symbolBody instead of sym.origin.
+                        symbolBody(sym, pass1) match
+                            case Present(body) =>
+                                val tree = TreeUnpickler.decodeSync(body, sym, dummyLookup)
                                 tree match
                                     case Tasty.Tree.ValDef(s, tpt, rhs) =>
                                         assert(s != null, "ValDef.sym must not be null")
@@ -1022,8 +831,7 @@ class TreeUnpicklerTest extends Test:
                                     case _ =>
                                         succeed
                                 end match
-                            case _ =>
-                                succeed
+                            case Absent => succeed
                 end match
             case Result.Failure(e) =>
                 fail(s"Unexpected failure: $e")
@@ -1039,21 +847,13 @@ class TreeUnpicklerTest extends Test:
     "Phase18e-2: APPLY with fun + 2 args decodes to Tree.Apply with fun and 2-element args chunk" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        def makeSym(n: String) = Tasty.Symbol.make(
-            Tasty.SymbolKind.Method,
-            Tasty.Flags.empty,
-            Tasty.Name(n),
-            null,
-            ClasspathRef.init(),
-            Tasty.Symbol.TastyOrigin.empty,
-            Absent
-        )
-        val fnSym   = makeSym("fn")
-        val arg1Sym = makeSym("arg1")
-        val arg2Sym = makeSym("arg2")
-        val names   = Array(Tasty.Name("test"))
-        val addrMap = IntMap(1 -> fnSym, 2 -> arg1Sym, 3 -> arg2Sym)
-        val home    = ClasspathRef.init()
+        def makeSym(n: String) = Tasty.Symbol.make(Tasty.SymbolKind.Method, Tasty.Flags.empty, Tasty.Name(n))
+        val fnSym              = makeSym("fn")
+        val arg1Sym            = makeSym("arg1")
+        val arg2Sym            = makeSym("arg2")
+        val names              = Array(Tasty.Name("test"))
+        val addrMap            = IntMap(1 -> fnSym, 2 -> arg1Sym, 3 -> arg2Sym)
+        val home               = ClasspathRef.init()
         // APPLY(136) Length(6=0x86) TERMREFdirect(62=0x3E) nat(1)=0x81 TERMREFdirect(62=0x3E) nat(2)=0x82 TERMREFdirect(62=0x3E) nat(3)=0x83
         val pickle = Chunk[Byte](
             TastyFormat.APPLY.toByte,
@@ -1167,11 +967,12 @@ class TreeUnpicklerTest extends Test:
                 import AllowUnsafe.embrace.danger
                 var total = 0
                 pass1.symbols.foreach: sym =>
-                    sym.origin match
-                        case o: Tasty.Symbol.TastyOrigin if o.bodyStart > 0 && o.bodyEnd > o.bodyStart =>
-                            val tree = TreeUnpickler.decodeSync(o, sym)
+                    // plan: phase-02 bridge; use symbolBody instead of sym.origin.
+                    symbolBody(sym, pass1) match
+                        case Present(body) =>
+                            val tree = TreeUnpickler.decodeSync(body, sym, dummyLookup)
                             total += countCat5Unknown(tree)
-                        case _ => ()
+                        case Absent => ()
                 total
 
         for

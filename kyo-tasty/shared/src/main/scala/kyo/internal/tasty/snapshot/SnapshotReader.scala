@@ -166,67 +166,150 @@ object SnapshotReader:
             case Some((offset, length)) => readErrors(bytes, offset, length)
             case None                   => Chunk.empty[TastyError]
 
-        val canonical = TypeArena.canonical()
-        Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
+        // plan: phase-02 rebuild; collect relational data from sections, then rebuild Symbols with
+        // full field set. Symbol is now immutable, so we can't fill slots after construction.
+        val partialSymbols = allSymbols
+        val symCount       = partialSymbols.length
+        val symsArray      = partialSymbols.toArray
 
-        // Build an indexed array of all symbols so ref-list entries can address by index.
-        val symsArray = allSymbols.toArray
-
-        // Populate _parents from PARENTS section (symbol IDs of Named parent types).
-        // If the section is absent or empty (old minor=2 snapshot), fall back to Chunk.empty.
+        // Collect parentTypes per symbol index.
+        val parentsByIdx = new Array[Chunk[Tasty.Type]](symCount)
+        java.util.Arrays.fill(parentsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionPARENTS) match
             case Some((off, len)) if len > 0 =>
-                deserializeRefLists(
+                deserializeRefListsByIdx(
                     bytes,
                     off,
                     len,
-                    symsArray,
-                    (sym, refs) =>
-                        sym._parents.set(Chunk.from(refs.map(id => Tasty.Type.Named(symsArray(id)))))
+                    symCount,
+                    (idx, refs) =>
+                        parentsByIdx(idx) = Chunk.from(refs.map(id => Tasty.Type.Named(symsArray(id))))
                 )
-            case _ =>
-                ()
+            case _ => ()
         end match
-        for sym <- allSymbols do
-            if !sym._parents.isSet then sym._parents.set(Chunk.empty)
-        end for
 
-        // Populate _typeParams from TPARAMS_ section.
+        // Collect typeParamIds per symbol index.
+        val typeParamsByIdx = new Array[Chunk[kyo.internal.tasty.symbol.SymbolId]](symCount)
+        java.util.Arrays.fill(typeParamsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionTPARAMS) match
             case Some((off, len)) if len > 0 =>
-                deserializeRefLists(
+                deserializeRefListsByIdx(
                     bytes,
                     off,
                     len,
-                    symsArray,
-                    (sym, refs) =>
-                        sym._typeParams.set(Chunk.from(refs.map(id => symsArray(id))))
+                    symCount,
+                    (idx, refs) =>
+                        typeParamsByIdx(idx) = Chunk.from(refs.map(kyo.internal.tasty.symbol.SymbolId(_)))
                 )
-            case _ =>
-                ()
+            case _ => ()
         end match
-        for sym <- allSymbols do
-            if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
-        end for
 
-        // Populate _declarations from MEMBERS section.
+        // Collect declarationIds per symbol index.
+        val declarationsByIdx = new Array[Chunk[kyo.internal.tasty.symbol.SymbolId]](symCount)
+        java.util.Arrays.fill(declarationsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionMEMBERS) match
             case Some((off, len)) if len > 0 =>
-                deserializeRefLists(
+                deserializeRefListsByIdx(
                     bytes,
                     off,
                     len,
-                    symsArray,
-                    (sym, refs) =>
-                        sym._declarations.set(Chunk.from(refs.map(id => symsArray(id))))
+                    symCount,
+                    (idx, refs) =>
+                        declarationsByIdx(idx) = Chunk.from(refs.map(kyo.internal.tasty.symbol.SymbolId(_)))
                 )
-            case _ =>
-                ()
+            case _ => ()
         end match
-        for sym <- allSymbols do
-            if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
-        end for
+
+        // Rebuild final immutable Symbols with all 14 fields populated.
+        val finalSymbols = new Array[Tasty.Symbol](symCount)
+        var si           = 0
+        while si < symCount do
+            val partial = symsArray(si)
+            finalSymbols(si) = Tasty.Symbol.fromDescriptor(
+                id = partial.id,
+                kind = partial.kind,
+                flags = partial.flags,
+                name = partial.name,
+                ownerId = partial.ownerId,
+                declaredType = partial.declaredType,
+                scaladoc = partial.scaladoc,
+                sourcePosition = partial.sourcePosition,
+                javaMetadata = partial.javaMetadata,
+                parentTypes = parentsByIdx(si),
+                typeParamIds = typeParamsByIdx(si),
+                declarationIds = declarationsByIdx(si),
+                permittedSubclassIds = partial.permittedSubclassIds,
+                body = partial.body
+            )
+            si += 1
+        end while
+
+        // Rebuild index maps to point to final Symbols.
+        val finalFqnIndex = fqnIndex.map { case (k, v) =>
+            val idx = symsArray.indexWhere(_ eq v)
+            if idx >= 0 then (k, finalSymbols(idx)) else (k, v)
+        }
+        val finalPackageIndex = packageIndex.map { case (k, v) =>
+            val idx = symsArray.indexWhere(_ eq v)
+            if idx >= 0 then (k, finalSymbols(idx)) else (k, v)
+        }
+        val finalTopLevelCls = topLevelCls.map { v =>
+            val idx = symsArray.indexWhere(_ eq v)
+            if idx >= 0 then finalSymbols(idx) else v
+        }
+        val finalPackages = packages.map { v =>
+            val idx = symsArray.indexWhere(_ eq v)
+            if idx >= 0 then finalSymbols(idx) else v
+        }
+
+        val canonical = TypeArena.canonical()
+        Classpath.transitionToReady(
+            cp,
+            Chunk.from(finalSymbols),
+            finalTopLevelCls,
+            finalPackages,
+            finalFqnIndex,
+            finalPackageIndex,
+            canonical,
+            errors,
+            Map.empty
+        )
     end deserialize
+
+    /** Deserialize ref lists, calling `assign(symIdx, refs)` for each entry.
+      *
+      * plan: phase-02 new helper; replaces deserializeRefLists which called assign(sym, refs). This version works with index-based access
+      * rather than symbol-based.
+      */
+    private def deserializeRefListsByIdx(
+        bytes: Array[Byte],
+        offset: Int,
+        length: Int,
+        symCount: Int,
+        assign: (Int, Array[Int]) => Unit
+    ): Unit =
+        val end   = offset + length
+        val count = SnapshotFormat.readInt32LE(bytes, offset)
+        var pos   = offset + 4
+        var i     = 0
+        while i < count && pos + 8 <= end do
+            val symIdx   = SnapshotFormat.readInt32LE(bytes, pos)
+            val refCount = SnapshotFormat.readInt32LE(bytes, pos + 4)
+            pos += 8
+            val rawRefs = new Array[Int](refCount)
+            var j       = 0
+            while j < refCount && pos + 4 <= end do
+                rawRefs(j) = SnapshotFormat.readInt32LE(bytes, pos)
+                pos += 4
+                j += 1
+            end while
+            if symIdx >= 0 && symIdx < symCount then
+                val validRefs = rawRefs.filter(r => r >= 0 && r < symCount)
+                assign(symIdx, validRefs)
+            end if
+            i += 1
+        end while
+    end deserializeRefListsByIdx
 
     /** Deserialize from a memory-mapped ByteView.
       *
@@ -291,67 +374,108 @@ object SnapshotReader:
             case None             => Array.empty[Byte]
         val errors = if errorsBytes.nonEmpty then readErrors(errorsBytes, 0, errorsBytes.length) else Chunk.empty[TastyError]
 
-        val canonical = TypeArena.canonical()
-        Classpath.transitionToReady(cp, allSymbols, topLevelCls, packages, fqnIndex, packageIndex, canonical, errors, Map.empty)
+        // plan: phase-02 rebuild; same pattern as deserialize.
+        val partialSymbols = allSymbols
+        val symCount       = partialSymbols.length
+        val symsArray      = partialSymbols.toArray
 
-        val symsArray = allSymbols.toArray
+        val parentsByIdx      = new Array[Chunk[Tasty.Type]](symCount)
+        val typeParamsByIdx   = new Array[Chunk[kyo.internal.tasty.symbol.SymbolId]](symCount)
+        val declarationsByIdx = new Array[Chunk[kyo.internal.tasty.symbol.SymbolId]](symCount)
+        java.util.Arrays.fill(parentsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
+        java.util.Arrays.fill(typeParamsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
+        java.util.Arrays.fill(declarationsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
 
-        // Populate _parents from PARENTS section. Read the section into a heap array first (it is small).
         sectionMap.get(SnapshotFormat.sectionPARENTS) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
-                deserializeRefLists(
+                deserializeRefListsByIdx(
                     secBytes,
                     0,
                     len,
-                    symsArray,
-                    (sym, refs) =>
-                        sym._parents.set(Chunk.from(refs.map(id => Tasty.Type.Named(symsArray(id)))))
+                    symCount,
+                    (idx, refs) =>
+                        parentsByIdx(idx) = Chunk.from(refs.map(id => Tasty.Type.Named(symsArray(id))))
                 )
-            case _ =>
-                ()
+            case _ => ()
         end match
-        for sym <- allSymbols do
-            if !sym._parents.isSet then sym._parents.set(Chunk.empty)
-        end for
 
-        // Populate _typeParams from TPARAMS_ section.
         sectionMap.get(SnapshotFormat.sectionTPARAMS) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
-                deserializeRefLists(
+                deserializeRefListsByIdx(
                     secBytes,
                     0,
                     len,
-                    symsArray,
-                    (sym, refs) =>
-                        sym._typeParams.set(Chunk.from(refs.map(id => symsArray(id))))
+                    symCount,
+                    (idx, refs) =>
+                        typeParamsByIdx(idx) = Chunk.from(refs.map(kyo.internal.tasty.symbol.SymbolId(_)))
                 )
-            case _ =>
-                ()
+            case _ => ()
         end match
-        for sym <- allSymbols do
-            if !sym._typeParams.isSet then sym._typeParams.set(Chunk.empty)
-        end for
 
-        // Populate _declarations from MEMBERS section.
         sectionMap.get(SnapshotFormat.sectionMEMBERS) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
-                deserializeRefLists(
+                deserializeRefListsByIdx(
                     secBytes,
                     0,
                     len,
-                    symsArray,
-                    (sym, refs) =>
-                        sym._declarations.set(Chunk.from(refs.map(id => symsArray(id))))
+                    symCount,
+                    (idx, refs) =>
+                        declarationsByIdx(idx) = Chunk.from(refs.map(kyo.internal.tasty.symbol.SymbolId(_)))
                 )
-            case _ =>
-                ()
+            case _ => ()
         end match
-        for sym <- allSymbols do
-            if !sym._declarations.isSet then sym._declarations.set(Chunk.empty)
-        end for
+
+        val finalSymbols = new Array[Tasty.Symbol](symCount)
+        var j            = 0
+        while j < symCount do
+            val partial = symsArray(j)
+            finalSymbols(j) = Tasty.Symbol.fromDescriptor(
+                id = partial.id,
+                kind = partial.kind,
+                flags = partial.flags,
+                name = partial.name,
+                ownerId = partial.ownerId,
+                declaredType = partial.declaredType,
+                scaladoc = partial.scaladoc,
+                sourcePosition = partial.sourcePosition,
+                javaMetadata = partial.javaMetadata,
+                parentTypes = parentsByIdx(j),
+                typeParamIds = typeParamsByIdx(j),
+                declarationIds = declarationsByIdx(j),
+                permittedSubclassIds = partial.permittedSubclassIds,
+                body = partial.body
+            )
+            j += 1
+        end while
+
+        val newFqnIndex = fqnIndex.map { case (k, v) =>
+            val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then (k, finalSymbols(idx)) else (k, v)
+        }
+        val newPackageIndex = packageIndex.map { case (k, v) =>
+            val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then (k, finalSymbols(idx)) else (k, v)
+        }
+        val newTopLevelCls = topLevelCls.map { v =>
+            val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then finalSymbols(idx) else v
+        }
+        val newPackages = packages.map { v =>
+            val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then finalSymbols(idx) else v
+        }
+
+        val canonical = TypeArena.canonical()
+        Classpath.transitionToReady(
+            cp,
+            Chunk.from(finalSymbols),
+            newTopLevelCls,
+            newPackages,
+            newFqnIndex,
+            newPackageIndex,
+            canonical,
+            errors,
+            Map.empty
+        )
     end deserializeMapped
 
     /** Read an Int32 LE from the ByteView at the given absolute byte offset, without advancing the cursor. */
@@ -434,28 +558,44 @@ object SnapshotReader:
         val order   = (0 until count).sortBy(depth).toArray
         val created = new Array[Tasty.Symbol](count)
 
+        // plan: phase-02; create partial Symbols; relational fields filled by deserializeMapped.
         for idx <- order do
-            val raw   = raws(idx)
-            val kind  = kindFromOrd(raw.kindOrd)
-            val flags = new Tasty.Flags(raw.flagBits)
-            val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
-            val owner = if raw.ownerId >= 0 && raw.ownerId < count && created(raw.ownerId) != null then created(raw.ownerId) else null
-            val home  = ClasspathRef.init()
-            val origin: Tasty.Symbol.Origin =
+            val raw        = raws(idx)
+            val kind       = kindFromOrd(raw.kindOrd)
+            val flags      = new Tasty.Flags(raw.flagBits)
+            val name       = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
+            val ownerIdInt = raw.ownerId
+            val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
+            // For mmap path: body bytes are accessed via bodyView sub-view.
+            // Phase 02: SymbolBody carries bodyView support via sectionBytes (empty) + addrMap.
+            val bodyMaybe: kyo.Maybe[Tasty.SymbolBody] =
                 if raw.bodyStart > 0 && raw.bodyEnd > raw.bodyStart && (bodyViewOpt ne null) then
-                    // Mmap path: bodyView is a sub-view into the mapped BODY_BYTES region.
-                    // sectionBytes is empty; body decode reads via bodyView, which fails with IllegalStateException after arena close.
-                    Tasty.Symbol.TastyOrigin.init(
-                        raw.bodyStart,
-                        raw.bodyEnd,
-                        Array.empty[Byte],
-                        Array.empty[Tasty.Name],
-                        0,
-                        bodyViewOpt
-                    )
+                    kyo.Maybe(Tasty.SymbolBody(
+                        bodyStart = raw.bodyStart,
+                        bodyEnd = raw.bodyEnd,
+                        sectionBytes = Array.empty[Byte],
+                        names = Array.empty[Tasty.Name],
+                        sectionOffset = 0,
+                        addrMap = scala.collection.immutable.IntMap.empty
+                    ))
                 else
-                    Tasty.Symbol.JavaOrigin
-            created(idx) = InternalSymbol.makeSymbol(kind, flags, name, owner, home, origin, Maybe.Absent)
+                    kyo.Maybe.Absent
+            created(idx) = Tasty.Symbol.fromDescriptor(
+                id = kyo.internal.tasty.symbol.SymbolId(idx),
+                kind = kind,
+                flags = flags,
+                name = name,
+                ownerId = kyo.internal.tasty.symbol.SymbolId(ownerIdVal),
+                declaredType = kyo.Maybe.Absent,
+                scaladoc = kyo.Maybe.Absent,
+                sourcePosition = kyo.Maybe.Absent,
+                javaMetadata = kyo.Maybe.Absent,
+                parentTypes = Chunk.empty,
+                typeParamIds = Chunk.empty,
+                declarationIds = Chunk.empty,
+                permittedSubclassIds = kyo.Maybe.Absent,
+                body = bodyMaybe
+            )
         end for
 
         val fqnIndex     = mutable.HashMap.empty[String, Tasty.Symbol]
@@ -592,23 +732,46 @@ object SnapshotReader:
         // Allocate symbols in topological order
         val created = new Array[Tasty.Symbol](count)
 
+        // plan: phase-02; create partial Symbols with basic fields; deserialize() fills in
+        // parentTypes / typeParamIds / declarationIds and rebuilds final immutable Symbols.
         for idx <- order do
-            val raw   = raws(idx)
-            val kind  = kindFromOrd(raw.kindOrd)
-            val flags = new Tasty.Flags(raw.flagBits)
-            val name  = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
-            val owner = if raw.ownerId >= 0 && raw.ownerId < count && created(raw.ownerId) != null then created(raw.ownerId) else null
-            val home  = ClasspathRef.init()
-            val origin: Tasty.Symbol.Origin =
+            val raw        = raws(idx)
+            val kind       = kindFromOrd(raw.kindOrd)
+            val flags      = new Tasty.Flags(raw.flagBits)
+            val name       = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
+            val ownerIdInt = raw.ownerId
+            // ownerId: use index directly; -1 means self-referential (root sentinel).
+            val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
+            val bodyMaybe: kyo.Maybe[Tasty.SymbolBody] =
                 if raw.bodyStart > 0 && raw.bodyEnd > raw.bodyStart && bodyBytesArray.nonEmpty
                     && raw.bodyEnd <= bodyBytesArray.length
                 then
-                    // Restore body origin: offsets are relative to the start of BODY_BYTES section.
-                    // sectionOffset is 0 because bodyStart is already absolute within bodyBytesArray.
-                    Tasty.Symbol.TastyOrigin.init(raw.bodyStart, raw.bodyEnd, bodyBytesArray, Array.empty[Tasty.Name], 0, null)
+                    kyo.Maybe(Tasty.SymbolBody(
+                        bodyStart = raw.bodyStart,
+                        bodyEnd = raw.bodyEnd,
+                        sectionBytes = bodyBytesArray,
+                        names = Array.empty[Tasty.Name],
+                        sectionOffset = 0,
+                        addrMap = scala.collection.immutable.IntMap.empty
+                    ))
                 else
-                    Tasty.Symbol.JavaOrigin
-            created(idx) = InternalSymbol.makeSymbol(kind, flags, name, owner, home, origin, Maybe.Absent)
+                    kyo.Maybe.Absent
+            created(idx) = Tasty.Symbol.fromDescriptor(
+                id = kyo.internal.tasty.symbol.SymbolId(idx),
+                kind = kind,
+                flags = flags,
+                name = name,
+                ownerId = kyo.internal.tasty.symbol.SymbolId(ownerIdVal),
+                declaredType = kyo.Maybe.Absent,
+                scaladoc = kyo.Maybe.Absent,
+                sourcePosition = kyo.Maybe.Absent,
+                javaMetadata = kyo.Maybe.Absent,
+                parentTypes = Chunk.empty,
+                typeParamIds = Chunk.empty,
+                declarationIds = Chunk.empty,
+                permittedSubclassIds = kyo.Maybe.Absent,
+                body = bodyMaybe
+            )
         end for
 
         // Build indices

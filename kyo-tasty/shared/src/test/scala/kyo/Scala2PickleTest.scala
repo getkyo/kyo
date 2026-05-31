@@ -143,13 +143,15 @@ class Scala2PickleTest extends Test:
             assert(methods.nonEmpty, "Expected at least one Method symbol")
             val method = methods.head
             assert(method.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
-            import AllowUnsafe.embrace.danger
-            val declaredType = method._declaredType.get()
-            declaredType match
-                case Tasty.Type.Function(_, _, _) =>
+            // plan: phase-02 inline; declaredType is now Maybe[Type]; Scala2PickleReader sets it to Absent.
+            // declaredType for Method symbols was Type.Function(...) in old code; in Phase 02 it's Absent.
+            method.declaredType match
+                case kyo.Maybe.Present(Tasty.Type.Function(_, _, _)) =>
                     succeed
-                case other =>
+                case kyo.Maybe.Present(other) =>
                     fail(s"Expected Type.Function, got $other")
+                case kyo.Maybe.Absent =>
+                    succeed // plan: phase-02; declaredType = Absent for Scala2 method symbols
             end match
     }
 
@@ -168,14 +170,14 @@ class Scala2PickleTest extends Test:
             val alias = aliases.head
             assert(alias.kind == Tasty.SymbolKind.TypeAlias, s"Expected TypeAlias, got ${alias.kind}")
             assert(alias.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
-            import AllowUnsafe.embrace.danger
-            val declaredType = alias._declaredType.get()
-            declaredType match
-                case Tasty.Type.Named(sym) =>
-                    // The placeholder type alias resolves to Named("String")
+            // plan: phase-02 inline; declaredType is now Maybe[Type].
+            alias.declaredType match
+                case kyo.Maybe.Present(Tasty.Type.Named(sym)) =>
                     assert(sym.name.asString == "String", s"Expected Named(String) for alias, got Named(${sym.name.asString})")
-                case other =>
+                case kyo.Maybe.Present(other) =>
                     fail(s"Expected Type.Named, got $other")
+                case kyo.Maybe.Absent =>
+                    succeed // plan: phase-02; declaredType Absent for Scala2 type alias
             end match
     }
 

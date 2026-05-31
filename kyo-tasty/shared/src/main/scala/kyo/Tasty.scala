@@ -9,6 +9,7 @@ import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import kyo.internal.tasty.symbol.Interner
+import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import kyo.stats.Attributes
 import scala.collection.immutable.IntMap
@@ -422,7 +423,8 @@ object Tasty:
             import AllowUnsafe.embrace.danger
             import Name.asString
             this match
-                case Named(sym)             => sym.fullName.asString
+                // plan: phase-02 inline; lifts to sym.fullName.asString in phase 09 once resolution methods land.
+                case Named(sym)             => sym.name.asString
                 case Applied(base, args)    => s"${base.show}[${args.map(_.show).mkString(", ")}]"
                 case Array(elem)            => s"${elem.show}[]"
                 case Function(ps, r, isCtx) => s"(${ps.map(_.show).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${r.show}"
@@ -619,428 +621,157 @@ object Tasty:
         final case class Unknown(tag: Int, length: Int) extends Tree
     end Tree
 
+    // ── SymbolBody ──────────────────────────────────────────────────────────
+
+    /** Byte slice and decode context for a TASTy symbol body. Carried by `Symbol.body: Maybe[SymbolBody]`.
+      *
+      * All symbols with a TASTy body (DEFDEF, VALDEF, class TYPEDEF with a non-trivial template) carry a `Present(SymbolBody)`. Java
+      * symbols, Package symbols, and abstract type stubs carry `Absent`.
+      *
+      * @param bodyStart
+      *   Absolute byte offset into `sectionBytes` where this symbol's body payload begins.
+      * @param bodyEnd
+      *   Absolute byte offset into `sectionBytes` where this symbol's body payload ends.
+      * @param sectionBytes
+      *   The raw AST section bytes for this file. Shared (not copied) across all symbols from the same file.
+      * @param names
+      *   The name table for this file, as decoded by NameUnpickler. Shared across all symbols from the same file.
+      * @param sectionOffset
+      *   Absolute byte offset where the AST section starts in the original TASTy file. Used to convert section-relative addrs to absolute.
+      * @param addrMap
+      *   Maps TASTy byte address to SymbolId for IDENT/SELECT tree references during lazy body decode.
+      */
+    final case class SymbolBody(
+        bodyStart: Int,
+        bodyEnd: Int,
+        sectionBytes: Array[Byte],
+        names: Array[Name],
+        sectionOffset: Int,
+        addrMap: IntMap[SymbolId]
+    )
+
     // ── Symbol ──────────────────────────────────────────────────────────────
 
-    final class Symbol private (
-        val kind: SymbolKind,
-        val flags: Flags,
-        val name: Name,
-        val owner: Symbol,
-        private[kyo] val home: ClasspathRef,
-        private[kyo] val origin: Symbol.Origin,
-        private[kyo] val javaMetadata: Maybe[JavaMetadata],
-        // Write-once slots populated during classpath orchestration. Passed as constructor parameters
-        // so that SingleAssign.init() (which requires AllowUnsafe) is called inside Symbol.make's scope.
-        private[kyo] val _parents: kyo.internal.tasty.symbol.SingleAssign[Chunk[Type]],
-        private[kyo] val _typeParams: kyo.internal.tasty.symbol.SingleAssign[Chunk[Symbol]],
-        private[kyo] val _declarations: kyo.internal.tasty.symbol.SingleAssign[Chunk[Symbol]],
-        private[kyo] val _declaredType: kyo.internal.tasty.symbol.SingleAssign[Type],
-        private[kyo] val _scaladoc: kyo.internal.tasty.symbol.SingleAssign[Maybe[String]],
-        private[kyo] val _position: kyo.internal.tasty.symbol.SingleAssign[Maybe[Position]],
-        // PermittedSubclasses attribute: populated by ClassfileUnpickler for sealed Java classes.
-        private[kyo] val _permittedSubclasses: kyo.internal.tasty.symbol.SingleAssign[Maybe[Chunk[Symbol]]],
-        // Cached full name: computed once on first call to fullName, then returned from the cell.
-        // OnceCell's race-and-discard semantics are acceptable here: init() is a pure owner-chain walk
-        // that always returns the same Name; at most one redundant computation per symbol under contention.
-        private[kyo] val _fullNameOnce: kyo.internal.tasty.symbol.OnceCell[Name],
-        // Lazy body cell: populated on first call to Symbol.body. Not a write-once slot because the
-        // computation is driven by the caller, not by classpath orchestration. OnceCell handles thread safety.
-        // The init lambda may throw TreeUnpickler.DecodeException for corrupt byte slices; body() catches it.
-        private[kyo] val _bodyOnce: kyo.internal.tasty.symbol.OnceCell[Tree]
-    ):
-
-        // Pure accessors (no effect, always present even after classpath close).
-        def fullName: Name        = _fullNameOnce.get()
-        def binaryName: String    = Symbol.computeBinaryName(this)
-        def isInline: Boolean     = flags.contains(Flag.Inline)
-        def isContextual: Boolean = flags.contains(Flag.Given)
-        def isOpaque: Boolean     = flags.contains(Flag.Opaque)
-        def isPackageObject: Boolean =
-            flags.contains(Flag.Module) && name.string.get() == "package"
-        def isModule: Boolean = flags.contains(Flag.Module)
-        def isJava: Boolean   = flags.contains(Flag.JavaDefined)
-
-        /** The scaladoc comment associated with this symbol, if any.
-          *
-          * Returns `Present(text)` for TASTy symbols with a scaladoc comment decoded from the Comments section. Returns `Absent` for TASTy
-          * symbols without a comment, for Java-sourced classfile symbols (classfiles have no Comments section), and for symbols whose home
-          * classpath has not yet been loaded. This is a pure accessor: it reads from a pre-populated write-once slot with no classpath I/O.
-          */
-        def scaladoc: Maybe[String] =
-            if _scaladoc.isSet then _scaladoc.get()
-            else Maybe.Absent
-
-        /** The source position of this symbol, if known.
-          *
-          * Returns `Present(pos)` for TASTy symbols with position data decoded from the Positions section. Returns `Absent` for
-          * Java-sourced classfile symbols (classfiles have no TASTy Positions section), for TASTy symbols in files without a Positions
-          * section, and for symbols whose home classpath has not yet been loaded. This is a pure accessor: it reads from a pre-populated
-          * write-once slot with no classpath I/O.
-          */
-        def position: Maybe[Position] =
-            if _position.isSet then _position.get()
-            else Maybe.Absent
-
-        // Resolving accessors.
-
-        /** The declared type of this symbol.
-          *
-          * Returns the type annotation decoded from the symbol's TASTy or classfile definition:
-          *   - For a VALDEF (val/var field): the declared type (e.g. Int, String).
-          *   - For a PARAM: the parameter type.
-          *   - For a TYPEPARAM: the type parameter bounds (Type.Wildcard or Type.Named).
-          *   - For a TYPEDEF (type alias or abstract type): the alias body or bounds type.
-          *   - For a class/trait/object TYPEDEF: Type.Named(sym) (the class type itself).
-          *   - For a DEFDEF: the return type (reconstructed in mergeResults from Pass 1 data).
-          *   - For Package symbols: throws IllegalArgumentException (pure accessor; programmer error).
-          * @note
-          *   Populated eagerly during cold-load mergeResults; readable as a pure accessor thereafter.
-          */
-        def declaredType: Type =
-            if kind == SymbolKind.Package then
-                throw new IllegalArgumentException("Symbol.declaredType is not available for Package symbols")
-            else
-                _declaredType.get()
-
-        /** The parent types of this symbol (superclass and mixed-in traits).
-          *
-          * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
-          */
-        def parents: Chunk[Type] = _parents.get()
-
-        /** The type parameters of this symbol.
-          *
-          * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
-          */
-        def typeParams: Chunk[Symbol] = _typeParams.get()
-
-        /** The member declarations of this symbol (methods, fields, nested types).
-          *
-          * Pure accessor: reads from an immutable write-once slot populated during classpath open. Valid after `open` returns.
-          */
-        def declarations: Chunk[Symbol] = _declarations.get()
-
-        /** The companion object symbol of this class or trait, if one exists.
-          *
-          * For a `Class` or `Trait` symbol, looks up the companion object via FQN `owner.fqn + "." + name + "$"`. For an `Object` symbol,
-          * looks up the companion class via the owner FQN and the simple name with any trailing `$` stripped. Java symbols always return
-          * `Absent`. All other kinds return `Absent`.
-          *
-          * Pure accessor: reads from the fqnIndex HashMap in the immutable Ready state. Valid after `open` returns.
-          */
-        def companion: Maybe[Symbol] =
-            if isJava then Maybe.Absent
-            else if !home.isAssigned then Maybe.Absent
-            else
-                import Name.asString
-                // flow-allow: §839 case 3 -- post-open immutable Ready-state fqnIndex lookup; populated during open, before any user access.
-                given AllowUnsafe = AllowUnsafe.embrace.danger
-                // Helper: true when the owner is null or is the synthetic root-package sentinel
-                // (identified by owner.owner eq owner, i.e. the root owns itself).
-                // For root-owned or unowned symbols the owner FQN is empty, so we use the
-                // symbol's own fullName to form the companion FQN rather than concatenating
-                // an empty prefix (which would produce ".ClassName$").
-                def isRootOwner: Boolean = owner == null || (owner.owner eq owner)
-                kind match
-                    case SymbolKind.Class | SymbolKind.Trait =>
-                        // Companion object FQN uses the "$"-suffixed key convention established in fqnIndex.
-                        // fqnIndex stores Object-kind symbols under "OwnerFqn.SimpleName$".
-                        val companionFqn =
-                            if isRootOwner then fullName.asString + "$"
-                            else owner.fullName.asString + "." + name.asString + "$"
-                        home.get().pureClass(companionFqn) match
-                            case Present(s) if s.kind == SymbolKind.Object => Maybe(s)
-                            case _                                         => Maybe.Absent
-                    case SymbolKind.Object =>
-                        // Companion class FQN: owner FQN + simple name without trailing "$".
-                        // The simple name may or may not end in "$" depending on TASTy encoding;
-                        // strip it and look up the class symbol by the plain dotted FQN.
-                        val simpleName = name.asString.stripSuffix("$")
-                        val companionFqn =
-                            if isRootOwner then simpleName
-                            else owner.fullName.asString + "." + simpleName
-                        home.get().pureClass(companionFqn) match
-                            case Present(s) if s.kind == SymbolKind.Class || s.kind == SymbolKind.Trait => Maybe(s)
-                            case _                                                                      => Maybe.Absent
-                    case _ => Maybe.Absent
-                end match
-
-        // Java-specific side door.
-        def javaSpecific: Maybe[JavaMetadata] = javaMetadata
-
-        /** Permitted subclasses of this sealed Java class, populated from the PermittedSubclasses classfile attribute.
-          *
-          * Returns Maybe.Present containing the subclass symbols when the attribute was present, or Maybe.Absent when not (non-sealed class
-          * or attribute not yet decoded). Pure accessor: reads a write-once SingleAssign slot that is immutable after classpath open.
-          */
-        def permittedSubclasses: Maybe[Chunk[Symbol]] =
-            if _permittedSubclasses.isSet then _permittedSubclasses.get() else Maybe.Absent
-
-        /** The body tree of this symbol, decoded lazily from the TASTy body byte slice.
-          *
-          * Returns the decoded Tree on success. The result is memoized: two consecutive calls return reference-equal Tree values.
-          *
-          * Fails with:
-          *   - `TastyError.NotImplemented` for Java symbols (classfiles have no body AST).
-          *   - `TastyError.NotImplemented` for Package symbols and any symbol without a body slice (bodyStart == 0).
-          *   - `TastyError.ClasspathClosed` if the classpath has been closed.
-          *   - `TastyError.MalformedSection` if the body byte slice is truncated or contains an unknown tag sequence.
-          */
-        def body(using Frame): Tree < (Sync & Abort[TastyError]) =
-            import Name.asString
-            origin match
-                case Symbol.JavaOrigin =>
-                    Abort.fail(TastyError.NotImplemented("body not available for Java symbols"))
-                case o: Symbol.TastyOrigin =>
-                    Sync.Unsafe.defer:
-                        // home.get() is pure (write-once ClasspathRef); home.get().isClosed is unsafe-tier
-                        // (reads stateRef.unsafe.get()) but is covered by the enclosing Sync.Unsafe.defer.
-                        // home.isAssigned is invariant=true after Classpath.open returns (assignHomes guarantees it).
-                        home.get().checkOpen.andThen:
-                            if o.bodyStart == 0 || o.bodyEnd == 0 || kind == SymbolKind.Package then
-                                Abort.fail(TastyError.NotImplemented("body not available for this symbol kind"))
-                            else
-                                // Unsafe: Classpath.isClosed reads AtomicRef state via stateRef.unsafe.get();
-                                // covered by the enclosing Sync.Unsafe.defer.
-                                // State transitions are monotonic (Closed is terminal) so a stale read is conservative.
-                                if home.get().isClosed then
-                                    Abort.fail(TastyError.ClasspathClosed)
-                                else
-                                    // _bodyOnce.get() is pure (OnceCell post-init); the try/catch converts
-                                    // decode exceptions to Either before any kyo effect constructor runs.
-                                    val decoded: Either[TastyError, Tree] =
-                                        try Right(_bodyOnce.get())
-                                        catch
-                                            case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                                Left(TastyError.MalformedSection(
-                                                    "ASTs",
-                                                    s"body decode failed for '${name.asString}': ${ex.getMessage}",
-                                                    ex.byteOffset
-                                                ))
-                                            case ex: ArrayIndexOutOfBoundsException =>
-                                                // no cursor: exception does not carry a byte offset
-                                                Left(TastyError.MalformedSection(
-                                                    "ASTs",
-                                                    s"body truncated for '${name.asString}': ${ex.getMessage}",
-                                                    0L
-                                                ))
-                                            case _: IllegalStateException =>
-                                                // Thrown when a mmap-backed ByteView is read after its arena was closed.
-                                                Left(TastyError.ClasspathClosed)
-                                    decoded match
-                                        case Right(t) => Sync.defer(t)
-                                        case Left(e)  => Abort.fail(e)
-                                end if
-            end match
-        end body
+    /** Pure-data representation of a TASTy or Java classfile symbol.
+      *
+      * Constructed exactly once per symbol by `ClasspathOrchestrator.materializeSymbols` during Pass C of `Classpath.open`. After
+      * construction, every field is immutable. Cross-symbol references use `SymbolId` (an opaque Int) rather than direct `Symbol` pointers
+      * to avoid case-class cycles.
+      *
+      * Resolution methods (`owner`, `parents`, `declarations`, `fullName`, etc.) are added in Phase 09 after `Classpath` becomes a pure
+      * case class. In this phase (Phase 02) only the 14 constructor parameters and auto-generated case-class members are available.
+      */
+    final case class Symbol private[Tasty] (
+        id: SymbolId,
+        kind: SymbolKind,
+        flags: Flags,
+        name: Name,
+        ownerId: SymbolId,
+        declaredType: Maybe[Type],
+        scaladoc: Maybe[String],
+        sourcePosition: Maybe[Position],
+        javaMetadata: Maybe[JavaMetadata],
+        parentTypes: Chunk[Type],
+        typeParamIds: Chunk[SymbolId],
+        declarationIds: Chunk[SymbolId],
+        permittedSubclassIds: Maybe[Chunk[SymbolId]],
+        body: Maybe[SymbolBody]
+    ) derives CanEqual:
+        // plan: phase-02; partial symbols (id == SymbolId(-1)) produced during Pass 1 need reference
+        // identity so that HashMap[Symbol, V] keys are distinct even when two symbols share the same
+        // kind/flags/name. Finalized symbols (id >= 0) use id-based equality: two symbols with the same
+        // id are the same symbol (matches case-class semantics for test fixtures with explicit ids).
+        override def equals(other: Any): Boolean =
+            other.isInstanceOf[Symbol] && {
+                val that = other.asInstanceOf[Symbol]
+                import kyo.internal.tasty.symbol.SymbolId.value
+                if id.value == -1 || that.id.value == -1 then this eq that
+                else id == that.id
+            }
+        override def hashCode(): Int =
+            import kyo.internal.tasty.symbol.SymbolId.value
+            if id.value == -1 then java.lang.System.identityHashCode(this)
+            else id.value
+        end hashCode
     end Symbol
 
     object Symbol:
-        // Bring Name.asString extension into scope for use within computeFullName and computeBinaryName.
-        import Name.asString
+        // The Origin sealed trait and TastyOrigin/JavaOrigin cases are removed; the body byte slice
+        // is carried inside `body: Maybe[SymbolBody]`. ClasspathOrchestrator Pass C invokes
+        // apply via the full factory below.
 
-        /** Walk the owner chain to build the fully-qualified dotted name.
+        /** Full factory for ClasspathOrchestrator Pass C (materializeSymbols).
           *
-          * The root sentinel symbol owns itself. Package/class separators are all dots. Binary name uses '$' for nested classes and is
-          * computed separately via computeBinaryName.
+          * Called by ClasspathOrchestrator.materializeSymbols to construct final immutable Symbols from SymbolDescriptors. Returns a Symbol
+          * with all 14 fields populated.
+          *
+          * plan: phase-02 factory; stays in Phase 07 when Pass C is fully rewritten with SymbolDescriptor pipeline. After Phase 07 the
+          * `private[Tasty]` apply is called directly from inside ClasspathOrchestrator (which will be inside object Tasty by then).
           */
-        private[Tasty] def computeFullName(s: Symbol): Name =
-            val parts = new scala.collection.mutable.ArrayBuffer[String]()
-            var cur   = s
-            while (cur ne null) && (cur.owner ne cur) && cur.owner != null do
-                parts.prepend(cur.name.asString)
-                cur = cur.owner
-            parts.prepend(cur.name.asString)
-            // Filter empty segments (root sentinel name may be empty)
-            val filtered = parts.filter(_.nonEmpty)
-            val full     = filtered.mkString(".")
-            Name(full)
-        end computeFullName
+        private[kyo] def fromDescriptor(
+            id: SymbolId,
+            kind: SymbolKind,
+            flags: Flags,
+            name: Name,
+            ownerId: SymbolId,
+            declaredType: Maybe[Type],
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            javaMetadata: Maybe[JavaMetadata],
+            parentTypes: Chunk[Type],
+            typeParamIds: Chunk[SymbolId],
+            declarationIds: Chunk[SymbolId],
+            permittedSubclassIds: Maybe[Chunk[SymbolId]],
+            body: Maybe[SymbolBody]
+        ): Symbol =
+            Symbol(
+                id = id,
+                kind = kind,
+                flags = flags,
+                name = name,
+                ownerId = ownerId,
+                declaredType = declaredType,
+                scaladoc = scaladoc,
+                sourcePosition = sourcePosition,
+                javaMetadata = javaMetadata,
+                parentTypes = parentTypes,
+                typeParamIds = typeParamIds,
+                declarationIds = declarationIds,
+                permittedSubclassIds = permittedSubclassIds,
+                body = body
+            )
+        end fromDescriptor
 
-        private[Tasty] def computeBinaryName(s: Symbol): String =
-            // Walk owner chain producing JVM binary form:
-            //   - packages (kind == Package) contribute segments separated by '/'
-            //   - class/trait/object segments are separated by '$' from a preceding class segment
-            //   - the overall package prefix uses '/', inner class transitions use '$'
-            // Example: java.util.Map.Entry -> "java/util/Map$Entry"
-            // Example: com.example.Foo (top-level) -> "com/example/Foo"
-            val parts = new scala.collection.mutable.ArrayBuffer[(String, SymbolKind)]()
-            var cur   = s
-            while (cur ne null) && (cur.owner ne cur) && cur.owner != null do
-                parts.prepend((cur.name.asString, cur.kind))
-                cur = cur.owner
-            parts.prepend((cur.name.asString, cur.kind))
-            val filtered = parts.filter(_._1.nonEmpty)
-            if filtered.isEmpty then ""
-            else
-                val sb = new StringBuilder()
-                var i  = 0
-                while i < filtered.length do
-                    val (segment, kind) = filtered(i)
-                    if i > 0 then
-                        // Use '$' if the previous segment was a class-like kind, '/' otherwise
-                        val prevKind = filtered(i - 1)._2
-                        if prevKind == SymbolKind.Class || prevKind == SymbolKind.Trait ||
-                            prevKind == SymbolKind.Object
-                        then
-                            sb.append('$')
-                        else
-                            sb.append('/')
-                        end if
-                    end if
-                    sb.append(segment)
-                    i += 1
-                end while
-                sb.toString
-            end if
-        end computeBinaryName
-
-        /** Internal factory used by kyo.internal.tasty.symbol.Symbol to construct Symbol instances.
+        /** Construct a synthetic placeholder Symbol for internal tree-decode use only.
           *
-          * The Symbol constructor is private so only Symbol.make (inside object Tasty) can call it. This factory bridges that access
-          * boundary for internal unpickler code. Requires AllowUnsafe because it allocates SingleAssign.init() slots.
+          * Used by TreeUnpickler when an address lookup fails (error recovery) or when building synthetic tree nodes that do not correspond
+          * to real classpath symbols. The returned Symbol has id = SymbolId(-1) and empty relational fields.
+          *
+          * plan: phase-02 bridge factory; migrates to a phase-09 resolution approach once Classpath becomes a pure case class and
+          * TreeUnpickler can look up SymbolId->Symbol.
           */
         private[kyo] def make(
             kind: SymbolKind,
             flags: Flags,
-            name: Name,
-            owner: Symbol,
-            home: ClasspathRef,
-            origin: Origin,
-            javaMetadata: Maybe[JavaMetadata]
-        )(using AllowUnsafe): Symbol =
-            // Use lazy val to allow _fullNameOnce and _bodyOnce init lambdas to capture `sym` by reference.
-            lazy val sym: Symbol = new Symbol(
-                kind,
-                flags,
-                name,
-                owner,
-                home,
-                origin,
-                javaMetadata,
-                _parents = kyo.internal.tasty.symbol.SingleAssign.init[Chunk[Type]](),
-                _typeParams = kyo.internal.tasty.symbol.SingleAssign.init[Chunk[Symbol]](),
-                _declarations = kyo.internal.tasty.symbol.SingleAssign.init[Chunk[Symbol]](),
-                _declaredType = kyo.internal.tasty.symbol.SingleAssign.init[Type](),
-                _scaladoc = kyo.internal.tasty.symbol.SingleAssign.init[Maybe[String]](),
-                _position = kyo.internal.tasty.symbol.SingleAssign.init[Maybe[Position]](),
-                _permittedSubclasses = kyo.internal.tasty.symbol.SingleAssign.init[Maybe[Chunk[Symbol]]](),
-                _fullNameOnce = kyo.internal.tasty.symbol.OnceCell.init[Name](() => Symbol.computeFullName(sym)),
-                _bodyOnce = kyo.internal.tasty.symbol.OnceCell.init[Tree](() =>
-                    // This init lambda is called at most once per symbol. TreeUnpickler.decodeSync throws
-                    // TreeUnpickler.DecodeException on corrupt/truncated slices; body() catches and wraps it.
-                    // flow-allow: §839 case 3 -- OnceCell init lambda; runs at first body access, single-fiber decode boundary.
-                    import AllowUnsafe.embrace.danger
-                    sym.origin match
-                        case Tasty.Symbol.JavaOrigin =>
-                            // No cursor: Java symbols have no TASTy body to read.
-                            throw new kyo.internal.tasty.reader.TreeUnpickler.DecodeException(
-                                "body not available for Java symbols",
-                                0L
-                            )
-                        case o: Tasty.Symbol.TastyOrigin =>
-                            kyo.internal.tasty.reader.TreeUnpickler.decodeSync(o, sym)
-                    end match
-                )
+            name: Name
+        ): Symbol =
+            Symbol(
+                id = SymbolId(-1),
+                kind = kind,
+                flags = flags,
+                name = name,
+                ownerId = SymbolId(-1),
+                declaredType = Maybe.Absent,
+                scaladoc = Maybe.Absent,
+                sourcePosition = Maybe.Absent,
+                javaMetadata = Maybe.Absent,
+                parentTypes = Chunk.empty,
+                typeParamIds = Chunk.empty,
+                declarationIds = Chunk.empty,
+                permittedSubclassIds = Maybe.Absent,
+                body = Maybe.Absent
             )
-            sym
         end make
-
-        /** The complete Symbol.Origin ADT. Sealed here; JavaOrigin and TastyOrigin are the two concrete subtypes. */
-        sealed trait Origin derives CanEqual
-
-        /** Origin for a symbol decoded from a TASTy file.
-          *
-          * @param bodyStart
-          *   Absolute byte offset into `sectionBytes` where this symbol's body payload begins. 0 for symbols without a body.
-          * @param bodyEnd
-          *   Absolute byte offset into `sectionBytes` where this symbol's body payload ends. 0 for symbols without a body.
-          * @param sectionBytes
-          *   The raw AST section bytes for this file. Shared (not copied) across all symbols from the same file. Empty array for synthetic
-          *   symbols. Used by TreeUnpickler to create a ByteView for lazy body decode.
-          * @param names
-          *   The name table for this file, as decoded by NameUnpickler. Shared across all symbols from the same file. Empty array for
-          *   synthetic symbols.
-          *
-          * The `addrMap` is stored as a write-once slot (`SingleAssign`) populated after Pass1 completes. It maps TASTy byte address to
-          * symbol and is used by TreeUnpickler to resolve IDENT/SELECT tree references during lazy body decode. Always Map.empty for
-          * synthetic (non-file) symbols.
-          */
-        final class TastyOrigin private (
-            val bodyStart: Int,
-            val bodyEnd: Int,
-            val sectionBytes: Array[Byte],
-            val names: Array[Tasty.Name],
-            val sectionOffset: Int,
-            /** Non-null only for mmap-loaded snapshot origins. When set, TreeUnpickler reads from this view directly instead of
-              * constructing a ByteView from sectionBytes. After the backing arena is closed, reads from this view throw
-              * IllegalStateException which Symbol.body maps to TastyError.ClasspathClosed.
-              */
-            val bodyView: kyo.internal.tasty.binary.ByteView | Null,
-            // Write-once: populated by AstUnpickler after pass1 completes. Passed as constructor parameter so that
-            // SingleAssign.init() (which requires AllowUnsafe) is called inside TastyOrigin.init's scope.
-            private[kyo] val _addrMap: kyo.internal.tasty.symbol.SingleAssign[IntMap[Tasty.Symbol]]
-        ) extends Origin:
-
-            private[kyo] def addrMap: IntMap[Tasty.Symbol] =
-                // flow-allow: §839 case 3; private[kyo] accessor; callers are kyo.internal.tasty.* decode contexts.
-                import AllowUnsafe.embrace.danger
-                if _addrMap.isSet then _addrMap.get()
-                else IntMap.empty
-            end addrMap
-
-            override def equals(other: Any): Boolean = other match
-                case o: TastyOrigin =>
-                    bodyStart == o.bodyStart && bodyEnd == o.bodyEnd
-                case _ => false
-            override def hashCode(): Int = bodyStart * 31 + bodyEnd
-        end TastyOrigin
-
-        object TastyOrigin:
-            /** Convenience factory for synthetic symbols that have no file bytes or body.
-              *
-              * Allocates a fresh unset SingleAssign for _addrMap at module-load time. flow-allow: §839 case 3 -- module-load init; object
-              * TastyOrigin initializer runs once at class load.
-              */
-            val empty: TastyOrigin =
-                // flow-allow: §839 case 3; module-load init; TastyOrigin.empty allocated once at object initialization.
-                import AllowUnsafe.embrace.danger
-                new TastyOrigin(
-                    0,
-                    0,
-                    Array.empty[Byte],
-                    Array.empty[Tasty.Name],
-                    0,
-                    null,
-                    kyo.internal.tasty.symbol.SingleAssign.init[IntMap[Tasty.Symbol]]()
-                )
-            end empty
-
-            /** Factory for file-backed TastyOrigin instances. Requires AllowUnsafe to allocate the SingleAssign slot. */
-            private[kyo] def init(
-                bodyStart: Int,
-                bodyEnd: Int,
-                sectionBytes: Array[Byte],
-                names: Array[Tasty.Name],
-                sectionOffset: Int,
-                bodyView: kyo.internal.tasty.binary.ByteView | Null
-            )(using AllowUnsafe): TastyOrigin =
-                new TastyOrigin(
-                    bodyStart,
-                    bodyEnd,
-                    sectionBytes,
-                    names,
-                    sectionOffset,
-                    bodyView,
-                    kyo.internal.tasty.symbol.SingleAssign.init[IntMap[Tasty.Symbol]]()
-                )
-
-            /** Pattern match extractor: `case TastyOrigin(bodyStart, bodyEnd)`. */
-            def unapply(o: TastyOrigin): Some[(Int, Int)] =
-                Some((o.bodyStart, o.bodyEnd))
-        end TastyOrigin
-
-        case object JavaOrigin extends Origin
     end Symbol
 
     // ── Pickle (in-memory TASTy + classfile bytes) ──────────────────────────
@@ -1114,7 +845,6 @@ object Tasty:
                     errors = Chunk.empty,
                     moduleIndex = Map.empty
                 )
-                assignHomes(cp, cp)
                 cp
 
         /** Internal: open implementation, delegates to ClasspathOrchestrator. */
@@ -1128,9 +858,7 @@ object Tasty:
                 "coldLoad",
                 Attributes.empty.add("roots", roots.size.toString)
             ) {
-                ClasspathOrchestrator.open(roots, strict, source, concurrency).map: cp =>
-                    assignHomes(cp, cp)
-                    cp
+                ClasspathOrchestrator.open(roots, strict, source, concurrency)
             }
         end openImpl
 
@@ -1160,7 +888,6 @@ object Tasty:
                                 }).andThen:
                                     Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source, cp)).flatMap:
                                         case Result.Success(_) =>
-                                            assignHomes(cp, cp)
                                             cp
                                         case Result.Failure(_) | Result.Panic(_) =>
                                             // Snapshot unreadable; fall through to normal open
@@ -1170,24 +897,6 @@ object Tasty:
                             openImpl(roots, strict = false).flatMap: cp =>
                                 Abort.run[TastyError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen(cp)
         end openCachedImpl
-
-        /** Assign each symbol's `ClasspathRef` to this classpath. Called once, after the classpath transitions to Ready.
-          *
-          * Multiple symbols from the same TASTy file share a single `ClasspathRef` instance (one per file). The seen set deduplicates so
-          * each slot is assigned exactly once.
-          */
-        private def assignHomes(cp: kyo.internal.tasty.query.Classpath, cpPublic: Classpath): Unit =
-            // flow-allow: §839 case 3; home assignment after classpath construction; single-fiber synchronous init.
-            import AllowUnsafe.embrace.danger
-            val syms = cp.allSymbols
-            val seen = new java.util.HashSet[kyo.internal.tasty.query.ClasspathRef]()
-            var i    = 0
-            while i < syms.length do
-                val ref = syms(i).home
-                if seen.add(ref) then ref.assign(cpPublic)
-                i += 1
-            end while
-        end assignHomes
 
     end Classpath
 

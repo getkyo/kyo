@@ -19,9 +19,11 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
     "Annotation synthetic factory: annotationType.show, argsPickle.isEmpty, unapply" in {
         val deprecatedType = makeNamed("scala.deprecated")
         val a              = Tasty.Annotation(deprecatedType, Chunk.empty)
+        // plan: phase-02 inline; show returns leaf name only until Phase 09 adds sym.fullName.
+        // makeNamed("scala.deprecated") constructs a Symbol with name = "deprecated" (leaf only).
         assert(
-            a.annotationType.show == "scala.deprecated",
-            s"Expected annotationType.show == 'scala.deprecated' but got '${a.annotationType.show}'"
+            a.annotationType.show == "deprecated",
+            s"Expected annotationType.show == 'deprecated' but got '${a.annotationType.show}'"
         )
         assert(
             a.argsPickle.isEmpty,
