@@ -22,7 +22,7 @@ class InvariantsTest extends Test:
         "McpStopReason",
         // McpCapabilities covered by McpCapabilityGateTest and McpCapabilityDerivationTest
         "McpCapabilities",
-        // McpElicitation* covered by McpErrorTest (error wire path)
+        // McpElicitation* covered by McpExceptionTest (error wire path)
         "McpElicitationRequest",
         "McpElicitationResponse",
         // McpInfo covered inline in every test that constructs McpInfo(...)
@@ -36,8 +36,8 @@ class InvariantsTest extends Test:
         // McpSamplingRequest / McpSamplingResponse covered by McpSamplingReverseTest
         "McpSamplingRequest",
         "McpSamplingResponse",
-        // McpError is covered by McpErrorTest
-        "McpError"
+        // McpException is covered by McpExceptionTest
+        "McpException"
     )
 
     "INV-009: no test file outside kyo/internal/ imports kyo.internal.* (INV-009)" in run {
@@ -70,7 +70,7 @@ class InvariantsTest extends Test:
                 "McpSamplingRequest.scala",
                 "McpCapabilities.scala",
                 "McpRoute.scala",
-                "McpError.scala"
+                "McpException.scala"
             )
             val rootPath = Paths.get(moduleRoot)
             if Files.exists(rootPath) then

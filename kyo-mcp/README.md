@@ -55,13 +55,13 @@ Handshake plumbing is invisible: the engine owns the `initialize` request and th
 
 ## Building a client
 
-`McpClient.init` is the mirror of `McpServer.init` with an additional pair of mandatory arguments: the `clientInfo: McpInfo` and the `capabilities: McpCapabilities.Client` the client advertises during the handshake. The result is `McpClient < (Async & Scope & Abort[McpError | Closed])` because the initialise handshake runs eagerly inside `init` and surfaces handshake failures (protocol-version mismatch, transport closed mid-handshake) directly in the effect row.
+`McpClient.init` is the mirror of `McpServer.init` with an additional pair of mandatory arguments: the `clientInfo: McpInfo` and the `capabilities: McpCapabilities.Client` the client advertises during the handshake. The result is `McpClient < (Async & Scope & Abort[McpException | Closed])` because the initialise handshake runs eagerly inside `init` and surfaces handshake failures (protocol-version mismatch, transport closed mid-handshake) directly in the effect row.
 
 ```scala
 val info = McpInfo(name = "calc-tester")
 val caps = McpCapabilities.Client()
 
-val program: McpRoute.ToolCallResult < (Async & Scope & Abort[McpError | Closed]) =
+val program: McpRoute.ToolCallResult < (Async & Scope & Abort[McpException | Closed]) =
     for
         transport <- JsonRpcTransport.stdio()
         client    <- McpClient.init(transport, info, caps)
@@ -74,7 +74,7 @@ val program: McpRoute.ToolCallResult < (Async & Scope & Abort[McpError | Closed]
 `client.callTool[AddIn]` is the untyped overload: the server's `ToolCallResult` is returned verbatim (`content: Chunk[McpContent]`, `isError: Boolean`, `structuredContent: Maybe[Structure.Value]`). When the tool produces a typed result and you want the engine to decode it for you, use the typed overload:
 
 ```scala
-val typed: Sum < (Async & Scope & Abort[McpError | Closed]) =
+val typed: Sum < (Async & Scope & Abort[McpException | Closed]) =
     JsonRpcTransport.stdio().map { transport =>
         val info = McpInfo(name = "calc-tester")
         val caps = McpCapabilities.Client()
@@ -84,7 +84,7 @@ val typed: Sum < (Async & Scope & Abort[McpError | Closed]) =
     }
 ```
 
-The typed overload aborts with `McpToolStructuredMissingError` when the server returns `ToolCallResult.structuredContent = Absent`; reach for the untyped variant when the tool emits unstructured content. `callTool[In]` and `callToolTyped[In, Out]` are distinct names so Scala 3 extension-method resolution is unambiguous: the compiler can tell them apart without inspecting the type-argument list.
+The typed overload aborts with `McpToolStructuredMissingException` when the server returns `ToolCallResult.structuredContent = Absent`; reach for the untyped variant when the tool emits unstructured content. `callTool[In]` and `callToolTyped[In, Out]` are distinct names so Scala 3 extension-method resolution is unambiguous: the compiler can tell them apart without inspecting the type-argument list.
 
 The remaining client surface is a small set of typed extension methods, each named after the underlying MCP request: `listTools`, `listResources`, `listResourceTemplates`, `readResource`, `listPrompts`, `getPrompt`, `complete`, `setLogLevel`, `subscribeResource`, `unsubscribeResource`, `ping`, `notifyRootsListChanged`. Each is fully callable at the safe tier and returns a typed result. (`subscribeResource(uri)` / `unsubscribeResource(uri)` ride the spec's resource-subscription protocol and only succeed when the server has at least one route declared with `subscribe = true`; `ping` is a `Unit`-returning handshake-liveness check.)
 
@@ -93,7 +93,7 @@ The remaining client surface is a small set of typed extension methods, each nam
 The list-shaped methods return `McpPage[A]` which also provides factories `McpPage.empty[A]` and `McpPage.of(items, next)` plus a `.isLast` predicate for cursor-based iteration.
 
 ```scala
-val tools: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpError | Closed]) =
+val tools: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpException | Closed]) =
     val info = McpInfo(name = "calc-tester")
     val caps = McpCapabilities.Client()
     JsonRpcTransport.inMemory.map { (_, clientT) =>
@@ -107,7 +107,7 @@ Each cursor-paginated list returns `McpPage[A](items, nextCursor, meta)` so the 
 
 `McpRoute[In, Out, +E]` is a single sealed top-level trait with role-tagged factories on the companion. Every factory captures the `Schema` evidence it needs at registration time; the engine wires the same underlying JSON-RPC route through whichever MCP method maps to the route's `Kind`. Five kinds cover the standard MCP surface: `tool`, `resource`, `resourceTemplate`, `prompt`, `completion`. A sixth kind, `custom`, lets you bolt a raw typed JSON-RPC method into the same engine for protocol extensions.
 
-The handler signature is locked across every factory: `(In, McpRoute.Context) => Out < (Async & Abort[McpError | JsonRpcResponse.Halt])`. The `Context` argument carries the per-request fields needed for cancellation, progress, and reverse-direction calls; see the `Context` subsection further down.
+The handler signature is locked across every factory: `(In, McpRoute.Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt])`. The `Context` argument carries the per-request fields needed for cancellation, progress, and reverse-direction calls; see the `Context` subsection further down.
 
 ### Tool routes
 
@@ -231,33 +231,28 @@ The engine wiring is identical for every route kind: each one ultimately becomes
 
 ## Errors
 
-`McpError` is the root error type, organised by the pipeline stage where each failure arises. Pattern-match on the four sealed subcategory traits to discriminate:
+`McpException` is the root error type, organised by the pipeline stage where each failure arises. Pattern-match on the four sealed subcategory traits to discriminate:
 
-- `McpHandshakeFailure`: errors surfaced during the `initialize` handshake (premature methods, version mismatch).
-- `McpDispatchFailure`: errors surfaced during method routing (unknown tool / resource / prompt, unadvertised capability, invalid argument).
-- `McpExecutionFailure`: errors surfaced during handler execution or structured-payload validation (typed `callTool` missing structured content, rejected sampling, declined elicitation).
-- `McpApplicationFailure`: user-domain errors from handler bodies.
+- `McpHandshakeException`: errors surfaced during the `initialize` handshake (premature methods, version mismatch).
+- `McpDispatchException`: errors surfaced during method routing (unknown tool / resource / prompt, unadvertised capability, invalid argument).
+- `McpExecutionException`: errors surfaced during handler execution or structured-payload validation (typed `callTool` missing structured content, rejected sampling, declined elicitation).
+- `McpApplicationException`: user-domain errors from handler bodies.
 
 ```scala
-def stage(e: McpError): String = e match
-    case _: McpHandshakeFailure   => "handshake"
-    case _: McpDispatchFailure    => "dispatch"
-    case _: McpExecutionFailure   => "execution"
-    case _: McpApplicationFailure => "application"
+def stage(e: McpException): String = e match
+    case _: McpHandshakeException   => "handshake"
+    case _: McpDispatchException    => "dispatch"
+    case _: McpExecutionException   => "execution"
+    case _: McpApplicationException => "application"
 ```
 
-`McpError` extends `JsonRpcApplicationError`, so every `McpError` is also a valid `JsonRpcError` and travels through `Abort[JsonRpcError | ...]` rows transparently. The inherited `Schema[JsonRpcError]` encodes any `McpError` as the wire triple `(code, message, data)`; no separate `Schema[McpError]` is required.
+`McpException` extends `JsonRpcApplicationError`, so every `McpException` is also a valid `JsonRpcError` and travels through `Abort[JsonRpcError | ...]` rows transparently. The inherited `Schema[JsonRpcError]` encodes any `McpException` as the wire triple `(code, message, data)`; no separate `Schema[McpException]` is required.
 
 ### Application errors
 
-For typed user-domain errors, extend `McpApplicationError`. The base is non-sealed precisely to allow this:
+The hierarchy is sealed end-to-end. Register typed user-domain errors per route via `.error[E2](code, message)` on the `McpRoute` value rather than by extending `McpApplicationException` directly. The mapping installs a wire-code/message pair that the engine emits whenever the handler aborts with an `E2` value, matching the `kyo-jsonrpc` route convention.
 
-```scala
-case class WeatherUnavailable(city: String)(using Frame)
-    extends McpApplicationError(-32010, s"No weather data for $city")
-```
-
-Three application-error leaves ship with the library: `McpToolExecutionError(tool, reason, cause)`, `McpResourceReadError(uri, reason, cause)`, and `McpPromptRenderError(name, reason, cause)`. Each carries a typed `cause: Throwable | String` per Audit-A7. Use these for the common failures inside tool, resource, and prompt handlers; extend `McpApplicationError` directly when you want a more specific domain class.
+Three application-error leaves ship with the library: `McpToolExecutionException(tool, reason, cause)`, `McpResourceReadException(uri, reason, cause)`, and `McpPromptRenderException(name, reason, cause)`. Each carries a typed `cause: Throwable | Text` and aborts directly inside tool, resource, and prompt handlers without needing a per-route `.error` registration.
 
 ### Why the stage trait, not a flat enum
 
@@ -279,9 +274,9 @@ val explicitCaps: McpConfig =
     )
 ```
 
-Once the handshake completes, `server.clientCapabilities` and `client.serverCapabilities` expose the negotiated record as `Maybe[McpCapabilities.{Client, Server}]` (`Absent` before the handshake finishes). The handler-time `Context` does not expose capabilities directly because routes that depend on an opt-in capability are dispatch-gated by `McpConfig.capabilityGate` ; if a client calls a method whose required capability the server did not advertise (or vice versa), the engine fails with `McpCapabilityNotAdvertisedError` before the handler runs.
+Once the handshake completes, `server.clientCapabilities` and `client.serverCapabilities` expose the negotiated record as `Maybe[McpCapabilities.{Client, Server}]` (`Absent` before the handshake finishes). The handler-time `Context` does not expose capabilities directly because routes that depend on an opt-in capability are dispatch-gated by `McpConfig.capabilityGate` ; if a client calls a method whose required capability the server did not advertise (or vice versa), the engine fails with `McpCapabilityNotAdvertisedException` before the handler runs.
 
-The `capabilityName: McpCapabilityName` field on `McpCapabilityNotAdvertisedError` (and the enum's eight cases: Tools, Resources, Prompts, Sampling, Roots, Logging, Completions, Elicitation) lets handler code pattern-match on which capability the peer required.
+The `capabilityName: McpCapabilityName` field on `McpCapabilityNotAdvertisedException` (and the enum's eight cases: Tools, Resources, Prompts, Sampling, Roots, Logging, Completions, Elicitation) lets handler code pattern-match on which capability the peer required.
 
 ## Lifecycle
 
@@ -292,7 +287,7 @@ Three pairs of methods control a server's or client's life:
 - `awaitDrain` (server only): blocks until in-flight requests have drained, without closing.
 
 ```scala
-val gracefulShutdown: Unit < (Async & Scope & Abort[McpError | Closed]) =
+val gracefulShutdown: Unit < (Async & Scope & Abort[McpException | Closed]) =
     val info = McpInfo(name = "calc-tester")
     val caps = McpCapabilities.Client()
     JsonRpcTransport.stdio().map { transport =>
@@ -362,7 +357,7 @@ Notifications (`server.notifyToolsListChanged`, `server.notifyResourcesListChang
 The minimal server above uses `stdio()` for exactly the standard MCP deployment shape. For tests, pair a server and a client over `inMemory`:
 
 ```scala
-val pairedTest: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpError | Closed]) =
+val pairedTest: McpPage[McpRoute.ToolMeta] < (Async & Scope & Abort[McpException | Closed]) =
     val addTool = McpRoute.tool[AddIn]("add") { (in, _) =>
         McpContent.text(s"${in.a + in.b}")
     }
@@ -399,7 +394,7 @@ The fluent setters (`serverInfo`, `instructions`, `supportedProtocolVersions`, `
 
 `HandshakeOrder.RequireInitializedNotification` (default) waits for the client's `notifications/initialized` notification before dispatching regular requests; `RequireInitializeRequestOnly` accepts requests as soon as the `initialize` request itself completes. Pick the latter only for clients that do not emit the follow-up notification.
 
-`CapabilityGateMode.RejectUnsupported` (default) fails with `McpCapabilityNotAdvertisedError` when a method requires an unadvertised capability; `LogOnly` records the gap and still dispatches; `Off` disables the gate entirely. Use `LogOnly` while developing against a non-compliant peer; reach for `RejectUnsupported` in production.
+`CapabilityGateMode.RejectUnsupported` (default) fails with `McpCapabilityNotAdvertisedException` when a method requires an unadvertised capability; `LogOnly` records the gap and still dispatches; `Off` disables the gate entirely. Use `LogOnly` while developing against a non-compliant peer; reach for `RejectUnsupported` in production.
 
 ### JSON-RPC defaults
 
@@ -413,7 +408,7 @@ The shared API compiles and runs on JVM, JavaScript, and Scala Native. The cross
 |---------|-----|----|----|
 | `McpServer`, `McpClient`, all routes | yes | yes | yes |
 | `McpRoute` factories, `McpContent`, `McpResourceContents` | yes | yes | yes |
-| `McpError` hierarchy and `Schema` derivations | yes | yes | yes |
+| `McpException` hierarchy and `Schema` derivations | yes | yes | yes |
 | `JsonRpcTransport.stdio` | yes | yes | yes |
 | `JsonRpcTransport.inMemory` | yes | yes | yes |
 | `JsonRpcTransport.unixDomain` | yes | aborts | aborts |

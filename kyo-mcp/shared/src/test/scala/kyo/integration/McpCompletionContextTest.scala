@@ -20,7 +20,7 @@ class McpCompletionContextTest extends Test:
         }
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, completionRoute),
                 McpClient.initUnscoped(tc, McpInfo("ctx-test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>

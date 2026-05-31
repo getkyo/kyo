@@ -23,12 +23,12 @@ class McpCancellationFireAndForgetTest extends Test:
         }
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, slowRoute),
                 McpClient.initUnscoped(tc, McpInfo("c"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
                 Fiber.initUnscoped(
-                    Abort.run[McpError | Closed](client.unsafe.callToolUnsafe[SlowReq]("slow", SlowReq(1)))
+                    Abort.run[McpException | Closed](client.unsafe.callToolUnsafe[SlowReq]("slow", SlowReq(1)))
                 ).flatMap { reqFiber =>
                     // Poll until the handler has set the flag, then interrupt.
                     untilTrue(Sync.defer(handlerReady.get()(using AllowUnsafe.embrace.danger)))

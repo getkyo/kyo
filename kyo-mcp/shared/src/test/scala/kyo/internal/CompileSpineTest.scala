@@ -102,7 +102,7 @@ class CompileSpineTest extends Test:
         // 3. McpCapabilities.Server.experimental: Map[String, Structure.Value]
         // 4. McpCapabilities.Client.experimental: Map[String, Structure.Value]
         // 5. McpRoute.ToolCallResult.structuredContent: Maybe[Structure.Value]
-        // 6. McpError.data: Maybe[Structure.Value] (forwarded to JsonRpcApplicationError)
+        // 6. McpException.data: Maybe[Structure.Value] (forwarded to JsonRpcApplicationError)
         // All other public flat-layer signatures must have zero Structure.Value occurrences.
         // The lint regex in flow-verify enforces this; this test asserts the type is reachable.
         val _: Structure.Value = Structure.Value.Null

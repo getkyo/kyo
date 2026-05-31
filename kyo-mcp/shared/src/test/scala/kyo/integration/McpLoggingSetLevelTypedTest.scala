@@ -23,7 +23,7 @@ class McpLoggingSetLevelTypedTest extends Test:
         val config       = McpConfig.default.declaredCapabilities(declaredCaps)
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, config)(),
                 McpClient.initUnscoped(tc, McpInfo("log-test"), McpCapabilities.Client(), logNotifRoute)
             ).flatMap { (srv, client) =>
@@ -55,7 +55,7 @@ class McpLoggingSetLevelTypedTest extends Test:
         val config       = McpConfig.default.declaredCapabilities(declaredCaps)
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, config)(),
                 McpClient.initUnscoped(tc, McpInfo("log-test2"), McpCapabilities.Client(), logNotifRoute)
             ).flatMap { (srv, client) =>

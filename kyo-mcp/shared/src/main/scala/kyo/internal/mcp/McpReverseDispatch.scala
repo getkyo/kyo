@@ -54,13 +54,13 @@ private[kyo] object McpReverseDispatch:
         JsonRpcRoute.request[McpServer.SamplingRequest, McpServer.SamplingResponse]("sampling/createMessage") { (_, _) =>
             // Default handler: gate on capability first (-32601), then reject if no user handler.
             if clientCapabilities.sampling.isEmpty then
-                Abort.fail(McpCapabilityNotAdvertisedError(
+                Abort.fail(McpCapabilityNotAdvertisedException(
                     "sampling/createMessage",
                     McpCapabilityName.Sampling,
-                    McpCapabilityNotAdvertisedError.Peer.Client
+                    McpCapabilityNotAdvertisedException.Peer.Client
                 ))
             else
-                Abort.fail(McpSamplingRejectedError("No sampling handler registered on this client."))
+                Abort.fail(McpSamplingRejectedException("No sampling handler registered on this client."))
         }
 
     private def buildRootsRoute(userRoutes: Seq[McpRoute[?, ?, ?]], clientCapabilities: McpCapabilities.Client)(using
@@ -68,10 +68,10 @@ private[kyo] object McpReverseDispatch:
     ): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[EmptyParams, McpRootsListResponse]("roots/list") { (_, _) =>
             if clientCapabilities.roots.isEmpty then
-                Abort.fail(McpCapabilityNotAdvertisedError(
+                Abort.fail(McpCapabilityNotAdvertisedException(
                     "roots/list",
                     McpCapabilityName.Roots,
-                    McpCapabilityNotAdvertisedError.Peer.Client
+                    McpCapabilityNotAdvertisedException.Peer.Client
                 ))
             else
                 McpRootsListResponse(Chunk.empty)
@@ -82,13 +82,13 @@ private[kyo] object McpReverseDispatch:
     ): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[McpServer.ElicitationRequest, McpServer.ElicitationResponse]("elicitation/create") { (_, _) =>
             if clientCapabilities.elicitation.isEmpty then
-                Abort.fail(McpCapabilityNotAdvertisedError(
+                Abort.fail(McpCapabilityNotAdvertisedException(
                     "elicitation/create",
                     McpCapabilityName.Elicitation,
-                    McpCapabilityNotAdvertisedError.Peer.Client
+                    McpCapabilityNotAdvertisedException.Peer.Client
                 ))
             else
-                Abort.fail(McpElicitationDeclinedError("No elicitation handler registered on this client."))
+                Abort.fail(McpElicitationDeclinedException("No elicitation handler registered on this client."))
         }
 
 end McpReverseDispatch

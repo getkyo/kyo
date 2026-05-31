@@ -223,7 +223,7 @@ object McpRoute:
     )(using
         inSchema: Schema[In]
     )[Out <: McpContent](
-        handler: (In, Context) => Out < (Async & Abort[McpError | JsonRpcResponse.Halt])
+        handler: (In, Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt])
     )(using outSchema: Schema[Out], frame: Frame): McpRoute[In, Out, Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
         val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
@@ -252,7 +252,7 @@ object McpRoute:
     )(using
         inSchema: Schema[In]
     )(
-        handler: (In, Context) => ToolCallResult < (Async & Abort[McpError | JsonRpcResponse.Halt])
+        handler: (In, Context) => ToolCallResult < (Async & Abort[McpException | JsonRpcResponse.Halt])
     )(using Frame): McpRoute[In, ToolCallResult, Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
         val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
@@ -286,7 +286,7 @@ object McpRoute:
         mimeType: Maybe[McpMimeType] = Absent,
         annotations: ResourceAnnotations = ResourceAnnotations.noop,
         subscribe: Boolean = false
-    )(handler: (McpResourceUri, Context) => Chunk[McpResourceContents] < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
+    )(handler: (McpResourceUri, Context) => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]))(using
         Frame
     ): McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
@@ -315,7 +315,7 @@ object McpRoute:
         description: String = "",
         mimeType: Maybe[McpMimeType] = Absent,
         annotations: ResourceAnnotations = ResourceAnnotations.noop
-    )(handler: (McpResourceUri, Context) => Chunk[McpResourceContents] < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
+    )(handler: (McpResourceUri, Context) => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]))(using
         Frame
     ): McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
@@ -342,7 +342,7 @@ object McpRoute:
         name: String,
         description: String = "",
         arguments: Chunk[PromptArgument] = Chunk.empty
-    )(handler: (Map[String, String], Context) => PromptGetResult < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
+    )(handler: (Map[String, String], Context) => PromptGetResult < (Async & Abort[McpException | JsonRpcResponse.Halt]))(using
         Frame
     ): McpRoute[Map[String, String], PromptGetResult, Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
@@ -371,7 +371,7 @@ object McpRoute:
         CompletionArg,
         Maybe[CompletionArg.Context],
         Context
-    ) => CompletionResult < (Async & Abort[McpError | JsonRpcResponse.Halt]))(using
+    ) => CompletionResult < (Async & Abort[McpException | JsonRpcResponse.Halt]))(using
         Frame
     ): McpRoute[(CompletionRef, CompletionArg), CompletionResult, Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
@@ -397,7 +397,7 @@ object McpRoute:
     def custom[In](method: String)(using
         inSchema: Schema[In]
     )[Out](
-        handler: (In, Context) => Out < (Async & Abort[McpError | JsonRpcResponse.Halt])
+        handler: (In, Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt])
     )(using outSchema: Schema[Out], frame: Frame): McpRoute[In, Out, Nothing] =
         // AllowUnsafe: AtomicRef for forward McpServer reference (Decision 2).
         val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
@@ -432,7 +432,7 @@ private[kyo] object McpRouteCarrier:
         val toolMeta: McpRoute.ToolMeta,
         val inSchema: Schema[In],
         val outSchema: Schema[Out],
-        val handler: (In, McpRoute.Context) => Out < (Async & Abort[McpError | JsonRpcResponse.Halt]),
+        val handler: (In, McpRoute.Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt]),
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[In, Out, Nothing]:
@@ -447,7 +447,7 @@ private[kyo] object McpRouteCarrier:
         val name: String,
         val toolMeta: McpRoute.ToolMeta,
         val inSchema: Schema[In],
-        val handler: (In, McpRoute.Context) => McpRoute.ToolCallResult < (Async & Abort[McpError | JsonRpcResponse.Halt]),
+        val handler: (In, McpRoute.Context) => McpRoute.ToolCallResult < (Async & Abort[McpException | JsonRpcResponse.Halt]),
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[In, McpRoute.ToolCallResult, Nothing]:
@@ -464,7 +464,10 @@ private[kyo] object McpRouteCarrier:
     final class Resource[Out] private[kyo] (
         val name: String,
         val resourceMeta: McpRoute.ResourceMeta,
-        val handler: (McpResourceUri, McpRoute.Context) => Chunk[McpResourceContents] < (Async & Abort[McpError | JsonRpcResponse.Halt]),
+        val handler: (
+            McpResourceUri,
+            McpRoute.Context
+        ) => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]),
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?],
         val subscribable: Boolean = false
@@ -482,7 +485,10 @@ private[kyo] object McpRouteCarrier:
     final class ResourceTemplate[Out] private[kyo] (
         val name: String,
         val resourceTemplateMeta: McpRoute.ResourceTemplateMeta,
-        val handler: (McpResourceUri, McpRoute.Context) => Chunk[McpResourceContents] < (Async & Abort[McpError | JsonRpcResponse.Halt]),
+        val handler: (
+            McpResourceUri,
+            McpRoute.Context
+        ) => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]),
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[McpResourceUri, Chunk[McpResourceContents], Nothing]:
@@ -499,7 +505,10 @@ private[kyo] object McpRouteCarrier:
     final class Prompt[Out] private[kyo] (
         val name: String,
         val promptMeta: McpRoute.PromptMeta,
-        val handler: (Map[String, String], McpRoute.Context) => McpRoute.PromptGetResult < (Async & Abort[McpError | JsonRpcResponse.Halt]),
+        val handler: (
+            Map[String, String],
+            McpRoute.Context
+        ) => McpRoute.PromptGetResult < (Async & Abort[McpException | JsonRpcResponse.Halt]),
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[Map[String, String], McpRoute.PromptGetResult, Nothing]:
@@ -521,7 +530,7 @@ private[kyo] object McpRouteCarrier:
             McpRoute.CompletionArg,
             Maybe[McpRoute.CompletionArg.Context],
             McpRoute.Context
-        ) => McpRoute.CompletionResult < (Async & Abort[McpError | JsonRpcResponse.Halt]),
+        ) => McpRoute.CompletionResult < (Async & Abort[McpException | JsonRpcResponse.Halt]),
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[(McpRoute.CompletionRef, McpRoute.CompletionArg), McpRoute.CompletionResult, Nothing]:
@@ -538,7 +547,7 @@ private[kyo] object McpRouteCarrier:
     final class Custom[In, Out] private[kyo] (
         val name: String,
         val method: String,
-        val handler: (In, McpRoute.Context) => Out < (Async & Abort[McpError | JsonRpcResponse.Halt]),
+        val handler: (In, McpRoute.Context) => Out < (Async & Abort[McpException | JsonRpcResponse.Halt]),
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[In, Out, Nothing]:

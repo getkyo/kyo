@@ -228,15 +228,15 @@ object McpServer:
     extension (self: McpServer)
 
         /** Sends `sampling/createMessage` to the connected client. */
-        def requestSampling(req: SamplingRequest)(using Frame): SamplingResponse < (Async & Abort[McpError | Closed]) =
+        def requestSampling(req: SamplingRequest)(using Frame): SamplingResponse < (Async & Abort[McpException | Closed]) =
             self.requestSamplingUnsafe(req)
 
         /** Sends `roots/list` to the connected client. */
-        def requestRoots(using Frame): Chunk[Root] < (Async & Abort[McpError | Closed]) =
+        def requestRoots(using Frame): Chunk[Root] < (Async & Abort[McpException | Closed]) =
             self.requestRootsUnsafe
 
         /** Sends `elicitation/create` to the connected client. */
-        def requestElicitation(req: ElicitationRequest)(using Frame): ElicitationResponse < (Async & Abort[McpError | Closed]) =
+        def requestElicitation(req: ElicitationRequest)(using Frame): ElicitationResponse < (Async & Abort[McpException | Closed]) =
             self.requestElicitationUnsafe(req)
 
         /** Sends `notifications/tools/list_changed`. */
@@ -298,9 +298,9 @@ object McpServer:
     end extension
 
     abstract class Unsafe:
-        def requestSamplingUnsafe(req: SamplingRequest)(using Frame): SamplingResponse < (Async & Abort[McpError | Closed])
-        def requestRootsUnsafe(using Frame): Chunk[Root] < (Async & Abort[McpError | Closed])
-        def requestElicitationUnsafe(req: ElicitationRequest)(using Frame): ElicitationResponse < (Async & Abort[McpError | Closed])
+        def requestSamplingUnsafe(req: SamplingRequest)(using Frame): SamplingResponse < (Async & Abort[McpException | Closed])
+        def requestRootsUnsafe(using Frame): Chunk[Root] < (Async & Abort[McpException | Closed])
+        def requestElicitationUnsafe(req: ElicitationRequest)(using Frame): ElicitationResponse < (Async & Abort[McpException | Closed])
         def notifyToolsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
         def notifyResourcesListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
         def notifyResourceUpdatedUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed])

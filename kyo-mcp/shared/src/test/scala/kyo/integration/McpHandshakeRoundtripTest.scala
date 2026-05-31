@@ -18,7 +18,7 @@ class McpHandshakeRoundtripTest extends Test:
 
     "server.protocolVersion is Present(current) and clientInfo matches after handshake (T-014, INV-002)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, route1, route2),
                 McpClient.initUnscoped(tc, clientInfo, clientCaps)
             ).flatMap { (srv, client) =>
@@ -37,7 +37,7 @@ class McpHandshakeRoundtripTest extends Test:
 
     "client.serverInfo and protocolVersion are Present after handshake (T-014, INV-005)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, route1, route2),
                 McpClient.initUnscoped(tc, clientInfo, clientCaps)
             ).flatMap { (srv, client) =>

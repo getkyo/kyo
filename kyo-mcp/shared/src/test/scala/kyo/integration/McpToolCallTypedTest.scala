@@ -18,7 +18,7 @@ class McpToolCallTypedTest extends Test:
 
     "callToolTyped[In, Out] returns decoded Out when structuredContent is Present (INV-027)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, addRoute),
                 McpClient.initUnscoped(tc, McpInfo("typed"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
@@ -35,7 +35,7 @@ class McpToolCallTypedTest extends Test:
 
     "callToolTyped[In, Out] returns correct value for multiple calls (INV-027)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, addRoute),
                 McpClient.initUnscoped(tc, McpInfo("typed"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>

@@ -16,13 +16,13 @@ class McpStructuredContentMissingTest extends Test:
         )
     }
 
-    "callToolTyped[In, Out] aborts with McpToolStructuredMissingError when structuredContent is Absent (T-023, INV-027)" in run {
+    "callToolTyped[In, Out] aborts with McpToolStructuredMissingException when structuredContent is Absent (T-023, INV-027)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, textOnlyRoute),
                 McpClient.initUnscoped(tc, McpInfo("sc"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
-                Abort.run[McpError](
+                Abort.run[McpException](
                     client.callToolTyped[AddIn, Sum]("text-only-tool", AddIn(1, 1))
                 ).flatMap { typedResult =>
                     for
@@ -31,7 +31,7 @@ class McpStructuredContentMissingTest extends Test:
                     yield
                         assert(typedResult.isFailure)
                         typedResult match
-                            case Result.Failure(e: McpToolStructuredMissingError) =>
+                            case Result.Failure(e: McpToolStructuredMissingException) =>
                                 assert(e.tool == "text-only-tool")
                             case Result.Failure(other) =>
                                 fail(s"wrong error type: $other")
@@ -46,7 +46,7 @@ class McpStructuredContentMissingTest extends Test:
 
     "callTool[In] (untyped) returns raw ToolCallResult when structuredContent is Absent (T-023, Q-018)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, textOnlyRoute),
                 McpClient.initUnscoped(tc, McpInfo("sc"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>

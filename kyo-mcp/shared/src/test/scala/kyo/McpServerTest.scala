@@ -74,7 +74,7 @@ class McpServerTest extends Test:
         }
     }
 
-    // INV-017: notify* methods must type-check as Unit < (Async & Abort[Closed]) with no McpError.
+    // INV-017: notify* methods must type-check as Unit < (Async & Abort[Closed]) with no McpException.
     "notifyToolsListChanged return type is Unit < (Async & Abort[Closed]) (INV-017)" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute).flatMap { server =>

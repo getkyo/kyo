@@ -58,7 +58,7 @@ class McpProgressNotificationWireTest extends Test:
         }
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, workerRoute),
                 McpClient.initUnscoped(tc, McpInfo("pg"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>

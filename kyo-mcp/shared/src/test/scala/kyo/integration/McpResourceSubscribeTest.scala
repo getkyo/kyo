@@ -31,7 +31,7 @@ class McpResourceSubscribeTest extends Test:
             McpRoute.resource(uri1, "res1", subscribe = true)((_, _) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, resourceRoute),
                 McpClient.initUnscoped(tc, McpInfo("sub-test"), McpCapabilities.Client(), updatedRoute)
             ).flatMap { (srv, client) =>
@@ -64,7 +64,7 @@ class McpResourceSubscribeTest extends Test:
             McpRoute.resource(uri1, "res1", subscribe = true)((_, _) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, resourceRoute),
                 McpClient.initUnscoped(tc, McpInfo("unsub-test"), McpCapabilities.Client(), updatedRoute)
             ).flatMap { (srv, client) =>
@@ -98,7 +98,7 @@ class McpResourceSubscribeTest extends Test:
         val resourceRoute = McpRoute.resource(uri1, "res1")((_, _) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, resourceRoute),
                 McpClient.initUnscoped(tc, McpInfo("nosub-test"), McpCapabilities.Client(), updatedRoute)
             ).flatMap { (srv, client) =>

@@ -1,55 +1,78 @@
 package kyo
 
 import kyo.*
-import scala.annotation.nowarn
 
-/** Base class for all MCP errors, organized into four sealed subcategories by operational stage.
+/** Base class for all MCP exceptions, organized into four sealed subcategories by operational stage.
   *
   * The four subcategories map to distinct pipeline stages where errors arise:
-  *   - [[McpHandshakeFailure]]: errors surfaced during the MCP initialization handshake
-  *   - [[McpDispatchFailure]]: errors surfaced during method routing (unknown tool/resource/prompt)
-  *   - [[McpExecutionFailure]]: errors surfaced during handler execution or structured-payload validation
-  *   - [[McpApplicationFailure]]: user-domain errors from handler bodies
+  *   - [[McpHandshakeException]]: errors surfaced during the MCP initialization handshake
+  *   - [[McpDispatchException]]: errors surfaced during method routing (unknown tool/resource/prompt)
+  *   - [[McpExecutionException]]: errors surfaced during handler execution or structured-payload validation
+  *   - [[McpApplicationException]]: user-domain errors from handler bodies
   *
   * Extends [[JsonRpcApplicationError]], the cross-module extension point for JSON-RPC errors
   * (`kyo-jsonrpc/.../JsonRpcError.scala:423-429`). [[JsonRpcApplicationError]] itself extends
-  * [[JsonRpcError]] and [[JsonRpcApplicationFailure]], so every `McpError` is a valid
+  * [[JsonRpcError]] and [[JsonRpcApplicationFailure]], so every `McpException` is a valid
   * [[JsonRpcError]] and travels through `Abort[JsonRpcError | ...]` rows transparently.
   * The inherited `Schema[JsonRpcError]` at `kyo-jsonrpc/.../JsonRpcError.scala:64-116` encodes
-  * any `McpError` as the wire triple `(code, message, data)`. No separate `Schema[McpError]` is
-  * needed.
+  * any `McpException` as the wire triple `(code, message, data)`. No separate `Schema[McpException]`
+  * is needed.
   *
-  * @see [[McpHandshakeFailure]]
-  * @see [[McpDispatchFailure]]
-  * @see [[McpExecutionFailure]]
-  * @see [[McpApplicationFailure]]
+  * User-domain errors are registered per-route via `route.error[E2](code, message)` rather than by
+  * extending this hierarchy directly; the hierarchy is sealed so callers exhaust pattern matches on
+  * the four subcategories above without an open extension surface.
+  *
+  * @see [[McpHandshakeException]]
+  * @see [[McpDispatchException]]
+  * @see [[McpExecutionException]]
+  * @see [[McpApplicationException]]
   */
 // flow-allow: Structure carve-out per §11a / INV-021 (forwarded to JsonRpcApplicationError)
-sealed abstract class McpError(
+sealed abstract class McpException(
     code: Int,
-    message: String,
+    message: Text,
     // flow-allow: Structure carve-out per §11a / INV-021 (forwarded to JsonRpcApplicationError)
     data: Maybe[Structure.Value] = Absent,
-    cause: String | Throwable = ""
+    cause: Text | Throwable = ""
 )(using Frame)
-    extends JsonRpcApplicationError(code, message, data, cause)
+    extends JsonRpcApplicationError(
+        code,
+        message.show,
+        data,
+        McpException.toRpcCause(cause)
+    )
+
+object McpException:
+    private[kyo] def toRpcCause(cause: Text | Throwable): String | Throwable =
+        cause match
+            case t: Throwable => t
+            case s: String    => s
+            case other        => other.asInstanceOf[Text].show
+end McpException
+
+// =============================================================================
+// Subcategory bases
+// =============================================================================
 
 /** Marks errors arising during the MCP initialization handshake (initialize / notifications/initialized). */
-sealed trait McpHandshakeFailure extends McpError
+sealed abstract class McpHandshakeException(code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+    extends McpException(code, message, Absent, cause)
 
 /** Marks errors arising during method dispatch (unknown tool, resource, or prompt). */
-sealed trait McpDispatchFailure extends McpError
+sealed abstract class McpDispatchException(code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+    extends McpException(code, message, Absent, cause)
 
 /** Marks errors arising during handler execution or structured-payload validation. */
-sealed trait McpExecutionFailure extends McpError
+sealed abstract class McpExecutionException(code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+    extends McpException(code, message, Absent, cause)
 
 /** Marks user-domain application errors from handler bodies.
   *
-  * Non-sealed: callers extend [[McpApplicationError]] for custom application errors.
-  * Already extends [[JsonRpcApplicationFailure]] via [[McpError]]'s [[JsonRpcApplicationError]]
-  * base, so this trait does not need to re-declare it.
+  * Sealed: callers register additional typed errors via `route.error[E2](code, message)` on the
+  * route rather than by extending this class directly.
   */
-trait McpApplicationFailure extends McpError
+sealed abstract class McpApplicationException(code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+    extends McpException(code, message, Absent, cause)
 
 // =============================================================================
 // Handshake-failure leaves
@@ -62,12 +85,11 @@ trait McpApplicationFailure extends McpError
   *
   * @param attemptedMethod the method name that was called before initialization
   */
-case class McpHandshakeNotInitializedError(attemptedMethod: String)(using Frame)
-    extends McpError(
+case class McpHandshakeNotInitializedException(attemptedMethod: String)(using Frame)
+    extends McpHandshakeException(
         code = -32002,
-        message = s"Handshake violation: '$attemptedMethod' attempted before initialize request.",
-        data = Absent
-    ) with McpHandshakeFailure
+        message = s"Handshake violation: '$attemptedMethod' attempted before initialize request."
+    )
 
 /** MCP handshake violation: method attempted after the initialize handshake was already completed (-32002).
   *
@@ -76,12 +98,11 @@ case class McpHandshakeNotInitializedError(attemptedMethod: String)(using Frame)
   *
   * @param attemptedMethod the method name that was called after initialization was already done
   */
-case class McpHandshakeAlreadyInitializedError(attemptedMethod: String)(using Frame)
-    extends McpError(
+case class McpHandshakeAlreadyInitializedException(attemptedMethod: String)(using Frame)
+    extends McpHandshakeException(
         code = -32002,
-        message = s"Handshake violation: '$attemptedMethod' attempted after initialize was already completed.",
-        data = Absent
-    ) with McpHandshakeFailure
+        message = s"Handshake violation: '$attemptedMethod' attempted after initialize was already completed."
+    )
 
 /** MCP protocol version mismatch during initialization (-32602).
   *
@@ -91,18 +112,17 @@ case class McpHandshakeAlreadyInitializedError(attemptedMethod: String)(using Fr
   * @param clientRequested the protocol version the client sent in the initialize request
   * @param supported       the protocol versions this server accepts
   */
-case class McpProtocolVersionMismatchError(
+case class McpProtocolVersionMismatchException(
     clientRequested: McpProtocolVersion,
     supported: Chunk[McpProtocolVersion]
 )(using Frame)
-    extends McpError(
+    extends McpHandshakeException(
         code = -32602,
         message =
             s"""Protocol version mismatch: client requested ${clientRequested.asString}.
 
-  Server supports: ${supported.map(_.asString).toList.sorted.mkString(", ")}""",
-        data = Absent
-    ) with McpHandshakeFailure
+  Server supports: ${supported.map(_.asString).toList.sorted.mkString(", ")}"""
+    )
 
 // =============================================================================
 // Dispatch-failure leaves
@@ -115,15 +135,14 @@ case class McpProtocolVersionMismatchError(
   * @param name       the tool name that was not found
   * @param registered the tool names currently registered on this server
   */
-case class McpUnknownToolError(name: String, registered: Chunk[String])(using Frame)
-    extends McpError(
+case class McpUnknownToolException(name: String, registered: Chunk[String])(using Frame)
+    extends McpDispatchException(
         code = -32602,
         message =
             s"""Unknown tool '$name'.
 
-  Registered: ${if registered.isEmpty then "(none)" else registered.mkString(", ")}""",
-        data = Absent
-    ) with McpDispatchFailure
+  Registered: ${if registered.isEmpty then "(none)" else registered.mkString(", ")}"""
+    )
 
 /** Unknown resource URI dispatched by the client (-32002).
   *
@@ -132,15 +151,14 @@ case class McpUnknownToolError(name: String, registered: Chunk[String])(using Fr
   * @param uri        the resource URI that was not found
   * @param registered the resource URIs currently registered on this server
   */
-case class McpUnknownResourceError(uri: McpResourceUri, registered: Chunk[McpResourceUri])(using Frame)
-    extends McpError(
+case class McpUnknownResourceException(uri: McpResourceUri, registered: Chunk[McpResourceUri])(using Frame)
+    extends McpDispatchException(
         code = -32002,
         message =
             s"""Unknown resource '${uri.asString}'.
 
-  Registered: ${if registered.isEmpty then "(none)" else registered.iterator.map(_.asString).mkString(", ")}""",
-        data = Absent
-    ) with McpDispatchFailure
+  Registered: ${if registered.isEmpty then "(none)" else registered.iterator.map(_.asString).mkString(", ")}"""
+    )
 
 /** Unknown prompt name dispatched by the client (-32602).
   *
@@ -149,15 +167,14 @@ case class McpUnknownResourceError(uri: McpResourceUri, registered: Chunk[McpRes
   * @param name       the prompt name that was not found
   * @param registered the prompt names currently registered on this server
   */
-case class McpUnknownPromptError(name: String, registered: Chunk[String])(using Frame)
-    extends McpError(
+case class McpUnknownPromptException(name: String, registered: Chunk[String])(using Frame)
+    extends McpDispatchException(
         code = -32602,
         message =
             s"""Unknown prompt '$name'.
 
-  Registered: ${if registered.isEmpty then "(none)" else registered.mkString(", ")}""",
-        data = Absent
-    ) with McpDispatchFailure
+  Registered: ${if registered.isEmpty then "(none)" else registered.mkString(", ")}"""
+    )
 
 /** Capability required by a method was not advertised by the peer (-32601).
   *
@@ -170,25 +187,24 @@ case class McpUnknownPromptError(name: String, registered: Chunk[String])(using 
   * @param requiredCapability the capability name that was not advertised
   * @param peer               whether the server or client is the peer that failed to advertise
   */
-case class McpCapabilityNotAdvertisedError(
+case class McpCapabilityNotAdvertisedException(
     method: String,
     requiredCapability: McpCapabilityName,
-    peer: McpCapabilityNotAdvertisedError.Peer
+    peer: McpCapabilityNotAdvertisedException.Peer
 )(using Frame)
-    extends McpError(
+    extends McpDispatchException(
         code = -32601,
         message =
-            s"Method '$method' requires ${peer.describe} capability '${requiredCapability.toString.toLowerCase}' which was not advertised.",
-        data = Absent
-    ) with McpDispatchFailure
+            s"Method '$method' requires ${peer.describe} capability '${requiredCapability.toString.toLowerCase}' which was not advertised."
+    )
 
-object McpCapabilityNotAdvertisedError:
+object McpCapabilityNotAdvertisedException:
     /** Identifies which side of the connection failed to advertise a required capability. */
     enum Peer derives CanEqual:
         case Server, Client
         def describe: String = this.toString.toLowerCase
     end Peer
-end McpCapabilityNotAdvertisedError
+end McpCapabilityNotAdvertisedException
 
 /** Invalid argument value for a method parameter (-32602).
   *
@@ -199,12 +215,11 @@ end McpCapabilityNotAdvertisedError
   * @param field  the parameter field name that is invalid
   * @param reason a brief description of the validation failure
   */
-case class McpInvalidArgumentError(method: String, field: String, reason: String)(using Frame)
-    extends McpError(
+case class McpInvalidArgumentException(method: String, field: String, reason: String)(using Frame)
+    extends McpDispatchException(
         code = -32602,
-        message = s"Invalid argument '$field' for '$method': $reason",
-        data = Absent
-    ) with McpDispatchFailure
+        message = s"Invalid argument '$field' for '$method': $reason"
+    )
 
 // =============================================================================
 // Execution-failure leaves
@@ -218,17 +233,16 @@ case class McpInvalidArgumentError(method: String, field: String, reason: String
   *
   * @param tool the tool name that failed to provide structured content
   */
-case class McpToolStructuredMissingError(tool: String)(using Frame)
-    extends McpError(
+case class McpToolStructuredMissingException(tool: String)(using Frame)
+    extends McpExecutionException(
         code = -32603,
         message =
             s"""Tool '$tool' returned no structured content for typed call.
 
   Use the untyped overload `client.callTool[In](name, args)` if the tool
   emits unstructured content, or fix the server to populate
-  `ToolCallResult.structuredContent`.""",
-        data = Absent
-    ) with McpExecutionFailure
+  `ToolCallResult.structuredContent`."""
+    )
 
 /** Sampling request rejected by the client (-32603).
   *
@@ -237,12 +251,11 @@ case class McpToolStructuredMissingError(tool: String)(using Frame)
   *
   * @param reason a brief description of why the sampling request was rejected
   */
-case class McpSamplingRejectedError(reason: String)(using Frame)
-    extends McpError(
+case class McpSamplingRejectedException(reason: String)(using Frame)
+    extends McpExecutionException(
         code = -32603,
-        message = s"Sampling request rejected: $reason",
-        data = Absent
-    ) with McpExecutionFailure
+        message = s"Sampling request rejected: $reason"
+    )
 
 /** Elicitation request declined by the client (-32603).
   *
@@ -251,43 +264,15 @@ case class McpSamplingRejectedError(reason: String)(using Frame)
   *
   * @param reason a brief description of why the elicitation was declined
   */
-case class McpElicitationDeclinedError(reason: String)(using Frame)
-    extends McpError(
+case class McpElicitationDeclinedException(reason: String)(using Frame)
+    extends McpExecutionException(
         code = -32603,
-        message = s"Elicitation declined: $reason",
-        data = Absent
-    ) with McpExecutionFailure
+        message = s"Elicitation declined: $reason"
+    )
 
 // =============================================================================
-// Application-error base and leaves
+// Application-failure leaves
 // =============================================================================
-
-/** Open base class for user-domain MCP errors with caller-defined codes.
-  *
-  * Non-sealed: callers extend this to define their own typed application errors:
-  *
-  * {{{
-  * case class MyDomainError(id: Int)(using Frame)
-  *     extends McpApplicationError(-32010, s"Domain error: $id")
-  * }}}
-  *
-  * Mirrors [[JsonRpcApplicationError]] at `kyo-jsonrpc/.../JsonRpcError.scala:423-429`.
-  * Automatically participates in [[McpApplicationFailure]] and [[JsonRpcApplicationFailure]]
-  * category traits.
-  *
-  * @param code    caller-defined integer error code
-  * @param message caller-defined human-readable message
-  * @param data    optional structured data for the wire error object
-  * @param cause   optional underlying throwable or string cause
-  */
-abstract class McpApplicationError(
-    code: Int,
-    message: String,
-    // flow-allow: McpApplicationError.data is the user-controlled MCP application-error payload; Structure.Value is the spec contract
-    data: Maybe[Structure.Value] = Absent,
-    cause: String | Throwable = ""
-)(using Frame)
-    extends McpError(code, message, data, cause) with McpApplicationFailure
 
 /** Tool handler execution failed (-32000).
   *
@@ -298,11 +283,10 @@ abstract class McpApplicationError(
   * @param reason a brief description of the execution failure
   * @param cause  optional underlying throwable or string cause
   */
-case class McpToolExecutionError(tool: String, reason: String, cause: Throwable | String = "")(using Frame)
-    extends McpApplicationError(
+case class McpToolExecutionException(tool: String, reason: String, cause: Throwable | Text = "")(using Frame)
+    extends McpApplicationException(
         code = -32000,
         message = s"Tool '$tool' execution failed: $reason",
-        data = Absent,
         cause = cause
     )
 
@@ -315,11 +299,10 @@ case class McpToolExecutionError(tool: String, reason: String, cause: Throwable 
   * @param reason a brief description of the read failure
   * @param cause  optional underlying throwable or string cause
   */
-case class McpResourceReadError(uri: McpResourceUri, reason: String, cause: Throwable | String = "")(using Frame)
-    extends McpApplicationError(
+case class McpResourceReadException(uri: McpResourceUri, reason: String, cause: Throwable | Text = "")(using Frame)
+    extends McpApplicationException(
         code = -32001,
         message = s"Failed to read resource '${uri.asString}': $reason",
-        data = Absent,
         cause = cause
     )
 
@@ -332,10 +315,9 @@ case class McpResourceReadError(uri: McpResourceUri, reason: String, cause: Thro
   * @param reason a brief description of the render failure
   * @param cause  optional underlying throwable or string cause
   */
-case class McpPromptRenderError(name: String, reason: String, cause: Throwable | String = "")(using Frame)
-    extends McpApplicationError(
+case class McpPromptRenderException(name: String, reason: String, cause: Throwable | Text = "")(using Frame)
+    extends McpApplicationException(
         code = -32003,
         message = s"Failed to render prompt '$name': $reason",
-        data = Absent,
         cause = cause
     )

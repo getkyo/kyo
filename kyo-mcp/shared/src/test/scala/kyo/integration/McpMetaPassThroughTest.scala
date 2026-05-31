@@ -18,7 +18,7 @@ class McpMetaPassThroughTest extends Test:
             )
         }
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, toolRoute),
                 McpClient.initUnscoped(tc, McpInfo("meta-test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
@@ -42,7 +42,7 @@ class McpMetaPassThroughTest extends Test:
             )
         }
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, toolRoute),
                 McpClient.initUnscoped(tc, McpInfo("meta-test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>

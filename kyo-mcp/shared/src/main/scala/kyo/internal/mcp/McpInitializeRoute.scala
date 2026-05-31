@@ -11,7 +11,7 @@ import kyo.*
   * Protocol version negotiation (MCP 2025-06-18 §3.2): if the client's requested version appears
   * in `config.supportedProtocolVersions`, that version is used. If there is no overlap, the server
   * returns success with the highest supported version (`maxBy(_.asString)`) rather than failing.
-  * `McpProtocolVersionMismatchError` is kept as a panic-class for the zero-supported-versions case.
+  * `McpProtocolVersionMismatchException` is kept as a panic-class for the zero-supported-versions case.
   */
 private[kyo] object McpInitializeRoute:
 

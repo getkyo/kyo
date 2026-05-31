@@ -100,8 +100,8 @@ private[kyo] object McpBuiltInRoutes:
                         case Result.Success(in) => carrier.handler.asInstanceOf[(
                                 Any,
                                 McpRoute.Context
-                            ) => McpRoute.ToolCallResult < (Async & Abort[McpError | JsonRpcResponse.Halt])](in, ctx)
-                        case Result.Failure(e) => Abort.fail(McpInvalidArgumentError("tools/call", "arguments", e.getMessage))
+                            ) => McpRoute.ToolCallResult < (Async & Abort[McpException | JsonRpcResponse.Halt])](in, ctx)
+                        case Result.Failure(e) => Abort.fail(McpInvalidArgumentException("tools/call", "arguments", e.getMessage))
                         case Result.Panic(t)   => Abort.panic(t)
                     end match
                 case (Some(carrier), _) =>
@@ -116,13 +116,13 @@ private[kyo] object McpBuiltInRoutes:
                             carrier.handler.asInstanceOf[(
                                 Any,
                                 McpRoute.Context
-                            ) => McpContent < (Async & Abort[McpError | JsonRpcResponse.Halt])](in, ctx)
+                            ) => McpContent < (Async & Abort[McpException | JsonRpcResponse.Halt])](in, ctx)
                                 .map(out => McpRoute.ToolCallResult(Chunk(out), isError = false, structuredContent = Absent))
-                        case Result.Failure(e) => Abort.fail(McpInvalidArgumentError("tools/call", "arguments", e.getMessage))
+                        case Result.Failure(e) => Abort.fail(McpInvalidArgumentException("tools/call", "arguments", e.getMessage))
                         case Result.Panic(t)   => Abort.panic(t)
                     end match
                 case (None, None) =>
-                    Abort.fail(McpUnknownToolError(params.name, registeredNames))
+                    Abort.fail(McpUnknownToolException(params.name, registeredNames))
             end match
         }
 
@@ -138,7 +138,7 @@ private[kyo] object McpBuiltInRoutes:
             val parsedUri = McpResourceUri.parse(params.uri)
             parsedUri match
                 case Absent =>
-                    Abort.fail(McpInvalidArgumentError("resources/read", "uri", s"invalid URI: ${params.uri}"))
+                    Abort.fail(McpInvalidArgumentException("resources/read", "uri", s"invalid URI: ${params.uri}"))
                 case Present(uri) =>
                     val matched = catalog.resourceRoutes.collectFirst {
                         case c: McpRouteCarrier.Resource[?] if c.resourceMeta.uri == uri => c
@@ -153,7 +153,7 @@ private[kyo] object McpBuiltInRoutes:
                             carrier.handler(uri, ctx).map(contents => ResourceReadResponse(contents))
                         case None =>
                             val registeredUris = Chunk.from(catalog.resourceRoutes.map(r => catalog.resourceMetaOf(r).uri))
-                            Abort.fail(McpUnknownResourceError(uri, registeredUris))
+                            Abort.fail(McpUnknownResourceException(uri, registeredUris))
                     end match
             end match
         }
@@ -187,7 +187,7 @@ private[kyo] object McpBuiltInRoutes:
                     carrier.handler(params.arguments, ctx)
                 case None =>
                     val registeredNames = Chunk.from(catalog.promptRoutes.map(_.name))
-                    Abort.fail(McpUnknownPromptError(params.name, registeredNames))
+                    Abort.fail(McpUnknownPromptException(params.name, registeredNames))
             end match
         }
 
@@ -200,7 +200,7 @@ private[kyo] object McpBuiltInRoutes:
         JsonRpcRoute.request[ResourceSubscribeParams, SetLogLevelResult]("resources/subscribe") { (p, _) =>
             McpResourceUri.parse(p.uri) match
                 case Absent =>
-                    Abort.fail(McpInvalidArgumentError("resources/subscribe", "uri", s"invalid URI: ${p.uri}"))
+                    Abort.fail(McpInvalidArgumentException("resources/subscribe", "uri", s"invalid URI: ${p.uri}"))
                 case Present(uri) =>
                     subs.getAndUpdate(_ + uri).andThen(SetLogLevelResult())
         }
@@ -209,7 +209,7 @@ private[kyo] object McpBuiltInRoutes:
         JsonRpcRoute.request[ResourceSubscribeParams, SetLogLevelResult]("resources/unsubscribe") { (p, _) =>
             McpResourceUri.parse(p.uri) match
                 case Absent =>
-                    Abort.fail(McpInvalidArgumentError("resources/unsubscribe", "uri", s"invalid URI: ${p.uri}"))
+                    Abort.fail(McpInvalidArgumentException("resources/unsubscribe", "uri", s"invalid URI: ${p.uri}"))
                 case Present(uri) =>
                     subs.getAndUpdate(_ - uri).andThen(SetLogLevelResult())
         }

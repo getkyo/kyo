@@ -78,7 +78,7 @@ private[kyo] object McpCapabilityGate:
     end missingCapability
 
     // Returns Allow if the method has no capability requirement or the required capability is
-    // advertised. Returns Reject with McpCapabilityNotAdvertisedError if the capability is absent.
+    // advertised. Returns Reject with McpCapabilityNotAdvertisedException if the capability is absent.
     private def requiredCapabilityCheck(
         id: JsonRpcId,
         method: String,
@@ -89,10 +89,10 @@ private[kyo] object McpCapabilityGate:
                 case Absent =>
                     JsonRpcMessageGate.Decision.Allow
                 case Present(capName) =>
-                    val err = McpCapabilityNotAdvertisedError(
+                    val err = McpCapabilityNotAdvertisedException(
                         method = method,
                         requiredCapability = capName,
-                        peer = McpCapabilityNotAdvertisedError.Peer.Server
+                        peer = McpCapabilityNotAdvertisedException.Peer.Server
                     )
                     JsonRpcMessageGate.Decision.Reject(JsonRpcResponse.failure(id, err))
             end match

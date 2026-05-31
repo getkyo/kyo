@@ -52,7 +52,7 @@ private[kyo] object McpHandshakeGate:
                             if admitted then
                                 JsonRpcMessageGate.Decision.Allow
                             else
-                                val err = McpHandshakeNotInitializedError(req.method)
+                                val err = McpHandshakeNotInitializedException(req.method)
                                 JsonRpcMessageGate.Decision.Reject(JsonRpcResponse.failure(req.id, err))
                             end if
 

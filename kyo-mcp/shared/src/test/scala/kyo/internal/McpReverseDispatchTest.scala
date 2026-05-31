@@ -21,7 +21,7 @@ class McpReverseDispatchTest extends Test:
     private def withPair[A, S](
         serverRoutes: Seq[McpRoute[?, ?, ?]],
         clientRoutes: Seq[McpRoute[?, ?, ?]]
-    )(f: (McpServer, McpClient) => A < S)(using Frame): A < (S & Async & Scope & Abort[McpError | Closed]) =
+    )(f: (McpServer, McpClient) => A < S)(using Frame): A < (S & Async & Scope & Abort[McpException | Closed]) =
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             McpServer.init(ta, serverRoutes*).flatMap { server =>
                 McpClient.init(tb, clientInfo, clientCaps, clientRoutes*).flatMap { client =>
@@ -42,7 +42,7 @@ class McpReverseDispatchTest extends Test:
     // requestRoots: server calls roots/list on client; default handler returns empty chunk.
     "server.requestRoots returns empty Chunk when client has no roots handler" in run {
         withPair(Seq.empty, Seq.empty) { (server, _) =>
-            Abort.run[McpError | Closed](server.requestRoots).map {
+            Abort.run[McpException | Closed](server.requestRoots).map {
                 case Result.Success(roots) =>
                     assert(roots == Chunk.empty, s"expected empty roots, got $roots")
                 case Result.Failure(err) =>
@@ -60,7 +60,7 @@ class McpReverseDispatchTest extends Test:
             maxTokens = 128
         )
         withPair(Seq.empty, Seq.empty) { (server, _) =>
-            Abort.run[McpError | Closed](server.requestSampling(req)).map { result =>
+            Abort.run[McpException | Closed](server.requestSampling(req)).map { result =>
                 result match
                     case Result.Failure(_) =>
                         succeed
@@ -79,7 +79,7 @@ class McpReverseDispatchTest extends Test:
             requestedSchema = Json.JsonSchema.Null
         )
         withPair(Seq.empty, Seq.empty) { (server, _) =>
-            Abort.run[McpError | Closed](server.requestElicitation(elicitReq)).map { result =>
+            Abort.run[McpException | Closed](server.requestElicitation(elicitReq)).map { result =>
                 result match
                     case Result.Failure(_) =>
                         succeed
@@ -112,14 +112,14 @@ class McpReverseDispatchTest extends Test:
                 messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("q"))),
                 maxTokens = 16
             )
-            val _: McpServer.SamplingResponse < (Async & Abort[McpError | Closed]) = server.requestSampling(req)
+            val _: McpServer.SamplingResponse < (Async & Abort[McpException | Closed]) = server.requestSampling(req)
             succeed
         }
     }
 
     "requestRoots return type is Chunk[McpServer.Root] < ... (typed, no Structure.Value)" in run {
         withPair(Seq.empty, Seq.empty) { (server, _) =>
-            val _: Chunk[McpServer.Root] < (Async & Abort[McpError | Closed]) = server.requestRoots
+            val _: Chunk[McpServer.Root] < (Async & Abort[McpException | Closed]) = server.requestRoots
             succeed
         }
     }
@@ -141,7 +141,7 @@ class McpReverseDispatchTest extends Test:
                 McpServer.SamplingResponse(McpRole.Assistant, McpContent.Text("pong"), "test-model")
             }
         withPair(Seq.empty, Seq(userSamplingRoute)) { (server, _) =>
-            Abort.run[McpError | Closed](server.requestSampling(req)).map {
+            Abort.run[McpException | Closed](server.requestSampling(req)).map {
                 case Result.Success(resp) =>
                     assert(resp.model == "test-model")
                     assert(resp.role == McpRole.Assistant)

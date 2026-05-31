@@ -11,7 +11,7 @@ class McpPingTest extends Test:
 
     "client.ping returns Unit without error" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
                 McpClient.initUnscoped(tc, McpInfo("ping-test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
@@ -28,7 +28,7 @@ class McpPingTest extends Test:
 
     "client.ping can be called multiple times" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
                 McpClient.initUnscoped(tc, McpInfo("ping-test-multi"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
@@ -49,7 +49,7 @@ class McpPingTest extends Test:
 
     "client.unsafe.pingUnsafe returns Unit without error" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
                 McpClient.initUnscoped(tc, McpInfo("ping-unsafe-test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>

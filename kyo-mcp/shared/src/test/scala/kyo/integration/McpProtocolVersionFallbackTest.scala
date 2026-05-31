@@ -18,7 +18,7 @@ class McpProtocolVersionFallbackTest extends Test:
         val serverConfig  = McpConfig.default.supportedProtocolVersions(Set(futureVersion))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, serverConfig)(),
                 McpClient.initUnscoped(tc, McpInfo("fallback-test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
@@ -39,7 +39,7 @@ class McpProtocolVersionFallbackTest extends Test:
         val serverConfig = McpConfig.default.supportedProtocolVersions(Set(McpProtocolVersion.current))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, serverConfig)(),
                 McpClient.initUnscoped(tc, McpInfo("normal-test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>

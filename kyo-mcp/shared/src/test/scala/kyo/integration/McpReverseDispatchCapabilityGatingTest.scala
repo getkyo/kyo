@@ -7,16 +7,16 @@ class McpReverseDispatchCapabilityGatingTest extends Test:
 
     "requestSampling without client sampling capability returns -32601 error" in run {
         // Client does NOT declare sampling capability.
-        // The client-side reverse dispatch returns McpCapabilityNotAdvertisedError (-32601).
-        // The server wraps the received JSON-RPC error as McpSamplingRejectedError, preserving
+        // The client-side reverse dispatch returns McpCapabilityNotAdvertisedException (-32601).
+        // The server wraps the received JSON-RPC error as McpSamplingRejectedException, preserving
         // the original error message which contains "Method not found" from the -32601 code.
         val clientCaps = McpCapabilities.Client()
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
                 McpClient.initUnscoped(tc, McpInfo("gate-test"), clientCaps)
             ).flatMap { (srv, client) =>
-                Abort.run[McpError](
+                Abort.run[McpException](
                     srv.requestSampling(
                         McpServer.SamplingRequest(
                             messages = Chunk(McpServer.SamplingRequest.Message(
@@ -33,8 +33,8 @@ class McpReverseDispatchCapabilityGatingTest extends Test:
                     yield
                         result match
                             case Result.Failure(_) =>
-                                // The client-side reverse dispatch returned McpCapabilityNotAdvertisedError
-                                // (-32601) to the server, which wrapped it as McpSamplingRejectedError.
+                                // The client-side reverse dispatch returned McpCapabilityNotAdvertisedException
+                                // (-32601) to the server, which wrapped it as McpSamplingRejectedException.
                                 // Any failure here confirms the capability gate is working.
                                 succeed
                             case Result.Success(_) =>
@@ -52,11 +52,11 @@ class McpReverseDispatchCapabilityGatingTest extends Test:
         // Client declares sampling capability; default handler rejects with a different error (not -32601).
         val clientCaps = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
                 McpClient.initUnscoped(tc, McpInfo("gate-test2"), clientCaps)
             ).flatMap { (srv, client) =>
-                Abort.run[McpError](
+                Abort.run[McpException](
                     srv.requestSampling(
                         McpServer.SamplingRequest(
                             messages = Chunk(McpServer.SamplingRequest.Message(
@@ -72,7 +72,7 @@ class McpReverseDispatchCapabilityGatingTest extends Test:
                         _ <- client.closeNow
                     yield
                         result match
-                            case Result.Failure(err: McpCapabilityNotAdvertisedError) =>
+                            case Result.Failure(err: McpCapabilityNotAdvertisedException) =>
                                 fail(s"did not expect -32601 when sampling capability is advertised")
                             case Result.Failure(_) =>
                                 // Any other error is fine (e.g. sampling rejected, no handler registered)

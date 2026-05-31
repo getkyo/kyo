@@ -106,25 +106,25 @@ private[kyo] object McpEngine:
 
                 def requestSamplingUnsafe(req: McpServer.SamplingRequest)(using
                     Frame
-                ): McpServer.SamplingResponse < (Async & Abort[McpError | Closed]) =
+                ): McpServer.SamplingResponse < (Async & Abort[McpException | Closed]) =
                     handler.call[McpServer.SamplingRequest, McpServer.SamplingResponse]("sampling/createMessage", req)
                         .handle(Abort.recover[JsonRpcError] { e =>
-                            Abort.fail(McpSamplingRejectedError(e.message))
+                            Abort.fail(McpSamplingRejectedException(e.message))
                         })
 
-                def requestRootsUnsafe(using Frame): Chunk[McpServer.Root] < (Async & Abort[McpError | Closed]) =
+                def requestRootsUnsafe(using Frame): Chunk[McpServer.Root] < (Async & Abort[McpException | Closed]) =
                     handler.call[NotifyEmptyParams, McpRootsListResponse]("roots/list", NotifyEmptyParams())
                         .map(_.roots)
                         .handle(Abort.recover[JsonRpcError] { e =>
-                            Abort.fail(McpInvalidArgumentError("roots/list", "response", e.message))
+                            Abort.fail(McpInvalidArgumentException("roots/list", "response", e.message))
                         })
 
                 def requestElicitationUnsafe(req: McpServer.ElicitationRequest)(using
                     Frame
-                ): McpServer.ElicitationResponse < (Async & Abort[McpError | Closed]) =
+                ): McpServer.ElicitationResponse < (Async & Abort[McpException | Closed]) =
                     handler.call[McpServer.ElicitationRequest, McpServer.ElicitationResponse]("elicitation/create", req)
                         .handle(Abort.recover[JsonRpcError] { e =>
-                            Abort.fail(McpElicitationDeclinedError(e.message))
+                            Abort.fail(McpElicitationDeclinedException(e.message))
                         })
 
                 def notifyToolsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =

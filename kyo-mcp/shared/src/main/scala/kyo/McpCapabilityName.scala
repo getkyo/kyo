@@ -6,7 +6,7 @@ package kyo
   * `"sampling"`, `"roots"`, `"logging"`, `"completions"`, `"elicitation"`). Per Q-006 / INV-010
   * the Schema is hand-rolled via `Schema.stringSchema.transform` (not `derives Schema`).
   *
-  * Used by [[McpCapabilityNotAdvertisedError.requiredCapability]] and internal capability gating
+  * Used by [[McpCapabilityNotAdvertisedException.requiredCapability]] and internal capability gating
   * so the public surface never carries a raw `String` for these closed-set values.
   */
 enum McpCapabilityName derives CanEqual:

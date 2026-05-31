@@ -11,21 +11,21 @@ class McpCapabilityAdvertisementTest extends Test:
         McpContent.Text(s"${in.a + in.b}")
     }
 
-    "tool call aborts with McpCapabilityNotAdvertisedError when tools capability is absent (T-015, INV-015)" in run {
+    "tool call aborts with McpCapabilityNotAdvertisedException when tools capability is absent (T-015, INV-015)" in run {
         // McpCapabilities.Server() has all fields Absent, so tools capability is not advertised.
         val cfg = McpConfig.default.declaredCapabilities(McpCapabilities.Server())
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, cfg)(toolRoute),
                 McpClient.initUnscoped(tc, McpInfo("test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
-                Abort.run[McpError](client.unsafe.callToolUnsafe[AddIn]("add", AddIn(1, 1))).flatMap { result =>
+                Abort.run[McpException](client.unsafe.callToolUnsafe[AddIn]("add", AddIn(1, 1))).flatMap { result =>
                     for
                         _ <- srv.closeNow
                         _ <- client.closeNow
                     yield
                         // The capability gate rejects with -32601; the client wraps all JsonRpcErrors
-                        // as McpInvalidArgumentError(-32602). Either code signals capability rejection.
+                        // as McpInvalidArgumentException(-32602). Either code signals capability rejection.
                         assert(result.isFailure)
                     end for
                 }
@@ -35,7 +35,7 @@ class McpCapabilityAdvertisementTest extends Test:
 
     "server advertises tools capability when route is registered and declaredCapabilities is Absent (T-015, INV-019)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, toolRoute),
                 McpClient.initUnscoped(tc, McpInfo("test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>

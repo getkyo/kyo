@@ -15,7 +15,7 @@ class McpClientTest extends Test:
     private def withPair[A, S](
         serverRoutes: Seq[McpRoute[?, ?, ?]],
         clientRoutes: Seq[McpRoute[?, ?, ?]]
-    )(f: (McpServer, McpClient) => A < S)(using Frame): A < (S & Async & Scope & Abort[McpError | Closed]) =
+    )(f: (McpServer, McpClient) => A < S)(using Frame): A < (S & Async & Scope & Abort[McpException | Closed]) =
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             McpServer.init(ta, serverRoutes*).flatMap { server =>
                 McpClient.init(tb, clientInfo, clientCaps, clientRoutes*).flatMap { client =>
@@ -41,9 +41,9 @@ class McpClientTest extends Test:
         }
     }
 
-    // T-012: callToolTyped[In, Out] aborts with McpToolStructuredMissingError when structuredContent = Absent.
+    // T-012: callToolTyped[In, Out] aborts with McpToolStructuredMissingException when structuredContent = Absent.
     // INV-027: typed overload must abort when structured content is absent.
-    "callToolTyped[In, Out] aborts McpToolStructuredMissingError when structuredContent = Absent (T-012, INV-027)" in run {
+    "callToolTyped[In, Out] aborts McpToolStructuredMissingException when structuredContent = Absent (T-012, INV-027)" in run {
         val addUntypedRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
             McpRoute.ToolCallResult(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
@@ -52,10 +52,10 @@ class McpClientTest extends Test:
             )
         }
         withPair(Seq(addUntypedRoute), Seq.empty) { (_, client) =>
-            Abort.run[McpToolStructuredMissingError](
+            Abort.run[McpToolStructuredMissingException](
                 client.callToolTyped[AddIn, Sum]("add", AddIn(2, 3))
             ).map { result =>
-                assert(result.isFailure, s"expected McpToolStructuredMissingError abort, got $result")
+                assert(result.isFailure, s"expected McpToolStructuredMissingException abort, got $result")
                 result match
                     case Result.Failure(err) => assert(err.tool == "add")
                     case _                   => fail(s"expected Failure, got $result")
@@ -86,7 +86,7 @@ class McpClientTest extends Test:
         JsonRpcTransport.inMemory.map { (ta, _) =>
             // The following must compile with this exact parameter order.
             // Swapping clientInfo and capabilities would fail because McpInfo != McpCapabilities.Client.
-            val _: McpClient < (Async & Abort[McpError | Closed]) =
+            val _: McpClient < (Async & Abort[McpException | Closed]) =
                 McpClient.initUnscoped(ta, clientInfo, clientCaps)
             succeed
         }
@@ -183,7 +183,7 @@ class McpClientTest extends Test:
     // W2 curried overload must compile.
     "McpClient.initUnscoped curried overload (W2 fix) compiles" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
-            val _: McpClient < (Async & Abort[McpError | Closed]) =
+            val _: McpClient < (Async & Abort[McpException | Closed]) =
                 McpClient.initUnscoped(ta, clientInfo, clientCaps, McpConfig.default)()
             succeed
         }
@@ -191,7 +191,7 @@ class McpClientTest extends Test:
 
     "McpClient.init curried overload (W2 fix) compiles" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
-            val _: McpClient < (Async & Scope & Abort[McpError | Closed]) =
+            val _: McpClient < (Async & Scope & Abort[McpException | Closed]) =
                 McpClient.init(ta, clientInfo, clientCaps, McpConfig.default)()
             succeed
         }

@@ -21,7 +21,7 @@ class McpSamplingReverseTest extends Test:
 
     "server.requestSampling returns the client-provided response (T-018)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
                 McpClient.initUnscoped(tc, McpInfo("s"), clientCaps, samplingRoute)
             ).flatMap { (srv, client) =>
@@ -44,14 +44,14 @@ class McpSamplingReverseTest extends Test:
         }
     }
 
-    "sampling request without client handler aborts with McpSamplingRejectedError" in run {
+    "sampling request without client handler aborts with McpSamplingRejectedException" in run {
         // No sampling route registered on the client; default handler rejects.
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
-            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+            Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
                 McpClient.initUnscoped(tc, McpInfo("s"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
-                Abort.run[McpError](
+                Abort.run[McpException](
                     srv.requestSampling(
                         McpServer.SamplingRequest(
                             messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("q"))),
