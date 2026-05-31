@@ -22,8 +22,8 @@ class YamlEventsTest extends Test:
                 Yaml.Events.Event.StreamEnd(mark)
             )
 
-            val collector = new Yaml.Events.Handler[Chunk[String], Nothing]:
-                def event(context: Chunk[String], event: Yaml.Events.Event): Result[Nothing, Chunk[String]] =
+            val collector = new Yaml.Events.EventHandler[Chunk[String], Nothing]:
+                override def event(context: Chunk[String], event: Yaml.Events.Event): Result[Nothing, Chunk[String]] =
                     Result.succeed(context :+ label(event))
             end collector
 
@@ -47,8 +47,8 @@ class YamlEventsTest extends Test:
         }
 
         "lets the parser drive internal events without exposing a public API" in {
-            val collector = new Yaml.Events.Handler[Chunk[String], Nothing]:
-                def event(context: Chunk[String], event: Yaml.Events.Event): Result[Nothing, Chunk[String]] =
+            val collector = new Yaml.Events.EventHandler[Chunk[String], Nothing]:
+                override def event(context: Chunk[String], event: Yaml.Events.Event): Result[Nothing, Chunk[String]] =
                     Result.succeed(context :+ label(event))
             end collector
 

@@ -1965,7 +1965,7 @@ object YamlReader:
         )(using Frame): Built =
             val buffer  = ArrayBuffer.empty[Event]
             val visitor = BuilderVisitor(buffer, maxDepth, maxCollectionSize)
-            YamlParser(source).visit(())(visitor) match
+            YamlParser(source).visitEvents(())(visitor) match
                 case Result.Success(_) => ()
                 case Result.Failure(e) => throw e
                 case Result.Panic(e)   => throw e
@@ -1980,15 +1980,10 @@ object YamlReader:
         buffer: ArrayBuffer[Event],
         maxDepth: Int,
         maxCollectionSize: Int
-    )(using frame: Frame) extends YamlVisitor[Unit, DecodeException, Unit]:
+    )(using frame: Frame) extends Yaml.Events.Handler[Unit, DecodeException]:
         private var stack: List[BuildFrame] = Nil
 
-        def streamStart(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit]   = Result.unit
-        def documentStart(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit] = Result.unit
-        def documentEnd(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit]   = Result.unit
-        def streamEnd(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit]     = Result.unit
-
-        def mappingStart(context: Unit, meta: Yaml.Meta): Result[DecodeException, Unit] =
+        override def mappingStart(context: Unit, meta: Yaml.Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
             countValue()
             if stack.length + 1 > maxDepth then throw LimitExceededException("Nesting depth", stack.length + 1, maxDepth)
             buffer += MappingStart(meta)
@@ -1996,7 +1991,7 @@ object YamlReader:
             Result.unit
         end mappingStart
 
-        def sequenceStart(context: Unit, meta: Yaml.Meta): Result[DecodeException, Unit] =
+        override def sequenceStart(context: Unit, meta: Yaml.Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
             countValue()
             if stack.length + 1 > maxDepth then throw LimitExceededException("Nesting depth", stack.length + 1, maxDepth)
             buffer += SequenceStart(meta)
@@ -2004,23 +1999,27 @@ object YamlReader:
             Result.unit
         end sequenceStart
 
-        def scalar(context: Unit, value: String, meta: Yaml.ScalarMeta): Result[DecodeException, Unit] =
+        override def scalar(context: Unit, value: String, meta: Yaml.ScalarMeta): Result[DecodeException, Unit] =
             countValue()
             buffer += Scalar(value, meta, meta.mark)
             Result.unit
         end scalar
 
-        def alias(context: Unit, name: Yaml.Anchor, mark: Yaml.Mark): Result[DecodeException, Unit] =
+        override def alias(context: Unit, name: Yaml.Anchor, mark: Yaml.Mark): Result[DecodeException, Unit] =
             countValue()
             buffer += Alias(name, mark)
             Result.unit
         end alias
 
-        def nodeEnd(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit] =
+        override def collectionEnd(
+            context: Unit,
+            kind: Yaml.Events.CollectionKind,
+            mark: Yaml.Mark
+        ): Result[DecodeException, Unit] =
             stack = stack.drop(1)
             buffer += NodeEnd(mark)
             Result.unit
-        end nodeEnd
+        end collectionEnd
 
         private def countValue(): Unit =
             stack match

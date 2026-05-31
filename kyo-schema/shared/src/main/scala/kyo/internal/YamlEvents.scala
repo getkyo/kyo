@@ -7,47 +7,6 @@ import scala.annotation.tailrec
 private[kyo] object YamlEvents:
 
     import Yaml.Events.CollectionKind
-    import Yaml.Events.Event
-
-    def toVisitor[Ctx, Err](handler: Yaml.Events.Handler[Ctx, Err]): YamlVisitor[Ctx, Err, Ctx] =
-        new YamlVisitor[Ctx, Err, Ctx]:
-            private var stack: List[CollectionKind] = Nil
-
-            def streamStart(context: Ctx, mark: Yaml.Mark): Result[Err, Ctx] =
-                handler.event(context, Event.StreamStart(mark))
-
-            def documentStart(context: Ctx, mark: Yaml.Mark): Result[Err, Ctx] =
-                handler.event(context, Event.DocumentStart(mark))
-
-            def mappingStart(context: Ctx, meta: Yaml.Meta): Result[Err, Ctx] =
-                stack = CollectionKind.Mapping :: stack
-                handler.event(context, Event.MappingStart(meta))
-
-            def sequenceStart(context: Ctx, meta: Yaml.Meta): Result[Err, Ctx] =
-                stack = CollectionKind.Sequence :: stack
-                handler.event(context, Event.SequenceStart(meta))
-
-            def scalar(context: Ctx, value: String, meta: Yaml.ScalarMeta): Result[Err, Ctx] =
-                handler.event(context, Event.Scalar(value, meta))
-
-            def alias(context: Ctx, name: Yaml.Anchor, mark: Yaml.Mark): Result[Err, Ctx] =
-                handler.event(context, Event.Alias(name, mark))
-
-            def nodeEnd(context: Ctx, mark: Yaml.Mark): Result[Err, Ctx] =
-                stack match
-                    case kind :: rest =>
-                        stack = rest
-                        handler.event(context, Event.CollectionEnd(kind, mark))
-                    case Nil =>
-                        handler.event(context, Event.CollectionEnd(CollectionKind.Mapping, mark))
-
-            def documentEnd(context: Ctx, mark: Yaml.Mark): Result[Err, Ctx] =
-                handler.event(context, Event.DocumentEnd(mark))
-
-            def streamEnd(context: Ctx, mark: Yaml.Mark): Result[Err, Ctx] =
-                handler.event(context, Event.StreamEnd(mark))
-        end new
-    end toVisitor
 
     final class Renderer private[YamlEvents] (config: Yaml.WriterConfig) extends Yaml.Events.Handler[Unit, DecodeException]:
 
@@ -74,40 +33,41 @@ private[kyo] object YamlEvents:
         private var stack: List[Frame] = Nil
         private var finalized: Boolean = false
 
-        def event(context: Unit, event: Event): Result[DecodeException, Unit] =
-            event match
-                case Event.StreamStart(_)   => Result.unit
-                case Event.DocumentStart(_) => Result.unit
-                case Event.DocumentEnd(_)   => Result.unit
-                case Event.StreamEnd(_)     => Result.unit
-                case Event.MappingStart(meta, size) =>
-                    startCollection(isMapping = true, size, properties(meta.anchor, meta.tag))
-                    Result.unit
-                case Event.SequenceStart(meta, size) =>
-                    startCollection(isMapping = false, size, properties(meta.anchor, meta.tag))
-                    Result.unit
-                case Event.Scalar(value, meta) =>
-                    writeScalar(value, meta)
-                    Result.unit
-                case Event.Alias(name, _) =>
-                    writeRenderedScalar(s"*${name.value}")
-                    Result.unit
-                case Event.CollectionEnd(_, _) =>
-                    stack match
-                        case (frame: MappingFrame) :: rest =>
-                            stack = rest
-                            if frame.flow then out.append('}')
-                            else if frame.unknownSize && frame.empty && frame.key.isEmpty then appendEmptyCollection("{}")
-                        case (frame: SequenceFrame) :: rest =>
-                            stack = rest
-                            if frame.flow then out.append(']')
-                            else if frame.unknownSize && frame.empty then appendEmptyCollection("[]")
-                        case _ :: rest => stack = rest
-                        case Nil       => ()
-                    end match
-                    Result.unit
+        override def mappingStart(context: Unit, meta: Yaml.Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
+            startCollection(isMapping = true, size, properties(meta.anchor, meta.tag))
+            Result.unit
+        end mappingStart
+
+        override def sequenceStart(context: Unit, meta: Yaml.Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
+            startCollection(isMapping = false, size, properties(meta.anchor, meta.tag))
+            Result.unit
+        end sequenceStart
+
+        override def scalar(context: Unit, value: String, meta: Yaml.ScalarMeta): Result[DecodeException, Unit] =
+            writeScalar(value, meta)
+            Result.unit
+        end scalar
+
+        override def alias(context: Unit, name: Yaml.Anchor, mark: Yaml.Mark): Result[DecodeException, Unit] =
+            writeRenderedScalar(s"*${name.value}")
+            Result.unit
+        end alias
+
+        override def collectionEnd(context: Unit, kind: CollectionKind, mark: Yaml.Mark): Result[DecodeException, Unit] =
+            stack match
+                case (frame: MappingFrame) :: rest =>
+                    stack = rest
+                    if frame.flow then out.append('}')
+                    else if frame.unknownSize && frame.empty && frame.key.isEmpty then appendEmptyCollection("{}")
+                case (frame: SequenceFrame) :: rest =>
+                    stack = rest
+                    if frame.flow then out.append(']')
+                    else if frame.unknownSize && frame.empty then appendEmptyCollection("[]")
+                case _ :: rest => stack = rest
+                case Nil       => ()
             end match
-        end event
+            Result.unit
+        end collectionEnd
 
         def resultString: String =
             if !finalized then
@@ -242,12 +202,12 @@ private[kyo] object YamlEvents:
                 case (frame: MappingFrame) :: _ if frame.flow =>
                     frame.empty = false
                     appendFlowMappingPrefix(frame)
-                    out.append(renderScalar(value, meta, frame.indent + indent))
+                    appendScalar(value, meta, frame.indent + indent)
                     frame.key = ""
                 case (frame: SequenceFrame) :: _ if frame.flow =>
                     frame.empty = false
                     appendFlowSequencePrefix(frame)
-                    out.append(renderScalar(value, meta, frame.indent + indent))
+                    appendScalar(value, meta, frame.indent + indent)
                 case (frame: MappingFrame) :: _ if frame.key.isEmpty =>
                     frame.empty = false
                     frame.key = renderKey(value, meta, flow = false)
@@ -257,17 +217,17 @@ private[kyo] object YamlEvents:
                     else writeIndent(frame.indent)
                     out.append(frame.key)
                     out.append(": ")
-                    appendRenderedScalar(renderScalar(value, meta, frame.indent + indent))
+                    appendScalarLine(value, meta, frame.indent + indent)
                     frame.key = ""
                 case (frame: SequenceFrame) :: _ =>
                     frame.empty = false
                     writeIndent(frame.indent)
                     out.append("- ")
-                    appendRenderedScalar(renderScalar(value, meta, frame.indent + indent))
+                    appendScalarLine(value, meta, frame.indent + indent)
                 case (_: EmptyFrame) :: _ =>
                     ()
                 case Nil =>
-                    appendRootScalar(renderScalar(value, meta, indent))
+                    appendRootScalar(value, meta, indent)
             end match
         end writeScalar
 
@@ -331,17 +291,26 @@ private[kyo] object YamlEvents:
             end if
         end appendEmptyCollection
 
-        private def renderScalar(value: String, meta: Yaml.ScalarMeta, contentIndent: Int): String =
-            val rendered =
-                meta.style match
-                    case Yaml.ScalarStyle.Plain        => value
-                    case Yaml.ScalarStyle.SingleQuoted => Scalar.singleQuoted(value)
-                    case Yaml.ScalarStyle.DoubleQuoted => Scalar.doubleQuoted(value)
-                    case Yaml.ScalarStyle.Literal      => Scalar.block(value, config, contentIndent, folded = false)
-                    case Yaml.ScalarStyle.Folded       => Scalar.block(value, config, contentIndent, folded = true)
-            val prefix = properties(meta.anchor, meta.tag)
-            prefixed(prefix, rendered)
-        end renderScalar
+        private def appendScalarLine(value: String, meta: Yaml.ScalarMeta, contentIndent: Int): Unit =
+            appendScalar(value, meta, contentIndent)
+            if out.isEmpty || out.charAt(out.length - 1) != '\n' then out.append('\n')
+        end appendScalarLine
+
+        private def appendRootScalar(value: String, meta: Yaml.ScalarMeta, contentIndent: Int): Unit =
+            appendScalar(value, meta, contentIndent)
+            if config.trailingNewline && (out.isEmpty || out.charAt(out.length - 1) != '\n') then out.append('\n')
+        end appendRootScalar
+
+        private def appendScalar(value: String, meta: Yaml.ScalarMeta, contentIndent: Int): Unit =
+            appendPropertyPrefix(properties(meta.anchor, meta.tag))
+            meta.style match
+                case Yaml.ScalarStyle.Plain        => out.append(value)
+                case Yaml.ScalarStyle.SingleQuoted => Scalar.appendSingleQuoted(out, value)
+                case Yaml.ScalarStyle.DoubleQuoted => Scalar.appendDoubleQuoted(out, value)
+                case Yaml.ScalarStyle.Literal      => Scalar.appendBlock(out, value, config, contentIndent, folded = false)
+                case Yaml.ScalarStyle.Folded       => Scalar.appendBlock(out, value, config, contentIndent, folded = true)
+            end match
+        end appendScalar
 
         private def renderKey(value: String, meta: Yaml.ScalarMeta, flow: Boolean): String =
             val rendered =
@@ -419,26 +388,40 @@ private[kyo] object YamlEvents:
         private var flowDepth: Int    = 0
         private val eventMark         = Yaml.Mark(0, 1, 1)
 
-        private[YamlEvents] def emit(event: Event): Unit
+        private[YamlEvents] def emitStreamStart(mark: Yaml.Mark): Unit
+
+        private[YamlEvents] def emitDocumentStart(mark: Yaml.Mark): Unit
+
+        private[YamlEvents] def emitMappingStart(meta: Yaml.Meta, size: Maybe[Int]): Unit
+
+        private[YamlEvents] def emitSequenceStart(meta: Yaml.Meta, size: Maybe[Int]): Unit
+
+        private[YamlEvents] def emitScalar(value: String, meta: Yaml.ScalarMeta): Unit
+
+        private[YamlEvents] def emitCollectionEnd(kind: CollectionKind, mark: Yaml.Mark): Unit
+
+        private[YamlEvents] def emitDocumentEnd(mark: Yaml.Mark): Unit
+
+        private[YamlEvents] def emitStreamEnd(mark: Yaml.Mark): Unit
 
         def objectStart(name: String, size: Int): Unit =
             ensureStarted()
-            emit(Event.MappingStart(Yaml.Meta(Absent, Absent, mark), knownSize(size)))
+            emitMappingStart(Yaml.Meta(Absent, Absent, mark), knownSize(size))
             startFlowContext()
         end objectStart
 
         def objectEnd(): Unit =
-            emit(Event.CollectionEnd(CollectionKind.Mapping, mark))
+            emitCollectionEnd(CollectionKind.Mapping, mark)
             endFlowContext()
 
         def arrayStart(size: Int): Unit =
             ensureStarted()
-            emit(Event.SequenceStart(Yaml.Meta(Absent, Absent, mark), knownSize(size)))
+            emitSequenceStart(Yaml.Meta(Absent, Absent, mark), knownSize(size))
             startFlowContext()
         end arrayStart
 
         def arrayEnd(): Unit =
-            emit(Event.CollectionEnd(CollectionKind.Sequence, mark))
+            emitCollectionEnd(CollectionKind.Sequence, mark)
             endFlowContext()
 
         def fieldBytes(nameBytes: Array[Byte], fieldId: Int): Unit =
@@ -446,12 +429,12 @@ private[kyo] object YamlEvents:
 
         override def field(name: String, fieldId: Int): Unit =
             ensureStarted()
-            emit(Event.Scalar(name, scalarMeta(Yaml.ScalarStyle.Plain)))
+            emitScalar(name, scalarMeta(Yaml.ScalarStyle.Plain))
         end field
 
         def string(value: String): Unit =
             ensureStarted()
-            emit(Event.Scalar(value, scalarMeta(Scalar.stringStyle(value, config, flowDepth > 0))))
+            emitScalar(value, scalarMeta(Scalar.stringStyle(value, config, flowDepth > 0)))
 
         def int(value: Int): Unit =
             scalar(value.toString)
@@ -517,12 +500,12 @@ private[kyo] object YamlEvents:
 
         private def scalar(value: String): Unit =
             ensureStarted()
-            emit(Event.Scalar(value, scalarMeta(Yaml.ScalarStyle.Plain)))
+            emitScalar(value, scalarMeta(Yaml.ScalarStyle.Plain))
         end scalar
 
         private def quoted(value: String): Unit =
             ensureStarted()
-            emit(Event.Scalar(value, scalarMeta(Yaml.ScalarStyle.DoubleQuoted)))
+            emitScalar(value, scalarMeta(Yaml.ScalarStyle.DoubleQuoted))
         end quoted
 
         private def specialFloat(value: String): Unit =
@@ -532,7 +515,7 @@ private[kyo] object YamlEvents:
                 config.specialFloatStyle match
                     case SpecialFloatStyle.TaggedYamlCore => scalarMeta(Yaml.ScalarStyle.DoubleQuoted, Maybe(Yaml.Tag("!!float")))
                     case SpecialFloatStyle.YamlCore       => scalarMeta(Yaml.ScalarStyle.Plain)
-            emit(Event.Scalar(value, meta))
+            emitScalar(value, meta)
         end specialFloat
 
         private def ryuFloat(value: Float): String =
@@ -559,15 +542,15 @@ private[kyo] object YamlEvents:
         private def ensureStarted(): Unit =
             if !started then
                 started = true
-                emit(Event.StreamStart(mark))
-                emit(Event.DocumentStart(mark))
+                emitStreamStart(mark)
+                emitDocumentStart(mark)
             end if
         end ensureStarted
 
         private[YamlEvents] def finishEvents(): Unit =
             if started && !finished then
-                emit(Event.DocumentEnd(mark))
-                emit(Event.StreamEnd(mark))
+                emitDocumentEnd(mark)
+                emitStreamEnd(mark)
                 finished = true
             end if
         end finishEvents
@@ -611,8 +594,29 @@ private[kyo] object YamlEvents:
             current
         end resultContext
 
-        private[YamlEvents] def emit(event: Event): Unit =
-            current = current.flatMap(handler.event(_, event))
+        private[YamlEvents] def emitStreamStart(mark: Yaml.Mark): Unit =
+            current = current.flatMap(handler.streamStart(_, mark))
+
+        private[YamlEvents] def emitDocumentStart(mark: Yaml.Mark): Unit =
+            current = current.flatMap(handler.documentStart(_, mark))
+
+        private[YamlEvents] def emitMappingStart(meta: Yaml.Meta, size: Maybe[Int]): Unit =
+            current = current.flatMap(handler.mappingStart(_, meta, size))
+
+        private[YamlEvents] def emitSequenceStart(meta: Yaml.Meta, size: Maybe[Int]): Unit =
+            current = current.flatMap(handler.sequenceStart(_, meta, size))
+
+        private[YamlEvents] def emitScalar(value: String, meta: Yaml.ScalarMeta): Unit =
+            current = current.flatMap(handler.scalar(_, value, meta))
+
+        private[YamlEvents] def emitCollectionEnd(kind: CollectionKind, mark: Yaml.Mark): Unit =
+            current = current.flatMap(handler.collectionEnd(_, kind, mark))
+
+        private[YamlEvents] def emitDocumentEnd(mark: Yaml.Mark): Unit =
+            current = current.flatMap(handler.documentEnd(_, mark))
+
+        private[YamlEvents] def emitStreamEnd(mark: Yaml.Mark): Unit =
+            current = current.flatMap(handler.streamEnd(_, mark))
     end EventWriter
 
     object EventWriter:
@@ -647,12 +651,36 @@ private[kyo] object YamlEvents:
             resetEvents()
         end release
 
-        private[YamlEvents] def emit(event: Event): Unit =
-            renderer.event((), event) match
+        private[YamlEvents] def emitStreamStart(mark: Yaml.Mark): Unit =
+            handle(renderer.streamStart((), mark))
+
+        private[YamlEvents] def emitDocumentStart(mark: Yaml.Mark): Unit =
+            handle(renderer.documentStart((), mark))
+
+        private[YamlEvents] def emitMappingStart(meta: Yaml.Meta, size: Maybe[Int]): Unit =
+            handle(renderer.mappingStart((), meta, size))
+
+        private[YamlEvents] def emitSequenceStart(meta: Yaml.Meta, size: Maybe[Int]): Unit =
+            handle(renderer.sequenceStart((), meta, size))
+
+        private[YamlEvents] def emitScalar(value: String, meta: Yaml.ScalarMeta): Unit =
+            handle(renderer.scalar((), value, meta))
+
+        private[YamlEvents] def emitCollectionEnd(kind: CollectionKind, mark: Yaml.Mark): Unit =
+            handle(renderer.collectionEnd((), kind, mark))
+
+        private[YamlEvents] def emitDocumentEnd(mark: Yaml.Mark): Unit =
+            handle(renderer.documentEnd((), mark))
+
+        private[YamlEvents] def emitStreamEnd(mark: Yaml.Mark): Unit =
+            handle(renderer.streamEnd((), mark))
+
+        private def handle(result: Result[DecodeException, Unit]): Unit =
+            result match
                 case Result.Success(_) => ()
                 case Result.Failure(e) => throw e
                 case Result.Panic(e)   => throw e
-        end emit
+        end handle
     end Writer
 
     object Writer:
@@ -712,6 +740,11 @@ private[kyo] object YamlEvents:
 
         def doubleQuoted(value: String): String =
             val out = new StringBuilder
+            appendDoubleQuoted(out, value)
+            out.toString
+        end doubleQuoted
+
+        def appendDoubleQuoted(out: StringBuilder, value: String): Unit =
             out.append('"')
 
             @tailrec def loop(i: Int): Unit =
@@ -735,11 +768,15 @@ private[kyo] object YamlEvents:
 
             loop(0)
             out.append('"')
-            out.toString
-        end doubleQuoted
+        end appendDoubleQuoted
 
         def singleQuoted(value: String): String =
             val out = new StringBuilder
+            appendSingleQuoted(out, value)
+            out.toString
+        end singleQuoted
+
+        def appendSingleQuoted(out: StringBuilder, value: String): Unit =
             out.append('\'')
 
             @tailrec def loop(i: Int): Unit =
@@ -753,8 +790,7 @@ private[kyo] object YamlEvents:
 
             loop(0)
             out.append('\'')
-            out.toString
-        end singleQuoted
+        end appendSingleQuoted
 
         def canSingleQuote(value: String): Boolean =
             @tailrec def loop(i: Int): Boolean =
@@ -768,6 +804,17 @@ private[kyo] object YamlEvents:
 
         def block(value: String, config: Yaml.WriterConfig, contentIndent: Int, folded: Boolean): String =
             val out = new StringBuilder
+            appendBlock(out, value, config, contentIndent, folded)
+            out.toString
+        end block
+
+        def appendBlock(
+            out: StringBuilder,
+            value: String,
+            config: Yaml.WriterConfig,
+            contentIndent: Int,
+            folded: Boolean
+        ): Unit =
             out.append(if folded then ">" else "|")
             out.append(chompingIndicator(value, config))
             out.append('\n')
@@ -795,8 +842,7 @@ private[kyo] object YamlEvents:
             end appendLines
 
             appendLines(0)
-            out.toString
-        end block
+        end appendBlock
 
         def appendIndent(out: StringBuilder, n: Int): Unit =
             @tailrec def loop(i: Int): Unit =

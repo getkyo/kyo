@@ -12,15 +12,15 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private var pendingAnchor: Maybe[Anchor] = Absent
     private var pendingTag: Maybe[Tag]       = Absent
 
-    def visit[Ctx, Err, A](context: Ctx)(visitor: YamlVisitor[Ctx, Err, A]): Result[Err | DecodeException, A] =
-        run(context, visitor.streamStart(_, mark())) { c1 =>
+    def visitEvents[Ctx, Err](context: Ctx)(handler: Yaml.Events.Handler[Ctx, Err]): Result[Err | DecodeException, Ctx] =
+        run(context, handler.streamStart(_, mark())) { c1 =>
             skipIgnorable()
             if isDocumentMarker("---") then
                 val _ = readRestOfLine()
-            run(c1, visitor.documentStart(_, mark())) { c2 =>
-                parseNode(c2, 0, visitor).flatMap { c3 =>
+            run(c1, handler.documentStart(_, mark())) { c2 =>
+                parseNode(c2, 0, handler).flatMap { c3 =>
                     skipIgnorable()
-                    run(c3, visitor.documentEnd(_, mark())) { c4 =>
+                    run(c3, handler.documentEnd(_, mark())) { c4 =>
                         skipIgnorable()
                         if isDocumentMarker("...") then
                             val endMark = mark()
@@ -28,24 +28,24 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                             skipIgnorable()
                             if pos < input.length then
                                 Result.fail(errorAt(endMark, "Unexpected content after YAML document end"))
-                            else visitor.streamEnd(c4, mark())
+                            else handler.streamEnd(c4, mark())
                         else if isDocumentMarker("---") then
                             Result.fail(error("Expected a single YAML document for this parser entry point"))
                         else if pos < input.length then
                             Result.fail(error("Unexpected content after YAML document"))
-                        else visitor.streamEnd(c4, mark())
+                        else handler.streamEnd(c4, mark())
                         end if
                     }
                 }
             }
         }
-    end visit
-
-    def visitEvents[Ctx, Err](context: Ctx)(handler: Yaml.Events.Handler[Ctx, Err]): Result[Err | DecodeException, Ctx] =
-        visit(context)(YamlEvents.toVisitor(handler))
     end visitEvents
 
-    private def parseNode[Ctx, Err, A](context: Ctx, indent: Int, visitor: YamlVisitor[Ctx, Err, A]): Result[Err | DecodeException, Ctx] =
+    private def parseNode[Ctx, Err](
+        context: Ctx,
+        indent: Int,
+        visitor: Yaml.Events.Handler[Ctx, Err]
+    ): Result[Err | DecodeException, Ctx] =
         skipIgnorable()
         if pos >= input.length then
             val (anchor, tag) = takeProperties()
@@ -64,18 +64,18 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         end if
     end parseNode
 
-    private def parseBlockMapping[Ctx, Err, A](
+    private def parseBlockMapping[Ctx, Err](
         context: Ctx,
         indent: Int,
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
-        run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()))) { c0 =>
+        run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()), Absent)) { c0 =>
             def loop(context: Ctx): Result[Err | DecodeException, Ctx] =
                 skipBlankAndCommentLines()
                 val lineText = if pos < input.length then currentLineText() else ""
                 if pos >= input.length || currentIndent() < indent || !isBlockMappingLine(lineText) then
-                    visitor.nodeEnd(context, mark())
+                    visitor.collectionEnd(context, Events.CollectionKind.Mapping, mark())
                 else
                     parseBlockMappingEntry(context, indent, visitor).flatMap(loop)
                 end if
@@ -84,17 +84,17 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         }
     end parseBlockMapping
 
-    private def parseBlockSequence[Ctx, Err, A](
+    private def parseBlockSequence[Ctx, Err](
         context: Ctx,
         indent: Int,
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
-        run(context, visitor.sequenceStart(_, Meta(anchor, tag, mark()))) { c0 =>
+        run(context, visitor.sequenceStart(_, Meta(anchor, tag, mark()), Absent)) { c0 =>
             def loop(context: Ctx): Result[Err | DecodeException, Ctx] =
                 skipBlankAndCommentLines()
                 if pos >= input.length || currentIndent() < indent || !startsWithSequenceEntryAtIndent() then
-                    visitor.nodeEnd(context, mark())
+                    visitor.collectionEnd(context, Events.CollectionKind.Sequence, mark())
                 else
                     consumeIndent(indent)
                     advance(1)
@@ -121,7 +121,10 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         }
     end parseBlockSequence
 
-    private def parseScalarValue[Ctx, Err, A](context: Ctx, visitor: YamlVisitor[Ctx, Err, A]): Result[Err | DecodeException, Ctx] =
+    private def parseScalarValue[Ctx, Err](
+        context: Ctx,
+        visitor: Yaml.Events.Handler[Ctx, Err]
+    ): Result[Err | DecodeException, Ctx] =
         val valueMark                = mark()
         val indent                   = currentIndent()
         val text                     = stripComment(readRestOfLine()).trim
@@ -134,10 +137,10 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         end match
     end parseScalarValue
 
-    private def parseInlineScalar[Ctx, Err, A](
+    private def parseInlineScalar[Ctx, Err](
         text: String,
         context: Ctx,
-        visitor: YamlVisitor[Ctx, Err, A],
+        visitor: Yaml.Events.Handler[Ctx, Err],
         valueMark: Mark = mark()
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag, valueText) = readProperties(text)
@@ -170,10 +173,10 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         end if
     end parseInlineScalar
 
-    private def parseBlockMappingEntry[Ctx, Err, A](
+    private def parseBlockMappingEntry[Ctx, Err](
         context: Ctx,
         indent: Int,
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         consumeIndent(indent)
         val keyMark       = mark()
@@ -203,10 +206,10 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         }
     end parseBlockMappingEntry
 
-    private def parseEmptyBlockMappingValue[Ctx, Err, A](
+    private def parseEmptyBlockMappingValue[Ctx, Err](
         context: Ctx,
         indent: Int,
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         skipBlankAndCommentLines()
         if pos >= input.length || (currentIndent() <= indent && !startsWithSequenceEntryAtIndent()) then
@@ -233,11 +236,11 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         else Absent
     end blockScalarHeader
 
-    private def parseBlockMappingScalarValue[Ctx, Err, A](
+    private def parseBlockMappingScalarValue[Ctx, Err](
         text: String,
         context: Ctx,
         indent: Int,
-        visitor: YamlVisitor[Ctx, Err, A],
+        visitor: Yaml.Events.Handler[Ctx, Err],
         valueMark: Mark
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag, valueText) = readProperties(text)
@@ -413,14 +416,14 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         readRestOfLine()
     end readContinuationText
 
-    private def parseCompactSequenceMapping[Ctx, Err, A](
+    private def parseCompactSequenceMapping[Ctx, Err](
         firstEntry: String,
         context: Ctx,
         sequenceIndent: Int,
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
-        run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()))) { c0 =>
+        run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()), Absent)) { c0 =>
             parseCompactMappingEntry(firstEntry, c0, sequenceIndent + 2, visitor).flatMap { c1 =>
                 def loop(context: Ctx): Result[Err | DecodeException, Ctx] =
                     skipBlankAndCommentLines()
@@ -428,18 +431,18 @@ final class YamlParser private (private val input: String)(using frame: Frame):
                     val lineText    = if pos < input.length then currentLineText() else ""
                     if pos < input.length && currentIndent() >= fieldIndent && isBlockMappingLine(lineText) then
                         parseBlockMappingEntry(context, fieldIndent, visitor).flatMap(loop)
-                    else visitor.nodeEnd(context, mark())
+                    else visitor.collectionEnd(context, Events.CollectionKind.Mapping, mark())
                 end loop
                 loop(c1)
             }
         }
     end parseCompactSequenceMapping
 
-    private def parseCompactMappingEntry[Ctx, Err, A](
+    private def parseCompactMappingEntry[Ctx, Err](
         text: String,
         context: Ctx,
         indent: Int,
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         val idx = findFlowMappingSeparator(text)
         if idx < 0 then parseInlineMappingEntry(text, context, visitor)
@@ -467,37 +470,38 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         end if
     end parseCompactMappingEntry
 
-    private def parseFlowMapping[Ctx, Err, A](
+    private def parseFlowMapping[Ctx, Err](
         text: String,
         context: Ctx,
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
-        run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()))) { c0 =>
+        run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()), Absent)) { c0 =>
             val inner = text.substring(1, text.length - 1).trim
-            foldTopLevel(inner, ',', c0)(parseInlineMappingEntry(_, _, visitor)).flatMap(visitor.nodeEnd(_, mark()))
+            foldTopLevel(inner, ',', c0)(parseInlineMappingEntry(_, _, visitor))
+                .flatMap(visitor.collectionEnd(_, Events.CollectionKind.Mapping, mark()))
         }
     end parseFlowMapping
 
-    private def parseFlowSequence[Ctx, Err, A](
+    private def parseFlowSequence[Ctx, Err](
         text: String,
         context: Ctx,
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
-        run(context, visitor.sequenceStart(_, Meta(anchor, tag, mark()))) { c0 =>
+        run(context, visitor.sequenceStart(_, Meta(anchor, tag, mark()), Absent)) { c0 =>
             val inner = text.substring(1, text.length - 1).trim
             foldTopLevel(inner, ',', c0) { (entry, context) =>
                 if isInlineMappingText(entry) then parseFlowMapping(s"{$entry}", context, visitor)
                 else parseInlineScalar(entry, context, visitor)
-            }.flatMap(visitor.nodeEnd(_, mark()))
+            }.flatMap(visitor.collectionEnd(_, Events.CollectionKind.Sequence, mark()))
         }
     end parseFlowSequence
 
-    private def parseInlineMappingEntry[Ctx, Err, A](
+    private def parseInlineMappingEntry[Ctx, Err](
         text: String,
         context: Ctx,
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         val idx = findFlowMappingSeparator(text)
         if idx < 0 then
@@ -526,7 +530,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         YamlSource.trimmedRange(text, start, end)
     end trimmedRange
 
-    private def parseBlockScalar[Ctx, Err, A](
+    private def parseBlockScalar[Ctx, Err](
         context: Ctx,
         parentIndent: Int,
         explicitIndent: Maybe[Int],
@@ -534,7 +538,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         chomp: Char,
         anchor: Maybe[Anchor],
         tag: Maybe[Tag],
-        visitor: YamlVisitor[Ctx, Err, A]
+        visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         val indent = explicitIndent match
             case Present(n) => parentIndent + n

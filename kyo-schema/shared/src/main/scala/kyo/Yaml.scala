@@ -454,11 +454,102 @@ object Yaml:
             case StreamEnd(mark: Mark)
         end Event
 
-        /** Event handler that threads caller-owned context through a YAML event stream. */
+        /** Event handler that threads caller-owned context through a YAML event stream.
+          *
+          * This method-based protocol is the allocation-light event surface used by parsers, renderers, and schema writers. Implement only
+          * the callbacks relevant to a tool; callbacks return the context unchanged by default. Use [[EventHandler]] when pattern matching
+          * on first-class [[Event]] values is more convenient than overriding individual callbacks.
+          */
         trait Handler[Ctx, Err]:
-            /** Handles one YAML event and returns the next context or a typed error. */
-            def event(context: Ctx, event: Event): Result[Err, Ctx]
+            /** Handles the start of a YAML stream. */
+            def streamStart(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                Result.succeed(context)
+
+            /** Handles the start of a YAML document. */
+            def documentStart(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                Result.succeed(context)
+
+            /** Handles the start of a YAML mapping. */
+            def mappingStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err, Ctx] =
+                Result.succeed(context)
+
+            /** Handles the start of a YAML sequence. */
+            def sequenceStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err, Ctx] =
+                Result.succeed(context)
+
+            /** Handles a YAML scalar. */
+            def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err, Ctx] =
+                Result.succeed(context)
+
+            /** Handles an alias reference to an anchor declared elsewhere in the document. */
+            def alias(context: Ctx, name: Anchor, mark: Mark): Result[Err, Ctx] =
+                Result.succeed(context)
+
+            /** Handles the end of a YAML mapping or sequence. */
+            def collectionEnd(context: Ctx, kind: CollectionKind, mark: Mark): Result[Err, Ctx] =
+                Result.succeed(context)
+
+            /** Handles the end of a YAML document. */
+            def documentEnd(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                Result.succeed(context)
+
+            /** Handles the end of a YAML stream. */
+            def streamEnd(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                Result.succeed(context)
+
+            /** Handles one first-class YAML event by dispatching to the method-based callbacks. */
+            def event(context: Ctx, event: Event): Result[Err, Ctx] =
+                event match
+                    case Event.StreamStart(mark)         => streamStart(context, mark)
+                    case Event.DocumentStart(mark)       => documentStart(context, mark)
+                    case Event.MappingStart(meta, size)  => mappingStart(context, meta, size)
+                    case Event.SequenceStart(meta, size) => sequenceStart(context, meta, size)
+                    case Event.Scalar(value, meta)       => scalar(context, value, meta)
+                    case Event.Alias(name, mark)         => alias(context, name, mark)
+                    case Event.CollectionEnd(kind, mark) => collectionEnd(context, kind, mark)
+                    case Event.DocumentEnd(mark)         => documentEnd(context, mark)
+                    case Event.StreamEnd(mark)           => streamEnd(context, mark)
+                end match
+            end event
         end Handler
+
+        /** Event handler specialization for tools that prefer first-class [[Event]] values.
+          *
+          * This trait extends the method-based [[Handler]] protocol, so it can be passed anywhere a handler is expected. Method callbacks
+          * are converted to [[Event]] values at the edge. Use it for collectors, debuggers, replayers, and pattern-matching tools where
+          * event allocation is intentional.
+          */
+        trait EventHandler[Ctx, Err] extends Handler[Ctx, Err]:
+            /** Handles one YAML event and returns the next context or a typed error. */
+            override def event(context: Ctx, event: Event): Result[Err, Ctx]
+
+            final override def streamStart(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                event(context, Event.StreamStart(mark))
+
+            final override def documentStart(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                event(context, Event.DocumentStart(mark))
+
+            final override def mappingStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err, Ctx] =
+                event(context, Event.MappingStart(meta, size))
+
+            final override def sequenceStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err, Ctx] =
+                event(context, Event.SequenceStart(meta, size))
+
+            final override def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err, Ctx] =
+                event(context, Event.Scalar(value, meta))
+
+            final override def alias(context: Ctx, name: Anchor, mark: Mark): Result[Err, Ctx] =
+                event(context, Event.Alias(name, mark))
+
+            final override def collectionEnd(context: Ctx, kind: CollectionKind, mark: Mark): Result[Err, Ctx] =
+                event(context, Event.CollectionEnd(kind, mark))
+
+            final override def documentEnd(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                event(context, Event.DocumentEnd(mark))
+
+            final override def streamEnd(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                event(context, Event.StreamEnd(mark))
+        end EventHandler
 
         /** Event middleware that wraps a downstream handler.
           *
@@ -493,14 +584,34 @@ object Yaml:
                 new Processor[Err]:
                     def apply[Ctx](downstream: Handler[Ctx, Err]): Handler[Ctx, Err] =
                         new Handler[Ctx, Err]:
-                            def event(context: Ctx, event: Event): Result[Err, Ctx] =
-                                event match
-                                    case Event.Scalar(value, meta) =>
-                                        f(value, meta).flatMap { case (nextValue, nextMeta) =>
-                                            downstream.event(context, Event.Scalar(nextValue, nextMeta))
-                                        }
-                                    case other =>
-                                        downstream.event(context, other)
+                            override def streamStart(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                                downstream.streamStart(context, mark)
+
+                            override def documentStart(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                                downstream.documentStart(context, mark)
+
+                            override def mappingStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err, Ctx] =
+                                downstream.mappingStart(context, meta, size)
+
+                            override def sequenceStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err, Ctx] =
+                                downstream.sequenceStart(context, meta, size)
+
+                            override def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err, Ctx] =
+                                f(value, meta).flatMap { case (nextValue, nextMeta) =>
+                                    downstream.scalar(context, nextValue, nextMeta)
+                                }
+
+                            override def alias(context: Ctx, name: Anchor, mark: Mark): Result[Err, Ctx] =
+                                downstream.alias(context, name, mark)
+
+                            override def collectionEnd(context: Ctx, kind: CollectionKind, mark: Mark): Result[Err, Ctx] =
+                                downstream.collectionEnd(context, kind, mark)
+
+                            override def documentEnd(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                                downstream.documentEnd(context, mark)
+
+                            override def streamEnd(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                                downstream.streamEnd(context, mark)
                         end new
                     end apply
                 end new
@@ -516,9 +627,25 @@ object Yaml:
           */
         final class Renderer private (private val inner: internal.YamlEvents.Renderer) extends Handler[Unit, DecodeException]:
 
-            /** Handles one YAML event for rendering. */
-            def event(context: Unit, event: Event): Result[DecodeException, Unit] =
-                inner.event(context, event)
+            /** Handles the start of a YAML mapping. */
+            override def mappingStart(context: Unit, meta: Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
+                inner.mappingStart(context, meta, size)
+
+            /** Handles the start of a YAML sequence. */
+            override def sequenceStart(context: Unit, meta: Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
+                inner.sequenceStart(context, meta, size)
+
+            /** Handles a YAML scalar. */
+            override def scalar(context: Unit, value: String, meta: ScalarMeta): Result[DecodeException, Unit] =
+                inner.scalar(context, value, meta)
+
+            /** Handles an alias reference. */
+            override def alias(context: Unit, name: Anchor, mark: Mark): Result[DecodeException, Unit] =
+                inner.alias(context, name, mark)
+
+            /** Handles the end of a YAML mapping or sequence. */
+            override def collectionEnd(context: Unit, kind: CollectionKind, mark: Mark): Result[DecodeException, Unit] =
+                inner.collectionEnd(context, kind, mark)
 
             /** Returns the rendered YAML string, finalizing document markers if configured. */
             def resultString: String =
@@ -591,7 +718,9 @@ object Yaml:
 
     /** Parses a single YAML document into an optional DOM node tree. */
     def parse(input: String)(using Frame): Result[DecodeException, Node] =
-        internal.YamlParser(input).visit(())(NodeBuilder())
+        val builder = NodeBuilder()
+        internal.YamlParser(input).visitEvents(())(builder).flatMap(_ => builder.result)
+    end parse
 
     /** Parses one document from a YAML stream into an optional DOM node tree. */
     def parse(input: String, documentIndex: DocumentIndex)(using Frame): Result[DecodeException, Node] =
@@ -829,46 +958,80 @@ object Yaml:
     final private class MappingFrame(val meta: Meta, var entries: Chunk[(Node, Node)], var pendingKey: Maybe[Node]) extends NodeFrame
     final private class SequenceFrame(val meta: Meta, var elements: Chunk[Node])                                    extends NodeFrame
 
-    final private class NodeBuilder(using Frame) extends internal.YamlVisitor[Unit, DecodeException, Node]:
+    final private class NodeBuilder(using Frame) extends Events.Handler[Unit, DecodeException]:
         private var root: Maybe[Node]      = Absent
         private var stack: List[NodeFrame] = Nil
+        private var lastMark: Mark         = Mark(0, 1, 1)
 
-        def streamStart(context: Unit, mark: Mark): Result[DecodeException, Unit]   = Result.unit
-        def documentStart(context: Unit, mark: Mark): Result[DecodeException, Unit] = Result.unit
-        def documentEnd(context: Unit, mark: Mark): Result[DecodeException, Unit]   = Result.unit
+        def result: Result[DecodeException, Node] =
+            root match
+                case Present(node) if stack.isEmpty => Result.succeed(node)
+                case Present(_)                     => Result.fail(ParseException(Yaml(), "", "Unclosed YAML node", Nil, lastMark.index))
+                case Absent => Result.fail(ParseException(Yaml(), "", "Expected a YAML document", Nil, lastMark.index))
+            end match
+        end result
 
-        def mappingStart(context: Unit, meta: Meta): Result[DecodeException, Unit] =
+        override def streamStart(context: Unit, mark: Mark): Result[DecodeException, Unit] =
+            lastMark = mark
+            Result.unit
+        end streamStart
+
+        override def documentStart(context: Unit, mark: Mark): Result[DecodeException, Unit] =
+            lastMark = mark
+            Result.unit
+        end documentStart
+
+        override def documentEnd(context: Unit, mark: Mark): Result[DecodeException, Unit] =
+            lastMark = mark
+            Result.unit
+        end documentEnd
+
+        override def streamEnd(context: Unit, mark: Mark): Result[DecodeException, Unit] =
+            lastMark = mark
+            Result.unit
+        end streamEnd
+
+        override def mappingStart(context: Unit, meta: Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
+            lastMark = meta.mark
             stack = MappingFrame(meta, Chunk.empty, Absent) :: stack
             Result.unit
+        end mappingStart
 
-        def sequenceStart(context: Unit, meta: Meta): Result[DecodeException, Unit] =
+        override def sequenceStart(context: Unit, meta: Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
+            lastMark = meta.mark
             stack = SequenceFrame(meta, Chunk.empty) :: stack
             Result.unit
+        end sequenceStart
 
-        def scalar(context: Unit, value: String, meta: ScalarMeta): Result[DecodeException, Unit] =
+        override def scalar(context: Unit, value: String, meta: ScalarMeta): Result[DecodeException, Unit] =
+            lastMark = meta.mark
             addNode(Node.Scalar(value, meta))
 
-        def alias(context: Unit, name: Anchor, mark: Mark): Result[DecodeException, Unit] =
+        override def alias(context: Unit, name: Anchor, mark: Mark): Result[DecodeException, Unit] =
+            lastMark = mark
             addNode(Node.Alias(name, mark))
 
-        def nodeEnd(context: Unit, mark: Mark): Result[DecodeException, Unit] =
+        override def collectionEnd(context: Unit, kind: Events.CollectionKind, mark: Mark): Result[DecodeException, Unit] =
+            lastMark = mark
             stack match
                 case (f: MappingFrame) :: rest =>
-                    stack = rest
-                    addNode(Node.Mapping(f.entries, f.meta))
+                    if kind != Events.CollectionKind.Mapping then
+                        Result.fail(ParseException(Yaml(), "", "Unexpected YAML sequence end", Nil, mark.index))
+                    else
+                        stack = rest
+                        addNode(Node.Mapping(f.entries, f.meta))
+                    end if
                 case (f: SequenceFrame) :: rest =>
-                    stack = rest
-                    addNode(Node.Sequence(f.elements, f.meta))
+                    if kind != Events.CollectionKind.Sequence then
+                        Result.fail(ParseException(Yaml(), "", "Unexpected YAML mapping end", Nil, mark.index))
+                    else
+                        stack = rest
+                        addNode(Node.Sequence(f.elements, f.meta))
+                    end if
                 case Nil =>
                     Result.fail(ParseException(Yaml(), "", "Unexpected YAML node end", Nil, mark.index))
             end match
-        end nodeEnd
-
-        def streamEnd(context: Unit, mark: Mark): Result[DecodeException, Node] =
-            root match
-                case Present(node) => Result.succeed(node)
-                case Absent        => Result.fail(ParseException(Yaml(), "", "Expected a YAML document", Nil, mark.index))
-        end streamEnd
+        end collectionEnd
 
         private def addNode(node: Node): Result[DecodeException, Unit] =
             stack match

@@ -787,8 +787,8 @@ class YamlParserTest extends Test:
         }
 
         "treats local tags from the yaml document from hell as metadata only" in {
-            val handler = new Yaml.Events.Handler[List[String], String]:
-                def event(context: List[String], event: Yaml.Events.Event): Result[String, List[String]] =
+            val handler = new Yaml.Events.EventHandler[List[String], String]:
+                override def event(context: List[String], event: Yaml.Events.Event): Result[String, List[String]] =
                     event match
                         case Yaml.Events.Event.Scalar(value, meta) =>
                             Result.succeed(s"$value:${meta.tag.map(_.value).getOrElse("")}" :: context)

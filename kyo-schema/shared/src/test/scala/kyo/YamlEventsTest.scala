@@ -36,6 +36,45 @@ class YamlEventsTest extends Test:
             )
         }
 
+        "supports method handlers and event object handlers through one protocol" in {
+            val yaml = "name: Alice\n"
+
+            val methodHandler = new Yaml.Events.Handler[Chunk[String], Nothing]:
+                override def scalar(
+                    context: Chunk[String],
+                    value: String,
+                    meta: Yaml.ScalarMeta
+                ): Result[Nothing, Chunk[String]] =
+                    Result.succeed(context :+ s"scalar:$value:${meta.style}")
+            end methodHandler
+
+            val eventHandler = new Yaml.Events.EventHandler[Chunk[String], Nothing]:
+                override def event(context: Chunk[String], event: Yaml.Events.Event): Result[Nothing, Chunk[String]] =
+                    Result.succeed(context :+ label(event))
+            end eventHandler
+
+            assert(
+                Yaml.Events.visit(yaml, Chunk.empty[String])(methodHandler) ==
+                    Result.succeed(Chunk(
+                        "scalar:name:Plain",
+                        "scalar:Alice:Plain"
+                    ))
+            )
+            assert(
+                Yaml.Events.visit(yaml, Chunk.empty[String])(eventHandler) ==
+                    Result.succeed(Chunk(
+                        "streamStart",
+                        "documentStart",
+                        "mappingStart::unknown",
+                        "scalar:name:Plain",
+                        "scalar:Alice:Plain",
+                        "collectionEnd:Mapping",
+                        "documentEnd",
+                        "streamEnd"
+                    ))
+            )
+        }
+
         "renders transformed parser events through the public renderer" in {
             val renderer = Yaml.Events.Renderer(Yaml.WriterConfig.Default)
             val uppercase =
@@ -210,8 +249,8 @@ end YamlEventsTest
 
 private object YamlEventsTest:
 
-    val labelCollector = new Yaml.Events.Handler[Chunk[String], Nothing]:
-        def event(context: Chunk[String], event: Yaml.Events.Event): Result[Nothing, Chunk[String]] =
+    val labelCollector = new Yaml.Events.EventHandler[Chunk[String], Nothing]:
+        override def event(context: Chunk[String], event: Yaml.Events.Event): Result[Nothing, Chunk[String]] =
             Result.succeed(context :+ label(event))
     end labelCollector
 
@@ -247,8 +286,8 @@ private object YamlEventsTest:
         val empty: AnchorAudit = AnchorAudit(Set.empty, Set.empty, Set.empty)
     end AnchorAudit
 
-    object AnchorAuditHandler extends Yaml.Events.Handler[AnchorAudit, Nothing]:
-        def event(context: AnchorAudit, event: Yaml.Events.Event): Result[Nothing, AnchorAudit] =
+    object AnchorAuditHandler extends Yaml.Events.EventHandler[AnchorAudit, Nothing]:
+        override def event(context: AnchorAudit, event: Yaml.Events.Event): Result[Nothing, AnchorAudit] =
             event match
                 case Yaml.Events.Event.MappingStart(meta, _)  => Result.succeed(declare(context, meta.anchor, "mapping"))
                 case Yaml.Events.Event.SequenceStart(meta, _) => Result.succeed(declare(context, meta.anchor, "sequence"))
@@ -299,8 +338,8 @@ private object YamlEventsTest:
 
     final case class SequenceBuildFrame(meta: Yaml.Meta, elements: Chunk[Yaml.Node]) extends BuildFrame
 
-    object NodeTreeHandler extends Yaml.Events.Handler[NodeTreeContext, NodeTreeError]:
-        def event(context: NodeTreeContext, event: Yaml.Events.Event): Result[NodeTreeError, NodeTreeContext] =
+    object NodeTreeHandler extends Yaml.Events.EventHandler[NodeTreeContext, NodeTreeError]:
+        override def event(context: NodeTreeContext, event: Yaml.Events.Event): Result[NodeTreeError, NodeTreeContext] =
             val next = context.copy(lastMark = mark(event))
             event match
                 case Yaml.Events.Event.MappingStart(meta, _) =>
