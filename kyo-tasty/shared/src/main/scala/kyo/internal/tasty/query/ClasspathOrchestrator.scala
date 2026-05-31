@@ -610,7 +610,7 @@ object ClasspathOrchestrator:
                 typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
                 declarationIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_))),
                 permittedSubclassIds = d.permittedSubclassIds.map(_.map(SymbolId(_))),
-                body = d.body
+                bodyRecord = d.body
             )
             i += 1
         end while

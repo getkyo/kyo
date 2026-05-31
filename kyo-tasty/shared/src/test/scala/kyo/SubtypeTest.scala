@@ -33,7 +33,7 @@ class SubtypeTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
-            body = Maybe.Absent
+            bodyRecord = Maybe.Absent
         )
     end makeSym
 
@@ -54,7 +54,7 @@ class SubtypeTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
-            body = Maybe.Absent
+            bodyRecord = Maybe.Absent
         )
     end makeCovParam
 

@@ -675,7 +675,7 @@ object Tasty:
         typeParamIds: Chunk[SymbolId],
         declarationIds: Chunk[SymbolId],
         permittedSubclassIds: Maybe[Chunk[SymbolId]],
-        body: Maybe[SymbolBody]
+        bodyRecord: Maybe[SymbolBody]
     ) derives CanEqual:
         // plan: phase-02; partial symbols (id == SymbolId(-1)) produced during Pass 1 need reference
         // identity so that HashMap[Symbol, V] keys are distinct even when two symbols share the same
@@ -693,6 +693,88 @@ object Tasty:
             if id.value == -1 then java.lang.System.identityHashCode(this)
             else id.value
         end hashCode
+
+        // plan: phase-04; 41 flag predicates -- pure Boolean reads on the Flags long bitmask.
+        // No effect row, no Classpath, no AllowUnsafe.
+        def isFinal: Boolean         = flags.contains(Flag.Final)
+        def isAbstract: Boolean      = flags.contains(Flag.Abstract)
+        def isSealed: Boolean        = flags.contains(Flag.Sealed)
+        def isCase: Boolean          = flags.contains(Flag.Case)
+        def isLazy: Boolean          = flags.contains(Flag.Lazy)
+        def isOverride: Boolean      = flags.contains(Flag.Override)
+        def isPrivate: Boolean       = flags.contains(Flag.Private)
+        def isProtected: Boolean     = flags.contains(Flag.Protected)
+        def isPublic: Boolean        = flags.contains(Flag.Public)
+        def isStatic: Boolean        = flags.contains(Flag.Static)
+        def isMutable: Boolean       = flags.contains(Flag.Mutable)
+        def isErased: Boolean        = flags.contains(Flag.Erased)
+        def isInfix: Boolean         = flags.contains(Flag.Infix)
+        def isOpen: Boolean          = flags.contains(Flag.Open)
+        def isTransparent: Boolean   = flags.contains(Flag.Transparent)
+        def isMacro: Boolean         = flags.contains(Flag.Macro)
+        def isSynthetic: Boolean     = flags.contains(Flag.Synthetic)
+        def isArtifact: Boolean      = flags.contains(Flag.Artifact)
+        def isCovariant: Boolean     = flags.contains(Flag.CoVariant)
+        def isContravariant: Boolean = flags.contains(Flag.ContraVariant)
+        def isExtension: Boolean     = flags.contains(Flag.Extension)
+        def isTracked: Boolean       = flags.contains(Flag.Tracked)
+        def isStable: Boolean        = flags.contains(Flag.Stable)
+        def isParamAccessor: Boolean = flags.contains(Flag.ParamAccessor)
+        def isCaseAccessor: Boolean  = flags.contains(Flag.CaseAccessor)
+        def isFieldAccessor: Boolean = flags.contains(Flag.FieldAccessor)
+        def isExported: Boolean      = flags.contains(Flag.Exported)
+        def isLocal: Boolean         = flags.contains(Flag.Local)
+        def isHasDefault: Boolean    = flags.contains(Flag.HasDefault)
+        def isInvisible: Boolean     = flags.contains(Flag.Invisible)
+        def isInto: Boolean          = flags.contains(Flag.Into)
+        def isInlineProxy: Boolean   = flags.contains(Flag.InlineProxy)
+        def isTailrec: Boolean       = flags.contains(Flag.Tailrec)
+        def isScala2: Boolean        = flags.contains(Flag.Scala2)
+        def isJavaRecord: Boolean    = flags.contains(Flag.JavaRecord)
+        def isEnum: Boolean          = flags.contains(Flag.Enum)
+        def isModule: Boolean        = flags.contains(Flag.Module)
+        def isJava: Boolean          = flags.contains(Flag.JavaDefined)
+        def isInline: Boolean        = flags.contains(Flag.Inline)
+        def isContextual: Boolean    = flags.contains(Flag.Given)
+        def isOpaque: Boolean        = flags.contains(Flag.Opaque)
+
+        // plan: phase-04; 14 single-kind discriminators -- pure Boolean equality on the SymbolKind enum.
+        def isPackage: Boolean        = kind == SymbolKind.Package
+        def isClass: Boolean          = kind == SymbolKind.Class
+        def isTrait: Boolean          = kind == SymbolKind.Trait
+        def isObject: Boolean         = kind == SymbolKind.Object
+        def isMethod: Boolean         = kind == SymbolKind.Method
+        def isField: Boolean          = kind == SymbolKind.Field
+        def isVal: Boolean            = kind == SymbolKind.Val
+        def isVar: Boolean            = kind == SymbolKind.Var
+        def isTypeAlias: Boolean      = kind == SymbolKind.TypeAlias
+        def isOpaqueTypeKind: Boolean = kind == SymbolKind.OpaqueType
+        def isAbstractType: Boolean   = kind == SymbolKind.AbstractType
+        def isTypeParam: Boolean      = kind == SymbolKind.TypeParam
+        def isParameter: Boolean      = kind == SymbolKind.Parameter
+        def isUnresolved: Boolean     = kind == SymbolKind.Unresolved
+
+        // plan: phase-04; 5 composite kind predicates -- pure Boolean combinations.
+        def isCaseClass: Boolean  = isClass && isCase
+        def isCaseObject: Boolean = isObject && isCase
+        def isClassLike: Boolean  = isClass || isTrait || isObject
+        def isTypeLike: Boolean   = isTypeAlias || isOpaqueTypeKind || isAbstractType || isTypeParam
+        def isTerm: Boolean       = isMethod || isVal || isVar || isField || isParameter
+
+        /** Decode the body of this symbol into a `Tree`.
+          *
+          * Returns `Absent` for Package symbols, Java symbols, and any symbol whose body record is empty. Fails with
+          * `TastyError.MalformedSection` on corrupt body bytes.
+          *
+          * This is the ONE Symbol method that carries a kyo effect row. All other Symbol members return plain values. The `body`
+          * constructor parameter (a raw `Maybe[SymbolBody]` byte record) and this method coexist because they have different signatures:
+          * the field takes no arguments while this method requires `using` clauses.
+          *
+          * plan: phase-04; decoding is NOT memoized in this phase. Memoization via ConcurrentHashMap arrives in Phase 06 when Classpath
+          * becomes a pure case class with a private lazy val bodyMemo.
+          */
+        def body(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+            cp.decodeBody(this)
     end Symbol
 
     object Symbol:
@@ -722,7 +804,7 @@ object Tasty:
             typeParamIds: Chunk[SymbolId],
             declarationIds: Chunk[SymbolId],
             permittedSubclassIds: Maybe[Chunk[SymbolId]],
-            body: Maybe[SymbolBody]
+            bodyRecord: Maybe[SymbolBody]
         ): Symbol =
             Symbol(
                 id = id,
@@ -738,7 +820,7 @@ object Tasty:
                 typeParamIds = typeParamIds,
                 declarationIds = declarationIds,
                 permittedSubclassIds = permittedSubclassIds,
-                body = body
+                bodyRecord = bodyRecord
             )
         end fromDescriptor
 
@@ -769,7 +851,7 @@ object Tasty:
                 typeParamIds = Chunk.empty,
                 declarationIds = Chunk.empty,
                 permittedSubclassIds = Maybe.Absent,
-                body = Maybe.Absent
+                bodyRecord = Maybe.Absent
             )
         end make
     end Symbol
@@ -995,6 +1077,41 @@ object Tasty:
             val fqn           = binaryName.replace('/', '.').replace('$', '.')
             cp.pureClass(fqn)
         end findClassByBinary
+
+        /** Decode the body bytes of `sym` into a `Tree`.
+          *
+          * Returns `Absent` for symbols whose `body` constructor parameter is `Absent` (Package, Java, and symbols without an AST body
+          * slice). Fails with `TastyError.MalformedSection` on corrupt body bytes.
+          *
+          * Called by `Symbol.body(using cp, frame)`. Phase 06 replaces this non-memoizing bridge with a memoizing implementation backed by
+          * a `private lazy val bodyMemo: ConcurrentHashMap` on the Classpath case class introduced in that phase.
+          *
+          * plan: phase-04 bridge; no memoization. AllowUnsafe is acquired internally to read the Ready state and to invoke
+          * TreeUnpickler.decodeSync; it does NOT appear on the public signature (INV-010).
+          */
+        def decodeBody(sym: Symbol)(using Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+            sym.bodyRecord match
+                case Maybe.Absent => Sync.defer(Maybe.Absent)
+                case Maybe.Present(blob) =>
+                    Sync.Unsafe.defer:
+                        // flow-allow: §839 case 3; post-open AllowUnsafe read to obtain allSymbols for
+                        // the symbol-lookup lambda passed to TreeUnpickler.decodeSync.
+                        given AllowUnsafe             = AllowUnsafe.embrace.danger
+                        val syms: Chunk[Tasty.Symbol] = cp.allSymbols
+                        try
+                            val tree = kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
+                                blob,
+                                sym,
+                                idx => if idx >= 0 && idx < syms.length then syms(idx) else sym
+                            )
+                            Maybe(tree)
+                        catch
+                            case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                Abort.fail(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
+                            case _: ArrayIndexOutOfBoundsException =>
+                                Abort.fail(TastyError.MalformedSection("ASTs", "truncated body", 0L))
+                        end try
+        end decodeBody
 
     end extension
 

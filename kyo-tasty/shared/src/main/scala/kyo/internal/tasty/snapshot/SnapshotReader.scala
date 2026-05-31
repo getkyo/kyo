@@ -239,7 +239,7 @@ object SnapshotReader:
                 typeParamIds = typeParamsByIdx(si),
                 declarationIds = declarationsByIdx(si),
                 permittedSubclassIds = partial.permittedSubclassIds,
-                body = partial.body
+                bodyRecord = partial.bodyRecord
             )
             si += 1
         end while
@@ -446,7 +446,7 @@ object SnapshotReader:
                 typeParamIds = typeParamsByIdx(j),
                 declarationIds = declarationsByIdx(j),
                 permittedSubclassIds = partial.permittedSubclassIds,
-                body = partial.body
+                bodyRecord = partial.bodyRecord
             )
             j += 1
         end while
@@ -594,7 +594,7 @@ object SnapshotReader:
                 typeParamIds = Chunk.empty,
                 declarationIds = Chunk.empty,
                 permittedSubclassIds = kyo.Maybe.Absent,
-                body = bodyMaybe
+                bodyRecord = bodyMaybe
             )
         end for
 
@@ -770,7 +770,7 @@ object SnapshotReader:
                 typeParamIds = Chunk.empty,
                 declarationIds = Chunk.empty,
                 permittedSubclassIds = kyo.Maybe.Absent,
-                body = bodyMaybe
+                bodyRecord = bodyMaybe
             )
         end for
 

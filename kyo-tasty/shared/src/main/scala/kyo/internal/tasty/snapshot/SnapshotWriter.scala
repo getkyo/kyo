@@ -105,7 +105,7 @@ object SnapshotWriter:
         val symBodyStarts   = new Array[Int](symbolList.size)
         val symBodyEnds     = new Array[Int](symbolList.size)
         for (sym, idx) <- symbolList.zipWithIndex do
-            sym.body match
+            sym.bodyRecord match
                 case kyo.Maybe.Present(b) if b.bodyStart > 0 && b.bodyEnd > b.bodyStart && b.sectionBytes.nonEmpty =>
                     val sliceLen = b.bodyEnd - b.bodyStart
                     bodyBytesBuffer.write(b.sectionBytes, b.bodyStart, sliceLen)

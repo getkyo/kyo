@@ -410,7 +410,7 @@ class SnapshotRoundTripTest extends Test:
                                     ClasspathTestHelpers.assignHomesForTest(rawCp)
                                     // plan: phase-02 inline; use sym.body.isDefined instead of sym.origin match.
                                     // sym.body as an effectful decode is deferred to Phase 04; mark as succeed.
-                                    val symWithBodyOpt = rawCp.allSymbols.toSeq.find(_.body.isDefined)
+                                    val symWithBodyOpt = rawCp.allSymbols.toSeq.find(_.bodyRecord.isDefined)
                                     discard(symWithBodyOpt)
                                     succeed
             ).map:
@@ -566,7 +566,7 @@ class SnapshotRoundTripTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
-            body = Maybe.Absent
+            bodyRecord = Maybe.Absent
         )
         val pkgSym = Tasty.Symbol.fromDescriptor(
             id = SymbolId(1),
@@ -582,7 +582,7 @@ class SnapshotRoundTripTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
-            body = Maybe.Absent
+            bodyRecord = Maybe.Absent
         )
         val barSym = Tasty.Symbol.fromDescriptor(
             id = SymbolId(2),
@@ -598,7 +598,7 @@ class SnapshotRoundTripTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
-            body = Maybe.Absent
+            bodyRecord = Maybe.Absent
         )
         val fooSym = Tasty.Symbol.fromDescriptor(
             id = SymbolId(3),
@@ -614,7 +614,7 @@ class SnapshotRoundTripTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
-            body = Maybe.Absent
+            bodyRecord = Maybe.Absent
         )
 
         val allSyms  = Chunk(rootSym, pkgSym, barSym, fooSym)

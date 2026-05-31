@@ -559,7 +559,7 @@ object Scala2PickleReader:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = kyo.Maybe.Absent,
-            body = kyo.Maybe.Absent
+            bodyRecord = kyo.Maybe.Absent
         )
     end makePickleSymWithType
 

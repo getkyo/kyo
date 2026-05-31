@@ -1087,7 +1087,7 @@ object ClassfileUnpickler:
                                                                 typeParamIds = Chunk.empty,
                                                                 declarationIds = Chunk.empty,
                                                                 permittedSubclassIds = permSubIds,
-                                                                body = Maybe.Absent
+                                                                bodyRecord = Maybe.Absent
                                                             )
                                                             // Parse class-level Signature attribute to extract type parameters.
                                                             parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map:
@@ -1584,7 +1584,7 @@ object ClassfileUnpickler:
                                     typeParamIds = Chunk.empty,
                                     declarationIds = Chunk.empty,
                                     permittedSubclassIds = Maybe.Absent,
-                                    body = Maybe.Absent
+                                    bodyRecord = Maybe.Absent
                                 )
                                 (sym, memberType)
 

@@ -49,7 +49,7 @@ class SymbolCaseClassTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
-            body = Maybe.Absent
+            bodyRecord = Maybe.Absent
         )
 
     // ── Leaf 1: construction populates all 14 fields ─────────────────────────
@@ -81,7 +81,7 @@ class SymbolCaseClassTest extends Test:
         assert(sym.typeParamIds.isEmpty, s"typeParamIds: ${sym.typeParamIds}")
         assert(sym.declarationIds.isEmpty, s"declarationIds: ${sym.declarationIds}")
         assert(sym.permittedSubclassIds.isEmpty, s"permittedSubclassIds: ${sym.permittedSubclassIds}")
-        assert(sym.body.isEmpty, s"body: ${sym.body}")
+        assert(sym.bodyRecord.isEmpty, s"bodyRecord: ${sym.bodyRecord}")
         succeed
     }
 
@@ -123,7 +123,7 @@ class SymbolCaseClassTest extends Test:
             typeParamIds = s1.typeParamIds,
             declarationIds = s1.declarationIds,
             permittedSubclassIds = s1.permittedSubclassIds,
-            body = s1.body
+            bodyRecord = s1.bodyRecord
         )
         assert(!(s1 eq s2), "Expected fromDescriptor to produce a new reference (not eq)")
         assert(s2.scaladoc.isDefined && s2.scaladoc.get == "b", s"Expected scaladoc Present('b') but got ${s2.scaladoc}")
@@ -180,7 +180,7 @@ class SymbolCaseClassTest extends Test:
         val _typeParamIds         = sym.typeParamIds
         val _declarationIds       = sym.declarationIds
         val _permittedSubclassIds = sym.permittedSubclassIds
-        val _body                 = sym.body
+        val _body                 = sym.bodyRecord
 
         // Verify the types are the expected pure-data types (no mutable slot).
         // SymbolId, SymbolKind, Flags, Name, Maybe[T], Chunk[T] are all pure data.

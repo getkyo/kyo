@@ -580,7 +580,7 @@ class JvmFileSourceTest extends Test:
                                     val syms = rawCp.allSymbols
                                     // plan: phase-02 inline; use sym.body.isDefined instead of sym.origin.
                                     val symWithBody = syms.find: s =>
-                                        s.body.isDefined
+                                        s.bodyRecord.isDefined
                                     symWithBody
                                 .flatMap:
                                     case Some(s) => Kyo.lift(s)
