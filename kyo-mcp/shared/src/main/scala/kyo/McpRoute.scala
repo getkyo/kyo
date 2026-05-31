@@ -417,6 +417,7 @@ end McpRoute
 // private[kyo] so engine code in kyo.internal.mcp can pattern-match on the concrete carrier types.
 sealed private[kyo] trait McpRouteCarrier[In, Out, +E] extends McpRoute[In, Out, E]:
     private[kyo] def serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
+    def error[E2](using schema: Schema[E2], tag: ConcreteTag[E2])(code: Int, message: String): McpRoute[In, Out, E | E2] = this
 
 private[kyo] object McpRouteCarrier:
 
@@ -436,9 +437,7 @@ private[kyo] object McpRouteCarrier:
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[In, Out, Nothing]:
-        val kind: McpRoute.Kind = McpRoute.Kind.Tool
-        def error[E2](using schema: Schema[E2], tag: ConcreteTag[E2])(code: Int, message: String): McpRoute[In, Out, Nothing | E2] =
-            this
+        val kind: McpRoute.Kind                            = McpRoute.Kind.Tool
         private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
     end Tool
 
@@ -451,12 +450,7 @@ private[kyo] object McpRouteCarrier:
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[In, McpRoute.ToolCallResult, Nothing]:
-        val kind: McpRoute.Kind = McpRoute.Kind.Tool
-        def error[E2](using
-            schema: Schema[E2],
-            tag: ConcreteTag[E2]
-        )(code: Int, message: String): McpRoute[In, McpRoute.ToolCallResult, Nothing | E2] =
-            this
+        val kind: McpRoute.Kind                            = McpRoute.Kind.Tool
         private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
     end ToolMulti
 
@@ -472,12 +466,7 @@ private[kyo] object McpRouteCarrier:
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?],
         val subscribable: Boolean = false
     ) extends McpRouteCarrier[McpResourceUri, Chunk[McpResourceContents], Nothing]:
-        val kind: McpRoute.Kind = McpRoute.Kind.Resource
-        def error[E2](using
-            schema: Schema[E2],
-            tag: ConcreteTag[E2]
-        )(code: Int, message: String): McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing | E2] =
-            this
+        val kind: McpRoute.Kind                            = McpRoute.Kind.Resource
         private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
     end Resource
 
@@ -492,12 +481,7 @@ private[kyo] object McpRouteCarrier:
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[McpResourceUri, Chunk[McpResourceContents], Nothing]:
-        val kind: McpRoute.Kind = McpRoute.Kind.ResourceTemplate
-        def error[E2](using
-            schema: Schema[E2],
-            tag: ConcreteTag[E2]
-        )(code: Int, message: String): McpRoute[McpResourceUri, Chunk[McpResourceContents], Nothing | E2] =
-            this
+        val kind: McpRoute.Kind                            = McpRoute.Kind.ResourceTemplate
         private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
     end ResourceTemplate
 
@@ -512,12 +496,7 @@ private[kyo] object McpRouteCarrier:
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[Map[String, String], McpRoute.PromptGetResult, Nothing]:
-        val kind: McpRoute.Kind = McpRoute.Kind.Prompt
-        def error[E2](using
-            schema: Schema[E2],
-            tag: ConcreteTag[E2]
-        )(code: Int, message: String): McpRoute[Map[String, String], McpRoute.PromptGetResult, Nothing | E2] =
-            this
+        val kind: McpRoute.Kind                            = McpRoute.Kind.Prompt
         private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
     end Prompt
 
@@ -534,12 +513,7 @@ private[kyo] object McpRouteCarrier:
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[(McpRoute.CompletionRef, McpRoute.CompletionArg), McpRoute.CompletionResult, Nothing]:
-        val kind: McpRoute.Kind = McpRoute.Kind.Custom
-        def error[E2](using
-            schema: Schema[E2],
-            tag: ConcreteTag[E2]
-        )(code: Int, message: String): McpRoute[(McpRoute.CompletionRef, McpRoute.CompletionArg), McpRoute.CompletionResult, Nothing | E2] =
-            this
+        val kind: McpRoute.Kind                            = McpRoute.Kind.Custom
         private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
     end Completion
 
@@ -551,9 +525,7 @@ private[kyo] object McpRouteCarrier:
         val serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         private[kyo] val underlyingRoute: JsonRpcRoute[?, ?, ?]
     ) extends McpRouteCarrier[In, Out, Nothing]:
-        val kind: McpRoute.Kind = McpRoute.Kind.Custom
-        def error[E2](using schema: Schema[E2], tag: ConcreteTag[E2])(code: Int, message: String): McpRoute[In, Out, Nothing | E2] =
-            this
+        val kind: McpRoute.Kind                            = McpRoute.Kind.Custom
         private[kyo] def underlying: JsonRpcRoute[?, ?, ?] = underlyingRoute
     end Custom
 
