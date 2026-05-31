@@ -152,6 +152,18 @@ object Tasty:
             Unresolved
     end SymbolKind
 
+    // ── Error mode ───────────────────────────────────────────────────────────
+
+    /** Controls error handling during classpath open.
+      *
+      * `SoftFail`: decode errors accumulate in `cp.errors`; the classpath is returned regardless. `FailFast`: any decode error immediately
+      * raises `Abort[TastyError]`.
+      */
+    enum ErrorMode derives CanEqual:
+        case SoftFail
+        case FailFast
+    end ErrorMode
+
     // ── Subtype verdict ──────────────────────────────────────────────────────
 
     /** Three-way result of a subtype check.
@@ -166,7 +178,7 @@ object Tasty:
 
     // ── Constants and annotations ───────────────────────────────────────────
 
-    enum Constant:
+    enum Constant derives CanEqual:
         case StringConst(s: String)
         case IntConst(i: Int)
         case LongConst(l: Long)
@@ -179,6 +191,22 @@ object Tasty:
         case UnitConst
         case NullConst
         case ClassConst(tpe: Type)
+
+        /** Human-readable representation. Pure; requires no Classpath. */
+        def show: String = this match
+            case StringConst(s)  => "\"" + s + "\""
+            case IntConst(i)     => i.toString
+            case LongConst(l)    => l.toString + "L"
+            case FloatConst(f)   => f.toString + "f"
+            case DoubleConst(d)  => d.toString
+            case BooleanConst(b) => b.toString
+            case CharConst(c)    => "'" + c + "'"
+            case ByteConst(b)    => b.toString
+            case ShortConst(s)   => s.toString
+            case UnitConst       => "()"
+            case NullConst       => "null"
+            case ClassConst(t)   => "classOf[" + t.toString + "]"
+        end show
     end Constant
 
     /** Source position attached to a TASTy symbol.
@@ -385,182 +413,310 @@ object Tasty:
       *
       * Reference: dotty TastyFormat.scala AST tag layout.
       */
-    sealed trait Tree
+    sealed trait Tree:
+
+        /** Direct structural child trees of this node. Leaf nodes return `Chunk.empty`. */
+        def children: Chunk[Tree]
+
+        /** Pre-order traversal: visits this node then all descendants. */
+        def foreach(f: Tree => Unit): Unit =
+            f(this)
+            children.foreach(_.foreach(f))
+        end foreach
+
+        /** Collect all nodes matching `pf` in pre-order. */
+        def collect[A](pf: PartialFunction[Tree, A]): Chunk[A] =
+            val b = Chunk.newBuilder[A]
+            foreach: t =>
+                if pf.isDefinedAt(t) then b += pf(t)
+            b.result()
+        end collect
+
+        /** Find first node satisfying `p` in pre-order. */
+        def find(p: Tree => Boolean): Maybe[Tree] =
+            var found: Tree | Null = null
+            foreach: t =>
+                if (found eq null) && p(t) then found = t
+            // safe: null-guarded
+            if found eq null then Maybe.Absent else Maybe(found.asInstanceOf[Tree])
+        end find
+
+        /** Left-fold over all nodes in pre-order. */
+        def foldLeft[A](z: A)(f: (A, Tree) => A): A =
+            var acc = z
+            foreach((t: Tree) => acc = f(acc, t))
+            acc
+        end foldLeft
+
+        /** Human-readable formatting; resolves symbols and types via the Classpath. */
+        def show(using cp: Classpath): String =
+            kyo.internal.tasty.reader.TreeShow.show(this, cp)
+    end Tree
 
     object Tree:
         /** Term reference by name (IDENT tag). */
-        final case class Ident(name: Name, tpe: Type) extends Tree
+        final case class Ident(name: Name, tpe: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Member selection (SELECT tag). */
-        final case class Select(qualifier: Tree, name: Name, tpe: Type) extends Tree
+        final case class Select(qualifier: Tree, name: Name, tpe: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk(qualifier)
 
         /** Function application (APPLY tag). */
-        final case class Apply(fun: Tree, args: Chunk[Tree]) extends Tree
+        final case class Apply(fun: Tree, args: Chunk[Tree]) extends Tree:
+            def children: Chunk[Tree] = Chunk(fun) ++ args
 
         /** Type application (TYPEAPPLY tag). */
-        final case class TypeApply(fun: Tree, args: Chunk[Type]) extends Tree
+        final case class TypeApply(fun: Tree, args: Chunk[Type]) extends Tree:
+            def children: Chunk[Tree] = Chunk(fun)
 
         /** Block of statements followed by an expression (BLOCK tag). */
-        final case class Block(stats: Chunk[Tree], expr: Tree) extends Tree
+        final case class Block(stats: Chunk[Tree], expr: Tree) extends Tree:
+            def children: Chunk[Tree] = stats :+ expr
 
         /** Conditional expression (IF tag). */
-        final case class If(cond: Tree, thenp: Tree, elsep: Tree) extends Tree
+        final case class If(cond: Tree, thenp: Tree, elsep: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(cond, thenp, elsep)
 
         /** Pattern match (MATCH tag). */
-        final case class Match(selector: Tree, cases: Chunk[CaseDef]) extends Tree
+        final case class Match(selector: Tree, cases: Chunk[CaseDef]) extends Tree:
+            def children: Chunk[Tree] = Chunk(selector) ++ cases
 
         /** Single case in a match (CASEDEF tag). */
-        final case class CaseDef(pattern: Tree, guard: Maybe[Tree], body: Tree) extends Tree
+        final case class CaseDef(pattern: Tree, guard: Maybe[Tree], body: Tree) extends Tree:
+            def children: Chunk[Tree] =
+                val guardChunk = guard match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+                Chunk(pattern) ++ guardChunk :+ body
+            end children
+        end CaseDef
 
         /** Literal constant (various const tags). */
-        final case class Literal(constant: Constant) extends Tree
+        final case class Literal(constant: Constant) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Object allocation (NEW tag). */
-        final case class New(tpe: Type) extends Tree
+        final case class New(tpe: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Assignment (ASSIGN tag). */
-        final case class Assign(lhs: Tree, rhs: Tree) extends Tree
+        final case class Assign(lhs: Tree, rhs: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(lhs, rhs)
 
         /** Return statement (RETURN tag). */
-        final case class Return(expr: Maybe[Tree], from: Symbol) extends Tree
+        final case class Return(expr: Maybe[Tree], from: Symbol) extends Tree:
+            def children: Chunk[Tree] =
+                expr match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+        end Return
 
         /** Throw expression (THROW tag). */
-        final case class Throw(expr: Tree) extends Tree
+        final case class Throw(expr: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(expr)
 
         /** Lambda / anonymous function (LAMBDA tag). */
-        final case class Lambda(method: Tree, tpe: Maybe[Type]) extends Tree
+        final case class Lambda(method: Tree, tpe: Maybe[Type]) extends Tree:
+            def children: Chunk[Tree] = Chunk(method)
 
         /** Type ascription (TYPED tag). */
-        final case class Typed(expr: Tree, tpe: Type) extends Tree
+        final case class Typed(expr: Tree, tpe: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk(expr)
 
         /** Inlined call expansion (INLINED tag). */
-        final case class Inlined(call: Maybe[Tree], bindings: Chunk[Tree], body: Tree) extends Tree
+        final case class Inlined(call: Maybe[Tree], bindings: Chunk[Tree], body: Tree) extends Tree:
+            def children: Chunk[Tree] =
+                val callChunk = call match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+                callChunk ++ bindings :+ body
+            end children
+        end Inlined
 
         /** Try/catch/finally (TRY tag). */
-        final case class Try(expr: Tree, cases: Chunk[CaseDef], finalizer: Maybe[Tree]) extends Tree
+        final case class Try(expr: Tree, cases: Chunk[CaseDef], finalizer: Maybe[Tree]) extends Tree:
+            def children: Chunk[Tree] =
+                val finChunk = finalizer match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+                Chunk(expr) ++ cases ++ finChunk
+            end children
+        end Try
 
         /** While loop (WHILE tag). */
-        final case class While(cond: Tree, body: Tree) extends Tree
+        final case class While(cond: Tree, body: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(cond, body)
 
         /** Pattern binding (BIND tag). */
-        final case class Bind(name: Name, pattern: Tree) extends Tree
+        final case class Bind(name: Name, pattern: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(pattern)
 
         /** Alternative patterns in a case (ALTERNATIVE tag). */
-        final case class Alternative(patterns: Chunk[Tree]) extends Tree
+        final case class Alternative(patterns: Chunk[Tree]) extends Tree:
+            def children: Chunk[Tree] = patterns
 
         /** Unapply extractor call (UNAPPLY tag). */
-        final case class Unapply(fun: Tree, implicits: Chunk[Tree], patterns: Chunk[Tree]) extends Tree
+        final case class Unapply(fun: Tree, implicits: Chunk[Tree], patterns: Chunk[Tree]) extends Tree:
+            def children: Chunk[Tree] = Chunk(fun) ++ implicits ++ patterns
 
         /** Val or var definition (VALDEF tag). */
-        final case class ValDef(sym: Symbol, tpt: Type, rhs: Maybe[Tree]) extends Tree
+        final case class ValDef(sym: Symbol, tpt: Type, rhs: Maybe[Tree]) extends Tree:
+            def children: Chunk[Tree] =
+                rhs match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+        end ValDef
 
         /** Method definition (DEFDEF tag). */
-        final case class DefDef(sym: Symbol, paramss: Chunk[Chunk[Tree]], tpt: Type, rhs: Maybe[Tree]) extends Tree
+        final case class DefDef(sym: Symbol, paramss: Chunk[Chunk[Tree]], tpt: Type, rhs: Maybe[Tree]) extends Tree:
+            def children: Chunk[Tree] =
+                val params = paramss.flatMap(identity)
+                rhs match
+                    case Maybe.Present(t) => params :+ t
+                    case Maybe.Absent     => params
+            end children
+        end DefDef
 
         /** Type alias or abstract type definition (TYPEDEF tag). */
-        final case class TypeDef(sym: Symbol, rhs: Type) extends Tree
+        final case class TypeDef(sym: Symbol, rhs: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Package definition (PACKAGE tag). */
-        final case class PackageDef(sym: Symbol, stats: Chunk[Tree]) extends Tree
+        final case class PackageDef(sym: Symbol, stats: Chunk[Tree]) extends Tree:
+            def children: Chunk[Tree] = stats
 
         /** Class definition (TYPEDEF with TEMPLATE). */
-        final case class ClassDef(sym: Symbol, template: Template) extends Tree
+        final case class ClassDef(sym: Symbol, template: Template) extends Tree:
+            def children: Chunk[Tree] = Chunk(template)
 
         /** Class template body (TEMPLATE tag). */
-        final case class Template(parents: Chunk[Tree], self: Maybe[Symbol], body: Chunk[Tree]) extends Tree
+        final case class Template(parents: Chunk[Tree], self: Maybe[Symbol], body: Chunk[Tree]) extends Tree:
+            def children: Chunk[Tree] = parents ++ body
 
         /** Super reference (SUPER tag). */
-        final case class Super(qual: Tree, mix: Maybe[Name]) extends Tree
+        final case class Super(qual: Tree, mix: Maybe[Name]) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual)
 
         /** This reference (THIS tag). */
-        final case class This(cls: Symbol) extends Tree
+        final case class This(cls: Symbol) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Named argument in an application (NAMEDARG tag). */
-        final case class NamedArg(name: Name, value: Tree) extends Tree
+        final case class NamedArg(name: Name, value: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(value)
 
         /** Annotated tree (ANNOTATEDtpt/ANNOTATEDtype). */
-        final case class Annotated(expr: Tree, annotation: Tree) extends Tree
+        final case class Annotated(expr: Tree, annotation: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(expr, annotation)
 
         /** Shared sub-tree back-reference (SHAREDtype or SHAREDterm tag). `addr` is the byte address of the original node. */
-        final case class Shared(addr: Int) extends Tree
+        final case class Shared(addr: Int) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** TASTy category-1 modifier tag (single-byte, no payload; tag in range [1, 59]). */
-        final case class Modifier(flag: Flag) extends Tree
+        final case class Modifier(flag: Flag) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Recursive type wrapper (RECtype tag). */
-        final case class RecType(parent: Tree) extends Tree
+        final case class RecType(parent: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(parent)
 
         /** Super type pair (SUPERtype tag). */
-        final case class SuperType(thistpe: Tree, supertpe: Tree) extends Tree
+        final case class SuperType(thistpe: Tree, supertpe: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(thistpe, supertpe)
 
         /** Structural refinement type (REFINEDtype tag). */
-        final case class RefinedType(parent: Tree, name: Name, info: Tree) extends Tree
+        final case class RefinedType(parent: Tree, name: Name, info: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(parent, info)
 
         /** Type constructor applied to arguments (APPLIEDtype tag). */
-        final case class AppliedType(tycon: Tree, args: Chunk[Tree]) extends Tree
+        final case class AppliedType(tycon: Tree, args: Chunk[Tree]) extends Tree:
+            def children: Chunk[Tree] = Chunk(tycon) ++ args
 
         /** Type bounds (TYPEBOUNDS tag). */
-        final case class TypeBounds(lo: Tree, hi: Tree) extends Tree
+        final case class TypeBounds(lo: Tree, hi: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(lo, hi)
 
         /** Annotated type (ANNOTATEDtype tag). */
-        final case class AnnotatedType(parent: Tree, annot: Tree) extends Tree
+        final case class AnnotatedType(parent: Tree, annot: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(parent, annot)
 
         /** Intersection type (ANDtype tag). */
-        final case class AndType(left: Tree, right: Tree) extends Tree
+        final case class AndType(left: Tree, right: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(left, right)
 
         /** Union type (ORtype tag). */
-        final case class OrType(left: Tree, right: Tree) extends Tree
+        final case class OrType(left: Tree, right: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(left, right)
 
         /** By-name type (BYNAMEtype tag). */
-        final case class ByNameType(arg: Tree) extends Tree
+        final case class ByNameType(arg: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(arg)
 
         /** Match type with scrutinee and cases (MATCHtype tag). */
-        final case class MatchType(bound: Tree, scrutinee: Tree, cases: Chunk[Tree]) extends Tree
+        final case class MatchType(bound: Tree, scrutinee: Tree, cases: Chunk[Tree]) extends Tree:
+            def children: Chunk[Tree] = Chunk(bound, scrutinee) ++ cases
 
         /** Flexible (Java-nullable) type (FLEXIBLEtype tag). */
-        final case class FlexibleType(arg: Tree) extends Tree
+        final case class FlexibleType(arg: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(arg)
 
         /** Type-position identifier (IDENTtpt tag): nameRef + type. */
-        final case class IdentTpt(name: Name, tpe: Type) extends Tree
+        final case class IdentTpt(name: Name, tpe: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Type-position selection (SELECTtpt tag): qualifier + name. */
-        final case class SelectTpt(qual: Tree, name: Name) extends Tree
+        final case class SelectTpt(qual: Tree, name: Name) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual)
 
         /** Singleton type (SINGLETONtpt tag): ref tree. */
-        final case class SingletonTpt(tpe: Tree) extends Tree
+        final case class SingletonTpt(tpe: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(tpe)
 
         /** Package-level term reference (TERMREFpkg tag): package name only. */
-        final case class TermRefPkg(name: Name) extends Tree
+        final case class TermRefPkg(name: Name) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Package-level type reference (TYPEREFpkg tag): package name only. */
-        final case class TypeRefPkg(name: Name) extends Tree
+        final case class TypeRefPkg(name: Name) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Symbol-addressed term reference (TERMREFsymbol tag): addr + qualifier. */
-        final case class TermRefSymbol(addr: Int, qual: Tree) extends Tree
+        final case class TermRefSymbol(addr: Int, qual: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual)
 
         /** Symbol-addressed type reference (TYPEREFsymbol tag): addr + qualifier. */
-        final case class TypeRefSymbol(addr: Int, qual: Tree) extends Tree
+        final case class TypeRefSymbol(addr: Int, qual: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual)
 
         /** Direct-address term reference (TERMREFdirect tag): symbol address. */
-        final case class TermRefDirect(addr: Int) extends Tree
+        final case class TermRefDirect(addr: Int) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Direct-address type reference (TYPEREFdirect tag): symbol address. */
-        final case class TypeRefDirect(addr: Int) extends Tree
+        final case class TypeRefDirect(addr: Int) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
 
         /** Owner-qualified selection (SELECTin tag): qualifier + name + owner. */
-        final case class SelectIn(qual: Tree, name: Name, owner: Tree) extends Tree
+        final case class SelectIn(qual: Tree, name: Name, owner: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual, owner)
 
         /** Import statement (IMPORT tag): qualifier expression and selector trees. */
-        final case class Import(qual: Tree, selectors: Chunk[Tree]) extends Tree
+        final case class Import(qual: Tree, selectors: Chunk[Tree]) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual) ++ selectors
 
         /** Export clause (EXPORT tag): qualifier expression and selector trees. */
-        final case class Export(qual: Tree, selectors: Chunk[Tree]) extends Tree
+        final case class Export(qual: Tree, selectors: Chunk[Tree]) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual) ++ selectors
 
         /** In-tree annotation node (ANNOTATION tag): annotation class type tree and annotation argument tree. */
-        final case class AnnotationNode(annotType: Tree, arg: Tree) extends Tree
+        final case class AnnotationNode(annotType: Tree, arg: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(annotType, arg)
 
         /** Unknown tag -- encountered a tag not covered by this ADT version. */
-        final case class Unknown(tag: Int, length: Int) extends Tree
+        final case class Unknown(tag: Int, length: Int) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
     end Tree
 
     // ── SymbolBody ──────────────────────────────────────────────────────────
@@ -776,8 +932,8 @@ object Tasty:
 
         /** Find a direct member by `Name` value. */
         def findMemberByName(n: Name)(using cp: Classpath): Maybe[Symbol] =
-            import Name.{asString, given}
-            declarations.find(s => s.name.asString == n.asString) match
+            import Name.given
+            declarations.find(_.name == n) match
                 case Some(s) => Maybe(s)
                 case None    => Maybe.Absent
         end findMemberByName
@@ -1153,6 +1309,42 @@ object Tasty:
         /** Package-private memo size for test verification. NOT part of the public API. */
         private[kyo] def bodyMemoSize: Int = bodyMemo.size()
 
+        /** All direct subclasses of `sym` (one hop, from the subclass index).
+          *
+          * Pure O(k) lookup where k is the number of direct subclasses. Returns an empty Chunk when `sym` has no registered subclasses.
+          */
+        def directSubclassesOf(sym: Symbol): Chunk[Symbol] =
+            subclassIndex.getOrElse(sym.id, Chunk.empty).map(symbol)
+
+        /** All transitive subclasses of `sym` (BFS closure over the subclass index).
+          *
+          * Returns an empty Chunk when `sym` has no registered subclasses. The BFS visited set prevents infinite loops on malformed
+          * (cyclic) classpath data.
+          */
+        def subclassesOf(sym: Symbol): Chunk[Symbol] = transitiveSubclasses(sym)
+
+        /** All concrete class symbols that are transitive subclasses of `sym`.
+          *
+          * Equivalent to `subclassesOf(sym).filter(s => s.isClass && !s.isAbstract)`.
+          */
+        def implementationsOf(sym: Symbol): Chunk[Symbol] =
+            subclassesOf(sym).filter(s => s.isClass && !s.isAbstract)
+
+        private def transitiveSubclasses(root: Symbol): Chunk[Symbol] =
+            val visited = scala.collection.mutable.HashSet.empty[SymbolId]
+            val out     = Chunk.newBuilder[Symbol]
+            val queue   = scala.collection.mutable.Queue(root.id)
+            while queue.nonEmpty do
+                val curId = queue.dequeue()
+                subclassIndex.getOrElse(curId, Chunk.empty).foreach: childId =>
+                    if visited.add(childId) then
+                        val child = symbol(childId)
+                        out += child
+                        queue.enqueue(childId)
+            end while
+            out.result()
+        end transitiveSubclasses
+
     end Classpath
 
     object Classpath:
@@ -1176,31 +1368,30 @@ object Tasty:
                 bodyRecord = Maybe.Absent
             )
 
-        /** Open a classpath from directory/file roots. Soft-fail mode (errors accumulate in `cp.errors`).
+        /** Open a classpath from directory/file roots using `ErrorMode.SoftFail` (errors accumulate in `cp.errors`).
           *
           * Effect row rationale:
-          *   - `Sync`: file I/O for JAR, classfile, and TASTy reads.
-          *   - `Async`: parallel per-file decode across the workgroup.
+          *   - `Async`: parallel per-file decode across the workgroup (subsumes Sync).
           *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
           *   - `Abort[TastyError]`: fatal errors (classpath build state, snapshot mismatch).
           *
-          * One-arg variant: delegates to the canonical two-arg form with `strict = false`.
+          * One-arg variant: delegates to the canonical two-arg form with `ErrorMode.SoftFail`.
           */
-        def open(roots: Seq[String])(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-            open(roots, strict = false)
+        def open(roots: Seq[String])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
+            open(roots, ErrorMode.SoftFail)
 
-        /** Open a classpath from directory/file roots.
+        /** Open a classpath from directory/file roots with the given `ErrorMode`.
           *
           * Effect row rationale:
-          *   - `Sync`: file I/O for JAR, classfile, and TASTy reads.
-          *   - `Async`: parallel per-file decode across the workgroup.
+          *   - `Async`: parallel per-file decode across the workgroup (subsumes Sync).
           *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
           *   - `Abort[TastyError]`: fatal errors (classpath build state, snapshot mismatch).
           *
-          * Canonical two-arg form. Soft-fail when `strict = false`; fail-fast when `strict = true`.
+          * `ErrorMode.SoftFail`: decode errors accumulate in `cp.errors`; classpath is returned. `ErrorMode.FailFast`: any decode error
+          * immediately raises `Abort[TastyError]`.
           */
-        def open(roots: Seq[String], strict: Boolean)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-            openImpl(roots, strict)
+        def open(roots: Seq[String], mode: ErrorMode)(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
+            openImpl(roots, mode == ErrorMode.FailFast)
 
         /** Open a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
           *

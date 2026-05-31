@@ -193,12 +193,12 @@ class TastyTest extends Test:
 
     // ── Phase 02f source-text invariant test (INV-025) ────────────────────────
 
-    "Classpath.open one-arg delegates to open(roots, strict = false)" in {
-        // INV-025: The no-strict Classpath.open(roots) overload delegates by name to the canonical
-        // Classpath.open(roots, strict) with `strict = false` explicit; no default-parameter shim.
+    "Classpath.open one-arg delegates to open(roots, ErrorMode.SoftFail)" in {
+        // INV-025: The no-mode Classpath.open(roots) overload delegates to the canonical
+        // Classpath.open(roots, mode) with ErrorMode.SoftFail explicit; no default-parameter shim.
         // Given: source Tasty.scala read as String, lines split.
         // When: locate the one-arg open overload by its signature and read its body line.
-        // Then: the body line contains the literal substring `open(roots, strict = false)`.
+        // Then: the body line contains the literal substring `open(roots, ErrorMode.SoftFail)`.
         val lines = TestResourceLoader.readText("kyo/Tasty.scala").split("\n")
         // Find the one-arg overload: `def open(roots: Seq[String])(using Frame)` without a second param.
         val sigPattern = """^\s+def open\(roots: Seq\[String\]\)\(using Frame\)""".r
@@ -207,8 +207,8 @@ class TastyTest extends Test:
         // The body is on the next non-blank line after the signature.
         val bodyLine = lines.slice(sigIdx + 1, sigIdx + 3).find(_.trim.nonEmpty).getOrElse("")
         assert(
-            bodyLine.contains("open(roots, strict = false)"),
-            s"INV-025 violated: one-arg open body is '${bodyLine.trim}'; expected 'open(roots, strict = false)'"
+            bodyLine.contains("open(roots, ErrorMode.SoftFail)"),
+            s"INV-025 violated: one-arg open body is '${bodyLine.trim}'; expected 'open(roots, ErrorMode.SoftFail)'"
         )
         assert(
             !bodyLine.contains("openImpl"),

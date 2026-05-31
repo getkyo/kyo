@@ -838,7 +838,7 @@ object ClasspathOrchestrator:
 
     /** Compute the dotted FQN for `sym` by walking the ownerBySymbol chain.
       *
-      * plan: phase-02 bridge; replaces sym.fullName. Deleted in Phase 09 when Symbol gains a fullName member.
+      * Internal FQN computation used during Pass C construction (before Classpath is fully assembled).
       */
     private def computeFqn(
         sym: Tasty.Symbol,

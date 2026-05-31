@@ -483,7 +483,14 @@ object TypeUnpickler:
                 val end   = view.readEnd()
                 val tycon = readTypeNode(view, ctx)
                 val args  = readTypesUntil(view, end, ctx)
-                TypeOps.applied(tycon, Chunk.from(args))
+                val fqnHint: String | Null = tycon match
+                    case Tasty.Type.Named(id) =>
+                        import kyo.internal.tasty.symbol.SymbolId.value
+                        ctx.session match
+                            case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(id.value, null)
+                            case _                => null
+                    case _ => null
+                TypeOps.applied(tycon, Chunk.from(args), fqnHint)
 
             case TastyFormat.ANNOTATEDtype =>
                 val end        = view.readEnd()
@@ -537,7 +544,14 @@ object TypeUnpickler:
                 val left  = readTypeNode(view, ctx)
                 val right = readTypeNode(view, ctx)
                 view.goto(end)
-                TypeOps.andType(left, right)
+                def namedFqn(t: Tasty.Type): String | Null = t match
+                    case Tasty.Type.Named(id) =>
+                        import kyo.internal.tasty.symbol.SymbolId.value
+                        ctx.session match
+                            case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(id.value, null)
+                            case _                => null
+                    case _ => null
+                TypeOps.andType(left, right, namedFqn(left), namedFqn(right))
 
             case TastyFormat.ORtype =>
                 val end   = view.readEnd()

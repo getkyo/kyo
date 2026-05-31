@@ -76,8 +76,10 @@ class ClasspathOrchestratorPipelineTest extends Test:
     "T1: pipeline produces correct symbol set for fixture classpath" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                // plan: phase-02 inline; sym.name.asString used (simple name); Phase 09 restores fullName.
-                Sync.defer(cp.symbols.map(_.name.asString).toSet)).map:
+                Sync.defer {
+                    import Tasty.Name.asString
+                    cp.symbols.map(_.fullName(using cp).asString).toSet
+                }).map:
                 case Result.Success(names) =>
                     assert(names.exists(_.contains("PlainClass")), s"Expected PlainClass in symbol names, got: $names")
                 case Result.Failure(e) =>
@@ -183,9 +185,9 @@ class ClasspathOrchestratorPipelineTest extends Test:
                 openFixtureClasspath(fixtureSource()).flatMap: cp1 =>
                     openFixtureClasspath(fixtureSource()).flatMap: cp2 =>
                         Sync.defer:
-                            // plan: phase-02 inline; uses simple name; Phase 09 restores fullName.
-                            val names1 = cp1.symbols.map(_.name.asString).toSet
-                            val names2 = cp2.symbols.map(_.name.asString).toSet
+                            import Tasty.Name.asString
+                            val names1 = cp1.symbols.map(_.fullName(using cp1).asString).toSet
+                            val names2 = cp2.symbols.map(_.fullName(using cp2).asString).toSet
                             (names1, names2)
             ).map:
                 case Result.Success((names1, names2)) =>

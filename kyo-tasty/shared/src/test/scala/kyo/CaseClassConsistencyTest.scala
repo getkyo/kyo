@@ -1,0 +1,79 @@
+package kyo
+
+import scala.concurrent.Future
+
+/** Tests for case class consistency of Position, ModuleDescriptor, Pickle, Version (Phase 10 Item 16).
+  *
+  * Leaf ids: 17, partial of 16. Pins: Steering rule on case classes for pure data.
+  */
+class CaseClassConsistencyTest extends Test:
+
+    import AllowUnsafe.embrace.danger
+
+    // Leaf id:17 -- Position, ModuleDescriptor, Pickle, Version are case classes
+    "Version is a case class with copy and show" in {
+        val v1 = Tasty.Version(28, 8, 0)
+        val v2 = v1.copy(minor = 9)
+        assert(v1.minor == 8)
+        assert(v2.minor == 9)
+        assert(v1.show == "28.8.0")
+        assert(v2.show == "28.9.0")
+        Future.successful(succeed)
+    }
+
+    "Position is a case class with copy" in {
+        val p1 = Tasty.Position(Maybe("Foo.scala"), 10, 5)
+        val p3 = p1.copy(line = 11)
+        assert(p1.line == 10)
+        assert(p3.line == 11)
+        // structural equality via equals (Scala case class auto-generates equals)
+        val p2: Any = Tasty.Position(Maybe("Foo.scala"), 10, 5)
+        assert(p1.equals(p2), "Position equality failed")
+        Future.successful(succeed)
+    }
+
+    "Pickle is a case class with copy" in {
+        val v       = Tasty.Version(28, 8, 0)
+        val bytes   = Chunk[Byte](1, 2, 3)
+        val p1      = Tasty.Pickle("uuid-1", v, bytes)
+        val p2: Any = Tasty.Pickle("uuid-1", v, bytes)
+        assert(p1.equals(p2), "Pickle equality failed")
+        val p3 = p1.copy(uuid = "uuid-2")
+        assert(p3.uuid == "uuid-2")
+        Future.successful(succeed)
+    }
+
+    "ModuleDescriptor is a case class" in {
+        val md = Tasty.ModuleDescriptor(
+            name = "java.base",
+            version = Maybe("17"),
+            requires = Chunk.empty,
+            exports = Chunk.empty,
+            opens = Chunk.empty,
+            uses = Chunk.empty,
+            provides = Chunk.empty
+        )
+        val md2 = md.copy(name = "java.lang")
+        assert(md.name == "java.base")
+        assert(md2.name == "java.lang")
+        Future.successful(succeed)
+    }
+
+    // Leaf id:16 partial -- directSubclassesOf / Constant.show / Annotation.args synchronous Maybe
+    "Constant.show is pure (no Classpath needed)" in {
+        val c = Tasty.Constant.StringConst("test")
+        val s = c.show
+        assert(s == "\"test\"")
+        Future.successful(succeed)
+    }
+
+    "Annotation.args is synchronous Maybe[Tree]" in {
+        // Verify the field type is Maybe[Tree] at compile time (test compiles = proof)
+        val tpe                     = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
+        val ann                     = Tasty.Annotation(tpe, Maybe.Absent)
+        val args: Maybe[Tasty.Tree] = ann.args
+        assert(args == Maybe.Absent)
+        Future.successful(succeed)
+    }
+
+end CaseClassConsistencyTest

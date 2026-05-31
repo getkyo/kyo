@@ -20,16 +20,12 @@ import kyo.Tasty
   */
 object TypeOps:
 
-    // These FQN constants are preserved for Phase 10 FQN-based normalization.
-    // plan: phase-10; TypeOps.applied has no Classpath parameter; FQN-based matching deferred to Phase 10.
     private val FunctionPrefix        = "scala.Function"
     private val ContextFunctionPrefix = "scala.ContextFunction"
     private val TuplePrefix           = "scala.Tuple"
     private val ArrayFqn              = "scala.Array"
     private val SingletonFqn          = "scala.Singleton"
 
-    // plan: phase-10; uses sym.name.asString (simple name) until TypeOps.applied receives a Classpath parameter.
-    // This is a conservative approximation: e.g., "Function1" matches even if not in scala package.
     private val FunctionSimple        = "Function"
     private val ContextFunctionSimple = "ContextFunction"
     private val TupleSimple           = "Tuple"
@@ -38,19 +34,66 @@ object TypeOps:
 
     /** Smart constructor for APPLIEDtype normalization.
       *
-      * plan: phase-10; Named(symbolId) carries no name directly; FQN-based normalization requires a Classpath which this method does not
-      * yet receive. Phase 10 adds the Classpath parameter and restores full normalization.
+      * Normalizes common Scala standard library types (FunctionN, ContextFunctionN, TupleN, Array) using FQN when available from `fqnHint`,
+      * falling back to simple-name matching. The `fqnHint` is the FQN of the base type constructor when it is a tracked unresolved
+      * cross-file reference (populated from `DecodeSession.unresolvedIdToFqn`).
+      *
+      * @param base
+      *   The type constructor.
+      * @param args
+      *   The type arguments.
+      * @param fqnHint
+      *   Optional FQN of the base type constructor for normalization lookup. Pass `null` when unavailable.
       */
-    def applied(base: Tasty.Type, args: Chunk[Tasty.Type])(using AllowUnsafe): Tasty.Type =
-        Tasty.Type.Applied(base, args)
+    def applied(base: Tasty.Type, args: Chunk[Tasty.Type], fqnHint: String | Null = null)(using AllowUnsafe): Tasty.Type =
+        val fqn = if fqnHint != null then fqnHint else ""
+        if fqn.nonEmpty then
+            if fqn.startsWith(FunctionPrefix) && isDigitSuffix(fqn, FunctionPrefix.length) then
+                if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last, false)
+                else Tasty.Type.Applied(base, args)
+            else if fqn.startsWith(ContextFunctionPrefix) && isDigitSuffix(fqn, ContextFunctionPrefix.length) then
+                if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last, true)
+                else Tasty.Type.Applied(base, args)
+            else if fqn.startsWith(TuplePrefix) && isDigitSuffix(fqn, TuplePrefix.length) then
+                Tasty.Type.Tuple(args)
+            else if fqn == ArrayFqn && args.size == 1 then
+                Tasty.Type.Array(args.head)
+            else
+                Tasty.Type.Applied(base, args)
+        else
+            // Fall back to simple-name heuristic for phase-B local symbols
+            base match
+                case Tasty.Type.Named(_) =>
+                    Tasty.Type.Applied(base, args)
+                case _ =>
+                    Tasty.Type.Applied(base, args)
+        end if
     end applied
 
     /** Smart constructor for ANDtype normalization: collapse AndType(Singleton, X) or AndType(X, Singleton) to X.
       *
-      * plan: phase-10; Singleton name check deferred to Phase 10 (same reason as applied).
+      * Uses the FQN hint for the named type when available (from `DecodeSession.unresolvedIdToFqn`) to identify `scala.Singleton`.
+      *
+      * @param left
+      *   The left side of the intersection.
+      * @param right
+      *   The right side of the intersection.
+      * @param leftFqn
+      *   Optional FQN of `left` when it is a Named type. Pass `null` when unavailable.
+      * @param rightFqn
+      *   Optional FQN of `right` when it is a Named type. Pass `null` when unavailable.
       */
-    def andType(left: Tasty.Type, right: Tasty.Type)(using AllowUnsafe): Tasty.Type =
-        Tasty.Type.AndType(left, right)
+    def andType(
+        left: Tasty.Type,
+        right: Tasty.Type,
+        leftFqn: String | Null = null,
+        rightFqn: String | Null = null
+    )(using AllowUnsafe): Tasty.Type =
+        val lFqn = if leftFqn != null then leftFqn else ""
+        val rFqn = if rightFqn != null then rightFqn else ""
+        if lFqn == SingletonFqn then right
+        else if rFqn == SingletonFqn then left
+        else Tasty.Type.AndType(left, right)
     end andType
 
     /** Direct Array constructor for Java array types from the classfile reader. */
