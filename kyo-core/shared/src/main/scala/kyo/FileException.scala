@@ -20,7 +20,7 @@ import java.io.IOException
   * @param message
   *   A description of the error
   * @param cause
-  *   Either a Text explanation or a Throwable that caused this exception
+  *   Either a String explanation or a Throwable that caused this exception
   * @see
   *   [[Path]] for the file operations that raise these exceptions
   */

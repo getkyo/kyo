@@ -232,9 +232,9 @@ class JsonTest extends Test:
 
         "number with many digits does not cause DoS" in {
             val manyDigits = "0." + "1" * 1000
-            val start      = System.currentTimeMillis()
+            val start      = java.lang.System.currentTimeMillis()
             val result     = Json.decode[BigDecimal](manyDigits)
-            val elapsed    = System.currentTimeMillis() - start
+            val elapsed    = java.lang.System.currentTimeMillis() - start
 
             assert(elapsed < 5000, s"Parsing took too long: ${elapsed}ms")
         }
@@ -1828,9 +1828,9 @@ class JsonTest extends Test:
         // spray-json #287 — BigDecimal with absurd scale accepted
         // https://github.com/spray/spray-json/issues/287
         "huge exponent BigDecimal does not hang" in {
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[BigDecimal]("\"1e-100000000\"")
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"BigDecimal with huge exponent took ${elapsed}ms")
         }
 
@@ -1838,9 +1838,9 @@ class JsonTest extends Test:
         // https://github.com/circe/circe/issues/1040
         "million-digit number does not cause DoS" in {
             val json    = "1" + "0" * 999999
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[Double](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Million-digit number took ${elapsed}ms")
         }
 
@@ -1936,18 +1936,18 @@ class JsonTest extends Test:
         // https://github.com/plokhotnyuk/jsoniter-scala/issues/282
         "BigDecimal with many fractional zeros does not DoS" in {
             val json    = "\"0." + "0" * 100000 + "1\""
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[BigDecimal](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"BigDecimal fractional zeros took ${elapsed}ms")
         }
 
         // spray-json #287 — huge positive exponent BigDecimal
         // https://github.com/spray/spray-json/issues/287
         "huge positive exponent BigDecimal does not hang" in {
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[BigDecimal]("\"1e1000000000\"")
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"BigDecimal 1e1000000000 took ${elapsed}ms")
         }
 
@@ -1956,9 +1956,9 @@ class JsonTest extends Test:
         "object with unexpected large number field does not DoS" in {
             val bigNum  = "1" + "0" * 100000
             val json    = s"""{"name":"Alice","age":30,"unexpected":$bigNum}"""
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[MTPerson](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Skipping large unexpected number took ${elapsed}ms")
         }
 
@@ -1967,16 +1967,16 @@ class JsonTest extends Test:
         "small exponent notation does not amplify into huge BigDecimal" in {
             // "1e100000" is 8 bytes but BigDecimal("1e100000") has scale=-100000
             // Operations on it can allocate massive backing arrays
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[BigDecimal]("\"1e100000\"")
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"BigDecimal amplification took ${elapsed}ms")
             result match
                 case Result.Success(v) =>
                     // Encoding it back must also be fast (no expansion)
-                    val start2   = System.currentTimeMillis()
+                    val start2   = java.lang.System.currentTimeMillis()
                     val encoded  = Json.encode(v)
-                    val elapsed2 = System.currentTimeMillis() - start2
+                    val elapsed2 = java.lang.System.currentTimeMillis() - start2
                     assert(elapsed2 < 5000, s"BigDecimal re-encoding took ${elapsed2}ms")
                 case Result.Failure(_) => succeed
             end match
@@ -1989,18 +1989,18 @@ class JsonTest extends Test:
         // General — large number of object fields (memory exhaustion)
         "object with many fields does not exhaust memory" in {
             val json    = (0 until 100000).map(i => s""""k$i":$i""").mkString("{", ",", "}")
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[Map[String, Int]](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 10000, s"Parsing 100K fields took ${elapsed}ms")
         }
 
         // General — large array
         "large array does not cause DoS" in {
             val json    = (0 until 100000).mkString("[", ",", "]")
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[List[Int]](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 10000, s"Parsing 100K element array took ${elapsed}ms")
         }
 
@@ -2028,27 +2028,27 @@ class JsonTest extends Test:
         // General — very long string
         "very long string does not cause DoS" in {
             val longStr = "\"" + "a" * 1000000 + "\""
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[String](longStr)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Parsing 1M char string took ${elapsed}ms")
         }
 
         // General — string with many escape sequences
         "string with many escapes does not cause DoS" in {
             val escapedStr = "\"" + "\\n" * 100000 + "\""
-            val start      = System.currentTimeMillis()
+            val start      = java.lang.System.currentTimeMillis()
             val result     = Json.decode[String](escapedStr)
-            val elapsed    = System.currentTimeMillis() - start
+            val elapsed    = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Parsing 100K escapes took ${elapsed}ms")
         }
 
         // General — string with many unicode escapes
         "string with many unicode escapes does not cause DoS" in {
             val unicodeStr = "\"" + "\\u0041" * 100000 + "\""
-            val start      = System.currentTimeMillis()
+            val start      = java.lang.System.currentTimeMillis()
             val result     = Json.decode[String](unicodeStr)
-            val elapsed    = System.currentTimeMillis() - start
+            val elapsed    = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Parsing 100K unicode escapes took ${elapsed}ms")
             result match
                 case Result.Success(s) => assert(s == "A" * 100000)

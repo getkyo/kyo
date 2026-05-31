@@ -1,0 +1,2 @@
+# Classpath: fence using a test dep compiles because the plugin uses Test/fullClasspath.
+> doctest

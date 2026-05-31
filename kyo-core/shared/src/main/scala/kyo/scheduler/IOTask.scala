@@ -66,22 +66,28 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                     nullResult
                             },
                         [C] =>
-                            (input, cont) =>
+                            (joinInput, cont) =>
                                 locally {
+                                    // Invoking joinInput registers the interrupt cascade link on THIS IOTask
+                                    // before we read the promise's state — see Async.useResult.
+                                    val input = joinInput(this)
                                     input.poll() match
                                         case null =>
                                             cont(null)
                                         case Present(r) =>
+                                            // Promise was already complete when the thunk ran — drop the
+                                            // cascade link the thunk pre-registered so it doesn't accumulate.
+                                            this.removeInterrupt(input)
                                             cont(r.asInstanceOf[Result[Nothing, C]])
                                         case Absent =>
                                             curr = nullResult
-                                            this.interrupts(input)
                                             input.onComplete { r =>
                                                 this.removeInterrupt(input)
                                                 curr = Sync.defer(cont(r.asInstanceOf[Result[Nothing, C]]))
                                                 Scheduler.get.schedule(this)
                                             }
                                             nullResult
+                                    end match
                             }
                     )
                 }
@@ -125,14 +131,16 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         end if
     end run
 
-    // Handle race when interrupted before processing Async.Join and linking interrupts
+    // Handle race when interrupted before processing Async.Join and linking interrupts.
+    // Bypasses the Safepoint via dispatchFirst: by the time this runs the fiber's promise
+    // is already complete (interrupt), so the preempt flag is set and handleFirst would
+    // short-circuit before reaching the matcher. Invoking joinInput(this) registers the
+    // cascade link on this IOTask so the interrupt propagates to the awaited promise.
     private def ensureInterrupt()(using Safepoint): Unit =
-        discard {
-            ArrowEffect.handleFirst(Tag[Async.Join], curr.asInstanceOf[Any < Async.Join])(
-                [C] => (input, _) => this.interrupts(input),
-                _ => ()
-            )
+        ArrowEffect.dispatchFirst(Tag[Async.Join], curr.asInstanceOf[Any < Async.Join]) {
+            [C] => joinInput => discard(joinInput(this))
         }
+    end ensureInterrupt
 
     private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
 

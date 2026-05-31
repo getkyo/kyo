@@ -15,3 +15,11 @@
 // crossProject in build.sbt.
 Compile / unmanagedSourceDirectories +=
     baseDirectory.value.getParentFile / "kyo-compat" / "plugin" / "src" / "main" / "scala"
+
+// Wire the in-tree `sbt-kyo-doctest` plugin into the meta-build so build.sbt
+// can reference `KyoDoctestPlugin` + its setting keys without resolving the
+// plugin from ivy. Same pattern as kyo-compat above. Eliminates the
+// chicken-and-egg of "plugin must be published to load the build that
+// publishes the plugin."
+Compile / unmanagedSourceDirectories +=
+    baseDirectory.value.getParentFile / "sbt-kyo-doctest" / "src" / "main" / "scala"

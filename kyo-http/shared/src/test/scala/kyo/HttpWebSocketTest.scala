@@ -369,11 +369,18 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
         }
 
         "client disconnects mid-stream" in runNotNative {
+            // Server runs an infinite producer loop until either ws.put raises Closed (outbound
+            // closed on wire failure) or ws.onPeerClose fires (client disconnect observed). Either
+            // signal terminates the loop and releases serverDone.
             Latch.init(1).map { serverDone =>
                 withWsServer(HttpHandler.webSocket("ws/infinite") { (_, ws) =>
                     Sync.ensure(serverDone.release) {
-                        Loop.foreach {
-                            ws.put(HttpWebSocket.Payload.Text("tick")).andThen(Loop.continue)
+                        val producer: Unit < (Async & Abort[Closed]) =
+                            Loop.foreach {
+                                ws.put(HttpWebSocket.Payload.Text("tick")).andThen(Loop.continue)
+                            }
+                        Abort.recover[Closed](_ => ()) {
+                            Async.race(producer, ws.onPeerClose).unit
                         }
                     }
                 }) { url =>
@@ -984,16 +991,20 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
                     ref.set(Present((code, reason)))
                 Channel.init[HttpWebSocket.Payload](32).map { ch1to2 =>
                     Channel.init[HttpWebSocket.Payload](32).map { ch2to1 =>
-                        val ws1 = new HttpWebSocket(ch2to1, ch1to2, ref, closeFn)
-                        val ws2 = new HttpWebSocket(ch1to2, ch2to1, ref, closeFn)
-                        Sync.ensure(ch1to2.close.unit.andThen(ch2to1.close.unit)) {
-                            Async.raceFirst(
-                                Abort.run[Closed](ws1.take()).unit,
-                                Abort.run[Closed](ws2.close(1001, "going away")).unit
-                            ).unit
-                        }.andThen(
-                            ref.get.map(r => discard(assert(r == Present((1001, "going away")))))
-                        ).andThen(succeed)
+                        Fiber.Promise.init[Unit, Any].map { pc1 =>
+                            Fiber.Promise.init[Unit, Any].map { pc2 =>
+                                val ws1 = new HttpWebSocket(ch2to1, ch1to2, ref, pc1, closeFn)
+                                val ws2 = new HttpWebSocket(ch1to2, ch2to1, ref, pc2, closeFn)
+                                Sync.ensure(ch1to2.close.unit.andThen(ch2to1.close.unit)) {
+                                    Async.raceFirst(
+                                        Abort.run[Closed](ws1.take()).unit,
+                                        Abort.run[Closed](ws2.close(1001, "going away")).unit
+                                    ).unit
+                                }.andThen(
+                                    ref.get.map(r => discard(assert(r == Present((1001, "going away")))))
+                                ).andThen(succeed)
+                            }
+                        }
                     }
                 }
             }
@@ -1006,16 +1017,20 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
                     ref.set(Present((code, reason)))
                 Channel.init[HttpWebSocket.Payload](32).map { ch1to2 =>
                     Channel.init[HttpWebSocket.Payload](32).map { ch2to1 =>
-                        val ws1 = new HttpWebSocket(ch2to1, ch1to2, ref, closeFn)
-                        val ws2 = new HttpWebSocket(ch1to2, ch2to1, ref, closeFn)
-                        Sync.ensure(ch1to2.close.unit.andThen(ch2to1.close.unit)) {
-                            Async.raceFirst(
-                                Abort.run[Closed](ws1.take()).unit,
-                                Abort.run[Closed](ws2.close(4000, "app error")).unit
-                            ).unit
-                        }.andThen(
-                            ref.get.map(r => discard(assert(r == Present((4000, "app error")))))
-                        ).andThen(succeed)
+                        Fiber.Promise.init[Unit, Any].map { pc1 =>
+                            Fiber.Promise.init[Unit, Any].map { pc2 =>
+                                val ws1 = new HttpWebSocket(ch2to1, ch1to2, ref, pc1, closeFn)
+                                val ws2 = new HttpWebSocket(ch1to2, ch2to1, ref, pc2, closeFn)
+                                Sync.ensure(ch1to2.close.unit.andThen(ch2to1.close.unit)) {
+                                    Async.raceFirst(
+                                        Abort.run[Closed](ws1.take()).unit,
+                                        Abort.run[Closed](ws2.close(4000, "app error")).unit
+                                    ).unit
+                                }.andThen(
+                                    ref.get.map(r => discard(assert(r == Present((4000, "app error")))))
+                                ).andThen(succeed)
+                            }
+                        }
                     }
                 }
             }
@@ -1377,18 +1392,19 @@ class HttpWebSocketTest extends Test with internal.UnixSocketTestHelperImpl:
             }.andThen(succeed)
         }
 
-        "outbound put observes Closed after a server-initiated close" in runNotNative {
-            // Server immediately closes; the client only sends frames. The next put after the close
-            // propagates must abort with Closed so a producer-only handler can exit promptly.
+        "ws.onPeerClose fires after a server-initiated close" in runNotNative {
+            // Server immediately closes. The client awaits `ws.onPeerClose` and asserts it completes,
+            // then inspects `closeReason` to confirm the close code and reason propagated. This is the
+            // canonical pattern for producer-only handlers that need to observe peer-close.
             val handler = HttpHandler.webSocket("ws/srv-fast-close") { (_, ws) =>
                 ws.close(4002, "go away")
             }
             withWsServer(handler) { url =>
                 Async.timeout(2.seconds) {
                     HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/srv-fast-close") { ws =>
-                        Async.sleep(150.millis).andThen {
-                            Abort.run[Closed](ws.put(HttpWebSocket.Payload.Text("hi"))).map { r =>
-                                discard(assert(r.isFailure, s"expected Closed, got: $r"))
+                        ws.onPeerClose.andThen {
+                            ws.closeReason.map { reason =>
+                                discard(assert(reason == Present((4002, "go away")), s"expected (4002, 'go away'), got: $reason"))
                             }
                         }
                     }
