@@ -57,4 +57,23 @@ private[kyo] object McpProgressPolicy:
             enforceMonotonic = true
         )
 
+    /** Reports a progress notification via the `JsonRpcRoute.Context` progress sink.
+      *
+      * Builds the MCP progress payload `{ current, total?, message? }` and invokes
+      * `ctx.progress(value)` which sends it through the configured `JsonRpcProgressPolicy`.
+      * If the context has no progress sink, this is a no-op.
+      */
+    def report(
+        ctx: JsonRpcRoute.Context,
+        current: Double,
+        total: Maybe[Double],
+        message: Maybe[String]
+    )(using Frame): Unit < (Async & Abort[Closed]) =
+        val currentField = Chunk(("current", Structure.Value.Decimal(current)))
+        val totalFields  = total.fold(Chunk.empty[(String, Structure.Value)])(t => Chunk(("total", Structure.Value.Decimal(t))))
+        val msgFields    = message.fold(Chunk.empty[(String, Structure.Value)])(m => Chunk(("message", Structure.Value.Str(m))))
+        val fields       = currentField ++ totalFields ++ msgFields
+        ctx.progress(Structure.Value.Record(fields))
+    end report
+
 end McpProgressPolicy
