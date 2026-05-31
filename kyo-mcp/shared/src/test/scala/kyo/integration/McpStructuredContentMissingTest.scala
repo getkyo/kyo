@@ -16,14 +16,14 @@ class McpStructuredContentMissingTest extends Test:
         )
     }
 
-    "callTool[In, Out] aborts with McpToolStructuredMissingError when structuredContent is Absent (T-023, INV-027)" in run {
+    "callToolTyped[In, Out] aborts with McpToolStructuredMissingError when structuredContent is Absent (T-023, INV-027)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpError | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, textOnlyRoute),
                 McpClient.initUnscoped(tc, McpInfo("sc"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
                 Abort.run[McpError](
-                    client.unsafe.callToolTypedUnsafe[AddIn, Sum]("text-only-tool", AddIn(1, 1))
+                    client.callToolTyped[AddIn, Sum]("text-only-tool", AddIn(1, 1))
                 ).flatMap { typedResult =>
                     for
                         _ <- srv.closeNow
@@ -50,7 +50,7 @@ class McpStructuredContentMissingTest extends Test:
                 McpServer.initUnscoped(ts, textOnlyRoute),
                 McpClient.initUnscoped(tc, McpInfo("sc"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
-                client.unsafe.callToolUnsafe[AddIn]("text-only-tool", AddIn(1, 1)).flatMap { rawResult =>
+                client.callTool[AddIn]("text-only-tool", AddIn(1, 1)).flatMap { rawResult =>
                     for
                         _ <- srv.closeNow
                         _ <- client.closeNow

@@ -57,7 +57,7 @@ Handshake plumbing is invisible: the engine owns the `initialize` request and th
 
 `McpClient.init` is the mirror of `McpServer.init` with an additional pair of mandatory arguments: the `clientInfo: McpInfo` and the `capabilities: McpCapabilities.Client` the client advertises during the handshake. The result is `McpClient < (Async & Scope & Abort[McpError | Closed])` because the initialise handshake runs eagerly inside `init` and surfaces handshake failures (protocol-version mismatch, transport closed mid-handshake) directly in the effect row.
 
-```scala doctest:expect=skipped
+```scala
 val info = McpInfo(name = "calc-tester")
 val caps = McpCapabilities.Client()
 
@@ -73,18 +73,18 @@ val program: McpRoute.ToolCallResult < (Async & Scope & Abort[McpError | Closed]
 
 `client.callTool[AddIn]` is the untyped overload: the server's `ToolCallResult` is returned verbatim (`content: Chunk[McpContent]`, `isError: Boolean`, `structuredContent: Maybe[Structure.Value]`). When the tool produces a typed result and you want the engine to decode it for you, use the typed overload:
 
-```scala doctest:expect=skipped
+```scala
 val typed: Sum < (Async & Scope & Abort[McpError | Closed]) =
     JsonRpcTransport.stdio().map { transport =>
         val info = McpInfo(name = "calc-tester")
         val caps = McpCapabilities.Client()
         McpClient.initWith(transport, info, caps) { client =>
-            client.callTool[AddIn, Sum]("add", AddIn(2, 3))
+            client.callToolTyped[AddIn, Sum]("add", AddIn(2, 3))
         }
     }
 ```
 
-The typed overload aborts with `McpToolStructuredMissingError` when the server returns `ToolCallResult.structuredContent = Absent`; reach for the untyped variant when the tool emits unstructured content. The two overloads have the same name and differ only by the type-argument list (`[In]` vs `[In, Out]`); under Scala 3 extension-method overload resolution this pair is currently ambiguous at the safe-tier call site, so the integration tests dispatch through `client.unsafe.callToolUnsafe[In](...)` and `client.unsafe.callToolTypedUnsafe[In, Out](...)` until the safe-tier resolution is unblocked.
+The typed overload aborts with `McpToolStructuredMissingError` when the server returns `ToolCallResult.structuredContent = Absent`; reach for the untyped variant when the tool emits unstructured content. `callTool[In]` and `callToolTyped[In, Out]` are distinct names so Scala 3 extension-method resolution is unambiguous: the compiler can tell them apart without inspecting the type-argument list.
 
 The remaining client surface is a small set of typed extension methods, each named after the underlying MCP request: `listTools`, `listResources`, `listResourceTemplates`, `readResource`, `listPrompts`, `getPrompt`, `complete`, `setLogLevel`, `notifyRootsListChanged`. Each is fully callable at the safe tier and returns a typed result:
 
@@ -126,7 +126,7 @@ val weatherTool: McpRoute[Weather, McpContent, Nothing] =
     }
 ```
 
-The `ToolAnnotations` record captures the spec's display and behavioural hints; every field is optional. Pick `tool` when one content leaf suffices; reach for `toolMulti` when the tool emits a mixed bag (text plus an image, say) or wants to populate the typed `structuredContent` slot that `callTool[In, Out]` decodes against.
+The `ToolAnnotations` record captures the spec's display and behavioural hints; every field is optional. Pick `tool` when one content leaf suffices; reach for `toolMulti` when the tool emits a mixed bag (text plus an image, say) or wants to populate the typed `structuredContent` slot that `callToolTyped[In, Out]` decodes against.
 
 ### Resource routes
 

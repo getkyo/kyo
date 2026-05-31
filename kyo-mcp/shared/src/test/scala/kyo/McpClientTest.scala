@@ -24,11 +24,9 @@ class McpClientTest extends Test:
             }
         }
 
-    // T-011: callTool[In, Out] returns the decoded Out when structuredContent = Present.
+    // T-011: callToolTyped[In, Out] returns the decoded Out when structuredContent = Present.
     // INV-027: typed overload decodes structuredContent.
-    // Note: callToolTypedUnsafe is used directly to avoid Scala 3 extension-method overload
-    // resolution ambiguity between callTool[In] and callTool[In, Out] at the call site.
-    "callTool[In, Out] returns typed Out when structuredContent = Present (T-011, INV-027)" in run {
+    "callToolTyped[In, Out] returns typed Out when structuredContent = Present (T-011, INV-027)" in run {
         val addRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
             McpRoute.ToolCallResult(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}", Absent)),
@@ -37,15 +35,15 @@ class McpClientTest extends Test:
             )
         }
         withPair(Seq(addRoute), Seq.empty) { (_, client) =>
-            client.unsafe.callToolTypedUnsafe[AddIn, Sum]("add", AddIn(2, 3)).map { result =>
+            client.callToolTyped[AddIn, Sum]("add", AddIn(2, 3)).map { result =>
                 assert(result == Sum(5))
             }
         }
     }
 
-    // T-012: callTool[In, Out] aborts with McpToolStructuredMissingError when structuredContent = Absent.
+    // T-012: callToolTyped[In, Out] aborts with McpToolStructuredMissingError when structuredContent = Absent.
     // INV-027: typed overload must abort when structured content is absent.
-    "callTool[In, Out] aborts McpToolStructuredMissingError when structuredContent = Absent (T-012, INV-027)" in run {
+    "callToolTyped[In, Out] aborts McpToolStructuredMissingError when structuredContent = Absent (T-012, INV-027)" in run {
         val addUntypedRoute = McpRoute.toolMulti[AddIn]("add") { (in, _) =>
             McpRoute.ToolCallResult(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}", Absent)),
@@ -55,7 +53,7 @@ class McpClientTest extends Test:
         }
         withPair(Seq(addUntypedRoute), Seq.empty) { (_, client) =>
             Abort.run[McpToolStructuredMissingError](
-                client.unsafe.callToolTypedUnsafe[AddIn, Sum]("add", AddIn(2, 3))
+                client.callToolTyped[AddIn, Sum]("add", AddIn(2, 3))
             ).map { result =>
                 assert(result.isFailure, s"expected McpToolStructuredMissingError abort, got $result")
                 result match
@@ -75,8 +73,7 @@ class McpClientTest extends Test:
             )
         }
         withPair(Seq(addRoute), Seq.empty) { (_, client) =>
-            // Use the Unsafe method directly to test untyped path without ambiguity.
-            client.unsafe.callToolUnsafe[AddIn]("add", AddIn(2, 3)).map { result =>
+            client.callTool[AddIn]("add", AddIn(2, 3)).map { result =>
                 assert(result.structuredContent == Absent)
                 assert(result.content.size == 1)
             }

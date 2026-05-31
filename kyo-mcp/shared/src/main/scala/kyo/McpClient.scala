@@ -34,8 +34,15 @@ object McpClient:
         /** Calls a tool with typed argument and typed output; aborts with `McpToolStructuredMissingError`
           * when `structuredContent` is `Absent` (Audit-A9 / INV-027).
           * Audit-C2: `using` clause order is `(Frame, Schema[In], Schema[Out])`.
+          * STEER-3: renamed from `callTool[In, Out]` to `callToolTyped[In, Out]` because Scala 3
+          * cannot disambiguate two same-named extension methods that differ only in type-parameter count;
+          * see phase-08/decisions.md § STEER-3.
           */
-        def callTool[In, Out](name: String, arguments: In)(using Frame, Schema[In], Schema[Out]): Out < (Async & Abort[McpError | Closed]) =
+        def callToolTyped[In, Out](name: String, arguments: In)(using
+            Frame,
+            Schema[In],
+            Schema[Out]
+        ): Out < (Async & Abort[McpError | Closed]) =
             self.callToolTypedUnsafe[In, Out](name, arguments)
 
         /** Lists the server's resources. Returns a named `McpPage` record (Audit-A3). */
