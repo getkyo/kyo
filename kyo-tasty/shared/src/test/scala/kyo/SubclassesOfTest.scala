@@ -213,7 +213,7 @@ class SubclassesOfTest extends Test:
     "implementationsOf excludes abstract subclasses" in run {
         traitClasspath.map: cp =>
             import Tasty.Name.asString
-            val t     = cp.findClass("T").get
+            val t     = cp.findClassLike("T").get
             val impls = cp.implementationsOf(t)
             val names = impls.map(_.name.asString).toSet
             assert(names.contains("Impl1"), s"Missing Impl1: $names")

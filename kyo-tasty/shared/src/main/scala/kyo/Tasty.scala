@@ -1560,53 +1560,115 @@ object Tasty:
             else Classpath.sentinelUnresolved
         end symbol
 
-        /** Look up a class symbol by fully-qualified dotted name.
+        /** Look up any symbol by fully-qualified dotted name.
           *
-          * Pure O(1) lookup in the immutable fqnIndex. Returns `Absent` if the FQN is not registered in this classpath.
-          *
-          * Example:
-          * {{{
-          *   val sym = cp.findClass("scala.Predef")
-          *   sym.isPresent == true
-          * }}}
+          * Pure O(1) lookup in the immutable fqnIndex. Returns `Absent` if the FQN is not registered. For typed lookups that narrow to a
+          * specific subtype, use `findClass`, `findTrait`, `findObject`, `findClassLike`, or `findPackage`.
           */
-        def findClass(fqn: String): Maybe[Symbol] =
+        def findSymbol(fqn: String): Maybe[Symbol] =
             fqnIndex.get(fqn) match
                 case Some(id) => Maybe(symbol(id))
                 case None     => Maybe.Absent
+
+        /** Look up a class symbol by fully-qualified dotted name.
+          *
+          * Pure O(1) lookup in the immutable fqnIndex. Returns `Absent` if the FQN is not registered or resolves to a non-Class symbol
+          * (e.g., a Trait or Object). Use `findClassLike` to match any class-like symbol regardless of subtype.
+          *
+          * Example:
+          * {{{
+          *   val sym: Maybe[Symbol.Class] = cp.findClass("scala.collection.List")
+          * }}}
+          */
+        def findClass(fqn: String): Maybe[Symbol.Class] =
+            fqnIndex.get(fqn) match
+                case Some(id) =>
+                    symbol(id) match
+                        case c: Symbol.Class => Maybe(c)
+                        case _               => Maybe.Absent
+                case None => Maybe.Absent
+
+        /** Look up a trait symbol by fully-qualified dotted name.
+          *
+          * Returns `Absent` when the FQN resolves to a non-Trait symbol. Use `findClassLike` for the broader case.
+          */
+        def findTrait(fqn: String): Maybe[Symbol.Trait] =
+            fqnIndex.get(fqn) match
+                case Some(id) =>
+                    symbol(id) match
+                        case t: Symbol.Trait => Maybe(t)
+                        case _               => Maybe.Absent
+                case None => Maybe.Absent
+
+        /** Look up an object symbol by fully-qualified dotted name.
+          *
+          * Returns `Absent` when the FQN resolves to a non-Object symbol.
+          */
+        def findObject(fqn: String): Maybe[Symbol.Object] =
+            fqnIndex.get(fqn) match
+                case Some(id) =>
+                    symbol(id) match
+                        case o: Symbol.Object => Maybe(o)
+                        case _                => Maybe.Absent
+                case None => Maybe.Absent
+
+        /** Look up a class-like symbol (Class, Trait, or Object) by fully-qualified dotted name.
+          *
+          * Returns `Absent` when the FQN resolves to a Package or other non-ClassLike symbol.
+          */
+        def findClassLike(fqn: String): Maybe[Symbol.ClassLike] =
+            fqnIndex.get(fqn) match
+                case Some(id) =>
+                    symbol(id) match
+                        case c: Symbol.ClassLike => Maybe(c)
+                        case _                   => Maybe.Absent
+                case None => Maybe.Absent
 
         /** Look up a package symbol by fully-qualified dotted name.
           *
           * Pure O(1) lookup in the immutable packageIndex. Returns `Absent` if the package is not in this classpath.
           */
-        def findPackage(fqn: String): Maybe[Symbol] =
+        def findPackage(fqn: String): Maybe[Symbol.Package] =
             packageIndex.get(fqn) match
-                case Some(id) => Maybe(symbol(id))
-                case None     => Maybe.Absent
+                case Some(id) =>
+                    symbol(id) match
+                        case p: Symbol.Package => Maybe(p)
+                        case _                 => Maybe.Absent
+                case None => Maybe.Absent
+
+        /** Find all `Symbol.Class` instances whose simple name equals `simpleName`.
+          *
+          * Linear scan over all symbols. Returns an empty Chunk when no match is found.
+          */
+        def findClassByName(simpleName: String): Chunk[Symbol.Class] =
+            import Name.asString
+            symbols.flatMap: s =>
+                s match
+                    case c: Symbol.Class if c.name.asString == simpleName => Chunk(c)
+                    case _                                                => Chunk.empty
+        end findClassByName
 
         /** All package symbols in this classpath.
           *
-          * Pure accessor over the immutable `packageIds` Chunk. Each id is resolved to a Symbol via `symbol(id)`.
-          *
-          * Example:
-          * {{{
-          *   val pkgs = cp.packages
-          *   pkgs.nonEmpty == true
-          * }}}
+          * Pure accessor over the immutable `packageIds` Chunk. Each id is resolved and narrowed to `Symbol.Package`; ids that resolve to
+          * non-Package symbols are excluded.
           */
-        def packages: Chunk[Symbol] = packageIds.map(symbol)
+        def packages: Chunk[Symbol.Package] =
+            packageIds.flatMap: id =>
+                symbol(id) match
+                    case p: Symbol.Package => Chunk(p)
+                    case _                 => Chunk.empty
 
-        /** All top-level class symbols (not packages) in this classpath.
+        /** All top-level class-like symbols (not packages) in this classpath.
           *
-          * Pure accessor over the immutable `topLevelClassIds` Chunk. Each id is resolved to a Symbol via `symbol(id)`.
-          *
-          * Example:
-          * {{{
-          *   val classes = cp.topLevelClasses
-          *   classes.nonEmpty == true
-          * }}}
+          * Pure accessor over the immutable `topLevelClassIds` Chunk. Each id is resolved and narrowed to `Symbol.ClassLike`; ids that
+          * resolve to non-ClassLike symbols are excluded.
           */
-        def topLevelClasses: Chunk[Symbol] = topLevelClassIds.map(symbol)
+        def topLevelClasses: Chunk[Symbol.ClassLike] =
+            topLevelClassIds.flatMap: id =>
+                symbol(id) match
+                    case c: Symbol.ClassLike => Chunk(c)
+                    case _                   => Chunk.empty
 
         /** Look up a JPMS module descriptor by module name (e.g., "java.base").
           *
@@ -1620,13 +1682,146 @@ object Tasty:
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
           *
-          * Converts the binary name to a dotted FQN and delegates to `findClass`.
+          * Converts the binary name to a dotted FQN and delegates to `findClass`. Returns `Maybe[Symbol.Class]`.
           *
           * Pure O(1) lookup; no I/O.
           */
-        def findClassByBinary(binaryName: String): Maybe[Symbol] =
+        def findClassByBinary(binaryName: String): Maybe[Symbol.Class] =
             val fqn = binaryName.replace('/', '.').replace('$', '.')
             findClass(fqn)
+
+        // ── require* throwing variants (INV-010: sole new effect-row additions in this phase) ──
+
+        /** Require a class by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a Class. */
+        def requireClass(fqn: String)(using Frame): Symbol.Class < Abort[TastyError] =
+            findClass(fqn) match
+                case Maybe.Present(c) => c
+                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+        /** Require a trait by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a Trait. */
+        def requireTrait(fqn: String)(using Frame): Symbol.Trait < Abort[TastyError] =
+            findTrait(fqn) match
+                case Maybe.Present(t) => t
+                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+        /** Require an object by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not an Object. */
+        def requireObject(fqn: String)(using Frame): Symbol.Object < Abort[TastyError] =
+            findObject(fqn) match
+                case Maybe.Present(o) => o
+                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+        /** Require a class-like by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a ClassLike. */
+        def requireClassLike(fqn: String)(using Frame): Symbol.ClassLike < Abort[TastyError] =
+            findClassLike(fqn) match
+                case Maybe.Present(c) => c
+                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+        /** Require a package by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a Package. */
+        def requirePackage(fqn: String)(using Frame): Symbol.Package < Abort[TastyError] =
+            findPackage(fqn) match
+                case Maybe.Present(p) => p
+                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+        /** Require a JPMS module descriptor by name; fails with `TastyError.NotFound` when absent. */
+        def requireModule(name: String)(using Frame): ModuleDescriptor < Abort[TastyError] =
+            findModule(name) match
+                case Maybe.Present(m) => m
+                case Maybe.Absent     => Abort.fail(TastyError.NotFound(name))
+
+        // ── typed Classpath-wide all* aggregations ──
+
+        /** All Class symbols in the classpath. Linear scan. */
+        def allClasses: Chunk[Symbol.Class] =
+            symbols.flatMap { case c: Symbol.Class => Chunk(c); case _ => Chunk.empty }
+
+        /** All Trait symbols in the classpath. Linear scan. */
+        def allTraits: Chunk[Symbol.Trait] =
+            symbols.flatMap { case t: Symbol.Trait => Chunk(t); case _ => Chunk.empty }
+
+        /** All Object symbols in the classpath. Linear scan. */
+        def allObjects: Chunk[Symbol.Object] =
+            symbols.flatMap { case o: Symbol.Object => Chunk(o); case _ => Chunk.empty }
+
+        /** All ClassLike symbols (Class, Trait, Object) in the classpath. Linear scan. */
+        def allClassLike: Chunk[Symbol.ClassLike] =
+            symbols.flatMap { case c: Symbol.ClassLike => Chunk(c); case _ => Chunk.empty }
+
+        /** All Method symbols in the classpath. Linear scan. */
+        def allMethods: Chunk[Symbol.Method] =
+            symbols.flatMap { case m: Symbol.Method => Chunk(m); case _ => Chunk.empty }
+
+        /** All Val symbols in the classpath. Linear scan. */
+        def allVals: Chunk[Symbol.Val] =
+            symbols.flatMap { case v: Symbol.Val => Chunk(v); case _ => Chunk.empty }
+
+        /** All Var symbols in the classpath. Linear scan. */
+        def allVars: Chunk[Symbol.Var] =
+            symbols.flatMap { case v: Symbol.Var => Chunk(v); case _ => Chunk.empty }
+
+        /** All Field symbols (Java-level) in the classpath. Linear scan. */
+        def allFields: Chunk[Symbol.Field] =
+            symbols.flatMap { case f: Symbol.Field => Chunk(f); case _ => Chunk.empty }
+
+        /** All TypeAlias symbols in the classpath. Linear scan. */
+        def allTypeAliases: Chunk[Symbol.TypeAlias] =
+            symbols.flatMap { case t: Symbol.TypeAlias => Chunk(t); case _ => Chunk.empty }
+
+        /** All OpaqueType symbols in the classpath. Linear scan. */
+        def allOpaqueTypes: Chunk[Symbol.OpaqueType] =
+            symbols.flatMap { case t: Symbol.OpaqueType => Chunk(t); case _ => Chunk.empty }
+
+        /** All AbstractType symbols in the classpath. Linear scan. */
+        def allAbstractTypes: Chunk[Symbol.AbstractType] =
+            symbols.flatMap { case t: Symbol.AbstractType => Chunk(t); case _ => Chunk.empty }
+
+        /** All TypeParam symbols in the classpath. Linear scan. */
+        def allTypeParams: Chunk[Symbol.TypeParam] =
+            symbols.flatMap { case t: Symbol.TypeParam => Chunk(t); case _ => Chunk.empty }
+
+        /** All Parameter symbols in the classpath. Linear scan. */
+        def allParameters: Chunk[Symbol.Parameter] =
+            symbols.flatMap { case p: Symbol.Parameter => Chunk(p); case _ => Chunk.empty }
+
+        /** All Package symbols in the classpath. Linear scan. */
+        def allPackages: Chunk[Symbol.Package] =
+            symbols.flatMap { case p: Symbol.Package => Chunk(p); case _ => Chunk.empty }
+
+        /** All Unresolved symbols in the classpath. Linear scan. */
+        def allUnresolved: Chunk[Symbol.Unresolved] =
+            symbols.flatMap { case u: Symbol.Unresolved => Chunk(u); case _ => Chunk.empty }
+
+        /** All symbols carrying the Scala or Java annotation whose fully-qualified name is `annotationFqn`.
+          *
+          * Checks Scala `annotations` (via `Annotation.annotationType`: must be `Type.Named(id)` whose FQN matches `annotationFqn`) and
+          * Java `javaAnnotations` (via `JavaAnnotation.annotationClass` FQN). Symbols that carry neither field (TypeParam, Package,
+          * Unresolved) are excluded.
+          */
+        def symbolsAnnotatedWith(annotationFqn: String): Chunk[Symbol] =
+            import Name.asString
+            symbols.filter: sym =>
+                val scalaMatch: Boolean = sym match
+                    case c: Symbol.ClassLike     => c.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                    case m: Symbol.Method        => m.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                    case v: Symbol.Val           => v.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                    case w: Symbol.Var           => w.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                    case ta: Symbol.TypeAlias    => ta.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                    case ot: Symbol.OpaqueType   => ot.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                    case at: Symbol.AbstractType => at.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                    case p: Symbol.Parameter     => p.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                    case _                       => false
+                val javaMatch: Boolean = sym match
+                    case c: Symbol.ClassLike => c.javaAnnotations.exists(ja => fullName(ja.annotationClass).asString == annotationFqn)
+                    case f: Symbol.Field     => f.javaAnnotations.exists(ja => fullName(ja.annotationClass).asString == annotationFqn)
+                    case _                   => false
+                scalaMatch || javaMatch
+        end symbolsAnnotatedWith
+
+        private def annotationFqnMatches(ann: Annotation, fqn: String): Boolean =
+            import Name.asString
+            ann.annotationType match
+                case Type.Named(id) => fullName(symbol(id)).asString == fqn
+                case _              => false
+        end annotationFqnMatches
 
         /** Look up the companion symbol (companion object for a class/trait; companion class for an object).
           *
@@ -1722,41 +1917,50 @@ object Tasty:
         /** Package-private memo size for test verification. NOT part of the public API. */
         private[kyo] def bodyMemoSize: Int = bodyMemo.size()
 
-        /** All direct subclasses of `sym` (one hop, from the subclass index).
+        /** All direct `ClassLike` subclasses of `sym` (one hop, from the subclass index).
           *
           * Pure O(k) lookup where k is the number of direct subclasses. Returns an empty Chunk when `sym` has no registered subclasses.
+          * Non-ClassLike entries in the index are silently excluded (defensive; should not occur in well-formed classpath data).
           */
-        def directSubclassesOf(sym: Symbol): Chunk[Symbol] =
-            subclassIndex.getOrElse(sym.id, Chunk.empty).map(symbol)
+        def directSubclassesOf(sym: Symbol.ClassLike): Chunk[Symbol.ClassLike] =
+            subclassIndex.getOrElse(sym.id, Chunk.empty).flatMap: id =>
+                symbol(id) match
+                    case c: Symbol.ClassLike => Chunk(c)
+                    case _                   => Chunk.empty
 
-        /** All transitive subclasses of `sym` (BFS closure over the subclass index).
+        /** All transitive `ClassLike` subclasses of `sym` (BFS closure over the subclass index).
           *
           * Returns an empty Chunk when `sym` has no registered subclasses. The BFS visited set prevents infinite loops on malformed
           * (cyclic) classpath data.
           */
-        def subclassesOf(sym: Symbol): Chunk[Symbol] = transitiveSubclasses(sym)
+        def subclassesOf(sym: Symbol.ClassLike): Chunk[Symbol.ClassLike] =
+            transitiveClassLikeSubclasses(sym)
 
-        /** All concrete class symbols that are transitive subclasses of `sym`.
+        /** All concrete `Symbol.Class` instances that are transitive subclasses of `sym` and not abstract.
           *
-          * Equivalent to `subclassesOf(sym).filter(s => s.isClass && !s.isAbstract)`.
+          * Equivalent to `subclassesOf(sym).collect { case c: Symbol.Class if !c.isAbstract => c }`.
           */
-        def implementationsOf(sym: Symbol): Chunk[Symbol] =
-            subclassesOf(sym).filter(s => s.isClass && !s.isAbstract)
+        def implementationsOf(sym: Symbol.ClassLike): Chunk[Symbol.Class] =
+            subclassesOf(sym).flatMap:
+                case c: Symbol.Class if !c.isAbstract => Chunk(c)
+                case _                                => Chunk.empty
 
-        private def transitiveSubclasses(root: Symbol): Chunk[Symbol] =
+        private def transitiveClassLikeSubclasses(root: Symbol): Chunk[Symbol.ClassLike] =
             val visited = scala.collection.mutable.HashSet.empty[SymbolId]
-            val out     = Chunk.newBuilder[Symbol]
+            val out     = Chunk.newBuilder[Symbol.ClassLike]
             val queue   = scala.collection.mutable.Queue(root.id)
             while queue.nonEmpty do
                 val curId = queue.dequeue()
                 subclassIndex.getOrElse(curId, Chunk.empty).foreach: childId =>
                     if visited.add(childId) then
-                        val child = symbol(childId)
-                        out += child
-                        queue.enqueue(childId)
+                        symbol(childId) match
+                            case c: Symbol.ClassLike =>
+                                out += c
+                                queue.enqueue(childId)
+                            case _ =>
             end while
             out.result()
-        end transitiveSubclasses
+        end transitiveClassLikeSubclasses
 
     end Classpath
 

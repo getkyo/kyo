@@ -789,7 +789,7 @@ class QueryApiTest extends Test:
         src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(src).flatMap: cp =>
-                cp.findClass("kyo.fixtures.SomeTrait") match
+                cp.findClassLike("kyo.fixtures.SomeTrait") match
                     case Absent => Abort.fail(TastyError.NotImplemented("SomeTrait not found"))
                     case Present(traitSym) =>
                         val declIds = symDeclarationIds(traitSym)

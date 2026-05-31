@@ -315,11 +315,8 @@ class TastySymbolTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym match
-                            case c: Tasty.Symbol.ClassLike => c.declarationIds;
-                            case p: Tasty.Symbol.Package   => p.memberIds;
-                            case _                         => Chunk.empty[kyo.internal.tasty.symbol.SymbolId])
-                    case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
+                    case Present(sym) => Kyo.lift(sym.declarationIds)
+                    case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(decls) =>
                     assert(decls != null, "Expected non-null Chunk from declarationIds")
                 case Result.Failure(e) =>
@@ -337,11 +334,8 @@ class TastySymbolTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym match
-                            case c: Tasty.Symbol.ClassLike => c.typeParamIds;
-                            case m: Tasty.Symbol.Method    => m.typeParamIds;
-                            case _                         => Chunk.empty[kyo.internal.tasty.symbol.SymbolId])
-                    case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
+                    case Present(sym) => Kyo.lift(sym.typeParamIds)
+                    case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(tps) =>
                     assert(
                         tps != null,

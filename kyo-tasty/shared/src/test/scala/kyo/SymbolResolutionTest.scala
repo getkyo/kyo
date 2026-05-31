@@ -74,7 +74,7 @@ class SymbolResolutionTest extends Test:
     "two concurrent findClass calls for the same FQN return reference-equal symbols" in run {
         Scope.run:
             Abort.run[TastyError](openClasspath(fixtureSource()).flatMap: cp =>
-                Async.zip[TastyError, Maybe[Tasty.Symbol], Maybe[Tasty.Symbol], Any](
+                Async.zip[TastyError, Maybe[Tasty.Symbol.Class], Maybe[Tasty.Symbol.Class], Any](
                     cp.findClass("kyo.fixtures.PlainClass"),
                     cp.findClass("kyo.fixtures.PlainClass")
                 )).map:
@@ -98,7 +98,7 @@ class SymbolResolutionTest extends Test:
         // and look up the same FQN plus a non-existent one
         Scope.run:
             Abort.run[TastyError](openClasspath(fixtureSource()).flatMap: cp =>
-                Async.zip[TastyError, Maybe[Tasty.Symbol], Maybe[Tasty.Symbol], Any](
+                Async.zip[TastyError, Maybe[Tasty.Symbol.Class], Maybe[Tasty.Symbol.Class], Any](
                     cp.findClass("kyo.fixtures.PlainClass"),
                     cp.findClass("no.such.Class")
                 )).map:

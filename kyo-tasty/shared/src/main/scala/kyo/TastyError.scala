@@ -24,6 +24,13 @@ enum TastyError derives CanEqual:
     /** A symbol with the fully-qualified name `fqn` is required but absent from the classpath. */
     case SymbolNotFound(fqn: String)
 
+    /** A required symbol or module with name `fqn` was not found in the classpath.
+      *
+      * Raised by `Classpath.requireClass`, `requireTrait`, `requireObject`, `requireClassLike`, `requirePackage`, and `requireModule` when
+      * the lookup returns Absent.
+      */
+    case NotFound(fqn: String)
+
     /** A Java classfile at `path` contains an undecodable constant-pool or attribute at `byteOffset`. */
     case ClassfileFormatError(path: String, reason: String, byteOffset: Long)
 
