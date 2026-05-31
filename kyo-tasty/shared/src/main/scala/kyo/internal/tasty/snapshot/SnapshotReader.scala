@@ -150,8 +150,7 @@ object SnapshotReader:
             case Some((offset, length)) => readErrors(bytes, offset, length)
             case None                   => Chunk.empty[TastyError]
 
-        // plan: phase-02 rebuild; collect relational data from sections, then rebuild Symbols with
-        // full field set. Symbol is now immutable, so we can't fill slots after construction.
+        // Collect relational data from sections, then rebuild Symbols with full field set.
         val partialSymbols = allSymbols
         val symCount       = partialSymbols.length
         val symsArray      = partialSymbols.toArray
@@ -270,8 +269,7 @@ object SnapshotReader:
 
     /** Deserialize ref lists, calling `assign(symIdx, refs)` for each entry.
       *
-      * plan: phase-02 new helper; replaces deserializeRefLists which called assign(sym, refs). This version works with index-based access
-      * rather than symbol-based.
+      * Works with index-based access: `assign(symIdx, refs)` is called for each entry in the section.
       */
     private def deserializeRefListsByIdx(
         bytes: Array[Byte],
@@ -366,7 +364,7 @@ object SnapshotReader:
             case None             => Array.empty[Byte]
         val errors = if errorsBytes.nonEmpty then readErrors(errorsBytes, 0, errorsBytes.length) else Chunk.empty[TastyError]
 
-        // plan: phase-02 rebuild; same pattern as deserialize.
+        // Same two-pass pattern as deserialize.
         val partialSymbols = allSymbols
         val symCount       = partialSymbols.length
         val symsArray      = partialSymbols.toArray
@@ -558,7 +556,7 @@ object SnapshotReader:
         val order   = (0 until count).sortBy(depth).toArray
         val created = new Array[Tasty.Symbol](count)
 
-        // plan: phase-02; create partial Symbols; relational fields filled by deserializeMapped.
+        // Create partial Symbols with basic fields; relational fields filled by the caller.
         for idx <- order do
             val raw        = raws(idx)
             val kind       = kindFromOrd(raw.kindOrd)
@@ -732,7 +730,7 @@ object SnapshotReader:
         // Allocate symbols in topological order
         val created = new Array[Tasty.Symbol](count)
 
-        // plan: phase-02; create partial Symbols with basic fields; deserialize() fills in
+        // Create partial Symbols with basic fields; deserialize() fills in
         // parentTypes / typeParamIds / declarationIds and rebuilds final immutable Symbols.
         for idx <- order do
             val raw        = raws(idx)
@@ -833,42 +831,6 @@ object SnapshotReader:
             Chunk.from(buf.toSeq)
         end if
     end readErrors
-
-    /** Deserialize a ref-list section produced by SnapshotWriter.serializeSymbolRelLists.
-      *
-      * Layout: [4-byte count] then count x ([4-byte symIdx][4-byte refCount][refCount x 4-byte refId]). For each entry,
-      * `assign(syms(symIdx), filteredRefs)` is called where filteredRefs contains only ref IDs in range [0, syms.length). Out-of-range or
-      * negative ref IDs are silently dropped (they were encoded as -1 for non-serializable references).
-      */
-    private def deserializeRefLists(
-        bytes: Array[Byte],
-        offset: Int,
-        length: Int,
-        syms: Array[Tasty.Symbol],
-        assign: (Tasty.Symbol, Array[Int]) => Unit
-    ): Unit =
-        val end   = offset + length
-        val count = SnapshotFormat.readInt32LE(bytes, offset)
-        var pos   = offset + 4
-        var i     = 0
-        while i < count && pos + 8 <= end do
-            val symIdx   = SnapshotFormat.readInt32LE(bytes, pos)
-            val refCount = SnapshotFormat.readInt32LE(bytes, pos + 4)
-            pos += 8
-            val rawRefs = new Array[Int](refCount)
-            var j       = 0
-            while j < refCount && pos + 4 <= end do
-                rawRefs(j) = SnapshotFormat.readInt32LE(bytes, pos)
-                pos += 4
-                j += 1
-            end while
-            if symIdx >= 0 && symIdx < syms.length then
-                val validRefs = rawRefs.filter(r => r >= 0 && r < syms.length)
-                assign(syms(symIdx), validRefs)
-            end if
-            i += 1
-        end while
-    end deserializeRefLists
 
     /** Best-effort reconstruction of a TastyError from its toString representation. */
     private def parseErrorString(msg: String): TastyError =

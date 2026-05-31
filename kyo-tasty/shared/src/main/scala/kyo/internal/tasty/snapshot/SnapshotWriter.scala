@@ -142,7 +142,7 @@ object SnapshotWriter:
 
         // PARENTS section: for each symbol, store the list of symbol IDs of Named parent types.
         // Non-Named parents (complex types) are encoded as -1 and skipped on read.
-        // plan: phase-05; Named(symbolId) carries SymbolId.value as the serialized index.
+        // Named(symbolId) carries SymbolId.value as the serialized index.
         val parentsBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
@@ -153,7 +153,7 @@ object SnapshotWriter:
         )
 
         // MEMBERS section: for each symbol, store the symbol IDs of its declarations.
-        // plan: phase-02 inline; declarationIds carries SymbolId.value directly.
+        // declarationIds carries SymbolId.value directly.
         val membersBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
@@ -163,7 +163,7 @@ object SnapshotWriter:
         )
 
         // TPARAMS_ section: for each symbol, store the symbol IDs of its type parameters.
-        // plan: phase-02 inline; typeParamIds carries SymbolId.value directly.
+        // typeParamIds carries SymbolId.value directly.
         val tparamsBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
@@ -297,7 +297,7 @@ object SnapshotWriter:
             SnapshotFormat.writeInt64LE(buf, pos + 1, sym.flags.bits)
             SnapshotFormat.writeInt32LE(buf, pos + 9, nameId)
             SnapshotFormat.writeInt32LE(buf, pos + 13, fqnId)
-            // plan: phase-02 inline; sym.ownerId.value is the index into the symbols array.
+            // sym.ownerId.value is the index into the symbols array.
             // For self-referential root (ownerId == id), write -1 to indicate no owner.
             import kyo.internal.tasty.symbol.SymbolId
             val ownerIdx = sym.ownerId.value
@@ -340,7 +340,7 @@ object SnapshotWriter:
         symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
         refsOf: Tasty.Symbol => Chunk[Int]
     ): Array[Byte] =
-        // plan: phase-02 inline; parentTypes / declarationIds / typeParamIds are direct fields on Symbol.
+        // parentTypes / declarationIds / typeParamIds are direct fields on Symbol.
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
         // Collect valid entries: (symIdx, filteredRefs) where filteredRefs is non-empty.

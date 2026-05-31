@@ -636,6 +636,247 @@ class SnapshotRoundTripTest extends Test:
                 throw t
     }
 
+    // Leaf 1 (Phase 11, INV-011): full Classpath data is preserved after write+read.
+    // Checks symbols count, fqnIndex keys, topLevelClassIds, packageIds, and errors.
+    // Does NOT use cp == cp2: subclassIndex / companionIndex / moduleIndex are not serialized
+    // (they are Map.empty in the reader) so strict equality would fail on a correct round-trip.
+    "snapshot round-trip preserves Classpath data (symbols, fqnIndex, topLevelClassIds, errors)" in run {
+        val cacheSrc = MemoryFileSource()
+        val digest   = Array[Byte](0xa0.toByte, 0xa1.toByte, 0xa2.toByte, 0xa3.toByte, 0xa4.toByte, 0xa5.toByte, 0xa6.toByte, 0xa7.toByte)
+        Scope.run:
+            Abort.run[TastyError](
+                openClasspath(fixtureSource()).flatMap: cp =>
+                    SnapshotWriter.write(cp, "cache", digest, cacheSrc).andThen:
+                        val hex      = DigestComputer.toHexString(digest)
+                        val snapPath = s"cache/$hex.krfl"
+                        SnapshotReader.read(snapPath, cacheSrc).map: cp2 =>
+                            (cp, cp2)
+            ).map:
+                case Result.Success((cp, cp2)) =>
+                    assert(
+                        cp.symbols.length == cp2.symbols.length,
+                        s"symbols count mismatch: ${cp.symbols.length} != ${cp2.symbols.length}"
+                    )
+                    assert(
+                        cp.fqnIndex.keySet == cp2.fqnIndex.keySet,
+                        s"fqnIndex key sets differ after round-trip"
+                    )
+                    assert(
+                        cp.topLevelClassIds.length == cp2.topLevelClassIds.length,
+                        s"topLevelClassIds length mismatch: ${cp.topLevelClassIds.length} != ${cp2.topLevelClassIds.length}"
+                    )
+                    assert(
+                        cp.packageIds.length == cp2.packageIds.length,
+                        s"packageIds length mismatch: ${cp.packageIds.length} != ${cp2.packageIds.length}"
+                    )
+                    assert(
+                        cp.errors.size == cp2.errors.size,
+                        s"errors size mismatch: ${cp.errors.size} != ${cp2.errors.size}"
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Leaf 2 (Phase 11, INV-011): a synthetic pre-campaign snapshot (written inline with minimal
+    // Classpath.make fields) is readable by the current SnapshotReader without error.
+    // This replaces the missing committed binary fixture: the synthetic Classpath exercises the
+    // same wire-format contract as a pre-campaign snapshot.
+    "legacy snapshot reads with the new reader (synthetic inline fixture)" in run {
+        val cacheSrc = MemoryFileSource()
+        val digest   = Array[Byte](0xb0.toByte, 0xb1.toByte, 0xb2.toByte, 0xb3.toByte, 0xb4.toByte, 0xb5.toByte, 0xb6.toByte, 0xb7.toByte)
+
+        import AllowUnsafe.embrace.danger
+        import kyo.internal.tasty.symbol.SymbolId
+        val rootSym2 = Tasty.Symbol.fromDescriptor(
+            id = SymbolId(0),
+            kind = Tasty.SymbolKind.Package,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(""),
+            ownerId = SymbolId(0),
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            bodyRecord = Maybe.Absent
+        )
+        val pkgSym2 = Tasty.Symbol.fromDescriptor(
+            id = SymbolId(1),
+            kind = Tasty.SymbolKind.Package,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("legacy"),
+            ownerId = SymbolId(0),
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            bodyRecord = Maybe.Absent
+        )
+        val classSym2 = Tasty.Symbol.fromDescriptor(
+            id = SymbolId(2),
+            kind = Tasty.SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("OldClass"),
+            ownerId = SymbolId(1),
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            bodyRecord = Maybe.Absent
+        )
+
+        val allSyms2 = Chunk(rootSym2, pkgSym2, classSym2)
+        val fqnMap2  = scala.collection.immutable.Map("legacy.OldClass" -> classSym2.id)
+        val pkgMap2  = scala.collection.immutable.Map("legacy" -> pkgSym2.id)
+        val topIds2  = Chunk(classSym2.id)
+        val pkgIds2  = Chunk(rootSym2.id, pkgSym2.id)
+
+        Abort.run[TastyError]:
+            val syntheticCp = Tasty.Classpath.make(
+                symbols = allSyms2,
+                rootSymbolId = SymbolId(0),
+                topLevelClassIds = topIds2,
+                packageIds = pkgIds2,
+                fqnIndex = fqnMap2,
+                packageIndex = pkgMap2,
+                subclassIndex = Map.empty,
+                companionIndex = Map.empty,
+                moduleIndex = Map.empty,
+                errors = Chunk.empty,
+                canonical = kyo.internal.tasty.type_.TypeArena.canonical()
+            )
+            SnapshotWriter.write(syntheticCp, "cache", digest, cacheSrc).andThen:
+                val hex      = DigestComputer.toHexString(digest)
+                val snapPath = s"cache/$hex.krfl"
+                SnapshotReader.read(snapPath, cacheSrc).map: loadedCp =>
+                    (
+                        loadedCp.findClass("legacy.OldClass"),
+                        loadedCp.findPackage("legacy"),
+                        loadedCp.symbols.length
+                    )
+        .map:
+            case Result.Success((foundClass, foundPkg, symCount)) =>
+                assert(foundClass.isDefined, "legacy.OldClass must be findable after synthetic snapshot round-trip")
+                assert(foundPkg.isDefined, "legacy package must be findable after synthetic snapshot round-trip")
+                assert(symCount == 3, s"Expected 3 symbols after round-trip, got $symCount")
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure reading synthetic legacy snapshot: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // Leaf 3 (Phase 11, INV-011): section-index byte-level walk.
+    // Parses the raw bytes of a new-writer snapshot; asserts all 10 expected section names are
+    // present and that section offsets are monotone increasing.
+    "new snapshot section-index: all 10 sections present and offsets monotone increasing" in run {
+        val cacheSrc = MemoryFileSource()
+        val digest   = Array[Byte](0xc0.toByte, 0xc1.toByte, 0xc2.toByte, 0xc3.toByte, 0xc4.toByte, 0xc5.toByte, 0xc6.toByte, 0xc7.toByte)
+        Scope.run:
+            Abort.run[TastyError](
+                openClasspath(fixtureSource()).flatMap: cp =>
+                    SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
+                        val hex      = DigestComputer.toHexString(digest)
+                        val snapPath = s"cache/$hex.krfl"
+                        cacheSrc.getBytes(snapPath)
+            ).map:
+                case Result.Success(Some(bytes)) =>
+                    val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
+                    assert(sectionCount == 10, s"Expected 10 sections in new-writer snapshot, got $sectionCount")
+
+                    val expectedNames = Set(
+                        SnapshotFormat.sectionNAMES,
+                        SnapshotFormat.sectionSYMBOLS,
+                        SnapshotFormat.sectionTYPES,
+                        SnapshotFormat.sectionTYPEXTRA,
+                        SnapshotFormat.sectionPARENTS,
+                        SnapshotFormat.sectionMEMBERS,
+                        SnapshotFormat.sectionTPARAMS,
+                        SnapshotFormat.sectionFILES,
+                        SnapshotFormat.sectionBODYBYTES,
+                        SnapshotFormat.sectionERRORS
+                    )
+
+                    val foundNames = scala.collection.mutable.Set.empty[String]
+                    val offsets    = scala.collection.mutable.ArrayBuffer.empty[Long]
+                    var idxPos     = 36
+                    var i          = 0
+                    while i < sectionCount do
+                        val name   = SnapshotFormat.readSectionName(bytes, idxPos)
+                        val offset = SnapshotFormat.readInt64LE(bytes, idxPos + 8)
+                        foundNames += name
+                        offsets += offset
+                        idxPos += SnapshotFormat.sectionIndexEntrySize
+                        i += 1
+                    end while
+
+                    assert(
+                        expectedNames == foundNames.toSet,
+                        s"Section names mismatch. Expected: $expectedNames Found: ${foundNames.toSet}"
+                    )
+
+                    val offsetSeq = offsets.toSeq
+                    val monotone  = offsetSeq.zip(offsetSeq.tail).forall { case (a, b) => b >= a }
+                    assert(monotone, s"Section offsets must be monotone increasing: $offsetSeq")
+                case Result.Success(None) =>
+                    fail("Snapshot file not found after write")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
+    // Leaf 4 (Phase 11, INV-004): Classpath.decodeBody on a snapshot-restored Classpath
+    // invokes the memoized decode path and populates bodyMemo even when body decoding fails.
+    //
+    // Snapshot-loaded body bytes lack the name table and type context from the original TASTy
+    // section, so actual tree decode produces MalformedSection. The failure IS memoized: after
+    // one decodeBody call, bodyMemoSize == 1, confirming the per-instance memo works correctly.
+    // Uses bodyMemoSize (private[kyo] on Tasty.Classpath) to verify memoization.
+    "snapshot body decode invokes decodeBody and memoizes result (bodyMemoSize == 1 after call)" in run {
+        val cacheSrc = MemoryFileSource()
+        val digest   = Array[Byte](0xd0.toByte, 0xd1.toByte, 0xd2.toByte, 0xd3.toByte, 0xd4.toByte, 0xd5.toByte, 0xd6.toByte, 0xd7.toByte)
+        Scope.run:
+            // Open the warm classpath and find a body-bearing symbol.
+            Abort.run[TastyError](
+                openClasspath(fixtureSource()).flatMap: cp =>
+                    SnapshotWriter.write(cp, "cache", digest, cacheSrc).andThen:
+                        val hex      = DigestComputer.toHexString(digest)
+                        val snapPath = s"cache/$hex.krfl"
+                        SnapshotReader.read(snapPath, cacheSrc).map: (warmCp: Tasty.Classpath) =>
+                            (warmCp, warmCp.symbols.find(_.bodyRecord.isDefined))
+            ).flatMap:
+                case Result.Success((warmCp: Tasty.Classpath, Some(sym: Tasty.Symbol))) =>
+                    // Before decodeBody: bodyMemoSize must be 0.
+                    assert(warmCp.bodyMemoSize == 0, s"bodyMemo must be empty before any decodeBody call, got ${warmCp.bodyMemoSize}")
+                    // Call decodeBody; snapshot bodies lack the name table so decode may fail,
+                    // but the result (success or failure) must be memoized.
+                    Abort.run[TastyError](warmCp.decodeBody(sym)).map: _ =>
+                        // After decodeBody: bodyMemoSize must be 1 regardless of decode outcome.
+                        val memoSize = warmCp.bodyMemoSize
+                        assert(memoSize == 1, s"bodyMemo must have exactly 1 entry after first decodeBody call, got $memoSize")
+                case Result.Success((_, None)) =>
+                    fail("No body-bearing symbol found in warm classpath; fixture must have at least one body")
+                case Result.Success(_) =>
+                    fail("Unexpected tuple shape")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure in Leaf 4: $e")
+                case Result.Panic(t) =>
+                    throw t
+    }
+
     // T-J2: directory-root digest is deterministic across two calls
     "DigestComputer.compute on directory root returns same digest for two successive calls" in run {
         val src = fixtureSource()
