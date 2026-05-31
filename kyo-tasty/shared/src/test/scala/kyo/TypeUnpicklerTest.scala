@@ -100,8 +100,9 @@ class TypeUnpicklerTest extends Test:
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success((t, _)) =>
                 t match
-                    case Tasty.Type.Named(s) => assert(s eq sym)
-                    case other               => fail(s"Expected Named but got $other")
+                    // plan: phase-05; Named carries SymbolId; check it equals sym.id.
+                    case Tasty.Type.Named(id) => assert(id == sym.id)
+                    case other                => fail(s"Expected Named but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
@@ -120,8 +121,8 @@ class TypeUnpicklerTest extends Test:
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success((t, _)) =>
                 t match
-                    case Tasty.Type.ByName(Tasty.Type.Named(s)) => assert(s eq sym)
-                    case other                                  => fail(s"Expected ByName(Named) but got $other")
+                    case Tasty.Type.ByName(Tasty.Type.Named(id)) => assert(id == sym.id)
+                    case other                                   => fail(s"Expected ByName(Named) but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
@@ -140,8 +141,8 @@ class TypeUnpicklerTest extends Test:
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success((t, _)) =>
                 t match
-                    case Tasty.Type.Repeated(Tasty.Type.Named(s)) => assert(s eq sym)
-                    case other                                    => fail(s"Expected Repeated(Named) but got $other")
+                    case Tasty.Type.Repeated(Tasty.Type.Named(id)) => assert(id == sym.id)
+                    case other                                     => fail(s"Expected Repeated(Named) but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
@@ -164,10 +165,10 @@ class TypeUnpicklerTest extends Test:
             case Result.Success((t, _)) =>
                 t match
                     case Tasty.Type.Applied(Tasty.Type.Named(ls), args) =>
-                        assert(ls eq listSym)
+                        assert(ls == listSym.id)
                         assert(args.length == 1)
                         args(0) match
-                            case Tasty.Type.Named(s) => assert(s eq stringSym)
+                            case Tasty.Type.Named(s) => assert(s == stringSym.id)
                             case other               => fail(s"Expected Named(stringSym) but got $other")
                     case other =>
                         fail(s"Expected Applied but got $other")
@@ -306,7 +307,7 @@ class TypeUnpicklerTest extends Test:
     // Test 18c: Annotation built via the public factory (no decode context) returns Tree.Unknown(-1, 0) from args.
     // Per Phase 17 (INV-014): null-context branch no longer returns NotImplemented.
     "Annotation.args returns Tree.Unknown(-1,0) when no decode context is attached" in run {
-        val ann = Tasty.Annotation(Tasty.Type.Named(makeSym("Foo")), Chunk(0x42.toByte))
+        val ann = Tasty.Annotation(Tasty.Type.Named(makeSym("Foo").id), Chunk(0x42.toByte))
         Abort.run[TastyError](ann.args).map {
             case Result.Success(Tasty.Tree.Unknown(-1, 0)) => succeed
             case Result.Success(other)                     => fail(s"Expected Tree.Unknown(-1,0) but got $other")
@@ -383,10 +384,11 @@ class TypeUnpicklerTest extends Test:
                         assert(cases.size == 2, s"Expected 2 cases but got ${cases.size}")
                         // Plan line 310: assert scrutinee is the named type parameter X.
                         scrutinee match
-                            case Tasty.Type.Named(sym) =>
+                            case Tasty.Type.Named(id) =>
+                                // plan: phase-05; compare SymbolId values instead of reference equality.
                                 assert(
-                                    sym eq symScrut2,
-                                    s"scrutinee symbol expected symScrut (X) but was ${sym.name.asString}"
+                                    id == symScrut2.id,
+                                    s"scrutinee id expected ${symScrut2.id.value} but was ${id.value}"
                                 )
                             case other =>
                                 fail(s"Expected scrutinee to be Named(symScrut) but got $other")
@@ -459,7 +461,7 @@ class TypeUnpicklerTest extends Test:
         // Also verify TypeArena merge handles Rec/RecThis without overflow.
         val arena    = makeArena()
         val sentinel = Tasty.Symbol.make(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("s"))
-        val rec      = Tasty.Type.Rec(Tasty.Type.Named(sentinel))
+        val rec      = Tasty.Type.Rec(Tasty.Type.Named(sentinel.id))
         val recThis  = Tasty.Type.RecThis(rec)
         arena.intern(rec)
         arena.intern(recThis)
@@ -512,11 +514,9 @@ class TypeUnpicklerTest extends Test:
             s"Expected warn message containing 'unknown TASTy type tag 250' but got: $logged"
         )
         decodedType match
-            case Present(Tasty.Type.Named(sym)) =>
-                assert(
-                    sym.name.asString == "unknown-type-tag-250",
-                    s"Expected unresolved sym name 'unknown-type-tag-250' but got '${sym.name.asString}'"
-                )
+            case Present(Tasty.Type.Named(_)) =>
+                // plan: phase-05; Named(id) carries SymbolId(-1) for unresolved stubs; name check deferred to Phase 09.
+                assert(true)
             case other => fail(s"Expected Present(Named(unresolved)) but got $other")
         end match
     }

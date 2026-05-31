@@ -394,10 +394,10 @@ object Tasty:
     // ── Type ADT ────────────────────────────────────────────────────────────
 
     enum Type:
-        case Named(symbol: Symbol)
+        case Named(symbolId: SymbolId)
         case TermRef(prefix: Type, name: Name)
         case Applied(base: Type, args: Chunk[Type])
-        case TypeLambda(params: Chunk[Symbol], body: Type)
+        case TypeLambda(paramIds: Chunk[SymbolId], body: Type)
         case Function(params: Chunk[Type], result: Type, isContext: Boolean)
         case Tuple(elements: Chunk[Type])
         case ByName(underlying: Type)
@@ -410,21 +410,31 @@ object Tasty:
         case OrType(left: Type, right: Type)
         case Annotated(underlying: Type, annotation: Annotation)
         case ConstantType(value: Constant)
-        case ThisType(cls: Symbol)
+        case ThisType(clsId: SymbolId)
         case SuperType(self: Type, mixin: Type)
-        case ParamRef(binder: Symbol, idx: Int)
+        case ParamRef(binderId: SymbolId, idx: Int)
         case Wildcard(lo: Type, hi: Type)
         case Skolem(underlying: Type)
         case MatchType(bound: Type, scrutinee: Type, cases: Chunk[Type])
         case FlexibleType(underlying: Type)
 
-        def show: String =
-            // flow-allow: §839 case 3; diagnostic display boundary; reads immutable interned Name strings.
-            import AllowUnsafe.embrace.danger
-            import Name.asString
+        /** Structural subtype check.
+          *
+          * Pure: walks Type cases recursively; uses cp.symbol(id) to resolve parents when needed. Returns Sub when this is a subtype of
+          * other, NotSub when definitely not, Unknown when the relation cannot be decided from the loaded classpath (e.g. a Named refers to
+          * an Unresolved symbol).
+          */
+        def isSubtypeOf(other: Type)(using cp: Classpath): SubtypeVerdict =
+            kyo.internal.tasty.type_.Subtyping.isSubtype(this, other, cp, budget = 64)
+
+        /** Human-readable formatting; uses Name.asString for simple cases.
+          *
+          * plan: phase-05; Named(symbolId) renders the raw id integer until Phase 09 wires cp.symbol(id).name resolution. The signature
+          * gains (using cp: Classpath) now so Phase 09 can resolve names without a further signature change.
+          */
+        def show(using cp: Classpath): String =
             this match
-                // plan: phase-02 inline; lifts to sym.fullName.asString in phase 09 once resolution methods land.
-                case Named(sym)             => sym.name.asString
+                case Named(id)              => s"Named(${id.value})"
                 case Applied(base, args)    => s"${base.show}[${args.map(_.show).mkString(", ")}]"
                 case Array(elem)            => s"${elem.show}[]"
                 case Function(ps, r, isCtx) => s"(${ps.map(_.show).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${r.show}"
@@ -929,6 +939,28 @@ object Tasty:
                 )
                 cp
 
+        /** Create a test-only classpath from a pre-built symbols array.
+          *
+          * plan: phase-05 test helper; symbols(i).id.value must equal i for cp.symbol(id) to resolve correctly. Only callable from within
+          * package kyo (private[kyo]).
+          */
+        private[kyo] def fromPicklesWithSymbols(symbols: Chunk[Symbol])(using Frame): Classpath < Sync =
+            kyo.internal.tasty.query.Classpath.allocate.map: cp =>
+                // flow-allow: §839 case 3; single-threaded Sync.map lambda; atomic state write to fresh Classpath.
+                import AllowUnsafe.embrace.danger
+                kyo.internal.tasty.query.Classpath.transitionToReady(
+                    cp,
+                    allSymbols = symbols,
+                    topLevelClasses = Chunk.empty,
+                    packages = Chunk.empty,
+                    fqnIndex = Map.empty,
+                    packageIndex = Map.empty,
+                    canonical = TypeArena.canonical(),
+                    errors = Chunk.empty,
+                    moduleIndex = Map.empty
+                )
+                cp
+
         /** Internal: open implementation, delegates to ClasspathOrchestrator. */
         private def openImpl(
             roots: Seq[String],
@@ -983,6 +1015,16 @@ object Tasty:
     end Classpath
 
     extension (cp: Classpath)
+        /** Look up a Symbol by its SymbolId.
+          *
+          * Pure O(1) accessor; returns the Symbol at index `id.value` in the allSymbols array. Returns a sentinel Unresolved symbol when
+          * `id` is -1 or out-of-range (e.g. unresolved cross-file references during decode).
+          *
+          * Valid after `open` returns (Ready state). Phase 06 replaces this bridge implementation with a direct IndexedSeq index on the
+          * Classpath case-class field.
+          */
+        def symbol(id: SymbolId): Symbol = cp.symbol(id)
+
         /** Look up a class symbol by fully-qualified dotted name.
           *
           * Pure accessor: reads from the immutable fqnIndex HashMap in Ready state. Valid after `open` returns. After close, returns
@@ -1113,43 +1155,6 @@ object Tasty:
                         end try
         end decodeBody
 
-    end extension
-
-    // ── Type subtyping extension ─────────────────────────────────────────────
-
-    /** Extension method for subtype checking on `Tasty.Type` values.
-      *
-      * Checks whether `t` is a subtype of `other` using the structural covariant rules implemented in `kyo.internal.tasty.type_.Subtyping`.
-      * Parent-chain lookups use the provided `cp` classpath (explicit, per `feedback_no_implicit_handlers`).
-      *
-      * ==Rec depth budget==
-      *
-      * A `Rec` type contains a recursive back-reference (`RecThis`). To avoid infinite recursion, each `Rec` unfolding decrements an
-      * internal budget counter that starts at 64. If the budget is exhausted before a definitive subtype verdict is reached, the method
-      * returns `SubtypeVerdict.Unknown`. Normal type hierarchies are nowhere near 64 levels deep; the budget is a safety net for
-      * adversarial or machine-generated type structures.
-      *
-      * @param other
-      *   the candidate supertype
-      * @param cp
-      *   the classpath used for transitive parent-chain resolution
-      */
-    extension (t: Type)
-        /** Check whether `t` is a subtype of `other` using the structural covariant rules in `kyo.internal.tasty.type_.Subtyping`.
-          *
-          * Returns `SubtypeVerdict.Sub` when the relation definitively holds, `SubtypeVerdict.NotSub` when it definitively does not hold,
-          * and `SubtypeVerdict.Unknown` when the budget was exhausted or the parent chain was not fully available on the classpath.
-          *
-          * Pure accessor: parent-chain lookups use the pre-populated `_parents` SingleAssign slots in each Symbol, which are set during
-          * classpath open and are immutable thereafter. No classpath I/O is performed.
-          *
-          * @param other
-          *   the candidate supertype
-          * @param cp
-          *   the classpath used for transitive parent-chain resolution (reads immutable post-open parent-chain slots)
-          */
-        def isSubtypeOf(other: Type)(using cp: Classpath): SubtypeVerdict =
-            kyo.internal.tasty.type_.Subtyping.isSubtype(t, other, cp, budget = 64)
     end extension
 
     // ── FQN helper ──────────────────────────────────────────────────────────

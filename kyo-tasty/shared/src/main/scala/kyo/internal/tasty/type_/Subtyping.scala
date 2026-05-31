@@ -2,6 +2,7 @@ package kyo.internal.tasty.type_
 
 import kyo.*
 import kyo.internal.tasty.query.Classpath as InternalClasspath
+import kyo.internal.tasty.symbol.SymbolId
 
 /** Subtype checking for `Tasty.Type` values.
   *
@@ -65,8 +66,8 @@ object Subtyping:
         else
             // Any is supertype of everything
             sup match
-                // plan: phase-02 inline; uses sym.name.asString for now; Phase 09 uses sym.fullName.asString
-                case Tasty.Type.Named(supSym) if { import Tasty.Name.asString; supSym.name.asString == AnyName } =>
+                // plan: phase-05; uses cp.symbol(id).name.asString for now; Phase 09 uses sym.fullName.asString
+                case Tasty.Type.Named(supId) if { import Tasty.Name.asString; cp.symbol(supId).name.asString == AnyName } =>
                     Sub
                 // T <: OrType(L, R): Sub if either side is Sub; NotSub only if both are NotSub; else Unknown
                 case Tasty.Type.OrType(supLeft, supRight) =>
@@ -81,16 +82,16 @@ object Subtyping:
                 case _ =>
                     sub match
                         // Nothing is subtype of everything
-                        // plan: phase-02 inline; uses sym.name.asString; Phase 09 uses sym.fullName.asString
-                        case Tasty.Type.Named(subSym) if { import Tasty.Name.asString; subSym.name.asString == NothingName } =>
+                        // plan: phase-05; uses cp.symbol(id).name.asString; Phase 09 uses sym.fullName.asString
+                        case Tasty.Type.Named(subId) if { import Tasty.Name.asString; cp.symbol(subId).name.asString == NothingName } =>
                             Sub
 
                         // Named reflexivity and nominal subtyping
-                        case Tasty.Type.Named(subSym) =>
+                        case Tasty.Type.Named(subId) =>
                             sup match
-                                case Tasty.Type.Named(supSym) =>
-                                    if subSym eq supSym then Sub
-                                    else isNamedSubNamed(subSym, supSym, cp, budget)
+                                case Tasty.Type.Named(supId) =>
+                                    if subId == supId then Sub
+                                    else isNamedSubNamed(subId, supId, cp, budget)
                                 case _ =>
                                     NotSub
 
@@ -103,10 +104,8 @@ object Subtyping:
                                         if baseVerdict == Unknown then Unknown else NotSub
                                     else if subArgs.length != supArgs.length then NotSub
                                     else
-                                        val baseSymOpt = subBase match
-                                            case Tasty.Type.Named(s) => Maybe(s)
-                                            case _                   => Maybe.Absent
-                                        checkAppliedArgs(subArgs, supArgs, baseSymOpt, cp, budget)
+                                        // plan: phase-05; baseSymOpt deferred; variance lookup via Phase 09.
+                                        checkAppliedArgs(subArgs, supArgs, Maybe.Absent, cp, budget)
                                     end if
                                 case _ =>
                                     NotSub
@@ -123,13 +122,13 @@ object Subtyping:
                             end if
 
                         // TypeLambda: alpha-equivalence
-                        case Tasty.Type.TypeLambda(subParams, subBody) =>
+                        case Tasty.Type.TypeLambda(subParamIds, subBody) =>
                             sup match
-                                case Tasty.Type.TypeLambda(supParams, supBody) =>
-                                    if subParams.length != supParams.length then NotSub
+                                case Tasty.Type.TypeLambda(supParamIds, supBody) =>
+                                    if subParamIds.length != supParamIds.length then NotSub
                                     else if alphaEquiv(
-                                            Tasty.Type.TypeLambda(subParams, subBody),
-                                            Tasty.Type.TypeLambda(supParams, supBody)
+                                            Tasty.Type.TypeLambda(subParamIds, subBody),
+                                            Tasty.Type.TypeLambda(supParamIds, supBody)
                                         )
                                     then Sub
                                     else NotSub
@@ -176,55 +175,54 @@ object Subtyping:
         else if a == NotSub && b == NotSub then NotSub
         else Unknown
 
-    /** Check `Named(subSym) <: Named(supSym)` by walking `subSym`'s transitive parent chain.
+    /** Check `Named(subId) <: Named(supId)` by walking the sub symbol's transitive parent chain.
       *
-      * plan: phase-02 inline; parentTypes is now a direct field on Symbol (always set). Phase 09 will add sym.parents as a resolution
-      * method returning Chunk[Type].
+      * plan: phase-05; resolves SymbolId -> Symbol via cp.symbol(id); parentTypes is a direct field. Phase 09 adds sym.parents.
       */
     private def isNamedSubNamed(
-        subSym: Tasty.Symbol,
-        supSym: Tasty.Symbol,
+        subId: SymbolId,
+        supId: SymbolId,
         cp: InternalClasspath,
         budget: Int
     ): SubtypeVerdict =
-        val parents = subSym.parentTypes
-        checkParents(parents, supSym, cp, budget)
+        val parents = cp.symbol(subId).parentTypes
+        checkParents(parents, supId, cp, budget)
     end isNamedSubNamed
 
-    /** Check if `supSym` appears directly in the given parent list or transitively in any parent's parents. */
+    /** Check if `supId` appears directly in the given parent list or transitively in any parent's parents. */
     private def checkParents(
         parents: Chunk[Tasty.Type],
-        supSym: Tasty.Symbol,
+        supId: SymbolId,
         cp: InternalClasspath,
         budget: Int
     ): SubtypeVerdict =
         if parents.isEmpty then NotSub
         else
             parents.head match
-                case Tasty.Type.Named(parentSym) =>
-                    if parentSym eq supSym then Sub
+                case Tasty.Type.Named(parentId) =>
+                    if parentId == supId then Sub
                     else
-                        val transitiveVerdict = isNamedSubNamed(parentSym, supSym, cp, budget)
+                        val transitiveVerdict = isNamedSubNamed(parentId, supId, cp, budget)
                         if transitiveVerdict == Sub then Sub
                         else
-                            val tailVerdict = checkParents(parents.tail, supSym, cp, budget)
+                            val tailVerdict = checkParents(parents.tail, supId, cp, budget)
                             if tailVerdict == Sub then Sub
                             else if transitiveVerdict == Unknown || tailVerdict == Unknown then Unknown
                             else NotSub
                         end if
-                case Tasty.Type.Applied(Tasty.Type.Named(parentSym), _) =>
-                    if parentSym eq supSym then Sub
+                case Tasty.Type.Applied(Tasty.Type.Named(parentId), _) =>
+                    if parentId == supId then Sub
                     else
-                        val transitiveVerdict = isNamedSubNamed(parentSym, supSym, cp, budget)
+                        val transitiveVerdict = isNamedSubNamed(parentId, supId, cp, budget)
                         if transitiveVerdict == Sub then Sub
                         else
-                            val tailVerdict = checkParents(parents.tail, supSym, cp, budget)
+                            val tailVerdict = checkParents(parents.tail, supId, cp, budget)
                             if tailVerdict == Sub then Sub
                             else if transitiveVerdict == Unknown || tailVerdict == Unknown then Unknown
                             else NotSub
                         end if
                 case _ =>
-                    checkParents(parents.tail, supSym, cp, budget)
+                    checkParents(parents.tail, supId, cp, budget)
 
     /** Variance-respecting argument check for Applied types.
       *
@@ -288,16 +286,16 @@ object Subtyping:
 
     /** Structural alpha-equivalence for TypeLambda: rename params to positional de Bruijn-like indices.
       *
-      * Two TypeLambda types are alpha-equivalent iff their bodies are structurally equal after replacing each parameter symbol with its
+      * Two TypeLambda types are alpha-equivalent iff their bodies are structurally equal after replacing each parameter SymbolId with its
       * positional index in the parameter list.
       */
     private def alphaEquiv(t1: Tasty.Type.TypeLambda, t2: Tasty.Type.TypeLambda): Boolean =
-        val idx1 = buildParamIndex(t1.params, Map.empty)
-        val idx2 = buildParamIndex(t2.params, Map.empty)
+        val idx1 = buildParamIndex(t1.paramIds, Map.empty)
+        val idx2 = buildParamIndex(t2.paramIds, Map.empty)
         typeEquivAlpha(t1.body, t2.body, idx1, idx2)
     end alphaEquiv
 
-    private def buildParamIndex(params: Chunk[Tasty.Symbol], base: Map[Tasty.Symbol, Int]): Map[Tasty.Symbol, Int] =
+    private def buildParamIndex(params: Chunk[SymbolId], base: Map[SymbolId, Int]): Map[SymbolId, Int] =
         var result = base
         var i      = 0
         while i < params.length do
@@ -309,15 +307,15 @@ object Subtyping:
     private def typeEquivAlpha(
         t1: Tasty.Type,
         t2: Tasty.Type,
-        idx1: Map[Tasty.Symbol, Int],
-        idx2: Map[Tasty.Symbol, Int]
+        idx1: Map[SymbolId, Int],
+        idx2: Map[SymbolId, Int]
     ): Boolean =
         (t1, t2) match
             case (Tasty.Type.Named(s1), Tasty.Type.Named(s2)) =>
-                // Either both are bound params at same position, or both are the same external symbol
+                // Either both are bound params at same position, or both are the same external SymbolId
                 (idx1.get(s1), idx2.get(s2)) match
                     case (Some(i), Some(j)) => i == j
-                    case (None, None)       => s1 eq s2
+                    case (None, None)       => s1 == s2
                     case _                  => false
             case (Tasty.Type.Applied(b1, a1), Tasty.Type.Applied(b2, a2)) =>
                 typeEquivAlpha(b1, b2, idx1, idx2) &&
@@ -352,8 +350,8 @@ object Subtyping:
     private def chunkPairsEquivAlpha(
         a1: Chunk[Tasty.Type],
         a2: Chunk[Tasty.Type],
-        idx1: Map[Tasty.Symbol, Int],
-        idx2: Map[Tasty.Symbol, Int]
+        idx1: Map[SymbolId, Int],
+        idx2: Map[SymbolId, Int]
     ): Boolean =
         var i = 0
         while i < a1.length do
@@ -378,8 +376,8 @@ object Subtyping:
                 Tasty.Type.AndType(substituteRecThis(l, recNode), substituteRecThis(r, recNode))
             case Tasty.Type.OrType(l, r) =>
                 Tasty.Type.OrType(substituteRecThis(l, recNode), substituteRecThis(r, recNode))
-            case Tasty.Type.TypeLambda(params, body) =>
-                Tasty.Type.TypeLambda(params, substituteRecThis(body, recNode))
+            case Tasty.Type.TypeLambda(paramIds, body) =>
+                Tasty.Type.TypeLambda(paramIds, substituteRecThis(body, recNode))
             case Tasty.Type.Wildcard(lo, hi) =>
                 Tasty.Type.Wildcard(substituteRecThis(lo, recNode), substituteRecThis(hi, recNode))
             case Tasty.Type.Function(params, result, ctx) =>

@@ -151,7 +151,7 @@ object ClassfileUnpickler:
             new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
             Tasty.Name(binaryName.replace('/', '.'))
         )
-        Tasty.Type.Named(sym)
+        Tasty.Type.Named(sym.id)
     end unresolvedType
 
     private def readClassBody(
@@ -1459,7 +1459,7 @@ object ClassfileUnpickler:
             new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
             Tasty.Name(fqn.split("\\.").last)
         )
-        Tasty.Type.Named(sym)
+        Tasty.Type.Named(sym.id)
     end primType
 
     private def decodeAnnotations(
@@ -1610,7 +1610,7 @@ object ClassfileUnpickler:
                     new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
                     Tasty.Name(binaryName.replace('/', '.'))
                 )
-                resolveThrowsList(pool, path, idxs, i + 1, acc.appended(Tasty.Type.Named(exSym)))
+                resolveThrowsList(pool, path, idxs, i + 1, acc.appended(Tasty.Type.Named(exSym.id)))
 
     private def buildInnerClassTable(
         pool: ConstantPool,

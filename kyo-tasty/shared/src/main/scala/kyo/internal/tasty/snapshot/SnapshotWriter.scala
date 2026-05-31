@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream
 import kyo.*
 import kyo.internal.tasty.query.Classpath
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable
 
 /** Writes a `Classpath` to a KRFL snapshot file.
@@ -143,14 +144,14 @@ object SnapshotWriter:
 
         // PARENTS section: for each symbol, store the list of symbol IDs of Named parent types.
         // Non-Named parents (complex types) are encoded as -1 and skipped on read.
-        // plan: phase-02 inline; parentTypes is now a direct field; Named(sym) still has Symbol ref.
+        // plan: phase-05; Named(symbolId) carries SymbolId.value as the serialized index.
         val parentsBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
             sym =>
                 sym.parentTypes.map:
-                    case Tasty.Type.Named(s) => symbolId.getOrElse(s, -1)
-                    case _                   => -1
+                    case Tasty.Type.Named(id) => id.value
+                    case _                    => -1
         )
 
         // MEMBERS section: for each symbol, store the symbol IDs of its declarations.

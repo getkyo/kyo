@@ -6,6 +6,7 @@ import kyo.internal.tasty.query.Classpath
 import kyo.internal.tasty.query.ClasspathRef
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
+import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -183,7 +184,7 @@ object SnapshotReader:
                     len,
                     symCount,
                     (idx, refs) =>
-                        parentsByIdx(idx) = Chunk.from(refs.map(id => Tasty.Type.Named(symsArray(id))))
+                        parentsByIdx(idx) = Chunk.from(refs.map(id => Tasty.Type.Named(SymbolId(id))))
                 )
             case _ => ()
         end match
@@ -395,7 +396,7 @@ object SnapshotReader:
                     len,
                     symCount,
                     (idx, refs) =>
-                        parentsByIdx(idx) = Chunk.from(refs.map(id => Tasty.Type.Named(symsArray(id))))
+                        parentsByIdx(idx) = Chunk.from(refs.map(id => Tasty.Type.Named(SymbolId(id))))
                 )
             case _ => ()
         end match

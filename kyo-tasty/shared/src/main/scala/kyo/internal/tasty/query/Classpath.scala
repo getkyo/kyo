@@ -1,6 +1,7 @@
 package kyo.internal.tasty.query
 
 import kyo.*
+import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -147,6 +148,26 @@ final class Classpath private[tasty] (
         end match
     end allSymbols
 
+    /** Look up a symbol by SymbolId index.
+      *
+      * plan: phase-05; provides O(1) SymbolId->Symbol lookup for Subtyping and show. Phase 06 replaces this with the case-class field
+      * accessor once allSymbols becomes an IndexedSeq. Returns a sentinel Unresolved symbol for id.value == -1 or out-of-range ids.
+      *
+      * Uses AllowUnsafe.embrace.danger internally: the allSymbols Chunk is write-once (set on transition to Ready and never modified), so
+      * reading it without an explicit effect row is safe.
+      */
+    private[kyo] def symbol(id: SymbolId): Tasty.Symbol =
+        // flow-allow: §839 case 3; allSymbols is immutable after Ready transition; no race possible.
+        import AllowUnsafe.embrace.danger
+        stateRef.unsafe.get() match
+            case s: Classpath.State.Ready =>
+                val idx = id.value
+                if idx >= 0 && idx < s.allSymbols.size then s.allSymbols(idx)
+                else Classpath.sentinelUnresolved
+            case _ => Classpath.sentinelUnresolved
+        end match
+    end symbol
+
 end Classpath
 
 object Classpath:
@@ -204,5 +225,13 @@ object Classpath:
     private[kyo] def close(cp: Classpath)(using AllowUnsafe): Unit =
         cp.stateRef.unsafe.set(State.Closed)
     end close
+
+    /** Sentinel symbol returned by Classpath.symbol for out-of-range or unassigned ids.
+      *
+      * plan: phase-05 bridge; Phase 06 replaces with a direct array index on an IndexedSeq. id = SymbolId(-1) so callers can detect the
+      * sentinel via sym.id.value == -1.
+      */
+    private[kyo] val sentinelUnresolved: Tasty.Symbol =
+        Tasty.Symbol.make(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("<unresolved>"))
 
 end Classpath

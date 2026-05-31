@@ -406,9 +406,9 @@ object ClasspathOrchestrator:
                 for placeholder <- allPlaceholders do
                     fqnIndex.get(placeholder.fqn) match
                         case Some(sym) =>
-                            placeholder.replaceSlot.set(Tasty.Type.Named(sym))
+                            placeholder.replaceSlot.set(Tasty.Type.Named(sym.id))
                         case None =>
-                            placeholder.replaceSlot.set(Tasty.Type.Named(makeUnresolvedSym(placeholder.fqn)))
+                            placeholder.replaceSlot.set(Tasty.Type.Named(makeUnresolvedSym(placeholder.fqn).id))
                 end for
         }.andThen:
             TastyStat.scope.traceSpan("finalize.materializeSymbols") {
@@ -497,7 +497,7 @@ object ClasspathOrchestrator:
                         if descs(i).declaredType.isEmpty then
                             val k = sym.kind
                             if k == Tasty.SymbolKind.Class || k == Tasty.SymbolKind.Trait || k == Tasty.SymbolKind.Object then
-                                descs(i).declaredType = Maybe(Tasty.Type.Named(sym))
+                                descs(i).declaredType = Maybe(Tasty.Type.Named(sym.id))
                         end if
                         i += 1
                     end for

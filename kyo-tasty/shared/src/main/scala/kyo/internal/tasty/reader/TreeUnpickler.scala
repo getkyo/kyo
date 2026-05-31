@@ -240,17 +240,19 @@ object TreeUnpickler:
 
             case TastyFormat.THIS =>
                 val tpe = readType(view, ctx)
+                // plan: phase-05 bridge; Tree.This still carries Symbol (Phase 09 migrates to SymbolId).
                 val sym = tpe match
-                    case Tasty.Type.Named(s)    => s
-                    case Tasty.Type.ThisType(s) => s
-                    case _                      => makeUnresolvedSym("this-class", ctx.home)
+                    case Tasty.Type.Named(id)    => resolveSymbolById(id, ctx, "this-class")
+                    case Tasty.Type.ThisType(id) => resolveSymbolById(id, ctx, "this-class")
+                    case _                       => makeUnresolvedSym("this-class", ctx.home)
                 Tasty.Tree.This(sym)
 
             case TastyFormat.QUALTHIS =>
                 val tpe = readType(view, ctx)
+                // plan: phase-05 bridge; Tree.This still carries Symbol (Phase 09 migrates to SymbolId).
                 val sym = tpe match
-                    case Tasty.Type.Named(s) => s
-                    case _                   => makeUnresolvedSym("qualthis", ctx.home)
+                    case Tasty.Type.Named(id) => resolveSymbolById(id, ctx, "qualthis")
+                    case _                    => makeUnresolvedSym("qualthis", ctx.home)
                 Tasty.Tree.This(sym)
 
             case TastyFormat.CLASSconst =>
@@ -314,8 +316,8 @@ object TreeUnpickler:
                     qualifier,
                     name,
                     Tasty.Type.Wildcard(
-                        Tasty.Type.Named(makeUnresolvedSym("lo", ctx.home)),
-                        Tasty.Type.Named(makeUnresolvedSym("hi", ctx.home))
+                        Tasty.Type.Named(makeUnresolvedSym("lo", ctx.home).id),
+                        Tasty.Type.Named(makeUnresolvedSym("hi", ctx.home).id)
                     )
                 )
 
@@ -590,7 +592,7 @@ object TreeUnpickler:
                 view.goto(end)
                 // Represent as Apply to SeqLiteral-like.
                 Tasty.Tree.Apply(
-                    Tasty.Tree.Ident(Tasty.Name("_repeated"), Tasty.Type.Named(makeUnresolvedSym("repeated", ctx.home))),
+                    Tasty.Tree.Ident(Tasty.Name("_repeated"), Tasty.Type.Named(makeUnresolvedSym("repeated", ctx.home).id)),
                     trees
                 )
 
@@ -959,7 +961,7 @@ object TreeUnpickler:
                 discard(view.readByte())
                 val nameRef = view.readNat()
                 val name    = nameFromRef(nameRef, ctx)
-                buf += Tasty.Tree.Ident(name, Tasty.Type.Named(makeUnresolvedSym(name.asString, ctx.home)))
+                buf += Tasty.Tree.Ident(name, Tasty.Type.Named(makeUnresolvedSym(name.asString, ctx.home).id))
                 // Check for optional RENAMED
                 if view.position < end && (view.peekByte(view.position) & 0xff) == TastyFormat.RENAMED then
                     discard(view.readByte())
@@ -985,7 +987,7 @@ object TreeUnpickler:
         ctx: DecodeCtx
     )(using AllowUnsafe): (Chunk[Chunk[Tasty.Tree]], Tasty.Type) =
         val paramss = new mutable.ArrayBuffer[Chunk[Tasty.Tree]]()
-        var tpt     = Tasty.Type.Named(makeUnresolvedSym("unknown-tpt", ctx.home)): Tasty.Type
+        var tpt     = Tasty.Type.Named(makeUnresolvedSym("unknown-tpt", ctx.home).id): Tasty.Type
         while view.position < end do
             val peek = view.peekByte(view.position) & 0xff
             peek match
@@ -1055,10 +1057,10 @@ object TreeUnpickler:
             if isTypeTag(peek) then
                 readType(view, ctx)
             else
-                Tasty.Type.Named(makeUnresolvedSym("unknown-tpt", ctx.home))
+                Tasty.Type.Named(makeUnresolvedSym("unknown-tpt", ctx.home).id)
             end if
         else
-            Tasty.Type.Named(makeUnresolvedSym("unknown-tpt", ctx.home))
+            Tasty.Type.Named(makeUnresolvedSym("unknown-tpt", ctx.home).id)
         end if
     end readTypeOrSkip
 
@@ -1187,5 +1189,21 @@ object TreeUnpickler:
             Tasty.Name(name)
         )
     end makeUnresolvedSym
+
+    /** Resolve a SymbolId back to a Symbol by scanning the addrMap.
+      *
+      * plan: phase-05 bridge; Tree.This still carries Symbol (migrated in Phase 09). Scans the addrMap values for a symbol whose id
+      * matches. O(n) but used only in THIS/QUALTHIS decode.
+      */
+    private def resolveSymbolById(
+        id: kyo.internal.tasty.symbol.SymbolId,
+        ctx: DecodeCtx,
+        fallbackName: String
+    )(using AllowUnsafe): Tasty.Symbol =
+        val idx = id.value
+        ctx.addrMap.values.find(_.id.value == idx) match
+            case Some(sym) => sym
+            case None      => makeUnresolvedSym(fallbackName, ctx.home)
+    end resolveSymbolById
 
 end TreeUnpickler

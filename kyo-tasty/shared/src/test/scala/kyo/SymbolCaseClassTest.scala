@@ -66,7 +66,7 @@ class SymbolCaseClassTest extends Test:
             name = "Bar",
             ownerId = 3,
             scaladoc = Maybe("/** doc */"),
-            parentTypes = Chunk(Tasty.Type.Named(makeTestSymbol(id = 1, name = "AnyRef")))
+            parentTypes = Chunk(Tasty.Type.Named(makeTestSymbol(id = 1, name = "AnyRef").id))
         )
         assert(sym.id == SymbolId(7), s"id: ${sym.id}")
         assert(sym.kind == Tasty.SymbolKind.Class, s"kind: ${sym.kind}")

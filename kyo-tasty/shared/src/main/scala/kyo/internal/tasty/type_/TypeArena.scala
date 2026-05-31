@@ -1,6 +1,7 @@
 package kyo.internal.tasty.type_
 
 import kyo.*
+import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable
 
 /** Per-thread hash-cons arena for Tasty.Type values.
@@ -73,8 +74,8 @@ final class TypeArena:
                     Tasty.Type.FlexibleType(internRec(u, depth))
                 case Tasty.Type.TermRef(p, n) =>
                     Tasty.Type.TermRef(internRec(p, depth), n)
-                case Tasty.Type.TypeLambda(ps, body) =>
-                    Tasty.Type.TypeLambda(ps, internRec(body, depth))
+                case Tasty.Type.TypeLambda(paramIds, body) =>
+                    Tasty.Type.TypeLambda(paramIds, internRec(body, depth))
             end match
         end recurse
 
@@ -150,8 +151,8 @@ object TypeKey:
 
     private def hashOf(t: Tasty.Type): Int =
         t match
-            case Tasty.Type.Named(sym) =>
-                31 * java.lang.System.identityHashCode(sym)
+            case Tasty.Type.Named(id) =>
+                31 * id.value
             case Tasty.Type.TermRef(prefix, name) =>
                 31 * computeHash(prefix) + name.hashCode
             case Tasty.Type.Applied(base, args) =>
@@ -183,12 +184,12 @@ object TypeKey:
                 31 * computeHash(u) + ann.hashCode
             case Tasty.Type.ConstantType(c) =>
                 c.hashCode
-            case Tasty.Type.ThisType(sym) =>
-                31 * java.lang.System.identityHashCode(sym) + 9
+            case Tasty.Type.ThisType(id) =>
+                31 * id.value + 9
             case Tasty.Type.SuperType(s, m) =>
                 31 * computeHash(s) + computeHash(m) + 10
             case Tasty.Type.ParamRef(b, i) =>
-                31 * java.lang.System.identityHashCode(b) + i
+                31 * b.value + i
             case Tasty.Type.Wildcard(lo, hi) =>
                 31 * computeHash(lo) + computeHash(hi) + 11
             case Tasty.Type.Skolem(u) =>
@@ -202,7 +203,7 @@ object TypeKey:
     def structuralEquals(a: Tasty.Type, b: Tasty.Type): Boolean =
         (a, b) match
             case (Tasty.Type.Named(s1), Tasty.Type.Named(s2)) =>
-                s1 eq s2
+                s1 == s2
             case (Tasty.Type.TermRef(p1, n1), Tasty.Type.TermRef(p2, n2)) =>
                 structuralEquals(p1, p2) && n1 == n2
             case (Tasty.Type.Applied(b1, a1), Tasty.Type.Applied(b2, a2)) =>
@@ -237,11 +238,11 @@ object TypeKey:
             case (Tasty.Type.ConstantType(c1), Tasty.Type.ConstantType(c2)) =>
                 c1.equals(c2)
             case (Tasty.Type.ThisType(s1), Tasty.Type.ThisType(s2)) =>
-                s1 eq s2
+                s1 == s2
             case (Tasty.Type.SuperType(s1, m1), Tasty.Type.SuperType(s2, m2)) =>
                 structuralEquals(s1, s2) && structuralEquals(m1, m2)
             case (Tasty.Type.ParamRef(b1, i1), Tasty.Type.ParamRef(b2, i2)) =>
-                (b1 eq b2) && i1 == i2
+                b1 == b2 && i1 == i2
             case (Tasty.Type.Wildcard(lo1, hi1), Tasty.Type.Wildcard(lo2, hi2)) =>
                 structuralEquals(lo1, lo2) && structuralEquals(hi1, hi2)
             case (Tasty.Type.Skolem(u1), Tasty.Type.Skolem(u2)) =>

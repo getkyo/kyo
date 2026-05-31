@@ -312,28 +312,28 @@ object TypeUnpickler:
             case TastyFormat.TERMREFdirect =>
                 val astRef = view.readNat()
                 ctx.addrMap.get(astRef) match
-                    case Some(sym) => Tasty.Type.Named(sym)
-                    case None      => Tasty.Type.Named(makeUnresolvedSym(s"termref@$astRef", ctx.home))
+                    case Some(sym) => Tasty.Type.Named(sym.id)
+                    case None      => Tasty.Type.Named(makeUnresolvedSym(s"termref@$astRef", ctx.home).id)
 
             case TastyFormat.TYPEREFdirect =>
                 val astRef = view.readNat()
                 ctx.addrMap.get(astRef) match
-                    case Some(sym) => Tasty.Type.Named(sym)
-                    case None      => Tasty.Type.Named(makeUnresolvedSym(s"typeref@$astRef", ctx.home))
+                    case Some(sym) => Tasty.Type.Named(sym.id)
+                    case None      => Tasty.Type.Named(makeUnresolvedSym(s"typeref@$astRef", ctx.home).id)
 
             case TastyFormat.TERMREFpkg =>
                 val nameRef = view.readNat()
                 val fqn     = nameAt(ctx.names, nameRef).asString
                 val ref     = new UnresolvedRef(fqn, SingleAssign.init[Tasty.Type]())
                 ctx.placeholders += ref
-                Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home))
+                Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home).id)
 
             case TastyFormat.TYPEREFpkg =>
                 val nameRef = view.readNat()
                 val fqn     = nameAt(ctx.names, nameRef).asString
                 val ref     = new UnresolvedRef(fqn, SingleAssign.init[Tasty.Type]())
                 ctx.placeholders += ref
-                Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home))
+                Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home).id)
 
             case TastyFormat.RECthis =>
                 val recAddr = view.readNat()
@@ -345,7 +345,7 @@ object TypeUnpickler:
                             case Some(recNode) => Tasty.Type.RecThis(recNode)
                             case None          =>
                                 // The Rec node hasn't been decoded yet; return a placeholder.
-                                Tasty.Type.RecThis(Tasty.Type.Named(makeUnresolvedSym(s"rec@$recAddr", ctx.home)))
+                                Tasty.Type.RecThis(Tasty.Type.Named(makeUnresolvedSym(s"rec@$recAddr", ctx.home).id))
                 end match
 
             // Constant types (category 2: tag + Nat)
@@ -372,8 +372,8 @@ object TypeUnpickler:
             case TastyFormat.THIS =>
                 val inner = readTypeNode(view, ctx)
                 inner match
-                    case Tasty.Type.Named(sym) => Tasty.Type.ThisType(sym)
-                    case _                     => Tasty.Type.ThisType(makeUnresolvedSym("this-unknown", ctx.home))
+                    case Tasty.Type.Named(id) => Tasty.Type.ThisType(id)
+                    case _                    => Tasty.Type.ThisType(makeUnresolvedSym("this-unknown", ctx.home).id)
 
             case TastyFormat.CLASSconst =>
                 val inner = readTypeNode(view, ctx)
@@ -388,7 +388,7 @@ object TypeUnpickler:
                 // inProgressRec is keyed by the RECtype node's start addr so RECthis nodes
                 // encountered during parent decoding can find the placeholder.
                 val sentinelSym                 = makeUnresolvedSym(s"rec-placeholder@$startAddr", ctx.home)
-                val placeholder: Tasty.Type.Rec = Tasty.Type.Rec(Tasty.Type.Named(sentinelSym))
+                val placeholder: Tasty.Type.Rec = Tasty.Type.Rec(Tasty.Type.Named(sentinelSym.id))
                 ctx.inProgressRec(startAddr) = placeholder
                 val parent = readTypeNode(view, ctx)
                 discard(ctx.inProgressRec.remove(startAddr))
@@ -416,8 +416,8 @@ object TypeUnpickler:
                 // qual is present but for Named resolution we only need the sym.
                 discard(readTypeNode(view, ctx)) // consume qual
                 ctx.addrMap.get(astRef) match
-                    case Some(sym) => Tasty.Type.Named(sym)
-                    case None      => Tasty.Type.Named(makeUnresolvedSym(s"typerefsym@$astRef", ctx.home))
+                    case Some(sym) => Tasty.Type.Named(sym.id)
+                    case None      => Tasty.Type.Named(makeUnresolvedSym(s"typerefsym@$astRef", ctx.home).id)
 
             case TastyFormat.TYPEREF =>
                 val nameRef = view.readNat()
@@ -446,7 +446,7 @@ object TypeUnpickler:
                 skipToEnd(view, end)
                 val annotation =
                     if ctx.sectionBytes == null then
-                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home)), Chunk.empty)
+                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home).id), Chunk.empty)
                     else
                         val pickle = Chunk.from(java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, endInt))
                         val annCtx = new Tasty.Annotation.DecodeContext(
@@ -456,7 +456,7 @@ object TypeUnpickler:
                             ctx.sectionBytes,
                             ctx.sectionOffset
                         )
-                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home)), pickle, annCtx)
+                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann", ctx.home).id), pickle, annCtx)
                 Tasty.Type.Annotated(underlying, annotation)
 
             case TastyFormat.ANDtype =>
@@ -500,8 +500,8 @@ object TypeUnpickler:
                 val pat = readTypeNode(view, ctx)
                 val rhs = readTypeNode(view, ctx)
                 view.goto(end)
-                // Represent as Applied(Named(MatchCaseSentinel), Chunk(pat, rhs))
-                Tasty.Type.Applied(Tasty.Type.Named(MatchCaseSentinel), Chunk(pat, rhs))
+                // Represent as Applied(Named(MatchCaseSentinel.id), Chunk(pat, rhs))
+                Tasty.Type.Applied(Tasty.Type.Named(MatchCaseSentinel.id), Chunk(pat, rhs))
 
             case TastyFormat.FLEXIBLEtype =>
                 val end        = view.readEnd()
@@ -518,7 +518,7 @@ object TypeUnpickler:
                 ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
                 val resultType = readTypeNode(view, ctx)
                 view.goto(end)
-                Tasty.Type.TypeLambda(Chunk.from(paramSyms), resultType)
+                Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
 
             case TastyFormat.POLYtype =>
                 val end       = view.readEnd()
@@ -526,7 +526,7 @@ object TypeUnpickler:
                 ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
                 val resultType = readTypeNode(view, ctx)
                 view.goto(end)
-                Tasty.Type.TypeLambda(Chunk.from(paramSyms), resultType)
+                Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
 
             case TastyFormat.METHODtype =>
                 val end       = view.readEnd()
@@ -534,7 +534,7 @@ object TypeUnpickler:
                 ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
                 val resultType = readTypeNode(view, ctx)
                 view.goto(end)
-                Tasty.Type.TypeLambda(Chunk.from(paramSyms), resultType)
+                Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
 
             case TastyFormat.PARAMtype =>
                 val end        = view.readEnd()
@@ -542,8 +542,8 @@ object TypeUnpickler:
                 val paramNum   = view.readNat()
                 view.goto(end)
                 ctx.binderAddrMap.get(binderAddr) match
-                    case Some(params) if paramNum < params.length => Tasty.Type.ParamRef(params(paramNum), paramNum)
-                    case _ => Tasty.Type.Named(makeUnresolvedSym(s"param@$binderAddr:$paramNum", ctx.home))
+                    case Some(params) if paramNum < params.length => Tasty.Type.ParamRef(params(paramNum).id, paramNum)
+                    case _ => Tasty.Type.Named(makeUnresolvedSym(s"param@$binderAddr:$paramNum", ctx.home).id)
 
             case TastyFormat.TYPEREFin =>
                 val end     = view.readEnd()
@@ -554,7 +554,7 @@ object TypeUnpickler:
                 val fqn = nameAt(ctx.names, nameRef).asString
                 val ref = new UnresolvedRef(fqn, SingleAssign.init[Tasty.Type]())
                 ctx.placeholders += ref
-                Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home))
+                Tasty.Type.Named(makeUnresolvedSym(fqn, ctx.home).id)
 
             case TastyFormat.TERMREFin =>
                 val end     = view.readEnd()
@@ -603,7 +603,7 @@ object TypeUnpickler:
                 ))
                 val end = view.readEnd()
                 view.goto(end)
-                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other", ctx.home))
+                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other", ctx.home).id)
 
             case other =>
                 // Unknown category 1-4 node: log a warning, skip body and return placeholder.
@@ -613,7 +613,7 @@ object TypeUnpickler:
                     s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt} in ${ctx.home}"
                 ))
                 skipTreeBody(other, view)
-                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other", ctx.home))
+                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other", ctx.home).id)
 
         end match
     end decodeTag

@@ -396,7 +396,7 @@ object Scala2PickleReader:
             symName,
             home,
             interner,
-            kyo.Maybe(Tasty.Type.Named(stringSym))
+            kyo.Maybe(Tasty.Type.Named(stringSym.id))
         )
         sym
     end decodeAliasSym
@@ -519,7 +519,7 @@ object Scala2PickleReader:
             new Tasty.Flags(Tasty.Flag.Scala2.bit | Tasty.Flag.JavaDefined.bit),
             Tasty.Name("AnyRef")
         )
-        Tasty.Type.Named(anyRefSym)
+        Tasty.Type.Named(anyRefSym.id)
     end buildAnyRefParent
 
     private def makePickleSym(

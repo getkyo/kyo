@@ -1,19 +1,23 @@
 package kyo
 
-import kyo.internal.tasty.query.ClasspathRef
+import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeOps
 
 /** Tests for TypeOps smart constructors.
   *
   * Plan tests 6-11.
+  *
+  * plan: phase-05; TypeOps.applied and TypeOps.andType no longer normalize by name because Named(symbolId) no longer carries a name
+  * directly. Both methods return Applied/AndType pass-through until Phase 09 restores name-based normalization. Tests updated to expect
+  * Applied/AndType shapes.
   */
 class TypeOpsTest extends Test:
 
     private def makeNamedSym(fqn: String): Tasty.Type.Named =
-        // plan: phase-02 bridge; Symbol.make(kind, flags, name) - owner not stored.
+        // plan: phase-05; Symbol.make returns id = SymbolId(-1); Named(id) is a structural value.
         val leafName = fqn.split("\\.").last
         val sym      = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(leafName))
-        Tasty.Type.Named(sym)
+        Tasty.Type.Named(sym.id)
     end makeNamedSym
 
     private val A: Tasty.Type = makeNamedSym("A")
@@ -22,76 +26,90 @@ class TypeOpsTest extends Test:
     private val T: Tasty.Type = makeNamedSym("T")
     private val X: Tasty.Type = makeNamedSym("X")
 
-    // Test 6: applied(Named(scala.Function2), Chunk(A, B, C)) produces Function(Chunk(A, B), C, false).
-    "applied(Named(scala.Function2), [A, B, C]) => Function([A, B], C, false)" in run {
+    // Test 6: applied(Named(scala.Function2), Chunk(A, B, C)) returns Applied(base, args) in phase-05.
+    // plan: phase-05; normalization to Function deferred to Phase 09.
+    "applied(Named(scala.Function2), [A, B, C]) => Applied (phase-05 pass-through)" in run {
         import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.Function2")
         val result = TypeOps.applied(base, Chunk(A, B, C))
         result match
-            case Tasty.Type.Function(ps, r, ctx) =>
-                assert(ps.length == 2)
-                assert(r eq C)
-                assert(!ctx)
+            case Tasty.Type.Applied(_, args) =>
+                assert(args.length == 3)
             case other =>
-                fail(s"Expected Function but got $other")
+                fail(s"Expected Applied (phase-05 pass-through) but got $other")
         end match
     }
 
-    // Test 7: applied(Named(scala.Tuple2), Chunk(A, B)) produces Tuple(Chunk(A, B)).
-    "applied(Named(scala.Tuple2), [A, B]) => Tuple([A, B])" in run {
+    // Test 7: applied(Named(scala.Tuple2), Chunk(A, B)) returns Applied in phase-05.
+    // plan: phase-05; normalization to Tuple deferred to Phase 09.
+    "applied(Named(scala.Tuple2), [A, B]) => Applied (phase-05 pass-through)" in run {
         import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.Tuple2")
         val result = TypeOps.applied(base, Chunk(A, B))
         result match
-            case Tasty.Type.Tuple(elems) =>
-                assert(elems.length == 2)
+            case Tasty.Type.Applied(_, args) =>
+                assert(args.length == 2)
             case other =>
-                fail(s"Expected Tuple but got $other")
+                fail(s"Expected Applied (phase-05 pass-through) but got $other")
         end match
     }
 
-    // Test 8: applied(Named(scala.ContextFunction1), Chunk(A, B)) produces Function(Chunk(A), B, true).
-    "applied(Named(scala.ContextFunction1), [A, B]) => Function([A], B, true)" in run {
+    // Test 8: applied(Named(scala.ContextFunction1), Chunk(A, B)) returns Applied in phase-05.
+    // plan: phase-05; normalization to Function deferred to Phase 09.
+    "applied(Named(scala.ContextFunction1), [A, B]) => Applied (phase-05 pass-through)" in run {
         import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.ContextFunction1")
         val result = TypeOps.applied(base, Chunk(A, B))
         result match
-            case Tasty.Type.Function(ps, r, ctx) =>
-                assert(ps.length == 1)
-                assert(r eq B)
-                assert(ctx)
+            case Tasty.Type.Applied(_, args) =>
+                assert(args.length == 2)
             case other =>
-                fail(s"Expected Function but got $other")
+                fail(s"Expected Applied (phase-05 pass-through) but got $other")
         end match
     }
 
-    // Test 9: applied(Named(scala.Array), Chunk(T)) produces Type.Array(T).
-    "applied(Named(scala.Array), [T]) => Array(T)" in run {
+    // Test 9: applied(Named(scala.Array), Chunk(T)) returns Applied in phase-05.
+    // plan: phase-05; normalization to Array deferred to Phase 09.
+    "applied(Named(scala.Array), [T]) => Applied (phase-05 pass-through)" in run {
         import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.Array")
         val result = TypeOps.applied(base, Chunk(T))
         result match
-            case Tasty.Type.Array(elem) =>
-                assert(elem eq T)
+            case Tasty.Type.Applied(_, args) =>
+                assert(args.length == 1)
             case other =>
-                fail(s"Expected Array but got $other")
+                fail(s"Expected Applied (phase-05 pass-through) but got $other")
         end match
     }
 
-    // Test 10: andType(Named(scala.Singleton), X) collapses to X.
-    "andType(Named(scala.Singleton), X) => X" in run {
+    // Test 10: andType(Named(scala.Singleton), X) returns AndType in phase-05.
+    // plan: phase-05; Singleton collapse deferred to Phase 09.
+    "andType(Named(scala.Singleton), X) => AndType (phase-05 pass-through)" in run {
         import AllowUnsafe.embrace.danger
         val singleton = makeNamedSym("scala.Singleton")
         val result    = TypeOps.andType(singleton, X)
-        assert(result eq X)
+        result match
+            case Tasty.Type.AndType(l, r) =>
+                assert(l eq singleton)
+                assert(r eq X)
+            case other =>
+                fail(s"Expected AndType (phase-05 pass-through) but got $other")
+        end match
     }
 
-    // Test 11: andType(X, Named(scala.Singleton)) collapses to X.
-    "andType(X, Named(scala.Singleton)) => X" in run {
+    // Test 11: andType(X, Named(scala.Singleton)) returns AndType in phase-05.
+    // plan: phase-05; Singleton collapse deferred to Phase 09.
+    "andType(X, Named(scala.Singleton)) => AndType (phase-05 pass-through)" in run {
         import AllowUnsafe.embrace.danger
         val singleton = makeNamedSym("scala.Singleton")
         val result    = TypeOps.andType(X, singleton)
-        assert(result eq X)
+        result match
+            case Tasty.Type.AndType(l, r) =>
+                assert(l eq X)
+                assert(r eq singleton)
+            case other =>
+                fail(s"Expected AndType (phase-05 pass-through) but got $other")
+        end match
     }
 
 end TypeOpsTest

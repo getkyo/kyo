@@ -215,7 +215,7 @@ object JavaAnnotationUnpickler:
 
     /** Convert a class descriptor to a Tasty.Type.Named wrapping an Unresolved symbol. */
     private def descriptorToType(descriptor: String, home: ClasspathRef)(using AllowUnsafe): Tasty.Type =
-        Tasty.Type.Named(descriptorToUnresolvedSymbol(descriptor, home))
+        Tasty.Type.Named(descriptorToUnresolvedSymbol(descriptor, home).id)
 
     /** Strip "L" prefix and ";" suffix, replace "/" with ".". For non-L descriptors (primitives), return as-is.
       */

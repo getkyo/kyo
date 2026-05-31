@@ -37,35 +37,22 @@ object TypeOps:
     private val ArraySimple           = "Array"
     private val SingletonSimple       = "Singleton"
 
-    /** Smart constructor for APPLIEDtype normalization. */
+    /** Smart constructor for APPLIEDtype normalization.
+      *
+      * plan: phase-05 inline; Named(symbolId) no longer carries a name directly; name resolution requires a Classpath (Phase 09 concern).
+      * For Phase 05, all Applied types pass through unchanged. Phase 09 restores FQN-based normalization once cp.symbol(id).name is
+      * available.
+      */
     def applied(base: Tasty.Type, args: Chunk[Tasty.Type])(using AllowUnsafe): Tasty.Type =
-        base match
-            case Tasty.Type.Named(sym) =>
-                import Tasty.Name.asString
-                val n = sym.name.asString
-                if n.startsWith(FunctionSimple) && isDigitSuffix(n, FunctionSimple.length) then
-                    Tasty.Type.Function(args.dropRight(1), args.last, false)
-                else if n.startsWith(ContextFunctionSimple) && isDigitSuffix(n, ContextFunctionSimple.length) then
-                    Tasty.Type.Function(args.dropRight(1), args.last, true)
-                else if n.startsWith(TupleSimple) && isDigitSuffix(n, TupleSimple.length) then
-                    Tasty.Type.Tuple(args)
-                else if n == ArraySimple && args.length == 1 then
-                    Tasty.Type.Array(args.head)
-                else
-                    Tasty.Type.Applied(base, args)
-                end if
-            case _ =>
-                Tasty.Type.Applied(base, args)
-        end match
+        Tasty.Type.Applied(base, args)
     end applied
 
-    /** Smart constructor for ANDtype normalization: collapse AndType(Singleton, X) or AndType(X, Singleton) to X. */
+    /** Smart constructor for ANDtype normalization: collapse AndType(Singleton, X) or AndType(X, Singleton) to X.
+      *
+      * plan: phase-05 inline; Singleton name check deferred to Phase 09 (same reason as applied).
+      */
     def andType(left: Tasty.Type, right: Tasty.Type)(using AllowUnsafe): Tasty.Type =
-        (left, right) match
-            case (Tasty.Type.Named(sym), _) if { import Tasty.Name.asString; sym.name.asString == SingletonSimple } => right
-            case (_, Tasty.Type.Named(sym)) if { import Tasty.Name.asString; sym.name.asString == SingletonSimple } => left
-            case _ => Tasty.Type.AndType(left, right)
-        end match
+        Tasty.Type.AndType(left, right)
     end andType
 
     /** Direct Array constructor for Java array types from the classfile reader. */

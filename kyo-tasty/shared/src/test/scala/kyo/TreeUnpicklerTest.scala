@@ -403,7 +403,7 @@ class TreeUnpicklerTest extends Test:
         // sectionBytes must be non-null for DecodeContext to function; use a minimal byte array.
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type)) =>
                 succeed
@@ -426,7 +426,7 @@ class TreeUnpicklerTest extends Test:
         val addrMap   = IntMap.empty[Tasty.Symbol]
         val home      = ClasspathRef.init()
         val decodeCtx = new Tasty.Annotation.DecodeContext(names, addrMap, home, Array.emptyByteArray, 0)
-        val ann       = Tasty.Annotation(Tasty.Type.Named(sym), Chunk.empty, decodeCtx)
+        val ann       = Tasty.Annotation(Tasty.Type.Named(sym.id), Chunk.empty, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Unknown(-1, 0)) =>
                 succeed
@@ -454,7 +454,7 @@ class TreeUnpicklerTest extends Test:
         val pickle       = Chunk(TastyFormat.PRIVATE.toByte)
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Private.bit =>
                 succeed
@@ -482,7 +482,7 @@ class TreeUnpicklerTest extends Test:
         val pickle           = Chunk(unknownTag)
         val sectionBytes     = pickle.toArray
         val decodeCtx        = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann              = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        val ann              = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Failure(TastyError.MalformedSection("ASTs", reason, _))
                 if reason.contains("unknown category-1 modifier tag 50") =>
@@ -513,7 +513,7 @@ class TreeUnpicklerTest extends Test:
                 pickle.toArray,
                 0
             )
-        val ann = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Module.bit => succeed
             case other => fail(s"Expected Modifier(Module), got: $other")
@@ -532,7 +532,7 @@ class TreeUnpicklerTest extends Test:
                 pickle.toArray,
                 0
             )
-        val ann = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Trait.bit => succeed
             case other => fail(s"Expected Modifier(Trait), got: $other")
@@ -551,7 +551,7 @@ class TreeUnpicklerTest extends Test:
                 pickle.toArray,
                 0
             )
-        val ann = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Enum.bit => succeed
             case other => fail(s"Expected Modifier(Enum), got: $other")
@@ -574,7 +574,7 @@ class TreeUnpicklerTest extends Test:
         val pickle       = Chunk(TastyFormat.SHAREDtype.toByte, (42 | 0x80).toByte)
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Shared(42)) =>
                 succeed
@@ -601,7 +601,7 @@ class TreeUnpicklerTest extends Test:
         val pickle       = Chunk(TastyFormat.INTconst.toByte, (7 | 0x80).toByte)
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Literal(Tasty.Constant.IntConst(7))) =>
                 succeed
@@ -653,7 +653,7 @@ class TreeUnpicklerTest extends Test:
         )
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(listSym), pickle, decodeCtx)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(listSym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.AppliedType(tycon, args)) =>
                 val tyconOk = tycon match
@@ -706,7 +706,7 @@ class TreeUnpicklerTest extends Test:
         )
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(boundSym), pickle, decodeCtx)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(boundSym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.MatchType(_, _, cases)) =>
                 assert(cases.length == 2, s"Expected 2 cases but got ${cases.length}")
@@ -743,7 +743,7 @@ class TreeUnpicklerTest extends Test:
         val pickle       = Chunk(TastyFormat.TERMREFpkg.toByte, (5 | 0x80).toByte)
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym), pickle, decodeCtx)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.TermRefPkg(name)) if name.asString == "scala" =>
                 succeed
@@ -782,7 +782,7 @@ class TreeUnpicklerTest extends Test:
         )
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(listSym), pickle, decodeCtx)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(listSym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.SelectIn(qual, name, owner)) =>
                 val nameStr = name.asString
@@ -867,7 +867,7 @@ class TreeUnpicklerTest extends Test:
         )
         val sectionBytes = pickle.toArray
         val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, home, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(fnSym), pickle, decodeCtx)
+        val ann          = Tasty.Annotation(Tasty.Type.Named(fnSym.id), pickle, decodeCtx)
         Abort.run[TastyError](ann.args).map:
             case Result.Success(Tasty.Tree.Apply(fun, args)) =>
                 val funOk = fun match

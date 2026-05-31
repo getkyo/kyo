@@ -23,7 +23,7 @@ trait TastyTestSupport:
             Tasty.Flags.empty,
             Tasty.Name(leafName)
         )
-        Tasty.Type.Named(sym)
+        Tasty.Type.Named(sym.id)
     end makeNamed
 
 end TastyTestSupport
