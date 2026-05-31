@@ -144,7 +144,7 @@ class Scala2PickleTest extends Test:
             assert(method.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
             // plan: phase-02 inline; declaredType is now Maybe[Type]; Scala2PickleReader sets it to Absent.
             // declaredType for Method symbols was Type.Function(...) in old code; in Phase 02 it's Absent.
-            method.declaredType match
+            method._declaredType match
                 case kyo.Maybe.Present(Tasty.Type.Function(_, _, _)) =>
                     succeed
                 case kyo.Maybe.Present(other) =>
@@ -170,7 +170,7 @@ class Scala2PickleTest extends Test:
             assert(alias.kind == Tasty.SymbolKind.TypeAlias, s"Expected TypeAlias, got ${alias.kind}")
             assert(alias.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
             // plan: phase-05; Named(id) no longer carries a Symbol name directly; name check deferred to Phase 09.
-            alias.declaredType match
+            alias._declaredType match
                 case kyo.Maybe.Present(Tasty.Type.Named(_)) =>
                     assert(true) // structure is Named; name check deferred to Phase 09
                 case kyo.Maybe.Present(other) =>

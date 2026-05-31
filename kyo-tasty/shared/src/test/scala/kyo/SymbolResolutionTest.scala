@@ -187,7 +187,7 @@ class SymbolResolutionTest extends Test:
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym.parentTypes)
+                    case Present(sym) => Kyo.lift(sym._parentTypes)
                     case Absent       => Abort.fail(TastyError.MalformedSection("ASTs", "PlainClass not found", 0L))).map:
                 case Result.Success(parents) =>
                     assert(parents.nonEmpty, "PlainClass should have at least one parent type (cross-file ref resolved)")

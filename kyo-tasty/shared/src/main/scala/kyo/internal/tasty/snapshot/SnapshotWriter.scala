@@ -147,29 +147,29 @@ object SnapshotWriter:
             symbolList,
             symbolId,
             sym =>
-                sym.parentTypes.map:
+                sym._parentTypes.map:
                     case Tasty.Type.Named(id) => id.value
                     case _                    => -1
         )
 
         // MEMBERS section: for each symbol, store the symbol IDs of its declarations.
-        // declarationIds carries SymbolId.value directly.
+        // _declarationIds carries SymbolId.value directly.
         val membersBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
             sym =>
                 import kyo.internal.tasty.symbol.SymbolId
-                sym.declarationIds.map(id => id.value)
+                sym._declarationIds.map(id => id.value)
         )
 
         // TPARAMS_ section: for each symbol, store the symbol IDs of its type parameters.
-        // typeParamIds carries SymbolId.value directly.
+        // _typeParamIds carries SymbolId.value directly.
         val tparamsBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
             sym =>
                 import kyo.internal.tasty.symbol.SymbolId
-                sym.typeParamIds.map(id => id.value)
+                sym._typeParamIds.map(id => id.value)
         )
 
         val sections = Seq(

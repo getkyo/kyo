@@ -214,14 +214,14 @@ object SnapshotReader:
                 flags = partial.flags,
                 name = partial.name,
                 ownerId = partial.ownerId,
-                declaredType = partial.declaredType,
+                declaredType = partial._declaredType,
                 scaladoc = partial.scaladoc,
                 sourcePosition = partial.sourcePosition,
-                javaMetadata = partial.javaMetadata,
+                javaMetadata = partial._javaMetadata,
                 parentTypes = parentsByIdx(si),
                 typeParamIds = typeParamsByIdx(si),
                 declarationIds = declarationsByIdx(si),
-                permittedSubclassIds = partial.permittedSubclassIds,
+                permittedSubclassIds = partial._permittedSubclassIds,
                 bodyRecord = partial.bodyRecord
             )
             si += 1
@@ -428,14 +428,14 @@ object SnapshotReader:
                 flags = partial.flags,
                 name = partial.name,
                 ownerId = partial.ownerId,
-                declaredType = partial.declaredType,
+                declaredType = partial._declaredType,
                 scaladoc = partial.scaladoc,
                 sourcePosition = partial.sourcePosition,
-                javaMetadata = partial.javaMetadata,
+                javaMetadata = partial._javaMetadata,
                 parentTypes = parentsByIdx(j),
                 typeParamIds = typeParamsByIdx(j),
                 declarationIds = declarationsByIdx(j),
-                permittedSubclassIds = partial.permittedSubclassIds,
+                permittedSubclassIds = partial._permittedSubclassIds,
                 bodyRecord = partial.bodyRecord
             )
             j += 1

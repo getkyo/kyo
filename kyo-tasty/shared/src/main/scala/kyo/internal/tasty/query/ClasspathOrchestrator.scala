@@ -627,7 +627,7 @@ object ClasspathOrchestrator:
         var i = 0
         while i < symbols.length do
             val s = symbols(i)
-            s.parentTypes.foreach: parent =>
+            s._parentTypes.foreach: parent =>
                 extractNamedId(parent) match
                     case Maybe.Present(pid) if pid.value >= 0 =>
                         val buf = b.getOrElseUpdate(pid, scala.collection.mutable.ArrayBuffer.empty)

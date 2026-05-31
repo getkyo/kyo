@@ -213,7 +213,7 @@ class UnifiedModelTest extends Test:
         // ClassfileUnpickler.buildRecordComponents calls parseErasedDescriptorType which
         // must produce Type.Array for the "[I" descriptor of the int[] field.
         readClassBytes(kyo.fixtures.Embedded.arrayRecordClass).map: result =>
-            val components = result.classSymbol.javaMetadata
+            val components = result.classSymbol._javaMetadata
                 .map(_.recordComponents)
                 .getOrElse(Chunk.empty)
             assert(

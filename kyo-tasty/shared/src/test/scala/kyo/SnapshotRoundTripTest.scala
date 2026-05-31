@@ -488,8 +488,8 @@ class SnapshotRoundTripTest extends Test:
                             case Some(warmSym) =>
                                 // plan: phase-02 inline; declarationIds replaces declarations.
                                 // We check declarationIds.length as a proxy.
-                                val coldDeclNames = coldSym.declarationIds.map(_.value.toString).toSet
-                                val warmDeclNames = warmSym.declarationIds.map(_.value.toString).toSet
+                                val coldDeclNames = coldSym._declarationIds.map(_.value.toString).toSet
+                                val warmDeclNames = warmSym._declarationIds.map(_.value.toString).toSet
                                 if coldDeclNames.nonEmpty && warmDeclNames.isEmpty then
                                     allGood = false
                                     failMsg = s"$coldFqn: cold has declarations $coldDeclNames but warm has none after round-trip"
@@ -498,7 +498,7 @@ class SnapshotRoundTripTest extends Test:
                     assert(allGood, failMsg)
                     // plan: phase-02 inline; parentTypes is always set (Chunk.empty by default).
                     for warmSym <- warmClasses do
-                        val parentsChunk = warmSym.parentTypes
+                        val parentsChunk = warmSym._parentTypes
                         assert(parentsChunk != null, s"${warmSym.name.asString}: parentTypes was null after snapshot load")
                     end for
                     succeed
@@ -619,7 +619,7 @@ class SnapshotRoundTripTest extends Test:
                 val snapPath = s"cache/$hex.krfl"
                 SnapshotReader.read(snapPath, cacheSrc).map: warmCp =>
                     warmCp.findClass("test.Foo") match
-                        case Maybe.Present(sym) => sym.parentTypes
+                        case Maybe.Present(sym) => sym._parentTypes
                         case Maybe.Absent       => Abort.fail(TastyError.NotImplemented("test.Foo not found after snapshot load"))
         .map:
             case Result.Success(parents) =>

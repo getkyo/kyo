@@ -245,19 +245,19 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 5: javaMetadata is Present for Java symbols, Absent for TASTy symbols
     // -------------------------------------------------------------------------
-    "sym.javaMetadata: Present for Java, Absent for TASTy" taggedAs jvmOnly in run {
+    "sym._javaMetadata: Present for Java, Absent for TASTy" taggedAs jvmOnly in run {
         val bytes = loadJdkClass("java/lang/String.class")
         for
             javaResult <- readClass(bytes)
             tastySym   <- firstClassSymbolFromTasty("PlainClass.tasty")
         yield
             assert(
-                javaResult.classSymbol.javaMetadata.isDefined,
+                javaResult.classSymbol._javaMetadata.isDefined,
                 "Expected javaMetadata Present for java.lang.String"
             )
             assert(
-                tastySym.javaMetadata.isEmpty,
-                s"Expected javaMetadata Absent for TASTy PlainClass, got ${tastySym.javaMetadata}"
+                tastySym._javaMetadata.isEmpty,
+                s"Expected javaMetadata Absent for TASTy PlainClass, got ${tastySym._javaMetadata}"
             )
         end for
     }
@@ -270,7 +270,7 @@ class JavaSymbolTest extends Test:
         readClass(bytes).map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
                 sym.kind == Tasty.SymbolKind.Method &&
-                    sym.javaMetadata.map(_.throwsTypes.nonEmpty).getOrElse(false)
+                    sym._javaMetadata.map(_.throwsTypes.nonEmpty).getOrElse(false)
             assert(
                 methodsWithThrows.nonEmpty,
                 s"Expected at least one method with throwsTypes in ThrowsFixture; symbols=${result.symbols.map(s =>
@@ -289,7 +289,7 @@ class JavaSymbolTest extends Test:
         readClass(bytes).map: result =>
             val sym = result.classSymbol
             assert(sym.flags.contains(Tasty.Flag.Final), "Expected Flag.Final for java.lang.String")
-            val meta = sym.javaMetadata
+            val meta = sym._javaMetadata
             assert(meta.isDefined, "Expected javaMetadata Present for java.lang.String")
             assert(
                 (meta.get.accessFlags & 0x0010) != 0,
@@ -308,7 +308,7 @@ class JavaSymbolTest extends Test:
                 sym.flags.contains(Tasty.Flag.JavaRecord),
                 s"Expected Flag.JavaRecord for PointRecord, flags=${sym.flags.bits}"
             )
-            val meta = sym.javaMetadata
+            val meta = sym._javaMetadata
             assert(meta.isDefined, "Expected javaMetadata Present for PointRecord")
             val components = meta.get.recordComponents
             assert(
@@ -332,7 +332,7 @@ class JavaSymbolTest extends Test:
         val bytes = loadJdkClass("java/lang/Deprecated.class")
         readClass(bytes).map: result =>
             val sym  = result.classSymbol
-            val meta = sym.javaMetadata
+            val meta = sym._javaMetadata
             assert(meta.isDefined, "Expected javaMetadata Present for java.lang.Deprecated")
             val annotations = meta.get.annotations
             assert(annotations.nonEmpty, s"Expected at least one annotation on java.lang.Deprecated; got none")
@@ -354,7 +354,7 @@ class JavaSymbolTest extends Test:
         val bytes = loadFixture("AnonymousFixture$1.class")
         readClass(bytes).map: result =>
             val sym  = result.classSymbol
-            val meta = sym.javaMetadata
+            val meta = sym._javaMetadata
             assert(meta.isDefined, "Expected javaMetadata Present for AnonymousFixture$1")
             val enclosing = meta.get.enclosingMethod
             assert(enclosing.isDefined, s"Expected enclosingMethod Present for AnonymousFixture$$1; got Absent")

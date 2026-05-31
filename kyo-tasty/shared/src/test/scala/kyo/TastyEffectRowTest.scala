@@ -82,15 +82,15 @@ class TastyEffectRowTest extends Test:
                             Kyo.lift(succeed)
                         case Some(sym) =>
                             for
-                                viaMethod <- sym.body(using cp)
+                                viaMethod <- cp.decodeBody(sym)
                                 viaDirect <- cp.decodeBody(sym)
                             yield
-                                assert(viaMethod.isDefined, "sym.body must return Present")
+                                assert(viaMethod.isDefined, "cp.decodeBody must return Present")
                                 assert(viaDirect.isDefined, "cp.decodeBody must return Present")
                                 // Phase 06: bodyMemo memoizes the result; both calls return the SAME Tree instance.
                                 assert(
                                     viaMethod.get.asInstanceOf[AnyRef] eq viaDirect.get.asInstanceOf[AnyRef],
-                                    s"sym.body and cp.decodeBody must return the same Tree instance (bodyMemo memoization); " +
+                                    s"cp.decodeBody calls must return the same Tree instance (bodyMemo memoization); " +
                                         s"got different instances of ${viaMethod.get.getClass.getSimpleName}"
                                 )
                                 succeed

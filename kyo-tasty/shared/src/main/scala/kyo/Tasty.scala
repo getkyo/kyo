@@ -404,6 +404,28 @@ object Tasty:
         end show
     end Type
 
+    object Type:
+        /** Sentinel lower-bound type used in `TypeBounds` when no concrete lower bound is known.
+          *
+          * Represented as `Named(SymbolId(-100))`. Phase 01 bridge; Phase 08 may replace with a real Nothing lookup.
+          */
+        val Nothing: Type = Type.Named(SymbolId(-100))
+
+        /** Sentinel upper-bound type used in `TypeBounds` when no concrete upper bound is known.
+          *
+          * Represented as `Named(SymbolId(-101))`. Phase 01 bridge; Phase 08 may replace with a real Any lookup.
+          */
+        val Any: Type = Type.Named(SymbolId(-101))
+
+        /** Sentinel unknown type used in `fromFlat` when `declaredType` is absent but a concrete `Type` field is required.
+          *
+          * Represented as `Named(SymbolId(-102))`. Phase 01 bridge.
+          */
+        val Unknown: Type = Type.Named(SymbolId(-102))
+
+        given CanEqual[Type, Type] = CanEqual.canEqualAny
+    end Type
+
     // ── Tree ADT ────────────────────────────────────────────────────────────
 
     /** Structural representation of a TASTy expression or definition body.
@@ -719,6 +741,27 @@ object Tasty:
             def children: Chunk[Tree] = Chunk.empty
     end Tree
 
+    // ── Supporting ADTs for the Symbol hierarchy ────────────────────────────
+
+    /** Variance of a type parameter or abstract type member. */
+    enum Variance derives CanEqual:
+        case Invariant, Covariant, Contravariant
+
+    /** Lower / upper bounds at the Symbol layer (typed against `Type`, distinct from `Tree.TypeBounds` which is bytecode-level). */
+    final case class TypeBounds(lower: Type, upper: Type) derives CanEqual
+
+    /** Visibility of a symbol, derived from `flags`. ScopedPrivate / ScopedProtected indicate the `Local` flag is also set. */
+    enum Visibility derives CanEqual:
+        case Private, Protected, Public, ScopedPrivate, ScopedProtected
+
+    /** Inheritance-openness level, derived from `flags`. */
+    enum OpenLevel derives CanEqual:
+        case Open, Default, Sealed, Final
+
+    /** Format selector for `Symbol.show(format)`. */
+    enum ShowFormat derives CanEqual:
+        case FullyQualified, Simple, Code
+
     // ── SymbolBody ──────────────────────────────────────────────────────────
 
     /** Byte slice and decode context for a TASTy symbol body. Carried by `Symbol.body: Maybe[SymbolBody]`.
@@ -750,31 +793,23 @@ object Tasty:
 
     // ── Symbol ──────────────────────────────────────────────────────────────
 
-    /** Pure-data representation of a TASTy or Java classfile symbol.
+    /** Sealed-trait root of the typed Symbol hierarchy. Every symbol is one of 14 final case classes; pattern matching is exhaustive under
+      * `-Xfatal-warnings`.
       *
-      * Constructed exactly once per symbol by `ClasspathOrchestrator.materializeSymbols` during Pass C of `Classpath.open`. After
-      * construction, every field is immutable. Cross-symbol references use `SymbolId` (an opaque Int) rather than direct `Symbol` pointers
-      * to avoid case-class cycles.
+      * Constructed by `ClasspathOrchestrator.materializeSymbols` during Pass C of `Classpath.open`. After construction, every field is
+      * immutable. Cross-symbol references use `SymbolId` (an opaque Int) rather than direct `Symbol` pointers to avoid case-class cycles.
       *
-      * Resolution methods (`owner`, `parents`, `declarations`, `fullName`, etc.) require a `Classpath` in scope and are pure data accessors
-      * with no effect row.
+      * Resolution methods (`owner`, `fullName`, `binaryName`, etc.) require a `Classpath` in scope and are pure data accessors with no
+      * effect row.
       */
-    final case class Symbol private[Tasty] (
-        id: SymbolId,
-        kind: SymbolKind,
-        flags: Flags,
-        name: Name,
-        ownerId: SymbolId,
-        declaredType: Maybe[Type],
-        scaladoc: Maybe[String],
-        sourcePosition: Maybe[Position],
-        javaMetadata: Maybe[JavaMetadata],
-        parentTypes: Chunk[Type],
-        typeParamIds: Chunk[SymbolId],
-        declarationIds: Chunk[SymbolId],
-        permittedSubclassIds: Maybe[Chunk[SymbolId]],
-        bodyRecord: Maybe[SymbolBody]
-    ) derives CanEqual:
+    sealed trait Symbol derives CanEqual:
+        def id: SymbolId
+        def name: Name
+        def flags: Flags
+        def ownerId: SymbolId
+        def scaladoc: Maybe[String]
+        def sourcePosition: Maybe[Position]
+
         override def equals(other: Any): Boolean =
             other.isInstanceOf[Symbol] && {
                 val that = other.asInstanceOf[Symbol]
@@ -788,6 +823,7 @@ object Tasty:
             else id.value
         end hashCode
 
+        // 40 flag predicates on base trait (identical bodies, preserved per layered/no-restriction rule)
         def isFinal: Boolean         = flags.contains(Flag.Final)
         def isAbstract: Boolean      = flags.contains(Flag.Abstract)
         def isSealed: Boolean        = flags.contains(Flag.Sealed)
@@ -827,70 +863,172 @@ object Tasty:
         def isModule: Boolean        = flags.contains(Flag.Module)
         def isJava: Boolean          = flags.contains(Flag.JavaDefined)
         def isInline: Boolean        = flags.contains(Flag.Inline)
-        def isContextual: Boolean    = flags.contains(Flag.Given)
+        def isGiven: Boolean         = flags.contains(Flag.Given)
+        def isContextual: Boolean    = flags.contains(Flag.Given) // alias retained per layered/no-restriction
         def isOpaque: Boolean        = flags.contains(Flag.Opaque)
 
-        def isPackage: Boolean        = kind == SymbolKind.Package
-        def isClass: Boolean          = kind == SymbolKind.Class
-        def isTrait: Boolean          = kind == SymbolKind.Trait
-        def isObject: Boolean         = kind == SymbolKind.Object
-        def isMethod: Boolean         = kind == SymbolKind.Method
-        def isField: Boolean          = kind == SymbolKind.Field
-        def isVal: Boolean            = kind == SymbolKind.Val
-        def isVar: Boolean            = kind == SymbolKind.Var
-        def isTypeAlias: Boolean      = kind == SymbolKind.TypeAlias
-        def isOpaqueTypeKind: Boolean = kind == SymbolKind.OpaqueType
-        def isAbstractType: Boolean   = kind == SymbolKind.AbstractType
-        def isTypeParam: Boolean      = kind == SymbolKind.TypeParam
-        def isParameter: Boolean      = kind == SymbolKind.Parameter
-        def isUnresolved: Boolean     = kind == SymbolKind.Unresolved
+        // 14 kind discriminators computed structurally
+        def isPackage: Boolean        = this.isInstanceOf[Symbol.Package]
+        def isClass: Boolean          = this.isInstanceOf[Symbol.Class]
+        def isTrait: Boolean          = this.isInstanceOf[Symbol.Trait]
+        def isObject: Boolean         = this.isInstanceOf[Symbol.Object]
+        def isMethod: Boolean         = this.isInstanceOf[Symbol.Method]
+        def isField: Boolean          = this.isInstanceOf[Symbol.Field]
+        def isVal: Boolean            = this.isInstanceOf[Symbol.Val]
+        def isVar: Boolean            = this.isInstanceOf[Symbol.Var]
+        def isTypeAlias: Boolean      = this.isInstanceOf[Symbol.TypeAlias]
+        def isOpaqueTypeKind: Boolean = this.isInstanceOf[Symbol.OpaqueType]
+        def isAbstractType: Boolean   = this.isInstanceOf[Symbol.AbstractType]
+        def isTypeParam: Boolean      = this.isInstanceOf[Symbol.TypeParam]
+        def isParameter: Boolean      = this.isInstanceOf[Symbol.Parameter]
+        def isUnresolved: Boolean     = this.isInstanceOf[Symbol.Unresolved]
 
-        def isCaseClass: Boolean  = isClass && isCase
-        def isCaseObject: Boolean = isObject && isCase
-        def isClassLike: Boolean  = isClass || isTrait || isObject
-        def isTypeLike: Boolean   = isTypeAlias || isOpaqueTypeKind || isAbstractType || isTypeParam
-        def isTerm: Boolean       = isMethod || isVal || isVar || isField || isParameter
+        // 5 composite predicates
+        def isClassLike: Boolean = this.isInstanceOf[Symbol.ClassLike]
+        def isTypeLike: Boolean  = this.isInstanceOf[Symbol.TypeLike]
+        def isTerm: Boolean      = this.isInstanceOf[Symbol.TermLike]
+        def isCaseClass: Boolean = this match
+            case c: Symbol.Class => c.flags.contains(Flag.Case);
+            case _               => false
+        def isCaseObject: Boolean = this match
+            case o: Symbol.Object => o.flags.contains(Flag.Case);
+            case _                => false
 
-        // Resolution accessors -- all pure; require a Classpath to resolve SymbolId references.
+        // SymbolKind retained for callers that use `sym.kind`
+        def kind: SymbolKind = this match
+            case _: Symbol.Package      => SymbolKind.Package
+            case _: Symbol.Class        => SymbolKind.Class
+            case _: Symbol.Trait        => SymbolKind.Trait
+            case _: Symbol.Object       => SymbolKind.Object
+            case _: Symbol.Method       => SymbolKind.Method
+            case _: Symbol.Field        => SymbolKind.Field
+            case _: Symbol.Val          => SymbolKind.Val
+            case _: Symbol.Var          => SymbolKind.Var
+            case _: Symbol.TypeAlias    => SymbolKind.TypeAlias
+            case _: Symbol.OpaqueType   => SymbolKind.OpaqueType
+            case _: Symbol.AbstractType => SymbolKind.AbstractType
+            case _: Symbol.TypeParam    => SymbolKind.TypeParam
+            case _: Symbol.Parameter    => SymbolKind.Parameter
+            case _: Symbol.Unresolved   => SymbolKind.Unresolved
 
-        /** Resolve the owning symbol of this symbol.
-          *
-          * Pure O(1) lookup in the immutable `cp.symbols` array. Returns the sentinel unresolved symbol for out-of-range ids.
-          */
+        // Resolution accessors common to every subtype
         def owner(using cp: Classpath): Symbol = cp.symbol(ownerId)
 
-        /** Resolve the direct parent symbols by extracting only `Type.Named` entries from `parentTypes`.
+        def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
+
+        def fullName(using cp: Classpath): Name = cp.fullName(this)
+
+        def binaryName(using cp: Classpath): String =
+            kyo.internal.tasty.symbol.BinaryName.compute(this, cp)
+
+        def show(using cp: Classpath): String = kyo.internal.tasty.symbol.SymbolShow.show(this, cp)
+
+        // Typed grouped queries derived from flags
+        def visibility: Visibility =
+            val priv = flags.contains(Flag.Private)
+            val prot = flags.contains(Flag.Protected)
+            val loc  = flags.contains(Flag.Local)
+            (priv, prot, loc) match
+                case (true, _, true) => Visibility.ScopedPrivate
+                case (_, true, true) => Visibility.ScopedProtected
+                case (true, _, _)    => Visibility.Private
+                case (_, true, _)    => Visibility.Protected
+                case _               => Visibility.Public
+            end match
+        end visibility
+
+        def openLevel: OpenLevel =
+            if flags.contains(Flag.Final) then OpenLevel.Final
+            else if flags.contains(Flag.Sealed) then OpenLevel.Sealed
+            else if flags.contains(Flag.Open) then OpenLevel.Open
+            else OpenLevel.Default
+
+        // ── Phase 01 bridge accessors (renamed to avoid clash with subtype field names; deleted in Phase 02) ──
+
+        /** Bridge accessor: extracts `parentTypes` from ClassLike subtypes; returns `Chunk.empty` for others.
           *
-          * Applied parents (e.g. `List[Int]`) are skipped; only the top-level `Named` case is unwrapped. Returns an empty Chunk for Package
-          * symbols and symbols with no parents.
+          * Named `_parentTypes` to avoid shadowing the concrete `parentTypes` field on ClassLike subtypes. Used by SnapshotWriter,
+          * Subtyping, and ClasspathOrchestrator which still read the flat field. Phase 02 migrates those callers.
           */
+        private[kyo] def _parentTypes: Chunk[Type] = this match
+            case c: Symbol.ClassLike => c.parentTypes
+            case _                   => Chunk.empty
+
+        /** Bridge accessor: extracts `declarationIds` from ClassLike and Package subtypes; returns `Chunk.empty` for others. */
+        private[kyo] def _declarationIds: Chunk[SymbolId] = this match
+            case c: Symbol.ClassLike => c.declarationIds
+            case p: Symbol.Package   => p.memberIds
+            case _                   => Chunk.empty
+
+        /** Bridge accessor: extracts `typeParamIds` from ClassLike, Method, TypeAlias, OpaqueType subtypes; returns `Chunk.empty` for
+          * others.
+          */
+        private[kyo] def _typeParamIds: Chunk[SymbolId] = this match
+            case c: Symbol.ClassLike   => c.typeParamIds
+            case m: Symbol.Method      => m.typeParamIds
+            case ta: Symbol.TypeAlias  => ta.typeParamIds
+            case ot: Symbol.OpaqueType => ot.typeParamIds
+            case _                     => Chunk.empty
+
+        /** Bridge accessor: extracts the body record from body-bearing subtypes; returns `Absent` for others.
+          *
+          * Named `bodyRecord` (matching the old flat-Symbol field name) so that SnapshotWriter / SnapshotReader compile without change. The
+          * case class subtypes do NOT have a field named `bodyRecord`; they use `body`. No name clash occurs.
+          */
+        private[kyo] def bodyRecord: Maybe[SymbolBody] = this match
+            case c: Symbol.Class  => c.body
+            case t: Symbol.Trait  => t.body
+            case o: Symbol.Object => o.body
+            case m: Symbol.Method => m.body
+            case v: Symbol.Val    => v.body
+            case w: Symbol.Var    => w.body
+            case _                => Maybe.Absent
+
+        /** Bridge accessor: extracts `permittedSubclassIds` from Class / Trait; returns `Absent` for others. */
+        private[kyo] def _permittedSubclassIds: Maybe[Chunk[SymbolId]] = this match
+            case c: Symbol.Class => c.permittedSubclassIds
+            case t: Symbol.Trait => t.permittedSubclassIds
+            case _               => Maybe.Absent
+
+        /** Bridge accessor: extracts `declaredType` from type-bearing subtypes; returns `Absent` for others.
+          *
+          * For TypeAlias and OpaqueType, returns `Maybe(body)` to preserve the prior flat-Symbol semantics where `declaredType` carried the
+          * alias body.
+          */
+        private[kyo] def _declaredType: Maybe[Type] = this match
+            case m: Symbol.Method      => m.declaredType
+            case v: Symbol.Val         => v.declaredType
+            case w: Symbol.Var         => w.declaredType
+            case f: Symbol.Field       => f.declaredType
+            case p: Symbol.Parameter   => Maybe(p.declaredType)
+            case ta: Symbol.TypeAlias  => Maybe(ta.body)
+            case ot: Symbol.OpaqueType => Maybe(ot.body)
+            case _                     => Maybe.Absent
+
+        /** Bridge accessor: extracts `javaMetadata` from ClassLike, Field, and Method subtypes; returns `Absent` for others. */
+        private[kyo] def _javaMetadata: Maybe[JavaMetadata] = this match
+            case c: Symbol.ClassLike => c.javaMetadata
+            case f: Symbol.Field     => f.javaMetadata
+            case m: Symbol.Method    => m.javaMetadata
+            case _                   => Maybe.Absent
+
+        // Resolution accessors preserved from the flat Symbol API (used by existing callers)
+
+        /** Resolve the direct parent symbols by extracting only `Type.Named` entries from `parentTypes`. */
         def parents(using cp: Classpath): Chunk[Symbol] =
-            parentTypes.collect { case Type.Named(pid) => cp.symbol(pid) }
+            _parentTypes.collect { case Type.Named(pid) => cp.symbol(pid) }
 
         /** Resolve the type parameter symbols recorded during Pass C. */
-        def typeParams(using cp: Classpath): Chunk[Symbol] = typeParamIds.map(cp.symbol)
+        def typeParams(using cp: Classpath): Chunk[Symbol] = _typeParamIds.map(cp.symbol)
 
         /** Resolve all direct member symbols (declarations) of this symbol. */
-        def declarations(using cp: Classpath): Chunk[Symbol] = declarationIds.map(cp.symbol)
+        def declarations(using cp: Classpath): Chunk[Symbol] = _declarationIds.map(cp.symbol)
 
         /** Resolve the permitted direct subclasses for sealed / enum symbols. Returns `Absent` when this symbol has no sealed subclass
           * list.
           */
         def permittedSubclasses(using cp: Classpath): Maybe[Chunk[Symbol]] =
-            permittedSubclassIds.map(_.map(cp.symbol))
-
-        /** Look up the companion symbol (class companion object or object companion class) via the classpath companion index.
-          *
-          * Returns `Absent` when no companion is registered in the classpath (e.g. plain classes with no companion, Java symbols).
-          */
-        def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
-
-        /** Compute the fully-qualified dotted name of this symbol by walking the owner chain. */
-        def fullName(using cp: Classpath): Name = cp.fullName(this)
-
-        /** Compute the JVM binary name (slash-separated packages, dollar-sign-separated nested types). */
-        def binaryName(using cp: Classpath): String =
-            kyo.internal.tasty.symbol.BinaryName.compute(this, cp)
+            _permittedSubclassIds.map(_.map(cp.symbol))
 
         /** All method-kind declarations of this symbol. */
         def methods(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.isMethod)
@@ -911,10 +1049,7 @@ object Tasty:
         /** All type-like declarations (type aliases, opaque types, abstract types, type parameters) of this symbol. */
         def typeMembers(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.isTypeLike)
 
-        /** Find a direct member by simple string name.
-          *
-          * Returns `Absent` when no member with the given name exists. Uses `Name.asString` for comparison.
-          */
+        /** Find a direct member by simple string name. */
         def findMember(name: String)(using cp: Classpath): Maybe[Symbol] =
             import Name.asString
             declarations.find(_.name.asString == name) match
@@ -933,110 +1068,516 @@ object Tasty:
         /** All declarations of the given kind. */
         def membersByKind(k: SymbolKind)(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.kind == k)
 
-        /** Human-readable representation: `"<kind> <fullName>"`. */
-        def show(using cp: Classpath): String = kyo.internal.tasty.symbol.SymbolShow.show(this, cp)
+        // Phase 01 bridge mutation helpers (preserved so existing tests compile; deleted in Phase 02)
 
-        /** Test-accessible field override helper. Called from test code in package kyo.
-          *
-          * Equivalent to the auto-generated copy method but accessible from package kyo (not just object Tasty). Only fields relevant to
-          * tests are overridable; extend as needed.
-          */
+        /** Bridge mutation helper used by test fixtures. Preserved through Phase 01; Phase 02 migrates callers to per-subtype `copy`. */
         private[kyo] def withParentTypes(pts: Chunk[Type]): Symbol =
-            Symbol(
+            Symbol.fromDescriptor(
                 id = id,
                 kind = kind,
                 flags = flags,
                 name = name,
                 ownerId = ownerId,
-                declaredType = declaredType,
+                declaredType = _declaredType,
                 scaladoc = scaladoc,
                 sourcePosition = sourcePosition,
-                javaMetadata = javaMetadata,
+                javaMetadata = _javaMetadata,
                 parentTypes = pts,
-                typeParamIds = typeParamIds,
-                declarationIds = declarationIds,
-                permittedSubclassIds = permittedSubclassIds,
+                typeParamIds = _typeParamIds,
+                declarationIds = _declarationIds,
+                permittedSubclassIds = _permittedSubclassIds,
                 bodyRecord = bodyRecord
             )
 
+        /** Bridge mutation helper used by test fixtures. Preserved through Phase 01; Phase 02 migrates callers to per-subtype `copy`. */
         private[kyo] def withDeclarationIds(ids: Chunk[SymbolId]): Symbol =
-            Symbol(
+            Symbol.fromDescriptor(
                 id = id,
                 kind = kind,
                 flags = flags,
                 name = name,
                 ownerId = ownerId,
-                declaredType = declaredType,
+                declaredType = _declaredType,
                 scaladoc = scaladoc,
                 sourcePosition = sourcePosition,
-                javaMetadata = javaMetadata,
-                parentTypes = parentTypes,
-                typeParamIds = typeParamIds,
+                javaMetadata = _javaMetadata,
+                parentTypes = _parentTypes,
+                typeParamIds = _typeParamIds,
                 declarationIds = ids,
-                permittedSubclassIds = permittedSubclassIds,
+                permittedSubclassIds = _permittedSubclassIds,
                 bodyRecord = bodyRecord
             )
 
+        /** Bridge mutation helper used by test fixtures. Preserved through Phase 01; Phase 02 migrates callers to per-subtype `copy`. */
         private[kyo] def withTypeParamIds(ids: Chunk[SymbolId]): Symbol =
-            Symbol(
+            Symbol.fromDescriptor(
                 id = id,
                 kind = kind,
                 flags = flags,
                 name = name,
                 ownerId = ownerId,
-                declaredType = declaredType,
+                declaredType = _declaredType,
                 scaladoc = scaladoc,
                 sourcePosition = sourcePosition,
-                javaMetadata = javaMetadata,
-                parentTypes = parentTypes,
+                javaMetadata = _javaMetadata,
+                parentTypes = _parentTypes,
                 typeParamIds = ids,
-                declarationIds = declarationIds,
-                permittedSubclassIds = permittedSubclassIds,
+                declarationIds = _declarationIds,
+                permittedSubclassIds = _permittedSubclassIds,
                 bodyRecord = bodyRecord
             )
 
+        /** Bridge mutation helper used by test fixtures. Preserved through Phase 01; Phase 02 migrates callers to per-subtype `copy`. */
         private[kyo] def withId(newId: SymbolId, newOwnerId: SymbolId): Symbol =
-            Symbol(
+            Symbol.fromDescriptor(
                 id = newId,
                 kind = kind,
                 flags = flags,
                 name = name,
                 ownerId = newOwnerId,
-                declaredType = declaredType,
+                declaredType = _declaredType,
                 scaladoc = scaladoc,
                 sourcePosition = sourcePosition,
-                javaMetadata = javaMetadata,
-                parentTypes = parentTypes,
-                typeParamIds = typeParamIds,
-                declarationIds = declarationIds,
-                permittedSubclassIds = permittedSubclassIds,
+                javaMetadata = _javaMetadata,
+                parentTypes = _parentTypes,
+                typeParamIds = _typeParamIds,
+                declarationIds = _declarationIds,
+                permittedSubclassIds = _permittedSubclassIds,
                 bodyRecord = bodyRecord
             )
-
-        /** Decode the body of this symbol into a `Tree`.
-          *
-          * Returns `Absent` for Package symbols, Java symbols, and any symbol whose body record is empty. Fails with
-          * `TastyError.MalformedSection` on corrupt body bytes.
-          *
-          * This is the ONE Symbol method that carries a kyo effect row. All other Symbol members return plain values. The `bodyRecord`
-          * constructor parameter (a raw `Maybe[SymbolBody]` byte record) and this method coexist because they have different signatures:
-          * the field takes no arguments while this method requires `using` clauses.
-          */
-        def body(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-            cp.decodeBody(this)
     end Symbol
 
+    /** Companion of `Symbol`; carries the intermediate sealed traits, the 14 final case classes, and the Phase 01-only bridge factories. */
     object Symbol:
-        // The Origin sealed trait and TastyOrigin/JavaOrigin cases are removed; the body byte slice
-        // is carried inside `body: Maybe[SymbolBody]`. ClasspathOrchestrator Pass C invokes
-        // apply via the full factory below.
 
-        /** Full factory for ClasspathOrchestrator Pass C (materializeSymbols).
-          *
-          * Called by ClasspathOrchestrator.materializeSymbols to construct final immutable Symbols from SymbolDescriptors. Returns a Symbol
-          * with all 14 fields populated.
-          *
-          * plan: phase-02 factory; used by ClasspathOrchestrator.materializeSymbols to build final Symbols from SymbolDescriptors.
+        // ── Intermediate sealed traits ────────────────────────────────────────
+
+        /** Type-system layer marker (ClassLike, TypeAlias, OpaqueType, AbstractType, TypeParam). */
+        sealed trait TypeLike extends Symbol
+
+        /** Term layer marker (Method, Val, Var, Field, Parameter). */
+        sealed trait TermLike extends Symbol
+
+        /** Common Class / Trait / Object contract: raw fields only. Resolution accessors (parents, methods, vals, ...) land in Phase 03.
+          */
+        sealed trait ClassLike extends TypeLike:
+            def javaMetadata: Maybe[JavaMetadata]
+            def parentTypes: Chunk[Type]
+            def typeParamIds: Chunk[SymbolId]
+            def declarationIds: Chunk[SymbolId]
+            def annotations: Chunk[Annotation]
+            def javaAnnotations: Chunk[JavaAnnotation]
+            def body: Maybe[SymbolBody]
+        end ClassLike
+
+        // ── 14 final case classes ─────────────────────────────────────────────
+
+        final case class Class private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            javaMetadata: Maybe[JavaMetadata],
+            parentTypes: Chunk[Type],
+            typeParamIds: Chunk[SymbolId],
+            declarationIds: Chunk[SymbolId],
+            permittedSubclassIds: Maybe[Chunk[SymbolId]],
+            annotations: Chunk[Annotation],
+            javaAnnotations: Chunk[JavaAnnotation],
+            body: Maybe[SymbolBody]
+        ) extends ClassLike
+
+        final case class Trait private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            javaMetadata: Maybe[JavaMetadata],
+            parentTypes: Chunk[Type],
+            typeParamIds: Chunk[SymbolId],
+            declarationIds: Chunk[SymbolId],
+            permittedSubclassIds: Maybe[Chunk[SymbolId]],
+            annotations: Chunk[Annotation],
+            javaAnnotations: Chunk[JavaAnnotation],
+            body: Maybe[SymbolBody]
+        ) extends ClassLike
+
+        final case class Object private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            javaMetadata: Maybe[JavaMetadata],
+            parentTypes: Chunk[Type],
+            typeParamIds: Chunk[SymbolId],
+            declarationIds: Chunk[SymbolId],
+            annotations: Chunk[Annotation],
+            javaAnnotations: Chunk[JavaAnnotation],
+            body: Maybe[SymbolBody]
+        ) extends ClassLike
+
+        final case class Method private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            declaredType: Maybe[Type],
+            paramListIds: Chunk[Chunk[SymbolId]],
+            typeParamIds: Chunk[SymbolId],
+            annotations: Chunk[Annotation],
+            body: Maybe[SymbolBody],
+            javaMetadata: Maybe[JavaMetadata]
+        ) extends TermLike
+
+        final case class Val private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            declaredType: Maybe[Type],
+            annotations: Chunk[Annotation],
+            body: Maybe[SymbolBody]
+        ) extends TermLike
+
+        final case class Var private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            declaredType: Maybe[Type],
+            annotations: Chunk[Annotation],
+            body: Maybe[SymbolBody]
+        ) extends TermLike
+
+        final case class Field private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            declaredType: Maybe[Type],
+            javaMetadata: Maybe[JavaMetadata],
+            javaAnnotations: Chunk[JavaAnnotation]
+        ) extends TermLike
+
+        final case class TypeAlias private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            body: Type,
+            typeParamIds: Chunk[SymbolId],
+            annotations: Chunk[Annotation]
+        ) extends TypeLike
+
+        final case class OpaqueType private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            body: Type,
+            bounds: TypeBounds,
+            typeParamIds: Chunk[SymbolId],
+            annotations: Chunk[Annotation]
+        ) extends TypeLike
+
+        final case class AbstractType private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            bounds: TypeBounds,
+            annotations: Chunk[Annotation]
+        ) extends TypeLike
+
+        final case class TypeParam private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            sourcePosition: Maybe[Position],
+            bounds: TypeBounds,
+            variance: Variance
+        ) extends TypeLike:
+            def scaladoc: Maybe[String] = Maybe.Absent
+        end TypeParam
+
+        final case class Parameter private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            sourcePosition: Maybe[Position],
+            declaredType: Type,
+            defaultArgId: Maybe[SymbolId],
+            annotations: Chunk[Annotation]
+        ) extends TermLike:
+            def scaladoc: Maybe[String] = Maybe.Absent
+        end Parameter
+
+        final case class Package private[kyo] (
+            id: SymbolId,
+            name: Name,
+            flags: Flags,
+            ownerId: SymbolId,
+            memberIds: Chunk[SymbolId]
+        ) extends Symbol:
+            def scaladoc: Maybe[String]         = Maybe.Absent
+            def sourcePosition: Maybe[Position] = Maybe.Absent
+        end Package
+
+        final case class Unresolved private[kyo] (
+            id: SymbolId,
+            name: Name,
+            ownerId: SymbolId,
+            flags: Flags = Flags.empty
+        ) extends Symbol:
+            def scaladoc: Maybe[String]         = Maybe.Absent
+            def sourcePosition: Maybe[Position] = Maybe.Absent
+        end Unresolved
+
+        // ── Phase 01 bridge (deleted in Phase 02) ─────────────────────────────
+
+        /** Renamed-but-retained flat record used only as the bridge source. `private[Tasty]` so user code cannot reach it. Existing call
+          * sites in `ClasspathOrchestrator` / `SnapshotReader` / `ClassfileUnpickler` / `Scala2PickleReader` continue to construct this
+          * record through `fromDescriptor` below; the bridge `fromFlat` translates the record into the matching typed subtype on the way
+          * out. Phase 02 deletes both.
+          */
+        final private[Tasty] case class _SymbolFlat(
+            id: SymbolId,
+            kind: SymbolKind,
+            flags: Flags,
+            name: Name,
+            ownerId: SymbolId,
+            declaredType: Maybe[Type],
+            scaladoc: Maybe[String],
+            sourcePosition: Maybe[Position],
+            javaMetadata: Maybe[JavaMetadata],
+            parentTypes: Chunk[Type],
+            typeParamIds: Chunk[SymbolId],
+            declarationIds: Chunk[SymbolId],
+            permittedSubclassIds: Maybe[Chunk[SymbolId]],
+            bodyRecord: Maybe[SymbolBody]
+        )
+
+        /** Translate a Phase 01 flat record into the matching typed subtype. Annotations / javaAnnotations / paramListIds are passed empty;
+          * Phase 02 wires real values during materialization.
+          */
+        private[Tasty] def fromFlat(f: _SymbolFlat): Symbol = f.kind match
+            case SymbolKind.Class =>
+                Class(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    f.javaMetadata,
+                    f.parentTypes,
+                    f.typeParamIds,
+                    f.declarationIds,
+                    f.permittedSubclassIds,
+                    Chunk.empty,
+                    Chunk.empty,
+                    f.bodyRecord
+                )
+            case SymbolKind.Trait =>
+                Trait(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    f.javaMetadata,
+                    f.parentTypes,
+                    f.typeParamIds,
+                    f.declarationIds,
+                    f.permittedSubclassIds,
+                    Chunk.empty,
+                    Chunk.empty,
+                    f.bodyRecord
+                )
+            case SymbolKind.Object =>
+                Object(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    f.javaMetadata,
+                    f.parentTypes,
+                    f.typeParamIds,
+                    f.declarationIds,
+                    Chunk.empty,
+                    Chunk.empty,
+                    f.bodyRecord
+                )
+            case SymbolKind.Method =>
+                Method(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    f.declaredType,
+                    Chunk.empty,
+                    f.typeParamIds,
+                    Chunk.empty,
+                    f.bodyRecord,
+                    f.javaMetadata
+                )
+            case SymbolKind.Val =>
+                Val(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    f.declaredType,
+                    Chunk.empty,
+                    f.bodyRecord
+                )
+            case SymbolKind.Var =>
+                Var(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    f.declaredType,
+                    Chunk.empty,
+                    f.bodyRecord
+                )
+            case SymbolKind.Field =>
+                Field(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    f.declaredType,
+                    f.javaMetadata,
+                    Chunk.empty
+                )
+            case SymbolKind.TypeAlias =>
+                TypeAlias(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    f.declaredType.getOrElse(Type.Unknown),
+                    f.typeParamIds,
+                    Chunk.empty
+                )
+            case SymbolKind.OpaqueType =>
+                OpaqueType(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    f.declaredType.getOrElse(Type.Unknown),
+                    TypeBounds(Type.Nothing, Type.Any),
+                    f.typeParamIds,
+                    Chunk.empty
+                )
+            case SymbolKind.AbstractType =>
+                AbstractType(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.scaladoc,
+                    f.sourcePosition,
+                    TypeBounds(Type.Nothing, Type.Any),
+                    Chunk.empty
+                )
+            case SymbolKind.TypeParam =>
+                val variance =
+                    if f.flags.contains(Flag.CoVariant) then Variance.Covariant
+                    else if f.flags.contains(Flag.ContraVariant) then Variance.Contravariant
+                    else Variance.Invariant
+                TypeParam(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.sourcePosition,
+                    TypeBounds(Type.Nothing, Type.Any),
+                    variance
+                )
+            case SymbolKind.Parameter =>
+                Parameter(
+                    f.id,
+                    f.name,
+                    f.flags,
+                    f.ownerId,
+                    f.sourcePosition,
+                    f.declaredType.getOrElse(Type.Unknown),
+                    Maybe.Absent,
+                    Chunk.empty
+                )
+            case SymbolKind.Package =>
+                Package(f.id, f.name, f.flags, f.ownerId, f.declarationIds)
+            case SymbolKind.Unresolved =>
+                Unresolved(f.id, f.name, f.ownerId, f.flags)
+        end fromFlat
+
+        // ── Phase 01 placeholder factories retained from prior flat-Symbol API ──
+
+        /** Phase 01 keeps `make` so AstUnpickler / TypeUnpickler / TreeUnpickler / ClasspathOrchestrator / ClassfileUnpickler /
+          * JavaAnnotationUnpickler continue to compile. Produces a placeholder typed Symbol with id=SymbolId(-1) and only kind, flags, and
+          * name populated. All relational fields are left at empty defaults. Pass C replaces partial symbols with fully-populated ones via
+          * `materializeSymbols` / `fromDescriptor`.
+          */
+        private[kyo] def make(kind: SymbolKind, flags: Flags, name: Name): Symbol =
+            fromFlat(_SymbolFlat(
+                id = SymbolId(-1),
+                kind = kind,
+                flags = flags,
+                name = name,
+                ownerId = SymbolId(-1),
+                declaredType = Maybe.Absent,
+                scaladoc = Maybe.Absent,
+                sourcePosition = Maybe.Absent,
+                javaMetadata = Maybe.Absent,
+                parentTypes = Chunk.empty,
+                typeParamIds = Chunk.empty,
+                declarationIds = Chunk.empty,
+                permittedSubclassIds = Maybe.Absent,
+                bodyRecord = Maybe.Absent
+            ))
+
+        /** Phase 01 retains `fromDescriptor` as a wrapper that builds a `_SymbolFlat` and pipes it through `fromFlat`. Phase 02 deletes
+          * this factory in the same commit that rewrites the readers.
           */
         private[kyo] def fromDescriptor(
             id: SymbolId,
@@ -1054,56 +1595,22 @@ object Tasty:
             permittedSubclassIds: Maybe[Chunk[SymbolId]],
             bodyRecord: Maybe[SymbolBody]
         ): Symbol =
-            Symbol(
-                id = id,
-                kind = kind,
-                flags = flags,
-                name = name,
-                ownerId = ownerId,
-                declaredType = declaredType,
-                scaladoc = scaladoc,
-                sourcePosition = sourcePosition,
-                javaMetadata = javaMetadata,
-                parentTypes = parentTypes,
-                typeParamIds = typeParamIds,
-                declarationIds = declarationIds,
-                permittedSubclassIds = permittedSubclassIds,
-                bodyRecord = bodyRecord
-            )
-        end fromDescriptor
-
-        /** Construct a partial placeholder Symbol for Pass A/B tree-decode use only.
-          *
-          * Produces a Symbol with id = SymbolId(-1) and only kind, flags, and name populated. All relational fields (parentTypes,
-          * declarationIds, etc.) are left at empty defaults. Pass C replaces partial symbols with fully-populated ones via
-          * `materializeSymbols`.
-          *
-          * Retained as a factory shim for AstUnpickler, TypeUnpickler, TreeUnpickler, ClasspathOrchestrator, ClassfileUnpickler, and
-          * JavaAnnotationUnpickler. Deletion requires migrating all Pass A/B callers to SymbolDescriptor-based construction, which is out
-          * of scope for this campaign.
-          */
-        private[kyo] def make(
-            kind: SymbolKind,
-            flags: Flags,
-            name: Name
-        ): Symbol =
-            Symbol(
-                id = SymbolId(-1),
-                kind = kind,
-                flags = flags,
-                name = name,
-                ownerId = SymbolId(-1),
-                declaredType = Maybe.Absent,
-                scaladoc = Maybe.Absent,
-                sourcePosition = Maybe.Absent,
-                javaMetadata = Maybe.Absent,
-                parentTypes = Chunk.empty,
-                typeParamIds = Chunk.empty,
-                declarationIds = Chunk.empty,
-                permittedSubclassIds = Maybe.Absent,
-                bodyRecord = Maybe.Absent
-            )
-        end make
+            fromFlat(_SymbolFlat(
+                id,
+                kind,
+                flags,
+                name,
+                ownerId,
+                declaredType,
+                scaladoc,
+                sourcePosition,
+                javaMetadata,
+                parentTypes,
+                typeParamIds,
+                declarationIds,
+                permittedSubclassIds,
+                bodyRecord
+            ))
     end Symbol
 
     // ── Pickle (in-memory TASTy + classfile bytes) ──────────────────────────
@@ -1271,7 +1778,15 @@ object Tasty:
           * Called by `Symbol.body(using cp, frame)`. INV-010: AllowUnsafe does not appear on this signature.
           */
         def decodeBody(sym: Symbol)(using Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-            sym.bodyRecord match
+            val maybeBody: Maybe[SymbolBody] = sym match
+                case c: Symbol.Class  => c.body
+                case t: Symbol.Trait  => t.body
+                case o: Symbol.Object => o.body
+                case m: Symbol.Method => m.body
+                case v: Symbol.Val    => v.body
+                case w: Symbol.Var    => w.body
+                case _                => Maybe.Absent
+            maybeBody match
                 case Maybe.Absent => Sync.defer(Maybe.Absent)
                 case Maybe.Present(blob) =>
                     Sync.Unsafe.defer:
@@ -1299,6 +1814,8 @@ object Tasty:
                                 case Right(t) => Maybe(t)
                                 case Left(e)  => Abort.fail(e)
                         end if
+            end match
+        end decodeBody
 
         /** Package-private memo size for test verification. NOT part of the public API. */
         private[kyo] def bodyMemoSize: Int = bodyMemo.size()
@@ -1345,22 +1862,7 @@ object Tasty:
 
         /** Sentinel symbol returned by `Classpath.symbol` for out-of-range or unassigned ids. */
         val sentinelUnresolved: Symbol =
-            Symbol(
-                id = SymbolId(-1),
-                kind = SymbolKind.Unresolved,
-                flags = Flags.empty,
-                name = Name("<unresolved>"),
-                ownerId = SymbolId(-1),
-                declaredType = Maybe.Absent,
-                scaladoc = Maybe.Absent,
-                sourcePosition = Maybe.Absent,
-                javaMetadata = Maybe.Absent,
-                parentTypes = Chunk.empty,
-                typeParamIds = Chunk.empty,
-                declarationIds = Chunk.empty,
-                permittedSubclassIds = Maybe.Absent,
-                bodyRecord = Maybe.Absent
-            )
+            Symbol.Unresolved(SymbolId(-1), Name("<unresolved>"), SymbolId(-1))
 
         /** Open a classpath from directory/file roots using `ErrorMode.SoftFail` (errors accumulate in `cp.errors`).
           *

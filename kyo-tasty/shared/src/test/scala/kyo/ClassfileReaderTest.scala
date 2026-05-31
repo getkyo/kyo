@@ -188,10 +188,13 @@ class ClassfileReaderTest extends Test:
     "classfile symbol has javaMetadata Present; TASTy symbol has javaMetadata Absent" taggedAs jvmOnly in run {
         readClass("java/lang/Object.class").map: javaResult =>
             val javaSym = javaResult.classSymbol
-            assert(javaSym.javaMetadata.isDefined, "Java-sourced symbol should have javaMetadata Present")
+            assert(javaSym._javaMetadata.isDefined, "Java-sourced symbol should have javaMetadata Present")
             val tastyBytes = kyo.fixtures.Embedded.plainClassTasty
             firstClassSymbolFromTasty(tastyBytes).map: tastySym =>
-                assert(tastySym.javaMetadata.isEmpty, s"TASTy-sourced symbol should have javaMetadata Absent, got ${tastySym.javaMetadata}")
+                assert(
+                    tastySym._javaMetadata.isEmpty,
+                    s"TASTy-sourced symbol should have javaMetadata Absent, got ${tastySym._javaMetadata}"
+                )
     }
 
     // -------------------------------------------------------------------------
@@ -202,13 +205,13 @@ class ClassfileReaderTest extends Test:
         readClass("java/io/FileInputStream.class").map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
                 sym.kind == Tasty.SymbolKind.Method &&
-                    sym.javaMetadata.map(_.throwsTypes.nonEmpty).getOrElse(false)
+                    sym._javaMetadata.map(_.throwsTypes.nonEmpty).getOrElse(false)
             assert(
                 methodsWithThrows.nonEmpty,
                 s"Expected at least one method with non-empty throwsTypes in FileInputStream"
             )
             // Verify the throws type name contains 'IOException' or a known exception class
-            val throwTypes = methodsWithThrows.flatMap(sym => sym.javaMetadata.map(_.throwsTypes).getOrElse(Chunk.empty))
+            val throwTypes = methodsWithThrows.flatMap(sym => sym._javaMetadata.map(_.throwsTypes).getOrElse(Chunk.empty))
             assert(
                 throwTypes.nonEmpty,
                 s"Expected non-empty throwsTypes"
@@ -221,7 +224,7 @@ class ClassfileReaderTest extends Test:
     "M8: BootstrapMethods attribute is parsed into metadata.bootstrapMethods" taggedAs jvmOnly in run {
         // java.util.function.Function uses BootstrapMethods for lambda-compose default methods
         readClass("java/util/function/Function.class").map: result =>
-            val md = result.classSymbol.javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
+            val md = result.classSymbol._javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
             assert(
                 md.bootstrapMethods.nonEmpty,
                 "Expected at least one BootstrapMethods entry in java/util/function/Function.class"
@@ -237,7 +240,7 @@ class ClassfileReaderTest extends Test:
     "M8: NestHost attribute is parsed into metadata.nestHost for an inner class" taggedAs jvmOnly in run {
         // java.util.HashMap$Node is an inner class of HashMap; has NestHost = java/util/HashMap
         readClass("java/util/HashMap$Node.class").map: result =>
-            val md = result.classSymbol.javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
+            val md = result.classSymbol._javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
             assert(
                 md.nestHost.isDefined,
                 "Expected nestHost to be Present for java/util/HashMap$Node.class"
@@ -255,7 +258,7 @@ class ClassfileReaderTest extends Test:
     "M8: NestMembers attribute is parsed into metadata.nestMembers for an outer class" taggedAs jvmOnly in run {
         // java.util.HashMap has inner classes; NestMembers lists them
         readClass("java/util/HashMap.class").map: result =>
-            val md = result.classSymbol.javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
+            val md = result.classSymbol._javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
             assert(
                 md.nestMembers.nonEmpty,
                 "Expected non-empty nestMembers in java/util/HashMap.class"
@@ -268,9 +271,9 @@ class ClassfileReaderTest extends Test:
     "M8: PermittedSubclasses attribute is parsed for a sealed interface" taggedAs jvmOnly in run {
         // java.lang.constant.ClassDesc is a sealed interface (JDK 12+) with known permitted subclasses
         readClass("java/lang/constant/ClassDesc.class").map: result =>
-            val md = result.classSymbol.javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
+            val md = result.classSymbol._javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
             // plan: phase-02 inline; permittedSubclassIds carries SymbolId values (not Symbol objects).
-            val permitted = result.classSymbol.permittedSubclassIds
+            val permitted = result.classSymbol._permittedSubclassIds
             assert(
                 permitted.isDefined,
                 "Expected permittedSubclassIds to be Present for java/lang/constant/ClassDesc.class"
@@ -290,7 +293,7 @@ class ClassfileReaderTest extends Test:
         readClass("java/lang/module/ModuleDescriptor$Requires$Modifier.class").map: result =>
             val methodsWithParams = result.symbols.filter: sym =>
                 sym.kind == Tasty.SymbolKind.Method &&
-                    sym.javaMetadata.exists(_.paramNames.nonEmpty)
+                    sym._javaMetadata.exists(_.paramNames.nonEmpty)
             assert(
                 methodsWithParams.nonEmpty,
                 "Expected at least one method with non-empty paramNames in ModuleDescriptor$Requires$Modifier"
@@ -391,7 +394,7 @@ class ClassfileReaderTest extends Test:
         out.flush()
         val bytes = buf.toByteArray
         ClassfileUnpickler.read(bytes, interner, new TypeArena).map: result =>
-            val md = result.classSymbol.javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
+            val md = result.classSymbol._javaMetadata.getOrElse(fail("Expected javaMetadata Present"))
             assert(
                 md.runtimeTypeAnnotations.nonEmpty,
                 s"Expected non-empty runtimeTypeAnnotations from synthetic classfile, got empty"

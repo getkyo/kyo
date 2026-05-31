@@ -113,7 +113,7 @@ class TastySymbolTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym.parentTypes)
+                    case Present(sym) => Kyo.lift(sym._parentTypes)
                     case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(parents) =>
                     assert(
@@ -348,7 +348,7 @@ class TastySymbolTest extends Test:
     // plan: phase-02 update; declaredType is now Maybe[Type], returns Absent for Package (no exception).
     "Symbol.declaredType returns Absent for Package symbols" in {
         val pkg = makePkg("scala", makeRoot())
-        assert(pkg.declaredType.isEmpty, "Expected Absent declaredType for Package symbol")
+        assert(pkg._declaredType.isEmpty, "Expected Absent declaredType for Package symbol")
     }
 
     // Phase 13 T1 gap: declarations returns empty Chunk for a fresh synthetic symbol (no classpath).
@@ -367,7 +367,7 @@ class TastySymbolTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym.declarationIds)
+                    case Present(sym) => Kyo.lift(sym._declarationIds)
                     case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(decls) =>
                     assert(decls != null, "Expected non-null Chunk from declarationIds")
@@ -386,7 +386,7 @@ class TastySymbolTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym.typeParamIds)
+                    case Present(sym) => Kyo.lift(sym._typeParamIds)
                     case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(tps) =>
                     assert(

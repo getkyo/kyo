@@ -489,7 +489,7 @@ class QueryApiTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => Kyo.lift(sym.parentTypes)
+                    case Present(sym) => Kyo.lift(sym._parentTypes)
                     case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(parents) =>
                     assert(
@@ -512,7 +512,7 @@ class QueryApiTest extends Test:
             Abort.run[TastyError](openFixtureClasspath(src).flatMap: cp =>
                 cp.findClass("kyo.fixtures.GenericBox") match
                     case Present(sym) =>
-                        val tpIds  = sym.typeParamIds
+                        val tpIds  = sym._typeParamIds
                         val allSym = cp.symbols
                         assert(
                             tpIds.length == 1,
@@ -535,7 +535,7 @@ class QueryApiTest extends Test:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Present(sym) =>
-                        val declIds = sym.declarationIds
+                        val declIds = sym._declarationIds
                         val allSym  = cp.symbols
                         assert(declIds.nonEmpty, s"Expected non-empty declarationIds for PlainClass but got empty")
                         val names = declIds.map(id => allSym(id.value).name.asString).toSet
@@ -571,7 +571,7 @@ class QueryApiTest extends Test:
             case Result.Success(sym) =>
                 // Scope has exited; classpath is now closed. sym.parentTypes is a direct field, always valid.
                 // plan: phase-02 inline; sym.parents renamed to sym.parentTypes.
-                val parents = sym.parentTypes
+                val parents = sym._parentTypes
                 assert(
                     parents.nonEmpty,
                     "Expected non-empty parentTypes from pre-populated field after classpath close"
@@ -733,7 +733,7 @@ class QueryApiTest extends Test:
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))
                     case Present(classSym) =>
-                        val declIds = classSym.declarationIds
+                        val declIds = classSym._declarationIds
                         val allSym  = cp.symbols
                         val xOpt    = declIds.map(id => allSym(id.value)).find(s => s.name.asString == "x")
                         xOpt match
@@ -744,7 +744,7 @@ class QueryApiTest extends Test:
                                     )
                                 )
                             case Some(xSym) =>
-                                Kyo.lift(xSym.declaredType)).map:
+                                Kyo.lift(xSym._declaredType)).map:
                 case Result.Success(tpeMaybe) =>
                     assert(tpeMaybe.isDefined, s"Expected Present declaredType for val x: Int but got Absent")
                     succeed
@@ -766,7 +766,7 @@ class QueryApiTest extends Test:
                 cp.findClass("kyo.fixtures.SomeTrait") match
                     case Absent => Abort.fail(TastyError.NotImplemented("SomeTrait not found"))
                     case Present(traitSym) =>
-                        val declIds = traitSym.declarationIds
+                        val declIds = traitSym._declarationIds
                         val allSym  = cp.symbols
                         val computeOpt = declIds.map(id => allSym(id.value)).find(s =>
                             s.name.asString == "compute" && s.kind == Tasty.SymbolKind.Method
@@ -775,7 +775,7 @@ class QueryApiTest extends Test:
                             case None =>
                                 Abort.fail(TastyError.NotImplemented("No method 'compute' in SomeTrait declarationIds"))
                             case Some(computeSym) =>
-                                Kyo.lift(computeSym.declaredType)).map:
+                                Kyo.lift(computeSym._declaredType)).map:
                 case Result.Success(tpeMaybe) =>
                     assert(tpeMaybe.isDefined, s"Expected Present declaredType for compute but got Absent")
                     succeed
@@ -797,7 +797,7 @@ class QueryApiTest extends Test:
                 val syms = cp.symbols.filter(_.name.asString == "StringList")
                 syms.headMaybe match
                     case Absent             => Abort.fail(TastyError.NotImplemented("No StringList symbol found"))
-                    case Present(stringSym) => Kyo.lift(stringSym.declaredType)).map:
+                    case Present(stringSym) => Kyo.lift(stringSym._declaredType)).map:
                 case Result.Success(tpeMaybe) =>
                     assert(tpeMaybe.isDefined, s"Expected Present declaredType for StringList but got Absent")
                     succeed
@@ -825,7 +825,7 @@ class QueryApiTest extends Test:
                         fail(s"No 'values' member in ArrayRecord. Members: ${cr.symbols.map(_.name.asString).mkString(", ")}")
                     case Some(valuesSym) =>
                         // plan: phase-02 update; declaredType is now Maybe[Type].
-                        Abort.run[TastyError](Kyo.lift(valuesSym.declaredType)).map:
+                        Abort.run[TastyError](Kyo.lift(valuesSym._declaredType)).map:
                             case Result.Success(tpeMaybe) =>
                                 tpeMaybe match
                                     case kyo.Maybe.Present(Tasty.Type.Array(Tasty.Type.Named(_))) =>
@@ -858,7 +858,7 @@ class QueryApiTest extends Test:
                     openFixtureClasspath(fixtureSource()).flatMap: cp =>
                         cp.findClass("kyo.fixtures.PlainClass") match
                             case Present(sym) =>
-                                val declIds = sym.declarationIds
+                                val declIds = sym._declarationIds
                                 val allSym  = cp.symbols
                                 declIds.map(id => allSym(id.value)).find(s => s.name.asString == "x") match
                                     case Some(xSym) => Kyo.lift(xSym)
@@ -871,7 +871,7 @@ class QueryApiTest extends Test:
             case Result.Panic(t) =>
                 throw t
             case Result.Success(sym) =>
-                val tpeMaybe = sym.declaredType
+                val tpeMaybe = sym._declaredType
                 assert(tpeMaybe.isDefined, "Expected Present declaredType from pre-populated field after classpath close")
     }
 

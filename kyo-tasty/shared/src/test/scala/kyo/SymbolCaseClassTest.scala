@@ -71,14 +71,14 @@ class SymbolCaseClassTest extends Test:
         assert(sym.flags.contains(Tasty.Flag.Final), s"flags: ${sym.flags.bits}")
         assert(sym.name.asString == "Bar", s"name: ${sym.name.asString}")
         assert(sym.ownerId == SymbolId(3), s"ownerId: ${sym.ownerId}")
-        assert(sym.declaredType.isEmpty, s"declaredType: ${sym.declaredType}")
+        assert(sym._declaredType.isEmpty, s"declaredType: ${sym._declaredType}")
         assert(sym.scaladoc.isDefined && sym.scaladoc.get == "/** doc */", s"scaladoc: ${sym.scaladoc}")
         assert(sym.sourcePosition.isEmpty, s"sourcePosition: ${sym.sourcePosition}")
-        assert(sym.javaMetadata.isEmpty, s"javaMetadata: ${sym.javaMetadata}")
-        assert(sym.parentTypes.length == 1, s"parentTypes.length: ${sym.parentTypes.length}")
-        assert(sym.typeParamIds.isEmpty, s"typeParamIds: ${sym.typeParamIds}")
-        assert(sym.declarationIds.isEmpty, s"declarationIds: ${sym.declarationIds}")
-        assert(sym.permittedSubclassIds.isEmpty, s"permittedSubclassIds: ${sym.permittedSubclassIds}")
+        assert(sym._javaMetadata.isEmpty, s"javaMetadata: ${sym._javaMetadata}")
+        assert(sym._parentTypes.length == 1, s"parentTypes.length: ${sym._parentTypes.length}")
+        assert(sym._typeParamIds.isEmpty, s"typeParamIds: ${sym._typeParamIds}")
+        assert(sym._declarationIds.isEmpty, s"declarationIds: ${sym._declarationIds}")
+        assert(sym._permittedSubclassIds.isEmpty, s"permittedSubclassIds: ${sym._permittedSubclassIds}")
         assert(sym.bodyRecord.isEmpty, s"bodyRecord: ${sym.bodyRecord}")
         succeed
     }
@@ -113,14 +113,14 @@ class SymbolCaseClassTest extends Test:
             flags = s1.flags,
             name = s1.name,
             ownerId = s1.ownerId,
-            declaredType = s1.declaredType,
+            declaredType = s1._declaredType,
             scaladoc = Maybe("b"),
             sourcePosition = s1.sourcePosition,
-            javaMetadata = s1.javaMetadata,
-            parentTypes = s1.parentTypes,
-            typeParamIds = s1.typeParamIds,
-            declarationIds = s1.declarationIds,
-            permittedSubclassIds = s1.permittedSubclassIds,
+            javaMetadata = s1._javaMetadata,
+            parentTypes = s1._parentTypes,
+            typeParamIds = s1._typeParamIds,
+            declarationIds = s1._declarationIds,
+            permittedSubclassIds = s1._permittedSubclassIds,
             bodyRecord = s1.bodyRecord
         )
         assert(!(s1 eq s2), "Expected fromDescriptor to produce a new reference (not eq)")
@@ -170,14 +170,14 @@ class SymbolCaseClassTest extends Test:
         val _flags                = sym.flags
         val _name                 = sym.name
         val _ownerId              = sym.ownerId
-        val _declaredType         = sym.declaredType
+        val _declaredType         = sym._declaredType
         val _scaladoc             = sym.scaladoc
         val _sourcePosition       = sym.sourcePosition
-        val _javaMetadata         = sym.javaMetadata
-        val _parentTypes          = sym.parentTypes
-        val _typeParamIds         = sym.typeParamIds
-        val _declarationIds       = sym.declarationIds
-        val _permittedSubclassIds = sym.permittedSubclassIds
+        val _javaMetadata         = sym._javaMetadata
+        val _parentTypes          = sym._parentTypes
+        val _typeParamIds         = sym._typeParamIds
+        val _declarationIds       = sym._declarationIds
+        val _permittedSubclassIds = sym._permittedSubclassIds
         val _body                 = sym.bodyRecord
 
         // Verify the types are the expected pure-data types (no mutable slot).
@@ -186,9 +186,13 @@ class SymbolCaseClassTest extends Test:
         assert(_kind.getClass.getSimpleName != "OnceCell", "kind field must not be OnceCell")
         assert(_flags.getClass.getSimpleName != "SingleAssign", "flags field must not be SingleAssign")
 
-        // Count the 14 accessible fields by pattern matching on the case class product.
-        val productArity = sym.productArity
-        assert(productArity == 14, s"Expected 14 product elements (case-class params) but got $productArity")
+        // Count the 14 accessible fields by pattern matching on the typed subtype.
+        // Symbol is now a sealed trait; the product shape lives on each case class subtype.
+        // Symbol.Class has 14 constructor fields (same count as the prior flat Symbol).
+        val productArity = sym match
+            case c: Tasty.Symbol.Class => c.productArity
+            case _                     => -1
+        assert(productArity == 14, s"Expected 14 product elements (Symbol.Class params) but got $productArity")
 
         succeed
     }
