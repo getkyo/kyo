@@ -959,8 +959,7 @@ object JsonRpcEndpointImpl:
                                                                         // scala.Option arm; interop with methodMap.get (covered by comment above match)
                                                                         case None =>
                                                                             // Step 3: unknown-method dispatch for notifications
-                                                                            val isDollarPrefix = method.startsWith("$/")
-                                                                            if config.unknownMethod.dollarPrefixOverride && isDollarPrefix
+                                                                            if config.unknownMethod.ignoreUnknownNotification(method)
                                                                             then
                                                                                 Exchange.Message.Skip
                                                                             else

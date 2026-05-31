@@ -93,6 +93,78 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
+    "ignoreUnknownNotification predicate: matching notifications are silently dropped" in run {
+        // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
+        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        // Custom predicate: silently ignore notifications whose method starts with "internal/"
+        val customPolicy = JsonRpcUnknownMethodPolicy.minimal.copy(
+            ignoreUnknownNotification = _.startsWith("internal/")
+        )
+        val customConfig = JsonRpcHandler.Config(unknownMethod = customPolicy)
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcHandler.init(ta, Seq.empty, customConfig).map { a =>
+                JsonRpcHandler.init(tb, Seq.empty, customConfig).map { _ =>
+                    a.notify[Empty]("internal/heartbeat", Empty()).andThen {
+                        Async.sleep(80.millis).andThen {
+                            Sync.defer(assert(handlerInvoked.get()(using AllowUnsafe.embrace.danger) == 0))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "ignoreUnknownNotification predicate: non-matching notifications go through onUnknownNotification" in run {
+        // Unsafe: AtomicInt.Unsafe.init for invocation counter
+        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        // Predicate only matches "internal/" prefix; "external/" should fall through to Drop (silent)
+        val customPolicy = JsonRpcUnknownMethodPolicy.minimal.copy(
+            ignoreUnknownNotification = _.startsWith("internal/")
+        )
+        val customConfig = JsonRpcHandler.Config(unknownMethod = customPolicy)
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcHandler.init(ta, Seq.empty, customConfig).map { a =>
+                JsonRpcHandler.init(tb, Seq.empty, customConfig).map { _ =>
+                    a.notify[Empty]("external/event", Empty()).andThen {
+                        Async.sleep(80.millis).andThen {
+                            // engine still running: unknown non-matching notification goes to Drop (onUnknownNotification)
+                            Abort.run[JsonRpcError | Closed](a.call[Empty, Empty]("any/probe", Empty())).map {
+                                case Result.Failure(e: JsonRpcError) => assert(e.code == -32601)
+                                case Result.Failure(_: Closed)       => fail("engine closed unexpectedly")
+                                case other                           => fail(s"expected MethodNotFound, got $other")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "ignoreUnknownNotification predicate: always-true predicate drops all unknown notifications silently" in run {
+        // Unsafe: AtomicInt.Unsafe.init for invocation counter
+        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        val alwaysIgnorePolicy = JsonRpcUnknownMethodPolicy.strict.copy(
+            ignoreUnknownNotification = _ => true
+        )
+        val alwaysIgnoreConfig = JsonRpcHandler.Config(unknownMethod = alwaysIgnorePolicy)
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcHandler.init(ta, Seq.empty, alwaysIgnoreConfig).map { a =>
+                JsonRpcHandler.init(tb, Seq.empty, alwaysIgnoreConfig).map { _ =>
+                    a.notify[Empty]("would/reject", Empty()).andThen {
+                        Async.sleep(80.millis).andThen {
+                            // engine still running: the always-true predicate short-circuited Reject
+                            Abort.run[JsonRpcError | Closed](a.call[Empty, Empty]("any/probe", Empty())).map {
+                                case Result.Failure(e: JsonRpcError) => assert(e.code == -32601)
+                                case Result.Failure(_: Closed) => fail("engine closed after notification: predicate should have ignored it")
+                                case other                     => fail(s"expected MethodNotFound, got $other")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "gate Allow: request reaches registered handler normally" in run {
         val allowGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =

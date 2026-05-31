@@ -73,4 +73,37 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
         }
     }
 
+    "requireHandshake: handshake method is allowed before handshake completes" in run {
+        val rejection    = JsonRpcResponse.failure(sentinelId, JsonRpcImplementationError(-32002, "not ready"))
+        val gate         = JsonRpcMessageGate.server.requireHandshake("begin", rejection)
+        val handshakeEnv = JsonRpcRequest(JsonRpcId.Num(1L), "begin", Absent, Absent)
+        gate.beforeDispatch(handshakeEnv).map { d =>
+            assert(d == JsonRpcMessageGate.Decision.Allow)
+        }
+    }
+
+    "requireHandshake: non-handshake request before handshake is rejected with supplied response" in run {
+        val rejection    = JsonRpcResponse.failure(sentinelId, JsonRpcImplementationError(-32002, "not ready"))
+        val gate         = JsonRpcMessageGate.server.requireHandshake("begin", rejection)
+        val nonHandshake = JsonRpcRequest(JsonRpcId.Num(2L), "doWork", Absent, Absent)
+        gate.beforeDispatch(nonHandshake).map { d =>
+            d match
+                case JsonRpcMessageGate.Decision.Reject(resp) => assert(resp == rejection)
+                case other                                    => fail(s"expected Reject, got $other")
+        }
+    }
+
+    "requireHandshake: requests allowed after handshake method observed" in run {
+        val rejection    = JsonRpcResponse.failure(sentinelId, JsonRpcImplementationError(-32002, "not ready"))
+        val gate         = JsonRpcMessageGate.server.requireHandshake("handshake", rejection)
+        val handshakeEnv = JsonRpcRequest(JsonRpcId.Num(1L), "handshake", Absent, Absent)
+        val workEnv      = JsonRpcRequest(JsonRpcId.Num(2L), "doWork", Absent, Absent)
+        gate.beforeDispatch(handshakeEnv).map { d1 =>
+            assert(d1 == JsonRpcMessageGate.Decision.Allow)
+            gate.beforeDispatch(workEnv).map { d2 =>
+                assert(d2 == JsonRpcMessageGate.Decision.Allow)
+            }
+        }
+    }
+
 end JsonRpcHandlerMessageGateTest

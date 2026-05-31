@@ -55,17 +55,22 @@ object JsonRpcMessageGate:
       */
     object server:
 
-        /** Returns a gate that requires the `initialize` request to arrive before any other
-          * request is dispatched. Non-initialize requests arriving before initialization is complete
-          * are rejected with the supplied error response.
+        /** Returns a gate that requires a request with `handshakeMethod` to succeed before any
+          * other request is dispatched. Requests for other methods that arrive before the handshake
+          * completes are rejected with `onUninitializedRequest`.
           *
-          * Typical use: LSP servers that must complete the `initialize` / `initialized` handshake
-          * before accepting any further requests.
+          * Common for servers that require a handshake message before accepting work. For example,
+          * a server that requires an `"initialize"` request before processing any other request
+          * can be configured with `requireHandshake("initialize", rejectionResponse)`.
           *
+          * @param handshakeMethod
+          *   the method name that triggers the handshake; once a request with this method is seen,
+          *   all subsequent requests are allowed through.
           * @param onUninitializedRequest
-          *   the response to send when a non-initialize request arrives before initialization.
+          *   the response to send when a non-handshake request arrives before the handshake.
           */
-        def requireInitialize(
+        def requireHandshake(
+            handshakeMethod: String,
             onUninitializedRequest: JsonRpcResponse
         ): JsonRpcMessageGate =
             // Unsafe: AtomicBoolean for thread-safe initialized flag shared across handler fibers
@@ -73,7 +78,7 @@ object JsonRpcMessageGate:
             new JsonRpcMessageGate:
                 def beforeDispatch(env: JsonRpcEnvelope)(using Frame): Decision < Sync =
                     env match
-                        case JsonRpcRequest(_, "initialize", _, _) =>
+                        case JsonRpcRequest(_, `handshakeMethod`, _, _) =>
                             initialized.set(true).andThen(Decision.Allow)
                         case _: JsonRpcRequest =>
                             initialized.get.map { done =>
@@ -84,6 +89,21 @@ object JsonRpcMessageGate:
                             Decision.Allow
                 end beforeDispatch
             end new
+        end requireHandshake
+
+        /** Returns a gate that requires the `initialize` request to arrive before any other
+          * request is dispatched. Non-initialize requests arriving before initialization is complete
+          * are rejected with the supplied error response.
+          *
+          * Equivalent to `requireHandshake("initialize", onUninitializedRequest)`.
+          *
+          * @param onUninitializedRequest
+          *   the response to send when a non-initialize request arrives before initialization.
+          */
+        def requireInitialize(
+            onUninitializedRequest: JsonRpcResponse
+        ): JsonRpcMessageGate =
+            requireHandshake("initialize", onUninitializedRequest)
         end requireInitialize
 
     end server

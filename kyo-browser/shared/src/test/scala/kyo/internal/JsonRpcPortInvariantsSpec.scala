@@ -307,7 +307,7 @@ class JsonRpcPortInvariantsSpec extends Test:
         val dropPolicy = JsonRpcUnknownMethodPolicy(
             onUnknownRequest = JsonRpcUnknownMethodPolicy.UnknownAction.Drop,
             onUnknownNotification = JsonRpcUnknownMethodPolicy.UnknownAction.Drop,
-            dollarPrefixOverride = false
+            ignoreUnknownNotification = _ => false
         )
         Scope.run {
             JsonRpcTransport.inMemory.map { (client, server) =>
