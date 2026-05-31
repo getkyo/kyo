@@ -462,7 +462,7 @@ class QueryApiTest extends Test:
     }
 
     // Phase 2 Test 3: classpath opened from two fixture TASTy files (one extending the other) reports no errors
-    // and no Result.Panic from unset SingleAssign slots. Verifies end-to-end Phase C placeholder resolution.
+    // and no panic. Verifies end-to-end Phase C placeholder resolution.
     "two-file classpath (ChildClass extends BaseClass) opens with no errors and no panic" in run {
         val src = MemoryFileSource()
         src.add("root/BaseClass.tasty", kyo.fixtures.Embedded.baseClassTasty)
@@ -552,7 +552,7 @@ class QueryApiTest extends Test:
     }
 
     // Phase 3 Test 4 (G21 post-close): sym.parents after classpath close returns the pre-populated Chunk.
-    // After Phase 3, pure accessors read immutable SingleAssign slots, which remain populated after close.
+    // After Phase 7, parents are stored as plain Chunk fields in the case class, so they remain valid after close.
     "Phase 3: sym.parents after classpath close returns the pre-populated Chunk (no failure)" in run {
         // Capture the symbol from inside the scope, then check parents after scope exits.
         // Scope.run returns Result[TastyError, Symbol] after running finalizers (closing classpath).
@@ -646,8 +646,7 @@ class QueryApiTest extends Test:
     }
 
     // Phase 4 Test 4 (G24): companion called after classpath close returns Absent.
-    // After Phase 3, companion is pure: it reads stateRef.unsafe.get() which returns Closed post-close.
-    // The Closed branch returns Maybe.Absent (no failure).
+    // sym.companion is pure (deferred to Phase 09); will return Maybe.Absent when not found.
     "Phase 4: sym.companion after classpath close returns Absent (pure, no failure)" in {
         pending // plan: phase-02; sym.companion deferred to Phase 09
     }
@@ -778,9 +777,8 @@ class QueryApiTest extends Test:
                 throw t
     }
 
-    // Phase 5 Test 5 (G20): sym.declaredType called after classpath close returns ClasspathClosed.
     // Phase 5 Test 5 (G20 post-close): sym.declaredType after classpath close returns the pre-populated type.
-    // After Phase 3, declaredType is pure and reads the SingleAssign slot, which remains valid post-close.
+    // declaredType is a plain Maybe[Type] field on the case class; it remains valid after close.
     // plan: phase-02 update; declarationIds used; declaredType is Maybe[Type].
     "Phase 5: sym.declaredType after classpath close returns pre-populated type (no failure)" in run {
         val captureResult: Result[TastyError, Tasty.Symbol] < Async =

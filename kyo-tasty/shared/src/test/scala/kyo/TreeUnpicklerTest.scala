@@ -366,141 +366,87 @@ class TreeUnpicklerTest extends Test:
         pending // plan: phase-02; sym.body effectful method added in Phase 04
     }
 
-    // ── Phase 17 Tests (INV-014, M2) ─────────────────────────────────────────────
-    //
-    // Fallback note for Test A: no @deprecated TASTy fixture exists in kyo-tasty-fixtures.
-    // We use a UNITconst annotation term with a synthetic DecodeContext to demonstrate that
-    // Annotation.args decodes a real pickle into a Tree via the orchestrator-level path.
-    // This exercises INV-014 and M2 (the critical path: non-null _decodeCtx + non-empty argsPickle).
+    // ── Phase 17 Tests (INV-006, M2): Phase 08 -- direct decodeAnnotationTerm calls ─────────────────
 
-    // Test A (INV-014, M2): Annotation with a real DecodeContext and a valid argsPickle decodes to a Tree.
-    // Given: an Annotation built via the internal factory with argsPickle = [UNITconst] and a real DecodeContext.
-    // When: annotation.args is evaluated.
-    // Then: returns Tree.Literal(UnitConst).
-    "Phase17-A: annotation with real decodeCtx and UNITconst pickle decodes to Literal(UnitConst)" in run {
+    /** Decode an annotation pickle directly via TreeUnpickler. Returns Result to mirror old test shape. */
+    private def decodeAnnPickle(
+        pickle: Array[Byte],
+        names: Array[Tasty.Name],
+        addrMap: scala.collection.Map[Int, Tasty.Symbol]
+    ): Result[TastyError, Tasty.Tree] =
+        try Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(pickle, names, addrMap, pickle, 0))
+        catch
+            case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                Result.Failure(TastyError.MalformedSection("ASTs", s"annotation args: ${ex.getMessage}", ex.byteOffset))
+            case ex: ArrayIndexOutOfBoundsException =>
+                Result.Failure(TastyError.MalformedSection("ASTs", "annotation args truncated", 0L))
+
+    // Test A (INV-006, M2): UNITconst pickle decodes to Literal(UnitConst).
+    // Phase 08: decodeAnnotationTerm takes raw bytes; no DecodeContext needed.
+    "Phase17-A: UNITconst pickle decodes to Literal(UnitConst)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        // plan: phase-02 bridge; Symbol.make(kind, flags, name).
-        val sym = Tasty.Symbol.make(
-            Tasty.SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("Int")
-        )
+        val sym     = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Int"))
         val names   = Array(Tasty.Name("scala"))
         val addrMap = IntMap(1 -> sym)
-        // UNITconst is a single-byte tag (category 1); TreeUnpickler decodes it as Literal(UnitConst).
-        val pickle = Chunk(TastyFormat.UNITconst.toByte)
-        // sectionBytes must be non-null for DecodeContext to function; use a minimal byte array.
-        val sectionBytes = pickle.toArray
-        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
-            case Result.Success(Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type)) =>
-                succeed
-            case Result.Success(other) =>
-                fail(s"Expected Literal(UnitConst) but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected success but got failure $e")
-            case Result.Panic(t) =>
-                throw t
+        val pickle  = Array(TastyFormat.UNITconst.toByte)
+        decodeAnnPickle(pickle, names, addrMap) match
+            case Result.Success(Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type)) => succeed
+            case Result.Success(other)                                                => fail(s"Expected Literal(UnitConst) but got $other")
+            case Result.Failure(e)                                                    => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)                                                      => throw t
+        end match
     }
 
-    // Test B (INV-014): Annotation with non-null DecodeContext but empty argsPickle returns Tree.Unknown(-1, 0).
-    // Given: an Annotation built via the internal factory with argsPickle = Chunk.empty and a real DecodeContext.
-    // When: annotation.args is evaluated.
-    // Then: returns Tree.Unknown(-1, 0) (the empty-pickle branch).
-    "Phase17-B: annotation with non-null decodeCtx but empty argsPickle returns Tree.Unknown(-1,0)" in run {
-        import scala.collection.immutable.IntMap
-        val sym       = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
-        val names     = Array(Tasty.Name("test"))
-        val addrMap   = IntMap.empty[Tasty.Symbol]
-        val decodeCtx = new Tasty.Annotation.DecodeContext(names, addrMap, Array.emptyByteArray, 0)
-        val ann       = Tasty.Annotation(Tasty.Type.Named(sym.id), Chunk.empty, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
-            case Result.Success(Tasty.Tree.Unknown(-1, 0)) =>
-                succeed
-            case Result.Success(other) =>
-                fail(s"Expected Tree.Unknown(-1,0) but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected Tree.Unknown(-1,0) but got failure $e")
-            case Result.Panic(t) =>
-                throw t
+    // Test B (INV-006): Annotation with Absent args (empty pickle case) holds Maybe.Absent.
+    // Phase 08: empty annotation pickle path produces Absent directly in ANNOTATEDtype.
+    "Phase17-B: Annotation with Maybe.Absent args holds Absent" in {
+        val sym = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
+        val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), Maybe.Absent)
+        assert(ann.args == Maybe.Absent, s"Expected Absent but got ${ann.args}")
+        succeed
     }
 
     // ── Phase 18a Tests (M1, category-1 modifiers) ────────────────────────────
 
     // Test 18a-1 (M1 category 1): PRIVATE tag decodes to Modifier(Private).
-    // Given: an annotation pickle containing only the PRIVATE byte (tag 6).
-    // When: annotation.args is evaluated via decodeAnnotationTerm.
-    // Then: returns Tree.Modifier(Flag.Private).
     "Phase18a-1: PRIVATE byte decodes to Tree.Modifier(Flag.Private)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym          = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
-        val names        = Array(Tasty.Name("dummy"))
-        val addrMap      = IntMap.empty[Tasty.Symbol]
-        val pickle       = Chunk(TastyFormat.PRIVATE.toByte)
-        val sectionBytes = pickle.toArray
-        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
-            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Private.bit =>
-                succeed
-            case Result.Success(other) =>
-                fail(s"Expected Tree.Modifier(Flag.Private) but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected success but got failure $e")
-            case Result.Panic(t) =>
-                throw t
-    }
-
-    // Test 18a-2 (M1 category 1 negative): unknown category-1 tag throws.
-    // Given: an annotation pickle containing byte 50 (below firstASTtag=60, not a recognised modifier).
-    // When: annotation.args is evaluated.
-    // Then: returns Result.Failure(TastyError.MalformedSection("ASTs", reason, _)) containing
-    //       "unknown category-1 modifier tag 50".
-    "Phase18a-2: unrecognised category-1 byte yields Failure(MalformedSection)" in run {
-        import scala.collection.immutable.IntMap
-        val sym     = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val names   = Array(Tasty.Name("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
-        // Tag 50 is below firstASTtag (60) but is not assigned to any modifier or constant.
-        val unknownTag: Byte = 50.toByte
-        val pickle           = Chunk(unknownTag)
-        val sectionBytes     = pickle.toArray
-        val decodeCtx        = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann              = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
+        val pickle  = Array(TastyFormat.PRIVATE.toByte)
+        decodeAnnPickle(pickle, names, addrMap) match
+            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Private.bit => succeed
+            case Result.Success(other) => fail(s"Expected Tree.Modifier(Flag.Private) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
+    }
+
+    // Test 18a-2 (M1 category 1 negative): unknown category-1 tag throws DecodeException.
+    "Phase18a-2: unrecognised category-1 byte yields Failure(MalformedSection)" in run {
+        import scala.collection.immutable.IntMap
+        val names      = Array(Tasty.Name("dummy"))
+        val addrMap    = IntMap.empty[Tasty.Symbol]
+        val unknownTag = Array(50.toByte)
+        decodeAnnPickle(unknownTag, names, addrMap) match
             case Result.Failure(TastyError.MalformedSection("ASTs", reason, _))
                 if reason.contains("unknown category-1 modifier tag 50") =>
                 succeed
-            case Result.Failure(e) =>
-                fail(s"Expected MalformedSection with 'unknown category-1 modifier tag 50' but got: $e")
-            case Result.Success(other) =>
-                fail(s"Expected failure but got success: $other")
-            case Result.Panic(t) =>
-                throw t
+            case Result.Failure(e)     => fail(s"Expected MalformedSection with 'unknown category-1 modifier tag 50' but got: $e")
+            case Result.Success(other) => fail(s"Expected failure but got success: $other")
+            case Result.Panic(t)       => throw t
+        end match
     }
 
-    // Test 18a-debt-1 through 18a-debt-3 (M1 category 1, BLOCKER from Phase 18a audit):
-    // OBJECT(19), TRAIT(20), ENUM(21) are category-1 tags that appear inside every TYPEDEF
-    // payload for class-like symbols. Before remediation, decoding any real class body would
-    // throw "unknown category-1 modifier tag $n". These tests pin the fix.
+    // Test 18a-debt-1 through 18a-debt-3 (M1 category 1, BLOCKER from Phase 18a audit).
 
     "Phase18a-debt-1: OBJECT byte decodes to Tree.Modifier(Flag.Module)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym    = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
-        val pickle = Chunk(TastyFormat.OBJECT.toByte)
-        val decodeCtx =
-            new Tasty.Annotation.DecodeContext(
-                Array(Tasty.Name("dummy")),
-                IntMap.empty[Tasty.Symbol],
-                pickle.toArray,
-                0
-            )
-        val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
+        val pickle = Array(TastyFormat.OBJECT.toByte)
+        decodeAnnPickle(pickle, Array(Tasty.Name("dummy")), IntMap.empty) match
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Module.bit => succeed
             case other => fail(s"Expected Modifier(Module), got: $other")
     }
@@ -508,17 +454,8 @@ class TreeUnpicklerTest extends Test:
     "Phase18a-debt-2: TRAIT byte decodes to Tree.Modifier(Flag.Trait)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym    = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
-        val pickle = Chunk(TastyFormat.TRAIT.toByte)
-        val decodeCtx =
-            new Tasty.Annotation.DecodeContext(
-                Array(Tasty.Name("dummy")),
-                IntMap.empty[Tasty.Symbol],
-                pickle.toArray,
-                0
-            )
-        val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
+        val pickle = Array(TastyFormat.TRAIT.toByte)
+        decodeAnnPickle(pickle, Array(Tasty.Name("dummy")), IntMap.empty) match
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Trait.bit => succeed
             case other => fail(s"Expected Modifier(Trait), got: $other")
     }
@@ -526,17 +463,8 @@ class TreeUnpicklerTest extends Test:
     "Phase18a-debt-3: ENUM byte decodes to Tree.Modifier(Flag.Enum)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym    = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
-        val pickle = Chunk(TastyFormat.ENUM.toByte)
-        val decodeCtx =
-            new Tasty.Annotation.DecodeContext(
-                Array(Tasty.Name("dummy")),
-                IntMap.empty[Tasty.Symbol],
-                pickle.toArray,
-                0
-            )
-        val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
+        val pickle = Array(TastyFormat.ENUM.toByte)
+        decodeAnnPickle(pickle, Array(Tasty.Name("dummy")), IntMap.empty) match
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Enum.bit => succeed
             case other => fail(s"Expected Modifier(Enum), got: $other")
     }
@@ -544,55 +472,35 @@ class TreeUnpicklerTest extends Test:
     // ── Phase 18b Tests (M1, category-2 tags) ────────────────────────────────
 
     // Test 18b-1 (M1 category 2): SHAREDtype byte + nat(42) decodes to Tree.Shared(42).
-    // Given: an annotation pickle containing [SHAREDtype=61, nat(42)].
-    // When: annotation.args is evaluated via decodeAnnotationTerm.
-    // Then: returns Tree.Shared(42).
     "Phase18b-1: SHAREDtype + nat(42) decodes to Tree.Shared(42)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym     = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val names   = Array(Tasty.Name("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
         // SHAREDtype = 61; nat(42): single-byte encoding with stop-bit set = 42 | 0x80 = 0xAA.
-        val pickle       = Chunk(TastyFormat.SHAREDtype.toByte, (42 | 0x80).toByte)
-        val sectionBytes = pickle.toArray
-        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
-            case Result.Success(Tasty.Tree.Shared(42)) =>
-                succeed
-            case Result.Success(other) =>
-                fail(s"Expected Tree.Shared(42) but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected success but got failure $e")
-            case Result.Panic(t) =>
-                throw t
+        val pickle = Array(TastyFormat.SHAREDtype.toByte, (42 | 0x80).toByte)
+        decodeAnnPickle(pickle, names, addrMap) match
+            case Result.Success(Tasty.Tree.Shared(42)) => succeed
+            case Result.Success(other)                 => fail(s"Expected Tree.Shared(42) but got $other")
+            case Result.Failure(e)                     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)                       => throw t
+        end match
     }
 
     // Test 18b-2 (M1 category 2): INTconst byte + int(7) decodes to Tree.Literal(Constant.IntConst(7)).
-    // Given: an annotation pickle containing [INTconst=70, int(7)].
-    // When: annotation.args is evaluated via decodeAnnotationTerm.
-    // Then: returns Tree.Literal(Constant.IntConst(7)).
     "Phase18b-2: INTconst + int(7) decodes to Tree.Literal(Constant.IntConst(7))" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym     = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
         val names   = Array(Tasty.Name("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
         // INTconst = 70; int(7): signed readInt encoding, single byte with stop-bit set = 7 | 0x80 = 0x87.
-        val pickle       = Chunk(TastyFormat.INTconst.toByte, (7 | 0x80).toByte)
-        val sectionBytes = pickle.toArray
-        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
-            case Result.Success(Tasty.Tree.Literal(Tasty.Constant.IntConst(7))) =>
-                succeed
-            case Result.Success(other) =>
-                fail(s"Expected Tree.Literal(Constant.IntConst(7)) but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected success but got failure $e")
-            case Result.Panic(t) =>
-                throw t
+        val pickle = Array(TastyFormat.INTconst.toByte, (7 | 0x80).toByte)
+        decodeAnnPickle(pickle, names, addrMap) match
+            case Result.Success(Tasty.Tree.Literal(Tasty.Constant.IntConst(7))) => succeed
+            case Result.Success(other) => fail(s"Expected Tree.Literal(Constant.IntConst(7)) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
     }
 
     // ── Phase 18c Tests (M1, category-5 type-form tags) ──────────────────────
@@ -602,20 +510,8 @@ class TreeUnpicklerTest extends Test:
     //   So single-byte nat `n` (0 < n < 128) encodes as `n | 0x80`.
     //   readEnd() reads a nat as the payload length, then returns cursor + length.
     //   APPLIEDtype = 161 (0xA1), TERMREFdirect = 62 (0x3E), MATCHtype = 190 (0xBE).
-    //
-    // Boundary strategy used for APPLIEDtype and MATCHtype: readEnd() from the length-prefixed payload
-    // (category-5 format), mirroring TypeUnpickler.APPLIEDtype and TypeUnpickler.MATCHtype.
-    //
-    // Fixture-byte construction: handcrafted minimal byte sequences using TERMREFdirect refs into a
-    // synthetic addrMap; no TASTy header or section overhead needed since decodeAnnotationTerm starts
-    // decoding from position 0 of the pickle array.
 
     // Test 18c-1 (M1 category 3): APPLIEDtype decodes nested arguments.
-    // Given: bytes [APPLIEDtype=161, length=4, TERMREFdirect=62, nat(1), TERMREFdirect=62, nat(2)]
-    //   with addrMap(1)=listSym, addrMap(2)=intSym.
-    // When: decode.
-    // Then: returns Tree.AppliedType(Tree.TermRefDirect(1), Chunk(Tree.TermRefDirect(2))).
-    //   (Phase 18d: TERMREFdirect now decodes to TermRefDirect(addr) rather than Ident.)
     "Phase18c-1: APPLIEDtype decodes tycon + one arg into Tree.AppliedType" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
@@ -624,7 +520,7 @@ class TreeUnpicklerTest extends Test:
         val names   = Array(Tasty.Name("scala"))
         val addrMap = IntMap(1 -> listSym, 2 -> intSym)
         // APPLIEDtype(161=0xA1) Length(4=0x84) TERMREFdirect(62=0x3E) nat(1)=0x81 TERMREFdirect(62=0x3E) nat(2)=0x82
-        val pickle = Chunk[Byte](
+        val pickle = Array[Byte](
             TastyFormat.APPLIEDtype.toByte,
             (4 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -632,10 +528,7 @@ class TreeUnpicklerTest extends Test:
             TastyFormat.TERMREFdirect.toByte,
             (2 | 0x80).toByte
         )
-        val sectionBytes = pickle.toArray
-        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(listSym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
+        decodeAnnPickle(pickle, names, addrMap) match
             case Result.Success(Tasty.Tree.AppliedType(tycon, args)) =>
                 val tyconOk = tycon match
                     case Tasty.Tree.TermRefDirect(1) => true
@@ -646,20 +539,13 @@ class TreeUnpicklerTest extends Test:
                     case Tasty.Tree.TermRefDirect(2) => true
                     case _                           => false
                 assert(argOk, s"Expected TermRefDirect(2) as arg but got ${args(0)}")
-            case Result.Success(other) =>
-                fail(s"Expected Tree.AppliedType but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected success but got failure $e")
-            case Result.Panic(t) =>
-                throw t
+            case Result.Success(other) => fail(s"Expected Tree.AppliedType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
     }
 
     // Test 18c-2 (M1 category 3): MATCHtype with 2 case nodes decodes into Tree.MatchType.
-    // Given: bytes [MATCHtype=190, length=8, TERMREFdirect nat(1), TERMREFdirect nat(2),
-    //               TERMREFdirect nat(3), TERMREFdirect nat(4)]
-    //   with addrMap(1..4) each mapped to synthetic symbols.
-    // When: decode.
-    // Then: returns Tree.MatchType(bound, scrutinee, cases) with cases.length == 2.
     "Phase18c-2: MATCHtype with 2 case nodes decodes into Tree.MatchType with cases.length==2" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
@@ -670,9 +556,7 @@ class TreeUnpicklerTest extends Test:
         val case2Sym           = makeSym("Case2")
         val names              = Array(Tasty.Name("scala"))
         val addrMap            = IntMap(1 -> boundSym, 2 -> scrutSym, 3 -> case1Sym, 4 -> case2Sym)
-        // MATCHtype(190=0xBE) Length(8=0x88) TERMREFdirect nat(1) TERMREFdirect nat(2)
-        //   TERMREFdirect nat(3) TERMREFdirect nat(4)
-        val pickle = Chunk[Byte](
+        val pickle = Array[Byte](
             TastyFormat.MATCHtype.toByte,
             (8 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -684,31 +568,21 @@ class TreeUnpicklerTest extends Test:
             TastyFormat.TERMREFdirect.toByte,
             (4 | 0x80).toByte
         )
-        val sectionBytes = pickle.toArray
-        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(boundSym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
+        decodeAnnPickle(pickle, names, addrMap) match
             case Result.Success(Tasty.Tree.MatchType(_, _, cases)) =>
                 assert(cases.length == 2, s"Expected 2 cases but got ${cases.length}")
-            case Result.Success(other) =>
-                fail(s"Expected Tree.MatchType but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected success but got failure $e")
-            case Result.Panic(t) =>
-                throw t
+            case Result.Success(other) => fail(s"Expected Tree.MatchType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
     }
 
     // ── Phase 18d Tests (M1, category-4 type-position tags) ──────────────────
 
     // Test 18d-1 (M1 category 4): TERMREFpkg + nameRef decodes to Tree.TermRefPkg(Name("scala")).
-    // Given: bytes [TERMREFpkg=64, nat(5)] with names(5) = Name("scala").
-    // When: decode via decodeAnnotationTerm.
-    // Then: returns Tree.TermRefPkg(Name("scala")).
     "Phase18d-1: TERMREFpkg + nameRef decodes to Tree.TermRefPkg(Name(scala))" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Dummy"))
-        // names array: indices 0-4 are placeholders, index 5 = Name("scala").
         val names = Array(
             Tasty.Name("a"),
             Tasty.Name("b"),
@@ -718,27 +592,16 @@ class TreeUnpicklerTest extends Test:
             Tasty.Name("scala")
         )
         val addrMap = IntMap.empty[Tasty.Symbol]
-        // TERMREFpkg = 64; nat(5): single-byte stop-bit encoding = 5 | 0x80 = 0x85.
-        val pickle       = Chunk(TastyFormat.TERMREFpkg.toByte, (5 | 0x80).toByte)
-        val sectionBytes = pickle.toArray
-        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(sym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
-            case Result.Success(Tasty.Tree.TermRefPkg(name)) if name.asString == "scala" =>
-                succeed
-            case Result.Success(other) =>
-                fail(s"Expected Tree.TermRefPkg(Name(scala)) but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected success but got failure $e")
-            case Result.Panic(t) =>
-                throw t
+        val pickle  = Array(TastyFormat.TERMREFpkg.toByte, (5 | 0x80).toByte)
+        decodeAnnPickle(pickle, names, addrMap) match
+            case Result.Success(Tasty.Tree.TermRefPkg(name)) if name.asString == "scala" => succeed
+            case Result.Success(other) => fail(s"Expected Tree.TermRefPkg(Name(scala)) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
     }
 
     // Test 18d-2 (M1 category 4): SELECTin with 3 components decodes to Tree.SelectIn(qual, name, owner).
-    // Given: bytes [SELECTin=176, length=8, nameRef=nat(0), TERMREFdirect=62 nat(1), TERMREFdirect=62 nat(2)]
-    //   with names(0) = Name("map"), addrMap(1) = listSym, addrMap(2) = scalaSym.
-    // When: decode via decodeAnnotationTerm.
-    // Then: returns Tree.SelectIn(Tree.TermRefDirect(1), Name("map"), Tree.TermRefDirect(2)).
     "Phase18d-2: SELECTin with nameRef + qual + owner decodes to Tree.SelectIn" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
@@ -746,10 +609,7 @@ class TreeUnpicklerTest extends Test:
         val scalaSym = Tasty.Symbol.make(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("scala"))
         val names    = Array(Tasty.Name("map"))
         val addrMap  = IntMap(1 -> listSym, 2 -> scalaSym)
-        // SELECTin = 176 (0xB0), length-prefixed (cat 5).
-        // Payload: nameRef=nat(0)=0x80, TERMREFdirect=62 nat(1)=0x81, TERMREFdirect=62 nat(2)=0x82 => 6 bytes.
-        // Length nat(6): single-byte stop-bit = 6 | 0x80 = 0x86.
-        val pickle = Chunk[Byte](
+        val pickle = Array[Byte](
             TastyFormat.SELECTin.toByte,
             (6 | 0x80).toByte,
             (0 | 0x80).toByte,
@@ -758,10 +618,7 @@ class TreeUnpicklerTest extends Test:
             TastyFormat.TERMREFdirect.toByte,
             (2 | 0x80).toByte
         )
-        val sectionBytes = pickle.toArray
-        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(listSym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
+        decodeAnnPickle(pickle, names, addrMap) match
             case Result.Success(Tasty.Tree.SelectIn(qual, name, owner)) =>
                 val nameStr = name.asString
                 assert(nameStr == "map", s"Expected name 'map' but got '$nameStr'")
@@ -773,12 +630,10 @@ class TreeUnpicklerTest extends Test:
                     case Tasty.Tree.TermRefDirect(2) => true
                     case _                           => false
                 assert(ownerOk, s"Expected TermRefDirect(2) for owner but got $owner")
-            case Result.Success(other) =>
-                fail(s"Expected Tree.SelectIn but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected success but got failure $e")
-            case Result.Panic(t) =>
-                throw t
+            case Result.Success(other) => fail(s"Expected Tree.SelectIn but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
     }
 
     // ── Phase 18e Tests (category-5 complete coverage) ────────────────────────
@@ -818,10 +673,7 @@ class TreeUnpicklerTest extends Test:
     }
 
     // Test 18e-2: APPLY with fun + 2 args hand-crafted pickle decodes to Tree.Apply with correct structure.
-    // Given: bytes [APPLY=136, length=6, TERMREFdirect=62 nat(1), TERMREFdirect=62 nat(2), TERMREFdirect=62 nat(3)]
-    //   with addrMap(1)=fnSym, addrMap(2)=arg1Sym, addrMap(3)=arg2Sym.
-    // When: decode via decodeAnnotationTerm.
-    // Then: returns Tree.Apply(Tree.TermRefDirect(1), Chunk(Tree.TermRefDirect(2), Tree.TermRefDirect(3))).
+    // Phase 08: uses decodeAnnPickle helper directly instead of Annotation internal factory.
     "Phase18e-2: APPLY with fun + 2 args decodes to Tree.Apply with fun and 2-element args chunk" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
@@ -831,8 +683,7 @@ class TreeUnpicklerTest extends Test:
         val arg2Sym            = makeSym("arg2")
         val names              = Array(Tasty.Name("test"))
         val addrMap            = IntMap(1 -> fnSym, 2 -> arg1Sym, 3 -> arg2Sym)
-        // APPLY(136) Length(6=0x86) TERMREFdirect(62=0x3E) nat(1)=0x81 TERMREFdirect(62=0x3E) nat(2)=0x82 TERMREFdirect(62=0x3E) nat(3)=0x83
-        val pickle = Chunk[Byte](
+        val pickle = Array[Byte](
             TastyFormat.APPLY.toByte,
             (6 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -842,10 +693,7 @@ class TreeUnpicklerTest extends Test:
             TastyFormat.TERMREFdirect.toByte,
             (3 | 0x80).toByte
         )
-        val sectionBytes = pickle.toArray
-        val decodeCtx    = new Tasty.Annotation.DecodeContext(names, addrMap, sectionBytes, 0)
-        val ann          = Tasty.Annotation(Tasty.Type.Named(fnSym.id), pickle, decodeCtx)
-        Abort.run[TastyError](ann.args).map:
+        decodeAnnPickle(pickle, names, addrMap) match
             case Result.Success(Tasty.Tree.Apply(fun, args)) =>
                 val funOk = fun match
                     case Tasty.Tree.TermRefDirect(1) => true
@@ -860,12 +708,10 @@ class TreeUnpicklerTest extends Test:
                     case _                           => false
                 assert(arg1Ok, s"Expected TermRefDirect(2) as first arg but got ${args(0)}")
                 assert(arg2Ok, s"Expected TermRefDirect(3) as second arg but got ${args(1)}")
-            case Result.Success(other) =>
-                fail(s"Expected Tree.Apply but got $other")
-            case Result.Failure(e) =>
-                fail(s"Expected success but got failure $e")
-            case Result.Panic(t) =>
-                throw t
+            case Result.Success(other) => fail(s"Expected Tree.Apply but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
     }
 
     // Test 18e-3: INV-005 zero-Unknown sweep: all symbol bodies decoded from someObjectTasty and

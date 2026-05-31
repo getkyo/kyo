@@ -191,80 +191,17 @@ object Tasty:
 
     /** A Scala annotation as it appears on a [[Type]] (`Type.Annotated`).
       *
-      * `annotationType` is the annotation class type (resolved best-effort during pass 1; may be a placeholder symbol). `argsPickle` is the
-      * raw TASTy term bytes for the annotation's argument expression (e.g. `new Foo(1, "x")`). Call [[args]] to lazily decode those bytes
-      * into a [[Tree]] via TreeUnpickler.
+      * Both `annotationType` and `args` are populated during Classpath open Pass B. A decode failure produces `args = Maybe.Absent` and
+      * appends a TastyError.MalformedSection to the file-result error list, which flows into cp.errors.
       *
-      * Equality is structural over (annotationType, argsPickle); the internal decode context is intentionally excluded so two annotations
-      * with identical type and pickle are equal regardless of which file they came from.
+      * `annotationType` is resolved best-effort during pass 1 and may be a placeholder symbol. Equality and hashing are structural over
+      * both fields (case class auto-generation).
       */
-    final class Annotation(
-        val annotationType: Type,
-        val argsPickle: Chunk[Byte],
-        private[kyo] val _decodeCtx: Annotation.DecodeContext | Null
-    ):
-        /** Decode the annotation's argument expression into a [[Tree]].
-          *
-          * Returns `Tree.Unknown(-1, 0)` when the annotation has no decode context (e.g. synthetic annotations built via the public
-          * factory) or when `argsPickle` is empty. The only remaining failure paths are `MalformedSection` (corrupt or truncated pickle
-          * bytes) -- never `NotImplemented`.
-          */
-        def args(using Frame): Tree < (Sync & Abort[TastyError]) =
-            _decodeCtx match
-                case null =>
-                    Sync.defer(Tree.Unknown(-1, 0))
-                case ctx: Annotation.DecodeContext =>
-                    if argsPickle.isEmpty then
-                        Sync.defer(Tree.Unknown(-1, 0))
-                    else
-                        // flow-allow: §839 case 3; decodeAnnotationTerm is a pure-compute tree decode with no shared state.
-                        Sync.Unsafe.defer:
-                            val result: Tree < Abort[TastyError] =
-                                try kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(argsPickle, ctx)
-                                catch
-                                    case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                        Abort.fail(TastyError.MalformedSection(
-                                            "ASTs",
-                                            s"annotation arg decode failed: ${ex.getMessage}",
-                                            ex.byteOffset
-                                        ))
-                                    case ex: ArrayIndexOutOfBoundsException =>
-                                        // no cursor available from AIOOBE
-                                        Abort.fail(TastyError.MalformedSection("ASTs", s"annotation arg truncated: ${ex.getMessage}", 0L))
-                            result
-
-        override def equals(other: Any): Boolean = other match
-            case a: Annotation =>
-                // Types are interned via TypeArena, so structural equality reduces to reference equality.
-                (annotationType eq a.annotationType) && argsPickle.toArray.sameElements(a.argsPickle.toArray)
-            case _ => false
-        override def hashCode(): Int  = annotationType.hashCode * 31 + java.util.Arrays.hashCode(argsPickle.toArray)
-        override def toString: String = s"Annotation($annotationType, argsPickle=${argsPickle.length} bytes)"
-    end Annotation
+    final case class Annotation(annotationType: Type, args: Maybe[Tree])
 
     object Annotation:
-        /** Public factory for tests / synthetic annotations. The resulting annotation has no decode context, so [[Annotation.args]] returns
-          * `Tree.Unknown(-1, 0)`.
-          */
-        def apply(annotationType: Type, argsPickle: Chunk[Byte]): Annotation =
-            new Annotation(annotationType, argsPickle, null)
-
-        /** Internal factory used by TypeUnpickler.ANNOTATEDtype to construct an annotation that knows how to decode itself. */
-        private[kyo] def apply(annotationType: Type, argsPickle: Chunk[Byte], decodeCtx: DecodeContext): Annotation =
-            new Annotation(annotationType, argsPickle, decodeCtx)
-
-        /** Pattern-match extractor: `case Tasty.Annotation(t, p) =>`. Internal decode context is hidden. */
-        def unapply(a: Annotation): Some[(Type, Chunk[Byte])] = Some((a.annotationType, a.argsPickle))
-
-        /** File-scoped decode context. Held only by annotations constructed during real TASTy reads. The `addrMap` reference is the live
-          * file-level map that gets fully populated during pass 1; reading it after `Classpath.open` returns is safe.
-          */
-        final private[kyo] class DecodeContext(
-            val names: Array[Name],
-            val addrMap: scala.collection.Map[Int, Symbol],
-            val sectionBytes: Array[Byte],
-            val sectionOffset: Int
-        )
+        /** CanEqual instance for structural equality comparisons in tests. */
+        given CanEqual[Annotation, Annotation] = CanEqual.canEqualAny
     end Annotation
 
     final case class JavaMetadata(
@@ -795,8 +732,7 @@ object Tasty:
           * Called by ClasspathOrchestrator.materializeSymbols to construct final immutable Symbols from SymbolDescriptors. Returns a Symbol
           * with all 14 fields populated.
           *
-          * plan: phase-02 factory; stays in Phase 07 when Pass C is fully rewritten with SymbolDescriptor pipeline. After Phase 07 the
-          * `private[Tasty]` apply is called directly from inside ClasspathOrchestrator (which will be inside object Tasty by then).
+          * plan: phase-02 factory; used by ClasspathOrchestrator.materializeSymbols to build final Symbols from SymbolDescriptors.
           */
         private[kyo] def fromDescriptor(
             id: SymbolId,

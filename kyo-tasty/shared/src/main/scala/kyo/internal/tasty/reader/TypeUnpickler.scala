@@ -219,6 +219,9 @@ object TypeUnpickler:
         val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec]      = new mutable.HashMap()
         val binderAddrMap: mutable.HashMap[Int, Chunk[Tasty.Symbol]] = new mutable.HashMap()
         val unresolvedIdToFqn: mutable.HashMap[Int, String]          = new mutable.HashMap()
+        // Accumulates errors from eager annotation arg decodes in ANNOTATEDtype. Drained into
+        // FileResult.errors at the end of AstUnpickler.runPass1 via Pass1Result.annotationDecodeErrors.
+        val annotationDecodeErrors: mutable.ArrayBuffer[TastyError] = new mutable.ArrayBuffer()
         // Counter for unique negative IDs: starts at -2 (to distinguish from SymbolId(-1) which is the sentinel).
         private var _unresolvedIdCounter: Int = -2
 
@@ -457,25 +460,48 @@ object TypeUnpickler:
             case TastyFormat.ANNOTATEDtype =>
                 val end        = view.readEnd()
                 val underlying = readTypeNode(view, ctx)
-                // Capture the annotation term's byte slice (a full TASTy term tree) so downstream
-                // consumers can decode it into a Tree via TreeUnpickler. The term spans from the
-                // current cursor up to `end`. When sectionBytes is unavailable (the rare cached
-                // re-decode path), fall back to an empty slice + no decode context.
+                // Eagerly decode the annotation term's byte slice into a Tree. The term spans from
+                // the current cursor up to `end`. When sectionBytes is unavailable (the rare cached
+                // re-decode path), produce args = Maybe.Absent with no error (same silent treatment as
+                // the previous Chunk.empty fallback).
                 val termStart = view.positionInt
                 val endInt    = Math.toIntExact(end)
                 skipToEnd(view, end)
+                val annotationType = Tasty.Type.Named(makeUnresolvedSym("ann").id)
                 val annotation =
                     if ctx.sectionBytes == null then
-                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann").id), Chunk.empty)
+                        Tasty.Annotation(annotationType, Maybe.Absent)
                     else
-                        val pickle = Chunk.from(java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, endInt))
-                        val annCtx = new Tasty.Annotation.DecodeContext(
-                            ctx.names,
-                            ctx.addrMap,
-                            ctx.sectionBytes,
-                            ctx.sectionOffset
-                        )
-                        Tasty.Annotation(Tasty.Type.Named(makeUnresolvedSym("ann").id), pickle, annCtx)
+                        val pickle = java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, endInt)
+                        val maybeTree: Maybe[Tasty.Tree] =
+                            try
+                                Maybe(kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(
+                                    pickle,
+                                    ctx.names,
+                                    ctx.addrMap,
+                                    ctx.sectionBytes,
+                                    ctx.sectionOffset
+                                ))
+                            catch
+                                case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                    val err = TastyError.MalformedSection(
+                                        "ASTs",
+                                        s"annotation args: ${ex.getMessage}",
+                                        ex.byteOffset
+                                    )
+                                    ctx.session match
+                                        case s: DecodeSession => discard(s.annotationDecodeErrors += err)
+                                        case null             => ()
+                                    end match
+                                    Maybe.Absent
+                                case ex: ArrayIndexOutOfBoundsException =>
+                                    val err = TastyError.MalformedSection("ASTs", "annotation args truncated", 0L)
+                                    ctx.session match
+                                        case s: DecodeSession => discard(s.annotationDecodeErrors += err)
+                                        case null             => ()
+                                    end match
+                                    Maybe.Absent
+                        Tasty.Annotation(annotationType, maybeTree)
                 Tasty.Type.Annotated(underlying, annotation)
 
             case TastyFormat.ANDtype =>

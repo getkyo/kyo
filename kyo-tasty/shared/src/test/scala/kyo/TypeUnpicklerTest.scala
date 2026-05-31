@@ -238,16 +238,17 @@ class TypeUnpicklerTest extends Test:
         }
     }
 
-    // Test 18: decoding ANNOTATEDtype returns Annotated(underlying, annotation) with the annotation
-    // term's raw bytes captured in argsPickle for downstream TreeUnpickler decode.
-    "decoding ANNOTATEDtype returns Annotated(underlying, annotation) with argsPickle captured" in run {
+    // Test 18: decoding ANNOTATEDtype eagerly decodes the annotation term into args: Maybe[Tree].
+    // Phase 08 (INV-006): args is now a plain Maybe[Tree] field populated eagerly during Pass B.
+    // The annotation term TYPEREFpkg(0) decodes to a TermRefPkg tree; args = Present(tree).
+    "decoding ANNOTATEDtype eagerly populates Annotation.args as Maybe[Tree]" in run {
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
         val names      = Array(Tasty.Name("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
-        // Annotation term: use a TYPEREFpkg(0) as a minimal annotation placeholder.
+        // Annotation term: TYPEREFpkg(0) -- decodes to TermRefPkg(names(0)).
         val annTerm = cat2(TastyFormat.TYPEREFpkg, 0)
         // ANNOTATEDtype (153) = cat5: [underlying] [annTerm]
         val bytes = cat5(TastyFormat.ANNOTATEDtype, underlying ++ annTerm)
@@ -256,8 +257,8 @@ class TypeUnpicklerTest extends Test:
                 t match
                     case Tasty.Type.Annotated(_, ann) =>
                         assert(
-                            ann.argsPickle.toArray.sameElements(annTerm),
-                            s"argsPickle should be the annotation term bytes; got ${ann.argsPickle.toArray.toSeq}, expected ${annTerm.toSeq}"
+                            ann.args.nonEmpty,
+                            s"Expected Present args but got ${ann.args}"
                         )
                         succeed
                     case other =>
@@ -267,49 +268,38 @@ class TypeUnpicklerTest extends Test:
         }
     }
 
-    // Test 18b: Annotation.args decodes the annotation term into a Tree via TreeUnpickler.
-    // Use UNITconst (tag 2, category 1: single byte) as the annotation term — minimal valid Term.
-    "Annotation.args decodes argsPickle into a Tree" in run {
+    // Test 18b: Annotation.args for a UNITconst term is Present(Literal(UnitConst)) after eager decode.
+    // Phase 08 (INV-006): args is a plain Maybe[Tree] field -- no Abort.run needed to access it.
+    "ANNOTATEDtype with UNITconst term: Annotation.args = Present(Literal(UnitConst))" in run {
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
         val names      = Array(Tasty.Name("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
-        // Annotation term: UNITconst — TreeUnpickler decodes this as Literal(UnitConst).
+        // Annotation term: UNITconst -- TreeUnpickler decodes this as Literal(UnitConst).
         val annTerm = Array(TastyFormat.UNITconst.toByte)
         val bytes   = cat5(TastyFormat.ANNOTATEDtype, underlying ++ annTerm)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success(t) =>
                 t match
                     case Tasty.Type.Annotated(_, ann) =>
-                        Abort.run[TastyError](ann.args).map {
-                            case Result.Success(tree) =>
-                                tree match
-                                    case Tasty.Tree.Literal(c) =>
-                                        c match
-                                            case _: Tasty.Constant.UnitConst.type => succeed
-                                            case other                            => fail(s"Expected UnitConst but got $other")
-                                    case other => fail(s"Expected Literal but got $other")
-                            case Result.Failure(e) => fail(s"args() failed: $e")
-                            case Result.Panic(t)   => throw t
-                        }
+                        ann.args match
+                            case Present(Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type)) => succeed
+                            case Present(other) => fail(s"Expected Literal(UnitConst) but got $other")
+                            case Absent         => fail("Expected Present args but got Absent")
                     case other => fail(s"Expected Annotated but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
     }
 
-    // Test 18c: Annotation built via the public factory (no decode context) returns Tree.Unknown(-1, 0) from args.
-    // Per Phase 17 (INV-014): null-context branch no longer returns NotImplemented.
-    "Annotation.args returns Tree.Unknown(-1,0) when no decode context is attached" in run {
-        val ann = Tasty.Annotation(Tasty.Type.Named(makeSym("Foo").id), Chunk(0x42.toByte))
-        Abort.run[TastyError](ann.args).map {
-            case Result.Success(Tasty.Tree.Unknown(-1, 0)) => succeed
-            case Result.Success(other)                     => fail(s"Expected Tree.Unknown(-1,0) but got $other")
-            case Result.Failure(e)                         => fail(s"Expected Tree.Unknown(-1,0) but got failure $e")
-            case Result.Panic(t)                           => throw t
-        }
+    // Test 18c: Annotation constructed directly with Maybe.Absent has no args (synthetic annotation).
+    // Phase 08 (INV-006): pure case class, no decode context needed.
+    "Annotation(type, Maybe.Absent).args == Maybe.Absent without any effect" in run {
+        val ann = Tasty.Annotation(Tasty.Type.Named(makeSym("Foo").id), Maybe.Absent)
+        assert(ann.args == Maybe.Absent, s"Expected Maybe.Absent but got ${ann.args}")
+        succeed
     }
 
     // Test 19: decoding ORtype returns OrType(left, right).

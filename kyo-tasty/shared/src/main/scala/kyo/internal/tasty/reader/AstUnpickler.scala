@@ -50,10 +50,10 @@ object AstUnpickler:
       *   Pre-indexed map from each symbol to its declared type. Consumed by Pass C.
       * @param ownerBySymbol
       *   Map from each symbol to its owner symbol (the partial Symbol used during Pass 1). Used by Pass C to build ownerId fields. plan:
-      *   phase-02 bridge; removed in Phase 07 when AstUnpickler produces SymbolDescriptors directly.
+      *   phase-02 bridge; removed in Phase 12 when AstUnpickler produces SymbolDescriptors directly.
       * @param bodyDataByAddr
       *   Map from TASTy byte address to (bodyStart, bodyEnd) for symbols that have a body. File-level body data. plan: phase-02 bridge;
-      *   removed in Phase 07 when AstUnpickler produces SymbolDescriptors with body field.
+      *   removed in Phase 12 when AstUnpickler produces SymbolDescriptors with body field.
       * @param sectionBytes
       *   The raw AST section bytes for this file (shared across all symbols). For Pass C SymbolBody construction.
       * @param sectionOffset
@@ -78,7 +78,9 @@ object AstUnpickler:
         /** Cross-file FQN -> unique negative SymbolId mappings accumulated by TypeUnpickler during Phase B. Phase C uses this to resolve
           * Named(SymbolId(negId)) parent types to final SymbolIds via fqnIndex.
           */
-        unresolvedIdToFqn: mutable.HashMap[Int, String]
+        unresolvedIdToFqn: mutable.HashMap[Int, String],
+        /** Errors from eager annotation arg decodes in ANNOTATEDtype. Flows into FileResult.errors via ClasspathOrchestrator. */
+        annotationDecodeErrors: Seq[TastyError]
     )
 
     /** Run pass 1 over the AST section.
@@ -193,7 +195,8 @@ object AstUnpickler:
             sectionBytes = sectionBytes,
             sectionOffset = sectionOffset,
             names = names,
-            unresolvedIdToFqn = typeSession.unresolvedIdToFqn
+            unresolvedIdToFqn = typeSession.unresolvedIdToFqn,
+            annotationDecodeErrors = typeSession.annotationDecodeErrors.toSeq
         )
     end runPass1
 

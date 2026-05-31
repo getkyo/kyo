@@ -58,7 +58,7 @@ object ClasspathOrchestrator:
       * provides a happens-before edge.
       *
       * plan: phase-02 bridge fields ownerBySymbol, bodyDataByAddr, sectionBytes, sectionOffset, names -- fed from AstUnpickler Pass1Result
-      * to ClasspathOrchestrator Pass C; removed in Phase 07 when the pipeline fully uses SymbolDescriptor.
+      * to ClasspathOrchestrator Pass C; removed in Phase 12 when the pipeline fully uses SymbolDescriptor.
       */
     final private case class FileResult(
         fqns: Chunk[(String, Tasty.Symbol)],
@@ -818,7 +818,7 @@ object ClasspathOrchestrator:
             FileResult(
                 pairs,
                 arena,
-                Seq.empty,
+                pass1Result.annotationDecodeErrors,
                 Chunk.empty[Nothing],
                 pass1Result.parentsBySymbol,
                 pass1Result.childrenByOwner,

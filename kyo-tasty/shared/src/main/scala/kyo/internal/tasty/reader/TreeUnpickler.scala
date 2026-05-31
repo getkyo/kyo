@@ -30,25 +30,34 @@ object TreeUnpickler:
 
     /** Decode a single Term tree from raw annotation pickle bytes.
       *
-      * Called by `Tasty.Annotation.args` on demand. The pickle is a self-contained slice of a TASTy AST section corresponding to one
-      * annotation term (typically a `New` or `Apply` expression).
+      * Called eagerly by TypeUnpickler.ANNOTATEDtype during Pass B. The pickle is a self-contained slice of a TASTy AST section
+      * corresponding to one annotation term (typically a `New` or `Apply` expression). Throws DecodeException or
+      * ArrayIndexOutOfBoundsException on malformed input; the caller catches and records the error in DecodeSession.annotationDecodeErrors.
       *
       * @param pickle
-      *   raw annotation term bytes (as captured by TypeUnpickler.ANNOTATEDtype into `Annotation.argsPickle`).
-      * @param ctx
-      *   the file-scoped decode context: names array, addrMap, home, full section bytes.
+      *   raw annotation term bytes extracted from the ASTs section.
+      * @param names
+      *   the file-level name array from NameUnpickler.
+      * @param addrMap
+      *   map from TASTy byte address to Symbol, used for TERMREF/SELECT resolution.
+      * @param sectionBytes
+      *   full ASTs section bytes (for SHAREDtype re-decode on cache miss).
+      * @param sectionOffset
+      *   absolute byte offset of the ASTs section within the TASTy file.
       */
     private[kyo] def decodeAnnotationTerm(
-        pickle: kyo.Chunk[Byte],
-        ctx: Tasty.Annotation.DecodeContext
+        pickle: Array[Byte],
+        names: Array[Tasty.Name],
+        addrMap: scala.collection.Map[Int, Tasty.Symbol],
+        sectionBytes: Array[Byte],
+        sectionOffset: Int
     )(using AllowUnsafe): Tasty.Tree =
-        val bytes      = pickle.toArray
-        val view       = ByteView(bytes, 0, bytes.length)
+        val view       = ByteView(pickle, 0, pickle.length)
         val dummyArena = TypeArena.canonical()
         val typeSession =
-            new TypeUnpickler.TreeTypeSession(ctx.names, ctx.addrMap, dummyArena, ctx.sectionBytes, ctx.sectionOffset)
+            new TypeUnpickler.TreeTypeSession(names, addrMap, dummyArena, sectionBytes, sectionOffset)
         val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
-        val decodeCtx     = DecodeCtx(ctx.names, ctx.addrMap, typeSession, treeAddrCache)
+        val decodeCtx     = DecodeCtx(names, addrMap, typeSession, treeAddrCache)
         readTree(view, decodeCtx)
     end decodeAnnotationTerm
 
