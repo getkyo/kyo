@@ -1,0 +1,303 @@
+package kyo.internal
+
+import kyo.*
+import scala.annotation.nowarn
+import scala.annotation.publicInBinary
+
+/** Hand-rolled discriminator-key Schemas for `McpContent` and `McpResourceContents`.
+  *
+  * Both schemas use the `"type"` field as the discriminator key. The `contentSchema` and
+  * `resourceContentsSchema` vals are singletons (INV-013): every `summon[Schema[McpContent]]`
+  * resolves to the same reference.
+  *
+  * Precedent: `Schema[JsonRpcError]` at kyo-jsonrpc/.../JsonRpcError.scala:63-116.
+  */
+private[kyo] object McpContentSchema:
+
+    @nowarn("msg=anonymous")
+    val contentSchema: Schema[McpContent] = new Schema[McpContent](Seq.empty):
+
+        @publicInBinary private[kyo] def serializeWrite(c: McpContent, w: Codec.Writer): Unit =
+            c match
+                case McpContent.Text(text, annotations) =>
+                    val fieldCount = if annotations.isDefined then 3 else 2
+                    w.objectStart("McpContent.Text", fieldCount)
+                    w.field("type", 1)
+                    w.string("text")
+                    w.field("text", 2)
+                    w.string(text)
+                    annotations.foreach { a =>
+                        w.field("annotations", 3)
+                        summon[Schema[McpContent.Annotations]].serializeWrite(a, w)
+                    }
+                    w.objectEnd()
+                case McpContent.Image(data, mimeType, annotations) =>
+                    val fieldCount = if annotations.isDefined then 4 else 3
+                    w.objectStart("McpContent.Image", fieldCount)
+                    w.field("type", 1)
+                    w.string("image")
+                    w.field("data", 2)
+                    w.string(data)
+                    w.field("mimeType", 3)
+                    w.string(mimeType)
+                    annotations.foreach { a =>
+                        w.field("annotations", 4)
+                        summon[Schema[McpContent.Annotations]].serializeWrite(a, w)
+                    }
+                    w.objectEnd()
+                case McpContent.Audio(data, mimeType, annotations) =>
+                    val fieldCount = if annotations.isDefined then 4 else 3
+                    w.objectStart("McpContent.Audio", fieldCount)
+                    w.field("type", 1)
+                    w.string("audio")
+                    w.field("data", 2)
+                    w.string(data)
+                    w.field("mimeType", 3)
+                    w.string(mimeType)
+                    annotations.foreach { a =>
+                        w.field("annotations", 4)
+                        summon[Schema[McpContent.Annotations]].serializeWrite(a, w)
+                    }
+                    w.objectEnd()
+                case McpContent.EmbeddedResource(resource, annotations) =>
+                    val fieldCount = if annotations.isDefined then 3 else 2
+                    w.objectStart("McpContent.EmbeddedResource", fieldCount)
+                    w.field("type", 1)
+                    w.string("resource")
+                    w.field("resource", 2)
+                    summon[Schema[McpResourceContents]].serializeWrite(resource, w)
+                    annotations.foreach { a =>
+                        w.field("annotations", 3)
+                        summon[Schema[McpContent.Annotations]].serializeWrite(a, w)
+                    }
+                    w.objectEnd()
+        end serializeWrite
+
+        @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): McpContent =
+            var typeTag: String                            = ""
+            var text: String                               = ""
+            var data: String                               = ""
+            var mimeType: String                           = ""
+            var resource: McpResourceContents              = null
+            var annotations: Maybe[McpContent.Annotations] = Absent
+            val n                                          = reader.objectStart()
+            var i                                          = 0
+            while i < n do
+                reader.fieldParse()
+                if reader.matchField("type".getBytes("UTF-8")) then
+                    typeTag = reader.string()
+                else if reader.matchField("text".getBytes("UTF-8")) then
+                    text = reader.string()
+                else if reader.matchField("data".getBytes("UTF-8")) then
+                    data = reader.string()
+                else if reader.matchField("mimeType".getBytes("UTF-8")) then
+                    mimeType = reader.string()
+                else if reader.matchField("resource".getBytes("UTF-8")) then
+                    resource = summon[Schema[McpResourceContents]].serializeRead(reader)
+                else if reader.matchField("annotations".getBytes("UTF-8")) then
+                    annotations = Present(summon[Schema[McpContent.Annotations]].serializeRead(reader))
+                else
+                    reader.skip()
+                end if
+                i += 1
+            end while
+            reader.objectEnd()
+            typeTag match
+                case "text"     => McpContent.Text(text, annotations)
+                case "image"    => McpContent.Image(data, mimeType, annotations)
+                case "audio"    => McpContent.Audio(data, mimeType, annotations)
+                case "resource" => McpContent.EmbeddedResource(resource, annotations)
+                case other =>
+                    throw TypeMismatchException(Seq.empty, "text|image|audio|resource", other)(using Frame.internal)
+            end match
+        end serializeRead
+
+        @publicInBinary private[kyo] def getter(value: McpContent): Maybe[Any] = Maybe(value)
+        @publicInBinary private[kyo] def setter(value: McpContent, next: Any): McpContent =
+            next match
+                case c: McpContent => c
+                case _             => value
+
+        override private[kyo] def fromStructureValue(sv: Structure.Value)(using
+            Frame
+        )
+            : Result[DecodeException, McpContent] =
+            sv match
+                case Structure.Value.Record(fields) =>
+                    val m = fields.iterator.toMap
+                    val annotationsResult: Result[DecodeException, Maybe[McpContent.Annotations]] =
+                        m.get("annotations") match
+                            case Some(annSv) =>
+                                summon[Schema[McpContent.Annotations]].fromStructureValue(annSv).map(Present(_))
+                            case scala.None => Result.Success(Absent)
+                    m.get("type") match
+                        case Some(Structure.Value.Str("text")) =>
+                            m.get("text") match
+                                case Some(Structure.Value.Str(t)) =>
+                                    annotationsResult.map(anns => McpContent.Text(t, anns))
+                                case _ =>
+                                    Result.Failure(TypeMismatchException(Seq("text"), "String", m.get("text").fold("absent")(_.toString)))
+                        case Some(Structure.Value.Str("image")) =>
+                            val dataOpt     = m.get("data").collect { case Structure.Value.Str(s) => s }
+                            val mimeTypeOpt = m.get("mimeType").collect { case Structure.Value.Str(s) => s }
+                            (dataOpt, mimeTypeOpt) match
+                                case (Some(d), Some(mt)) =>
+                                    annotationsResult.map(anns => McpContent.Image(d, mt, anns))
+                                case _ =>
+                                    Result.Failure(TypeMismatchException(Seq.empty, "data+mimeType", "missing fields"))
+                            end match
+                        case Some(Structure.Value.Str("audio")) =>
+                            val dataOpt     = m.get("data").collect { case Structure.Value.Str(s) => s }
+                            val mimeTypeOpt = m.get("mimeType").collect { case Structure.Value.Str(s) => s }
+                            (dataOpt, mimeTypeOpt) match
+                                case (Some(d), Some(mt)) =>
+                                    annotationsResult.map(anns => McpContent.Audio(d, mt, anns))
+                                case _ =>
+                                    Result.Failure(TypeMismatchException(Seq.empty, "data+mimeType", "missing fields"))
+                            end match
+                        case Some(Structure.Value.Str("resource")) =>
+                            m.get("resource") match
+                                case Some(resSv) =>
+                                    summon[Schema[McpResourceContents]].fromStructureValue(resSv).flatMap { res =>
+                                        annotationsResult.map(anns => McpContent.EmbeddedResource(res, anns))
+                                    }
+                                case scala.None =>
+                                    Result.Failure(TypeMismatchException(Seq("resource"), "McpResourceContents", "absent"))
+                        case other =>
+                            Result.Failure(TypeMismatchException(
+                                Seq.empty,
+                                "text|image|audio|resource",
+                                other.fold("absent")(_.toString)
+                            ))
+                    end match
+                case _ =>
+                    Result.Failure(TypeMismatchException(Seq.empty, "Record", sv.toString))
+        end fromStructureValue
+
+    end contentSchema
+
+    @nowarn("msg=anonymous")
+    val resourceContentsSchema: Schema[McpResourceContents] = new Schema[McpResourceContents](Seq.empty):
+
+        @publicInBinary private[kyo] def serializeWrite(rc: McpResourceContents, w: Codec.Writer): Unit =
+            rc match
+                case McpResourceContents.Text(uri, mimeType, text) =>
+                    val fieldCount = if mimeType.isDefined then 4 else 3
+                    w.objectStart("McpResourceContents.Text", fieldCount)
+                    w.field("type", 1)
+                    w.string("text")
+                    w.field("uri", 2)
+                    summon[Schema[McpResourceUri]].serializeWrite(uri, w)
+                    mimeType.foreach { mt =>
+                        w.field("mimeType", 3)
+                        w.string(mt)
+                    }
+                    w.field("text", if mimeType.isDefined then 4 else 3)
+                    w.string(text)
+                    w.objectEnd()
+                case McpResourceContents.Blob(uri, mimeType, blob) =>
+                    val fieldCount = if mimeType.isDefined then 4 else 3
+                    w.objectStart("McpResourceContents.Blob", fieldCount)
+                    w.field("type", 1)
+                    w.string("blob")
+                    w.field("uri", 2)
+                    summon[Schema[McpResourceUri]].serializeWrite(uri, w)
+                    mimeType.foreach { mt =>
+                        w.field("mimeType", 3)
+                        w.string(mt)
+                    }
+                    w.field("blob", if mimeType.isDefined then 4 else 3)
+                    w.string(blob)
+                    w.objectEnd()
+        end serializeWrite
+
+        @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): McpResourceContents =
+            var typeTag: String         = ""
+            var uri: McpResourceUri     = McpResourceUri("")
+            var mimeType: Maybe[String] = Absent
+            var text: String            = ""
+            var blob: String            = ""
+            val n                       = reader.objectStart()
+            var i                       = 0
+            while i < n do
+                reader.fieldParse()
+                if reader.matchField("type".getBytes("UTF-8")) then
+                    typeTag = reader.string()
+                else if reader.matchField("uri".getBytes("UTF-8")) then
+                    uri = summon[Schema[McpResourceUri]].serializeRead(reader)
+                else if reader.matchField("mimeType".getBytes("UTF-8")) then
+                    mimeType = Present(reader.string())
+                else if reader.matchField("text".getBytes("UTF-8")) then
+                    text = reader.string()
+                else if reader.matchField("blob".getBytes("UTF-8")) then
+                    blob = reader.string()
+                else
+                    reader.skip()
+                end if
+                i += 1
+            end while
+            reader.objectEnd()
+            typeTag match
+                case "text" => McpResourceContents.Text(uri, mimeType, text)
+                case "blob" => McpResourceContents.Blob(uri, mimeType, blob)
+                case other =>
+                    throw TypeMismatchException(Seq.empty, "text|blob", other)(using Frame.internal)
+            end match
+        end serializeRead
+
+        @publicInBinary private[kyo] def getter(value: McpResourceContents): Maybe[Any] = Maybe(value)
+        @publicInBinary private[kyo] def setter(value: McpResourceContents, next: Any): McpResourceContents =
+            next match
+                case rc: McpResourceContents => rc
+                case _                       => value
+
+        override private[kyo] def fromStructureValue(sv: Structure.Value)(using
+            Frame
+        )
+            : Result[DecodeException, McpResourceContents] =
+            sv match
+                case Structure.Value.Record(fields) =>
+                    val m = fields.iterator.toMap
+                    val uriResult = m.get("uri") match
+                        case Some(uriSv) => summon[Schema[McpResourceUri]].fromStructureValue(uriSv)
+                        case scala.None =>
+                            Result.Failure(TypeMismatchException(Seq("uri"), "McpResourceUri", "absent"))
+                    val mimeTypeResult = m.get("mimeType") match
+                        case Some(Structure.Value.Str(mt)) => Result.Success(Present(mt): Maybe[String])
+                        case Some(Structure.Value.Null) | scala.None =>
+                            Result.Success(Absent: Maybe[String])
+                        case Some(other) =>
+                            Result.Failure(TypeMismatchException(Seq("mimeType"), "String", other.toString))
+                    m.get("type") match
+                        case Some(Structure.Value.Str("text")) =>
+                            m.get("text") match
+                                case Some(Structure.Value.Str(t)) =>
+                                    for
+                                        u  <- uriResult
+                                        mt <- mimeTypeResult
+                                    yield McpResourceContents.Text(u, mt, t)
+                                case _ =>
+                                    Result.Failure(TypeMismatchException(Seq("text"), "String", m.get("text").fold("absent")(_.toString)))
+                        case Some(Structure.Value.Str("blob")) =>
+                            m.get("blob") match
+                                case Some(Structure.Value.Str(b)) =>
+                                    for
+                                        u  <- uriResult
+                                        mt <- mimeTypeResult
+                                    yield McpResourceContents.Blob(u, mt, b)
+                                case _ =>
+                                    Result.Failure(TypeMismatchException(Seq("blob"), "String", m.get("blob").fold("absent")(_.toString)))
+                        case other =>
+                            Result.Failure(TypeMismatchException(
+                                Seq.empty,
+                                "text|blob",
+                                other.fold("absent")(_.toString)
+                            ))
+                    end match
+                case _ =>
+                    Result.Failure(TypeMismatchException(Seq.empty, "Record", sv.toString))
+        end fromStructureValue
+
+    end resourceContentsSchema
+
+end McpContentSchema

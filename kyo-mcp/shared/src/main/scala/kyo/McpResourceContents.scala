@@ -36,14 +36,8 @@ object McpResourceContents:
     def blob(uri: McpResourceUri, blob: String, mimeType: Maybe[String] = Absent): McpResourceContents =
         Blob(uri, mimeType, blob)
 
-    // Phase 1 stub; Phase 3 replaces with hand-rolled tagged-union schema
-    given Schema[McpResourceContents] = new Schema[McpResourceContents](Seq.empty):
-        import scala.annotation.publicInBinary
-        @publicInBinary private[kyo] def serializeWrite(v: McpResourceContents, w: kyo.Codec.Writer): Unit =
-            throw new NotImplementedError("McpResourceContents.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def serializeRead(r: kyo.Codec.Reader): McpResourceContents =
-            throw new NotImplementedError("McpResourceContents.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def getter(v: McpResourceContents): Maybe[Any]                     = Maybe(v)
-        @publicInBinary private[kyo] def setter(v: McpResourceContents, next: Any): McpResourceContents = v
+    // Hand-rolled tagged-union schema. Implementation in kyo/internal/McpContentSchema.scala.
+    // Wire discriminator key: "type"; tags: "text" | "blob" (INV-006).
+    given Schema[McpResourceContents] = internal.McpContentSchema.resourceContentsSchema
 
 end McpResourceContents

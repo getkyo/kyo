@@ -33,15 +33,10 @@ object McpProtocolVersion:
         /** Returns the underlying string value. */
         def asString: String = v
 
-    // Phase 1 stub; Phase 3 replaces with Schema.stringSchema.transform(fromWire)(_.asString)
-    given Schema[McpProtocolVersion] = new Schema[McpProtocolVersion](Seq.empty):
-        import scala.annotation.publicInBinary
-        @publicInBinary private[kyo] def serializeWrite(v: McpProtocolVersion, w: kyo.Codec.Writer): Unit =
-            throw new NotImplementedError("McpProtocolVersion.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def serializeRead(r: kyo.Codec.Reader): McpProtocolVersion =
-            throw new NotImplementedError("McpProtocolVersion.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def getter(v: McpProtocolVersion): Maybe[Any]                    = Maybe(v)
-        @publicInBinary private[kyo] def setter(v: McpProtocolVersion, next: Any): McpProtocolVersion = v
+    // Uses `fromWire` (private[kyo] total constructor) so the codec accepts any wire-received string.
+    // Client-side validation (supported set check) happens at the handshake gate, not at the codec.
+    // Note: design/02-design.md:993 used `imap` which does not exist on Schema; `transform` is correct.
+    given Schema[McpProtocolVersion] = Schema.stringSchema.transform[McpProtocolVersion](fromWire)(_.asString)
 
     given CanEqual[McpProtocolVersion, McpProtocolVersion] = CanEqual.derived
 

@@ -11,15 +11,16 @@ enum McpStopReason derives CanEqual:
 
 object McpStopReason:
 
-    // Phase 1 stub; Phase 3 replaces with stringSchema.transform
-    // Wire strings: "endTurn" | "stopSequence" | "maxTokens"
-    given Schema[McpStopReason] = new Schema[McpStopReason](Seq.empty):
-        import scala.annotation.publicInBinary
-        @publicInBinary private[kyo] def serializeWrite(v: McpStopReason, w: kyo.Codec.Writer): Unit =
-            throw new NotImplementedError("McpStopReason.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def serializeRead(r: kyo.Codec.Reader): McpStopReason =
-            throw new NotImplementedError("McpStopReason.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def getter(v: McpStopReason): Maybe[Any]               = Maybe(v)
-        @publicInBinary private[kyo] def setter(v: McpStopReason, next: Any): McpStopReason = v
+    // Wire strings use camelCase and do not match toString.toLowerCase (INV-010).
+    // Explicit match on both sides is required.
+    given Schema[McpStopReason] = Schema.stringSchema.transform[McpStopReason] {
+        case "endTurn"      => McpStopReason.EndTurn
+        case "stopSequence" => McpStopReason.StopSequence
+        case "maxTokens"    => McpStopReason.MaxTokens
+    } {
+        case McpStopReason.EndTurn      => "endTurn"
+        case McpStopReason.StopSequence => "stopSequence"
+        case McpStopReason.MaxTokens    => "maxTokens"
+    }
 
 end McpStopReason

@@ -60,15 +60,8 @@ object McpContent:
     def resource(resource: McpResourceContents, annotations: Maybe[Annotations] = Absent): McpContent =
         EmbeddedResource(resource, annotations)
 
-    // Phase 1 stub; Phase 3 replaces with hand-rolled "type" discriminator schema.
-    // Wire discriminator key: "type"; tags: "text" | "image" | "audio" | "resource"
-    given Schema[McpContent] = new Schema[McpContent](Seq.empty):
-        import scala.annotation.publicInBinary
-        @publicInBinary private[kyo] def serializeWrite(v: McpContent, w: kyo.Codec.Writer): Unit =
-            throw new NotImplementedError("McpContent.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def serializeRead(r: kyo.Codec.Reader): McpContent =
-            throw new NotImplementedError("McpContent.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def getter(v: McpContent): Maybe[Any]            = Maybe(v)
-        @publicInBinary private[kyo] def setter(v: McpContent, next: Any): McpContent = v
+    // Hand-rolled discriminator ("type") schema. Implementation in kyo/internal/McpContentSchema.scala.
+    // Wire discriminator key: "type"; tags: "text" | "image" | "audio" | "resource" (INV-006).
+    given Schema[McpContent] = internal.McpContentSchema.contentSchema
 
 end McpContent

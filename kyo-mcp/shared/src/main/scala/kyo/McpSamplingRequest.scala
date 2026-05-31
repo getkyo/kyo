@@ -49,16 +49,17 @@ object McpSamplingRequest:
         case None, ThisServer, AllServers
 
     object IncludeContext:
-        // Phase 1 stub; Phase 3 fills with stringSchema.transform
-        // Wire strings (camelCase): "none" | "thisServer" | "allServers"
-        given Schema[IncludeContext] = new Schema[IncludeContext](Seq.empty):
-            import scala.annotation.publicInBinary
-            @publicInBinary private[kyo] def serializeWrite(v: IncludeContext, w: kyo.Codec.Writer): Unit =
-                throw new NotImplementedError("IncludeContext.Schema stub: body filled in Phase 3")
-            @publicInBinary private[kyo] def serializeRead(r: kyo.Codec.Reader): IncludeContext =
-                throw new NotImplementedError("IncludeContext.Schema stub: body filled in Phase 3")
-            @publicInBinary private[kyo] def getter(v: IncludeContext): Maybe[Any]                = Maybe(v)
-            @publicInBinary private[kyo] def setter(v: IncludeContext, next: Any): IncludeContext = v
+        // Wire strings use camelCase and do not match toString.toLowerCase (INV-010).
+        // None is qualified as IncludeContext.None to avoid shadowing scala.None.
+        given Schema[IncludeContext] = Schema.stringSchema.transform[IncludeContext] {
+            case "none"       => IncludeContext.None
+            case "thisServer" => IncludeContext.ThisServer
+            case "allServers" => IncludeContext.AllServers
+        } {
+            case IncludeContext.None       => "none"
+            case IncludeContext.ThisServer => "thisServer"
+            case IncludeContext.AllServers => "allServers"
+        }
     end IncludeContext
 
 end McpSamplingRequest

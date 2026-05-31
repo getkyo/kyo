@@ -23,15 +23,9 @@ object McpResourceUri:
         /** Returns the underlying string value. */
         def asString: String = u
 
-    // Phase 1 stub; Phase 3 replaces with Schema.stringSchema.transform through parse
-    given Schema[McpResourceUri] = new Schema[McpResourceUri](Seq.empty):
-        import scala.annotation.publicInBinary
-        @publicInBinary private[kyo] def serializeWrite(v: McpResourceUri, w: kyo.Codec.Writer): Unit =
-            throw new NotImplementedError("McpResourceUri.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def serializeRead(r: kyo.Codec.Reader): McpResourceUri =
-            throw new NotImplementedError("McpResourceUri.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def getter(v: McpResourceUri): Maybe[Any]                = Maybe(v)
-        @publicInBinary private[kyo] def setter(v: McpResourceUri, next: Any): McpResourceUri = v
+    // Uses `apply` (total constructor) so the codec accepts any wire-received string.
+    // Blank-rejection is at the user `parse` callsite, not at the codec level (INV-022).
+    given Schema[McpResourceUri] = Schema.stringSchema.transform[McpResourceUri](apply)(_.asString)
 
     given CanEqual[McpResourceUri, McpResourceUri] = CanEqual.derived
 

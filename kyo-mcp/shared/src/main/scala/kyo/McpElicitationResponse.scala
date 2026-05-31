@@ -23,16 +23,11 @@ object McpElicitationResponse:
         case Accept, Decline, Cancel
 
     object Action:
-        // Phase 1 stub; Phase 3 fills with stringSchema.transform
-        // Wire strings: "accept" | "decline" | "cancel"
-        given Schema[Action] = new Schema[Action](Seq.empty):
-            import scala.annotation.publicInBinary
-            @publicInBinary private[kyo] def serializeWrite(v: Action, w: kyo.Codec.Writer): Unit =
-                throw new NotImplementedError("McpElicitationResponse.Action.Schema stub: body filled in Phase 3")
-            @publicInBinary private[kyo] def serializeRead(r: kyo.Codec.Reader): Action =
-                throw new NotImplementedError("McpElicitationResponse.Action.Schema stub: body filled in Phase 3")
-            @publicInBinary private[kyo] def getter(v: Action): Maybe[Any]        = Maybe(v)
-            @publicInBinary private[kyo] def setter(v: Action, next: Any): Action = v
+        // Wire strings: "accept" | "decline" | "cancel" (INV-010).
+        // capitalize maps lowercase wire string to Scala case name: "accept" -> "Accept".
+        given Schema[Action] = Schema.stringSchema.transform(s => Action.valueOf(s.capitalize))(
+            _.toString.toLowerCase
+        )
     end Action
 
 end McpElicitationResponse

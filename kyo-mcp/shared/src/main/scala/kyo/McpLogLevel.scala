@@ -12,15 +12,10 @@ enum McpLogLevel derives CanEqual:
 
 object McpLogLevel:
 
-    // Phase 1 stub; Phase 3 replaces with stringSchema.transform
-    // Wire strings: "debug" | "info" | "notice" | "warning" | "error" | "critical" | "alert" | "emergency"
-    given Schema[McpLogLevel] = new Schema[McpLogLevel](Seq.empty):
-        import scala.annotation.publicInBinary
-        @publicInBinary private[kyo] def serializeWrite(v: McpLogLevel, w: kyo.Codec.Writer): Unit =
-            throw new NotImplementedError("McpLogLevel.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def serializeRead(r: kyo.Codec.Reader): McpLogLevel =
-            throw new NotImplementedError("McpLogLevel.Schema stub: body filled in Phase 3")
-        @publicInBinary private[kyo] def getter(v: McpLogLevel): Maybe[Any]             = Maybe(v)
-        @publicInBinary private[kyo] def setter(v: McpLogLevel, next: Any): McpLogLevel = v
+    // Wire strings: "debug"|"info"|"notice"|"warning"|"error"|"critical"|"alert"|"emergency" (INV-010).
+    // capitalize maps lowercase wire string to Scala case name: "debug" -> "Debug".
+    given Schema[McpLogLevel] = Schema.stringSchema.transform(s => McpLogLevel.valueOf(s.capitalize))(
+        _.toString.toLowerCase
+    )
 
 end McpLogLevel
