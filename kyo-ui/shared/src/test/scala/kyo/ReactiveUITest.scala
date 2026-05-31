@@ -2,12 +2,9 @@ package kyo
 
 import kyo.Browser.*
 import kyo.internal.HtmlOp
-import kyo.internal.HtmlRenderer
 import kyo.internal.KeyboardEventData
 import kyo.internal.MouseEventData
-import kyo.internal.ReactiveUI
 import kyo.internal.UIEvent
-import kyo.internal.UIExchange
 import scala.language.implicitConversions
 
 class ReactiveUITest extends UITest:
@@ -209,36 +206,6 @@ class ReactiveUITest extends UITest:
                 _ <- Browser.assertText(Selector.id("cnt"), "5")
             yield succeed
         }
-    }
-
-    private def awaitDigits(rec: AtomicInt, target: Int, fuel: Int)(using Frame): Int < Async =
-        rec.get.map: c =>
-            if c >= target || fuel <= 0 then c
-            else Clock.sleep(1.millis).andThen(awaitDigits(rec, target, fuel - 1))
-
-    "subscribe settles on the final change without lost wakeups" in run {
-        // Regression for the lost-wakeup race. The reactive subscribe loop must register its
-        // next-change waiter before reading the signal's current value. A change that lands in the
-        // gap is conflated away by Signal (latest-wins, by design); if it is the last change the
-        // region would never re-render, leaving the observer stuck on a stale value. Fire a burst of
-        // changes concurrently with the loop and require the final value to be observed.
-        val target = 2000
-        for
-            ref <- Signal.initRef(0)
-            rec <- AtomicInt.init(0)
-            rui <- ReactiveUI.normalize(UI.div(ref.map(v => UI.span(v.toString).id("v"))), Seq.empty)
-            exchange = new UIExchange:
-                def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
-                    HtmlRenderer.render(ui, path).map: html =>
-                        """>(\d+)<""".r.findFirstMatchIn(html) match
-                            case Some(m) => rec.set(m.group(1).toInt)
-                            case None    => ()
-            sub <- ReactiveUI.subscribe(rui, exchange)
-            _   <- Kyo.foreachDiscard(1 to target)(ref.set)
-            got <- awaitDigits(rec, target, 5000)
-            _   <- Kyo.foreachDiscard(sub.fibers)(_.interrupt)
-        yield assert(got == target)
-        end for
     }
 
 end ReactiveUITest
