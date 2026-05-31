@@ -97,9 +97,72 @@ private[kyo] object McpClientEngine:
             _ <- serverCapabilitiesRef.set(Present(initResult.capabilities))
             _ <- serverInfoRef.set(Present(initResult.serverInfo))
             _ <- handler.notify[InitializedParams]("notifications/initialized", InitializedParams())
-        yield buildUnsafe(handler, serverCapabilitiesRef, serverInfoRef, negotiatedVersionRef)
+        yield
+            val unsafe = buildUnsafe(handler, serverCapabilitiesRef, serverInfoRef, negotiatedVersionRef)
+            // Write the forward reference into every user route carrier so their handlers can resolve ctx.server.
+            // On the client side the "server" is a no-op sentinel (user handlers must not call ctx.server from
+            // client-side routes; the ref is populated to avoid an IllegalStateException during dispatch).
+            // AllowUnsafe: synchronous write of forward reference immediately after client construction.
+            val sentinelServer = buildClientSentinelServer(handler)
+            routes.foreach { case c: McpRouteCarrier[?, ?, ?] =>
+                c.serverRef.unsafe.set(Present(sentinelServer))(using AllowUnsafe.embrace.danger)
+            }
+            unsafe
         end for
     end initClient
+
+    /** Builds a no-op McpServer.Unsafe sentinel for client-side route carriers.
+      *
+      * Client-side route handlers (sampling, elicitation, roots) receive a [[McpRoute.Context]]
+      * that includes a `server` field. On the client side there is no McpServer, so we provide a
+      * sentinel that aborts with a clear error if any reverse-direction method is called.
+      * The handler itself must not call `ctx.server`; this sentinel exists solely to satisfy the
+      * carrier's serverRef requirement and avoid IllegalStateException during dispatch.
+      */
+    private def buildClientSentinelServer(handler: JsonRpcHandler): McpServer.Unsafe =
+        new McpServer.Unsafe:
+            private def reject[A](method: String)(using Frame): A < (Async & Abort[McpError | Closed]) =
+                Abort.fail(McpSamplingRejectedError(s"ctx.server.$method is not available in client-side route handlers"))
+
+            def requestSamplingUnsafe(req: McpSamplingRequest)(using Frame): McpSamplingResponse < (Async & Abort[McpError | Closed]) =
+                reject("requestSampling")
+
+            def requestRootsUnsafe(using Frame): Chunk[McpRoot] < (Async & Abort[McpError | Closed]) =
+                reject("requestRoots")
+
+            def requestElicitationUnsafe(req: McpElicitationRequest)(using
+                Frame
+            ): McpElicitationResponse < (Async & Abort[McpError | Closed]) =
+                reject("requestElicitation")
+
+            def notifyToolsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
+                Sync.defer(())
+
+            def notifyResourcesListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
+                Sync.defer(())
+
+            def notifyResourceUpdatedUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed]) =
+                Sync.defer(())
+
+            def notifyPromptsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
+                Sync.defer(())
+
+            def notifyLogUnsafe[T](level: McpLogLevel, data: T, logger: Maybe[String])(using
+                Frame,
+                Schema[T]
+            ): Unit < (Async & Abort[Closed]) =
+                Sync.defer(())
+
+            def protocolVersionUnsafe: Maybe[McpProtocolVersion]        = Absent
+            def clientCapabilitiesUnsafe: Maybe[McpCapabilities.Client] = Absent
+            def clientInfoUnsafe: Maybe[McpInfo]                        = Absent
+            def underlyingUnsafe: JsonRpcHandler                        = handler
+            def awaitDrainUnsafe(using Frame): Unit < Async             = Sync.defer(())
+
+            def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async =
+                Sync.defer(())
+        end new
+    end buildClientSentinelServer
 
     private def buildUnsafe(
         handler: JsonRpcHandler,

@@ -126,13 +126,11 @@ class McpReverseDispatchTest extends Test:
 
     // Route ordering: user-registered sampling handler must take precedence over default-reject.
     //
-    // The user route here is constructed via McpRoute.custom which captures an unset McpServer
-    // reference; on the client side that reference is never bound, so the lifted handler panics
-    // with an IllegalStateException carrying "McpServer not initialized". The point of the test
-    // is the dispatch hop: when the server issues sampling/createMessage we observe the user
-    // handler being reached (the panic surfaces) instead of the default-reject McpSamplingRejected.
-    // This proves McpReverseDispatch.buildRoutes places user routes after defaults so the
-    // last-wins methodMap in JsonRpcEndpointImpl (line 772) lets the user route override.
+    // Phase 7 fix: McpClientEngine.initClient now populates serverRef for all carrier routes with
+    // a no-op sentinel server. This means a user-registered client-side sampling handler now
+    // successfully returns its response rather than panicking with "McpServer not initialized".
+    // The test verifies the dispatch hop (user route overrides default-reject) by asserting
+    // that the response is the one returned by the user handler.
     "user-registered sampling route is reached instead of default reject" in run {
         val req = McpSamplingRequest(
             messages = Chunk(McpSamplingRequest.Message(McpRole.User, McpContent.Text("ping", Absent))),
@@ -144,19 +142,13 @@ class McpReverseDispatchTest extends Test:
             }
         withPair(Seq.empty, Seq(userSamplingRoute)) { (server, _) =>
             Abort.run[McpError | Closed](server.requestSampling(req)).map {
-                case Result.Failure(err) =>
-                    val msg = err.toString
-                    assert(
-                        msg.contains("McpServer not initialized") || !msg.contains("No sampling handler registered"),
-                        s"expected user route to be reached (panic from unset server ref); got default-reject path: $err"
-                    )
                 case Result.Success(resp) =>
-                    fail(s"unexpected success without bound McpServer: $resp")
+                    assert(resp.model == "test-model")
+                    assert(resp.role == McpRole.Assistant)
+                case Result.Failure(err) =>
+                    fail(s"expected user sampling handler to succeed, got failure: $err")
                 case Result.Panic(t) =>
-                    assert(
-                        t.getMessage != null && t.getMessage.contains("McpServer not initialized"),
-                        s"expected panic from unset server ref, got: $t"
-                    )
+                    fail(s"expected user sampling handler to succeed, got panic: $t")
             }
         }
     }

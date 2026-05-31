@@ -1,0 +1,72 @@
+package kyo.integration
+
+import kyo.*
+
+/** Integration test: sampling reverse-direction request (T-018, INV-014, INV-024). */
+class McpSamplingReverseTest extends Test:
+
+    // Client-side route that handles sampling/createMessage requests from the server.
+    // Registered as a custom route on the client; McpReverseDispatch builds the handler.
+    private val samplingRoute =
+        McpRoute.custom[McpSamplingRequest, McpSamplingResponse]("sampling/createMessage") { (req, _) =>
+            McpSamplingResponse(
+                role = McpRole.Assistant,
+                content = McpContent.text("reply"),
+                model = "model-x",
+                stopReason = Present("endTurn")
+            )
+        }
+
+    private val clientCaps = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
+
+    "server.requestSampling returns the client-provided response (T-018)" in run {
+        JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
+            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+                McpServer.initUnscoped(ts),
+                McpClient.initUnscoped(tc, McpInfo("s"), clientCaps, samplingRoute)
+            ).flatMap { (srv, client) =>
+                srv.requestSampling(
+                    McpSamplingRequest(
+                        messages = Chunk(McpSamplingRequest.Message(McpRole.User, McpContent.text("q"))),
+                        maxTokens = 256
+                    )
+                ).flatMap { resp =>
+                    for
+                        _ <- srv.closeNow
+                        _ <- client.closeNow
+                    yield
+                        assert(resp.role == McpRole.Assistant)
+                        assert(resp.model == "model-x")
+                        assert(resp.stopReason == Present("endTurn"))
+                    end for
+                }
+            }
+        }
+    }
+
+    "sampling request without client handler aborts with McpSamplingRejectedError" in run {
+        // No sampling route registered on the client; default handler rejects.
+        JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
+            Async.zip[McpError | Closed, McpServer, McpClient, Any](
+                McpServer.initUnscoped(ts),
+                McpClient.initUnscoped(tc, McpInfo("s"), McpCapabilities.Client())
+            ).flatMap { (srv, client) =>
+                Abort.run[McpError](
+                    srv.requestSampling(
+                        McpSamplingRequest(
+                            messages = Chunk(McpSamplingRequest.Message(McpRole.User, McpContent.text("q"))),
+                            maxTokens = 10
+                        )
+                    )
+                ).flatMap { result =>
+                    for
+                        _ <- srv.closeNow
+                        _ <- client.closeNow
+                    yield assert(result.isFailure)
+                    end for
+                }
+            }
+        }
+    }
+
+end McpSamplingReverseTest
