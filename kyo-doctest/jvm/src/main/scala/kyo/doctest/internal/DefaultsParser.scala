@@ -56,7 +56,7 @@ object DefaultsParser:
     private def defaultsCommentBlockParser(file: kyo.Path)(using
         Frame
     ): ModifierParser.Parsed < (Parse[Char] & Abort[Doctest.Error.ParseError]) =
-        Parse.literal(Text(DefaultCommentStart)).andThen(gatherUntilCommentEnd).flatMap { tokensPart =>
+        Parse.literal(DefaultCommentStart).andThen(gatherUntilCommentEnd).flatMap { tokensPart =>
             if tokensPart.nonEmpty then
                 ModifierParser.parseTokensDirect(tokensPart, file, 1)
             else
@@ -68,8 +68,8 @@ object DefaultsParser:
     private def skipNonDefaultsCommentParser(file: kyo.Path)(using Frame): Unit < Parse[Char] =
         for
             _ <- Parse.readWhile[Char](c => c == ' ' || c == '\t')
-            _ <- Parse.literal(Text(CommentOpen))
-            _ <- Parse.not(Parse.literal(Text(" doctest:default")))
+            _ <- Parse.literal(CommentOpen)
+            _ <- Parse.not(Parse.literal(" doctest:default"))
             _ <- gatherUntilCommentEnd
         yield ()
 
@@ -81,7 +81,7 @@ object DefaultsParser:
     // Recursive combinator: reads one char at a time, stopping when --> is matched.
     private def collectUntilCommentEnd(acc: StringBuilder)(using Frame): String < Parse[Char] =
         Parse.firstOf(
-            Parse.literal(Text(CommentEnd)).andThen(acc.toString),
+            Parse.literal(CommentEnd).andThen(acc.toString),
             Parse.any[Char].flatMap(c => collectUntilCommentEnd(acc.append(c)))
         )
 

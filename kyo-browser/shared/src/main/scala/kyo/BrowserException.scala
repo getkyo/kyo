@@ -22,7 +22,7 @@ import kyo.internal.CdpBackend
   * @see
   *   [[kyo.Browser]] for the actions that raise these errors.
   */
-sealed abstract class BrowserException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class BrowserException(message: String, cause: String | Throwable = "")(using Frame)
     extends KyoException(message, cause)
 
 /** Operation-row trait for actions that read page state (navigation, eval, screenshot, etc.).
@@ -105,7 +105,7 @@ sealed trait BrowserSetupException extends BrowserException
   *   [[BrowserSetupFailedException]] for the launch / download / install variant.
   */
 final case class BrowserConnectionLostException(message: String, cause: Maybe[Throwable] = Absent)(using Frame)
-    extends BrowserException(message, cause.fold[Text | Throwable]("")(identity))
+    extends BrowserException(message, cause.fold[String | Throwable]("")(identity))
     with BrowserConnectionException with BrowserReadException derives CanEqual
 
 /** Setup of the browser environment failed before any CDP session could be established.
@@ -121,7 +121,7 @@ final case class BrowserConnectionLostException(message: String, cause: Maybe[Th
   *   [[BrowserSetupException]] for the topical marker.
   */
 final case class BrowserSetupFailedException(message: String, cause: Maybe[Throwable] = Absent)(using Frame)
-    extends BrowserException(message, cause.fold[Text | Throwable]("")(identity))
+    extends BrowserException(message, cause.fold[String | Throwable]("")(identity))
     with BrowserSetupException derives CanEqual
 
 /** Companion with smart constructors for [[BrowserSetupFailedException]]. */

@@ -68,7 +68,7 @@ class SLF4JLogTest extends Test:
         appender.start()
         logger.addAppender(appender)
 
-        val text: Text = "info message - hidden"
+        val text: String = "info message - hidden"
         Log.let(SLF4JLog("kyo.logging")) {
             for
                 _ <- Log.trace("won't show up")

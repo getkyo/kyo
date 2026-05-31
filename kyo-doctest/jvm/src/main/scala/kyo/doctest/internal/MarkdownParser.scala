@@ -247,7 +247,7 @@ private[kyo] object MarkdownParser:
     // Matches ``` exactly (block closer).
     private def blockCloserParser(using Frame): LineKind < Parse[Char] =
         for
-            _ <- Parse.literal(Text("```"))
+            _ <- Parse.literal("```")
             _ <- Parse.end[Char]
         yield BlockCloserLine
 
@@ -263,7 +263,7 @@ private[kyo] object MarkdownParser:
     // The info string is extracted from the original (case-preserved) line by dropping the backticks.
     private def scalaOpenerForPrefix(prefix: String, original: String)(using Frame): LineKind < Parse[Char] =
         for
-            _ <- Parse.literal(Text(prefix))
+            _ <- Parse.literal(prefix)
             _ <- Parse.firstOf(
                 Parse.end[Char],
                 Parse.literal(' ').andThen(Parse.readWhile[Char](_ => true))
@@ -275,7 +275,7 @@ private[kyo] object MarkdownParser:
     // Matches <!-- (HTML comment opener). Extracts the content after <!-- from the original trimmed line.
     private def commentOpenerParser(original: String)(using Frame): LineKind < Parse[Char] =
         for
-            _ <- Parse.literal(Text(CommentStart))
+            _ <- Parse.literal(CommentStart)
             _ <- Parse.readWhile[Char](_ => true)
         yield
             val afterComment = original.drop(CommentStart.length).trim

@@ -66,7 +66,7 @@ class JavaLogTest extends Test:
         val handler = new StreamHandler(out, new SimpleFormatter)
         handler.setLevel(toJUL(Level.DEBUG)) // logger.setLevel isn't enough
         logger.addHandler(handler)
-        val text: Text = "info message - hidden"
+        val text: String = "info message - hidden"
         Log.let(Log(loggerWithLevel(Level.DEBUG))) {
             for
                 _ <- Log.trace("won't show up")

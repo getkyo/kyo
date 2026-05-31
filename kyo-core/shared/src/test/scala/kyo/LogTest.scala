@@ -42,7 +42,7 @@ class LogTest extends Test:
         scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
             override def write(b: Int): Unit = output.append(b.toChar))) {
             import AllowUnsafe.embrace.danger
-            val text: Text = "info message - hidden"
+            val text: String = "info message - hidden"
             Sync.Unsafe.evalOrThrow {
                 for
                     _ <- Log.withConsoleLogger("test.logger", Log.Level.debug) {
