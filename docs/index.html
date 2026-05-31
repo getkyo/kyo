@@ -26,8 +26,9 @@
     window.$docsify = {
       name: '',
       repo: 'getkyo/kyo',
-      homepage: 'https://raw.githubusercontent.com/getkyo/kyo/main/README.md',
-      coverpage: true,
+      basePath: 'https://raw.githubusercontent.com/getkyo/kyo/main/',
+      homepage: 'README.md',
+      coverpage: 'docs/_coverpage.md',
       plugins: [
         function (hook, vm) {
           hook.beforeEach(function (content) {
