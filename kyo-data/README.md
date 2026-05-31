@@ -622,7 +622,7 @@ case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 given Render[User] = Render.from(u => s"User(${u.id}, ${u.name})")
 ```
 
-`Rendered` is an opaque-type wrapper that converts implicitly from any value with a `Render` instance, and is a subtype of `String`. The `t` string interpolator on `StringContext` takes `Rendered*` arguments, so any value with a `Render` can be interpolated without an explicit call:
+`Rendered` is an opaque-type wrapper that converts implicitly from any value with a `Render` instance, and is a subtype of `String`. The `render` string interpolator on `StringContext` takes `Rendered*` arguments, so any value with a `Render` can be interpolated without an explicit call:
 
 ```scala
 import kyo.*
@@ -630,7 +630,7 @@ import kyo.*
 case class User(id: Int, name: String, email: String, signedUpAt: Instant)
 
 val alice        = User(1, "Alice", "alice@example.com", Instant.Epoch)
-val line: String = t"signed in: $alice at ${alice.signedUpAt}"
+val line: String = render"signed in: $alice at ${alice.signedUpAt}"
 ```
 
 ### Terminal color and formatting

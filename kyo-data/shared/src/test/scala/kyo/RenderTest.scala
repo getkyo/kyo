@@ -112,16 +112,16 @@ class RenderTest extends Test:
 
     "interpolation" - {
         "should interpolate" in {
-            assert(t"${23}" == "23")
-            assert(t"prefix ${Wr(23)} suffix" == "prefix Yep(23) suffix")
-            assert(t"prefix ${Wr(null)} suffix" == "prefix Nope suffix")
-            assert(t"prefix ${ShowADT.Obj} suffix" == "prefix Obj suffix")
-            assert(t"prefix ${ShowADT.Nested(Wr(null))} suffix" == "prefix Nested(Nope) suffix")
-            assert(t"prefix ${ShowADT.Nested(Wr(23))} suffix" == "prefix Nested(Yep(23)) suffix")
+            assert(render"${23}" == "23")
+            assert(render"prefix ${Wr(23)} suffix" == "prefix Yep(23) suffix")
+            assert(render"prefix ${Wr(null)} suffix" == "prefix Nope suffix")
+            assert(render"prefix ${ShowADT.Obj} suffix" == "prefix Obj suffix")
+            assert(render"prefix ${ShowADT.Nested(Wr(null))} suffix" == "prefix Nested(Nope) suffix")
+            assert(render"prefix ${ShowADT.Nested(Wr(23))} suffix" == "prefix Nested(Yep(23)) suffix")
         }
 
         "should handle empty string" in {
-            assert(t"" == "")
+            assert(render"" == "")
         }
     }
 

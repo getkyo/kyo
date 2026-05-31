@@ -75,7 +75,7 @@ object Render extends kyo.internal.LowPriorityRenders:
 end Render
 
 extension (sc: StringContext)
-    def t(args: Render.Rendered*): String =
+    def render(args: Render.Rendered*): String =
         StringContext.checkLengths(args, sc.parts)
         val pi      = sc.parts.iterator
         val ai      = args.iterator

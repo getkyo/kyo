@@ -532,27 +532,27 @@ class MaybeTest extends Test:
     "show" - {
         "should return 'Absent' for Absent" in {
             assert(Absent.show == "Absent")
-            assert(t"$Absent" == "Absent")
+            assert(render"$Absent" == "Absent")
         }
 
         "should return 'Present(value)' for Present" in {
             assert(Present(1).show == "Present(1)")
             val somat: Render.Rendered = Present(1)
-            assert(t"${Present(1): Present[Int]}" == "Present(1)")
+            assert(render"${Present(1): Present[Int]}" == "Present(1)")
             assert(Present("hello").show == "Present(hello)")
-            assert(t"${Present("hello")}" == "Present(hello)")
+            assert(render"${Present("hello")}" == "Present(hello)")
         }
 
         "should handle nested Present values" in {
             assert(Present(Absent).show == "Present(Absent)")
-            assert(t"${Present(Absent)}" == "Present(Absent)")
+            assert(render"${Present(Absent)}" == "Present(Absent)")
         }
 
         "should return Present(Present(value)) for nested Present" in {
             val p: Present[Present[Int]]         = Present(Present(1))
             val r: Render[Present[Present[Int]]] = Render.apply
             assert(r.asString(p) == "Present(Present(1))")
-            assert(t"$p" == "Present(Present(1))")
+            assert(render"$p" == "Present(Present(1))")
         }
     }
 
