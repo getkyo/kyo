@@ -6,7 +6,7 @@ package kyo
   * violations, TransformException for schema manipulation errors, and NavigationException for path traversal failures.
   */
 // --- Base ---
-sealed abstract class SchemaException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class SchemaException(message: String, cause: String | Throwable = "")(using Frame)
     extends KyoException(message, cause)
 
 // --- Operation markers ---

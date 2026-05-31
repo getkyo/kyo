@@ -223,7 +223,6 @@ Schemas are provided for all common types out of the box:
 |----------|-------|
 | Primitives | `String`, `Boolean`, `Int`, `Long`, `Float`, `Double`, `Short`, `Byte`, `Char`, `BigDecimal`, `BigInt`, `Unit` |
 | Time | `java.time.Instant`, `java.time.Duration`, `kyo.Instant`, `kyo.Duration`, `LocalDate`, `LocalTime`, `LocalDateTime` |
-| Text | `kyo.Text` |
 | Identifiers | `UUID`, `Frame`, `Tag[A]` |
 | Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[String, V]`, `Dict[K, V]` |
 | Optional | `Option[A]`, `Maybe[A]` |
