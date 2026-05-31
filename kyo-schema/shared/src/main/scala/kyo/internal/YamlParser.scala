@@ -12,7 +12,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private var pendingAnchor: Maybe[Anchor] = Absent
     private var pendingTag: Maybe[Tag]       = Absent
 
-    def visit[Ctx, Err, A](context: Ctx)(visitor: Visitor[Ctx, Err, A]): Result[Err | DecodeException, A] =
+    def visit[Ctx, Err, A](context: Ctx)(visitor: YamlVisitor[Ctx, Err, A]): Result[Err | DecodeException, A] =
         run(context, visitor.streamStart(_, mark())) { c1 =>
             skipIgnorable()
             if isDocumentMarker("---") then
@@ -41,7 +41,11 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         }
     end visit
 
-    private def parseNode[Ctx, Err, A](context: Ctx, indent: Int, visitor: Visitor[Ctx, Err, A]): Result[Err | DecodeException, Ctx] =
+    def visitEvents[Ctx, Err](context: Ctx)(handler: Yaml.Events.Handler[Ctx, Err]): Result[Err | DecodeException, Ctx] =
+        visit(context)(YamlEvents.toVisitor(handler))
+    end visitEvents
+
+    private def parseNode[Ctx, Err, A](context: Ctx, indent: Int, visitor: YamlVisitor[Ctx, Err, A]): Result[Err | DecodeException, Ctx] =
         skipIgnorable()
         if pos >= input.length then
             val (anchor, tag) = takeProperties()
@@ -63,7 +67,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def parseBlockMapping[Ctx, Err, A](
         context: Ctx,
         indent: Int,
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
         run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()))) { c0 =>
@@ -83,7 +87,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def parseBlockSequence[Ctx, Err, A](
         context: Ctx,
         indent: Int,
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
         run(context, visitor.sequenceStart(_, Meta(anchor, tag, mark()))) { c0 =>
@@ -117,7 +121,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         }
     end parseBlockSequence
 
-    private def parseScalarValue[Ctx, Err, A](context: Ctx, visitor: Visitor[Ctx, Err, A]): Result[Err | DecodeException, Ctx] =
+    private def parseScalarValue[Ctx, Err, A](context: Ctx, visitor: YamlVisitor[Ctx, Err, A]): Result[Err | DecodeException, Ctx] =
         val valueMark                = mark()
         val indent                   = currentIndent()
         val text                     = stripComment(readRestOfLine()).trim
@@ -133,7 +137,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def parseInlineScalar[Ctx, Err, A](
         text: String,
         context: Ctx,
-        visitor: Visitor[Ctx, Err, A],
+        visitor: YamlVisitor[Ctx, Err, A],
         valueMark: Mark = mark()
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag, valueText) = readProperties(text)
@@ -169,7 +173,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def parseBlockMappingEntry[Ctx, Err, A](
         context: Ctx,
         indent: Int,
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         consumeIndent(indent)
         val keyMark       = mark()
@@ -202,7 +206,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def parseEmptyBlockMappingValue[Ctx, Err, A](
         context: Ctx,
         indent: Int,
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         skipBlankAndCommentLines()
         if pos >= input.length || (currentIndent() <= indent && !startsWithSequenceEntryAtIndent()) then
@@ -233,7 +237,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         text: String,
         context: Ctx,
         indent: Int,
-        visitor: Visitor[Ctx, Err, A],
+        visitor: YamlVisitor[Ctx, Err, A],
         valueMark: Mark
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag, valueText) = readProperties(text)
@@ -413,7 +417,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         firstEntry: String,
         context: Ctx,
         sequenceIndent: Int,
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
         run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()))) { c0 =>
@@ -435,7 +439,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         text: String,
         context: Ctx,
         indent: Int,
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         val idx = findFlowMappingSeparator(text)
         if idx < 0 then parseInlineMappingEntry(text, context, visitor)
@@ -466,7 +470,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def parseFlowMapping[Ctx, Err, A](
         text: String,
         context: Ctx,
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
         run(context, visitor.mappingStart(_, Meta(anchor, tag, mark()))) { c0 =>
@@ -478,7 +482,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def parseFlowSequence[Ctx, Err, A](
         text: String,
         context: Ctx,
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         val (anchor, tag) = takeProperties()
         run(context, visitor.sequenceStart(_, Meta(anchor, tag, mark()))) { c0 =>
@@ -493,7 +497,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     private def parseInlineMappingEntry[Ctx, Err, A](
         text: String,
         context: Ctx,
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         val idx = findFlowMappingSeparator(text)
         if idx < 0 then
@@ -530,7 +534,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         chomp: Char,
         anchor: Maybe[Anchor],
         tag: Maybe[Tag],
-        visitor: Visitor[Ctx, Err, A]
+        visitor: YamlVisitor[Ctx, Err, A]
     ): Result[Err | DecodeException, Ctx] =
         val indent = explicitIndent match
             case Present(n) => parentIndent + n

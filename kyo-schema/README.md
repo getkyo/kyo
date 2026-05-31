@@ -248,71 +248,27 @@ Yaml.decode[User](
 
 `Yaml.encode` writes YAML 1.2 by default. Use `Yaml.WriterConfig` profiles and `yamlVersion` when writing for systems that still use YAML 1.1 implicit scalar rules.
 
-For lower-level use cases, `Yaml.visit` exposes an event-first parser API. It lets callers carry their own context and fail early without building a YAML node tree. `Yaml.parse` and `Yaml.parseAll` are available when a DOM-style node tree is desired.
+For YAML-specific tooling, `Yaml.Events` exposes parser and writer events without requiring a YAML node tree. This is useful for checks and transforms that care about anchors, aliases, tags, document boundaries, scalar styles, or source marks. Ordinary schema decoding and encoding should still use `Yaml.decode` and `Yaml.encode`.
 
-#### Event-first YAML visitors
+#### YAML events
 
-Visitors receive parser events directly and decide what state to keep. They can return a value at the end of the stream or stop early with a typed error. This is useful for validation, indexing, metrics, extraction, and other workflows where building a YAML node tree would be unnecessary.
-
-This visitor audits YAML anchors. It records anchor declarations from mapping, sequence, and scalar metadata, records alias usage from `alias` events, then reports aliases that point at missing anchors and anchors that were never used.
+Events can be collected, transformed, rendered, or produced from schema values. This example uppercases every scalar from a YAML parser stream and renders the transformed events back to YAML:
 
 ```scala
-case class AnchorReport(declared: Set[Yaml.Anchor], used: Set[Yaml.Anchor]):
-    def undeclared: Set[Yaml.Anchor] = used -- declared
-    def unused: Set[Yaml.Anchor]     = declared -- used
-end AnchorReport
+val renderer = Yaml.Events.Renderer()
+val uppercase =
+    Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
+        Result.succeed((value.toUpperCase, meta))
+    }
 
-object AnchorReport:
-    val empty: AnchorReport = AnchorReport(Set.empty, Set.empty)
-end AnchorReport
+val rewritten =
+    Yaml.Events.visit("name: Alice\n", ())(uppercase.andThen(renderer))
+        .map(_ => renderer.resultString)
 
-def declare(report: AnchorReport, anchor: Maybe[Yaml.Anchor]): AnchorReport =
-    anchor.fold(report)(a => report.copy(declared = report.declared + a))
-
-val anchorAudit = new Yaml.Visitor[AnchorReport, Nothing, AnchorReport]:
-    def streamStart(report: AnchorReport, mark: Yaml.Mark)   = Result.succeed(report)
-    def documentStart(report: AnchorReport, mark: Yaml.Mark) = Result.succeed(report)
-    def documentEnd(report: AnchorReport, mark: Yaml.Mark)   = Result.succeed(report)
-    def nodeEnd(report: AnchorReport, mark: Yaml.Mark)       = Result.succeed(report)
-
-    def mappingStart(report: AnchorReport, meta: Yaml.Meta) =
-        Result.succeed(declare(report, meta.anchor))
-
-    def sequenceStart(report: AnchorReport, meta: Yaml.Meta) =
-        Result.succeed(declare(report, meta.anchor))
-
-    def scalar(report: AnchorReport, value: String, meta: Yaml.ScalarMeta) =
-        Result.succeed(declare(report, meta.anchor))
-
-    def alias(report: AnchorReport, name: Yaml.Anchor, mark: Yaml.Mark) =
-        Result.succeed(report.copy(used = report.used + name))
-
-    def streamEnd(report: AnchorReport, mark: Yaml.Mark) =
-        Result.succeed(report)
-end anchorAudit
-
-val input =
-    """defaults: &defaults
-      |  retries: 3
-      |database: &database
-      |  host: localhost
-      |workers: &workers
-      |  - api
-      |service:
-      |  config: *defaults
-      |  connection: *database
-      |  pool: *workers
-      |orphan: *missing
-      |unused: &unused value
-      |""".stripMargin
-
-val report = Yaml.visit(input, AnchorReport.empty)(anchorAudit)
-
-assert(report.map(_.undeclared) == Result.succeed(Set(Yaml.Anchor("missing"))))
-assert(report.map(_.unused) == Result.succeed(Set(Yaml.Anchor("unused"))))
+assert(rewritten == Result.succeed("NAME: ALICE\n"))
 ```
 
-When callers do want a tree, `Yaml.parse` builds one explicitly. For a complete visitor-based node-builder with a custom error hierarchy, see [YamlVisitorTest.scala](shared/src/test/scala/kyo/YamlVisitorTest.scala).
+The same event protocol can be driven from schema output with `Yaml.Events.write`, so YAML-specific tooling can sit on either side of the schema layer. For richer examples, including an anchor audit that finds undeclared aliases and unused anchors plus a complete node-builder with a custom error hierarchy, see [YamlEventsTest.scala](shared/src/test/scala/kyo/YamlEventsTest.scala). When callers do want a tree, `Yaml.parse` builds one explicitly.
 
 ### Protobuf
 

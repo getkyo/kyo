@@ -1980,7 +1980,7 @@ object YamlReader:
         buffer: ArrayBuffer[Event],
         maxDepth: Int,
         maxCollectionSize: Int
-    )(using frame: Frame) extends Yaml.Visitor[Unit, DecodeException, Unit]:
+    )(using frame: Frame) extends YamlVisitor[Unit, DecodeException, Unit]:
         private var stack: List[BuildFrame] = Nil
 
         def streamStart(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit]   = Result.unit

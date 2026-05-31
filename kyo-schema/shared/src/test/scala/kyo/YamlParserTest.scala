@@ -787,21 +787,16 @@ class YamlParserTest extends Test:
         }
 
         "treats local tags from the yaml document from hell as metadata only" in {
-            val visitor = new Yaml.Visitor[List[String], String, List[String]]:
-                def streamStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]              = Result.succeed(context)
-                def documentStart(context: List[String], mark: Yaml.Mark): Result[String, List[String]]            = Result.succeed(context)
-                def mappingStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]]             = Result.succeed(context)
-                def sequenceStart(context: List[String], meta: Yaml.Meta): Result[String, List[String]]            = Result.succeed(context)
-                def alias(context: List[String], name: Yaml.Anchor, mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context)
-                def nodeEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]                  = Result.succeed(context)
-                def documentEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]]              = Result.succeed(context)
-                def streamEnd(context: List[String], mark: Yaml.Mark): Result[String, List[String]] = Result.succeed(context.reverse)
+            val handler = new Yaml.Events.Handler[List[String], String]:
+                def event(context: List[String], event: Yaml.Events.Event): Result[String, List[String]] =
+                    event match
+                        case Yaml.Events.Event.Scalar(value, meta) =>
+                            Result.succeed(s"$value:${meta.tag.map(_.value).getOrElse("")}" :: context)
+                        case _ =>
+                            Result.succeed(context)
+            end handler
 
-                def scalar(context: List[String], value: String, meta: Yaml.ScalarMeta): Result[String, List[String]] =
-                    Result.succeed(s"$value:${meta.tag.map(_.value).getOrElse("")}" :: context)
-            end visitor
-
-            assert(Yaml.visit("serve:\n  - !.git\n", Nil)(visitor) == Result.succeed(List("serve:", ":!.git")))
+            assert(Yaml.Events.visit("serve:\n  - !.git\n", Nil)(handler).map(_.reverse) == Result.succeed(List("serve:", ":!.git")))
         }
 
         "parses YAML 1.2 decimal integers with leading zeroes as decimal" in {

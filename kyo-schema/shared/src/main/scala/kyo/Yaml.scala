@@ -24,7 +24,7 @@ end Yaml
 
 /** Primary entry point for YAML 1.2 serialization, parsing, and visiting.
   *
-  * YAML parsing is event-first: the parser drives a [[Yaml.Visitor]] and does not require constructing a YAML node tree. Schema decoding
+  * YAML parsing is event-first: [[Yaml.Events]] exposes stream events without requiring construction of a YAML node tree. Schema decoding
   * uses a direct YAML [[Codec.Reader]] path, so ordinary decode does not require a YAML DOM, a whole-document event tape, or a JSON bridge.
   *
   * @see
@@ -364,7 +364,7 @@ object Yaml:
 
     /** Source position in the YAML stream.
       *
-      * Marks are attached to visitor events and parser metadata so callers can report application-level errors at the same source position
+      * Marks are attached to YAML events and parser metadata so callers can report application-level errors at the same source position
       * where the YAML parser found a value. The raw `index` is the character offset into the decoded input string; `line` and `column` are
       * intended for display in diagnostics.
       */
@@ -373,13 +373,13 @@ object Yaml:
     /** Node metadata carried by collection nodes.
       *
       * YAML anchors and tags are exposed as metadata instead of being interpreted by the event parser. Schema decoding honors the standard
-      * scalar tags it understands, while unknown and local tags remain available to visitors and DOM-style parsing as metadata.
+      * scalar tags it understands, while unknown and local tags remain available to event handlers and DOM-style parsing as metadata.
       */
     case class Meta(anchor: Maybe[Anchor], tag: Maybe[Tag], mark: Mark) derives CanEqual
 
     /** Scalar style as written in the YAML stream.
       *
-      * The style records YAML surface syntax without changing the scalar value reported to visitors. It lets callers distinguish plain,
+      * The style records YAML surface syntax without changing the scalar value reported to event handlers. It lets callers distinguish plain,
       * quoted, literal, and folded content when they need formatting-aware behavior.
       */
     enum ScalarStyle derives CanEqual:
@@ -401,10 +401,174 @@ object Yaml:
 
     /** Metadata carried by scalar nodes.
       *
-      * Scalar metadata includes the same anchor, tag, and mark information as collection metadata, plus the scalar's source style. Visitors
+      * Scalar metadata includes the same anchor, tag, and mark information as collection metadata, plus the scalar's source style. Callers
       * can use the tag and style to implement custom scalar handling without forcing the parser to build a node tree.
       */
     case class ScalarMeta(anchor: Maybe[Anchor], tag: Maybe[Tag], style: ScalarStyle, mark: Mark) derives CanEqual
+
+    /** YAML event protocol for parser, renderer, and tooling pipelines.
+      *
+      * `Events` is the YAML-specific middle layer between raw parsing and schema values. It preserves document boundaries, collection
+      * starts and ends, scalars, aliases, anchors, tags, scalar styles, and source marks without requiring callers to build a [[Node]].
+      * Use it for linters, format-aware transforms, anchor/alias audits, and event-to-event processing. Use [[Yaml.decode]] and
+      * [[Yaml.encode]] for ordinary schema-value decoding and encoding.
+      */
+    object Events:
+
+        /** Collection kind for typed collection-end events. */
+        enum CollectionKind derives CanEqual:
+            /** A YAML mapping collection. */
+            case Mapping
+
+            /** A YAML sequence collection. */
+            case Sequence
+        end CollectionKind
+
+        /** One event in a YAML stream. */
+        enum Event derives CanEqual:
+            /** Start of the YAML stream. */
+            case StreamStart(mark: Mark)
+
+            /** Start of a YAML document. */
+            case DocumentStart(mark: Mark)
+
+            /** Start of a YAML mapping, with optional known size. */
+            case MappingStart(meta: Meta, size: Maybe[Int] = Absent)
+
+            /** Start of a YAML sequence, with optional known size. */
+            case SequenceStart(meta: Meta, size: Maybe[Int] = Absent)
+
+            /** Scalar value and its source metadata. */
+            case Scalar(value: String, meta: ScalarMeta)
+
+            /** Alias reference to an anchor declared elsewhere in the document. */
+            case Alias(name: Anchor, mark: Mark)
+
+            /** End of a YAML mapping or sequence. */
+            case CollectionEnd(kind: CollectionKind, mark: Mark)
+
+            /** End of a YAML document. */
+            case DocumentEnd(mark: Mark)
+
+            /** End of the YAML stream. */
+            case StreamEnd(mark: Mark)
+        end Event
+
+        /** Event handler that threads caller-owned context through a YAML event stream. */
+        trait Handler[Ctx, Err]:
+            /** Handles one YAML event and returns the next context or a typed error. */
+            def event(context: Ctx, event: Event): Result[Err, Ctx]
+        end Handler
+
+        /** Event middleware that wraps a downstream handler.
+          *
+          * Processors can inspect, rewrite, reject, or pass through YAML events. They compose left-to-right with `andThen`, allowing parser
+          * events to flow through reusable tooling before they reach a terminal handler such as a collector or renderer.
+          */
+        trait Processor[Err]:
+            self =>
+
+            /** Wraps a downstream handler with this processor. */
+            def apply[Ctx](downstream: Handler[Ctx, Err]): Handler[Ctx, Err]
+
+            /** Sends this processor's output to the downstream handler. */
+            final def andThen[Ctx](downstream: Handler[Ctx, Err]): Handler[Ctx, Err] =
+                self(downstream)
+
+            /** Composes this processor with another processor. */
+            final def andThen(next: Processor[Err]): Processor[Err] =
+                new Processor[Err]:
+                    def apply[Ctx](downstream: Handler[Ctx, Err]): Handler[Ctx, Err] =
+                        self(next(downstream))
+                end new
+            end andThen
+        end Processor
+
+        /** Processor constructors for common event transformations. */
+        object Processor:
+            /** Rewrites scalar values and metadata while passing all other events through unchanged. */
+            def mapScalars[Err](
+                f: (String, ScalarMeta) => Result[Err, (String, ScalarMeta)]
+            ): Processor[Err] =
+                new Processor[Err]:
+                    def apply[Ctx](downstream: Handler[Ctx, Err]): Handler[Ctx, Err] =
+                        new Handler[Ctx, Err]:
+                            def event(context: Ctx, event: Event): Result[Err, Ctx] =
+                                event match
+                                    case Event.Scalar(value, meta) =>
+                                        f(value, meta).flatMap { case (nextValue, nextMeta) =>
+                                            downstream.event(context, Event.Scalar(nextValue, nextMeta))
+                                        }
+                                    case other =>
+                                        downstream.event(context, other)
+                        end new
+                    end apply
+                end new
+            end mapScalars
+        end Processor
+
+        /** Terminal event handler that renders YAML events to a YAML string.
+          *
+          * A renderer is useful when parser events flow through one or more [[Processor]] instances and need to become YAML again without
+          * first building a [[Node]]. It uses [[WriterConfig]] for layout, quoting, multiline strings, document markers, and YAML version
+          * decisions. Create a fresh renderer for each output, pass it as the terminal handler, then read [[resultString]] after event
+          * processing completes.
+          */
+        final class Renderer private (private val inner: internal.YamlEvents.Renderer) extends Handler[Unit, DecodeException]:
+
+            /** Handles one YAML event for rendering. */
+            def event(context: Unit, event: Event): Result[DecodeException, Unit] =
+                inner.event(context, event)
+
+            /** Returns the rendered YAML string, finalizing document markers if configured. */
+            def resultString: String =
+                inner.resultString
+        end Renderer
+
+        /** Renderer constructors. */
+        object Renderer:
+            /** Creates a YAML event renderer using the contextual writer configuration. */
+            def apply()(using config: WriterConfig): Renderer =
+                apply(config)
+
+            /** Creates a YAML event renderer using the provided writer configuration. */
+            @targetName("applyWithConfig")
+            def apply(config: WriterConfig): Renderer =
+                new Renderer(internal.YamlEvents.Renderer(config))
+        end Renderer
+
+        /** Visits a YAML stream as events without constructing a YAML DOM. */
+        def visit[Ctx, Err](
+            input: String,
+            context: Ctx
+        )(handler: Handler[Ctx, Err])(using Frame): Result[Err | DecodeException, Ctx] =
+            internal.YamlParser(input).visitEvents(context)(handler)
+        end visit
+
+        /** Visits one document from a YAML stream as events without constructing a YAML DOM. */
+        def visit[Ctx, Err](
+            input: String,
+            documentIndex: DocumentIndex,
+            context: Ctx
+        )(handler: Handler[Ctx, Err])(using Frame): Result[Err | DecodeException, Ctx] =
+            selectDocument(input, documentIndex).flatMap(doc => visit(doc, context)(handler))
+        end visit
+
+        /** Writes a schema value as YAML events into a handler.
+          *
+          * This is the write-side counterpart to [[visit]]. It lets YAML-specific tooling inspect or transform schema output before it is
+          * rendered, collected, or otherwise consumed. The contextual [[WriterConfig]] controls scalar style metadata in the emitted events,
+          * matching the single-argument [[Yaml.encode]] behavior.
+          */
+        def write[A, Ctx, Err](
+            value: A,
+            context: Ctx
+        )(handler: Handler[Ctx, Err])(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): Result[Err, Ctx] =
+            val writer = internal.YamlEvents.EventWriter(context, handler, writerConfig)
+            schema.writeTo(value, writer)
+            writer.resultContext
+        end write
+    end Events
 
     /** YAML node tree built only by [[parse]] and [[parseAll]].
       *
@@ -424,60 +588,6 @@ object Yaml:
         /** Alias node referencing a previously declared anchor by name. */
         case Alias(name: Anchor, mark: Mark)
     end Node
-
-    /** Event consumer for YAML parsing.
-      *
-      * The parser passes caller-owned context through every callback. Returning [[Result.Failure]] stops parsing immediately and returns
-      * that error to the caller.
-      *
-      * @tparam Ctx
-      *   caller-owned context threaded through the event stream
-      * @tparam Err
-      *   application error type that can stop parsing
-      * @tparam A
-      *   final visitor result produced at stream end
-      */
-    trait Visitor[Ctx, Err, A]:
-        /** Called once before the first document is visited. */
-        def streamStart(context: Ctx, mark: Mark): Result[Err, Ctx]
-
-        /** Called before each YAML document body. */
-        def documentStart(context: Ctx, mark: Mark): Result[Err, Ctx]
-
-        /** Called when a mapping node starts. */
-        def mappingStart(context: Ctx, meta: Meta): Result[Err, Ctx]
-
-        /** Called when a sequence node starts. */
-        def sequenceStart(context: Ctx, meta: Meta): Result[Err, Ctx]
-
-        /** Called for each scalar node with its source text and metadata. */
-        def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err, Ctx]
-
-        /** Called for each alias node with the referenced anchor name. */
-        def alias(context: Ctx, name: Anchor, mark: Mark): Result[Err, Ctx]
-
-        /** Called when a mapping or sequence node ends. */
-        def nodeEnd(context: Ctx, mark: Mark): Result[Err, Ctx]
-
-        /** Called after each YAML document body. */
-        def documentEnd(context: Ctx, mark: Mark): Result[Err, Ctx]
-
-        /** Called once after the stream has been visited and returns the final visitor value. */
-        def streamEnd(context: Ctx, mark: Mark): Result[Err, A]
-    end Visitor
-
-    /** Visits a YAML stream without constructing a YAML DOM. */
-    def visit[Ctx, Err, A](input: String, context: Ctx)(visitor: Visitor[Ctx, Err, A])(using Frame): Result[Err | DecodeException, A] =
-        internal.YamlParser(input).visit(context)(visitor)
-
-    /** Visits one document from a YAML stream without constructing a YAML DOM. */
-    def visit[Ctx, Err, A](
-        input: String,
-        documentIndex: DocumentIndex,
-        context: Ctx
-    )(visitor: Visitor[Ctx, Err, A])(using Frame): Result[Err | DecodeException, A] =
-        selectDocument(input, documentIndex).flatMap(doc => visit(doc, context)(visitor))
-    end visit
 
     /** Parses a single YAML document into an optional DOM node tree. */
     def parse(input: String)(using Frame): Result[DecodeException, Node] =
@@ -719,7 +829,7 @@ object Yaml:
     final private class MappingFrame(val meta: Meta, var entries: Chunk[(Node, Node)], var pendingKey: Maybe[Node]) extends NodeFrame
     final private class SequenceFrame(val meta: Meta, var elements: Chunk[Node])                                    extends NodeFrame
 
-    final private class NodeBuilder(using Frame) extends Visitor[Unit, DecodeException, Node]:
+    final private class NodeBuilder(using Frame) extends internal.YamlVisitor[Unit, DecodeException, Node]:
         private var root: Maybe[Node]      = Absent
         private var stack: List[NodeFrame] = Nil
 
