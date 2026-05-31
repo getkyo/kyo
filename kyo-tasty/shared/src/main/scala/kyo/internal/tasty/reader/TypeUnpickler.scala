@@ -202,6 +202,34 @@ object TypeUnpickler:
         readTypeNode(view, ctx)
     end readTypeIntoSession
 
+    /** Variant of readTypeIntoSession that also provides sectionBytes, enabling eager annotation arg decode.
+      *
+      * Used in tests (Phase 09 followup for Phase 08 W-1/W-2) to verify that corrupt annotation arg bytes accumulate errors in
+      * `session.annotationDecodeErrors` rather than propagating exceptions.
+      *
+      * Private to kyo; not part of the public API.
+      */
+    private[kyo] def readTypeIntoSessionWithBytes(
+        view: ByteView,
+        session: DecodeSession,
+        sectionBytes: Array[Byte],
+        sectionOffset: Int
+    )(using frame: Frame)(using AllowUnsafe): Tasty.Type =
+        val ctx = DecodeCtx(
+            session.names,
+            session.liveAddrMap,
+            session.arena,
+            session.addrCache,
+            session.inProgressRec,
+            session.binderAddrMap,
+            sectionBytes,
+            sectionOffset,
+            frame,
+            session
+        )
+        readTypeNode(view, ctx)
+    end readTypeIntoSessionWithBytes
+
     /** Mutable decode session shared across all type positions in one file. Created by AstUnpickler and passed to readTypeIntoSession.
       *
       * `liveAddrMap` is the mutable HashMap being built by AstUnpickler.walkStats. Passing it directly (not as a snapshot) lets type decode

@@ -62,9 +62,12 @@ class SubtypeTest extends Test:
         )
     end makeCovParam
 
-    /** Wire a base-class symbol with the given type params -- plan: phase-02 stub (no-op; variance deferred to Phase 09). */
-    private def wireTypeParams(sym: Tasty.Symbol, params: Chunk[Tasty.Symbol]): Unit =
-        () // plan: phase-02; typeParamIds requires SymbolId resolution; variance check is approximate in Phase 02
+    /** Wire a base-class symbol with the given type params.
+      *
+      * Returns the updated symbol with typeParamIds populated. The caller must reassign the `var` holding the symbol.
+      */
+    private def wireTypeParams(sym: Tasty.Symbol, params: Chunk[Tasty.Symbol]): Tasty.Symbol =
+        sym.withTypeParamIds(params.map(_.id))
 
     /** Build a test Classpath populated with the given symbols, indexed by their id.value.
       *
@@ -150,9 +153,6 @@ class SubtypeTest extends Test:
     }
 
     // Test 6: Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant
-    // plan: phase-02; wireTypeParams is a no-op stub (typeParamIds requires SymbolId resolution, deferred
-    // to Phase 09). Without variance info, args are checked as invariant; String <: AnyRef but AnyRef </> String
-    // yields NotSub. Phase 09 wires typeParamIds and this assertion flips back to Sub.
     "Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant" in run {
         nextId = 0
         val anyRefSym  = makeSym("java.lang.Object")
@@ -160,15 +160,14 @@ class SubtypeTest extends Test:
         val stringSym  = makeSym("java.lang.String", Chunk(anyRefType))
         val stringType = Tasty.Type.Named(stringSym.id)
         val tParam     = makeCovParam("T")
-        val listSym    = makeSym("scala.collection.immutable.List")
-        wireTypeParams(listSym, Chunk(tParam))
+        var listSym    = makeSym("scala.collection.immutable.List")
+        listSym = wireTypeParams(listSym, Chunk(tParam))
         val listType   = Tasty.Type.Named(listSym.id)
         val listString = Tasty.Type.Applied(listType, Chunk(stringType))
         val listAnyRef = Tasty.Type.Applied(listType, Chunk(anyRefType))
         makeTestClasspath(Chunk(anyRefSym, stringSym, tParam, listSym)).map: cp =>
             given Tasty.Classpath = cp
-            // phase-02: variance absent => invariant fallback => NotSub (phase 09 restores Sub)
-            assert(listString.isSubtypeOf(listAnyRef) == Tasty.SubtypeVerdict.NotSub)
+            assert(listString.isSubtypeOf(listAnyRef) == Tasty.SubtypeVerdict.Sub)
     }
 
     // Test 7: Named(Nothing).isSubtypeOf(anyType) returns Sub (Nothing is subtype of all)

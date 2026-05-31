@@ -507,6 +507,36 @@ class TypeUnpicklerTest extends Test:
         end match
     }
 
+    // Phase 08 W-1/W-2 followup: DecodeSession.annotationDecodeErrors accumulates errors from corrupt
+    // ANNOTATEDtype argument bytes when sectionBytes is available. This test constructs a real
+    // DecodeSession, crafts an ANNOTATEDtype with a non-empty but syntactically invalid arg byte
+    // slice, and calls readTypeIntoSessionWithBytes (the test-only variant that provides sectionBytes).
+    // Asserts session.annotationDecodeErrors.nonEmpty after the decode.
+    // Phase 08 W-1/W-2 followup: session.annotationDecodeErrors accumulates errors from truncated
+    // annotation arg bytes. ANNOTATEDtype with a 1-byte payload (only UNITconst; no annotation term)
+    // produces an empty pickle for the term slice. TreeUnpickler.readTree on an empty ByteView throws
+    // AIOOBE, which is caught and converted to a MalformedSection error accumulated in the session.
+    "ANNOTATEDtype with truncated arg bytes accumulates error in session.annotationDecodeErrors" in {
+        import AllowUnsafe.embrace.danger
+        import kyo.internal.tasty.binary.ByteView
+        // Build ANNOTATEDtype with payload = [UNITconst] only (no annotation term bytes follow).
+        // The payload length is 1 (= size of UNITconst). After reading underlying=UNITconst,
+        // termStart == endInt, so the annotation-term pickle is empty [].
+        // decodeAnnotationTerm([]) calls readTree on an empty ByteView, throwing AIOOBE.
+        val bytes = cat5(TastyFormat.ANNOTATEDtype, Array(TastyFormat.UNITconst.toByte))
+        // Decode via readTypeIntoSessionWithBytes so ctx.sectionBytes != null AND ctx.session != null.
+        val arena       = makeArena()
+        val liveAddrMap = new mutable.HashMap[Int, Tasty.Symbol]()
+        val session     = new TypeUnpickler.DecodeSession(Array.empty, liveAddrMap, arena)
+        val view        = ByteView(bytes)
+        given Frame     = summon[Frame]
+        TypeUnpickler.readTypeIntoSessionWithBytes(view, session, bytes, 0)
+        assert(
+            session.annotationDecodeErrors.nonEmpty,
+            s"Expected annotationDecodeErrors.nonEmpty after truncated annotation decode, got: ${session.annotationDecodeErrors}"
+        )
+    }
+
     // Test M7-2: a known category-1 tag (UNITconst) does NOT fire any log output.
     // Pins INV-004 negative path.
     "known TASTy type tag does not emit a warn-level log" in {

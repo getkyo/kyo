@@ -362,14 +362,11 @@ object Tasty:
         def isSubtypeOf(other: Type)(using cp: Classpath): SubtypeVerdict =
             kyo.internal.tasty.type_.Subtyping.isSubtype(this, other, cp, budget = 64)
 
-        /** Human-readable formatting; uses Name.asString for simple cases.
-          *
-          * plan: phase-05; Named(symbolId) renders the raw id integer until Phase 09 wires cp.symbol(id).name resolution. The signature
-          * gains (using cp: Classpath) now so Phase 09 can resolve names without a further signature change.
-          */
+        /** Human-readable formatting; resolves Named ids to symbol names via the Classpath. */
         def show(using cp: Classpath): String =
+            import Name.asString
             this match
-                case Named(id)              => s"Named(${id.value})"
+                case Named(id)              => cp.symbol(id).name.asString
                 case Applied(base, args)    => s"${base.show}[${args.map(_.show).mkString(", ")}]"
                 case Array(elem)            => s"${elem.show}[]"
                 case Function(ps, r, isCtx) => s"(${ps.map(_.show).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${r.show}"
@@ -603,8 +600,8 @@ object Tasty:
       * construction, every field is immutable. Cross-symbol references use `SymbolId` (an opaque Int) rather than direct `Symbol` pointers
       * to avoid case-class cycles.
       *
-      * Resolution methods (`owner`, `parents`, `declarations`, `fullName`, etc.) are added in Phase 09 after `Classpath` becomes a pure
-      * case class. In this phase (Phase 02) only the 14 constructor parameters and auto-generated case-class members are available.
+      * Resolution methods (`owner`, `parents`, `declarations`, `fullName`, etc.) require a `Classpath` in scope and are pure data accessors
+      * with no effect row.
       */
     final case class Symbol private[Tasty] (
         id: SymbolId,
@@ -706,17 +703,176 @@ object Tasty:
         def isTypeLike: Boolean   = isTypeAlias || isOpaqueTypeKind || isAbstractType || isTypeParam
         def isTerm: Boolean       = isMethod || isVal || isVar || isField || isParameter
 
+        // Resolution accessors -- all pure; require a Classpath to resolve SymbolId references.
+
+        /** Resolve the owning symbol of this symbol.
+          *
+          * Pure O(1) lookup in the immutable `cp.symbols` array. Returns the sentinel unresolved symbol for out-of-range ids.
+          */
+        def owner(using cp: Classpath): Symbol = cp.symbol(ownerId)
+
+        /** Resolve the direct parent symbols by extracting only `Type.Named` entries from `parentTypes`.
+          *
+          * Applied parents (e.g. `List[Int]`) are skipped; only the top-level `Named` case is unwrapped. Returns an empty Chunk for Package
+          * symbols and symbols with no parents.
+          */
+        def parents(using cp: Classpath): Chunk[Symbol] =
+            parentTypes.collect { case Type.Named(pid) => cp.symbol(pid) }
+
+        /** Resolve the type parameter symbols recorded during Pass C. */
+        def typeParams(using cp: Classpath): Chunk[Symbol] = typeParamIds.map(cp.symbol)
+
+        /** Resolve all direct member symbols (declarations) of this symbol. */
+        def declarations(using cp: Classpath): Chunk[Symbol] = declarationIds.map(cp.symbol)
+
+        /** Resolve the permitted direct subclasses for sealed / enum symbols. Returns `Absent` when this symbol has no sealed subclass
+          * list.
+          */
+        def permittedSubclasses(using cp: Classpath): Maybe[Chunk[Symbol]] =
+            permittedSubclassIds.map(_.map(cp.symbol))
+
+        /** Look up the companion symbol (class companion object or object companion class) via the classpath companion index.
+          *
+          * Returns `Absent` when no companion is registered in the classpath (e.g. plain classes with no companion, Java symbols).
+          */
+        def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
+
+        /** Compute the fully-qualified dotted name of this symbol by walking the owner chain. */
+        def fullName(using cp: Classpath): Name = cp.fullName(this)
+
+        /** Compute the JVM binary name (slash-separated packages, dollar-sign-separated nested types). */
+        def binaryName(using cp: Classpath): String =
+            kyo.internal.tasty.symbol.BinaryName.compute(this, cp)
+
+        /** All method-kind declarations of this symbol. */
+        def methods(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.isMethod)
+
+        /** All val-kind declarations of this symbol. */
+        def vals(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.isVal)
+
+        /** All var-kind declarations of this symbol. */
+        def vars(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.isVar)
+
+        /** All field-kind declarations of this symbol. */
+        def fields(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.isField)
+
+        /** All nested class, trait, and object declarations of this symbol. */
+        def nestedTypes(using cp: Classpath): Chunk[Symbol] =
+            declarations.filter(s => s.isClass || s.isTrait || s.isObject)
+
+        /** All type-like declarations (type aliases, opaque types, abstract types, type parameters) of this symbol. */
+        def typeMembers(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.isTypeLike)
+
+        /** Find a direct member by simple string name.
+          *
+          * Returns `Absent` when no member with the given name exists. Uses `Name.asString` for comparison.
+          */
+        def findMember(name: String)(using cp: Classpath): Maybe[Symbol] =
+            import Name.asString
+            declarations.find(_.name.asString == name) match
+                case Some(s) => Maybe(s)
+                case None    => Maybe.Absent
+        end findMember
+
+        /** Find a direct member by `Name` value. */
+        def findMemberByName(n: Name)(using cp: Classpath): Maybe[Symbol] =
+            import Name.{asString, given}
+            declarations.find(s => s.name.asString == n.asString) match
+                case Some(s) => Maybe(s)
+                case None    => Maybe.Absent
+        end findMemberByName
+
+        /** All declarations of the given kind. */
+        def membersByKind(k: SymbolKind)(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.kind == k)
+
+        /** Human-readable representation: `"<kind> <fullName>"`. */
+        def show(using cp: Classpath): String = kyo.internal.tasty.symbol.SymbolShow.show(this, cp)
+
+        /** Test-accessible field override helper. Called from test code in package kyo.
+          *
+          * Equivalent to the auto-generated copy method but accessible from package kyo (not just object Tasty). Only fields relevant to
+          * tests are overridable; extend as needed.
+          */
+        private[kyo] def withParentTypes(pts: Chunk[Type]): Symbol =
+            Symbol(
+                id = id,
+                kind = kind,
+                flags = flags,
+                name = name,
+                ownerId = ownerId,
+                declaredType = declaredType,
+                scaladoc = scaladoc,
+                sourcePosition = sourcePosition,
+                javaMetadata = javaMetadata,
+                parentTypes = pts,
+                typeParamIds = typeParamIds,
+                declarationIds = declarationIds,
+                permittedSubclassIds = permittedSubclassIds,
+                bodyRecord = bodyRecord
+            )
+
+        private[kyo] def withDeclarationIds(ids: Chunk[SymbolId]): Symbol =
+            Symbol(
+                id = id,
+                kind = kind,
+                flags = flags,
+                name = name,
+                ownerId = ownerId,
+                declaredType = declaredType,
+                scaladoc = scaladoc,
+                sourcePosition = sourcePosition,
+                javaMetadata = javaMetadata,
+                parentTypes = parentTypes,
+                typeParamIds = typeParamIds,
+                declarationIds = ids,
+                permittedSubclassIds = permittedSubclassIds,
+                bodyRecord = bodyRecord
+            )
+
+        private[kyo] def withTypeParamIds(ids: Chunk[SymbolId]): Symbol =
+            Symbol(
+                id = id,
+                kind = kind,
+                flags = flags,
+                name = name,
+                ownerId = ownerId,
+                declaredType = declaredType,
+                scaladoc = scaladoc,
+                sourcePosition = sourcePosition,
+                javaMetadata = javaMetadata,
+                parentTypes = parentTypes,
+                typeParamIds = ids,
+                declarationIds = declarationIds,
+                permittedSubclassIds = permittedSubclassIds,
+                bodyRecord = bodyRecord
+            )
+
+        private[kyo] def withId(newId: SymbolId, newOwnerId: SymbolId): Symbol =
+            Symbol(
+                id = newId,
+                kind = kind,
+                flags = flags,
+                name = name,
+                ownerId = newOwnerId,
+                declaredType = declaredType,
+                scaladoc = scaladoc,
+                sourcePosition = sourcePosition,
+                javaMetadata = javaMetadata,
+                parentTypes = parentTypes,
+                typeParamIds = typeParamIds,
+                declarationIds = declarationIds,
+                permittedSubclassIds = permittedSubclassIds,
+                bodyRecord = bodyRecord
+            )
+
         /** Decode the body of this symbol into a `Tree`.
           *
           * Returns `Absent` for Package symbols, Java symbols, and any symbol whose body record is empty. Fails with
           * `TastyError.MalformedSection` on corrupt body bytes.
           *
-          * This is the ONE Symbol method that carries a kyo effect row. All other Symbol members return plain values. The `body`
+          * This is the ONE Symbol method that carries a kyo effect row. All other Symbol members return plain values. The `bodyRecord`
           * constructor parameter (a raw `Maybe[SymbolBody]` byte record) and this method coexist because they have different signatures:
           * the field takes no arguments while this method requires `using` clauses.
-          *
-          * plan: phase-04; decoding is NOT memoized in this phase. Memoization via ConcurrentHashMap arrives in Phase 06 when Classpath
-          * becomes a pure case class with a private lazy val bodyMemo.
           */
         def body(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
             cp.decodeBody(this)
@@ -912,6 +1068,46 @@ object Tasty:
         def findClassByBinary(binaryName: String): Maybe[Symbol] =
             val fqn = binaryName.replace('/', '.').replace('$', '.')
             findClass(fqn)
+
+        /** Look up the companion symbol (companion object for a class/trait; companion class for an object).
+          *
+          * Pure O(1) lookup in the immutable `companionIndex`. Returns `Absent` when no companion is registered.
+          */
+        def companion(sym: Symbol): Maybe[Symbol] =
+            companionIndex.get(sym.id) match
+                case Some(cid) => Maybe(symbol(cid))
+                case None      => Maybe.Absent
+
+        /** Compute the fully-qualified dotted name of `sym` by walking the owner chain.
+          *
+          * Walks upward collecting non-empty segment names; stops when the symbol owns itself (root sentinel), when ownerId is -1, or when
+          * the same symbol appears twice (cycle guard). Depth limit of 64 prevents unbounded loops.
+          */
+        def fullName(sym: Symbol): Name =
+            import Name.asString
+            val parts   = new scala.collection.mutable.ArrayBuffer[String]()
+            var cur     = sym
+            var depth   = 0
+            var stop    = false
+            val visited = new java.util.HashSet[Int]()
+            while !stop && depth < 64 && visited.add(cur.id.value) do
+                val n = cur.name.asString
+                if n.nonEmpty then parts.prepend(n)
+                val ownerId = cur.ownerId
+                if ownerId == cur.id || ownerId.value == -1 then
+                    stop = true
+                else
+                    val ownerSym = symbol(ownerId)
+                    if ownerSym.id == cur.id || ownerSym.name.asString.isEmpty then
+                        stop = true
+                    else
+                        cur = ownerSym
+                        depth += 1
+                    end if
+                end if
+            end while
+            Name(parts.mkString("."))
+        end fullName
 
         /** Decode the body bytes of `sym` into a `Tree`, memoizing the result.
           *

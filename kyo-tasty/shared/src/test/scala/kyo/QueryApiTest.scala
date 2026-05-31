@@ -580,23 +580,19 @@ class QueryApiTest extends Test:
 
     // Phase 3 Test 5 (G21/G22/G23 classfile): for ArrayRecord.class (Java record), sym.parents includes
     // java.lang.Record; sym.typeParams is empty (non-generic); sym.declarations is non-empty.
+    // Note: this test uses ClassfileUnpickler directly (pre-finalizeMerge). The relational fields
+    // (parentTypes/typeParamIds/declarationIds) on the partial classSymbol are empty at this stage;
+    // we read the pre-merge ClassfileResult fields (cr.parents, cr.typeParams, cr.symbols) directly.
+    // Phase 09 adds sym.parents/typeParams/declarations as member methods accessible post-finalizeMerge.
     "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" taggedAs jvmOnly in run {
         val bytes    = kyo.fixtures.Embedded.arrayRecordClass
         val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, interner, new TypeArena).flatMap: cr =>
-                // Create a mini-classpath so home.isAssigned is true and checkOpen passes.
-                // assignExtraHomes covers the class symbol and all members; since all symbols share
-                // the same ClasspathRef instance, calling home.assign separately is redundant.
                 Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
                     cr
         .flatMap:
             case Result.Success(cr) =>
-                // plan: phase-02 inline; ClassfileResult fields used directly because classSymbol is a partial
-                // symbol (parentTypes/declarationIds are empty until finalizeMerge runs). cr.parents holds the
-                // unresolved parent types; cr.typeParams holds the class-level type parameter symbols; cr.symbols
-                // holds the member symbols. Phase 09 promotes these into sym.parentTypes/typeParamIds/declarationIds
-                // via the full classpath pipeline.
                 val parents    = cr.parents
                 val typeParams = cr.typeParams
                 val decls      = cr.symbols
@@ -605,8 +601,6 @@ class QueryApiTest extends Test:
                 .map:
                     case Result.Success((parents, typeParams, decls)) =>
                         assert(parents.nonEmpty, s"Expected non-empty parentTypes for ArrayRecord but got empty")
-                        // plan: phase-05; Named(id) no longer carries name directly; name checks deferred to Phase 09.
-                        // Verify that at least one parent is Named or Applied.
                         val hasNamedOrApplied = parents.exists:
                             case Tasty.Type.Named(_)      => true
                             case Tasty.Type.Applied(_, _) => true
@@ -615,7 +609,7 @@ class QueryApiTest extends Test:
                         assert(typeParams.isEmpty, s"Expected no typeParamIds for ArrayRecord but got ${typeParams.length}")
                         assert(decls.nonEmpty, s"Expected non-empty declarationIds for ArrayRecord but got empty")
                     case Result.Failure(e) =>
-                        fail(s"Unexpected failure calling sym.parents/typeParams/declarations: $e")
+                        fail(s"Unexpected failure calling cr.parents/typeParams/symbols: $e")
                     case Result.Panic(t) =>
                         throw t
             case Result.Failure(e) =>
@@ -624,31 +618,108 @@ class QueryApiTest extends Test:
                 throw t
     }
 
+    /** Build a MemoryFileSource with the SomeCaseClass fixture. */
+    private def someCaseClassSource(): MemoryFileSource =
+        val src = MemoryFileSource()
+        src.add("root/SomeCaseClass.tasty", kyo.fixtures.Embedded.someCaseClassTasty)
+        src
+    end someCaseClassSource
+
     // Phase 4 Test 1 (G24): case class companion object.
     // SomeCaseClass.tasty contains both the case class and its companion object.
     // The class symbol's companion should return Present(objectSym) where kind == Object.
-    // Use topLevelClasses to find the Class-kind symbol since fqnIndex may be overwritten by
-    // the module accessor VALDEF (which shares the same dotted FQN as the class).
-    "Phase 4: SomeCaseClass.companion returns Present(objectSym) with kind Object" in {
-        pending // plan: phase-02; sym.companion deferred to Phase 09
+    "Phase 4: SomeCaseClass.companion returns Present(objectSym) with kind Object" in run {
+        Scope.run:
+            Abort.run[TastyError](openFixtureClasspath(someCaseClassSource()).flatMap: cp =>
+                // Find the Class-kind symbol for SomeCaseClass (fqnIndex key: "kyo.fixtures.SomeCaseClass").
+                cp.findClass("kyo.fixtures.SomeCaseClass") match
+                    case Present(classSym) =>
+                        given Tasty.Classpath = cp
+                        Kyo.lift(classSym.companion)
+                    case Absent =>
+                        Abort.fail(TastyError.NotImplemented("SomeCaseClass not found"))).map:
+                case Result.Success(Present(compSym)) =>
+                    assert(
+                        compSym.kind == Tasty.SymbolKind.Object,
+                        s"Expected companion kind Object but got ${compSym.kind}"
+                    )
+                case Result.Success(Absent) =>
+                    fail("Expected Present companion for SomeCaseClass but got Absent")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
     }
 
     // Phase 4 Test 2 (G24): companion object reverse lookup -- the object symbol's companion is the class.
-    // Use topLevelClasses to find the Object-kind symbol, then call companion on it to get back the class.
-    "Phase 4: SomeCaseClass companion object's companion returns Present(classSym) with kind Class" in {
-        pending // plan: phase-02; sym.companion deferred to Phase 09
+    "Phase 4: SomeCaseClass companion object's companion returns Present(classSym) with kind Class" in run {
+        Scope.run:
+            Abort.run[TastyError](openFixtureClasspath(someCaseClassSource()).flatMap: cp =>
+                // Companion object is registered with "$" suffix in fqnIndex.
+                cp.findClass("kyo.fixtures.SomeCaseClass$") match
+                    case Present(objSym) =>
+                        given Tasty.Classpath = cp
+                        Kyo.lift(objSym.companion)
+                    case Absent =>
+                        // Some TASTy encodings register the object without "$"; try topLevelClasses.
+                        val objSym = cp.topLevelClasses.find(_.kind == Tasty.SymbolKind.Object)
+                        objSym match
+                            case Some(s) =>
+                                given Tasty.Classpath = cp
+                                Kyo.lift(s.companion)
+                            case None =>
+                                Abort.fail(TastyError.NotImplemented("SomeCaseClass$ not found in fqnIndex"))).map:
+                case Result.Success(Present(compSym)) =>
+                    assert(
+                        compSym.kind == Tasty.SymbolKind.Class,
+                        s"Expected companion kind Class but got ${compSym.kind}"
+                    )
+                case Result.Success(Absent) =>
+                    fail("Expected Present companion for SomeCaseClass$ but got Absent")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
     }
 
     // Phase 4 Test 3 (G24): plain class with no companion returns Absent.
-    // PlainClass has no companion object in the fixtures.
-    "Phase 4: PlainClass.companion returns Absent (no companion object)" in {
-        pending // plan: phase-02; sym.companion deferred to Phase 09
+    "Phase 4: PlainClass.companion returns Absent (no companion object)" in run {
+        Scope.run:
+            Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                cp.findClass("kyo.fixtures.PlainClass") match
+                    case Present(sym) =>
+                        given Tasty.Classpath = cp
+                        Kyo.lift(sym.companion)
+                    case Absent =>
+                        Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
+                case Result.Success(Absent) =>
+                    succeed
+                case Result.Success(Present(s)) =>
+                    fail(s"Expected Absent companion for PlainClass but got Present(${s.name.asString})")
+                case Result.Failure(e) =>
+                    fail(s"Unexpected failure: $e")
+                case Result.Panic(t) =>
+                    throw t
     }
 
-    // Phase 4 Test 4 (G24): companion called after classpath close returns Absent.
-    // sym.companion is pure (deferred to Phase 09); will return Maybe.Absent when not found.
-    "Phase 4: sym.companion after classpath close returns Absent (pure, no failure)" in {
-        pending // plan: phase-02; sym.companion deferred to Phase 09
+    // Phase 4 Test 4 (G24): companion is pure; returns Absent after scope close for a plain class.
+    // sym.companion uses cp.companionIndex which is empty in fromPickles.
+    "Phase 4: sym.companion after classpath close returns Absent (pure, no failure)" in run {
+        val captureResult: Result[TastyError, Tasty.Symbol] < Async =
+            Scope.run:
+                Abort.run[TastyError]:
+                    openFixtureClasspath(fixtureSource()).flatMap: cp =>
+                        cp.findClass("kyo.fixtures.PlainClass") match
+                            case Present(sym) => Kyo.lift(sym)
+                            case Absent       => Abort.fail(TastyError.NotImplemented("PlainClass not found"))
+        captureResult.flatMap:
+            case Result.Failure(e) => Kyo.lift(fail(s"Unexpected failure: $e"))
+            case Result.Panic(t)   => throw t
+            case Result.Success(sym) =>
+                Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+                    given Tasty.Classpath = cp
+                    val companion         = sym.companion
+                    assert(companion == Maybe.Absent, s"Expected Absent companion on empty classpath but got $companion")
     }
 
     // Phase 5 Test 1 (G20): sym.declaredType for val x: Int in PlainClass returns a type.

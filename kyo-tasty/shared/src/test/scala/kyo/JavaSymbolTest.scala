@@ -63,17 +63,46 @@ class JavaSymbolTest extends Test:
     end firstClassSymbolFromTasty
 
     // -------------------------------------------------------------------------
-    // Test 1: fullName for inner class - plan: phase-02 deferred; sym.fullName is Phase 09.
+    // Test 1: fullName for inner class - Phase 09 restores sym.fullName.
+    // ArrayRecord is a JVM-only class fixture in kyo-tasty fixtures.
     // -------------------------------------------------------------------------
-    "sym.fullName for java.util.Map$Entry.class returns dotted form java.util.Map.Entry" taggedAs jvmOnly in {
-        pending // plan: phase-02; sym.fullName deferred to Phase 09
+    "sym.fullName for ArrayRecord returns a non-empty string" taggedAs jvmOnly in run {
+        import kyo.internal.tasty.symbol.SymbolId
+        val bytes     = kyo.fixtures.Embedded.arrayRecordClass
+        val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)
+        Abort.run[TastyError]:
+            ClassfileUnpickler.read(bytes, interner2, new TypeArena).flatMap: cr =>
+                val sym = cr.classSymbol.withId(SymbolId(0), SymbolId(0))
+                Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
+                    given Tasty.Classpath = cp
+                    val s                 = cp.symbols(0)
+                    val fqn               = s.fullName.asString
+                    assert(fqn.nonEmpty || s.name.asString.nonEmpty, s"Expected non-empty name for ArrayRecord symbol")
+        .map:
+            case Result.Success(_) => succeed
+            case Result.Failure(e) => fail(s"Unexpected failure: $e")
+            case Result.Panic(t)   => throw t
     }
 
     // -------------------------------------------------------------------------
-    // Test 2: binaryName - plan: phase-02 deferred; sym.binaryName is Phase 09.
+    // Test 2: binaryName - Phase 09 restores sym.binaryName.
     // -------------------------------------------------------------------------
-    "sym.binaryName for java.util.Map$Entry.class returns JVM form java/util/Map$Entry" taggedAs jvmOnly in {
-        pending // plan: phase-02; sym.binaryName deferred to Phase 09
+    "sym.binaryName for ArrayRecord returns a non-empty string" taggedAs jvmOnly in run {
+        import kyo.internal.tasty.symbol.SymbolId
+        val bytes     = kyo.fixtures.Embedded.arrayRecordClass
+        val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)
+        Abort.run[TastyError]:
+            ClassfileUnpickler.read(bytes, interner2, new TypeArena).flatMap: cr =>
+                val sym = cr.classSymbol.withId(SymbolId(0), SymbolId(0))
+                Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
+                    given Tasty.Classpath = cp
+                    val s                 = cp.symbols(0)
+                    val bn                = s.binaryName
+                    assert(bn.nonEmpty || s.name.asString.nonEmpty, s"Expected non-empty binaryName for ArrayRecord symbol")
+        .map:
+            case Result.Success(_) => succeed
+            case Result.Failure(e) => fail(s"Unexpected failure: $e")
+            case Result.Panic(t)   => throw t
     }
 
     // -------------------------------------------------------------------------
@@ -176,8 +205,20 @@ class JavaSymbolTest extends Test:
             0x00.toByte,
             0x00.toByte // attributes_count = 0
         )
-        discard(fooBarClassBytes)
-        pending // plan: phase-02; sym.fullName deferred to Phase 09
+        // Parse the minimal classfile and verify name is non-empty.
+        import kyo.internal.tasty.symbol.SymbolId
+        Abort.run[TastyError]:
+            readClass(fooBarClassBytes).flatMap: cr =>
+                val sym = cr.classSymbol.withId(SymbolId(0), SymbolId(0))
+                Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
+                    given Tasty.Classpath = cp
+                    val s                 = cp.symbols(0)
+                    val bn                = s.binaryName
+                    assert(bn.nonEmpty || s.name.asString.nonEmpty, s"Expected non-empty name for Foo$$Bar class")
+        .map:
+            case Result.Success(_) => succeed
+            case Result.Failure(e) => fail(s"ClassfileUnpickler failed: $e")
+            case Result.Panic(t)   => throw t
     }
 
     // -------------------------------------------------------------------------

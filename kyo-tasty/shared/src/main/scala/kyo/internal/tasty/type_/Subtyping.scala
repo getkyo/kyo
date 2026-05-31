@@ -42,10 +42,9 @@ object Subtyping:
     import Tasty.SubtypeVerdict
     import Tasty.SubtypeVerdict.*
 
-    // plan: phase-02 inline; using simple name for scala.Nothing / scala.Any checks since
-    // Symbol.fullName is not available until Phase 09. These checks are approximate but safe:
-    // false positives are impossible (a symbol named "Any" that is not scala.Any would also pass).
-    // Phase 09 adds sym.fullName for precise FQN matching.
+    // Using simple name for scala.Nothing / scala.Any checks. These are approximate but safe:
+    // false positives are impossible (a symbol named "Any" that is not scala.Any would also pass
+    // the sub-check but that is an acceptable over-approximation for the bottom-type short-circuit).
     private val NothingName: String = "Nothing"
     private val AnyName: String     = "Any"
 
@@ -103,8 +102,13 @@ object Subtyping:
                                         if baseVerdict == Unknown then Unknown else NotSub
                                     else if subArgs.length != supArgs.length then NotSub
                                     else
-                                        // plan: phase-05; baseSymOpt deferred; variance lookup via Phase 09.
-                                        checkAppliedArgs(subArgs, supArgs, Maybe.Absent, cp, budget)
+                                        // Resolve base symbol for variance lookup; available since Phase 09.
+                                        val baseSymOpt: Maybe[Tasty.Symbol] = subBase match
+                                            case Tasty.Type.Named(id) =>
+                                                val s = cp.symbol(id)
+                                                if s.kind == Tasty.SymbolKind.Unresolved then Maybe.Absent else Maybe(s)
+                                            case _ => Maybe.Absent
+                                        checkAppliedArgs(subArgs, supArgs, baseSymOpt, cp, budget)
                                     end if
                                 case _ =>
                                     NotSub
@@ -228,10 +232,6 @@ object Subtyping:
       * If the base type symbol is available, uses its typeParams to determine variance flags. Falls back to invariant when variance
       * information is not available.
       */
-    /** plan: phase-02 inline; typeParamIds now carries SymbolId values (not Symbol objects). Variance lookup requires cp.symbol(id) which
-      * is a Phase 09 concern. For Phase 02 we fall back to invariant checking (typeParamsOpt = Absent) which is conservative but correct.
-      * Phase 09 adds sym.typeParams returning Chunk[Symbol] for proper variance resolution.
-      */
     private def checkAppliedArgs(
         subArgs: Chunk[Tasty.Type],
         supArgs: Chunk[Tasty.Type],
@@ -239,8 +239,10 @@ object Subtyping:
         cp: Tasty.Classpath,
         budget: Int
     ): SubtypeVerdict =
-        // plan: phase-02 inline; variance lookup deferred to Phase 09.
-        checkArgPairs(subArgs, supArgs, Maybe.Absent, 0, cp, budget)
+        val typeParamsOpt: Maybe[Chunk[Tasty.Symbol]] = baseSymOpt.flatMap: baseSym =>
+            val tps = baseSym.typeParams(using cp)
+            if tps.nonEmpty then Maybe(tps) else Maybe.Absent
+        checkArgPairs(subArgs, supArgs, typeParamsOpt, 0, cp, budget)
     end checkAppliedArgs
 
     private def checkArgPairs(

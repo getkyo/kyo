@@ -20,17 +20,16 @@ import kyo.Tasty
   */
 object TypeOps:
 
-    // These FQN constants are preserved for Phase 09 reference but unused in Phase 02.
-    // plan: phase-02 inline; Phase 09 restores FQN-based matching.
+    // These FQN constants are preserved for Phase 10 FQN-based normalization.
+    // plan: phase-10; TypeOps.applied has no Classpath parameter; FQN-based matching deferred to Phase 10.
     private val FunctionPrefix        = "scala.Function"
     private val ContextFunctionPrefix = "scala.ContextFunction"
     private val TuplePrefix           = "scala.Tuple"
     private val ArrayFqn              = "scala.Array"
     private val SingletonFqn          = "scala.Singleton"
 
-    // plan: phase-02 inline; uses sym.name.asString (simple name) instead of sym.fullName.asString (FQN).
+    // plan: phase-10; uses sym.name.asString (simple name) until TypeOps.applied receives a Classpath parameter.
     // This is a conservative approximation: e.g., "Function1" matches even if not in scala package.
-    // Phase 09 restores FQN-based matching once Symbol.fullName is available as a resolution method.
     private val FunctionSimple        = "Function"
     private val ContextFunctionSimple = "ContextFunction"
     private val TupleSimple           = "Tuple"
@@ -39,9 +38,8 @@ object TypeOps:
 
     /** Smart constructor for APPLIEDtype normalization.
       *
-      * plan: phase-05 inline; Named(symbolId) no longer carries a name directly; name resolution requires a Classpath (Phase 09 concern).
-      * For Phase 05, all Applied types pass through unchanged. Phase 09 restores FQN-based normalization once cp.symbol(id).name is
-      * available.
+      * plan: phase-10; Named(symbolId) carries no name directly; FQN-based normalization requires a Classpath which this method does not
+      * yet receive. Phase 10 adds the Classpath parameter and restores full normalization.
       */
     def applied(base: Tasty.Type, args: Chunk[Tasty.Type])(using AllowUnsafe): Tasty.Type =
         Tasty.Type.Applied(base, args)
@@ -49,7 +47,7 @@ object TypeOps:
 
     /** Smart constructor for ANDtype normalization: collapse AndType(Singleton, X) or AndType(X, Singleton) to X.
       *
-      * plan: phase-05 inline; Singleton name check deferred to Phase 09 (same reason as applied).
+      * plan: phase-10; Singleton name check deferred to Phase 10 (same reason as applied).
       */
     def andType(left: Tasty.Type, right: Tasty.Type)(using AllowUnsafe): Tasty.Type =
         Tasty.Type.AndType(left, right)

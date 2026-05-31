@@ -226,4 +226,214 @@ class SymbolResolutionTest extends Test:
                     throw t
     }
 
+    // ── Phase 09: Plan-mandated tests (Leaves 1-6) ──────────────────────────
+
+    import kyo.internal.tasty.symbol.SymbolId
+
+    private def makeClassSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol =
+        Tasty.Symbol.fromDescriptor(
+            id = SymbolId(id),
+            kind = Tasty.SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(name),
+            ownerId = SymbolId(ownerId),
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            bodyRecord = Maybe.Absent
+        )
+    end makeClassSym9
+
+    private def makePkgSym9(id: Int, name: String): Tasty.Symbol =
+        Tasty.Symbol.fromDescriptor(
+            id = SymbolId(id),
+            kind = Tasty.SymbolKind.Package,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(name),
+            ownerId = SymbolId(id),
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            bodyRecord = Maybe.Absent
+        )
+    end makePkgSym9
+
+    private def makeMethodSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol =
+        Tasty.Symbol.fromDescriptor(
+            id = SymbolId(id),
+            kind = Tasty.SymbolKind.Method,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(name),
+            ownerId = SymbolId(ownerId),
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            bodyRecord = Maybe.Absent
+        )
+    end makeMethodSym9
+
+    private def makeValSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol =
+        Tasty.Symbol.fromDescriptor(
+            id = SymbolId(id),
+            kind = Tasty.SymbolKind.Val,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(name),
+            ownerId = SymbolId(ownerId),
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            bodyRecord = Maybe.Absent
+        )
+    end makeValSym9
+
+    private def makeVarSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol =
+        Tasty.Symbol.fromDescriptor(
+            id = SymbolId(id),
+            kind = Tasty.SymbolKind.Var,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(name),
+            ownerId = SymbolId(ownerId),
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            bodyRecord = Maybe.Absent
+        )
+    end makeVarSym9
+
+    // Phase 09 Leaf 1: owner resolves to the correct Symbol.
+    // Pins: INV-005 + INV-001
+    "Phase09: owner resolves to the correct Symbol" in run {
+        val pkgSym = makePkgSym9(id = 0, name = "p")
+        val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).map: cp =>
+            given Tasty.Classpath = cp
+            val owner             = fooSym.owner
+            assert(
+                owner.id == pkgSym.id,
+                s"Expected owner id ${pkgSym.id.value} but got ${owner.id.value}"
+            )
+    }
+
+    // Phase 09 Leaf 2: parents extracts only Type.Named entries.
+    // Pins: INV-002 + INV-005
+    "Phase09: parents extracts only Type.Named entries from parentTypes" in run {
+        val symA = makeClassSym9(id = 0, name = "A", ownerId = 0)
+        val symB = makeClassSym9(id = 1, name = "B", ownerId = 0)
+        val symC = makeClassSym9(id = 2, name = "C", ownerId = 0).withParentTypes(
+            Chunk(
+                Tasty.Type.Named(SymbolId(0)),
+                Tasty.Type.Applied(
+                    Tasty.Type.Named(SymbolId(1)),
+                    Chunk(Tasty.Type.ConstantType(Tasty.Constant.IntConst(0)))
+                )
+            )
+        )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(symA, symB, symC)).map: cp =>
+            given Tasty.Classpath = cp
+            val parents           = symC.parents
+            assert(
+                parents.length == 1,
+                s"Expected 1 parent (Named only) but got ${parents.length}"
+            )
+            assert(
+                parents(0).id == symA.id,
+                s"Expected parent to be A (id 0) but got id ${parents(0).id.value}"
+            )
+    }
+
+    // Phase 09 Leaf 3: methods returns only method-kind declarations.
+    // Pins: INV-005
+    "Phase09: methods returns only method-kind declarations" in run {
+        val classSym  = makeClassSym9(id = 0, name = "Foo", ownerId = 0)
+        val method1   = makeMethodSym9(id = 1, name = "foo", ownerId = 0)
+        val method2   = makeMethodSym9(id = 2, name = "bar", ownerId = 0)
+        val valSym    = makeValSym9(id = 3, name = "x", ownerId = 0)
+        val varSym    = makeVarSym9(id = 4, name = "y", ownerId = 0)
+        val withDecls = classSym.withDeclarationIds(Chunk(SymbolId(1), SymbolId(2), SymbolId(3), SymbolId(4)))
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, method2, valSym, varSym)).map: cp =>
+            given Tasty.Classpath = cp
+            val methods           = withDecls.methods
+            assert(methods.length == 2, s"Expected 2 methods but got ${methods.length}")
+            val methodNames = methods.map(_.name.asString).toSet
+            assert(methodNames == Set("foo", "bar"), s"Expected {foo, bar} but got $methodNames")
+    }
+
+    // Phase 09 Leaf 4: findMember by string name returns Maybe.Absent when missing.
+    // Pins: INV-007
+    "Phase09: findMember by string name returns Maybe.Absent when missing" in run {
+        val classSym  = makeClassSym9(id = 0, name = "Foo", ownerId = 0)
+        val memberSym = makeMethodSym9(id = 1, name = "existingMethod", ownerId = 0)
+        val withDecls = classSym.withDeclarationIds(Chunk(SymbolId(1)))
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, memberSym)).map: cp =>
+            given Tasty.Classpath = cp
+            val absent            = withDecls.findMember("nope")
+            val present           = withDecls.findMember("existingMethod")
+            assert(absent == Maybe.Absent, s"Expected Absent for 'nope' but got $absent")
+            assert(present.isDefined, s"Expected Present for 'existingMethod' but got $present")
+    }
+
+    // Phase 09 Leaf 5: sym.parents, sym.owner, sym.methods are direct member calls.
+    // Pins: API discipline rule
+    "Phase09: sym.parents, sym.owner, sym.methods compile as direct member calls" in run {
+        val pkgSym = makePkgSym9(id = 0, name = "pkg")
+        val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).map: cp =>
+            given Tasty.Classpath               = cp
+            val ownerSym: Tasty.Symbol          = fooSym.owner
+            val parentList: Chunk[Tasty.Symbol] = fooSym.parents
+            val methodList: Chunk[Tasty.Symbol] = fooSym.methods
+            assert(ownerSym.id == pkgSym.id, "owner id mismatch")
+            assert(parentList.isEmpty, s"Expected empty parents got ${parentList.length}")
+            assert(methodList.isEmpty, s"Expected empty methods got ${methodList.length}")
+    }
+
+    // Phase 09 Leaf 6: no AllowUnsafe on resolution accessors.
+    // Pins: INV-010
+    "Phase09: resolution accessors require only Classpath, no AllowUnsafe" in run {
+        val sym = makeClassSym9(id = 0, name = "X", ownerId = 0)
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
+            locally:
+                given Tasty.Classpath                = cp
+                val _owner: Tasty.Symbol             = sym.owner
+                val _parents: Chunk[Tasty.Symbol]    = sym.parents
+                val _typeParams: Chunk[Tasty.Symbol] = sym.typeParams
+                val _decls: Chunk[Tasty.Symbol]      = sym.declarations
+                val _methods: Chunk[Tasty.Symbol]    = sym.methods
+                val _vals: Chunk[Tasty.Symbol]       = sym.vals
+                val _vars: Chunk[Tasty.Symbol]       = sym.vars
+                val _fields: Chunk[Tasty.Symbol]     = sym.fields
+                val _nested: Chunk[Tasty.Symbol]     = sym.nestedTypes
+                val _typeM: Chunk[Tasty.Symbol]      = sym.typeMembers
+                val _find: Maybe[Tasty.Symbol]       = sym.findMember("anything")
+                val _findN: Maybe[Tasty.Symbol]      = sym.findMemberByName(Tasty.Name("anything"))
+                val _byKind: Chunk[Tasty.Symbol]     = sym.membersByKind(Tasty.SymbolKind.Method)
+                val _showStr: String                 = sym.show
+            succeed
+    }
+
 end SymbolResolutionTest

@@ -12,17 +12,34 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
     import AllowUnsafe.embrace.danger
 
     // Test 6 (INV: T1, Annotation): synthetic factory produces correct field values.
-    // plan: phase-08; Annotation is now a case class; args is Maybe[Tree] not a Chunk[Byte].
-    "Annotation case class: annotationType.show is non-empty, args is Absent for synthetic" in run {
-        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+    // Phase 09: Type.Named(id).show resolves cp.symbol(id).name.asString; the symbol must
+    // be registered in the classpath at index id.value.
+    "Annotation case class: annotationType.show returns leaf name 'deprecated', args is Absent" in run {
+        import kyo.internal.tasty.symbol.SymbolId
+        val deprecatedSym = Tasty.Symbol.fromDescriptor(
+            id = SymbolId(0),
+            kind = Tasty.SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("deprecated"),
+            ownerId = SymbolId(0),
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            bodyRecord = Maybe.Absent
+        )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(deprecatedSym)).map: cp =>
             given Tasty.Classpath = cp
-            val deprecatedType    = makeNamed("scala.deprecated")
+            val deprecatedType    = Tasty.Type.Named(SymbolId(0))
             val a                 = Tasty.Annotation(deprecatedType, Maybe.Absent)
-            // plan: phase-05; show renders id values (not names) until Phase 09.
-            val showStr = a.annotationType.show
+            val showStr           = a.annotationType.show
             assert(
-                showStr.nonEmpty,
-                s"Expected non-empty show but got '$showStr'"
+                showStr == "deprecated",
+                s"Expected 'deprecated' but got '$showStr'"
             )
             assert(
                 a.args == Maybe.Absent,

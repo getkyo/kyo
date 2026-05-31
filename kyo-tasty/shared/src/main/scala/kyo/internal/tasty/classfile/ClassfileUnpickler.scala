@@ -1066,7 +1066,9 @@ object ClassfileUnpickler:
                                                         flags = classFlags,
                                                         name = Tasty.Name(symName),
                                                         ownerId = kyo.internal.tasty.symbol.SymbolId(-1),
-                                                        // plan: phase-02; self-referential declaredType deferred to Phase 09.
+                                                        // Classfile symbols receive declaredType = Absent here because the symbol id is not yet
+                                                        // assigned (partial symbol with id=-1). The self-referential Type.Named(sym.id) is set
+                                                        // after finalizeMerge in Phase 11 when ids are stable.
                                                         declaredType = Maybe.Absent,
                                                         scaladoc = Maybe.Absent,
                                                         sourcePosition = Maybe.Absent,

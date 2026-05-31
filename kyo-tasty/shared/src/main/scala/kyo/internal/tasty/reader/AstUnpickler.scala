@@ -567,6 +567,9 @@ object AstUnpickler:
         // Phase 2: decode parent_Type* entries.
         // Stop at SELFDEF (118), any definition tag (VALDEF=129, DEFDEF=130, TYPEDEF=131),
         // or any modifier tag (1-59, 98, 99, 173) which would indicate we overran.
+        // Cross-file parents arrive as APPLY(SELECT(NEW(type_ref), <init>), args) term trees with
+        // tag >= firstLengthTreeTag (128). We descend into APPLY nodes to extract the constructor
+        // type reference so that buildSubclassIndex can correctly index cross-file parent edges.
         var scanParents = true
         while scanParents && parentScanView.position < end do
             val tag = parentScanView.peekByte(parentScanView.position) & 0xff
@@ -577,6 +580,24 @@ object AstUnpickler:
                 isModifierTag(tag)
             then
                 scanParents = false
+            else if tag == TastyFormat.APPLY && tag >= TastyFormat.firstLengthTreeTag then
+                // APPLY-headed parent: consume tag + length, then decode the first sub-node
+                // (the constructor call target) as a type reference.
+                try
+                    discard(parentScanView.readByte()) // consume APPLY tag
+                    val applyEnd = parentScanView.readEnd()
+                    val savedPos = parentScanView.position
+                    // The first child of APPLY is usually SELECT(NEW(type_ref), <init>).
+                    // Attempt to decode it as a type; fall back on any error.
+                    val decoded = TypeUnpickler.readTypeIntoSession(parentScanView, typeSession)
+                    collected += decoded
+                    parentScanView.goto(applyEnd)
+                catch
+                    case _: Exception =>
+                        // On decode error for APPLY descent, skip to end.
+                        parentScanView.goto(end)
+                        scanParents = false
+                end try
             else
                 try
                     val decoded = TypeUnpickler.readTypeIntoSession(parentScanView, typeSession)
