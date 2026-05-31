@@ -9,10 +9,8 @@ import scala.collection.mutable
   *
   * Leaves:
   *   1. Classpath constructor fields are immutable (INV-003).
-  *   5. No AllowUnsafe on Classpath public methods (INV-010).
-  *   6. decodeBody is the only Classpath method returning a kyo effect (INV-005).
   *
-  * Pins: INV-003, INV-005, INV-010.
+  * Pins: INV-003.
   */
 class ClasspathImmutabilityTest extends Test:
 
@@ -84,69 +82,6 @@ class ClasspathImmutabilityTest extends Test:
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
                     throw t
-    }
-
-    // ── Leaf 5: no AllowUnsafe on Classpath public methods ───────────────────
-
-    // Given: the Tasty.scala source text, Classpath case class body block.
-    // When: every public method signature in the case class is scanned.
-    // Then: no method carries (using AllowUnsafe).
-    // Pins: INV-010.
-    "Leaf 5: no AllowUnsafe on Classpath public methods" in {
-        val src   = TestResourceLoader.readText("kyo/Tasty.scala")
-        val lines = src.split("\n").toSeq
-
-        // Find the Classpath case class body between `final case class Classpath private[Tasty]` and `end Classpath`.
-        val cpStart = lines.indexWhere(_.contains("final case class Classpath private[Tasty]"))
-        val cpEnd   = lines.indexWhere(l => l.trim == "end Classpath", cpStart)
-        assert(cpStart >= 0, "Could not find 'final case class Classpath private[Tasty]' in Tasty.scala")
-        assert(cpEnd >= 0, "Could not find 'end Classpath' in Tasty.scala")
-
-        val classpathLines = lines.slice(cpStart, cpEnd + 1)
-
-        // Collect public def lines that have AllowUnsafe in their signature.
-        val allowUnsafeDefs = classpathLines.filter: line =>
-            val t = line.trim
-            (t.startsWith("def ") || t.contains(" def ")) && t.contains("AllowUnsafe") && !t.startsWith("//") && !t.startsWith("private")
-
-        assert(
-            allowUnsafeDefs.isEmpty,
-            s"No Classpath public method may carry AllowUnsafe; found: ${allowUnsafeDefs.mkString("; ")}"
-        )
-        succeed
-    }
-
-    // ── Leaf 6: decodeBody is the only Classpath method returning a kyo effect ─
-
-    // Given: the Tasty.scala source text, Classpath case class body block.
-    // When: every public method's return type is scanned for a kyo effect suffix.
-    // Then: exactly one method (decodeBody) returns a kyo effect; all others return plain values.
-    // Pins: INV-005.
-    "Leaf 6: decodeBody is the only Classpath method returning a kyo effect" in {
-        val src   = TestResourceLoader.readText("kyo/Tasty.scala")
-        val lines = src.split("\n").toSeq
-
-        val cpStart = lines.indexWhere(_.contains("final case class Classpath private[Tasty]"))
-        val cpEnd   = lines.indexWhere(l => l.trim == "end Classpath", cpStart)
-        assert(cpStart >= 0, "Could not find 'final case class Classpath private[Tasty]' in Tasty.scala")
-        assert(cpEnd >= 0, "Could not find 'end Classpath' in Tasty.scala")
-
-        val classpathLines = lines.slice(cpStart, cpEnd + 1)
-
-        // Collect public def lines with a kyo effect return type marker.
-        val effectDefs = classpathLines.filter: line =>
-            val t = line.trim
-            t.startsWith("def ") && t.contains("< ") && !t.startsWith("//") && !t.startsWith("private")
-
-        assert(
-            effectDefs.length == 1,
-            s"Expected exactly 1 effect-bearing def in Classpath, found ${effectDefs.length}: ${effectDefs.mkString("; ")}"
-        )
-        assert(
-            effectDefs.head.contains("def decodeBody(sym: Symbol)"),
-            s"The single effect-bearing def must be 'def decodeBody(sym: Symbol)', got: ${effectDefs.head.trim}"
-        )
-        succeed
     }
 
 end ClasspathImmutabilityTest

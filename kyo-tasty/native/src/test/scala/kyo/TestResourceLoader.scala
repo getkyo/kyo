@@ -1,6 +1,6 @@
 package kyo
 
-/** Native implementation: serves known fixture bytes from Embedded; reads text from classpath resources. */
+/** Native implementation: serves known fixture bytes from Embedded. */
 object TestResourceLoader:
 
     def loadBytes(resourcePath: String): Array[Byte] =
@@ -15,8 +15,5 @@ object TestResourceLoader:
             case p if p.endsWith("FixtureClasses$package.tasty") => kyo.fixtures.Embedded.fixtureClassesPackageTasty
             case other =>
                 throw new RuntimeException(s"Native: fixture not embedded: $other; add to Embedded.scala")
-
-    def readText(resourcePath: String): String =
-        EmbeddedText.get(resourcePath)
 
 end TestResourceLoader

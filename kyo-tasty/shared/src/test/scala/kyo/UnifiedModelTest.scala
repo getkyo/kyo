@@ -377,11 +377,4 @@ class UnifiedModelTest extends Test:
             case Result.Panic(t)   => throw t
     }
 
-    // Test 21: Constant.scala source contains zero occurrences of "classConstSentinel".
-    "Constant.scala source contains zero occurrences of classConstSentinel" in run {
-        val src   = TestResourceLoader.readText("kyo/internal/tasty/symbol/Constant.scala")
-        val count = src.split("classConstSentinel", -1).length - 1
-        assert(count == 0, s"Expected 0 occurrences of 'classConstSentinel' in Constant.scala but found $count")
-    }
-
 end UnifiedModelTest

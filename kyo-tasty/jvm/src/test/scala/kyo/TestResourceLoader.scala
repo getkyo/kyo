@@ -1,6 +1,6 @@
 package kyo
 
-/** JVM implementation: loads bytes and text from classloader resources. */
+/** JVM implementation: loads bytes from classloader resources. */
 object TestResourceLoader:
 
     def loadBytes(resourcePath: String): Array[Byte] =
@@ -25,11 +25,5 @@ object TestResourceLoader:
             buf.toArray
         end if
     end loadBytes
-
-    def readText(resourcePath: String): String =
-        val src = scala.io.Source.fromResource(resourcePath)
-        try src.mkString
-        finally src.close()
-    end readText
 
 end TestResourceLoader
