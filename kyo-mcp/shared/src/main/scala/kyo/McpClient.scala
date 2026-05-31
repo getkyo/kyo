@@ -108,6 +108,10 @@ object McpClient:
         /** Closes the client immediately without waiting for in-flight requests. */
         def closeNow(using Frame): Unit < Async = self.closeUnsafe(Duration.Zero)
 
+        /** Sends a `ping` request to the server and awaits the empty response. */
+        def ping(using Frame): Unit < (Async & Abort[McpError | Closed]) =
+            self.pingUnsafe
+
         /** Returns the underlying Unsafe handle. */
         def unsafe: Unsafe = self
 
@@ -138,6 +142,7 @@ object McpClient:
             Frame
         ): McpRoute.CompletionResult < (Async & Abort[McpError | Closed])
         def notifyRootsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
+        def pingUnsafe(using Frame): Unit < (Async & Abort[McpError | Closed])
         def serverCapabilitiesUnsafe: Maybe[McpCapabilities.Server]
         def serverInfoUnsafe: Maybe[McpInfo]
         def protocolVersionUnsafe: Maybe[McpProtocolVersion]

@@ -8,9 +8,10 @@ import kyo.*
   * set, writes negotiated state into the provided `AtomicRef`s, and returns `McpInitializeResult`
   * carrying the auto-derived or declared server capabilities.
   *
-  * Protocol version negotiation: the server accepts the client's requested version if it appears
-  * in `config.supportedProtocolVersions`; otherwise returns `McpProtocolVersionMismatchError`
-  * which causes the handler framework to send an error response to the client.
+  * Protocol version negotiation (MCP 2025-06-18 §3.2): if the client's requested version appears
+  * in `config.supportedProtocolVersions`, that version is used. If there is no overlap, the server
+  * returns success with the highest supported version (`maxBy(_.asString)`) rather than failing.
+  * `McpProtocolVersionMismatchError` is kept as a panic-class for the zero-supported-versions case.
   */
 private[kyo] object McpInitializeRoute:
 
@@ -23,31 +24,22 @@ private[kyo] object McpInitializeRoute:
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[McpInitializeRequest, McpInitializeResult]("initialize") { (req, _) =>
             val clientVersion = req.protocolVersion
-            val negotiated =
+            val version =
                 if config.supportedProtocolVersions.contains(clientVersion) then
-                    Present(clientVersion)
+                    clientVersion
                 else
-                    Absent
-            negotiated match
-                case Absent =>
-                    Abort.fail(
-                        McpProtocolVersionMismatchError(
-                            clientRequested = clientVersion,
-                            supported = Chunk.from(config.supportedProtocolVersions)
-                        )
-                    )
-                case Present(version) =>
-                    for
-                        _ <- negotiatedVersionRef.set(Present(version))
-                        _ <- clientCapabilitiesRef.set(Present(req.capabilities))
-                        _ <- clientInfoRef.set(Present(req.clientInfo))
-                    yield McpInitializeResult(
-                        protocolVersion = version,
-                        serverInfo = config.serverInfo,
-                        capabilities = serverCaps,
-                        instructions = config.instructions
-                    )
-            end match
+                    config.supportedProtocolVersions.maxBy(_.asString)
+            for
+                _ <- negotiatedVersionRef.set(Present(version))
+                _ <- clientCapabilitiesRef.set(Present(req.capabilities))
+                _ <- clientInfoRef.set(Present(req.clientInfo))
+            yield McpInitializeResult(
+                protocolVersion = version,
+                serverInfo = config.serverInfo,
+                capabilities = serverCaps,
+                instructions = config.instructions
+            )
+            end for
         }
 
 end McpInitializeRoute

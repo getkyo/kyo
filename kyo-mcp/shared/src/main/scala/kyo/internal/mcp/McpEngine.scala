@@ -75,11 +75,16 @@ private[kyo] object McpEngine:
         val rootsListChangedRoute: JsonRpcRoute[?, ?, ?] =
             JsonRpcRoute.notification[NotifyEmptyParams]("notifications/roots/list_changed") { (_, _) => () }
 
+        // MCP 2025-06-18 §3.8: ping must be handled by both client and server.
+        // Responds with an empty object to confirm liveness. Registered unconditionally.
+        val pingRoute: JsonRpcRoute[?, ?, ?] =
+            JsonRpcRoute.request[NotifyEmptyParams, NotifyEmptyParams]("ping") { (_, _) => NotifyEmptyParams() }
+
         // Lift user McpRoute carriers to JsonRpcRoute.
         // initialize is at index 0 (INV-004); builtins follow; user routes last.
         val userJsonRpcRoutes: Seq[JsonRpcRoute[?, ?, ?]] = userRoutes.map(_.underlying)
         val allRoutes: Seq[JsonRpcRoute[?, ?, ?]] =
-            Seq(initializeRoute, initializedNotifRoute, rootsListChangedRoute) ++ builtinRoutes ++ userJsonRpcRoutes
+            Seq(initializeRoute, initializedNotifRoute, rootsListChangedRoute, pingRoute) ++ builtinRoutes ++ userJsonRpcRoutes
 
         JsonRpcHandler.initUnscoped(transport, allRoutes, jsonRpcConfig).map { handler =>
             val unsafe: McpServer.Unsafe = new McpServer.Unsafe:

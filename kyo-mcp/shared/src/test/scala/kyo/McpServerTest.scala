@@ -126,14 +126,15 @@ class McpServerTest extends Test:
             McpServer.initUnscoped(ta, completionRoute).flatMap { server =>
                 Fiber.Promise.init[Unit, Sync].map { promise =>
                     val ctx = JsonRpcRoute.Context.forTest(promise, Absent, Absent, Absent)
-                    // Build CompleteParams as Structure.Value.
-                    // A sum type variant (sealed enum case) encodes as Record("VariantName" -> Record(fields...)).
+                    // Build CompleteParams as Structure.Value using the hand-rolled CompletionRef wire format.
+                    // Per MCP 2025-06-18 §3.3, CompletionRef uses a "type" discriminator field:
+                    //   Prompt encodes as {"type":"ref/prompt","name":"..."}
+                    //   Resource encodes as {"type":"ref/resource","uri":"..."}
                     // CompleteParams(ref=CompletionRef.Prompt("myPrompt"), argument=CompletionArg("color", "re")):
                     val params = Structure.Value.Record(Chunk(
                         "ref" -> Structure.Value.Record(Chunk(
-                            "Prompt" -> Structure.Value.Record(Chunk(
-                                "name" -> Structure.Value.Str("myPrompt")
-                            ))
+                            "type" -> Structure.Value.Str("ref/prompt"),
+                            "name" -> Structure.Value.Str("myPrompt")
                         )),
                         "argument" -> Structure.Value.Record(Chunk(
                             "name"  -> Structure.Value.Str("color"),

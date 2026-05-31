@@ -48,11 +48,11 @@ object McpRoute:
 
         /** Reports a progress notification back to the caller. */
         def progress(
-            current: Double,
+            progress: Double,
             total: Maybe[Double] = Absent,
             message: Maybe[String] = Absent
         )(using Frame): Unit < (Async & Abort[Closed]) =
-            internal.mcp.McpProgressPolicy.report(underlying, current, total, message)
+            internal.mcp.McpProgressPolicy.report(underlying, progress, total, message)
 
     end Context
 
@@ -158,10 +158,15 @@ object McpRoute:
 
     /** Identifies the target of a completion request.
       * INV-022: `Resource.uri` is typed `McpResourceUri`.
+      * The on-wire discriminator key is `"type"` with values `"ref/prompt"` and `"ref/resource"`.
+      * The hand-rolled Schema lives in `kyo/internal/McpCompletionRefSchema.scala`.
       */
     enum CompletionRef derives CanEqual:
         case Prompt(name: String)
         case Resource(uri: McpResourceUri)
+
+    object CompletionRef:
+        given Schema[CompletionRef] = internal.McpCompletionRefSchema.schema
 
     /** Named argument descriptor for a completion request (Audit-A8 / INV-026). */
     final case class CompletionArg(name: String, value: String) derives Schema, CanEqual

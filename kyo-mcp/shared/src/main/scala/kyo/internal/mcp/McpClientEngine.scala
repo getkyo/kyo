@@ -161,6 +161,10 @@ private[kyo] object McpClientEngine:
             def underlyingUnsafe: JsonRpcHandler                        = handler
             def awaitDrainUnsafe(using Frame): Unit < Async             = Sync.defer(())
 
+            // The sentinel server has no real ping target; return immediately.
+            def pingUnsafe(using Frame): Unit < (Async & Abort[McpError | Closed]) =
+                Sync.defer(())
+
             def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async =
                 Sync.defer(())
         end new
@@ -266,6 +270,13 @@ private[kyo] object McpClientEngine:
 
             def notifyRootsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
                 handler.notify[NotifyEmptyParams]("notifications/roots/list_changed", NotifyEmptyParams())
+
+            def pingUnsafe(using Frame): Unit < (Async & Abort[McpError | Closed]) =
+                handler.call[NotifyEmptyParams, NotifyEmptyParams]("ping", NotifyEmptyParams())
+                    .map(_ => ())
+                    .handle(Abort.recover[JsonRpcError] { e =>
+                        Abort.fail(McpInvalidArgumentError("ping", "response", e.message))
+                    })
 
             def serverCapabilitiesUnsafe: Maybe[McpCapabilities.Server] =
                 // AllowUnsafe: synchronous read of post-handshake negotiated state; populated before instance is returned.

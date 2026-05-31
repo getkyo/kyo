@@ -80,4 +80,46 @@ class McpContentTest extends Test:
         assert(s1 eq s2)
     }
 
+    "ResourceLink: wire JSON contains type:resource_link" in {
+        val uri     = McpResourceUri("file:///a")
+        val content = McpContent.ResourceLink(uri, "a-file")
+        val json    = encodedJson[McpContent](content)
+        assert(json.contains("\"type\":\"resource_link\""))
+        assert(json.contains("file:///a"))
+        assert(json.contains("\"name\":\"a-file\""))
+    }
+
+    "ResourceLink round-trip preserves fields" in {
+        val uri     = McpResourceUri("file:///a")
+        val content = McpContent.ResourceLink(uri, "a-file", Absent, Absent, McpContent.Annotations.noop)
+        assert(roundtrip[McpContent](content) == content)
+    }
+
+    "ResourceLink with description round-trips" in {
+        val uri     = McpResourceUri("file:///b")
+        val content = McpContent.ResourceLink(uri, "b-file", Present("A description"), Absent)
+        assert(roundtrip[McpContent](content) == content)
+    }
+
+    "ResourceLink with mimeType round-trips" in {
+        val uri     = McpResourceUri("file:///c")
+        val content = McpContent.ResourceLink(uri, "c-file", Absent, Present(McpMimeType("text/plain")))
+        assert(roundtrip[McpContent](content) == content)
+    }
+
+    "ResourceLink omits absent Maybe fields from wire JSON" in {
+        val uri     = McpResourceUri("file:///d")
+        val content = McpContent.ResourceLink(uri, "d-file", Absent, Absent)
+        val json    = encodedJson[McpContent](content)
+        assert(!json.contains("\"description\""))
+        assert(!json.contains("\"mimeType\""))
+    }
+
+    "ResourceLink with annotations round-trips" in {
+        val uri     = McpResourceUri("file:///e")
+        val ann     = McpContent.Annotations(Present(Chunk(McpRole.User)), Absent)
+        val content = McpContent.ResourceLink(uri, "e-file", Absent, Absent, ann)
+        assert(roundtrip[McpContent](content) == content)
+    }
+
 end McpContentTest

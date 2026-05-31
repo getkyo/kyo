@@ -2,12 +2,12 @@ package kyo
 
 /** Sealed union of MCP content types exchanged in tool results, sampling messages, and prompts.
   *
-  * The four cases are `Text`, `Image`, `Audio`, and `EmbeddedResource`. Use the companion
-  * factory methods `text`, `image`, `audio`, `resource` to construct values.
+  * The five cases are `Text`, `Image`, `Audio`, `EmbeddedResource`, and `ResourceLink`.
+  * Use the companion factory methods `text`, `image`, `audio`, `resource` to construct values.
   *
   * The on-wire discriminator key is `"type"` with values `"text"` / `"image"` / `"audio"` /
-  * `"resource"` (INV-006). The `given Schema[McpContent]` hand-rolls the discriminator schema
-  * in `kyo/internal/McpContentSchema.scala`.
+  * `"resource"` / `"resource_link"` (INV-006). The `given Schema[McpContent]` hand-rolls the
+  * discriminator schema in `kyo/internal/McpContentSchema.scala`.
   *
   * Optional record-typed fields (notably `annotations`) follow the noop pattern: the parameter
   * type is the concrete record and `Annotations.noop` is the default; the wire encoder omits
@@ -42,6 +42,17 @@ object McpContent:
         resource: McpResourceContents,
         annotations: Annotations = Annotations.noop
     ) extends McpContent
+
+    /** A link to a resource that the client can retrieve.
+      * INV-022: `uri` is typed `McpResourceUri`, not raw `String`.
+      */
+    final case class ResourceLink(
+        uri: McpResourceUri,
+        name: String,
+        description: Maybe[String] = Absent,
+        mimeType: Maybe[McpMimeType] = Absent,
+        annotations: Annotations = Annotations.noop
+    ) extends McpContent derives CanEqual
 
     /** Optional display annotations for any content leaf.
       *

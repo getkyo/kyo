@@ -1,0 +1,56 @@
+package kyo.integration
+
+import kyo.*
+
+/** Tests §3.3 MCP 2025-06-18: `CompletionRef` encodes with the correct `"type"` discriminator
+  * key (`"ref/prompt"` or `"ref/resource"`) and round-trips through the hand-rolled Schema.
+  *
+  * Pins acceptance criterion 3 of Phase 05 and INV-300.
+  */
+class McpCompletionRefWireTest extends Test:
+
+    given CanEqual[Any, Any] = CanEqual.canEqualAny
+
+    private def encodedJson[A: Schema](value: A): String = Json.encode[A](value)
+
+    private def roundtrip[A: Schema](value: A): A =
+        val encoded = Structure.encode[A](value)
+        Structure.decode[A](encoded).getOrElse(fail(s"decode failed for $value"))
+
+    "CompletionRef.Prompt encodes with type 'ref/prompt'" in {
+        val ref  = McpRoute.CompletionRef.Prompt("my-prompt")
+        val json = encodedJson[McpRoute.CompletionRef](ref)
+        assert(json.contains("\"type\":\"ref/prompt\""))
+        assert(json.contains("\"name\":\"my-prompt\""))
+    }
+
+    "CompletionRef.Resource encodes with type 'ref/resource'" in {
+        val ref  = McpRoute.CompletionRef.Resource(McpResourceUri("file:///my-resource"))
+        val json = encodedJson[McpRoute.CompletionRef](ref)
+        assert(json.contains("\"type\":\"ref/resource\""))
+        assert(json.contains("file:///my-resource"))
+    }
+
+    "CompletionRef.Prompt round-trips" in {
+        val ref = McpRoute.CompletionRef.Prompt("x")
+        assert(roundtrip[McpRoute.CompletionRef](ref) == ref)
+    }
+
+    "CompletionRef.Resource round-trips" in {
+        val ref = McpRoute.CompletionRef.Resource(McpResourceUri("file:///r"))
+        assert(roundtrip[McpRoute.CompletionRef](ref) == ref)
+    }
+
+    "CompletionRef.Prompt with empty name encodes correctly" in {
+        val ref  = McpRoute.CompletionRef.Prompt("")
+        val json = encodedJson[McpRoute.CompletionRef](ref)
+        assert(json.contains("\"type\":\"ref/prompt\""))
+    }
+
+    "Schema singleton reference is stable (INV-013)" in {
+        val s1 = summon[Schema[McpRoute.CompletionRef]]
+        val s2 = summon[Schema[McpRoute.CompletionRef]]
+        assert(s1 eq s2)
+    }
+
+end McpCompletionRefWireTest
