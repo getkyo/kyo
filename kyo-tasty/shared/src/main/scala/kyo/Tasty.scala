@@ -1031,7 +1031,12 @@ object Tasty:
         /** Term layer marker (Method, Val, Var, Field, Parameter). */
         sealed trait TermLike extends Symbol
 
-        /** Common Class / Trait / Object contract: raw fields only. Resolution accessors (parents, methods, vals, ...) land in Phase 03.
+        /** Common Class / Trait / Object contract: raw fields plus typed resolution accessors.
+          *
+          * Raw fields are the data as decoded from TASTy/classfile bytes. Typed accessors resolve SymbolId references via the implicit
+          * Classpath and return narrowed Chunk types (Chunk[Method], Chunk[Val], etc.) per INV-005. The base-Symbol accessors (methods,
+          * vals, etc.) that return Chunk[Symbol] remain on Symbol and still work for flat-Symbol callers; these overrides narrow the return
+          * type for ClassLike-typed references via Chunk covariance.
           */
         sealed trait ClassLike extends TypeLike:
             def javaMetadata: Maybe[JavaMetadata]
@@ -1041,6 +1046,90 @@ object Tasty:
             def annotations: Chunk[Annotation]
             def javaAnnotations: Chunk[JavaAnnotation]
             def body: Maybe[SymbolBody]
+
+            /** Resolve direct parent ClassLike symbols, collecting only Type.Named entries from parentTypes. */
+            override def parents(using cp: Classpath): Chunk[ClassLike] =
+                parentTypes.flatMap:
+                    case Type.Named(pid) =>
+                        cp.symbol(pid) match
+                            case c: ClassLike => Chunk(c)
+                            case _            => Chunk.empty
+                    case _ => Chunk.empty
+
+            /** Resolve type parameter symbols recorded for this classlike. */
+            override def typeParams(using cp: Classpath): Chunk[TypeParam] =
+                typeParamIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case t: TypeParam => Chunk(t)
+                        case _            => Chunk.empty
+
+            /** All direct declarations of this classlike as an unfiltered Chunk[Symbol]. */
+            override def declarations(using cp: Classpath): Chunk[Symbol] = declarationIds.map(cp.symbol)
+
+            /** All method-kind declarations of this classlike. */
+            override def methods(using cp: Classpath): Chunk[Method] =
+                declarationIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case m: Method => Chunk(m)
+                        case _         => Chunk.empty
+
+            /** All constructor declarations (name == "<init>") of this classlike. */
+            def constructors(using cp: Classpath): Chunk[Method] =
+                import Name.asString
+                methods.filter(m => m.name.asString == "<init>")
+
+            /** All val-kind declarations of this classlike. */
+            override def vals(using cp: Classpath): Chunk[Val] =
+                declarationIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case v: Val => Chunk(v)
+                        case _      => Chunk.empty
+
+            /** All var-kind declarations of this classlike. */
+            override def vars(using cp: Classpath): Chunk[Var] =
+                declarationIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case v: Var => Chunk(v)
+                        case _      => Chunk.empty
+
+            /** All field-kind declarations (Java-only) of this classlike. */
+            override def fields(using cp: Classpath): Chunk[Field] =
+                declarationIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case f: Field => Chunk(f)
+                        case _        => Chunk.empty
+
+            /** All nested class, trait, and object declarations of this classlike. */
+            override def nestedTypes(using cp: Classpath): Chunk[ClassLike] =
+                declarationIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case c: ClassLike => Chunk(c)
+                        case _            => Chunk.empty
+
+            /** All type alias declarations of this classlike. */
+            def typeAliases(using cp: Classpath): Chunk[TypeAlias] =
+                declarationIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case t: TypeAlias => Chunk(t)
+                        case _            => Chunk.empty
+
+            /** All abstract type declarations of this classlike. */
+            def abstractTypes(using cp: Classpath): Chunk[AbstractType] =
+                declarationIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case t: AbstractType => Chunk(t)
+                        case _               => Chunk.empty
+
+            /** All opaque type declarations of this classlike. */
+            def opaqueTypes(using cp: Classpath): Chunk[OpaqueType] =
+                declarationIds.flatMap: id =>
+                    cp.symbol(id) match
+                        case t: OpaqueType => Chunk(t)
+                        case _             => Chunk.empty
+
+            /** Resolve the companion of this classlike (companion object for a Class or Trait; companion class for an Object). */
+            override def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
+
         end ClassLike
 
         // ── 14 final case classes ─────────────────────────────────────────────
@@ -1060,7 +1149,16 @@ object Tasty:
             annotations: Chunk[Annotation],
             javaAnnotations: Chunk[JavaAnnotation],
             body: Maybe[SymbolBody]
-        ) extends ClassLike
+        ) extends ClassLike:
+            /** Resolve the permitted direct subclasses for sealed / enum classes. Returns Absent when no sealed subclass list is present.
+              */
+            override def permittedSubclasses(using cp: Classpath): Maybe[Chunk[ClassLike]] =
+                permittedSubclassIds.map: ids =>
+                    ids.flatMap: id =>
+                        cp.symbol(id) match
+                            case c: ClassLike => Chunk(c)
+                            case _            => Chunk.empty
+        end Class
 
         final case class Trait private[kyo] (
             id: SymbolId,
@@ -1077,7 +1175,15 @@ object Tasty:
             annotations: Chunk[Annotation],
             javaAnnotations: Chunk[JavaAnnotation],
             body: Maybe[SymbolBody]
-        ) extends ClassLike
+        ) extends ClassLike:
+            /** Resolve the permitted direct subclasses for sealed traits. Returns Absent when no sealed subclass list is present. */
+            override def permittedSubclasses(using cp: Classpath): Maybe[Chunk[ClassLike]] =
+                permittedSubclassIds.map: ids =>
+                    ids.flatMap: id =>
+                        cp.symbol(id) match
+                            case c: ClassLike => Chunk(c)
+                            case _            => Chunk.empty
+        end Trait
 
         final case class Object private[kyo] (
             id: SymbolId,
