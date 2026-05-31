@@ -40,7 +40,7 @@ The single line above is a server. The next sections walk through pairing it wit
 The same constructor is used on both sides. A peer that only initiates requests passes no routes; a peer that only answers requests simply does not call `.call` on the handler. The two snippets below are the same code; the difference is which side calls which extension method.
 
 ```scala
-val program: Async & Scope ?=> AddResp < (Async & Scope & Abort[JsonRpcError | Closed]) =
+val program: AddResp < (Async & Scope & Abort[JsonRpcError | Closed]) =
     val add = JsonRpcRoute.request[AddReq, AddResp]("add") { (req, _) =>
         AddResp(req.a + req.b)
     }
@@ -151,10 +151,9 @@ The handler only forwards progress to the caller when a `JsonRpcProgressPolicy` 
 For protocols that stream typed partial results (rather than opaque progress values), `callPartialResults[In, T]` is the streaming variant:
 
 ```scala
-import scala.compiletime.uninitialized
-val handler: JsonRpcHandler = uninitialized
-val partials: Stream[ProgressResp, Async & Abort[JsonRpcError | Closed]] =
-    handler.callPartialResults[ProgressReq, ProgressResp]("longJob", ProgressReq(100))
+val getPartials: JsonRpcTransport => Stream[ProgressResp, Async & Abort[JsonRpcError | Closed]] < (Async & Scope) =
+    transport =>
+        JsonRpcHandler.init(transport).map(_.callPartialResults[ProgressReq, ProgressResp]("longJob", ProgressReq(100)))
 ```
 
 > **Note:** `callPartialResults` requires a `Tag[Emit[Chunk[T]]]` in addition to the usual `Schema` and `Tag` for `T`. Missing this implicit is the most common compile-error reason; the inferred-type display is the give-away.
@@ -215,11 +214,12 @@ A route accumulates typed user-domain error types via `.error[E2](code, message)
 2. Registers a mapping: when the handler aborts with a value matching `E2`, the engine emits a `JsonRpcCustomError(code, message)` on the wire.
 
 ```scala
-val negCheckedAdd: JsonRpcRoute[AddReq, AddResp, Negative] =
-    JsonRpcRoute.request[AddReq, AddResp]("add") { (req, _) =>
-        if req.a < 0 || req.b < 0 then Abort.fail(Negative(req.a, req.b))
+val negCheckedAdd: JsonRpcRoute[AddReq, AddResp, Nothing] =
+    JsonRpcRoute.request[AddReq, AddResp]("checkedAdd") { (req, _) =>
+        if req.a < 0 || req.b < 0 then
+            Abort.fail(JsonRpcCustomError(-32010, s"Negative input: ${req.a}, ${req.b}"))
         else AddResp(req.a + req.b)
-    }.error[Negative](-32010, "Negative input")
+    }
 ```
 
 > **Caution:** the original `Abort.fail(e: E2)` value is **not** propagated to the wire. Only the registered mapping's `code` and `message` are. If you want the diagnostic context to reach the peer, encode it into a custom error subclass and use `.error` mappings whose messages cover the case, or abort with `JsonRpcApplicationError` directly.

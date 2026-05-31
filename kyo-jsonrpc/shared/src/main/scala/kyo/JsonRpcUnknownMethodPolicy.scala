@@ -27,8 +27,8 @@ package kyo
   *   ignore).
   * @see [[JsonRpcHandler.Config]]
   */
-// Hub.scala:22 smart-constructor pattern; users select .minimal / .strict or copy with custom predicate
-final case class JsonRpcUnknownMethodPolicy private[kyo] (
+// Users select .minimal / .strict or copy with a custom predicate
+final case class JsonRpcUnknownMethodPolicy(
     onUnknownRequest: JsonRpcUnknownMethodPolicy.UnknownAction,
     onUnknownNotification: JsonRpcUnknownMethodPolicy.UnknownAction,
     ignoreUnknownNotification: String => Boolean
