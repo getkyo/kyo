@@ -590,18 +590,19 @@ private[kyo] object ReactiveUI:
                                 newFibers    <- Kyo.foreach(newKids)(subscribeNode(_, exchange, signalChangeTime))
                                 _            <- childFibersRef.set(newFibers.flatten)
                             yield ()
-                        emitAndResubscribe.andThen {
-                            Loop.forever {
-                                for
-                                    armed <- Promise.init[Unit, Any]
-                                    nextFiber <- Fiber.initUnscoped {
-                                        Sync.defer(armed.completeUnitDiscard).andThen(rui.signal.next)
-                                    }
-                                    _ <- armed.get
-                                    _ <- emitAndResubscribe
-                                    _ <- nextFiber.get
-                                yield Loop.continue(())
-                            }
+                        // Fork the next-change wait BEFORE emitting, then await it. Signal conflates
+                        // intermediate values (latest-wins by design), so the loop only needs to be
+                        // woken once and re-read `current`. The hazard is a lost wakeup of the final
+                        // change: if a change lands after `current` is read but before the waiter is
+                        // registered, it completes a waiterless promise and, when it is the last
+                        // change, the region never re-renders. Forking `next` ahead of `emit`
+                        // registers the waiter first, closing that window.
+                        Loop.forever {
+                            for
+                                nextFiber <- Fiber.initUnscoped(rui.signal.next)
+                                _         <- emitAndResubscribe
+                                _         <- nextFiber.get
+                            yield Loop.continue(())
                         }
                     }.map { result =>
                         if result.isFailure then

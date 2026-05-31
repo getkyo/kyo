@@ -1144,7 +1144,9 @@ lazy val `kyo-browser` =
             // in a 10-minute run; isolating each suite eliminates that contamination at the cost of ~3
             // minutes of additional Chrome startup. parallelExecution = false serializes the per-suite
             // groups so Chrome processes don't compete for resources; testForkedParallel = false keeps
-            // within-fork tests sequential as a belt-and-braces safeguard.
+            // within-fork tests sequential as a belt-and-braces safeguard. (Running the per-suite forks
+            // concurrently was tried and reverted: cores/2 simultaneous Chrome processes starve each other,
+            // a Chrome dies, and the dead-Chrome failures cascade -- the very thing the serial mode prevents.)
             Test / parallelExecution  := false,
             Test / testForkedParallel := false,
             Test / testGrouping := {
