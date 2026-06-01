@@ -612,6 +612,43 @@ class YamlCstTest extends Test:
             assert(Yaml.decode[Map[String, List[String]]](rendered) == Result.succeed(Map("items" -> List("new", "next"))))
         }
 
+        "replaces mapping value while preserving trailing field comment" in {
+            val yaml = """services:
+                         |  api:
+                         |    image: app:v1 # image trailing
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "services" / "api" / "image", scalar("app:v2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+            val expected = """services:
+                             |  api:
+                             |    image: app:v2 # image trailing
+                             |""".stripMargin
+
+            assert(edited.source.isEmpty)
+            assert(rendered == expected)
+            assert(Yaml.decode[Map[String, Map[String, Map[String, String]]]](rendered) ==
+                Result.succeed(Map("services" -> Map("api" -> Map("image" -> "app:v2")))))
+        }
+
+        "replaces sequence element while preserving trailing item comment" in {
+            val yaml = """items:
+                         |  - old # item trailing
+                         |  - next
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "items" / 0, scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+            val expected = """items:
+                             |  - new # item trailing
+                             |  - next
+                             |""".stripMargin
+
+            assert(edited.source.isEmpty)
+            assert(rendered == expected)
+            assert(Yaml.decode[Map[String, List[String]]](rendered) == Result.succeed(Map("items" -> List("new", "next"))))
+        }
+
         "inserts, removes, and renames mapping entries at root" in {
             val base =
                 Yaml.cst("name: Alice\nactive: true\n").getOrThrow
