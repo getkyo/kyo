@@ -209,4 +209,107 @@ private[kyo] object TestClasspaths2:
                     ))
     end standardWithPlatformModules
 
+    /** Load a classpath from the kyo-tasty root passed TWICE, producing same-FQN collisions.
+      *
+      * Each pass through the same root re-decodes the .tasty files and creates fresh symbol objects. The merger detects collisions when two
+      * different objects map to the same FQN. All collisions are visible in cp.collisionReport.
+      *
+      * Used by CollisionFidelity2Test (leaves 1-5, 13).
+      */
+    def collisionRoots: Seq[String] =
+        // Pass kyo-tasty root twice to force same-FQN collisions via double-decoding.
+        TestClasspaths.kyoTasty ++ TestClasspaths.kyoTasty
+
+    /** Load a classpath with collisions (SoftFail). */
+    def withCollisionClasspath(using Frame): Tasty.Classpath < (Async & Scope & Abort[TastyError]) =
+        Tasty.Classpath.init(collisionRoots, Tasty.ErrorMode.SoftFail)
+
+    /** Load a classpath with collisions (FailFast -- expected to abort). */
+    def withCollisionClasspathFailFast(using Frame): Tasty.Classpath < (Async & Scope & Abort[TastyError]) =
+        Tasty.Classpath.init(collisionRoots, Tasty.ErrorMode.FailFast)
+
+    /** Write `bytes` to a fresh temp file and return its path. */
+    private def writeTempFile(name: String, bytes: Array[Byte]): String =
+        val dir  = java.nio.file.Files.createTempDirectory("kyo-df2-fixture")
+        val path = dir.resolve(name)
+        java.nio.file.Files.write(path, bytes)
+        path.toString
+    end writeTempFile
+
+    /** Create a truncated .tasty file whose name-table header refers to index 254 past the end.
+      *
+      * Byte layout:
+      *   - valid TASTy magic bytes (4 bytes)
+      *   - version triple: major=28, minor=5, experimental=0 (3 Nats, 3 bytes)
+      *   - UUID (16 bytes)
+      *   - name table length = 254 (1-byte Nat)
+      *   - total bytes = 24, then truncated; ArrayIndexOutOfBoundsException on index 254
+      *
+      * The resulting path is returned; the file is written to a temp directory.
+      */
+    def truncatedTastyPath: String =
+        // TASTy header in big-endian base-128 Nat encoding (terminating byte has bit 7 SET).
+        //   - Magic: 0x5c 0xa1 0xab 0x1f
+        //   - Version: 28.8.0 (major=0x9c, minor=0x88, experimental=0x80)
+        //   - Tooling length = 0 (0x80 = terminating byte for 0)
+        //   - UUID: 16 zero bytes
+        //   - Name table length Nat = 100 (single terminating byte: 100 | 0x80 = 0xe4)
+        //   - Name table: only 5 bytes of data (truncated at byte 5 of 100 claimed)
+        //
+        // The NameUnpickler loop will read:
+        //   - byte 0x81 (UTF8 tag): but 0x81 = 1 | 0x80 = terminating-byte for 1 → NOT UTF8 tag.
+        //   Actually we need the raw UTF8 tag byte. In TASTy name table, tags are raw bytes (no Nat encoding).
+        //   UTF8 tag = 1 (raw). After reading the tag, the length is a Nat.
+        //
+        // To force AIOOBE from NameUnpickler reading past the end:
+        //   Name table length = 100 (Nat encoded with bit 7 set: 100 | 0x80 = 0xe4)
+        //   Provide 5 bytes: [raw tag 1] [Nat-encoded length 3: 3|0x80=0x83] [A] [B] → runs ok
+        //   Then on next loop iteration, readByte() at position past end → AIOOBE
+        val magic        = Array[Byte](0x5c.toByte, 0xa1.toByte, 0xab.toByte, 0x1f.toByte)
+        val version      = Array[Byte](0x9c.toByte, 0x88.toByte, 0x80.toByte) // 28.8.0 as Nats
+        val toolingLen   = Array[Byte](0x80.toByte)                           // tooling length = 0
+        val uuid         = Array.fill[Byte](16)(0)                            // zero UUID
+        val nameTableLen = Array[Byte]((100 | 0x80).toByte)                   // Nat for 100 (terminating)
+        // Name data: tag=1 (raw UTF8 tag byte), length-as-Nat=3 (0x83=3|0x80 terminating), then 3 bytes ABC.
+        // After reading 'ABC', loop tries to read next tag byte but array ends -> AIOOBE.
+        val nameData = Array[Byte](1.toByte, 0x83.toByte, 65.toByte, 66.toByte, 67.toByte)
+        val bytes    = magic ++ version ++ toolingLen ++ uuid ++ nameTableLen ++ nameData
+        writeTempFile("Truncated.tasty", bytes)
+    end truncatedTastyPath
+
+    /** Create a .tasty file with bit-flipped magic bytes (byte 0 corrupted).
+      *
+      * The first magic byte is flipped so TastyHeader.read detects a corruption and raises TastyError.CorruptedFile. Used by
+      * ErrorFidelity2Test leaf 9 (softfail-accumulates-corruptedfile).
+      */
+    def bitFlippedMagicTastyPath: String =
+        // TASTy magic: 0x5c 0xa1 0xab 0x1f (TastyFormat.MagicBytes)
+        val magic = Array[Byte](0x5c.toByte, 0xa1.toByte, 0xab.toByte, 0x1f.toByte)
+        // Corrupt first byte (0x5c -> 0x5d)
+        val corrupt = Array[Byte]((magic(0) ^ 0x01).toByte) ++ magic.drop(1)
+        val version = Array[Byte](28, 5, 0)
+        val uuid    = Array.fill[Byte](16)(0)
+        val bytes   = corrupt ++ version ++ uuid
+        writeTempFile("BitFlipped.tasty", bytes)
+    end bitFlippedMagicTastyPath
+
+    /** Create a corrupted-mid-stream .tasty fixture: valid magic + version + uuid, then garbage.
+      *
+      * Name-table length claims 100 bytes, but only 5 bytes follow. The name unpickler will raise AIOOBE mid-stream. Used by
+      * ErrorFidelity2Test leaf 14 (softfail-accumulates-corruptedfile-midstream).
+      */
+    def corruptedMidStreamTastyPath: String =
+        // Same layout as truncatedTastyPath: valid header + truncated name table.
+        // This exercises the F-A5-004 path (structured error with on-disk path, partial file).
+        val magic        = Array[Byte](0x5c.toByte, 0xa1.toByte, 0xab.toByte, 0x1f.toByte)
+        val version      = Array[Byte](0x9c.toByte, 0x88.toByte, 0x80.toByte)
+        val toolingLen   = Array[Byte](0x80.toByte)
+        val uuid         = Array.fill[Byte](16)(0)
+        val nameTableLen = Array[Byte]((50 | 0x80).toByte) // claims 50 bytes (Nat=50)
+        // Provide partial data: tag=1 (UTF8), length Nat=2 (0x82), then only 1 byte 'A' -> truncated
+        val nameData = Array[Byte](1.toByte, 0x82.toByte, 65.toByte)
+        val bytes    = magic ++ version ++ toolingLen ++ uuid ++ nameTableLen ++ nameData
+        writeTempFile("MidStream.tasty", bytes)
+    end corruptedMidStreamTastyPath
+
 end TestClasspaths2

@@ -362,18 +362,18 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Test 24b: missing root produces FileNotFound
+    // Test 24b: missing root under SoftFail accumulates FileNotFound in cp.errors (F-A5-002 fix).
+    // Before fix: raised Abort.fail(TastyError.FileNotFound) regardless of ErrorMode.
+    // After fix: SoftFail accumulates; FailFast still raises.
     "missing root produces FileNotFound immediately" in run {
         Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(MemoryFileSource())).map:
-                case Result.Success(_) =>
-                    fail("Expected FileNotFound for missing root")
-                case Result.Failure(e) =>
-                    e match
-                        case TastyError.FileNotFound(_) => succeed
-                        case other                      => fail(s"Expected FileNotFound but got: $other")
-                case Result.Panic(t) =>
-                    throw t
+            // SoftFail: expect Success with cp.errors containing FileNotFound
+            openFixtureClasspath(MemoryFileSource()).map: cp =>
+                val errs = cp.errors
+                assert(errs.size == 1, s"Expected exactly 1 error; got: $errs")
+                errs.head match
+                    case TastyError.FileNotFound(_) => succeed
+                    case other                      => fail(s"Expected FileNotFound; got: $other")
     }
 
     // Test 31: 3 TASTy files with concurrency=3; all symbols present after open

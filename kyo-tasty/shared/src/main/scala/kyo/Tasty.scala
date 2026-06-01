@@ -2052,7 +2052,17 @@ object Tasty:
         companionIndex: Map[SymbolId, SymbolId],
         moduleIndex: Map[String, ModuleDescriptor],
         errors: Chunk[TastyError],
-        canonical: kyo.internal.tasty.type_.TypeArena
+        canonical: kyo.internal.tasty.type_.TypeArena,
+        /** Structured diagnostics accumulated during classpath initialization.
+          *
+          * Currently populated with `Classpath.FqnCollision` entries when two roots each define a symbol under the same fully-qualified
+          * name. Under `ErrorMode.SoftFail` these are recorded here rather than raising `Abort[TastyError]`. Under `ErrorMode.FailFast`
+          * the first collision raises `TastyError.InconsistentClasspath` and initialization aborts.
+          *
+          * Unlike `errors` (which carries decode-time failures such as `MalformedSection`), `diagnostics` carries build-time observations
+          * about the classpath shape itself.
+          */
+        diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty
     ):
         // NOT a constructor parameter -- excluded from auto-generated equals / hashCode / copy / unapply.
         // A cp.copy(...) call produces a new Classpath with a fresh empty memo; this is correct because
@@ -2283,6 +2293,33 @@ object Tasty:
             findModule(name) match
                 case Maybe.Present(m) => m
                 case Maybe.Absent     => Abort.fail(TastyError.NotFound(name))
+
+        /** Require any symbol by fully-qualified dotted name; fails with `TastyError.SymbolNotFound` when absent.
+          *
+          * This accessor replaces the accidental `findSymbol(fqn).get` pattern that would throw a `NoSuchElementException` at runtime.
+          * Unlike `requireClass` / `requireTrait` / `requireObject`, this method does not narrow the kind: any registered symbol satisfies
+          * the lookup regardless of its `SymbolKind`.
+          *
+          * Raises `TastyError.SymbolNotFound(fqn)` when the FQN is not present in `fqnIndex`.
+          */
+        def requireSymbol(fqn: String)(using Frame): Symbol < Abort[TastyError] =
+            findSymbol(fqn) match
+                case Maybe.Present(s) => s
+                case Maybe.Absent     => Abort.fail(TastyError.SymbolNotFound(fqn))
+
+        /** Return all FQN collisions recorded during classpath initialization.
+          *
+          * A collision arises when two distinct source roots each define a symbol under the same fully-qualified name. Under
+          * `ErrorMode.SoftFail`, every collision is recorded here; `findSymbol(fqn)` still returns a deterministic winner (last-write-wins by
+          * root insertion order). Under `ErrorMode.FailFast`, initialization aborts with `TastyError.InconsistentClasspath` on the first
+          * collision, so this chunk is always empty when FailFast is used.
+          *
+          * Returns an empty `Chunk` when no collisions occurred.
+          */
+        def collisionReport: Chunk[Classpath.FqnCollision] =
+            diagnostics.flatMap:
+                case c: Classpath.FqnCollision => Chunk(c)
+                case _                         => Chunk.empty
 
         // ── typed Classpath-wide all* aggregations ──
 
@@ -2553,6 +2590,24 @@ object Tasty:
         val sentinelUnresolved: Symbol =
             Symbol.Unresolved(SymbolId(-1), Name("<unresolved>"), SymbolId(-1))
 
+        /** Sealed hierarchy for structured build-time observations accumulated in `Classpath.diagnostics`.
+          *
+          * Unlike `TastyError` (which represents failures during decoding or classpath operations), `Diagnostic` represents observations
+          * about the classpath shape that do not prevent a usable classpath from being returned. Currently the only concrete type is
+          * `FqnCollision`.
+          */
+        sealed trait Diagnostic derives CanEqual
+
+        /** Recorded when two or more source roots each provide a symbol under the same fully-qualified name.
+          *
+          * `fqn` is the colliding fully-qualified name. `ids` contains the `SymbolId` of every symbol that was registered under this FQN
+          * across the input roots; the winning symbol (the one returned by `findSymbol(fqn)`) is the last entry in insertion order.
+          *
+          * This diagnostic is only populated under `ErrorMode.SoftFail`. Under `ErrorMode.FailFast`, a collision immediately raises
+          * `TastyError.InconsistentClasspath` and initialization aborts.
+          */
+        final case class FqnCollision(fqn: String, ids: Chunk[SymbolId]) extends Diagnostic
+
         /** Init a classpath from directory/file roots using `ErrorMode.SoftFail` (errors accumulate in `cp.errors`).
           *
           * Effect row rationale:
@@ -2730,7 +2785,8 @@ object Tasty:
             companionIndex: Map[SymbolId, SymbolId],
             moduleIndex: Map[String, ModuleDescriptor],
             errors: Chunk[TastyError],
-            canonical: kyo.internal.tasty.type_.TypeArena
+            canonical: kyo.internal.tasty.type_.TypeArena,
+            diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty
         ): Classpath =
             new Classpath(
                 symbols = symbols,
@@ -2743,7 +2799,8 @@ object Tasty:
                 companionIndex = companionIndex,
                 moduleIndex = moduleIndex,
                 errors = errors,
-                canonical = canonical
+                canonical = canonical,
+                diagnostics = diagnostics
             )
         end make
 
@@ -2757,6 +2814,14 @@ object Tasty:
           */
         private[kyo] def copyWithErrors(cp: Classpath, newErrors: Chunk[TastyError]): Classpath =
             cp.copy(errors = newErrors)
+
+        /** Internal helper: prepend pre-errors (e.g., FileNotFound for missing roots under SoftFail) to cp.errors.
+          *
+          * Called from `ClasspathOrchestrator.init` after running the decode pipeline with only the valid roots. Accessible from
+          * `kyo.internal.*` callers via `private[kyo]`.
+          */
+        private[kyo] def copyWithPreErrors(cp: Classpath, preErrors: Chunk[TastyError]): Classpath =
+            cp.copy(errors = preErrors ++ cp.errors)
 
     end Classpath
 

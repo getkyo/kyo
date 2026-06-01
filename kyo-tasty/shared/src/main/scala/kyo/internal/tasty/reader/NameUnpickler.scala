@@ -47,11 +47,20 @@ object NameUnpickler:
             try Right(readUnsafe(view, interner))
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
-                    val reason = if ex.getMessage != null then ex.getMessage else "unexpected end of name table"
+                    // F-A5-005 fix: translate raw JVM array-index message to a typed, reader-comprehensible reason.
+                    // Before fix: reason == "Array index out of range: 254" (JVM default message).
+                    // After fix:  reason == "name table index 254 out of range" (field-specific, stable wording).
+                    val reason =
+                        if ex.getMessage != null then
+                            val msg   = ex.getMessage
+                            val index = msg.stripPrefix("Array index out of range: ")
+                            if index != msg then s"name table index $index out of range"
+                            else s"name table corrupted: $msg"
+                        else "name table: unexpected end of data"
                     Left(TastyError.MalformedSection("Names", reason, view.position))
                 case ex: java.lang.Error
                     if ex.getCause != null && ex.getCause.isInstanceOf[ArrayIndexOutOfBoundsException] =>
-                    Left(TastyError.MalformedSection("Names", "unexpected end of name table", view.position))
+                    Left(TastyError.MalformedSection("Names", "name table: unexpected end of data", view.position))
         .map:
             case Right(names) => names
             case Left(err)    => Abort.fail(err)

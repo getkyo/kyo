@@ -15,7 +15,14 @@ enum TastyError derives CanEqual:
     /** The TASTy file's format version is outside the range this reader supports. */
     case UnsupportedVersion(found: Tasty.Version, supported: Tasty.Version)
 
-    /** The TASTy file's UUID does not match the UUID recorded in the classfile. */
+    /** The classpath is internally inconsistent.
+      *
+      * Two uses:
+      *   1. UUID mismatch: a TASTy file's UUID does not match the UUID recorded in the companion classfile. `file` is the .tasty file path.
+      *      `expectedUuid` / `foundUuid` carry the mismatched UUIDs.
+      *   2. FQN collision under `ErrorMode.FailFast`: two source roots each define a symbol under the same fully-qualified name. `file`
+      *      carries the colliding FQN. `expectedUuid` and `foundUuid` are set to the zero UUID (sentinel) in this case.
+      */
     case InconsistentClasspath(file: String, expectedUuid: java.util.UUID, foundUuid: java.util.UUID)
 
     /** A section of the TASTy or KRFL file could not be decoded at `byteOffset`. */

@@ -390,7 +390,8 @@ object SnapshotReader:
             companionIndex = Map.empty,
             moduleIndex = Map.empty,
             errors = errors,
-            canonical = canonical
+            canonical = canonical,
+            diagnostics = Chunk.empty
         )
     end deserialize
 

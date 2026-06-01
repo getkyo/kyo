@@ -140,11 +140,24 @@ object ClasspathOrchestrator:
         /** F-A3-001..004 fix: decoded standalone .class files accumulated for finalizeMerge parent-type wiring. */
         val javaClassfileResults: mutable.ArrayBuffer[(String, kyo.internal.tasty.classfile.ClassfileResult)] =
             mutable.ArrayBuffer.empty
+
+        /** F-A1-008: same-FQN collision tracking.
+          *
+          * Keyed by the indexKey (primary binary FQN) of the collision. Value is an ordered list of ALL symbols that were ever stored under
+          * that FQN; the last entry is the current winner (last-write-wins). Populated by `mergeOneInto` when it encounters a new structural
+          * symbol for an FQN that already has a different structural symbol.
+          */
+        val collisions: mutable.HashMap[String, mutable.ArrayBuffer[Tasty.Symbol]] = mutable.HashMap.empty
     end MergeState
 
     /** Init a new classpath from a set of root paths.
       *
       * Roots may be directories containing `.tasty` files or individual `.tasty` files.
+      *
+      * Missing-root contract per `Tasty.Classpath.init` scaladoc:
+      *   - `ErrorMode.FailFast`: a missing root immediately raises `Abort[TastyError.FileNotFound]`.
+      *   - `ErrorMode.SoftFail`: a missing root accumulates `TastyError.FileNotFound` in `cp.errors` and initialization continues with the
+      *     remaining valid roots. An all-missing classpath returns an empty `Classpath` with one error per missing root.
       */
     def init(
         roots: Seq[String],
@@ -152,16 +165,28 @@ object ClasspathOrchestrator:
         source: FileSource,
         concurrency: Int
     )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        // Validate roots exist first (both FailFast and SoftFail report FileNotFound immediately)
+        // Partition roots into missing vs. valid.
+        // FailFast: abort on first missing root (preserves original behavior).
+        // SoftFail: accumulate FileNotFound errors; run the pipeline with only the valid roots.
         Kyo.foreach(roots): root =>
             source.exists(root).flatMap: ex =>
-                if !ex then Abort.fail(TastyError.FileNotFound(root))
-                else Kyo.unit
-        .andThen:
+                if !ex && mode == Tasty.ErrorMode.FailFast then Abort.fail(TastyError.FileNotFound(root))
+                else Sync.defer(ex) // true = root exists; false = missing (only in SoftFail)
+        .flatMap: existFlags =>
+            val validRoots: Seq[String] =
+                roots.zip(existFlags).collect:
+                    case (root, true) => root
+            val preErrors: Chunk[TastyError] =
+                Chunk.from(roots.zip(existFlags).collect:
+                    case (root, false) => TastyError.FileNotFound(root): TastyError)
             // Install a read-batch context so JvmFileSource can share mmap readers across the scan+decode pipeline.
             // The default FileSource.withReadBatch is a no-op; JvmFileSource overrides it.
             source.withReadBatch:
-                runPhaseAB(roots, mode, source, concurrency)
+                runPhaseAB(validRoots, mode, source, concurrency)
+            .map: cp =>
+                // Prepend pre-errors (missing roots) to cp.errors so callers see them first.
+                if preErrors.nonEmpty then Tasty.Classpath.copyWithPreErrors(cp, preErrors)
+                else cp
 
     /** Phase A+B+C pipeline via Channels.
       *
@@ -426,6 +451,30 @@ object ClasspathOrchestrator:
                                 sym.kind == Tasty.SymbolKind.Trait || sym.kind == Tasty.SymbolKind.Object ||
                                 sym.kind == Tasty.SymbolKind.EnumCase
                             newIsStructural || !prevIsStructural
+                    // F-A1-008: record a collision when a new structural symbol of the SAME KIND overwrites a
+                    // different structural symbol. Both must be structural (Class/Trait/Object/EnumCase), must be
+                    // distinct objects (different reference identity), and must share the same SymbolKind to be a
+                    // real cross-root collision.
+                    //
+                    // Same-kind constraint is essential to avoid false positives from the canonical-FQN alias
+                    // pattern: when a companion Object (kind=Object, fqn="scala.Array$") is registered under its
+                    // canonical alias ("scala.Array"), the incoming Class (kind=Class) later overwrites it. That
+                    // is the expected alias-upgrade sequence, NOT a collision. Requiring sym.kind == prev.kind
+                    // filters out the alias-upgrade case while still catching genuine same-kind duplicates (e.g.,
+                    // two jars both defining "com.example.Foo" as a Class).
+                    existing match
+                        case Some(prev) if (prev ne sym) && (prev.kind == sym.kind) =>
+                            val prevIsStructural = prev.kind == Tasty.SymbolKind.Class ||
+                                prev.kind == Tasty.SymbolKind.Trait || prev.kind == Tasty.SymbolKind.Object ||
+                                prev.kind == Tasty.SymbolKind.EnumCase
+                            val newIsStructural = sym.kind == Tasty.SymbolKind.Class ||
+                                sym.kind == Tasty.SymbolKind.Trait || sym.kind == Tasty.SymbolKind.Object ||
+                                sym.kind == Tasty.SymbolKind.EnumCase
+                            if prevIsStructural && newIsStructural then
+                                val buf = state.collisions.getOrElseUpdate(indexKey, mutable.ArrayBuffer(prev))
+                                discard(buf += sym)
+                        case _ => ()
+                    end match
                     if shouldStore then state.fqnIndex(indexKey) = sym
                     // HARD RULE 8 / HARD RULE 10: unified source-FQN dual-index via FqnNormalizer.
                     // Replaces the 3 separate opaque / $-suffix / $. blocks from Phases 06/09.
@@ -514,7 +563,7 @@ object ClasspathOrchestrator:
         state: MergeState,
         source: FileSource,
         mode: Tasty.ErrorMode
-    )(using Frame): Tasty.Classpath < Sync =
+    )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
         val canonical   = TypeArena.canonical()
         val fileResults = state.fileResults.toSeq
         val allPartial  = state.allSyms
@@ -1241,7 +1290,40 @@ object ClasspathOrchestrator:
                     val subclassIdx  = buildSubclassIndex(symsChunk)
                     val companionIdx = buildCompanionIndex(symsChunk, fqnIdIdx)
 
-                    Tasty.Classpath.make(
+                    // F-A1-008: convert per-FQN collision buckets to FqnCollision diagnostics.
+                    // Each bucket holds all symbols seen for that FQN (including winner); ids are resolved
+                    // via symbolIdMap so they reflect final SymbolIds.
+                    val collisionDiagnostics: Chunk[Tasty.Classpath.Diagnostic] =
+                        Chunk.from(
+                            state.collisions.flatMap { case (colFqn, syms) =>
+                                val ids = Chunk.from(syms.toSeq.map(s => SymbolId(symbolIdMap.getOrDefault(s, -1))))
+                                Seq(Tasty.Classpath.FqnCollision(colFqn, ids))
+                            }
+                        )
+
+                    // F-A5-001 (ClasspathBuilding): check for partial symbols that escaped both symbolIdMap
+                    // and the OQ-003 canonFqn fallback. Such symbols retain id.value < 0 in newFqnIndex.
+                    // Under FailFast, fire ClasspathBuilding. Under SoftFail, accumulate a diagnostic note
+                    // but continue (the classpath is still usable for all unaffected FQNs).
+                    val brokenFqnCount = fqnIdIdx.count { case (_, sid) => sid.value < 0 }
+
+                    // OQ-001 FailFast wiring:
+                    //   - If collisions exist under FailFast -> InconsistentClasspath (first colliding FQN).
+                    //   - If broken fqnIndex entries exist under FailFast -> ClasspathBuilding.
+                    // Both checks produce Left(error) returned as a tuple alongside the classpath so the
+                    // Sync.Unsafe.defer block can carry the error out without mixing Abort effects inside it.
+                    val failFastError: Maybe[TastyError] =
+                        if mode == Tasty.ErrorMode.FailFast then
+                            if collisionDiagnostics.nonEmpty then
+                                val firstFqn = state.collisions.keys.head
+                                val zeroUUID = new java.util.UUID(0L, 0L)
+                                Maybe(TastyError.InconsistentClasspath(firstFqn, zeroUUID, zeroUUID))
+                            else if brokenFqnCount > 0 then
+                                Maybe(TastyError.ClasspathBuilding)
+                            else Maybe.Absent
+                        else Maybe.Absent
+
+                    val cp = Tasty.Classpath.make(
                         symbols = symsChunk,
                         rootSymbolId = rootId,
                         topLevelClassIds = topIds,
@@ -1252,9 +1334,15 @@ object ClasspathOrchestrator:
                         companionIndex = companionIdx,
                         moduleIndex = moduleIndex,
                         errors = finalErrors,
-                        canonical = canonical
+                        canonical = canonical,
+                        diagnostics = collisionDiagnostics
                     )
-            }
+                    (cp, failFastError)
+            }.flatMap: result =>
+                val (builtCp, failFastError) = result
+                failFastError match
+                    case Maybe.Present(err) => Abort.fail(err)
+                    case Maybe.Absent       => builtCp
     end finalizeMerge
 
     /** Build subclassIndex by inverting parentTypes: for each symbol, register it as a direct subclass of each Named parent.
@@ -1389,10 +1477,17 @@ object ClasspathOrchestrator:
                                 fr
                             case _ => fr
             case Result.Failure(err: TastyError) =>
+                // F-A5-006 fix: replace the placeholder path "<byte view>" produced by TastyHeader.read
+                // with the actual on-disk file path so cp.errors carries the real filename.
+                val patchedErr = err match
+                    case TastyError.CorruptedFile("<byte view>", at, reason) =>
+                        TastyError.CorruptedFile(file, at, reason)
+                    case other => other
                 if mode == Tasty.ErrorMode.FailFast then
-                    Abort.fail(err)
+                    Abort.fail(patchedErr)
                 else
-                    emptyFileResultWithError(file, err)
+                    emptyFileResultWithError(file, patchedErr)
+                end if
             case Result.Panic(t) =>
                 val err = TastyError.CorruptedFile(file, 0L, t.getMessage)
                 if mode == Tasty.ErrorMode.FailFast then
@@ -1610,5 +1705,32 @@ object ClasspathOrchestrator:
         end if
         cached.asInstanceOf[Tasty.Symbol]
     end makeUnresolvedSym
+
+    /** Test helper: trigger a `TastyError.ClasspathBuilding` abort via a synthetic degenerate MergeState.
+      *
+      * Constructs a `MergeState` where one entry in `fqnIndex` maps to a partial symbol that is NOT present in `allSyms`. As a result,
+      * `finalizeMerge` cannot resolve the symbol via `symbolIdMap` (direct lookup returns -1) and the OQ-003 canonical-FQN fallback also
+      * fails (no alias form exists). Under `ErrorMode.FailFast`, `finalizeMerge` raises `TastyError.ClasspathBuilding`.
+      *
+      * This method is `private[kyo]` so it is reachable from tests in `kyo.internal.*` test packages but invisible to API consumers.
+      */
+    private[kyo] def triggerClasspathBuildingForTest()(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
+        import AllowUnsafe.embrace.danger
+        val state = new MergeState()
+        // Insert a partial symbol into fqnIndex but deliberately do NOT add it to allSyms.
+        // This simulates the invariant-violation scenario: fqnIndex references a symbol object that
+        // was never registered in the merge pipeline's allSyms accumulator.
+        val ghost = kyo.internal.tasty.symbol.Symbol.makeSymbol(
+            Tasty.SymbolKind.Class,
+            Tasty.Flags.empty,
+            Tasty.Name("GhostClass")
+        )
+        state.fqnIndex("test.GhostClass") = ghost
+        // allSyms intentionally left empty so symbolIdMap.getOrDefault(ghost, -1) == -1.
+        // canonicalSourceFqn("test.GhostClass") == "test.GhostClass" (no mangling), so OQ-003
+        // fallback also returns -1. Both checks fail -> ClasspathBuilding fires under FailFast.
+        val platSrc = kyo.internal.tasty.query.PlatformFileSource.get
+        finalizeMerge(state, platSrc, Tasty.ErrorMode.FailFast)
+    end triggerClasspathBuildingForTest
 
 end ClasspathOrchestrator
