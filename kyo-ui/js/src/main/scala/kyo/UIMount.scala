@@ -13,9 +13,10 @@ extension (ui: UI.type)
         DomBackend.mount(u, selector)
 
     /** Injects a [[kyo.Stylesheet]] into the live document (`<head>` `<style>`), client-side.
-      * JS-only. Idempotent per identical CSS text. Reuses the existing kyo-ui document stylesheet
-      * (the same `<style>` element `runMount` appends per-element rules to), so a mounted app's
-      * authored stylesheet and its per-element styles share one sheet.
+      * JS-only. Idempotent: a second call with the same rendered CSS text is a no-op and does
+      * not append duplicate rules. Reuses the existing kyo-ui document stylesheet (the same
+      * `<style>` element `runMount` appends per-element rules to), so a mounted app's authored
+      * stylesheet and its per-element styles share one sheet.
       */
     def runStylesheet(sheet: Stylesheet)(using Frame): Unit < Sync =
         DomBackend.injectStylesheet(sheet)

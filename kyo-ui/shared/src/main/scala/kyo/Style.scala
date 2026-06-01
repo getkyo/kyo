@@ -37,17 +37,19 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
 
     // Span is an opaque Array; case-class equals would use reference equality for the props field.
     // Override to compare element-by-element so value semantics hold.
+    // BgGradientProp's auto-derived equals also uses Array reference equality for its nested
+    // Span[Color] and Span[Double] fields, so we use propEqual to handle that case structurally.
     override def equals(that: Any): Boolean = that match
         case s: Style =>
             props.size == s.props.size &&
-            (0 until props.size).forall(i => props(i) == s.props(i))
+            (0 until props.size).forall(i => Style.propEqual(props(i), s.props(i)))
         case _ => false
 
     override def hashCode: Int =
         var h = 1
         var i = 0
         while i < props.size do
-            h = 31 * h + props(i).hashCode
+            h = 31 * h + Style.propHash(props(i))
             i += 1
         h
     end hashCode
@@ -447,6 +449,33 @@ end Style
   *   [[kyo.Style.Color]] for color construction and [[kyo.Style.Prop]] for the encoded prop cases
   */
 object Style:
+
+    // Prop equality and hashing helpers. The auto-derived equality for BgGradientProp uses
+    // Array reference equality for its nested Span[Color] and Span[Double] fields (Span is an
+    // opaque Array). These helpers handle that case structurally; all other Prop cases use
+    // their auto-derived equals/hashCode, which is correct (no nested Span fields).
+    private[kyo] def propEqual(a: Prop, b: Prop): Boolean = (a, b) match
+        case (Prop.BgGradientProp(da, ca, pa), Prop.BgGradientProp(db, cb, pb)) =>
+            da == db &&
+            ca.size == cb.size &&
+            pa.size == pb.size &&
+            (0 until ca.size).forall(i => ca(i) == cb(i)) &&
+            (0 until pa.size).forall(i => pa(i) == pb(i))
+        case _ => a == b
+
+    private[kyo] def propHash(p: Prop): Int = p match
+        case Prop.BgGradientProp(d, colors, positions) =>
+            var h = d.hashCode
+            var i = 0
+            while i < colors.size do
+                h = 31 * h + colors(i).hashCode
+                i += 1
+            i = 0
+            while i < positions.size do
+                h = 31 * h + positions(i).hashCode
+                i += 1
+            h
+        case _ => p.hashCode
 
     // ---- Style factory methods ----
 

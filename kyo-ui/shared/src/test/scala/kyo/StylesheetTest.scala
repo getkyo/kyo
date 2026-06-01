@@ -111,6 +111,28 @@ class StylesheetTest extends Test:
         }
     }
 
+    "gradient Style and Stylesheet compare equal by value (regression: BgGradientProp Span equality)" in {
+        // Two independently-built gradient styles must compare equal and share a hashCode.
+        // BgGradientProp holds Span[Color] and Span[Double] (opaque Arrays); without the
+        // propEqual/propHash fix, Array reference equality causes them to compare UNEQUAL.
+        val a = Style.bgGradient(_.toRight, Style.Color.white -> 0.pct, Style.Color.black -> 100.pct)
+        val b = Style.bgGradient(_.toRight, Style.Color.white -> 0.pct, Style.Color.black -> 100.pct)
+        assert(a == b)
+        assert(a.hashCode == b.hashCode)
+        // A differing gradient must compare unequal
+        val c = Style.bgGradient(_.toLeft, Style.Color.white -> 0.pct, Style.Color.black -> 100.pct)
+        assert(a != c)
+        // Stylesheet equality must also hold when a rule carries a gradient
+        val sheetA = Stylesheet.rule("hero", a)
+        val sheetB = Stylesheet.rule("hero", b)
+        assert(sheetA == sheetB)
+        assert(sheetA.hashCode == sheetB.hashCode)
+        // Non-gradient control: still correct
+        val ng1 = Style.bg(Style.Color.blue)
+        val ng2 = Style.bg(Style.Color.blue)
+        assert(ng1 == ng2)
+    }
+
     "cssClass renders class attribute and coexists with style attribute" in run {
         val html = kyo.internal.HtmlRenderer.render(
             UI.div.cssClass("feat-grid").cssClass("dark").style(Style.bg(Style.Color.blue)),

@@ -21,6 +21,10 @@ private[kyo] object DomStyleSheet:
 
     private var baseInjected = false
 
+    // Tracks CSS strings already injected via injectStylesheet to avoid duplicate appends.
+    // The browser is single-threaded so a plain mutable Set is safe here.
+    private val injectedSheets = scala.collection.mutable.Set.empty[String]
+
     /** Injects the base CSS reset once. Idempotent: the first call appends the reset rules; later calls are no-ops.
       * (kyo-ui is JS-only and the browser is single-threaded, so a plain flag is sufficient.)
       */
@@ -77,11 +81,15 @@ private[kyo] object DomStyleSheet:
         end if
     end apply
 
-    /** Appends arbitrary CSS to the kyo-ui document stylesheet. Reuses the same injection
-      * point as the per-element auto-class mechanism, so authored stylesheet rules and
-      * per-element pseudo-state rules share one `<style>` element.
+    /** Appends a CSS string to the kyo-ui document stylesheet if it has not been appended
+      * before. Idempotent: a second call with the same CSS text is a no-op. Reuses the same
+      * injection point as the per-element auto-class mechanism, so authored stylesheet rules
+      * and per-element pseudo-state rules share one `<style>` element.
       */
-    private[kyo] def injectStylesheet(css: String): Unit = inject(css)
+    private[kyo] def injectStylesheet(css: String): Unit =
+        if !injectedSheets.contains(css) then
+            injectedSheets.add(css)
+            inject(css)
 
     private def nextClass(using Frame): String < Sync =
         ids.incrementAndGet.map(n => s"kyo-s$n")

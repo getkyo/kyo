@@ -81,20 +81,22 @@ class UIRunRenderPageTest extends Test:
 
     "reactive UI re-emits complete document on signal change" in run {
         // runRenderPage re-emits a full document on every signal change (inherited from runRender).
-        // The subscribe step also triggers an immediate re-render; we take 3 emissions:
+        // The subscribe step also triggers an immediate re-render; the stream produces:
         // (1) the initial render, (2) the subscribe-triggered re-render, (3) the signal-change
         // re-render. All carry complete documents; the third reflects the updated signal value.
+        //
+        // A Channel is used as the stream sink so we can take emissions one at a time and
+        // synchronize deterministically: after taking 2 emissions the subscription waiter is
+        // guaranteed to be registered, so ref.set is safe to call without any sleep.
         for
             ref <- Signal.initRef("initial")
+            buf <- Channel.init[String](8)
             stream = UI.runRenderPage(UI.PageHead(title = "re-emit"))(ref.map(v => UI.span(v)))
-            fiber <- Fiber.initUnscoped(stream.take(3).run)
-            // Allow the stream to emit the initial and subscribe-triggered documents and register
-            // the change waiter before setting the signal.
-            _      <- Async.sleep(100.millis)
-            _      <- ref.set("updated")
-            frames <- fiber.get
-            first = frames.lift(0).getOrElse("")
-            third = frames.lift(2).getOrElse("")
+            _     <- Fiber.initUnscoped(stream.take(3).foreach(buf.put(_)))
+            first <- buf.take
+            _     <- buf.take // subscribe-triggered re-render; discard, just confirms subscription is ready
+            _     <- ref.set("updated")
+            third <- buf.take
         yield
             // First emission is a complete document with the initial value
             assert(first.startsWith("<!DOCTYPE html>"))
