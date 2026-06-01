@@ -46,7 +46,7 @@ object LspCapabilities:
         /** All capabilities a server may advertise in the `InitializeResult`. */
         final case class Server(
             positionEncoding: Maybe[LspHandler.PositionEncodingKind] = Absent,
-            textDocumentSync: Maybe[LspHandler.BooleanOr[LspHandler.TextDocumentSyncOptions]] = Absent,
+            textDocumentSync: Maybe[LspHandler.TextDocumentSyncValue] = Absent,
             completionProvider: Maybe[LspHandler.CompletionOptions] = Absent,
             hoverProvider: Maybe[LspHandler.BooleanOr[LspHandler.HoverOptions]] = Absent,
             signatureHelpProvider: Maybe[LspHandler.SignatureHelpOptions] = Absent,
@@ -54,7 +54,7 @@ object LspCapabilities:
             definitionProvider: Maybe[LspHandler.BooleanOr[LspHandler.DefinitionOptions]] = Absent,
             typeDefinitionProvider: Maybe[LspHandler.BooleanOr[LspHandler.TypeDefinitionOptions]] = Absent,
             implementationProvider: Maybe[LspHandler.BooleanOr[LspHandler.ImplementationOptions]] = Absent,
-            referencesProvider: Maybe[LspHandler.BooleanOr[LspHandler.ReferencesOptions]] = Absent,
+            referencesProvider: Maybe[LspHandler.BooleanOr[LspHandler.ReferenceOptions]] = Absent,
             documentHighlightProvider: Maybe[LspHandler.BooleanOr[LspHandler.DocumentHighlightOptions]] = Absent,
             documentSymbolProvider: Maybe[LspHandler.BooleanOr[LspHandler.DocumentSymbolOptions]] = Absent,
             codeActionProvider: Maybe[LspHandler.BooleanOr[LspHandler.CodeActionOptions]] = Absent,
@@ -77,7 +77,7 @@ object LspCapabilities:
             inlayHintProvider: Maybe[LspHandler.BooleanOr[LspHandler.InlayHintOptions]] = Absent,
             diagnosticProvider: Maybe[DiagnosticOptions] = Absent,
             workspaceSymbolProvider: Maybe[LspHandler.BooleanOr[LspHandler.WorkspaceSymbolOptions]] = Absent,
-            notebookDocumentSyncProvider: Maybe[NotebookDocumentSyncOptions] = Absent,
+            notebookDocumentSync: Maybe[NotebookDocumentSyncOptions] = Absent,
             workspace: Maybe[WorkspaceServerCapabilities] = Absent,
             private[kyo] _rawExperimental: Maybe[String] = Absent
         ) derives CanEqual

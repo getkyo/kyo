@@ -38,29 +38,29 @@ class LspHandlerFactoryTest extends kyo.Test:
             succeed
         }
 
-        "declaration factory" in {
-            val h = LspHandler.textDocument.declaration(_ => Absent)
+        "declaration factory returns DeclarationResult directly (A4 fix)" in {
+            val h = LspHandler.textDocument.declaration(_ => LspHandler.DeclarationResult.Many(Chunk.empty))
             assert(h.name == "textDocument/declaration")
             assert(h.kind == LspHandler.Kind.Declaration)
             succeed
         }
 
-        "definition factory" in {
-            val h = LspHandler.textDocument.definition(_ => Absent)
+        "definition factory returns DefinitionResult directly (A4 fix)" in {
+            val h = LspHandler.textDocument.definition(_ => LspHandler.DefinitionResult.Many(Chunk.empty))
             assert(h.name == "textDocument/definition")
             assert(h.kind == LspHandler.Kind.Definition)
             succeed
         }
 
-        "typeDefinition factory" in {
-            val h = LspHandler.textDocument.typeDefinition(_ => Absent)
+        "typeDefinition factory returns DefinitionResult directly (A4 fix)" in {
+            val h = LspHandler.textDocument.typeDefinition(_ => LspHandler.DefinitionResult.Many(Chunk.empty))
             assert(h.name == "textDocument/typeDefinition")
             assert(h.kind == LspHandler.Kind.TypeDefinition)
             succeed
         }
 
-        "implementation factory" in {
-            val h = LspHandler.textDocument.implementation(_ => Absent)
+        "implementation factory returns DefinitionResult directly (A4 fix)" in {
+            val h = LspHandler.textDocument.implementation(_ => LspHandler.DefinitionResult.Many(Chunk.empty))
             assert(h.name == "textDocument/implementation")
             assert(h.kind == LspHandler.Kind.Implementation)
             succeed
@@ -853,6 +853,42 @@ class LspHandlerFactoryTest extends kyo.Test:
                 case other =>
                     fail(s"Expected success, got: $other")
             end match
+            succeed
+        }
+    }
+
+    // MARK: -- general namespace factory tests (A1 fix)
+
+    "general namespace factories produce valid handlers" - {
+        "cancelRequest factory has correct name, kind, and direction" in {
+            val h = LspHandler.general.cancelRequest(_ => ())
+            assert(h.name == "$/cancelRequest")
+            assert(h.kind == LspHandler.Kind.CancelRequest)
+            assert(h.direction == LspHandler.Direction.Either)
+            succeed
+        }
+
+        "progress factory has correct name, kind, and direction" in {
+            val h = LspHandler.general.progress[String](_ => ())
+            assert(h.name == "$/progress")
+            assert(h.kind == LspHandler.Kind.Progress)
+            assert(h.direction == LspHandler.Direction.Either)
+            succeed
+        }
+
+        "setTrace factory has correct name, kind, and direction" in {
+            val h = LspHandler.general.setTrace(_ => ())
+            assert(h.name == "$/setTrace")
+            assert(h.kind == LspHandler.Kind.SetTrace)
+            assert(h.direction == LspHandler.Direction.ServerHandled)
+            succeed
+        }
+
+        "logTrace factory has correct name, kind, and direction" in {
+            val h = LspHandler.general.logTrace(_ => ())
+            assert(h.name == "$/logTrace")
+            assert(h.kind == LspHandler.Kind.LogTrace)
+            assert(h.direction == LspHandler.Direction.ClientHandled)
             succeed
         }
     }

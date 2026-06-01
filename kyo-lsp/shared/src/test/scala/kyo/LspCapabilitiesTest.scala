@@ -65,7 +65,7 @@ class LspCapabilitiesTest extends Test:
             assert(s.inlayHintProvider.isEmpty)
             assert(s.diagnosticProvider.isEmpty)
             assert(s.workspaceSymbolProvider.isEmpty)
-            assert(s.notebookDocumentSyncProvider.isEmpty)
+            assert(s.notebookDocumentSync.isEmpty)
             assert(s.workspace.isEmpty)
         }
     }
@@ -131,7 +131,23 @@ class LspCapabilitiesTest extends Test:
         assert(roundtrip(s) == s)
     }
 
-    "Schema[Server.Server] with notebookDocumentSyncProvider" in {
+    "Schema[Server.Server] textDocumentSync with Kind" in {
+        val s = LspCapabilities.Server.empty.copy(
+            textDocumentSync = Present(LspHandler.TextDocumentSyncValue.Kind(LspHandler.TextDocumentSyncKind.Incremental))
+        )
+        assert(roundtrip(s) == s)
+    }
+
+    "Schema[Server.Server] textDocumentSync with Options" in {
+        val s = LspCapabilities.Server.empty.copy(
+            textDocumentSync = Present(LspHandler.TextDocumentSyncValue.Options(
+                LspHandler.TextDocumentSyncOptions(openClose = Present(true))
+            ))
+        )
+        assert(roundtrip(s) == s)
+    }
+
+    "Schema[Server.Server] with notebookDocumentSync" in {
         val notebookSync = LspCapabilities.Server.NotebookDocumentSyncOptions(
             notebookSelector = Chunk(
                 LspCapabilities.Server.NotebookSelector(
@@ -139,7 +155,7 @@ class LspCapabilitiesTest extends Test:
                 )
             )
         )
-        val s = LspCapabilities.Server.empty.copy(notebookDocumentSyncProvider = Present(notebookSync))
+        val s = LspCapabilities.Server.empty.copy(notebookDocumentSync = Present(notebookSync))
         assert(roundtrip(s) == s)
     }
 

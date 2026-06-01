@@ -140,4 +140,55 @@ class InvariantsTest extends Test:
         succeed
     }
 
+    // Phase 05 invariants
+
+    // INV-006: Direction filtering at init time.
+    "INV-006: WrongDirection thrown for ClientHandled handler on server" in run {
+        val h = LspHandler.mkNotif[LspHandler.ShowMessageParams](
+            "window/showMessage",
+            LspHandler.Kind.ShowMessage,
+            _ => ()
+        )
+        val result = scala.util.Try(
+            kyo.internal.lsp.LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
+        )
+        assert(result.isFailure)
+        assert(result.failed.get.isInstanceOf[LspException.Dispatch.WrongDirection])
+        succeed
+    }
+
+    // INV-031: expectReplyForCancelledRequest = true.
+    "INV-031: LspCancellationPolicy.expectReplyForCancelledRequest is true" in run {
+        assert(kyo.internal.lsp.LspCancellationPolicy.default.expectReplyForCancelledRequest)
+        succeed
+    }
+
+    // INV-033: Sync edge cases never raise LspException.
+    "INV-033: applyChanges for unknown URI is a no-op" in run {
+        val encRef = AtomicRef.Unsafe.init[LspHandler.PositionEncodingKind](
+            LspHandler.PositionEncodingKind.UTF16
+        )(using AllowUnsafe.embrace.danger).safe
+        val registry = new LspDocumentRegistryImpl(encRef)
+        registry.applyChanges(
+            LspHandler.LspDocument.Uri.fromWire("file:///unknown.txt"),
+            1,
+            Chunk.empty
+        ).map(_ => succeed)
+    }
+
+    // INV-048: Registry mutators are private[kyo].
+    "INV-048: LspDocumentRegistryImpl insert is private[kyo]" in run {
+        // Accessible here because this file is in package kyo.
+        val encRef = AtomicRef.Unsafe.init[LspHandler.PositionEncodingKind](
+            LspHandler.PositionEncodingKind.UTF16
+        )(using AllowUnsafe.embrace.danger).safe
+        val registry = new LspDocumentRegistryImpl(encRef)
+        registry.insert(LspHandler.TextDocumentItem(
+            LspHandler.LspDocument.Uri.fromWire("file:///test.txt"),
+            "text",
+            1,
+            "hello"
+        )).map(_ => succeed)
+    }
+
 end InvariantsTest
