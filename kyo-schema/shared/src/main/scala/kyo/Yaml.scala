@@ -785,7 +785,7 @@ object Yaml:
                 case Absent =>
                     selectedSource(input).flatMap(Yaml.cst)
                 case Present(current) =>
-                    decodeSource(input).flatMap { source =>
+                    selectedSource(input).flatMap { source =>
                         internal.yaml.YamlEventScanner.collect(source, current).flatMap(Yaml.Cst.fromEvents)
                     }
             end match

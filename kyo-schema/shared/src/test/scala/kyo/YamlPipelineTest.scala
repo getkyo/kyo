@@ -197,6 +197,26 @@ age: 30
             assert(Yaml.decode[MTPerson](doc.render(using Yaml.WriterConfig.Default)) == Result.succeed(MTPerson("Bob", 25)))
         }
 
+        "does not merge document streams for single-document CST" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |---
+                  |age: 30
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+            val expected =
+                cstFailure(Yaml.cst(yaml))
+            val processed =
+                cstFailure(Yaml.pipeline.reader(config).through(identityProcessor).cst(yaml))
+
+            assert(expected.contains("Unexpected content after YAML document end"))
+            assert(cstFailure(Yaml.pipeline.reader(config).cst(yaml)) == expected)
+            assert(processed.contains("Expected a single YAML document"))
+        }
+
         "builds source-backed CST stream without processors" in {
             val yaml =
                 """# first
@@ -377,4 +397,10 @@ age: 30
             else Result.succeed((value, meta))
         }
     end scalarRewrite
+
+    private def cstFailure[Err](result: Result[Err | DecodeException, Yaml.Cst.Document]): String =
+        result match
+            case Result.Failure(e: ParseException) => e.getMessage
+            case other                             => fail(s"Expected ParseException failure, got $other")
+    end cstFailure
 end YamlPipelineTest
