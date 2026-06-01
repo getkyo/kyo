@@ -27,7 +27,7 @@ private[kyo] object YamlCstRenderer:
                 @tailrec def loop(index: Int): String =
                     if index >= stream.documents.size then builder.toString
                     else
-                        if index > 0 then
+                        if stream.documents.size > 1 then
                             if builder.nonEmpty && builder.charAt(builder.length - 1) != '\n' then
                                 val _ = builder.append('\n')
                             val _ = builder.append("---\n")

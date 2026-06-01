@@ -78,7 +78,7 @@ class YamlCstTest extends Test:
                 )
             val rendered = stream.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered == "Alice\n---\nname: Bob\n")
+            assert(rendered == "---\nAlice\n---\nname: Bob\n")
             Yaml.parseAll(rendered) match
                 case Result.Success(parsed) =>
                     assert(parsed.size == 2)
@@ -106,6 +106,83 @@ class YamlCstTest extends Test:
                 case Result.Panic(e) =>
                     fail(e.getMessage())
             end match
+        }
+
+        "renders canonical streams with leading empty documents" in {
+            val mark     = Yaml.Mark(0, 1, 1)
+            val span     = Yaml.Cst.SourceSpan(mark, mark)
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val scalarDoc =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(
+                        "Alice",
+                        Yaml.Cst.ScalarSyntax.Canonical,
+                        Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                        span,
+                        Absent
+                    )),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            val stream   = Yaml.Cst.Stream(Chunk(emptyDoc, scalarDoc), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = stream.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered == "---\n---\nAlice\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
+        }
+
+        "renders canonical streams with consecutive empty documents" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val meta = Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)
+            def scalarDoc(value: String): Yaml.Cst.Document =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(value, Yaml.Cst.ScalarSyntax.Canonical, meta, span, Absent)),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            end scalarDoc
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val stream = Yaml.Cst.Stream(
+                Chunk(scalarDoc("Alice"), emptyDoc, emptyDoc, scalarDoc("Bob")),
+                Chunk.empty,
+                Chunk.empty,
+                span,
+                Absent
+            )
+            val rendered = stream.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered == "---\nAlice\n---\n---\n---\nBob\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(Some("Alice"), None, None, Some("Bob"))))
+        }
+
+        "renders canonical streams with trailing empty documents" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val scalarDoc =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(
+                        "Alice",
+                        Yaml.Cst.ScalarSyntax.Canonical,
+                        Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                        span,
+                        Absent
+                    )),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val stream   = Yaml.Cst.Stream(Chunk(scalarDoc, emptyDoc), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = stream.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered == "---\nAlice\n---\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(Some("Alice"), None)))
         }
     }
 end YamlCstTest
