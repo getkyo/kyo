@@ -28,6 +28,14 @@ class YamlCstTest extends Test:
             case other                             => fail(s"Expected ParseException failure, got $other")
     end parseFailure
 
+    private def assertSourceRoundTrip[A](yaml: String, expected: A)(using Schema[A]) =
+        val rendered = Yaml.cst(yaml).getOrThrow.render(using Yaml.WriterConfig.Default)
+
+        assertResult((source = yaml, decoded = Result.succeed(expected))) {
+            (source = rendered, decoded = Yaml.decode[A](rendered))
+        }
+    end assertSourceRoundTrip
+
     private def scalar(value: String): Yaml.Cst.Node =
         val mark = Yaml.Mark(0, 1, 1)
         val span = Yaml.Cst.SourceSpan(mark, mark)
@@ -142,6 +150,330 @@ class YamlCstTest extends Test:
                   |""".stripMargin
 
             assert(Yaml.cst(yaml).map(_.render(using Yaml.WriterConfig.Default)) == Result.succeed(yaml))
+        }
+
+        "preserves GitHub workflow source and decodes rendered YAML" in {
+            val yaml =
+                """name: CI
+                  |on:
+                  |  push:
+                  |    branches: [main, release]
+                  |  pull_request:
+                  |jobs:
+                  |  build:
+                  |    runs-on: ubuntu-latest
+                  |    steps:
+                  |      - name: Checkout
+                  |        uses: actions/checkout@v4
+                  |      - name: Test
+                  |        run: |-
+                  |          sbt 'kyo-schema/test'
+                  |          echo done
+                  |        with:
+                  |          cache: sbt
+                  |""".stripMargin
+
+            assertSourceRoundTrip(
+                yaml,
+                YamlGithubWorkflow(
+                    "CI",
+                    YamlGithubOn(YamlGithubPush(List("main", "release")), None),
+                    Map(
+                        "build" -> YamlGithubJob(
+                            "ubuntu-latest",
+                            List(
+                                YamlGithubStep(Some("Checkout"), Some("actions/checkout@v4"), None, None),
+                                YamlGithubStep(
+                                    Some("Test"),
+                                    None,
+                                    Some("sbt 'kyo-schema/test'\necho done"),
+                                    Some(Map("cache" -> "sbt"))
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        }
+
+        "preserves OpenAPI source and decodes rendered YAML" in {
+            val yaml =
+                """openapi: 3.1.0
+                  |info:
+                  |  title: Users API
+                  |  version: 1.0.0
+                  |  description: >-
+                  |    Users API for
+                  |    client apps.
+                  |paths:
+                  |  /users/{id}:
+                  |    get:
+                  |      summary: Get a user
+                  |      operationId: getUser
+                  |      parameters:
+                  |        - name: id
+                  |          in: path
+                  |          required: true
+                  |          schema: {type: string, format: uuid}
+                  |      responses:
+                  |        "200":
+                  |          description: ok
+                  |components:
+                  |  schemas:
+                  |    UserId: {type: string, format: uuid}
+                  |""".stripMargin
+
+            assertSourceRoundTrip(
+                yaml,
+                YamlOpenApiSpec(
+                    "3.1.0",
+                    YamlOpenApiInfo("Users API", "1.0.0", "Users API for client apps."),
+                    Map(
+                        "/users/{id}" -> YamlOpenApiPathItem(
+                            YamlOpenApiOperation(
+                                "Get a user",
+                                "getUser",
+                                List(YamlOpenApiParameter("id", "path", true, YamlOpenApiSchema("string", Some("uuid")))),
+                                Map("200" -> YamlOpenApiResponse("ok"))
+                            )
+                        )
+                    ),
+                    YamlOpenApiComponents(Map("UserId" -> YamlOpenApiSchema("string", Some("uuid"))))
+                )
+            )
+        }
+
+        "preserves Docker Compose source and decodes rendered YAML" in {
+            val yaml =
+                """version: "3.9"
+                  |x-logging: &default-logging
+                  |  driver: json-file
+                  |  options:
+                  |    max-size: 10m
+                  |    max-file: "3"
+                  |services:
+                  |  api:
+                  |    image: ghcr.io/acme/api:1.2.3
+                  |    ports:
+                  |      - "8080:80"
+                  |    environment:
+                  |      APP_ENV: production
+                  |      FEATURE_FLAG: "true"
+                  |      REGION: NO
+                  |    depends_on: [db, redis]
+                  |    volumes:
+                  |      - "app-data:/var/lib/app"
+                  |      - "./config:/app/config:ro"
+                  |    networks:
+                  |      - backend
+                  |    healthcheck:
+                  |      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+                  |      interval: 30s
+                  |      timeout: 10s
+                  |      retries: 3
+                  |    logging: *default-logging
+                  |    restart: unless-stopped
+                  |  db:
+                  |    image: postgres:16
+                  |    environment:
+                  |      POSTGRES_DB: app
+                  |      POSTGRES_PASSWORD: secret
+                  |    volumes:
+                  |      - "db-data:/var/lib/postgresql/data"
+                  |    networks: [backend]
+                  |volumes:
+                  |  app-data:
+                  |    driver: local
+                  |  db-data:
+                  |    driver: local
+                  |networks:
+                  |  backend:
+                  |    driver: bridge
+                  |""".stripMargin
+
+            val logging = YamlComposeLogging("json-file", Map("max-size" -> "10m", "max-file" -> "3"))
+            assertSourceRoundTrip(
+                yaml,
+                YamlDockerCompose(
+                    "3.9",
+                    logging,
+                    Map(
+                        "api" -> YamlComposeService(
+                            "ghcr.io/acme/api:1.2.3",
+                            Some(List("8080:80")),
+                            Some(Map("APP_ENV" -> "production", "FEATURE_FLAG" -> "true", "REGION" -> "NO")),
+                            Some(List("db", "redis")),
+                            Some(List("app-data:/var/lib/app", "./config:/app/config:ro")),
+                            Some(List("backend")),
+                            Some(YamlComposeHealthcheck(
+                                List("CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"),
+                                "30s",
+                                "10s",
+                                3
+                            )),
+                            Some(logging),
+                            Some("unless-stopped")
+                        ),
+                        "db" -> YamlComposeService(
+                            "postgres:16",
+                            None,
+                            Some(Map("POSTGRES_DB" -> "app", "POSTGRES_PASSWORD" -> "secret")),
+                            None,
+                            Some(List("db-data:/var/lib/postgresql/data")),
+                            Some(List("backend")),
+                            None,
+                            None,
+                            None
+                        )
+                    ),
+                    Map("app-data" -> YamlComposeVolume(Some("local")), "db-data" -> YamlComposeVolume(Some("local"))),
+                    Map("backend"  -> YamlComposeNetwork(Some("bridge")))
+                )
+            )
+        }
+
+        "preserves multiline scalar source forms and decodes rendered YAML" in {
+            val yaml =
+                """literalStrip: |-
+                  |  line one
+                  |  line two
+                  |
+                  |literalClip: |
+                  |  line one
+                  |  line two
+                  |
+                  |literalKeep: |+
+                  |  line one
+                  |  line two
+                  |
+                  |
+                  |literalIndent: |4
+                  |    indented
+                  |      deeper
+                  |
+                  |foldedStrip: >2-
+                  |  line one
+                  |  line two
+                  |
+                  |  line three
+                  |foldedKeep: >+2
+                  |  line one
+                  |  line two
+                  |
+                  |
+                  |singleQuoted: 'line one
+                  |  line two
+                  |
+                  |  line three'
+                  |doubleQuoted: "line one
+                  |  line two\nline three"
+                  |plain: line one
+                  |  line two
+                  |
+                  |  line three
+                  |""".stripMargin
+
+            assertSourceRoundTrip(
+                yaml,
+                YamlMultilineScalars(
+                    literalStrip = "line one\nline two",
+                    literalClip = "line one\nline two\n",
+                    literalKeep = "line one\nline two\n\n\n",
+                    literalIndent = "indented\n  deeper\n",
+                    foldedStrip = "line one line two\nline three",
+                    foldedKeep = "line one line two\n\n\n",
+                    singleQuoted = "line one line two\nline three",
+                    doubleQuoted = "line one line two\nline three",
+                    plain = "line one line two\nline three"
+                )
+            )
+        }
+
+        "preserves yaml document from hell gotcha source and decodes rendered YAML" in {
+            val yaml =
+                """server_config:
+                  |  port_mapping:
+                  |    - 22:22
+                  |    - 80:80
+                  |    - 443:443
+                  |  serve:
+                  |    - /robots.txt
+                  |    - /favicon.ico
+                  |    - "*.html"
+                  |    - "*.png"
+                  |    - "!.git"
+                  |  geoblock_regions:
+                  |    - dk
+                  |    - fi
+                  |    - is
+                  |    - no
+                  |    - se
+                  |  flush_cache:
+                  |    on: [push, memory_pressure]
+                  |    priority: background
+                  |  allow_postgres_versions:
+                  |    - 9.5.25
+                  |    - 9.6.24
+                  |    - 10.23
+                  |    - 12.13
+                  |""".stripMargin
+
+            assertSourceRoundTrip(
+                yaml,
+                YamlHellConfig(
+                    YamlHellServerConfig(
+                        List("22:22", "80:80", "443:443"),
+                        List("/robots.txt", "/favicon.ico", "*.html", "*.png", "!.git"),
+                        List("dk", "fi", "is", "no", "se"),
+                        YamlHellFlushCache(List("push", "memory_pressure"), "background")
+                    )
+                )
+            )
+        }
+
+        "preserves YAML 1.1 Norway problem text exactly in CST source" in {
+            val yaml =
+                """norway: NO
+                  |on: on
+                  |off: off
+                  |yes: yes
+                  |no: no
+                  |trueValue: true
+                  |falseValue: FALSE
+                  |nullValue: ~
+                  |""".stripMargin
+            val doc      = Yaml.cst(yaml).getOrThrow
+            val rendered = doc.render(using Yaml.WriterConfig.Default)
+
+            val scalarText =
+                doc.root match
+                    case Present(Yaml.Cst.Node.Mapping(entries, _, _, _, _)) =>
+                        entries.map {
+                            case Yaml.Cst.MappingEntry(
+                                    Yaml.Cst.Node.Scalar(key, _, _, _, _),
+                                    Yaml.Cst.Node.Scalar(value, _, _, _, _),
+                                    _,
+                                    _,
+                                    _
+                                ) =>
+                                key -> value
+                            case other =>
+                                fail(s"Expected scalar mapping entry, found $other")
+                        }.toMap
+                    case other =>
+                        fail(s"Expected mapping root, found $other")
+                end match
+            end scalarText
+
+            assert(rendered == yaml)
+            assert(scalarText("norway") == "NO")
+            assert(scalarText("on") == "on")
+            assert(scalarText("off") == "off")
+            assert(scalarText("yes") == "yes")
+            assert(scalarText("no") == "no")
+            assert(Yaml.decode[YamlCoreScalars](rendered) == Result.succeed(
+                YamlCoreScalars("NO", "on", "off", "yes", "no", true, false, None)
+            ))
         }
 
         "builds canonical CST from schema values" in {

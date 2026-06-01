@@ -116,6 +116,37 @@ class YamlCstParserTest extends Test:
             assert(parseFailure(YamlCstParser.document(yaml)).contains("Unexpected content after YAML document end"))
         }
 
+        "rejects an unclosed flow sequence" in {
+            val yaml =
+                """items: [one, two
+                  |""".stripMargin
+
+            assert(parseFailure(YamlCstParser.document(yaml)).contains("Unterminated flow collection"))
+        }
+
+        "rejects invalid block scalar indentation" in {
+            val yaml =
+                """text: |
+                  |    first
+                  |  second
+                  |""".stripMargin
+
+            val message = parseFailure(YamlCstParser.document(yaml))
+
+            assert(message.contains("Expected block scalar indentation"))
+            assert(message.contains("line 3"))
+        }
+
+        "rejects a multi-document stream as a single CST document" in {
+            val yaml =
+                """name: Alice
+                  |---
+                  |name: Bob
+                  |""".stripMargin
+
+            assert(parseFailure(YamlCstParser.document(yaml)).contains("Unexpected content after YAML document end"))
+        }
+
         "preserves an explicit empty document at the start of a stream" in {
             val yaml =
                 """---
