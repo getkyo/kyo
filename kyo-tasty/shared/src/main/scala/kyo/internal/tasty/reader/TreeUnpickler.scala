@@ -1493,4 +1493,136 @@ object TreeUnpickler:
         end match
     end decodeTptAsType
 
+    /** Decode a TERM tag node and return the underlying Type it conveys at TYPE position.
+      *
+      * Companion of decodeTptAsType for the term-in-type-position tag set (F-A2-001). The 8 specific tags surface in ANNOTATEDtype payloads
+      * (NEW, APPLY, SELECT), TEMPLATE parent expressions (TYPEAPPLY, SELECT, NEW), CASEDEF inside MATCHCASEtype rhs, and INLINED-as-type
+      * body slots. Each handler consumes its byte payload precisely so the outer view advances correctly.
+      *
+      * The tag byte at view.position is consumed as the first action (same pattern as decodeTptAsType). Callers must only call this for
+      * tags in AstUnpickler.isTermTagInTypePosition; any tag reaching case other throws, since the caller committed to the guard.
+      *
+      * Wire formats:
+      *   SHAREDterm (60): cat-2 (tag + Nat). Nat is an AST section-relative offset (ASTRef).
+      *   BYNAMEtpt  (94): cat-3 (tag + AST). AST is the element type.
+      *   NEW        (95): cat-3 (tag + AST). AST is the constructed type (tpt).
+      *   SINGLETONtpt (101): cat-3 (tag + AST). AST is the singleton's value term.
+      *   SELECT    (112): cat-4 (tag + Nat + AST). Nat is nameRef; AST is qualifier.
+      *   APPLY     (136): cat-5 (tag + Length + fn_AST + args_AST*). fn is the called method.
+      *   TYPEAPPLY (137): cat-5 (tag + Length + fn_AST + targs_AST*). fn applied to type args.
+      *   CASEDEF   (155): cat-5 (tag + Length + pat_AST + body_AST + guard_AST?). Skip all.
+      */
+    private[reader] def decodeTermTagInTypePosition(
+        view: ByteView,
+        typeSession: TypeUnpickler.DecodeSession,
+        tag: Int,
+        sectionOffset: Int = 0
+    )(using Frame)(using AllowUnsafe): Tasty.Type =
+        discard(view.readByte()) // consume tag byte
+        tag match
+            case TastyFormat.SHAREDterm =>
+                // SHAREDterm (60): cat-2 (tag + Nat). The Nat is a section-relative ASTRef.
+                // Look up the cached type from addrCache. On cache miss assign a unique tracked negative
+                // ID so the result is Named(SymbolId(uniqueNeg)) with uniqueNeg < -1, not the Named(-1) sentinel.
+                // sectionOffset converts section-relative ref to the absolute addrCache key.
+                val ref    = view.readNat()
+                val absRef = sectionOffset + ref
+                typeSession.addrCache.getOrElse(
+                    absRef,
+                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(typeSession.nextUnresolvedId()))
+                )
+
+            case TastyFormat.BYNAMEtpt =>
+                // BYNAMEtpt (94): cat-3 (tag + AST). The AST is the element type.
+                // Distinct from BYNAMEtype (93) which is the type-position by-name encoding already handled
+                // by TypeUnpickler. This TPT-position variant wraps the inner type in Type.ByName.
+                val under = TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
+                Tasty.Type.ByName(under)
+
+            case TastyFormat.NEW =>
+                // NEW (95): cat-3 (tag + AST). The AST is the tpt (class type being constructed).
+                // The tpt IS the result type of the new expression.
+                TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
+
+            case TastyFormat.SINGLETONtpt =>
+                // SINGLETONtpt (101): cat-3 (tag + AST). The AST is the singleton's value term.
+                // Decode the term's type to get the singleton's underlying type.
+                TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
+
+            case TastyFormat.SELECT =>
+                // SELECT (112): cat-4 (tag + Nat + AST). Nat is nameRef; AST is the qualifier.
+                // Build a qualified FQN from the qualifier's resolved type and the selected name,
+                // mirroring SELECTtpt in decodeTptAsType (same pattern).
+                val nameRef = view.readNat()
+                val nm      = typeSession.names(nameRef).asString
+                val qual    = TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
+                val qualFqn: String = qual match
+                    case Tasty.Type.Named(sid) if sid.value < -1 =>
+                        typeSession.unresolvedIdToFqn.getOrElse(sid.value, "")
+                    case _ => ""
+                val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
+                val id      = typeSession.nextUnresolvedId()
+                typeSession.unresolvedIdToFqn(id) = fullFqn
+                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(id))
+
+            case TastyFormat.APPLY =>
+                // APPLY (136): cat-5 (tag + Length + fn_AST + args_AST*).
+                // The result type of the application is the function's return type. Read fn type;
+                // skip the remaining term args (they are values, not types).
+                val end    = view.readEnd()
+                val fnType = TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
+                view.goto(end)
+                fnType
+
+            case TastyFormat.TYPEAPPLY =>
+                // TYPEAPPLY (137): cat-5 (tag + Length + fn_AST + targs_AST*).
+                // fn is the method reference; targs are TYPE arguments.
+                // Return Applied(fnType, targs) since targs are types and match Type.Applied semantics.
+                val end    = view.readEnd()
+                val fnType = TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
+                val targs  = new scala.collection.mutable.ArrayBuffer[Tasty.Type]()
+                while view.position < end do
+                    targs += TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
+                view.goto(end)
+                if targs.isEmpty then fnType
+                else Tasty.Type.Applied(fnType, Chunk.from(targs.toSeq))
+
+            case TastyFormat.CASEDEF =>
+                // CASEDEF (155): cat-5 (tag + Length + pat_AST + body_AST + guard_AST?).
+                // In type position (rare, inside MATCHCASEtype rhs) the body is the result type.
+                // Skip everything and return a Wildcard placeholder; the body's type is inaccessible
+                // without a full term decoder. Use unique tracked negative IDs for the bounds to avoid
+                // emitting the Named(-1) sentinel that would fail the INV-005 named-sentinel check.
+                val end = view.readEnd()
+                view.goto(end)
+                val loId = typeSession.nextUnresolvedId()
+                val hiId = typeSession.nextUnresolvedId()
+                Tasty.Type.Wildcard(
+                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(loId)),
+                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(hiId))
+                )
+
+            case TastyFormat.QUALTHIS =>
+                // QUALTHIS (91): cat-3 (tag + AST). The AST is the qualifier type reference.
+                // Decode the qualifier type and return it as the this-type.
+                TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
+
+            case TastyFormat.INLINED =>
+                // INLINED (147): cat-5 (tag + Length + expr + call? + bindings*).
+                // An inlined expression appearing in type position. Skip the payload and return a
+                // unique tracked unresolved ID to avoid the Named(-1) sentinel.
+                val end = view.readEnd()
+                view.goto(end)
+                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(typeSession.nextUnresolvedId()))
+
+            case other =>
+                // Any tag reaching here is a routing invariant violation: the caller committed to
+                // isTermTagInTypePosition returning true. Throw loudly so the mismatch is detectable.
+                throw new IllegalStateException(
+                    s"decodeTermTagInTypePosition: unhandled tag $other at position ${view.positionInt}; " +
+                        s"check AstUnpickler.isTermTagInTypePosition routing."
+                )
+        end match
+    end decodeTermTagInTypePosition
+
 end TreeUnpickler

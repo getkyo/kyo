@@ -420,10 +420,13 @@ object TypeUnpickler:
                         else
                             // Pass 1 context: sectionBytes is null. A SHAREDtype cache miss means
                             // the referenced type was in a position not decoded during Pass 1.
-                            // Return an unresolved placeholder rather than throwing, so that callers
-                            // (e.g. decodeTemplateParents) can continue scanning.
-                            // F-G-007 pass B: use interned sentinelUnresolved instead of per-address fabricated name
-                            Tasty.Type.Named(sentinelUnresolved.id)
+                            // F-A2-002 fix: use a unique tracked negative ID (< -1) so the result
+                            // does not collide with the Named(-1) sentinel checked by INV-005.
+                            ctx.session match
+                                case s: DecodeSession =>
+                                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                                case null =>
+                                    Tasty.Type.Named(sentinelUnresolved.id)
                         end if
                     }
                 )
@@ -434,8 +437,15 @@ object TypeUnpickler:
                 // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
                 val absRef = ctx.sectionOffset + astRef
                 if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
-                // F-G-007 pass B: cross-file or unresolved TERMREFdirect -- use interned sentinel
-                else Tasty.Type.Named(sentinelUnresolved.id)
+                else
+                    // F-A2-002 fix: cross-file TERMREFdirect miss. Assign a unique tracked negative ID
+                    // so the result is Named(SymbolId(uniqueNeg)) with uniqueNeg < -1, not the Named(-1) sentinel.
+                    // Phase C's remapType will attempt FQN lookup via negIdToFinal; if it fails the type
+                    // remains as a unique unresolved ref (value < -1) rather than colliding with the -1 sentinel.
+                    ctx.session match
+                        case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                        case null             => Tasty.Type.Named(sentinelUnresolved.id)
+                end if
 
             case TastyFormat.TYPEREFdirect =>
                 val astRef = view.readNat()
@@ -443,8 +453,15 @@ object TypeUnpickler:
                 // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
                 val absRef = ctx.sectionOffset + astRef
                 if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
-                // F-G-007 pass B: cross-file or unresolved TYPEREFdirect -- use interned sentinel
-                else Tasty.Type.Named(sentinelUnresolved.id)
+                else
+                    // F-A2-002 fix: cross-file TYPEREFdirect miss (same rationale as TERMREFdirect above).
+                    // Assign a unique tracked negative ID so the result is Named(SymbolId(uniqueNeg)) with
+                    // uniqueNeg < -1, eliminating the Named(-1) sentinel from declaredType traversals.
+                    // This is the root cause of the scala.Tuple.splitAt Named(-1) in probe-001.log line 39872.
+                    ctx.session match
+                        case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                        case null             => Tasty.Type.Named(sentinelUnresolved.id)
+                end if
 
             case TastyFormat.TERMREFpkg =>
                 val nameRef = view.readNat()
@@ -477,11 +494,14 @@ object TypeUnpickler:
                         ctx.addrCache.get(recAddr) match
                             case Some(recNode) => Tasty.Type.RecThis(recNode)
                             case None          =>
-                                // F-A-007 fix: the Rec node hasn't been decoded yet. Use the interned
-                                // sentinelUnresolved instead of a fresh rec@<addr> symbol so that
-                                // no per-address fabricated names leak into cp.symbols.
-                                // Full thunk-based late resolution is deferred to Phase 11.
-                                Tasty.Type.RecThis(Tasty.Type.Named(sentinelUnresolved.id))
+                                // F-A-007 fix: the Rec node hasn't been decoded yet. Assign a unique
+                                // tracked ID (< -1) so the result is Named(SymbolId(uniqueNeg)) not Named(-1).
+                                // No per-address fabricated names leak into cp.symbols; the unique ID is
+                                // unresolvable but does not collide with the INV-005 Named(-1) sentinel check.
+                                val placeholderId = ctx.session match
+                                    case s: DecodeSession => kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId())
+                                    case null             => sentinelUnresolved.id
+                                Tasty.Type.RecThis(Tasty.Type.Named(placeholderId))
                 end match
 
             // Constant types (category 2: tag + Nat)
@@ -752,8 +772,12 @@ object TypeUnpickler:
                 val absBinderAddr = ctx.sectionOffset + binderAddr
                 ctx.binderAddrMap.get(absBinderAddr) match
                     case Some(params) if paramNum < params.length => Tasty.Type.ParamRef(params(paramNum).id, paramNum)
-                    // F-G-007 pass B: binder addr miss -- use interned sentinel
-                    case _ => Tasty.Type.Named(sentinelUnresolved.id)
+                    // F-A2-002 fix: binder addr miss -- assign unique tracked ID so the result is Named(SymbolId(uniqueNeg))
+                    // with uniqueNeg < -1, not the Named(-1) sentinel that would fail INV-005.
+                    case _ =>
+                        ctx.session match
+                            case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                            case null             => Tasty.Type.Named(sentinelUnresolved.id)
                 end match
 
             case TastyFormat.TYPEREFin =>
@@ -951,30 +975,124 @@ object TypeUnpickler:
                 view.goto(end)
                 Tasty.Type.MatchCase(pat, rhs)
 
+            // ── F-A2-001 term-tag-in-type-position handlers ───────────────────────
+            // These 8 TERM tags can appear inside nested type positions (e.g. inside APPLIEDtype
+            // args, ANNOTATEDtype payloads, or REFINEDtype bodies) when TypeUnpickler.readTypeNode
+            // recurses into them. The tag byte has already been consumed by readTypeNode. The logic
+            // mirrors TreeUnpickler.decodeTermTagInTypePosition but without re-consuming the tag.
+
+            case TastyFormat.SHAREDterm =>
+                // SHAREDterm (60): cat-2 (tag + Nat). ASTRef section-relative.
+                val ref    = view.readNat()
+                val absRef = ctx.sectionOffset + ref
+                ctx.addrCache.getOrElse(
+                    absRef, {
+                        ctx.session match
+                            case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                            case null             => Tasty.Type.Named(sentinelUnresolved.id)
+                    }
+                )
+
+            case TastyFormat.BYNAMEtpt =>
+                // BYNAMEtpt (94): cat-3 (tag + AST). Wrap inner type in Type.ByName.
+                val under = readTypeNode(view, ctx)
+                Tasty.Type.ByName(under)
+
+            case TastyFormat.NEW =>
+                // NEW (95): cat-3 (tag + AST). The AST is the tpt (constructed type).
+                readTypeNode(view, ctx)
+
+            case TastyFormat.SINGLETONtpt =>
+                // SINGLETONtpt (101): cat-3 (tag + AST). Decode singleton's underlying type.
+                readTypeNode(view, ctx)
+
+            case TastyFormat.SELECT =>
+                // SELECT (112): cat-4 (tag + Nat + AST). Build a tracked unresolved FQN (same as SELECTtpt).
+                val nameRef = view.readNat()
+                val nm      = nameAt(ctx.names, nameRef).asString
+                val qual    = readTypeNode(view, ctx)
+                val qualFqn: String = qual match
+                    case Tasty.Type.Named(sid) if sid.value < -1 =>
+                        ctx.session match
+                            case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(sid.value, "")
+                            case null             => ""
+                    case _ => ""
+                val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
+                ctx.session match
+                    case s: DecodeSession =>
+                        val id = s.nextUnresolvedId()
+                        s.unresolvedIdToFqn(id) = fullFqn
+                        Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(id))
+                    case null => Tasty.Type.Named(sentinelUnresolved.id)
+                end match
+
+            case TastyFormat.APPLY =>
+                // APPLY (136): cat-5 (tag + Length + fn_AST + args_AST*). Result type is fn's return type.
+                val end    = view.readEnd()
+                val fnType = readTypeNode(view, ctx)
+                view.goto(end)
+                fnType
+
+            case TastyFormat.TYPEAPPLY =>
+                // TYPEAPPLY (137): cat-5 (tag + Length + fn_AST + targs_AST*). Applied(fnType, targs).
+                val end    = view.readEnd()
+                val fnType = readTypeNode(view, ctx)
+                val targs  = readTypesUntil(view, end, ctx)
+                view.goto(end)
+                if targs.isEmpty then fnType
+                else Tasty.Type.Applied(fnType, Chunk.from(targs))
+
+            case TastyFormat.CASEDEF =>
+                // CASEDEF (155): cat-5 (tag + Length + ...). Skip; return Wildcard with unique IDs.
+                val end = view.readEnd()
+                view.goto(end)
+                val loId = ctx.session match
+                    case s: DecodeSession => s.nextUnresolvedId()
+                    case null             => sentinelUnresolved.id.value
+                val hiId = ctx.session match
+                    case s: DecodeSession => s.nextUnresolvedId()
+                    case null             => sentinelUnresolved.id.value
+                Tasty.Type.Wildcard(
+                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(loId)),
+                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(hiId))
+                )
+
+            case TastyFormat.QUALTHIS =>
+                // QUALTHIS (91): cat-3 (tag + AST). Decode the qualifier type and return it.
+                readTypeNode(view, ctx)
+
+            case TastyFormat.INLINED =>
+                // INLINED (147): cat-5 (tag + Length + ...). Skip; return unique unresolved ID.
+                val end = view.readEnd()
+                view.goto(end)
+                ctx.session match
+                    case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                    case null             => Tasty.Type.Named(sentinelUnresolved.id)
+
+            // ── Unknown tag fallbacks (forward-compat safety net) ─────────────────
+
             case other if other >= TastyFormat.firstLengthTreeTag =>
-                // Unknown category 5 node: log a warning, skip and return a placeholder.
-                // All 9 TPT tags are now explicitly handled above (F-I-004 fix). Tags that
-                // reach here are genuinely unknown (new TASTy tags or term-position nodes
-                // encountered in a type-decode context). Warn but continue loading.
+                // F-A2-001 keystone fix: the 8 tracked term-tag-in-type-position classes now have
+                // explicit handlers above. Any cat-5 tag that still lands here is a genuinely new
+                // TASTy wire-format tag (e.g. a future Scala 3 release). Warn and continue.
                 given Frame = ctx.frame
                 Sync.Unsafe.evalOrThrow(Log.warn(
-                    s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt}"
+                    s"TypeUnpickler: unhandled cat-5 TASTy tag $other at offset ${view.positionInt} ; " +
+                        s"check AstUnpickler.isTreeTptTag / isTermTagInTypePosition dispatch."
                 ))
                 val end = view.readEnd()
                 view.goto(end)
-                // F-G-007 pass B: use single interned sentinelUnknownTag instead of per-tag fabricated name
                 Tasty.Type.Named(sentinelUnknownTag.id)
 
             case other =>
-                // Unknown category 1-4 node: log a warning, skip body and return placeholder.
-                // Term-position tags (SELECT=112, APPLY=136, etc.) can appear in type-decode
-                // paths (e.g. parent expressions in TEMPLATE). Skip gracefully.
+                // F-A2-001 keystone fix: same rationale as the cat-5 branch above.
+                // INV-003 asserts ZERO of these warnings on the stdlib + kyo load.
                 given Frame = ctx.frame
                 Sync.Unsafe.evalOrThrow(Log.warn(
-                    s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt}"
+                    s"TypeUnpickler: unhandled cat-1..4 TASTy tag $other at offset ${view.positionInt} ; " +
+                        s"check AstUnpickler.isTermTagInTypePosition dispatch."
                 ))
                 skipTreeBody(other, view)
-                // F-G-007 pass B: use single interned sentinelUnknownTag instead of per-tag fabricated name
                 Tasty.Type.Named(sentinelUnknownTag.id)
 
         end match

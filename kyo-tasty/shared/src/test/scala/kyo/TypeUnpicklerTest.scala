@@ -496,8 +496,8 @@ class TypeUnpicklerTest extends Test:
                 }
         val logged = output.toString
         assert(
-            logged.contains("unknown TASTy type tag 250"),
-            s"Expected warn message containing 'unknown TASTy type tag 250' but got: $logged"
+            logged.contains("unhandled cat-5 TASTy tag 250") || logged.contains("unknown TASTy type tag 250"),
+            s"Expected warn message containing 'unhandled cat-5 TASTy tag 250' (F-A2-001 new wording) but got: $logged"
         )
         decodedType match
             case Present(Tasty.Type.Named(_)) =>

@@ -535,6 +535,17 @@ object AstUnpickler:
                     case _: Exception =>
                         view.goto(end)
                         Absent
+            else if isTermTagInTypePosition(nextTag) then
+                // F-A2-001 fix: TERM tags (NEW=95, SELECT=112, SHAREDterm=60, TYPEAPPLY=137,
+                // APPLY=136, CASEDEF=155, SINGLETONtpt=101, BYNAMEtpt=94) can appear in TYPE
+                // position inside ANNOTATEDtype payloads, TEMPLATE parent expressions, and
+                // INLINED-as-type contexts. Route to decodeTermTagInTypePosition instead of
+                // TypeUnpickler.decodeTag which would emit Named(sentinelUnknownTag.id) and log a warning.
+                try Present(TreeUnpickler.decodeTermTagInTypePosition(view, typeSession, nextTag, sectionOffset))
+                catch
+                    case _: Exception =>
+                        view.goto(end)
+                        Absent
             else
                 try Present(TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset))
                 catch
@@ -562,6 +573,28 @@ object AstUnpickler:
             tag == TastyFormat.MATCHtpt ||
             tag == TastyFormat.MATCHCASEtype
     end isTreeTptTag
+
+    /** TASTy TERM tags that may legitimately appear in TYPE position inside ANNOTATEDtype, TEMPLATE parent expressions, and INLINED-as-type
+      * contexts. Surfaced by F-A2-001 (probe-001.log) plus additional tags discovered during Phase 2.01 test runs: NEW=95, SELECT=112,
+      * SHAREDterm=60, TYPEAPPLY=137, APPLY=136, CASEDEF=155, SINGLETONtpt=101, BYNAMEtpt=94, QUALTHIS=91, INLINED=147.
+      * Routes to TreeUnpickler.decodeTermTagInTypePosition.
+      *
+      * SINGLETONtpt and BYNAMEtpt are TPT-flavored tags but were not included in isTreeTptTag from decoder-fidelity-1 Phase 03; they are
+      * grouped here with the term-position tags for consistency with the F-A2-001 fix path. QUALTHIS and INLINED were discovered during
+      * Phase 2.01 test runs (kyo-tasty classes contained them in type positions).
+      */
+    private[reader] def isTermTagInTypePosition(tag: Int): Boolean =
+        tag == TastyFormat.NEW ||
+            tag == TastyFormat.SELECT ||
+            tag == TastyFormat.SHAREDterm ||
+            tag == TastyFormat.TYPEAPPLY ||
+            tag == TastyFormat.APPLY ||
+            tag == TastyFormat.CASEDEF ||
+            tag == TastyFormat.SINGLETONtpt ||
+            tag == TastyFormat.BYNAMEtpt ||
+            tag == TastyFormat.QUALTHIS ||
+            tag == TastyFormat.INLINED
+    end isTermTagInTypePosition
 
     /** Scan a DEFDEF payload sub-view to read the return type.
       *
@@ -664,13 +697,20 @@ object AstUnpickler:
             else if tag == TastyFormat.APPLY && tag >= TastyFormat.firstLengthTreeTag then
                 // APPLY-headed parent: consume tag + length, then decode the first sub-node
                 // (the constructor call target) as a type reference.
+                // F-A2-001 fix: the first child is typically SELECT(NEW(type_ref), <init>).
+                // SELECT=112 is a term tag; route through decodeTermTagInTypePosition instead
+                // of TypeUnpickler.readTypeIntoSession which has no handler for SELECT.
                 try
                     discard(parentScanView.readByte()) // consume APPLY tag
                     val applyEnd = parentScanView.readEnd()
-                    val savedPos = parentScanView.position
-                    // The first child of APPLY is usually SELECT(NEW(type_ref), <init>).
-                    // Attempt to decode it as a type; fall back on any error.
-                    val decoded = TypeUnpickler.readTypeIntoSession(parentScanView, typeSession, sectionOffset)
+                    val childTag = parentScanView.peekByte(parentScanView.position) & 0xff
+                    val decoded =
+                        if isTermTagInTypePosition(childTag) then
+                            TreeUnpickler.decodeTermTagInTypePosition(parentScanView, typeSession, childTag, sectionOffset)
+                        else if isTreeTptTag(childTag) then
+                            TreeUnpickler.decodeTptAsType(parentScanView, typeSession, childTag, sectionOffset)
+                        else
+                            TypeUnpickler.readTypeIntoSession(parentScanView, typeSession, sectionOffset)
                     collected += decoded
                     parentScanView.goto(applyEnd)
                 catch
@@ -680,8 +720,17 @@ object AstUnpickler:
                         scanParents = false
                 end try
             else
+                // F-A2-001 fix: also guard direct (non-APPLY-headed) parent expressions.
+                // A parent like `extends SomeTrait` may have a NEW or SELECT tag at the head.
                 try
-                    val decoded = TypeUnpickler.readTypeIntoSession(parentScanView, typeSession, sectionOffset)
+                    val parentTag = parentScanView.peekByte(parentScanView.position) & 0xff
+                    val decoded =
+                        if isTermTagInTypePosition(parentTag) then
+                            TreeUnpickler.decodeTermTagInTypePosition(parentScanView, typeSession, parentTag, sectionOffset)
+                        else if isTreeTptTag(parentTag) then
+                            TreeUnpickler.decodeTptAsType(parentScanView, typeSession, parentTag, sectionOffset)
+                        else
+                            TypeUnpickler.readTypeIntoSession(parentScanView, typeSession, sectionOffset)
                     collected += decoded
                 catch
                     case _: Exception =>
@@ -813,6 +862,9 @@ object AstUnpickler:
                 if isTreeTptTag(nextTag) then
                     // Annotation tycon emitted as a TPT tag (e.g. IDENTtpt, APPLIEDtpt).
                     Present(TreeUnpickler.decodeTptAsType(view, typeSession, nextTag, sectionOffset))
+                else if isTermTagInTypePosition(nextTag) then
+                    // F-A2-001 fix: annotation tycons can arrive as term tags in INLINED-as-type contexts.
+                    Present(TreeUnpickler.decodeTermTagInTypePosition(view, typeSession, nextTag, sectionOffset))
                 else if !isModifierTag(nextTag) then
                     Present(TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset))
                 else
@@ -909,6 +961,9 @@ object AstUnpickler:
             val subT =
                 if isTreeTptTag(typeArgTag) then
                     TreeUnpickler.decodeTptAsType(view, typeSession, typeArgTag, sectionOffset)
+                else if isTermTagInTypePosition(typeArgTag) then
+                    // F-A2-001 fix: term tags in type-argument position of @Child annotations.
+                    TreeUnpickler.decodeTermTagInTypePosition(view, typeSession, typeArgTag, sectionOffset)
                 else
                     TypeUnpickler.readTypeIntoSessionWithBytes(view, typeSession, sectionBytes, sectionOffset)
             Tasty.Type.Applied(tycon, kyo.Chunk(subT))
