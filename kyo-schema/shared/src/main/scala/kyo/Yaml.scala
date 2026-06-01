@@ -560,16 +560,16 @@ object Yaml:
             self =>
 
             /** Wraps a downstream handler with this processor. */
-            def apply[Ctx](downstream: Handler[Ctx, Err]): Handler[Ctx, Err]
+            def apply[Ctx, Err2 >: Err](downstream: Handler[Ctx, Err2]): Handler[Ctx, Err2]
 
             /** Sends this processor's output to the downstream handler. */
-            final def andThen[Ctx](downstream: Handler[Ctx, Err]): Handler[Ctx, Err] =
+            final def andThen[Ctx, Err2 >: Err](downstream: Handler[Ctx, Err2]): Handler[Ctx, Err2] =
                 self(downstream)
 
             /** Composes this processor with another processor. */
-            final def andThen(next: Processor[Err]): Processor[Err] =
-                new Processor[Err]:
-                    def apply[Ctx](downstream: Handler[Ctx, Err]): Handler[Ctx, Err] =
+            final def andThen[Err2](next: Processor[Err2]): Processor[Err | Err2] =
+                new Processor[Err | Err2]:
+                    def apply[Ctx, Err3 >: Err | Err2](downstream: Handler[Ctx, Err3]): Handler[Ctx, Err3] =
                         self(next(downstream))
                 end new
             end andThen
@@ -582,35 +582,35 @@ object Yaml:
                 f: (String, ScalarMeta) => Result[Err, (String, ScalarMeta)]
             ): Processor[Err] =
                 new Processor[Err]:
-                    def apply[Ctx](downstream: Handler[Ctx, Err]): Handler[Ctx, Err] =
-                        new Handler[Ctx, Err]:
-                            override def streamStart(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                    def apply[Ctx, Err2 >: Err](downstream: Handler[Ctx, Err2]): Handler[Ctx, Err2] =
+                        new Handler[Ctx, Err2]:
+                            override def streamStart(context: Ctx, mark: Mark): Result[Err2, Ctx] =
                                 downstream.streamStart(context, mark)
 
-                            override def documentStart(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                            override def documentStart(context: Ctx, mark: Mark): Result[Err2, Ctx] =
                                 downstream.documentStart(context, mark)
 
-                            override def mappingStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err, Ctx] =
+                            override def mappingStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err2, Ctx] =
                                 downstream.mappingStart(context, meta, size)
 
-                            override def sequenceStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err, Ctx] =
+                            override def sequenceStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err2, Ctx] =
                                 downstream.sequenceStart(context, meta, size)
 
-                            override def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err, Ctx] =
+                            override def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err2, Ctx] =
                                 f(value, meta).flatMap { case (nextValue, nextMeta) =>
                                     downstream.scalar(context, nextValue, nextMeta)
                                 }
 
-                            override def alias(context: Ctx, name: Anchor, mark: Mark): Result[Err, Ctx] =
+                            override def alias(context: Ctx, name: Anchor, mark: Mark): Result[Err2, Ctx] =
                                 downstream.alias(context, name, mark)
 
-                            override def collectionEnd(context: Ctx, kind: CollectionKind, mark: Mark): Result[Err, Ctx] =
+                            override def collectionEnd(context: Ctx, kind: CollectionKind, mark: Mark): Result[Err2, Ctx] =
                                 downstream.collectionEnd(context, kind, mark)
 
-                            override def documentEnd(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                            override def documentEnd(context: Ctx, mark: Mark): Result[Err2, Ctx] =
                                 downstream.documentEnd(context, mark)
 
-                            override def streamEnd(context: Ctx, mark: Mark): Result[Err, Ctx] =
+                            override def streamEnd(context: Ctx, mark: Mark): Result[Err2, Ctx] =
                                 downstream.streamEnd(context, mark)
                         end new
                     end apply
@@ -696,6 +696,177 @@ object Yaml:
             writer.resultContext
         end write
     end Events
+
+    /** Configurable YAML event processing pipeline.
+      *
+      * A `Pipeline` is the opt-in orchestration API for YAML middleware. With no processors configured, schema decoding and encoding
+      * delegate to [[Yaml.decode]] and [[Yaml.encode]] so ordinary reads and writes stay on the direct fast paths. With processors,
+      * `visit`, `render`, and `write` route events through the configured middleware before reaching the terminal handler.
+      *
+      * Processor-backed `decode` is intentionally wired later through the direct event reader path. The final design reads transformed
+      * events into `Schema` without rendering YAML text, without building a YAML DOM, and without using the JSON reader bridge.
+      *
+      * Pipelines are immutable; methods such as [[reader]], [[writer]], and [[through]] return a new pipeline.
+      */
+    final class Pipeline[Err] private[Yaml] (
+        private val readerConfig: ReaderConfig,
+        private val writerConfig: WriterConfig,
+        private val processor: Maybe[Events.Processor[Err]]
+    ):
+
+        /** Uses the supplied reader configuration for decode, parse, render, and visit source selection. */
+        def reader(config: ReaderConfig): Pipeline[Err] =
+            new Pipeline(config, writerConfig, processor)
+        end reader
+
+        /** Uses the supplied writer configuration for encode, write, and render output. */
+        def writer(config: WriterConfig): Pipeline[Err] =
+            new Pipeline(readerConfig, config, processor)
+        end writer
+
+        /** Adds an event processor to this pipeline. Processors run in the order they are added. */
+        def through[Err2](next: Events.Processor[Err2]): Pipeline[Err | Err2] =
+            val combined: Events.Processor[Err | Err2] =
+                processor match
+                    case Present(current) => current.andThen(next)
+                    case Absent           => widenProcessor(next)
+            new Pipeline(readerConfig, writerConfig, Maybe(combined))
+        end through
+
+        /** Decodes YAML into a schema value.
+          *
+          * Pipelines with no processors delegate to [[Yaml.decode]]. Processor-backed decode is implemented by the direct event reader
+          * path, not by rendering the transformed events back to YAML text.
+          */
+        def decode[A](
+            input: String
+        )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
+            processor match
+                case Absent     => Yaml.decode[A](input, readerConfig)
+                case Present(_) => processorDecodeUnsupported(input)
+            end match
+        end decode
+
+        /** Decodes UTF-8 YAML bytes into a schema value. */
+        def decodeBytes[A](
+            input: Span[Byte]
+        )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
+            decode[A](String(input.toArray, StandardCharsets.UTF_8))
+        end decodeBytes
+
+        /** Renders a YAML source after routing its events through this pipeline's processors. */
+        def render(input: String)(using Frame): Result[Err | DecodeException, String] =
+            val renderer = Events.Renderer(writerConfig)
+            visit(input, ())(renderer).map(_ => renderer.resultString)
+        end render
+
+        /** Parses a YAML source into a [[Node]] after routing its events through this pipeline's processors. */
+        def parse(input: String)(using Frame): Result[Err | DecodeException, Node] =
+            val builder = NodeBuilder()
+            visit(input, ())(builder).flatMap(_ => builder.result)
+        end parse
+
+        /** Visits a YAML source after routing its events through this pipeline's processors. */
+        def visit[Ctx, Err2](
+            input: String,
+            context: Ctx
+        )(handler: Events.Handler[Ctx, Err2])(using Frame): Result[Err | Err2 | DecodeException, Ctx] =
+            selectedSource(input).flatMap { source =>
+                processor match
+                    case Absent =>
+                        Events.visit(source, context)(handler)
+                    case Present(current) =>
+                        Events.visit(source, context)(current.andThen(widenHandler(handler)))
+                end match
+            }
+        end visit
+
+        /** Encodes a schema value to YAML.
+          *
+          * Pipelines with no processors delegate to [[Yaml.encode]]. Processor-backed encode emits schema events through the configured
+          * processors and renders the resulting YAML event stream.
+          */
+        def encode[A](value: A)(using schema: Schema[A], frame: Frame): Result[Err | DecodeException, String] =
+            processor match
+                case Absent =>
+                    Result.succeed(Yaml.encode(value, writerConfig))
+                case Present(_) =>
+                    val renderer = Events.Renderer(writerConfig)
+                    write(value, ())(renderer).map(_ => renderer.resultString)
+            end match
+        end encode
+
+        /** Writes a schema value as YAML events after routing them through this pipeline's processors. */
+        def write[A, Ctx, Err2](
+            value: A,
+            context: Ctx
+        )(handler: Events.Handler[Ctx, Err2])(using schema: Schema[A], frame: Frame): Result[Err | Err2, Ctx] =
+            processor match
+                case Absent =>
+                    Events.write(value, context)(handler)(using schema, writerConfig, frame)
+                case Present(current) =>
+                    Events.write(value, context)(current.andThen(widenHandler(handler)))(using schema, writerConfig, frame)
+            end match
+        end write
+
+        private def selectedSource(input: String)(using Frame): Result[DecodeException, String] =
+            readerConfig.documentIndex match
+                case Present(index) => selectDocument(input, index)
+                case Absent         => Result.succeed(input)
+        end selectedSource
+
+        private def processorDecodeUnsupported[A](input: String)(using Frame): Result[Err | DecodeException, A] =
+            Result.fail(ParseException(
+                Yaml(),
+                input,
+                "YAML pipeline decode with processors requires the direct YAML event reader",
+                Nil,
+                0
+            ))
+        end processorDecodeUnsupported
+    end Pipeline
+
+    /** Default YAML pipeline using [[ReaderConfig.Default]] and [[WriterConfig.Default]]. */
+    val pipeline: Pipeline[Nothing] =
+        new Pipeline(ReaderConfig.Default, WriterConfig.Default, Absent)
+
+    private def widenProcessor[Err1, Err2](processor: Events.Processor[Err2]): Events.Processor[Err1 | Err2] =
+        new Events.Processor[Err1 | Err2]:
+            def apply[Ctx, Err3 >: Err1 | Err2](downstream: Events.Handler[Ctx, Err3]): Events.Handler[Ctx, Err3] =
+                processor(downstream)
+        end new
+    end widenProcessor
+
+    private def widenHandler[Ctx, Err1, Err2](handler: Events.Handler[Ctx, Err2]): Events.Handler[Ctx, Err1 | Err2] =
+        new Events.Handler[Ctx, Err1 | Err2]:
+            override def streamStart(context: Ctx, mark: Mark): Result[Err1 | Err2, Ctx] =
+                handler.streamStart(context, mark)
+
+            override def documentStart(context: Ctx, mark: Mark): Result[Err1 | Err2, Ctx] =
+                handler.documentStart(context, mark)
+
+            override def mappingStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err1 | Err2, Ctx] =
+                handler.mappingStart(context, meta, size)
+
+            override def sequenceStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err1 | Err2, Ctx] =
+                handler.sequenceStart(context, meta, size)
+
+            override def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err1 | Err2, Ctx] =
+                handler.scalar(context, value, meta)
+
+            override def alias(context: Ctx, name: Anchor, mark: Mark): Result[Err1 | Err2, Ctx] =
+                handler.alias(context, name, mark)
+
+            override def collectionEnd(context: Ctx, kind: Events.CollectionKind, mark: Mark): Result[Err1 | Err2, Ctx] =
+                handler.collectionEnd(context, kind, mark)
+
+            override def documentEnd(context: Ctx, mark: Mark): Result[Err1 | Err2, Ctx] =
+                handler.documentEnd(context, mark)
+
+            override def streamEnd(context: Ctx, mark: Mark): Result[Err1 | Err2, Ctx] =
+                handler.streamEnd(context, mark)
+        end new
+    end widenHandler
 
     /** YAML node tree built only by [[parse]] and [[parseAll]].
       *
