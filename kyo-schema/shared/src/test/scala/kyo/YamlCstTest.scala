@@ -513,4 +513,133 @@ class YamlCstTest extends Test:
             assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(Some("Alice"), None)))
         }
     }
+
+    "Yaml.Cst edits" - {
+
+        def scalar(value: String): Yaml.Cst.Node =
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            Yaml.Cst.Node.Scalar(
+                value,
+                Yaml.Cst.ScalarSyntax.Canonical,
+                Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                span,
+                Absent
+            )
+        end scalar
+
+        def mapping(entries: (String, Yaml.Cst.Node)*): Yaml.Cst.Node =
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            Yaml.Cst.Node.Mapping(
+                Chunk.from(entries).map { case (key, value) =>
+                    Yaml.Cst.MappingEntry(scalar(key), value, span)
+                },
+                Yaml.Cst.MappingSyntax.Canonical,
+                Yaml.Meta(Absent, Absent, mark),
+                span,
+                Absent
+            )
+        end mapping
+
+        "replaces scalar by structural path while preserving leading comment in rendered output" in {
+            val yaml = """# app
+                         |services:
+                         |  api:
+                         |    # image comment
+                         |    image: app:v1
+                         |    ports: [8080]
+                         |""".stripMargin
+            val replacement = scalar("app:v2")
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "services" / "api" / "image", replacement).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty)
+            assert(rendered.contains("# image comment"))
+            Yaml.parse(rendered) match
+                case Result.Success(Yaml.Node.Mapping(servicesRoot, _)) =>
+                    servicesRoot(0) match
+                        case (Yaml.Node.Scalar("services", _), Yaml.Node.Mapping(serviceEntries, _)) =>
+                            serviceEntries(0) match
+                                case (Yaml.Node.Scalar("api", _), Yaml.Node.Mapping(apiEntries, _)) =>
+                                    assert(apiEntries(0) match
+                                        case (Yaml.Node.Scalar("image", _), Yaml.Node.Scalar("app:v2", _)) => true
+                                        case _                                                             => false)
+                                    assert(apiEntries(1) match
+                                        case (Yaml.Node.Scalar("ports", _), Yaml.Node.Sequence(ports, _)) =>
+                                            ports.size == 1 && (ports(0) match
+                                                case Yaml.Node.Scalar("8080", _) => true
+                                                case _                           => false)
+                                        case _ =>
+                                            false)
+                                case other =>
+                                    fail(s"Expected api mapping, got $other")
+                            end match
+                        case other =>
+                            fail(s"Expected services mapping, got $other")
+                    end match
+                case other =>
+                    fail(s"Expected rendered YAML to parse, got $other")
+            end match
+            assert(rendered.contains("image: app:v2"))
+        }
+
+        "inserts, removes, and renames mapping entries at root" in {
+            val base =
+                Yaml.cst("name: Alice\nactive: true\n").getOrThrow
+            val edited =
+                base
+                    .insert(Yaml.Cst.Path.root / "age", scalar("30"))
+                    .getOrThrow
+                    .insert(Yaml.Cst.Path.root / "displayName", scalar("Alice"))
+                    .getOrThrow
+                    .remove(Yaml.Cst.Path.root / "name")
+                    .getOrThrow
+                    .remove(Yaml.Cst.Path.root / "active")
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty)
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("age" -> "30", "displayName" -> "Alice")))
+        }
+
+        "inserts and removes sequence elements under a mapping key" in {
+            val base =
+                Yaml.cst("ports:\n- 8080\n- 8082\n").getOrThrow
+            val edited =
+                base
+                    .insert(Yaml.Cst.Path.root / "ports" / 1, scalar("8081"))
+                    .getOrThrow
+                    .remove(Yaml.Cst.Path.root / "ports" / 0)
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty)
+            assert(Yaml.decode[Map[String, List[Int]]](rendered) == Result.succeed(Map("ports" -> List(8081, 8082))))
+        }
+
+        "fails removing a missing path with the concrete path" in {
+            val result =
+                Yaml.cst("name: Alice\n").getOrThrow.remove(Yaml.Cst.Path.root / "missing")
+
+            result match
+                case Result.Failure(e: Yaml.Cst.EditException) =>
+                    assert(e.path.show == "missing")
+                case other =>
+                    fail(s"Expected EditException failure, got $other")
+            end match
+        }
+
+        "replaces root and renders the new node" in {
+            val base = Yaml.cst("name: Alice\n").getOrThrow
+            val edited =
+                base.replace(Yaml.Cst.Path.root, mapping("name" -> scalar("Bob"))).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty)
+            assert(rendered == "name: Bob\n")
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("name" -> "Bob")))
+        }
+    }
 end YamlCstTest
