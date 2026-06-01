@@ -103,7 +103,7 @@ private[kyo] object YamlCstRenderer:
             end match
 
             appendTrivia(document.leadingTrivia, 0)
-            document.root.foreach(renderNode(_, 0))
+            document.root.foreach(renderNode(_, 0, includeProperties = true))
             appendTrivia(document.trailingTrivia, 0)
             if config.documentMarkers == Yaml.WriterConfig.DocumentMarkers.StartAndEnd then
                 if out.nonEmpty && out.charAt(out.length - 1) != '\n' then
@@ -121,11 +121,13 @@ private[kyo] object YamlCstRenderer:
             out.toString
         end document
 
-        private def renderNode(node: Yaml.Cst.Node, indent: Int): Unit =
+        private def renderNode(node: Yaml.Cst.Node, indent: Int, includeProperties: Boolean): Unit =
             node match
-                case Yaml.Cst.Node.Mapping(entries, _, _, _, _) =>
+                case Yaml.Cst.Node.Mapping(entries, _, meta, _, _) =>
+                    appendCollectionProperties(meta, indent, includeProperties)
                     renderMapping(entries, indent)
-                case Yaml.Cst.Node.Sequence(entries, _, _, _, _) =>
+                case Yaml.Cst.Node.Sequence(entries, _, meta, _, _) =>
+                    appendCollectionProperties(meta, indent, includeProperties)
                     renderSequence(entries, indent)
                 case Yaml.Cst.Node.Scalar(value, _, meta, _, _) =>
                     appendIndent(indent)
@@ -137,6 +139,17 @@ private[kyo] object YamlCstRenderer:
                     appendLine()
             end match
         end renderNode
+
+        private def appendCollectionProperties(meta: Yaml.Meta, indent: Int, includeProperties: Boolean): Unit =
+            if includeProperties then
+                val prefix = properties(meta.anchor, meta.tag)
+                if prefix.nonEmpty then
+                    appendIndent(indent)
+                    out.append(prefix)
+                    appendLine()
+                end if
+            end if
+        end appendCollectionProperties
 
         private def renderMapping(entries: Chunk[Yaml.Cst.MappingEntry], indent: Int): Unit =
             if entries.isEmpty then
@@ -161,9 +174,10 @@ private[kyo] object YamlCstRenderer:
                         case child =>
                             appendIndent(indent)
                             val _ = out.append(renderKey(entry.key)).append(':')
+                            appendCollectionPropertiesInline(child)
                             appendTrailingTrivia(entry.trailingTrivia)
                             appendLine()
-                            renderNode(child, indent + indentSize)
+                            renderNode(child, indent + indentSize, includeProperties = false)
                     end match
                 }
             end if
@@ -192,13 +206,22 @@ private[kyo] object YamlCstRenderer:
                         case child =>
                             appendIndent(indent)
                             out.append('-')
+                            appendCollectionPropertiesInline(child)
                             appendTrailingTrivia(entry.trailingTrivia)
                             appendLine()
-                            renderNode(child, indent + indentSize)
+                            renderNode(child, indent + indentSize, includeProperties = false)
                     end match
                 }
             end if
         end renderSequence
+
+        private def appendCollectionPropertiesInline(node: Yaml.Cst.Node): Unit =
+            val prefix = collectionProperties(node)
+            if prefix.nonEmpty then
+                out.append(' ')
+                out.append(prefix)
+            end if
+        end appendCollectionPropertiesInline
 
         private def appendTrivia(trivia: Chunk[Yaml.Cst.Trivia], indent: Int): Unit =
             trivia.foreach { value =>
@@ -233,6 +256,14 @@ private[kyo] object YamlCstRenderer:
                 case _                                       => node.toString
             end match
         end renderInline
+
+        private def collectionProperties(node: Yaml.Cst.Node): String =
+            node match
+                case Yaml.Cst.Node.Mapping(_, _, meta, _, _)  => properties(meta.anchor, meta.tag)
+                case Yaml.Cst.Node.Sequence(_, _, meta, _, _) => properties(meta.anchor, meta.tag)
+                case _                                        => ""
+            end match
+        end collectionProperties
 
         private def appendScalar(value: String, meta: Yaml.ScalarMeta): Unit =
             val prefix = properties(meta.anchor, meta.tag)

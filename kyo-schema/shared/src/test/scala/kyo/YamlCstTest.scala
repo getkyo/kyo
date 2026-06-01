@@ -698,6 +698,50 @@ class YamlCstTest extends Test:
             assert(rendered == "# keep\nvalue: new")
         }
 
+        "preserves mapping anchors and aliases when rendering changed documents with comments" in {
+            val yaml = """value: &map
+                         |  a: 1 # keep
+                         |copy: *map
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value" / "a", scalar("2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("value: &map"))
+            assert(rendered.contains("a: 2 # keep"))
+            assert(rendered.contains("copy: *map"))
+            assert(Yaml.decode[Map[String, Map[String, String]]](rendered) ==
+                Result.succeed(Map("value" -> Map("a" -> "2"), "copy" -> Map("a" -> "2"))))
+        }
+
+        "preserves sequence anchors and aliases when rendering changed documents with comments" in {
+            val yaml = """items: &items
+                         |  - old # keep
+                         |copy: *items
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "items" / 0, scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("items: &items"))
+            assert(rendered.contains("- new # keep"))
+            assert(rendered.contains("copy: *items"))
+            assert(Yaml.decode[Map[String, List[String]]](rendered) ==
+                Result.succeed(Map("items" -> List("new"), "copy" -> List("new"))))
+        }
+
+        "preserves collection tags when rendering changed documents with comments" in {
+            val yaml = """value: !!map
+                         |  a: 1 # keep
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value" / "a", scalar("2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("value: !!map"))
+            assert(rendered.contains("a: 2 # keep"))
+        }
+
         "inserts, removes, and renames mapping entries at root" in {
             val base =
                 Yaml.cst("name: Alice\nactive: true\n").getOrThrow
