@@ -232,12 +232,12 @@ object LspClient:
         ): Chunk[LspHandler.TypeHierarchyItem] < (Async & Abort[LspException | Closed]) =
             Sync.Unsafe.defer(self.prepareTypeHierarchy(params).safe.get)
 
-        def typeHierarchySupertypes(params: LspHandler.TypeHierarchySuperTypesParams)(using
+        def typeHierarchySupertypes(params: LspHandler.TypeHierarchySupertypesParams)(using
             Frame
         ): Chunk[LspHandler.TypeHierarchyItem] < (Async & Abort[LspException | Closed]) =
             Sync.Unsafe.defer(self.typeHierarchySupertypes(params).safe.get)
 
-        def typeHierarchySubtypes(params: LspHandler.TypeHierarchySubTypesParams)(using
+        def typeHierarchySubtypes(params: LspHandler.TypeHierarchySubtypesParams)(using
             Frame
         ): Chunk[LspHandler.TypeHierarchyItem] < (Async & Abort[LspException | Closed]) =
             Sync.Unsafe.defer(self.typeHierarchySubtypes(params).safe.get)
@@ -488,11 +488,11 @@ object LspClient:
             AllowUnsafe,
             Frame
         ): Fiber.Unsafe[Chunk[LspHandler.TypeHierarchyItem], Abort[LspException | Closed]]
-        def typeHierarchySupertypes(params: LspHandler.TypeHierarchySuperTypesParams)(using
+        def typeHierarchySupertypes(params: LspHandler.TypeHierarchySupertypesParams)(using
             AllowUnsafe,
             Frame
         ): Fiber.Unsafe[Chunk[LspHandler.TypeHierarchyItem], Abort[LspException | Closed]]
-        def typeHierarchySubtypes(params: LspHandler.TypeHierarchySubTypesParams)(using
+        def typeHierarchySubtypes(params: LspHandler.TypeHierarchySubtypesParams)(using
             AllowUnsafe,
             Frame
         ): Fiber.Unsafe[Chunk[LspHandler.TypeHierarchyItem], Abort[LspException | Closed]]

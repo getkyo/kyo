@@ -1964,14 +1964,14 @@ object LspHandler:
     ) derives Schema, CanEqual
 
     /** Parameters for `typeHierarchy/supertypes`. */
-    final case class TypeHierarchySuperTypesParams(
+    final case class TypeHierarchySupertypesParams(
         item: TypeHierarchyItem,
         workDoneToken: Maybe[ProgressToken] = Absent,
         partialResultToken: Maybe[ProgressToken] = Absent
     ) derives Schema, CanEqual
 
     /** Parameters for `typeHierarchy/subtypes`. */
-    final case class TypeHierarchySubTypesParams(
+    final case class TypeHierarchySubtypesParams(
         item: TypeHierarchyItem,
         workDoneToken: Maybe[ProgressToken] = Absent,
         partialResultToken: Maybe[ProgressToken] = Absent
@@ -2056,196 +2056,243 @@ object LspHandler:
     object textDocument:
 
         def completion(
-            handler: CompletionParams => Maybe[CompletionResult] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CompletionParams, Maybe[CompletionResult], LspException] = ???
+            handler: CompletionParams => CompletionResult < (Async & Abort[LspException | JsonRpcResponse.Halt])
+        )(using Frame): LspHandler[CompletionParams, CompletionResult, LspException] =
+            new RequestHandler("textDocument/completion", Kind.Completion, handler, Chunk.empty)
 
         def completionItemResolve(
             handler: CompletionItem => CompletionItem < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CompletionItem, CompletionItem, LspException] = ???
+        )(using Frame): LspHandler[CompletionItem, CompletionItem, LspException] =
+            new RequestHandler("completionItem/resolve", Kind.CompletionItemResolve, handler, Chunk.empty)
 
         def hover(
             handler: HoverParams => Maybe[Hover] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[HoverParams, Maybe[Hover], LspException] = ???
+        )(using Frame): LspHandler[HoverParams, Maybe[Hover], LspException] =
+            new RequestHandler("textDocument/hover", Kind.Hover, handler, Chunk.empty)
 
         def signatureHelp(
             handler: SignatureHelpParams => Maybe[SignatureHelp] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[SignatureHelpParams, Maybe[SignatureHelp], LspException] = ???
+        )(using Frame): LspHandler[SignatureHelpParams, Maybe[SignatureHelp], LspException] =
+            new RequestHandler("textDocument/signatureHelp", Kind.SignatureHelp, handler, Chunk.empty)
 
         def declaration(
             handler: DeclarationParams => Maybe[DeclarationResult] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DeclarationParams, Maybe[DeclarationResult], LspException] = ???
+        )(using Frame): LspHandler[DeclarationParams, Maybe[DeclarationResult], LspException] =
+            new RequestHandler("textDocument/declaration", Kind.Declaration, handler, Chunk.empty)
 
         def definition(
             handler: DefinitionParams => Maybe[DefinitionResult] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DefinitionParams, Maybe[DefinitionResult], LspException] = ???
+        )(using Frame): LspHandler[DefinitionParams, Maybe[DefinitionResult], LspException] =
+            new RequestHandler("textDocument/definition", Kind.Definition, handler, Chunk.empty)
 
         def typeDefinition(
             handler: TypeDefinitionParams => Maybe[TypeDefinitionResult] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[TypeDefinitionParams, Maybe[TypeDefinitionResult], LspException] = ???
+        )(using Frame): LspHandler[TypeDefinitionParams, Maybe[TypeDefinitionResult], LspException] =
+            new RequestHandler("textDocument/typeDefinition", Kind.TypeDefinition, handler, Chunk.empty)
 
         def implementation(
             handler: ImplementationParams => Maybe[ImplementationResult] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[ImplementationParams, Maybe[ImplementationResult], LspException] = ???
+        )(using Frame): LspHandler[ImplementationParams, Maybe[ImplementationResult], LspException] =
+            new RequestHandler("textDocument/implementation", Kind.Implementation, handler, Chunk.empty)
 
         def references(
             handler: ReferenceParams => Chunk[Location] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[ReferenceParams, Chunk[Location], LspException] = ???
+        )(using Frame): LspHandler[ReferenceParams, Chunk[Location], LspException] =
+            new RequestHandler("textDocument/references", Kind.References, handler, Chunk.empty)
 
         def documentHighlight(
             handler: DocumentHighlightParams => Chunk[DocumentHighlight] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DocumentHighlightParams, Chunk[DocumentHighlight], LspException] = ???
+        )(using Frame): LspHandler[DocumentHighlightParams, Chunk[DocumentHighlight], LspException] =
+            new RequestHandler("textDocument/documentHighlight", Kind.DocumentHighlight, handler, Chunk.empty)
 
         def documentSymbol(
-            handler: DocumentSymbolParams => Maybe[DocumentSymbolResult] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DocumentSymbolParams, Maybe[DocumentSymbolResult], LspException] = ???
+            handler: DocumentSymbolParams => DocumentSymbolResult < (Async & Abort[LspException | JsonRpcResponse.Halt])
+        )(using Frame): LspHandler[DocumentSymbolParams, DocumentSymbolResult, LspException] =
+            new RequestHandler("textDocument/documentSymbol", Kind.DocumentSymbol, handler, Chunk.empty)
 
         def codeAction(
             handler: CodeActionParams => Chunk[CommandOrCodeAction] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CodeActionParams, Chunk[CommandOrCodeAction], LspException] = ???
+        )(using Frame): LspHandler[CodeActionParams, Chunk[CommandOrCodeAction], LspException] =
+            new RequestHandler("textDocument/codeAction", Kind.CodeAction, handler, Chunk.empty)
 
         def codeActionResolve(
             handler: CodeAction => CodeAction < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CodeAction, CodeAction, LspException] = ???
+        )(using Frame): LspHandler[CodeAction, CodeAction, LspException] =
+            new RequestHandler("codeAction/resolve", Kind.CodeActionResolve, handler, Chunk.empty)
 
         def codeLens(
             handler: CodeLensParams => Chunk[CodeLens] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CodeLensParams, Chunk[CodeLens], LspException] = ???
+        )(using Frame): LspHandler[CodeLensParams, Chunk[CodeLens], LspException] =
+            new RequestHandler("textDocument/codeLens", Kind.CodeLens, handler, Chunk.empty)
 
         def codeLensResolve(
             handler: CodeLens => CodeLens < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CodeLens, CodeLens, LspException] = ???
+        )(using Frame): LspHandler[CodeLens, CodeLens, LspException] =
+            new RequestHandler("codeLens/resolve", Kind.CodeLensResolve, handler, Chunk.empty)
 
         def documentLink(
             handler: DocumentLinkParams => Chunk[DocumentLink] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DocumentLinkParams, Chunk[DocumentLink], LspException] = ???
+        )(using Frame): LspHandler[DocumentLinkParams, Chunk[DocumentLink], LspException] =
+            new RequestHandler("textDocument/documentLink", Kind.DocumentLink, handler, Chunk.empty)
 
         def documentLinkResolve(
             handler: DocumentLink => DocumentLink < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DocumentLink, DocumentLink, LspException] = ???
+        )(using Frame): LspHandler[DocumentLink, DocumentLink, LspException] =
+            new RequestHandler("documentLink/resolve", Kind.DocumentLinkResolve, handler, Chunk.empty)
 
         def documentColor(
             handler: DocumentColorParams => Chunk[ColorInformation] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DocumentColorParams, Chunk[ColorInformation], LspException] = ???
+        )(using Frame): LspHandler[DocumentColorParams, Chunk[ColorInformation], LspException] =
+            new RequestHandler("textDocument/documentColor", Kind.DocumentColor, handler, Chunk.empty)
 
         def colorPresentation(
             handler: ColorPresentationParams => Chunk[ColorPresentation] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[ColorPresentationParams, Chunk[ColorPresentation], LspException] = ???
+        )(using Frame): LspHandler[ColorPresentationParams, Chunk[ColorPresentation], LspException] =
+            new RequestHandler("textDocument/colorPresentation", Kind.ColorPresentation, handler, Chunk.empty)
 
         def formatting(
             handler: DocumentFormattingParams => Chunk[TextEdit] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DocumentFormattingParams, Chunk[TextEdit], LspException] = ???
+        )(using Frame): LspHandler[DocumentFormattingParams, Chunk[TextEdit], LspException] =
+            new RequestHandler("textDocument/formatting", Kind.Formatting, handler, Chunk.empty)
 
         def rangeFormatting(
             handler: DocumentRangeFormattingParams => Chunk[TextEdit] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DocumentRangeFormattingParams, Chunk[TextEdit], LspException] = ???
+        )(using Frame): LspHandler[DocumentRangeFormattingParams, Chunk[TextEdit], LspException] =
+            new RequestHandler("textDocument/rangeFormatting", Kind.RangeFormatting, handler, Chunk.empty)
 
         def onTypeFormatting(
             handler: DocumentOnTypeFormattingParams => Chunk[TextEdit] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DocumentOnTypeFormattingParams, Chunk[TextEdit], LspException] = ???
+        )(using Frame): LspHandler[DocumentOnTypeFormattingParams, Chunk[TextEdit], LspException] =
+            new RequestHandler("textDocument/onTypeFormatting", Kind.OnTypeFormatting, handler, Chunk.empty)
 
         def rename(
             handler: RenameParams => Maybe[WorkspaceEdit] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[RenameParams, Maybe[WorkspaceEdit], LspException] = ???
+        )(using Frame): LspHandler[RenameParams, Maybe[WorkspaceEdit], LspException] =
+            new RequestHandler("textDocument/rename", Kind.Rename, handler, Chunk.empty)
 
         def prepareRename(
             handler: PrepareRenameParams => Maybe[PrepareRenameResult] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[PrepareRenameParams, Maybe[PrepareRenameResult], LspException] = ???
+        )(using Frame): LspHandler[PrepareRenameParams, Maybe[PrepareRenameResult], LspException] =
+            new RequestHandler("textDocument/prepareRename", Kind.PrepareRename, handler, Chunk.empty)
 
         def foldingRange(
             handler: FoldingRangeParams => Chunk[FoldingRange] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[FoldingRangeParams, Chunk[FoldingRange], LspException] = ???
+        )(using Frame): LspHandler[FoldingRangeParams, Chunk[FoldingRange], LspException] =
+            new RequestHandler("textDocument/foldingRange", Kind.FoldingRange, handler, Chunk.empty)
 
         def selectionRange(
             handler: SelectionRangeParams => Chunk[SelectionRange] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[SelectionRangeParams, Chunk[SelectionRange], LspException] = ???
+        )(using Frame): LspHandler[SelectionRangeParams, Chunk[SelectionRange], LspException] =
+            new RequestHandler("textDocument/selectionRange", Kind.SelectionRange, handler, Chunk.empty)
 
         def linkedEditingRange(
             handler: LinkedEditingRangeParams => Maybe[LinkedEditingRanges] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[LinkedEditingRangeParams, Maybe[LinkedEditingRanges], LspException] = ???
+        )(using Frame): LspHandler[LinkedEditingRangeParams, Maybe[LinkedEditingRanges], LspException] =
+            new RequestHandler("textDocument/linkedEditingRange", Kind.LinkedEditingRange, handler, Chunk.empty)
 
         def prepareCallHierarchy(
             handler: CallHierarchyPrepareParams => Chunk[CallHierarchyItem] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CallHierarchyPrepareParams, Chunk[CallHierarchyItem], LspException] = ???
+        )(using Frame): LspHandler[CallHierarchyPrepareParams, Chunk[CallHierarchyItem], LspException] =
+            new RequestHandler("textDocument/prepareCallHierarchy", Kind.PrepareCallHierarchy, handler, Chunk.empty)
 
         def callHierarchyIncomingCalls(
             handler: CallHierarchyIncomingCallsParams => Chunk[
                 CallHierarchyIncomingCall
             ] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CallHierarchyIncomingCallsParams, Chunk[CallHierarchyIncomingCall], LspException] = ???
+        )(using Frame): LspHandler[CallHierarchyIncomingCallsParams, Chunk[CallHierarchyIncomingCall], LspException] =
+            new RequestHandler("callHierarchy/incomingCalls", Kind.CallHierarchyIncomingCalls, handler, Chunk.empty)
 
         def callHierarchyOutgoingCalls(
             handler: CallHierarchyOutgoingCallsParams => Chunk[
                 CallHierarchyOutgoingCall
             ] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CallHierarchyOutgoingCallsParams, Chunk[CallHierarchyOutgoingCall], LspException] = ???
+        )(using Frame): LspHandler[CallHierarchyOutgoingCallsParams, Chunk[CallHierarchyOutgoingCall], LspException] =
+            new RequestHandler("callHierarchy/outgoingCalls", Kind.CallHierarchyOutgoingCalls, handler, Chunk.empty)
 
         def prepareTypeHierarchy(
             handler: TypeHierarchyPrepareParams => Chunk[TypeHierarchyItem] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[TypeHierarchyPrepareParams, Chunk[TypeHierarchyItem], LspException] = ???
+        )(using Frame): LspHandler[TypeHierarchyPrepareParams, Chunk[TypeHierarchyItem], LspException] =
+            new RequestHandler("textDocument/prepareTypeHierarchy", Kind.PrepareTypeHierarchy, handler, Chunk.empty)
 
         def typeHierarchySupertypes(
-            handler: TypeHierarchySuperTypesParams => Chunk[TypeHierarchyItem] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[TypeHierarchySuperTypesParams, Chunk[TypeHierarchyItem], LspException] = ???
+            handler: TypeHierarchySupertypesParams => Chunk[TypeHierarchyItem] < (Async & Abort[LspException | JsonRpcResponse.Halt])
+        )(using Frame): LspHandler[TypeHierarchySupertypesParams, Chunk[TypeHierarchyItem], LspException] =
+            new RequestHandler("typeHierarchy/supertypes", Kind.TypeHierarchySupertypes, handler, Chunk.empty)
 
         def typeHierarchySubtypes(
-            handler: TypeHierarchySubTypesParams => Chunk[TypeHierarchyItem] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[TypeHierarchySubTypesParams, Chunk[TypeHierarchyItem], LspException] = ???
+            handler: TypeHierarchySubtypesParams => Chunk[TypeHierarchyItem] < (Async & Abort[LspException | JsonRpcResponse.Halt])
+        )(using Frame): LspHandler[TypeHierarchySubtypesParams, Chunk[TypeHierarchyItem], LspException] =
+            new RequestHandler("typeHierarchy/subtypes", Kind.TypeHierarchySubtypes, handler, Chunk.empty)
 
         def semanticTokensFull(
             handler: SemanticTokensParams => Maybe[SemanticTokens] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[SemanticTokensParams, Maybe[SemanticTokens], LspException] = ???
+        )(using Frame): LspHandler[SemanticTokensParams, Maybe[SemanticTokens], LspException] =
+            new RequestHandler("textDocument/semanticTokens/full", Kind.SemanticTokensFull, handler, Chunk.empty)
 
         def semanticTokensFullDelta(
             handler: SemanticTokensDeltaParams => Maybe[SemanticTokensResult] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[SemanticTokensDeltaParams, Maybe[SemanticTokensResult], LspException] = ???
+        )(using Frame): LspHandler[SemanticTokensDeltaParams, Maybe[SemanticTokensResult], LspException] =
+            new RequestHandler("textDocument/semanticTokens/full/delta", Kind.SemanticTokensFullDelta, handler, Chunk.empty)
 
         def semanticTokensRange(
             handler: SemanticTokensRangeParams => Maybe[SemanticTokens] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[SemanticTokensRangeParams, Maybe[SemanticTokens], LspException] = ???
+        )(using Frame): LspHandler[SemanticTokensRangeParams, Maybe[SemanticTokens], LspException] =
+            new RequestHandler("textDocument/semanticTokens/range", Kind.SemanticTokensRange, handler, Chunk.empty)
 
         def moniker(
             handler: MonikerParams => Chunk[Moniker] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[MonikerParams, Chunk[Moniker], LspException] = ???
+        )(using Frame): LspHandler[MonikerParams, Chunk[Moniker], LspException] =
+            new RequestHandler("textDocument/moniker", Kind.Moniker, handler, Chunk.empty)
 
         def inlayHint(
             handler: InlayHintParams => Chunk[InlayHint] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[InlayHintParams, Chunk[InlayHint], LspException] = ???
+        )(using Frame): LspHandler[InlayHintParams, Chunk[InlayHint], LspException] =
+            new RequestHandler("textDocument/inlayHint", Kind.InlayHint, handler, Chunk.empty)
 
         def inlayHintResolve(
             handler: InlayHint => InlayHint < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[InlayHint, InlayHint, LspException] = ???
+        )(using Frame): LspHandler[InlayHint, InlayHint, LspException] =
+            new RequestHandler("inlayHint/resolve", Kind.InlayHintResolve, handler, Chunk.empty)
 
         def inlineValue(
             handler: InlineValueParams => Chunk[InlineValue] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[InlineValueParams, Chunk[InlineValue], LspException] = ???
+        )(using Frame): LspHandler[InlineValueParams, Chunk[InlineValue], LspException] =
+            new RequestHandler("textDocument/inlineValue", Kind.InlineValue, handler, Chunk.empty)
 
         def diagnostic(
             handler: DocumentDiagnosticParams => DocumentDiagnosticReport < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DocumentDiagnosticParams, DocumentDiagnosticReport, LspException] = ???
+        )(using Frame): LspHandler[DocumentDiagnosticParams, DocumentDiagnosticReport, LspException] =
+            new RequestHandler("textDocument/diagnostic", Kind.DocumentDiagnostic, handler, Chunk.empty)
 
         def willSaveWaitUntil(
             handler: WillSaveTextDocumentParams => Chunk[TextEdit] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[WillSaveTextDocumentParams, Chunk[TextEdit], LspException] = ???
+        )(using Frame): LspHandler[WillSaveTextDocumentParams, Chunk[TextEdit], LspException] =
+            new RequestHandler("textDocument/willSaveWaitUntil", Kind.TextDocumentWillSaveWaitUntil, handler, Chunk.empty)
 
         def didOpen(
             handler: DidOpenTextDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidOpenTextDocumentParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidOpenTextDocumentParams, Unit, LspException] =
+            new NotificationHandler("textDocument/didOpen", Kind.TextDocumentDidOpen, handler, Chunk.empty)
 
         def didChange(
             handler: DidChangeTextDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidChangeTextDocumentParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidChangeTextDocumentParams, Unit, LspException] =
+            new NotificationHandler("textDocument/didChange", Kind.TextDocumentDidChange, handler, Chunk.empty)
 
         def didSave(
             handler: DidSaveTextDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidSaveTextDocumentParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidSaveTextDocumentParams, Unit, LspException] =
+            new NotificationHandler("textDocument/didSave", Kind.TextDocumentDidSave, handler, Chunk.empty)
 
         def didClose(
             handler: DidCloseTextDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidCloseTextDocumentParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidCloseTextDocumentParams, Unit, LspException] =
+            new NotificationHandler("textDocument/didClose", Kind.TextDocumentDidClose, handler, Chunk.empty)
 
         def willSave(
             handler: WillSaveTextDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[WillSaveTextDocumentParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[WillSaveTextDocumentParams, Unit, LspException] =
+            new NotificationHandler("textDocument/willSave", Kind.TextDocumentWillSave, handler, Chunk.empty)
 
     end textDocument
 
@@ -2256,79 +2303,100 @@ object LspHandler:
 
         def symbol(
             handler: WorkspaceSymbolParams => Chunk[WorkspaceSymbol] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[WorkspaceSymbolParams, Chunk[WorkspaceSymbol], LspException] = ???
+        )(using Frame): LspHandler[WorkspaceSymbolParams, Chunk[WorkspaceSymbol], LspException] =
+            new RequestHandler("workspace/symbol", Kind.WorkspaceSymbol, handler, Chunk.empty)
 
         def symbolResolve(
             handler: WorkspaceSymbol => WorkspaceSymbol < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[WorkspaceSymbol, WorkspaceSymbol, LspException] = ???
+        )(using Frame): LspHandler[WorkspaceSymbol, WorkspaceSymbol, LspException] =
+            new RequestHandler("workspaceSymbol/resolve", Kind.WorkspaceSymbolResolve, handler, Chunk.empty)
 
         def executeCommand[Out](
             handler: ExecuteCommandParams => Maybe[Out] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using outSchema: Schema[Out], frame: Frame): LspHandler[ExecuteCommandParams, Maybe[Out], LspException] = ???
+        )(using outSchema: Schema[Out], frame: Frame): LspHandler[ExecuteCommandParams, Maybe[Out], LspException] =
+            new RequestHandler("workspace/executeCommand", Kind.ExecuteCommand, handler, Chunk.empty)
 
         def didChangeConfiguration[T](
             handler: DidChangeConfigurationParams[T] => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Schema[T], Frame): LspHandler[DidChangeConfigurationParams[T], Unit, LspException] = ???
+        )(using Schema[T], Frame): LspHandler[DidChangeConfigurationParams[T], Unit, LspException] =
+            new NotificationHandler("workspace/didChangeConfiguration", Kind.DidChangeConfiguration, handler, Chunk.empty)
 
         def didChangeWatchedFiles(
             handler: DidChangeWatchedFilesParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidChangeWatchedFilesParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidChangeWatchedFilesParams, Unit, LspException] =
+            new NotificationHandler("workspace/didChangeWatchedFiles", Kind.DidChangeWatchedFiles, handler, Chunk.empty)
 
         def didChangeWorkspaceFolders(
             handler: DidChangeWorkspaceFoldersParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidChangeWorkspaceFoldersParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidChangeWorkspaceFoldersParams, Unit, LspException] =
+            new NotificationHandler("workspace/didChangeWorkspaceFolders", Kind.DidChangeWorkspaceFolders, handler, Chunk.empty)
 
         def willCreateFiles(
             handler: CreateFilesParams => Maybe[WorkspaceEdit] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CreateFilesParams, Maybe[WorkspaceEdit], LspException] = ???
+        )(using Frame): LspHandler[CreateFilesParams, Maybe[WorkspaceEdit], LspException] =
+            new RequestHandler("workspace/willCreateFiles", Kind.WillCreateFiles, handler, Chunk.empty)
 
         def didCreateFiles(
             handler: CreateFilesParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[CreateFilesParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[CreateFilesParams, Unit, LspException] =
+            new NotificationHandler("workspace/didCreateFiles", Kind.DidCreateFiles, handler, Chunk.empty)
 
         def willRenameFiles(
             handler: RenameFilesParams => Maybe[WorkspaceEdit] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[RenameFilesParams, Maybe[WorkspaceEdit], LspException] = ???
+        )(using Frame): LspHandler[RenameFilesParams, Maybe[WorkspaceEdit], LspException] =
+            new RequestHandler("workspace/willRenameFiles", Kind.WillRenameFiles, handler, Chunk.empty)
 
         def didRenameFiles(
             handler: RenameFilesParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[RenameFilesParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[RenameFilesParams, Unit, LspException] =
+            new NotificationHandler("workspace/didRenameFiles", Kind.DidRenameFiles, handler, Chunk.empty)
 
         def willDeleteFiles(
             handler: DeleteFilesParams => Maybe[WorkspaceEdit] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DeleteFilesParams, Maybe[WorkspaceEdit], LspException] = ???
+        )(using Frame): LspHandler[DeleteFilesParams, Maybe[WorkspaceEdit], LspException] =
+            new RequestHandler("workspace/willDeleteFiles", Kind.WillDeleteFiles, handler, Chunk.empty)
 
         def didDeleteFiles(
             handler: DeleteFilesParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DeleteFilesParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DeleteFilesParams, Unit, LspException] =
+            new NotificationHandler("workspace/didDeleteFiles", Kind.DidDeleteFiles, handler, Chunk.empty)
 
         def diagnostic(
             handler: WorkspaceDiagnosticParams => WorkspaceDiagnosticReport < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, LspException] = ???
+        )(using Frame): LspHandler[WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, LspException] =
+            new RequestHandler("workspace/diagnostic", Kind.WorkspaceDiagnostic, handler, Chunk.empty)
 
         // Reverse-direction (ClientHandled) workspace factories
 
         def applyEdit(
             handler: ApplyWorkspaceEditParams => ApplyWorkspaceEditResult < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[ApplyWorkspaceEditParams, ApplyWorkspaceEditResult, LspException] = ???
+        )(using Frame): LspHandler[ApplyWorkspaceEditParams, ApplyWorkspaceEditResult, LspException] =
+            new RequestHandler("workspace/applyEdit", Kind.ApplyEdit, handler, Chunk.empty)
 
         def configuration[T](
             handler: ConfigurationParams => Chunk[T] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using outSchema: Schema[T], frame: Frame): LspHandler[ConfigurationParams, Chunk[T], LspException] = ???
+        )(using outSchema: Schema[T], frame: Frame): LspHandler[ConfigurationParams, Chunk[T], LspException] =
+            new RequestHandler("workspace/configuration", Kind.Configuration, handler, Chunk.empty)
 
         def workspaceFolders(
             handler: Unit => Maybe[Chunk[WorkspaceFolder]] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[Unit, Maybe[Chunk[WorkspaceFolder]], LspException] = ???
+        )(using Frame): LspHandler[Unit, Maybe[Chunk[WorkspaceFolder]], LspException] =
+            new RequestHandler("workspace/workspaceFolders", Kind.WorkspaceFolders, handler, Chunk.empty)
 
-        def refreshSemanticTokens(using Frame): LspHandler[Unit, Unit, LspException] = ???
+        def refreshSemanticTokens(using Frame): LspHandler[Unit, Unit, LspException] =
+            new NotificationHandler("workspace/semanticTokens/refresh", Kind.RefreshSemanticTokens, _ => (), Chunk.empty)
 
-        def refreshInlineValue(using Frame): LspHandler[Unit, Unit, LspException] = ???
+        def refreshInlineValue(using Frame): LspHandler[Unit, Unit, LspException] =
+            new NotificationHandler("workspace/inlineValue/refresh", Kind.RefreshInlineValue, _ => (), Chunk.empty)
 
-        def refreshInlayHint(using Frame): LspHandler[Unit, Unit, LspException] = ???
+        def refreshInlayHint(using Frame): LspHandler[Unit, Unit, LspException] =
+            new NotificationHandler("workspace/inlayHint/refresh", Kind.RefreshInlayHint, _ => (), Chunk.empty)
 
-        def refreshDiagnostic(using Frame): LspHandler[Unit, Unit, LspException] = ???
+        def refreshDiagnostic(using Frame): LspHandler[Unit, Unit, LspException] =
+            new NotificationHandler("workspace/diagnostic/refresh", Kind.RefreshDiagnostic, _ => (), Chunk.empty)
 
-        def refreshCodeLens(using Frame): LspHandler[Unit, Unit, LspException] = ???
+        def refreshCodeLens(using Frame): LspHandler[Unit, Unit, LspException] =
+            new NotificationHandler("workspace/codeLens/refresh", Kind.RefreshCodeLens, _ => (), Chunk.empty)
 
     end workspace
 
@@ -2339,19 +2407,23 @@ object LspHandler:
 
         def didOpen(
             handler: DidOpenNotebookDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidOpenNotebookDocumentParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidOpenNotebookDocumentParams, Unit, LspException] =
+            new NotificationHandler("notebookDocument/didOpen", Kind.NotebookDidOpen, handler, Chunk.empty)
 
         def didChange(
             handler: DidChangeNotebookDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidChangeNotebookDocumentParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidChangeNotebookDocumentParams, Unit, LspException] =
+            new NotificationHandler("notebookDocument/didChange", Kind.NotebookDidChange, handler, Chunk.empty)
 
         def didSave(
             handler: DidSaveNotebookDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidSaveNotebookDocumentParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidSaveNotebookDocumentParams, Unit, LspException] =
+            new NotificationHandler("notebookDocument/didSave", Kind.NotebookDidSave, handler, Chunk.empty)
 
         def didClose(
             handler: DidCloseNotebookDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[DidCloseNotebookDocumentParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[DidCloseNotebookDocumentParams, Unit, LspException] =
+            new NotificationHandler("notebookDocument/didClose", Kind.NotebookDidClose, handler, Chunk.empty)
 
     end notebookDocument
 
@@ -2362,31 +2434,38 @@ object LspHandler:
 
         def showMessage(
             handler: ShowMessageParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[ShowMessageParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[ShowMessageParams, Unit, LspException] =
+            new NotificationHandler("window/showMessage", Kind.ShowMessage, handler, Chunk.empty)
 
         def showMessageRequest(
             handler: ShowMessageRequestParams => Maybe[MessageActionItem] < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[ShowMessageRequestParams, Maybe[MessageActionItem], LspException] = ???
+        )(using Frame): LspHandler[ShowMessageRequestParams, Maybe[MessageActionItem], LspException] =
+            new RequestHandler("window/showMessageRequest", Kind.ShowMessageRequest, handler, Chunk.empty)
 
         def showDocument(
             handler: ShowDocumentParams => ShowDocumentResult < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[ShowDocumentParams, ShowDocumentResult, LspException] = ???
+        )(using Frame): LspHandler[ShowDocumentParams, ShowDocumentResult, LspException] =
+            new RequestHandler("window/showDocument", Kind.ShowDocument, handler, Chunk.empty)
 
         def logMessage(
             handler: LogMessageParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[LogMessageParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[LogMessageParams, Unit, LspException] =
+            new NotificationHandler("window/logMessage", Kind.LogMessage, handler, Chunk.empty)
 
         def createWorkDoneProgress(
             handler: WorkDoneProgressCreateParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[WorkDoneProgressCreateParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[WorkDoneProgressCreateParams, Unit, LspException] =
+            new RequestHandler("window/workDoneProgress/create", Kind.WorkDoneProgressCreate, handler, Chunk.empty)
 
         def workDoneProgressCancel(
             handler: WorkDoneProgressCancelParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[WorkDoneProgressCancelParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[WorkDoneProgressCancelParams, Unit, LspException] =
+            new NotificationHandler("window/workDoneProgress/cancel", Kind.WorkDoneProgressCancel, handler, Chunk.empty)
 
         def telemetry[T](
             handler: T => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using outSchema: Schema[T], frame: Frame): LspHandler[T, Unit, LspException] = ???
+        )(using outSchema: Schema[T], frame: Frame): LspHandler[T, Unit, LspException] =
+            new NotificationHandler("telemetry/event", Kind.Telemetry, handler, Chunk.empty)
 
     end window
 
@@ -2397,11 +2476,13 @@ object LspHandler:
 
         def registerCapability(
             handler: RegistrationParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[RegistrationParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[RegistrationParams, Unit, LspException] =
+            new RequestHandler("client/registerCapability", Kind.RegisterCapability, handler, Chunk.empty)
 
         def unregisterCapability(
             handler: UnregistrationParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
-        )(using Frame): LspHandler[UnregistrationParams, Unit, LspException] = ???
+        )(using Frame): LspHandler[UnregistrationParams, Unit, LspException] =
+            new RequestHandler("client/unregisterCapability", Kind.UnregisterCapability, handler, Chunk.empty)
 
     end client
 
@@ -2421,7 +2502,8 @@ object LspHandler:
       */
     def custom[In, Out](method: String)(
         handler: In => Out < (Async & Abort[LspException | JsonRpcResponse.Halt])
-    )(using inSchema: Schema[In], outSchema: Schema[Out], frame: Frame): LspHandler[In, Out, LspException] = ???
+    )(using inSchema: Schema[In], outSchema: Schema[Out], frame: Frame): LspHandler[In, Out, LspException] =
+        new CustomHandler(method, Direction.ServerHandled, handler, Chunk.empty)
 
     /** Creates a custom client-handled extension method handler.
       *
@@ -2429,7 +2511,8 @@ object LspHandler:
       */
     def customClient[In, Out](method: String)(
         handler: In => Out < (Async & Abort[LspException | JsonRpcResponse.Halt])
-    )(using inSchema: Schema[In], outSchema: Schema[Out], frame: Frame): LspHandler[In, Out, LspException] = ???
+    )(using inSchema: Schema[In], outSchema: Schema[Out], frame: Frame): LspHandler[In, Out, LspException] =
+        new CustomHandler(method, Direction.ClientHandled, handler, Chunk.empty)
 
     // MARK: -- Private[kyo] carrier subclasses
 

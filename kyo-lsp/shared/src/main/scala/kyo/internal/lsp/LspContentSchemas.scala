@@ -944,36 +944,61 @@ private[kyo] object LspContentSchemas:
                     case LspHandler.CommandOrCodeAction.Action(value) => summon[Schema[LspHandler.CodeAction]].serializeWrite(value, w)
 
             @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): LspHandler.CommandOrCodeAction =
-                // Discriminate: CodeAction has `edit`, `diagnostics`, `isPreferred`, `disabled`, or `kind` (CodeActionKind string) field
-                // Command has only `title`, `command` (string), `arguments` fields - and `command` is always present
+                // Discriminate: CodeAction has `edit`, `diagnostics`, `isPreferred`, `disabled` fields.
+                // `command` is a string in Command but a nested object in CodeAction.
+                // `arguments` are LSPAny[]; capture as raw JSON snippets via captureValue.
                 var title: String                                  = ""
-                var command: String                                = ""
+                var commandStr: String                             = ""
+                var commandObj: Maybe[LspHandler.Command]          = Absent
                 var arguments: Chunk[String]                       = Chunk.empty
                 var hasEdit                                        = false
                 var hasDiagnostics                                 = false
                 var hasIsPreferred                                 = false
                 var hasDisabled                                    = false
+                var commandIsObject                                = false
                 var kind: Maybe[LspHandler.CodeActionKind]         = Absent
                 var edit: Maybe[LspHandler.WorkspaceEdit]          = Absent
                 var diags: Chunk[LspHandler.Diagnostic]            = Chunk.empty
                 var isPreferred: Maybe[Boolean]                    = Absent
                 var disabled: Maybe[LspHandler.CodeActionDisabled] = Absent
-                var cmdField: Maybe[LspHandler.Command]            = Absent
-                var rawData: Maybe[String]                         = Absent
 
                 discard(reader.objectStart())
                 while reader.hasNextField() do
                     reader.fieldParse()
                     if reader.matchField("title".getBytes("UTF-8")) then title = reader.string()
-                    else if reader.matchField("command".getBytes("UTF-8")) then command = reader.string()
+                    else if reader.matchField("command".getBytes("UTF-8")) then
+                        // `command` can be a string (standalone Command) or object (Command nested inside CodeAction)
+                        val captured = reader.captureValue()
+                        try
+                            commandStr = captured.string()
+                            commandIsObject = false
+                        catch
+                            case _: Exception =>
+                                commandIsObject = true
+                                commandObj = Present(summon[Schema[LspHandler.Command]].serializeRead(captured))
+                        end try
                     else if reader.matchField("arguments".getBytes("UTF-8")) then
+                        // LSPAny[] - each element may be any JSON value.
+                        // String elements are read directly; non-string elements are skipped (stored as empty string).
+                        // This preserves string arguments (most common case) without crashing on typed JSON args.
                         val count = reader.arrayStart()
                         val buf   = scala.collection.mutable.ArrayBuffer[String]()
-                        if count < 0 then while reader.hasNextElement() do buf += reader.string()
+                        if count < 0 then
+                            while reader.hasNextElement() do
+                                val cap = reader.captureValue()
+                                val v =
+                                    try cap.string()
+                                    catch case _: Exception => ""
+                                buf += v
                         else
                             var j = 0;
                             while j < count do
-                                buf += reader.string(); j += 1
+                                val cap = reader.captureValue()
+                                val v =
+                                    try cap.string()
+                                    catch case _: Exception => ""
+                                buf += v; j += 1
+                            end while
                         end if
                         reader.arrayEnd()
                         arguments = Chunk.from(buf)
@@ -1009,14 +1034,14 @@ private[kyo] object LspContentSchemas:
                 end while
                 reader.objectEnd()
 
-                // If any CodeAction-specific field is present, it's a CodeAction
-                if hasEdit || hasDiagnostics || hasIsPreferred || hasDisabled then
+                // If any CodeAction-specific field is present, or command field was an object, it's a CodeAction
+                if hasEdit || hasDiagnostics || hasIsPreferred || hasDisabled || commandIsObject then
                     LspHandler.CommandOrCodeAction.Action(
-                        LspHandler.CodeAction(title, kind, diags, isPreferred, disabled, edit, Absent, rawData)
+                        LspHandler.CodeAction(title, kind, diags, isPreferred, disabled, edit, commandObj, Absent)
                     )
                 else
-                    // It's a Command (title + command + optional arguments)
-                    LspHandler.CommandOrCodeAction.Cmd(LspHandler.Command(title, command, arguments))
+                    // It's a Command (title + command-string + optional arguments)
+                    LspHandler.CommandOrCodeAction.Cmd(LspHandler.Command(title, commandStr, arguments))
                 end if
             end serializeRead
 
@@ -1110,6 +1135,30 @@ private[kyo] object LspContentSchemas:
                     else if reader.matchField("annotationId".getBytes("UTF-8")) then
                         val a = Present(reader.string())
                         cfAnnotationId = a; rfAnnotationId = a; dfAnnotationId = a
+                    else if reader.matchField("options".getBytes("UTF-8")) then
+                        // Parse options based on the kind we've seen so far; defer until end if kind unknown yet.
+                        // For simplicity, parse as CreateFileOptions shape (overwrite + ignoreIfExists) which covers
+                        // Create, and try RenameFileOptions (overwrite + ignoreIfExists), and DeleteFileOptions
+                        // (recursive + ignoreIfNotExists). We capture raw and parse after.
+                        var overwrite: Maybe[Boolean]         = Absent
+                        var ignoreIfExists: Maybe[Boolean]    = Absent
+                        var recursive: Maybe[Boolean]         = Absent
+                        var ignoreIfNotExists: Maybe[Boolean] = Absent
+                        discard(reader.objectStart())
+                        while reader.hasNextField() do
+                            reader.fieldParse()
+                            if reader.matchField("overwrite".getBytes("UTF-8")) then overwrite = Present(reader.boolean())
+                            else if reader.matchField("ignoreIfExists".getBytes("UTF-8")) then ignoreIfExists = Present(reader.boolean())
+                            else if reader.matchField("recursive".getBytes("UTF-8")) then recursive = Present(reader.boolean())
+                            else if reader.matchField("ignoreIfNotExists".getBytes("UTF-8")) then
+                                ignoreIfNotExists = Present(reader.boolean())
+                            else reader.skip()
+                            end if
+                        end while
+                        reader.objectEnd()
+                        cfOptions = Present(LspHandler.CreateFileOptions(overwrite, ignoreIfExists))
+                        rfOptions = Present(LspHandler.RenameFileOptions(overwrite, ignoreIfExists))
+                        dfOptions = Present(LspHandler.DeleteFileOptions(recursive, ignoreIfNotExists))
                     else reader.skip()
                     end if
                 end while
