@@ -345,6 +345,31 @@ object ClasspathOrchestrator:
                                 sym.kind == Tasty.SymbolKind.Trait || sym.kind == Tasty.SymbolKind.Object
                             newIsStructural || !prevIsStructural
                     if shouldStore then state.fqnIndex(indexKey) = sym
+                    // F-E-001 / Q-003 / HARD RULE 8 dual-index (source FQN):
+                    // Pattern: `<pkg>.<owner>$package$.<TypeName>` -> source FQN is `<pkg>.<TypeName>`.
+                    // Only applies when the opaque type is a DIRECT child of a `$package$` owner:
+                    // the segment after `$package$.` must contain no dot (to avoid indexing nested members).
+                    // Algorithm (per plan Q-003 regex): find `$package$.`, extract <pkg> as everything
+                    // before the last dot before `$package$`, and <TypeName> as the segment after `$package$.`.
+                    if sym.kind == Tasty.SymbolKind.OpaqueType then
+                        val pkgSuffix    = "$package$."
+                        val pkgSuffixIdx = fqn.indexOf(pkgSuffix)
+                        if pkgSuffixIdx >= 0 then
+                            val afterPkg = fqn.substring(pkgSuffixIdx + pkgSuffix.length)
+                            // Only register source FQN for direct opaque type children (no further dots).
+                            if !afterPkg.contains('.') then
+                                val beforePkg      = fqn.substring(0, pkgSuffixIdx) // e.g. "kyo.Maybe"
+                                val lastDot        = beforePkg.lastIndexOf('.')
+                                val pkgPrefix      = if lastDot >= 0 then beforePkg.substring(0, lastDot + 1) else ""
+                                val sourceFqn      = pkgPrefix + afterPkg           // e.g. "kyo." + "Maybe" = "kyo.Maybe"
+                                val existingSource = state.fqnIndex.get(sourceFqn)
+                                val storeSource = existingSource match
+                                    case None       => true
+                                    case Some(prev) => prev.kind != Tasty.SymbolKind.OpaqueType
+                                if storeSource then state.fqnIndex(sourceFqn) = sym
+                            end if
+                        end if
+                    end if
                     if seenSyms.add(sym) then state.allSyms += sym
                     sym.kind match
                         case Tasty.SymbolKind.Package =>
