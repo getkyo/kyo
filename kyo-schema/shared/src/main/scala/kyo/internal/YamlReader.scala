@@ -2146,4 +2146,38 @@ object YamlReader:
 
     def apply(input: String, yamlVersion: Yaml.SpecVersion)(using Frame): YamlReader =
         new YamlReader(input, 0, yamlVersion, null, 0, 0, scala.collection.mutable.Map.empty, Expansion(), allowSourcePull = true)
+
+    private[internal] def fromEvents(events: Chunk[Yaml.Events.Event], yamlVersion: Yaml.SpecVersion)(using Frame): YamlReader =
+        val buffer = ArrayBuffer.empty[Event]
+
+        @tailrec def loop(index: Int): Unit =
+            if index < events.size then
+                events(index) match
+                    case Yaml.Events.Event.StreamStart(_) =>
+                        ()
+                    case Yaml.Events.Event.DocumentStart(_) =>
+                        ()
+                    case Yaml.Events.Event.MappingStart(meta, _) =>
+                        buffer += MappingStart(meta)
+                    case Yaml.Events.Event.SequenceStart(meta, _) =>
+                        buffer += SequenceStart(meta)
+                    case Yaml.Events.Event.Scalar(value, meta) =>
+                        buffer += Scalar(value, meta, meta.mark)
+                    case Yaml.Events.Event.Alias(name, mark) =>
+                        buffer += Alias(name, mark)
+                    case Yaml.Events.Event.CollectionEnd(_, mark) =>
+                        buffer += NodeEnd(mark)
+                    case Yaml.Events.Event.DocumentEnd(_) =>
+                        ()
+                    case Yaml.Events.Event.StreamEnd(_) =>
+                        ()
+                end match
+                loop(index + 1)
+            end if
+        end loop
+
+        loop(0)
+        val arr = buffer.toArray
+        new YamlReader("", 0, yamlVersion, arr, 0, arr.length, collectAnchors(arr), Expansion(), allowSourcePull = false)
+    end fromEvents
 end YamlReader
