@@ -1130,6 +1130,10 @@ object Yaml:
             span: SourceSpan,
             originalSource: Maybe[String]
         ) derives CanEqual:
+            /** Returns the original source used for source-preserving rendering. */
+            def source: Maybe[String] =
+                originalSource
+
             /** Renders this stream to YAML. */
             def render(using config: WriterConfig): String =
                 internal.yaml.YamlCstRenderer.stream(this)

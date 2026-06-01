@@ -77,13 +77,13 @@ class YamlCstParserTest extends Test:
 
             assertResult(
                 (
-                    streamSource = true,
+                    streamSource = Maybe(yaml),
                     rendered = yaml,
                     childSources = Chunk(false, false)
                 )
             ) {
                 (
-                    streamSource = stream.originalSource.isDefined,
+                    streamSource = stream.source,
                     rendered = stream.render(using Yaml.WriterConfig.Default),
                     childSources = stream.documents.map(_.source.isDefined)
                 )
