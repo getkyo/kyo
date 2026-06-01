@@ -53,16 +53,13 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                     Result.succeed(context :+ label(event))
             end eventHandler
 
-            assert(
-                Yaml.Events.visit(yaml, Chunk.empty[String])(methodHandler) ==
-                    Result.succeed(Chunk(
+            assertResult(
+                (
+                    methodResult = Result.succeed(Chunk(
                         "scalar:name:Plain",
                         "scalar:Alice:Plain"
-                    ))
-            )
-            assert(
-                Yaml.Events.visit(yaml, Chunk.empty[String])(eventHandler) ==
-                    Result.succeed(Chunk(
+                    )),
+                    eventResult = Result.succeed(Chunk(
                         "streamStart",
                         "documentStart",
                         "mappingStart::unknown",
@@ -72,7 +69,13 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                         "documentEnd",
                         "streamEnd"
                     ))
-            )
+                )
+            ) {
+                (
+                    methodResult = Yaml.Events.visit(yaml, Chunk.empty[String])(methodHandler),
+                    eventResult = Yaml.Events.visit(yaml, Chunk.empty[String])(eventHandler)
+                )
+            }
         }
 
         "renders transformed parser events through the public renderer" in {
@@ -173,14 +176,25 @@ class YamlEventsTest extends kyo.test.Test[Any]:
             val tag      = Yaml.YamlTag("!custom")
             val defaults = Yaml.Anchor("defaults")
 
-            assert(tag.value == "!custom")
-            assert(defaults.value == "defaults")
-            assert((tag match
-                case Yaml.YamlTag(value) => value
-            ) == "!custom")
-            assert((defaults match
-                case Yaml.Anchor(value) => value
-            ) == "defaults")
+            assertResult(
+                (
+                    tagValue = "!custom",
+                    defaultsValue = "defaults",
+                    tagExtracted = "!custom",
+                    defaultsExtracted = "defaults"
+                )
+            ) {
+                (
+                    tagValue = tag.value,
+                    defaultsValue = defaults.value,
+                    tagExtracted = (tag match
+                        case Yaml.YamlTag(value) => value
+                    ),
+                    defaultsExtracted = (defaults match
+                        case Yaml.Anchor(value) => value
+                    )
+                )
+            }
 
             val yaml =
                 """defaults: &defaults
@@ -210,9 +224,19 @@ class YamlEventsTest extends kyo.test.Test[Any]:
 
             val result = Yaml.Events.visit(yaml, AnchorAudit.empty)(AnchorAuditHandler)
 
-            assert(result == Result.succeed(expected))
-            assert(result.map(_.undeclared) == Result.succeed(Set(Yaml.Anchor("missing"))))
-            assert(result.map(_.unused) == Result.succeed(Set(Yaml.Anchor("unused"))))
+            assertResult(
+                (
+                    audit = Result.succeed(expected),
+                    undeclared = Result.succeed(Set(Yaml.Anchor("missing"))),
+                    unused = Result.succeed(Set(Yaml.Anchor("unused")))
+                )
+            ) {
+                (
+                    audit = result,
+                    undeclared = result.map(_.undeclared),
+                    unused = result.map(_.unused)
+                )
+            }
         }
 
         "can build a YAML node tree with an event handler and typed errors" in {

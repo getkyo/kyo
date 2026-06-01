@@ -25,18 +25,27 @@ final case class YamlWriterTextFirst(text: String, name: String) derives CanEqua
 
 class YamlWriterTest extends kyo.test.Test[Any]:
 
+    given CanEqual[Any, Any] = CanEqual.derived
+
     "encode" - {
 
         "writes case classes as block mappings by default" in {
             val yaml = Yaml.encode(MTPerson("Alice", 30))
 
-            assert(
-                yaml ==
-                    """name: Alice
-                      |age: 30
-                      |""".stripMargin
-            )
-            assert(Yaml.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alice", 30)))
+            assertResult(
+                (
+                    encoded =
+                        """name: Alice
+                          |age: 30
+                          |""".stripMargin,
+                    decoded = Result.succeed(MTPerson("Alice", 30))
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[MTPerson](yaml)
+                )
+            }
         }
 
         "writes nested products sequences maps and value wrappers as block YAML" in {
@@ -53,32 +62,39 @@ class YamlWriterTest extends kyo.test.Test[Any]:
 
             val yaml = Yaml.encode(value)
 
-            assert(
-                yaml ==
-                    """team:
-                      |  lead:
-                      |    name: Alice
-                      |    age: 30
-                      |  size: 5
-                      |people:
-                      |  -
-                      |    name: Alice
-                      |    age: 30
-                      |  -
-                      |    name: Bob
-                      |    age: 25
-                      |labels:
-                      |  env: prod
-                      |  "feature:flag": on
-                      |wrappers:
-                      |  opaqueId: user-123
-                      |  anyValId:
-                      |    value: user-456
-                      |  valueObject:
-                      |    value: user-789
-                      |""".stripMargin
-            )
-            assert(Yaml.decode[YamlWriterNested](yaml) == Result.succeed(value))
+            assertResult(
+                (
+                    encoded =
+                        """team:
+                          |  lead:
+                          |    name: Alice
+                          |    age: 30
+                          |  size: 5
+                          |people:
+                          |  -
+                          |    name: Alice
+                          |    age: 30
+                          |  -
+                          |    name: Bob
+                          |    age: 25
+                          |labels:
+                          |  env: prod
+                          |  "feature:flag": on
+                          |wrappers:
+                          |  opaqueId: user-123
+                          |  anyValId:
+                          |    value: user-456
+                          |  valueObject:
+                          |    value: user-789
+                          |""".stripMargin,
+                    decoded = Result.succeed(value)
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[YamlWriterNested](yaml)
+                )
+            }
         }
 
         "round-trips sequence mappings whose first field has a nested block value" in {
@@ -89,20 +105,27 @@ class YamlWriterTest extends kyo.test.Test[Any]:
 
             val yaml = Yaml.encode(value)
 
-            assert(
-                yaml ==
-                    """-
-                      |  items:
-                      |    - 1
-                      |    - 2
-                      |  name: a
-                      |-
-                      |  items:
-                      |    - 3
-                      |  name: b
-                      |""".stripMargin
-            )
-            assert(Yaml.decode[List[YamlWriterNestedFirst]](yaml) == Result.succeed(value))
+            assertResult(
+                (
+                    encoded =
+                        """-
+                          |  items:
+                          |    - 1
+                          |    - 2
+                          |  name: a
+                          |-
+                          |  items:
+                          |    - 3
+                          |  name: b
+                          |""".stripMargin,
+                    decoded = Result.succeed(value)
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[List[YamlWriterNestedFirst]](yaml)
+                )
+            }
         }
 
         "round-trips sequence mappings whose first field is a literal block scalar" in {
@@ -110,16 +133,23 @@ class YamlWriterTest extends kyo.test.Test[Any]:
 
             val yaml = Yaml.encode(value)
 
-            assert(
-                yaml ==
-                    """-
-                      |  text: |
-                      |    line one
-                      |    line two
-                      |  name: a
-                      |""".stripMargin
-            )
-            assert(Yaml.decode[List[YamlWriterTextFirst]](yaml) == Result.succeed(value))
+            assertResult(
+                (
+                    encoded =
+                        """-
+                          |  text: |
+                          |    line one
+                          |    line two
+                          |  name: a
+                          |""".stripMargin,
+                    decoded = Result.succeed(value)
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[List[YamlWriterTextFirst]](yaml)
+                )
+            }
         }
 
         "quotes ambiguous strings and writes multiline strings as literal blocks" in {
@@ -134,46 +164,84 @@ class YamlWriterTest extends kyo.test.Test[Any]:
 
             val yaml = Yaml.encode(value)
 
-            assert(
-                yaml ==
-                    """plain: Alice
-                      |truthy: "true"
-                      |comment: "Alice #1"
-                      |url: "https://example.com"
-                      |multiline: |
-                      |  line one
-                      |  line two
-                      |empty: ""
-                      |""".stripMargin
-            )
-            assert(Yaml.decode[YamlWriterStrings](yaml) == Result.succeed(value))
+            assertResult(
+                (
+                    encoded =
+                        """plain: Alice
+                          |truthy: "true"
+                          |comment: "Alice #1"
+                          |url: "https://example.com"
+                          |multiline: |
+                          |  line one
+                          |  line two
+                          |empty: ""
+                          |""".stripMargin,
+                    decoded = Result.succeed(value)
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[YamlWriterStrings](yaml)
+                )
+            }
         }
 
         "keeps extra trailing newlines in multiline string scalars" in {
             val yaml = Yaml.encode("line one\n\n")
 
-            assert(
-                yaml ==
-                    "|+\n  line one\n\n"
-            )
-            assert(Yaml.decode[String](yaml) == Result.succeed("line one\n\n"))
+            assertResult(
+                (
+                    encoded = "|+\n  line one\n\n",
+                    decoded = Result.succeed("line one\n\n")
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
         }
 
         "writes empty collections and scalar roots as YAML" in {
-            assert(Yaml.encode(List.empty[Int]) == "[]\n")
-            assert(Yaml.encode(Map.empty[String, Int]) == "{}\n")
-            assert(Yaml.encode(List(1, 2, 3)) == "- 1\n- 2\n- 3\n")
-            assert(Yaml.encode("true") == "\"true\"\n")
-            assert(Yaml.encode("0x3A") == "\"0x3A\"\n")
-            assert(Yaml.encode("0o7") == "\"0o7\"\n")
-            assert(Yaml.encode(".5") == "\".5\"\n")
-            assert(Yaml.encode("+12e03") == "\"+12e03\"\n")
-            assert(Yaml.encode(".inf") == "\".inf\"\n")
+            assertResult(
+                (
+                    emptyList = "[]\n",
+                    emptyMap = "{}\n",
+                    intList = "- 1\n- 2\n- 3\n",
+                    truthy = "\"true\"\n",
+                    hex = "\"0x3A\"\n",
+                    octal = "\"0o7\"\n",
+                    leadingDot = "\".5\"\n",
+                    exponent = "\"+12e03\"\n",
+                    infinity = "\".inf\"\n"
+                )
+            ) {
+                (
+                    emptyList = Yaml.encode(List.empty[Int]),
+                    emptyMap = Yaml.encode(Map.empty[String, Int]),
+                    intList = Yaml.encode(List(1, 2, 3)),
+                    truthy = Yaml.encode("true"),
+                    hex = Yaml.encode("0x3A"),
+                    octal = Yaml.encode("0o7"),
+                    leadingDot = Yaml.encode(".5"),
+                    exponent = Yaml.encode("+12e03"),
+                    infinity = Yaml.encode(".inf")
+                )
+            }
         }
 
         "uses the readable writer config as the default profile" in {
-            assert(Yaml.WriterConfig.Default == Yaml.WriterConfig.Readable)
-            assert(Yaml.encode(List(MTPerson("Alice", 30))) == "-\n  name: Alice\n  age: 30\n")
+            assertResult(
+                (
+                    defaultIsReadable = true,
+                    encoded = "-\n  name: Alice\n  age: 30\n"
+                )
+            ) {
+                (
+                    defaultIsReadable = Yaml.WriterConfig.Default == Yaml.WriterConfig.Readable,
+                    encoded = Yaml.encode(List(MTPerson("Alice", 30)))
+                )
+            }
         }
 
         "uses a contextual writer config for single-argument encode" in {
@@ -185,26 +253,56 @@ class YamlWriterTest extends kyo.test.Test[Any]:
         "supports explicit compact small and fast writer profiles" in {
             val value = MTPerson("Alice", 30)
 
-            assert(Yaml.encode(value, Yaml.WriterConfig.Compact) == "name: Alice\nage: 30\n")
-            assert(Yaml.encode(value, Yaml.WriterConfig.Small) == "{name: Alice, age: 30}")
-            assert(Yaml.encode(value, Yaml.WriterConfig.Fast) == "{\"name\":\"Alice\",\"age\":30}")
+            assertResult(
+                (
+                    compact = "name: Alice\nage: 30\n",
+                    small = "{name: Alice, age: 30}",
+                    fast = "{\"name\":\"Alice\",\"age\":30}"
+                )
+            ) {
+                (
+                    compact = Yaml.encode(value, Yaml.WriterConfig.Compact),
+                    small = Yaml.encode(value, Yaml.WriterConfig.Small),
+                    fast = Yaml.encode(value, Yaml.WriterConfig.Fast)
+                )
+            }
         }
 
         "supports scalar quoting modes and quote styles" in {
             val minimal      = Yaml.WriterConfig.Readable.copy(scalarQuoting = Yaml.WriterConfig.ScalarQuoting.WhenNeeded)
             val singleQuoted = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
 
-            assert(Yaml.encode("true", minimal) == "true\n")
-            assert(Yaml.encode("true", Yaml.WriterConfig.Readable) == "\"true\"\n")
-            assert(Yaml.encode("Alice #1", singleQuoted) == "'Alice #1'\n")
+            assertResult(
+                (
+                    minimal = "true\n",
+                    readable = "\"true\"\n",
+                    singleQuoted = "'Alice #1'\n"
+                )
+            ) {
+                (
+                    minimal = Yaml.encode("true", minimal),
+                    readable = Yaml.encode("true", Yaml.WriterConfig.Readable),
+                    singleQuoted = Yaml.encode("Alice #1", singleQuoted)
+                )
+            }
         }
 
         "quotes YAML 1.1 ambiguous strings when configured for legacy consumers" in {
             val legacy = Yaml.WriterConfig.Readable.copy(yamlVersion = Yaml.SpecVersion.Yaml11)
 
-            assert(Yaml.encode("NO") == "NO\n")
-            assert(Yaml.encode("NO", legacy) == "\"NO\"\n")
-            assert(Yaml.encode("010", legacy) == "\"010\"\n")
+            assertResult(
+                (
+                    defaultNo = "NO\n",
+                    legacyNo = "\"NO\"\n",
+                    legacyOctal = "\"010\"\n"
+                )
+            ) {
+                (
+                    defaultNo = Yaml.encode("NO"),
+                    legacyNo = Yaml.encode("NO", legacy),
+                    legacyOctal = Yaml.encode("010", legacy)
+                )
+            }
         }
 
         "uses Ryu numeric spelling for finite floats and doubles where YAML permits plain scalars" in {
@@ -263,16 +361,34 @@ class YamlWriterTest extends kyo.test.Test[Any]:
             val value  = "line one\nline two\n"
             val yaml   = Yaml.encode(value, config)
 
-            assert(yaml == ">\n  line one\n\n  line two\n")
-            assert(Yaml.decode[String](yaml) == Result.succeed(value))
+            assertResult(
+                (
+                    encoded = ">\n  line one\n\n  line two\n",
+                    decoded = Result.succeed(value)
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
         }
 
         "uses double quoted string values in JSON-compatible flow output" in {
             val config = Yaml.WriterConfig.Fast.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
             val yaml   = Yaml.encode(Map("greeting" -> "hello world"), config)
 
-            assert(yaml == """{"greeting":"hello world"}""")
-            assert(Yaml.decode[Map[String, String]](yaml) == Result.succeed(Map("greeting" -> "hello world")))
+            assertResult(
+                (
+                    encoded = """{"greeting":"hello world"}""",
+                    decoded = Result.succeed(Map("greeting" -> "hello world"))
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[Map[String, String]](yaml)
+                )
+            }
         }
 
         "codec-generic schema encoding uses the contextual Yaml writer config" in {

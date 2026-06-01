@@ -465,15 +465,29 @@ class YamlCstTest extends Test:
                 end match
             end scalarText
 
-            assert(rendered == yaml)
-            assert(scalarText("norway") == "NO")
-            assert(scalarText("on") == "on")
-            assert(scalarText("off") == "off")
-            assert(scalarText("yes") == "yes")
-            assert(scalarText("no") == "no")
-            assert(Yaml.decode[YamlCoreScalars](rendered) == Result.succeed(
-                YamlCoreScalars("NO", "on", "off", "yes", "no", true, false, None)
-            ))
+            assertResult(
+                (
+                    rendered = yaml,
+                    norway = "NO",
+                    on = "on",
+                    off = "off",
+                    yes = "yes",
+                    no = "no",
+                    decoded = Result.succeed(
+                        YamlCoreScalars("NO", "on", "off", "yes", "no", true, false, None)
+                    )
+                )
+            ) {
+                (
+                    rendered = rendered,
+                    norway = scalarText("norway"),
+                    on = scalarText("on"),
+                    off = scalarText("off"),
+                    yes = scalarText("yes"),
+                    no = scalarText("no"),
+                    decoded = Yaml.decode[YamlCoreScalars](rendered)
+                )
+            }
         }
 
         "builds canonical CST from schema values" in {
@@ -747,8 +761,17 @@ class YamlCstTest extends Test:
             val stream   = Yaml.Cst.Stream(Chunk(emptyDoc, scalarDoc), Chunk.empty, Chunk.empty, span, Absent)
             val rendered = stream.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered == "---\n---\nAlice\n")
-            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
+            assertResult(
+                (
+                    rendered = "---\n---\nAlice\n",
+                    decoded = Result.succeed(Chunk(None, Some("Alice")))
+                )
+            ) {
+                (
+                    rendered = rendered,
+                    decoded = Yaml.decodeAll[Option[String]](rendered)
+                )
+            }
         }
 
         "renders canonical streams once with start document markers" in {
@@ -774,8 +797,17 @@ class YamlCstTest extends Test:
             val stream   = Yaml.Cst.Stream(Chunk(emptyDoc, scalarDoc), Chunk.empty, Chunk.empty, span, Absent)
             val rendered = stream.render(using config)
 
-            assert(rendered == "---\n---\nAlice\n")
-            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
+            assertResult(
+                (
+                    rendered = "---\n---\nAlice\n",
+                    decoded = Result.succeed(Chunk(None, Some("Alice")))
+                )
+            ) {
+                (
+                    rendered = rendered,
+                    decoded = Yaml.decodeAll[Option[String]](rendered)
+                )
+            }
         }
 
         "renders canonical streams once with start and end document markers" in {
@@ -801,8 +833,17 @@ class YamlCstTest extends Test:
             val stream   = Yaml.Cst.Stream(Chunk(emptyDoc, scalarDoc), Chunk.empty, Chunk.empty, span, Absent)
             val rendered = stream.render(using config)
 
-            assert(rendered == "---\n---\nAlice\n...\n")
-            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
+            assertResult(
+                (
+                    rendered = "---\n---\nAlice\n...\n",
+                    decoded = Result.succeed(Chunk(None, Some("Alice")))
+                )
+            ) {
+                (
+                    rendered = rendered,
+                    decoded = Yaml.decodeAll[Option[String]](rendered)
+                )
+            }
         }
 
         "renders canonical streams with consecutive empty documents" in {
@@ -828,8 +869,17 @@ class YamlCstTest extends Test:
             )
             val rendered = stream.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered == "---\nAlice\n---\n---\n---\nBob\n")
-            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(Some("Alice"), None, None, Some("Bob"))))
+            assertResult(
+                (
+                    rendered = "---\nAlice\n---\n---\n---\nBob\n",
+                    decoded = Result.succeed(Chunk(Some("Alice"), None, None, Some("Bob")))
+                )
+            ) {
+                (
+                    rendered = rendered,
+                    decoded = Yaml.decodeAll[Option[String]](rendered)
+                )
+            }
         }
 
         "renders canonical streams with trailing empty documents" in {
@@ -853,8 +903,17 @@ class YamlCstTest extends Test:
             val stream   = Yaml.Cst.Stream(Chunk(scalarDoc, emptyDoc), Chunk.empty, Chunk.empty, span, Absent)
             val rendered = stream.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered == "---\nAlice\n---\n")
-            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(Some("Alice"), None)))
+            assertResult(
+                (
+                    rendered = "---\nAlice\n---\n",
+                    decoded = Result.succeed(Chunk(Some("Alice"), None))
+                )
+            ) {
+                (
+                    rendered = rendered,
+                    decoded = Yaml.decodeAll[Option[String]](rendered)
+                )
+            }
         }
     }
 
@@ -1060,8 +1119,9 @@ class YamlCstTest extends Test:
                              |      - 8080
                              |""".stripMargin
 
-            assert(edited.source.isEmpty)
-            assert(rendered == expected)
+            assertResult((sourceCleared = true, rendered = expected)) {
+                (sourceCleared = edited.source.isEmpty, rendered = rendered)
+            }
             Yaml.parse(rendered) match
                 case Result.Success(Yaml.Node.Mapping(servicesRoot, _)) =>
                     servicesRoot(0) match
@@ -1104,9 +1164,19 @@ class YamlCstTest extends Test:
                              |  - next
                              |""".stripMargin
 
-            assert(edited.source.isEmpty)
-            assert(rendered == expected)
-            assert(Yaml.decode[Map[String, List[String]]](rendered) == Result.succeed(Map("items" -> List("new", "next"))))
+            assertResult(
+                (
+                    sourceCleared = true,
+                    rendered = expected,
+                    decoded = Result.succeed(Map("items" -> List("new", "next")))
+                )
+            ) {
+                (
+                    sourceCleared = edited.source.isEmpty,
+                    rendered = rendered,
+                    decoded = Yaml.decode[Map[String, List[String]]](rendered)
+                )
+            }
         }
 
         "replaces mapping value while preserving trailing field comment" in {
@@ -1122,10 +1192,19 @@ class YamlCstTest extends Test:
                              |    image: app:v2 # image trailing
                              |""".stripMargin
 
-            assert(edited.source.isEmpty)
-            assert(rendered == expected)
-            assert(Yaml.decode[Map[String, Map[String, Map[String, String]]]](rendered) ==
-                Result.succeed(Map("services" -> Map("api" -> Map("image" -> "app:v2")))))
+            assertResult(
+                (
+                    sourceCleared = true,
+                    rendered = expected,
+                    decoded = Result.succeed(Map("services" -> Map("api" -> Map("image" -> "app:v2"))))
+                )
+            ) {
+                (
+                    sourceCleared = edited.source.isEmpty,
+                    rendered = rendered,
+                    decoded = Yaml.decode[Map[String, Map[String, Map[String, String]]]](rendered)
+                )
+            }
         }
 
         "replaces sequence element while preserving trailing item comment" in {
@@ -1141,9 +1220,19 @@ class YamlCstTest extends Test:
                              |  - next
                              |""".stripMargin
 
-            assert(edited.source.isEmpty)
-            assert(rendered == expected)
-            assert(Yaml.decode[Map[String, List[String]]](rendered) == Result.succeed(Map("items" -> List("new", "next"))))
+            assertResult(
+                (
+                    sourceCleared = true,
+                    rendered = expected,
+                    decoded = Result.succeed(Map("items" -> List("new", "next")))
+                )
+            ) {
+                (
+                    sourceCleared = edited.source.isEmpty,
+                    rendered = rendered,
+                    decoded = Yaml.decode[Map[String, List[String]]](rendered)
+                )
+            }
         }
 
         "preserves scalar anchors and aliases when rendering changed documents with comments" in {
@@ -1155,10 +1244,19 @@ class YamlCstTest extends Test:
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "other", scalar("new")).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered.contains("value: &name Alice # keep"))
-            assert(rendered.contains("copy: *name"))
-            assert(Yaml.decode[Map[String, String]](rendered) ==
-                Result.succeed(Map("value" -> "Alice", "other" -> "new", "copy" -> "Alice")))
+            assertResult(
+                (
+                    anchorKept = true,
+                    aliasKept = true,
+                    decoded = Result.succeed(Map("value" -> "Alice", "other" -> "new", "copy" -> "Alice"))
+                )
+            ) {
+                (
+                    anchorKept = rendered.contains("value: &name Alice # keep"),
+                    aliasKept = rendered.contains("copy: *name"),
+                    decoded = Yaml.decode[Map[String, String]](rendered)
+                )
+            }
         }
 
         "preserves scalar tags when rendering changed documents with comments" in {
@@ -1169,9 +1267,17 @@ class YamlCstTest extends Test:
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "other", scalar("new")).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered.contains("value: !!str true # keep"))
-            assert(Yaml.decode[Map[String, String]](rendered) ==
-                Result.succeed(Map("value" -> "true", "other" -> "new")))
+            assertResult(
+                (
+                    tagKept = true,
+                    decoded = Result.succeed(Map("value" -> "true", "other" -> "new"))
+                )
+            ) {
+                (
+                    tagKept = rendered.contains("value: !!str true # keep"),
+                    decoded = Yaml.decode[Map[String, String]](rendered)
+                )
+            }
         }
 
         "escapes control characters when rendering changed documents with comments" in {
@@ -1181,8 +1287,17 @@ class YamlCstTest extends Test:
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value", replacement).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered.contains("\\u0001"))
-            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("value" -> ("a" + 1.toChar + "b"))))
+            assertResult(
+                (
+                    escaped = true,
+                    decoded = Result.succeed(Map("value" -> ("a" + 1.toChar + "b")))
+                )
+            ) {
+                (
+                    escaped = rendered.contains("\\u0001"),
+                    decoded = Yaml.decode[Map[String, String]](rendered)
+                )
+            }
         }
 
         "respects disabled trailing newline when rendering changed documents with comments" in {
@@ -1191,8 +1306,17 @@ class YamlCstTest extends Test:
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value", scalar("new")).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default.copy(trailingNewline = false))
 
-            assert(!rendered.endsWith("\n"))
-            assert(rendered == "# keep\nvalue: new")
+            assertResult(
+                (
+                    noTrailingNewline = true,
+                    rendered = "# keep\nvalue: new"
+                )
+            ) {
+                (
+                    noTrailingNewline = !rendered.endsWith("\n"),
+                    rendered = rendered
+                )
+            }
         }
 
         "preserves mapping anchors and aliases when rendering changed documents with comments" in {
@@ -1204,11 +1328,21 @@ class YamlCstTest extends Test:
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value" / "a", scalar("2")).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered.contains("value: &map"))
-            assert(rendered.contains("a: 2 # keep"))
-            assert(rendered.contains("copy: *map"))
-            assert(Yaml.decode[Map[String, Map[String, String]]](rendered) ==
-                Result.succeed(Map("value" -> Map("a" -> "2"), "copy" -> Map("a" -> "2"))))
+            assertResult(
+                (
+                    anchorKept = true,
+                    valueKept = true,
+                    aliasKept = true,
+                    decoded = Result.succeed(Map("value" -> Map("a" -> "2"), "copy" -> Map("a" -> "2")))
+                )
+            ) {
+                (
+                    anchorKept = rendered.contains("value: &map"),
+                    valueKept = rendered.contains("a: 2 # keep"),
+                    aliasKept = rendered.contains("copy: *map"),
+                    decoded = Yaml.decode[Map[String, Map[String, String]]](rendered)
+                )
+            }
         }
 
         "preserves sequence anchors and aliases when rendering changed documents with comments" in {
@@ -1220,11 +1354,21 @@ class YamlCstTest extends Test:
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "items" / 0, scalar("new")).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered.contains("items: &items"))
-            assert(rendered.contains("- new # keep"))
-            assert(rendered.contains("copy: *items"))
-            assert(Yaml.decode[Map[String, List[String]]](rendered) ==
-                Result.succeed(Map("items" -> List("new"), "copy" -> List("new"))))
+            assertResult(
+                (
+                    anchorKept = true,
+                    itemKept = true,
+                    aliasKept = true,
+                    decoded = Result.succeed(Map("items" -> List("new"), "copy" -> List("new")))
+                )
+            ) {
+                (
+                    anchorKept = rendered.contains("items: &items"),
+                    itemKept = rendered.contains("- new # keep"),
+                    aliasKept = rendered.contains("copy: *items"),
+                    decoded = Yaml.decode[Map[String, List[String]]](rendered)
+                )
+            }
         }
 
         "preserves collection tags when rendering changed documents with comments" in {
@@ -1235,8 +1379,12 @@ class YamlCstTest extends Test:
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value" / "a", scalar("2")).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(rendered.contains("value: !!map"))
-            assert(rendered.contains("a: 2 # keep"))
+            assertResult((tagKept = true, valueKept = true)) {
+                (
+                    tagKept = rendered.contains("value: !!map"),
+                    valueKept = rendered.contains("a: 2 # keep")
+                )
+            }
         }
 
         "inserts, removes, and renames mapping entries at root" in {
@@ -1254,8 +1402,17 @@ class YamlCstTest extends Test:
                     .getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(edited.source.isEmpty)
-            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("age" -> "30", "displayName" -> "Alice")))
+            assertResult(
+                (
+                    sourceCleared = true,
+                    decoded = Result.succeed(Map("age" -> "30", "displayName" -> "Alice"))
+                )
+            ) {
+                (
+                    sourceCleared = edited.source.isEmpty,
+                    decoded = Yaml.decode[Map[String, String]](rendered)
+                )
+            }
         }
 
         "inserts and removes sequence elements under a mapping key" in {
@@ -1269,8 +1426,17 @@ class YamlCstTest extends Test:
                     .getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(edited.source.isEmpty)
-            assert(Yaml.decode[Map[String, List[Int]]](rendered) == Result.succeed(Map("ports" -> List(8081, 8082))))
+            assertResult(
+                (
+                    sourceCleared = true,
+                    decoded = Result.succeed(Map("ports" -> List(8081, 8082)))
+                )
+            ) {
+                (
+                    sourceCleared = edited.source.isEmpty,
+                    decoded = Yaml.decode[Map[String, List[Int]]](rendered)
+                )
+            }
         }
 
         "renders complex collection keys as valid flow in the trivia path" in {
@@ -1354,9 +1520,19 @@ class YamlCstTest extends Test:
                 base.replace(Yaml.Cst.Path.root, mapping("name" -> scalar("Bob"))).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(edited.source.isEmpty)
-            assert(rendered == "name: Bob\n")
-            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("name" -> "Bob")))
+            assertResult(
+                (
+                    sourceCleared = true,
+                    rendered = "name: Bob\n",
+                    decoded = Result.succeed(Map("name" -> "Bob"))
+                )
+            ) {
+                (
+                    sourceCleared = edited.source.isEmpty,
+                    rendered = rendered,
+                    decoded = Yaml.decode[Map[String, String]](rendered)
+                )
+            }
         }
 
         "preserves literal block scalars when rendering changed documents with comments" in {

@@ -512,31 +512,54 @@ class YamlEventsTest extends kyo.test.Test[Any]:
 
             summon[Schema[YamlWriterStrings]].writeTo(value, writer)
 
-            assert(
-                writer.resultString ==
-                    """plain: Alice
-                      |truthy: "true"
-                      |comment: "Alice #1"
-                      |url: "https://example.com"
-                      |multiline: |
-                      |  line one
-                      |  line two
-                      |empty: ""
-                      |""".stripMargin
-            )
-            assert(write("\u0001") == "\"\\u0001\"\n")
+            assertResult(
+                (
+                    resultString =
+                        """plain: Alice
+                          |truthy: "true"
+                          |comment: "Alice #1"
+                          |url: "https://example.com"
+                          |multiline: |
+                          |  line one
+                          |  line two
+                          |empty: ""
+                          |""".stripMargin,
+                    controlChar = "\"\\u0001\"\n"
+                )
+            ) {
+                (
+                    resultString = writer.resultString,
+                    controlChar = write("\u0001")
+                )
+            }
         }
 
         "matches production YAML writer for empty collections and scalar roots" in {
-            assert(write(List.empty[Int]) == "[]\n")
-            assert(write(Map.empty[String, Int]) == "{}\n")
-            assert(write(List(1, 2, 3)) == "- 1\n- 2\n- 3\n")
-            assert(write("true") == "\"true\"\n")
-            assert(write("0x3A") == "\"0x3A\"\n")
-            assert(write("0o7") == "\"0o7\"\n")
-            assert(write(".5") == "\".5\"\n")
-            assert(write("+12e03") == "\"+12e03\"\n")
-            assert(write(".inf") == "\".inf\"\n")
+            assertResult(
+                (
+                    emptyList = "[]\n",
+                    emptyMap = "{}\n",
+                    intList = "- 1\n- 2\n- 3\n",
+                    trueStr = "\"true\"\n",
+                    hex = "\"0x3A\"\n",
+                    octal = "\"0o7\"\n",
+                    dotFive = "\".5\"\n",
+                    expNum = "\"+12e03\"\n",
+                    infStr = "\".inf\"\n"
+                )
+            ) {
+                (
+                    emptyList = write(List.empty[Int]),
+                    emptyMap = write(Map.empty[String, Int]),
+                    intList = write(List(1, 2, 3)),
+                    trueStr = write("true"),
+                    hex = write("0x3A"),
+                    octal = write("0o7"),
+                    dotFive = write(".5"),
+                    expNum = write("+12e03"),
+                    infStr = write(".inf")
+                )
+            }
         }
 
         "honors compact sequence mapping layout from writer config" in {
@@ -550,28 +573,48 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         "honors small and fast flow writer profiles" in {
             val value = MTPerson("Alice", 30)
 
-            assert(write(value, Yaml.WriterConfig.Small) == "{name: Alice, age: 30}")
-            assert(write(value, Yaml.WriterConfig.Fast) == "{\"name\":\"Alice\",\"age\":30}")
-            assert(write("Alice", Yaml.WriterConfig.Small) == "Alice")
-            assert(write(List.empty[Int], Yaml.WriterConfig.Small) == "[]")
-            assert(write(Map.empty[String, Int], Yaml.WriterConfig.Fast) == "{}")
-            assert(write(
-                List("line one\nline two\n"),
-                Yaml.WriterConfig.Readable.copy(collectionStyle = Yaml.WriterConfig.CollectionStyle.Flow)
-            ) ==
-                "[\"line one\\nline two\\n\"]")
+            assertResult(
+                (
+                    smallPerson = "{name: Alice, age: 30}",
+                    fastPerson = "{\"name\":\"Alice\",\"age\":30}",
+                    smallScalar = "Alice",
+                    smallEmptyList = "[]",
+                    fastEmptyMap = "{}",
+                    flowMultiline = "[\"line one\\nline two\\n\"]"
+                )
+            ) {
+                (
+                    smallPerson = write(value, Yaml.WriterConfig.Small),
+                    fastPerson = write(value, Yaml.WriterConfig.Fast),
+                    smallScalar = write("Alice", Yaml.WriterConfig.Small),
+                    smallEmptyList = write(List.empty[Int], Yaml.WriterConfig.Small),
+                    fastEmptyMap = write(Map.empty[String, Int], Yaml.WriterConfig.Fast),
+                    flowMultiline = write(
+                        List("line one\nline two\n"),
+                        Yaml.WriterConfig.Readable.copy(collectionStyle = Yaml.WriterConfig.CollectionStyle.Flow)
+                    )
+                )
+            }
         }
 
         "matches production YAML writer for finite and special floating point values" in {
-            assert(write(1.23e100d) == "1.23E100\n")
-            assert(write(Double.MinPositiveValue) == "5.0E-324\n")
-            assert(write(Float.MaxValue) == "3.4028235E38\n")
-
-            assert(write(List(Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity)) == "- .nan\n- .inf\n- -.inf\n")
-            assert(
-                write(List(Float.NaN, Float.PositiveInfinity, Float.NegativeInfinity), Yaml.WriterConfig.Fast) ==
-                    """[!!float ".nan",!!float ".inf",!!float "-.inf"]"""
-            )
+            assertResult(
+                (
+                    bigExp = "1.23E100\n",
+                    minPositive = "5.0E-324\n",
+                    floatMax = "3.4028235E38\n",
+                    doubleSpecials = "- .nan\n- .inf\n- -.inf\n",
+                    floatSpecials = """[!!float ".nan",!!float ".inf",!!float "-.inf"]"""
+                )
+            ) {
+                (
+                    bigExp = write(1.23e100d),
+                    minPositive = write(Double.MinPositiveValue),
+                    floatMax = write(Float.MaxValue),
+                    doubleSpecials = write(List(Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity)),
+                    floatSpecials = write(List(Float.NaN, Float.PositiveInfinity, Float.NegativeInfinity), Yaml.WriterConfig.Fast)
+                )
+            }
         }
 
         "honors scalar quoting folded multiline and YAML version config" in {
@@ -580,29 +623,64 @@ class YamlEventsTest extends kyo.test.Test[Any]:
             val legacy       = Yaml.WriterConfig.Readable.copy(yamlVersion = Yaml.SpecVersion.Yaml11)
             val folded       = Yaml.WriterConfig.Readable.copy(multilineStyle = Yaml.WriterConfig.MultilineStyle.Folded)
 
-            assert(write("true", minimal) == "true\n")
-            assert(write("true") == "\"true\"\n")
-            assert(write("Alice #1", singleQuoted) == "'Alice #1'\n")
-            assert(write("NO") == "NO\n")
-            assert(write("NO", legacy) == "\"NO\"\n")
-            assert(write("010", legacy) == "\"010\"\n")
-            assert(write("line one\nline two\n", folded) == ">\n  line one\n\n  line two\n")
+            assertResult(
+                (
+                    minimalTrue = "true\n",
+                    defaultTrue = "\"true\"\n",
+                    singleQuoted = "'Alice #1'\n",
+                    plainNo = "NO\n",
+                    legacyNo = "\"NO\"\n",
+                    legacyOctal = "\"010\"\n",
+                    foldedMultiline = ">\n  line one\n\n  line two\n"
+                )
+            ) {
+                (
+                    minimalTrue = write("true", minimal),
+                    defaultTrue = write("true"),
+                    singleQuoted = write("Alice #1", singleQuoted),
+                    plainNo = write("NO"),
+                    legacyNo = write("NO", legacy),
+                    legacyOctal = write("010", legacy),
+                    foldedMultiline = write("line one\nline two\n", folded)
+                )
+            }
         }
 
         "honors document marker config" in {
             val start = Yaml.WriterConfig.Readable.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.Start)
             val both  = Yaml.WriterConfig.Readable.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
 
-            assert(write(MTPerson("Alice", 30), start) == "---\nname: Alice\nage: 30\n")
-            assert(write(MTPerson("Alice", 30), both) == "---\nname: Alice\nage: 30\n...\n")
+            assertResult(
+                (
+                    startMarker = "---\nname: Alice\nage: 30\n",
+                    bothMarkers = "---\nname: Alice\nage: 30\n...\n"
+                )
+            ) {
+                (
+                    startMarker = write(MTPerson("Alice", 30), start),
+                    bothMarkers = write(MTPerson("Alice", 30), both)
+                )
+            }
         }
 
         "matches production YAML writer direct scalar methods" in {
-            assert(direct(_.bytes(Span.fromUnsafe(Array[Byte](1, 2, 3)))) == "\"AQID\"\n")
-            assert(direct(_.bigInt(BigInt("12345678901234567890"))) == "\"12345678901234567890\"\n")
-            assert(direct(_.bigDecimal(BigDecimal("1234567890.0987654321"))) == "\"1234567890.0987654321\"\n")
-            assert(direct(_.instant(java.time.Instant.parse("2026-05-30T12:34:56Z"))) == "\"2026-05-30T12:34:56Z\"\n")
-            assert(direct(_.duration(java.time.Duration.parse("PT1H2M3S"))) == "\"PT1H2M3S\"\n")
+            assertResult(
+                (
+                    bytes = "\"AQID\"\n",
+                    bigInt = "\"12345678901234567890\"\n",
+                    bigDecimal = "\"1234567890.0987654321\"\n",
+                    instant = "\"2026-05-30T12:34:56Z\"\n",
+                    duration = "\"PT1H2M3S\"\n"
+                )
+            ) {
+                (
+                    bytes = direct(_.bytes(Span.fromUnsafe(Array[Byte](1, 2, 3)))),
+                    bigInt = direct(_.bigInt(BigInt("12345678901234567890"))),
+                    bigDecimal = direct(_.bigDecimal(BigDecimal("1234567890.0987654321"))),
+                    instant = direct(_.instant(java.time.Instant.parse("2026-05-30T12:34:56Z"))),
+                    duration = direct(_.duration(java.time.Duration.parse("PT1H2M3S")))
+                )
+            }
         }
 
         "releases writer state after materializing results" in {

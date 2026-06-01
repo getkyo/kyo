@@ -4,6 +4,8 @@ import kyo.*
 
 class YamlDocumentsTest extends kyo.test.Test[Any]:
 
+    given CanEqual[Any, Any] = CanEqual.derived
+
     "YamlDocuments" - {
 
         "detects document markers only at the start of a line" in {
@@ -28,8 +30,17 @@ class YamlDocumentsTest extends kyo.test.Test[Any]:
                   |name: Bob
                   |""".stripMargin
 
-            assert(YamlDocuments.requiresSplit(yaml))
-            assert(YamlDocuments.split(yaml) == Chunk("name: Alice\n", "", "name: Bob\n"))
+            assertResult(
+                (
+                    requiresSplit = true,
+                    split = Chunk("name: Alice\n", "", "name: Bob\n")
+                )
+            ) {
+                (
+                    requiresSplit = YamlDocuments.requiresSplit(yaml),
+                    split = YamlDocuments.split(yaml)
+                )
+            }
         }
 
         "ignores directives and comments between documents" in {

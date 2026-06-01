@@ -133,8 +133,17 @@ class YamlCstParserTest extends Test:
 
             val message = parseFailure(YamlCstParser.document(yaml))
 
-            assert(message.contains("Expected block scalar indentation"))
-            assert(message.contains("line 3"))
+            assertResult(
+                (
+                    hasIndentationMessage = true,
+                    hasLineNumber = true
+                )
+            ) {
+                (
+                    hasIndentationMessage = message.contains("Expected block scalar indentation"),
+                    hasLineNumber = message.contains("line 3")
+                )
+            }
         }
 
         "rejects a multi-document stream as a single CST document" in {
