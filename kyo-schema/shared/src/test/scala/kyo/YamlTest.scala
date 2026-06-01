@@ -1,0 +1,809 @@
+package kyo
+
+object YamlOpaqueUserId:
+    opaque type Type = String
+
+    def apply(value: String): Type = value
+
+    extension (id: Type) def value: String = id
+
+    given Schema[Type] = Schema.stringSchema.transform[Type](apply)(_.value)
+end YamlOpaqueUserId
+
+final case class YamlAnyValUserId(value: String) extends AnyVal derives CanEqual
+final case class YamlValueObject(value: String) derives CanEqual
+final case class YamlValueHolder(
+    opaqueId: YamlOpaqueUserId.Type,
+    anyValId: YamlAnyValUserId,
+    valueObject: YamlValueObject
+) derives CanEqual
+final case class YamlCountOnly(count: Int) derives CanEqual
+final case class YamlAnchoredCount(value: YamlCountOnly) derives CanEqual
+final case class YamlScalarAlias(first: String, second: String) derives CanEqual
+final case class YamlSequenceAlias(name: String, items: List[String]) derives CanEqual
+final case class YamlUnicodeField(café: Int) derives CanEqual
+final case class YamlMultiDocumentConfig(
+    primary: MTPerson,
+    people: List[MTPerson],
+    shape: MTShape,
+    status: MixedArityEnum,
+    unit: SealedNoArgVariants
+) derives CanEqual
+
+class YamlTest extends Test:
+
+    given CanEqual[Any, Any] = CanEqual.derived
+
+    case class Pair(primary: MTPerson, backup: MTPerson) derives CanEqual
+    case class Notes(literal: String, folded: String) derives CanEqual
+    case class AdtHolder(shape: MTShape, expr: Expr, pair: (Int, String)) derives CanEqual
+
+    "decode" - {
+
+        "decodes a block mapping into a case class" in {
+            val yaml =
+                """name: Alice
+                  |age: 30
+                  |""".stripMargin
+
+            val decoded = Yaml.decode[MTPerson](yaml)
+
+            assert(decoded == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "decodes nested block mappings" in {
+            val yaml =
+                """lead:
+                  |  name: Alice
+                  |  age: 30
+                  |size: 5
+                  |""".stripMargin
+
+            val decoded = Yaml.decode[MTSmallTeam](yaml)
+
+            assert(decoded == Result.succeed(MTSmallTeam(MTPerson("Alice", 30), 5)))
+        }
+
+        "decodes block sequences of mappings" in {
+            val yaml =
+                """- name: Alice
+                  |  age: 30
+                  |- name: Bob
+                  |  age: 25
+                  |""".stripMargin
+
+            val decoded = Yaml.decode[List[MTPerson]](yaml)
+
+            assert(decoded == Result.succeed(List(MTPerson("Alice", 30), MTPerson("Bob", 25))))
+        }
+
+        "decodes flow mappings and flow sequences" in {
+            assert(Yaml.decode[MTPerson]("{name: Alice, age: 30}") == Result.succeed(MTPerson("Alice", 30)))
+            assert(Yaml.decode[List[Int]]("[1, 2, 3]") == Result.succeed(List(1, 2, 3)))
+        }
+
+        "keeps comment markers inside quoted scalars" in {
+            val yaml =
+                """name: "Alice #1"
+                  |age: 30 # comment
+                  |""".stripMargin
+
+            assert(Yaml.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alice #1", 30)))
+        }
+
+        "rejects multi-document streams for single-document decode" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            assert(Yaml.decode[MTPerson](yaml).isFailure)
+        }
+
+        "resolves anchors and aliases during schema decode" in {
+            val yaml =
+                """primary: &alice
+                  |  name: Alice
+                  |  age: 30
+                  |backup: *alice
+                  |""".stripMargin
+
+            assert(Yaml.decode[Pair](yaml) == Result.succeed(Pair(MTPerson("Alice", 30), MTPerson("Alice", 30))))
+        }
+
+        "decodes literal and folded block scalars" in {
+            val yaml =
+                """literal: |
+                  |  line one
+                  |  line two
+                  |folded: >
+                  |  line one
+                  |  line two
+                  |""".stripMargin
+
+            assert(Yaml.decode[Notes](yaml) == Result.succeed(Notes("line one\nline two\n", "line one line two\n")))
+        }
+
+        "decodeAll decodes explicit document streams" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            assert(Yaml.decodeAll[MTPerson](yaml) == Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25))))
+        }
+
+        "decodeAll uses contextual reader config" in {
+            given Yaml.ReaderConfig = Yaml.ReaderConfig.Default.copy(yamlVersion = Yaml.SpecVersion.Yaml11)
+
+            val yaml =
+                """---
+                  |NO
+                  |---
+                  |yes
+                  |""".stripMargin
+
+            assert(Yaml.decodeAll[Boolean](yaml) == Result.succeed(Chunk(false, true)))
+        }
+
+        "decode targets a document by zero-based index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |---
+                  |name: Charlie
+                  |age: 35
+                  |""".stripMargin
+
+            assert(Yaml.decode[MTPerson](yaml, Yaml.DocumentIndex(1)) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "decode reports an invalid document index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |""".stripMargin
+
+            val decoded = Yaml.decode[MTPerson](yaml, Yaml.DocumentIndex(1))
+
+            decoded match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("document index 1"))
+                    assert(e.getMessage.contains("found 1"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
+        }
+
+        "decodeBytes targets a document by zero-based index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            assert(Yaml.decodeBytes[MTPerson](bytes, Yaml.DocumentIndex(1)) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "decodeBytes rejects multi-document streams for single-document decode" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            assert(Yaml.decodeBytes[MTPerson](bytes).isFailure)
+        }
+
+        "decode config combines document index and limits" in {
+            val yaml =
+                """---
+                  |value: 0
+                  |children: []
+                  |---
+                  |value: 1
+                  |children:
+                  |  - value: 2
+                  |    children:
+                  |      - value: 3
+                  |        children: []
+                  |""".stripMargin
+
+            val config = Yaml.ReaderConfig(
+                maxDepth = Yaml.DefaultMaxDepth,
+                maxCollectionSize = Yaml.DefaultMaxCollectionSize,
+                documentIndex = Maybe(Yaml.DocumentIndex(1))
+            )
+
+            val expected = TreeNode(1, List(TreeNode(2, List(TreeNode(3, Nil)))))
+
+            assert(Yaml.decode[TreeNode](yaml, config) == Result.succeed(expected))
+        }
+
+        "decode uses a contextual reader config for single-argument decode" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            given Yaml.ReaderConfig = Yaml.ReaderConfig(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            assert(Yaml.decode[MTPerson](yaml) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "accepts YAML directives before the document marker" in {
+            val yaml =
+                """%YAML 1.2
+                  |---
+                  |name: Alice
+                  |age: 30
+                  |""".stripMargin
+
+            assert(Yaml.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "decodeAll ignores stream directives before the first document" in {
+            val yaml =
+                """%YAML 1.2
+                  |---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            assert(Yaml.decodeAll[MTPerson](yaml) == Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25))))
+        }
+
+        "decodeAll handles YAML document markers with comments and empty documents" in {
+            val yaml =
+                """--- # explicit empty document
+                  |...
+                  |---
+                  |present
+                  |""".stripMargin
+
+            assert(Yaml.decodeAll[Option[String]](yaml) == Result.succeed(Chunk(None, Some("present"))))
+        }
+
+        "document selection ignores indented markers inside block scalars" in {
+            val yaml =
+                """---
+                  |text: |
+                  |  ---
+                  |  literal marker
+                  |...
+                  |--- # next document
+                  |text: next
+                  |""".stripMargin
+
+            assert(Yaml.decode[Map[String, String]](yaml, Yaml.DocumentIndex(0)) == Result.succeed(Map(
+                "text" -> "---\nliteral marker\n"
+            )))
+            assert(Yaml.decode[Map[String, String]](yaml, Yaml.DocumentIndex(1)) == Result.succeed(Map("text" -> "next")))
+        }
+
+        "single document decode rejects trailing content after an end marker" in {
+            val yaml =
+                """name: Alice
+                  |age: 30
+                  |...
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            Yaml.decode[MTPerson](yaml) match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("Unexpected content after YAML document end"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
+        }
+
+        "decode merges document stream mapping fragments when configured" in {
+            val yaml =
+                """---
+                  |primary:
+                  |  name: Alice
+                  |  age: 30
+                  |---
+                  |people:
+                  |  - name: Bob
+                  |    age: 25
+                  |  - name: Charlie
+                  |    age: 35
+                  |---
+                  |shape:
+                  |  MTRectangle:
+                  |    width: 3.0
+                  |    height: 4.0
+                  |---
+                  |status:
+                  |  Alpha:
+                  |    x: 7
+                  |---
+                  |unit:
+                  |  Unit2: {}
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(
+                Yaml.decode[YamlMultiDocumentConfig](yaml, config) ==
+                    Result.succeed(
+                        YamlMultiDocumentConfig(
+                            MTPerson("Alice", 30),
+                            List(MTPerson("Bob", 25), MTPerson("Charlie", 35)),
+                            MTRectangle(3.0, 4.0),
+                            MixedArityEnum.Alpha(7),
+                            SealedNoArgVariants.Unit2
+                        )
+                    )
+            )
+        }
+
+        "decode merges document stream fragments for top-level sealed traits when configured" in {
+            val yaml =
+                """---
+                  |Labeled:
+                  |---
+                  |  name: release
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.decode[SealedNoArgVariants](yaml, config) == Result.succeed(SealedNoArgVariants.Labeled("release")))
+        }
+
+        "decode merges document stream fragments for top-level Scala 3 enums when configured" in {
+            val yaml =
+                """---
+                  |Alpha:
+                  |---
+                  |  x: 7
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.decode[MixedArityEnum](yaml, config) == Result.succeed(MixedArityEnum.Alpha(7)))
+        }
+
+        "decodeBytes merges document stream fragments when configured" in {
+            val yaml =
+                """---
+                  |Alpha:
+                  |---
+                  |  x: 7
+                  |""".stripMargin
+            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.decodeBytes[MixedArityEnum](bytes, config) == Result.succeed(MixedArityEnum.Alpha(7)))
+        }
+
+        "document index takes precedence over document stream merging" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            val config = Yaml.ReaderConfig.Default.copy(
+                documentIndex = Maybe(Yaml.DocumentIndex(1)),
+                documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings
+            )
+
+            assert(Yaml.decode[MTPerson](yaml, config) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "reports line and column in parser failures" in {
+            val result = Yaml.decode[MTPerson]("name: Alice\nage: *missing\n")
+
+            result match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("line 2"))
+                    assert(e.getMessage.contains("column"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
+        }
+
+        "decodes all-no-arg enum variants distinctly" in {
+            val first  = Yaml.decode[AllNoArgEnumA]("First: {}\n")
+            val second = Yaml.decode[AllNoArgEnumA]("Second: {}\n")
+            val third  = Yaml.decode[AllNoArgEnumA]("Third: {}\n")
+
+            assert(first == Result.succeed(AllNoArgEnumA.First))
+            assert(second == Result.succeed(AllNoArgEnumA.Second))
+            assert(third == Result.succeed(AllNoArgEnumA.Third))
+        }
+
+        "decodes mixed enum cases with parameterized and no-arg variants" in {
+            val alpha =
+                """Alpha:
+                  |  x: 7
+                  |""".stripMargin
+
+            assert(Yaml.decode[MixedArityEnum](alpha) == Result.succeed(MixedArityEnum.Alpha(7)))
+            assert(Yaml.decode[MixedArityEnum]("Beta: {}\n") == Result.succeed(MixedArityEnum.Beta))
+            assert(Yaml.decode[MixedArityEnum]("Gamma: {}\n") == Result.succeed(MixedArityEnum.Gamma))
+        }
+
+        "decodes sealed trait hierarchies including case objects" in {
+            val labeled =
+                """Labeled:
+                  |  name: release
+                  |""".stripMargin
+
+            assert(Yaml.decode[SealedNoArgVariants](labeled) == Result.succeed(SealedNoArgVariants.Labeled("release")))
+            assert(Yaml.decode[SealedNoArgVariants]("Unit2: {}\n") == Result.succeed(SealedNoArgVariants.Unit2))
+        }
+
+        "decodes recursive sealed trait hierarchies" in {
+            val yaml =
+                """Add:
+                  |  left:
+                  |    Lit:
+                  |      value: 1
+                  |  right:
+                  |    Neg:
+                  |      inner:
+                  |        Lit:
+                  |          value: 2
+                  |""".stripMargin
+
+            assert(Yaml.decode[Expr](yaml) == Result.succeed(Add(Lit(1), Neg(Lit(2)))))
+        }
+
+        "decodes tuples using derived tuple field names" in {
+            val yaml =
+                """_1: 42
+                  |_2: hello
+                  |""".stripMargin
+
+            assert(Yaml.decode[(Int, String)](yaml) == Result.succeed((42, "hello")))
+        }
+
+        "decodes ADTs and tuples nested in a product" in {
+            val yaml =
+                """shape:
+                  |  MTRectangle:
+                  |    width: 3.0
+                  |    height: 4.0
+                  |expr:
+                  |  Lit:
+                  |    value: 9
+                  |pair:
+                  |  _1: 5
+                  |  _2: five
+                  |""".stripMargin
+
+            assert(Yaml.decode[AdtHolder](yaml) == Result.succeed(AdtHolder(MTRectangle(3.0, 4.0), Lit(9), (5, "five"))))
+        }
+
+        "decodes opaque types through their underlying scalar schema" in {
+            val decoded = Yaml.decode[YamlOpaqueUserId.Type]("user-123\n")
+
+            assert(decoded == Result.succeed(YamlOpaqueUserId("user-123")))
+        }
+
+        "decodes root scalars without spending nesting depth on synthetic nodes" in {
+            val decoded = Yaml.decode[Int]("42\n", Yaml.ReaderConfig(maxDepth = 0))
+
+            assert(decoded == Result.succeed(42))
+        }
+
+        "decodes AnyVal value classes as single-field products" in {
+            val decoded = Yaml.decode[YamlAnyValUserId]("value: user-123\n")
+
+            assert(decoded == Result.succeed(YamlAnyValUserId("user-123")))
+        }
+
+        "decodes old single-field value objects as products" in {
+            val decoded = Yaml.decode[YamlValueObject]("value: user-123\n")
+
+            assert(decoded == Result.succeed(YamlValueObject("user-123")))
+        }
+
+        "decodes opaque and value wrappers nested in a product" in {
+            val yaml =
+                """opaqueId: user-123
+                  |anyValId:
+                  |  value: user-456
+                  |valueObject:
+                  |  value: user-789
+                  |""".stripMargin
+
+            assert(
+                Yaml.decode[YamlValueHolder](yaml) ==
+                    Result.succeed(
+                        YamlValueHolder(
+                            YamlOpaqueUserId("user-123"),
+                            YamlAnyValUserId("user-456"),
+                            YamlValueObject("user-789")
+                        )
+                    )
+            )
+        }
+
+        "captures deferred values as YAML readers" in {
+            val reader = kyo.internal.YamlReader("value: 42\n")
+
+            discard(reader.objectStart())
+            reader.fieldParse()
+            val captured = reader.captureValue()
+
+            assert(captured.isInstanceOf[kyo.internal.YamlReader])
+            assert(captured.int() == 42)
+        }
+
+        "reader can pull a requested prefix without parsing later malformed content" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """value: 42
+                      |later: [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.objectStart())
+            reader.fieldParse()
+
+            assert(reader.matchField("value".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            assert(reader.int() == 42)
+        }
+
+        "reader folds a requested plain scalar prefix without parsing later malformed content" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """value: hello
+                      |  world
+                      |later: [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.objectStart())
+            reader.fieldParse()
+
+            assert(reader.matchField("value".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            assert(reader.string() == "hello world")
+        }
+
+        "captureValue buffers only the requested subtree" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """value:
+                      |  count: 7
+                      |later: [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.objectStart())
+            reader.fieldParse()
+            val captured = reader.captureValue()
+
+            discard(captured.objectStart())
+            captured.fieldParse()
+            val count = captured.int()
+            captured.objectEnd()
+            assert(count == 7)
+        }
+
+        "captureValue pulls the current sequence element without parsing later malformed content" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """- count: 7
+                      |- [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.arrayStart())
+            val captured = reader.captureValue()
+
+            discard(captured.objectStart())
+            captured.fieldParse()
+            val count = captured.int()
+            captured.objectEnd()
+            assert(count == 7)
+        }
+
+        "captureValue buffers a root source value without parsing later malformed content" in {
+            val reader = kyo.internal.YamlReader("[1, [unterminated")
+
+            val captured = reader.captureValue()
+
+            discard(captured.arrayStart())
+            assert(captured.hasNextElement())
+            assert(captured.int() == 1)
+        }
+
+        "captureValue advances root source by one scalar node" in {
+            val reader = kyo.internal.YamlReader("Alice\nBob\n")
+
+            val first = reader.captureValue()
+            assert(first.string() == "Alice")
+
+            val second = reader.captureValue()
+            assert(second.string() == "Bob")
+        }
+
+        "captureValue advances root source by one flow collection" in {
+            val reader = kyo.internal.YamlReader("[1]\n[2]\n")
+
+            val first = reader.captureValue()
+            discard(first.arrayStart())
+            assert(first.hasNextElement())
+            assert(first.int() == 1)
+            first.arrayEnd()
+
+            val second = reader.captureValue()
+            discard(second.arrayStart())
+            assert(second.hasNextElement())
+            assert(second.int() == 2)
+            second.arrayEnd()
+            succeed
+        }
+
+        "captureValue advances root source by one block collection" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """name: Alice
+                      |[2]
+                      |""".stripMargin
+                )
+
+            val first = reader.captureValue()
+            discard(first.objectStart())
+            first.fieldParse()
+            assert(first.matchField("name".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            assert(first.string() == "Alice")
+            first.objectEnd()
+
+            val second = reader.captureValue()
+            discard(second.arrayStart())
+            assert(second.hasNextElement())
+            assert(second.int() == 2)
+            second.arrayEnd()
+            succeed
+        }
+
+        "reader can pull a flow sequence prefix without parsing later malformed content" in {
+            val reader = kyo.internal.YamlReader("[1, [unterminated")
+
+            val size = reader.arrayStart()
+
+            assert(size == -1)
+            assert(reader.hasNextElement())
+            assert(reader.int() == 1)
+        }
+
+        "reader can pull a flow mapping prefix without parsing later malformed content" in {
+            val reader = kyo.internal.YamlReader("{name: Alice, later: [unterminated")
+
+            val size = reader.objectStart()
+
+            assert(size == -1)
+            assert(reader.hasNextField())
+            reader.fieldParse()
+            assert(reader.matchField("name".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            assert(reader.string() == "Alice")
+        }
+
+        "reader registers anchored mapping sources without parsing later malformed fields" in {
+            val yaml =
+                """value: &thing
+                  |  count: 7
+                  |  later: [unterminated
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlAnchoredCount](yaml) == Result.succeed(YamlAnchoredCount(YamlCountOnly(7))))
+        }
+
+        "reader registers inline scalar anchors without building an event tape" in {
+            val yaml =
+                """first: &name Alice
+                  |second: *name
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlScalarAlias](yaml) == Result.succeed(YamlScalarAlias("Alice", "Alice")))
+        }
+
+        "reader resolves source aliases before unrelated malformed fields" in {
+            val yaml =
+                """first: &name Alice
+                  |second: *name
+                  |later: [unterminated
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlScalarAlias](yaml) == Result.succeed(YamlScalarAlias("Alice", "Alice")))
+        }
+
+        "reader resolves source aliases in sequences before malformed elements" in {
+            val yaml =
+                """name: &name Alice
+                  |items:
+                  |  - *name
+                  |later: [unterminated
+                  |""".stripMargin
+
+            assert(Yaml.decode[YamlSequenceAlias](yaml) == Result.succeed(YamlSequenceAlias("Alice", List("Alice"))))
+        }
+
+        "reader reports unknown source aliases with context" in {
+            Yaml.decode[String]("*missing\n") match
+                case Result.Failure(e: ParseException) =>
+                    assert(e.getMessage.contains("Unknown alias 'missing'"))
+                    assert(e.getMessage.contains("line 1"))
+                case other => fail(s"Expected ParseException failure, got $other")
+            end match
+        }
+
+        "isNil reads root source nulls without parsing later malformed content" in {
+            List("null", "~", "!!null ignored").foreach { value =>
+                val reader = kyo.internal.YamlReader(s"$value\nlater: [unterminated")
+
+                assert(reader.isNil())
+            }
+
+            val empty = kyo.internal.YamlReader("\n")
+            assert(empty.isNil())
+        }
+
+        "isNil preserves non-null source scalars for later reads" in {
+            val reader = kyo.internal.YamlReader("Alice\nlater: [unterminated")
+
+            assert(!reader.isNil())
+            assert(reader.string() == "Alice")
+        }
+
+        "skip advances the current sequence element without parsing later malformed content" in {
+            val reader =
+                kyo.internal.YamlReader(
+                    """- ignored:
+                      |    count: 7
+                      |- [unterminated
+                      |""".stripMargin
+                )
+
+            discard(reader.arrayStart())
+            reader.skip()
+            assert(reader.hasNextElement())
+        }
+
+        "matches UTF-8 field names without lossy byte comparisons" in {
+            assert(Yaml.decode[YamlUnicodeField]("café: 7\n") == Result.succeed(YamlUnicodeField(7)))
+        }
+
+    }
+
+end YamlTest
