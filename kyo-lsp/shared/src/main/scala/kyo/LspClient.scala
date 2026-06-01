@@ -31,7 +31,7 @@ object LspClient:
         clientInfo: LspInfo,
         capabilities: LspCapabilities.Client.Client,
         handlers: LspHandler[?, ?, ?]*
-    )(using Frame): LspClient < (Async & Scope) =
+    )(using Frame): LspClient < (Async & Scope & Abort[LspException]) =
         init(transport, clientInfo, capabilities, LspConfig.default, handlers*)
 
     /** Initializes an LSP client with explicit config and performs the handshake eagerly. */
@@ -41,7 +41,7 @@ object LspClient:
         capabilities: LspCapabilities.Client.Client,
         config: LspConfig,
         handlers: LspHandler[?, ?, ?]*
-    )(using Frame): LspClient < (Async & Scope) =
+    )(using Frame): LspClient < (Async & Scope & Abort[LspException]) =
         Scope.acquireRelease(
             internal.lsp.LspClientEngine.initClient(transport, clientInfo, capabilities, handlers, config)
         )(c => Sync.Unsafe.defer(c.close(Duration.Zero)(using AllowUnsafe.embrace.danger, Frame.internal).safe.get))
@@ -52,8 +52,18 @@ object LspClient:
         clientInfo: LspInfo,
         capabilities: LspCapabilities.Client.Client,
         handlers: LspHandler[?, ?, ?]*
-    )(f: LspClient => A < S)(using Frame): A < (S & Async & Scope) =
+    )(f: LspClient => A < S)(using Frame): A < (S & Async & Scope & Abort[LspException]) =
         init(transport, clientInfo, capabilities, LspConfig.default, handlers*).map(f)
+
+    /** Initializes and passes the client handle to the given function in a Scope context with explicit config. */
+    def initWith[A, S](
+        transport: JsonRpcTransport,
+        clientInfo: LspInfo,
+        capabilities: LspCapabilities.Client.Client,
+        config: LspConfig,
+        handlers: LspHandler[?, ?, ?]*
+    )(f: LspClient => A < S)(using Frame): A < (S & Async & Scope & Abort[LspException]) =
+        init(transport, clientInfo, capabilities, config, handlers*).map(f)
 
     // =========================================================================
     // Unscoped init quartet
@@ -65,7 +75,7 @@ object LspClient:
         clientInfo: LspInfo,
         capabilities: LspCapabilities.Client.Client,
         handlers: LspHandler[?, ?, ?]*
-    )(using Frame): LspClient < Async =
+    )(using Frame): LspClient < (Async & Abort[LspException]) =
         internal.lsp.LspClientEngine.initClient(transport, clientInfo, capabilities, handlers, LspConfig.default)
 
     /** Initializes an LSP client with config, without automatic resource cleanup. */
@@ -75,7 +85,7 @@ object LspClient:
         capabilities: LspCapabilities.Client.Client,
         config: LspConfig,
         handlers: LspHandler[?, ?, ?]*
-    )(using Frame): LspClient < Async =
+    )(using Frame): LspClient < (Async & Abort[LspException]) =
         internal.lsp.LspClientEngine.initClient(transport, clientInfo, capabilities, handlers, config)
 
     /** Initializes unscoped and passes the client handle to the given function. */
@@ -84,8 +94,18 @@ object LspClient:
         clientInfo: LspInfo,
         capabilities: LspCapabilities.Client.Client,
         handlers: LspHandler[?, ?, ?]*
-    )(f: LspClient => A < S)(using Frame): A < (S & Async) =
+    )(f: LspClient => A < S)(using Frame): A < (S & Async & Abort[LspException]) =
         initUnscoped(transport, clientInfo, capabilities, LspConfig.default, handlers*).map(f)
+
+    /** Initializes unscoped with explicit config and passes the client handle to the given function. */
+    def initUnscopedWith[A, S](
+        transport: JsonRpcTransport,
+        clientInfo: LspInfo,
+        capabilities: LspCapabilities.Client.Client,
+        config: LspConfig,
+        handlers: LspHandler[?, ?, ?]*
+    )(f: LspClient => A < S)(using Frame): A < (S & Async & Abort[LspException]) =
+        initUnscoped(transport, clientInfo, capabilities, config, handlers*).map(f)
 
     // =========================================================================
     // Extension methods (safe-tier bridge over Unsafe)

@@ -50,7 +50,7 @@ private[kyo] object LspClientEngine:
         capabilities: LspCapabilities.Client.Client,
         userHandlers: Seq[LspHandler[?, ?, ?]],
         config: LspConfig
-    )(using Frame): LspClient.Unsafe < Async =
+    )(using Frame): LspClient.Unsafe < (Async & Abort[LspException]) =
 
         // --- State refs ---
         val negotiatedEncodingRef = AtomicRef.Unsafe.init[LspHandler.PositionEncodingKind](
@@ -124,18 +124,12 @@ private[kyo] object LspClientEngine:
                     }
                     .andThen(handler.notify[EmptyParams]("initialized", EmptyParams()))
 
-            // Run the handshake; map errors to LspException.Handshake.NotInitialized on abort.
-            val handshakeRun: Unit < Async =
-                Abort.run(handshakeEffect).map {
-                    case Result.Success(_)   => ()
-                    case Result.Failure(err) =>
-                        // Log and continue; the server may reject further requests, but we
-                        // do not abort the client construction itself.
-                        ()
-                    case Result.Panic(ex) =>
-                        // Re-throw panics.
-                        throw ex
-                }
+            // Run the handshake. On failure, abort the client construction with the error (INV-061).
+            val handshakeRun: Unit < (Async & Abort[LspException]) =
+                handshakeEffect
+                    .handle(Abort.recover[Closed] { _ =>
+                        Abort.fail(LspException.Handshake.NotInitialized("initialize"))
+                    })
 
             handshakeRun.andThen {
                 val unsafe: LspClient.Unsafe = new LspClient.Unsafe:
