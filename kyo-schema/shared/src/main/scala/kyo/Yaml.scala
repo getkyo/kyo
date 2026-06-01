@@ -963,7 +963,11 @@ object Yaml:
       */
     object Cst:
 
-        /** Span of source text covered by a CST value. */
+        /** Source marks associated with a CST value.
+          *
+          * Collection roots parsed from source usually span the corresponding source region. Scalar and alias nodes may carry a zero-width
+          * mark range when only the node start is available, especially for event-backed or canonical CST values.
+          */
         case class SourceSpan(start: Mark, end: Mark) derives CanEqual
 
         /** Base type for CST-specific failures. */
@@ -1102,10 +1106,10 @@ object Yaml:
 
         /** One YAML CST node.
           *
-          * CST nodes carry the decoded structural value, source syntax metadata, and the source span that produced the node. When
-          * `originalSource` is present, renderers may preserve that exact source slice for unchanged source-backed nodes. When it is absent,
-          * renderers emit canonical YAML events from the node content and the supplied writer configuration. Trivia that belongs to entries
-          * or documents is kept outside the node so structural editing can distinguish comments and whitespace from YAML values.
+          * CST nodes carry the decoded structural value, source syntax metadata, and source marks. `originalSource` is reserved for CSTs
+          * constructed by callers or future source-slice preserving parsers; the source parser currently preserves exact text at the document
+          * or stream level, and edited documents render changed regions canonically. Trivia that belongs to entries or documents is kept
+          * outside the node so structural editing can distinguish comments and whitespace from YAML values.
           */
         enum Node derives CanEqual:
             /** Mapping node with entry CSTs. */
@@ -1237,8 +1241,8 @@ object Yaml:
 
     /** Parses a single YAML document into a source-backed CST.
       *
-      * The returned document keeps the original source text and source spans. Rendering an unchanged document returns that source without
-      * re-emitting YAML events. Structural edits may preserve source-backed slices around the edited path, while changed regions render
+      * The returned document keeps the original source text and source marks. Rendering an unchanged document returns that source without
+      * re-emitting YAML events. Structural edits preserve collected comments and whitespace where supported, while changed regions render
       * canonically. Use CST parsing for format-aware tooling; ordinary schema decoding should use [[decode]].
       */
     def cst(input: String)(using Frame): Result[DecodeException, Cst.Document] =

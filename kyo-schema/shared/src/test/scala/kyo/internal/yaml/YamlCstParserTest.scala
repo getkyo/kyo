@@ -330,5 +330,28 @@ class YamlCstParserTest extends Test:
                 )
             }
         }
+
+        "records scalar source marks without claiming token extents" in {
+            val yaml =
+                """name: Alice
+                  |""".stripMargin
+
+            val doc                                  = YamlCstParser.document(yaml).getOrThrow
+            val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
+            val key                                  = root.entries(0).key.asInstanceOf[Yaml.Cst.Node.Scalar]
+            val value                                = root.entries(0).value.asInstanceOf[Yaml.Cst.Node.Scalar]
+
+            assertResult(
+                (
+                    key = (start = Yaml.Mark(0, 1, 1), end = Yaml.Mark(0, 1, 1)),
+                    value = (start = Yaml.Mark(6, 1, 7), end = Yaml.Mark(6, 1, 7))
+                )
+            ) {
+                (
+                    key = (start = key.span.start, end = key.span.end),
+                    value = (start = value.span.start, end = value.span.end)
+                )
+            }
+        }
     }
 end YamlCstParserTest
