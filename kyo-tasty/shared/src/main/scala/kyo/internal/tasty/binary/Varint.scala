@@ -25,24 +25,12 @@ object Varint:
 
     /** Read an unsigned big-endian base-128 Nat from `view` as Int.
       *
-      * Verbatim semantics from TastyReader.readLongNat, narrowed to Int. The loop continues while the continuation bit (0x80) is CLEAR,
-      * stopping at the byte where 0x80 is SET (the terminating byte). Throws MalformedVarintException if more than 5 continuation bytes are
-      * consumed (Int overflow guard).
+      * Per Q-002 / actual dotty TastyReader.readNat: delegates to readLongNat and truncates the Long result to Int. No separate per-byte
+      * Int-range check is applied; dotty's TastyReader.readNat does readLongNat().toInt without a range check, and kyo matches that behavior
+      * so that large-section offsets encoded in 6-10 bytes are accepted (the old 5-byte cap was too strict).
       */
     def readNat(view: ByteView)(using AllowUnsafe): Int =
-        var b     = 0
-        var x     = 0
-        var bytes = 0
-        while
-            if bytes >= 5 then
-                throw new MalformedVarintException(view.position.toLong, "varint: continuation runs past 5 bytes (Int overflow)")
-            b = view.readByte() & 0xff
-            x = (x << 7) | (b & 0x7f)
-            bytes += 1
-            (b & 0x80) == 0
-        do ()
-        end while
-        x
+        readLongNat(view).toInt
     end readNat
 
     /** Read an unsigned big-endian base-128 Nat from `view` as Long.

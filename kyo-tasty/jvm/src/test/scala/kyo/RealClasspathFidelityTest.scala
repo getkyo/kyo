@@ -81,10 +81,12 @@ class RealClasspathFidelityTest extends Test:
             end while
         // Phase 01 baseline: 51 pending leaves. Each subsequent phase un-pends its assigned leaves.
         // Phase 06 un-pended 4 opaque-type leaves, bringing the count to ~29.
-        // The threshold is updated to 25 to give phases 07-15 room to un-pend more.
+        // Phase 07 un-pended additional leaves, bringing the count to ~25.
+        // Phase 08 un-pended INV-009, bringing the count to 24.
+        // The threshold is updated to 24 to give phases 09-15 room to un-pend more.
         assert(
-            pendingCount >= 25,
-            s"Expected at least 25 pending fidelity leaves, found $pendingCount. " +
+            pendingCount >= 24,
+            s"Expected at least 24 pending fidelity leaves, found $pendingCount. " +
                 "Each finding from the exploration should be pinned as a pending leaf."
         )
         succeed
@@ -182,7 +184,16 @@ class RealClasspathFidelityTest extends Test:
     //       before fix at Phase 01 commit size is 9 with each message matching
     //       "varint: continuation runs past 5 bytes"
     // Pins: INV-009
-    "INV-009 (Phase 08): cp.errors.size == 0 on real-classpath load" in pending
+    "INV-009 (Phase 08): cp.errors.size == 0 on real-classpath load" in run {
+        val cp = TestClasspaths.withClasspath()
+        cp.map: classpath =>
+            assert(
+                classpath.errors.isEmpty,
+                s"Expected 0 errors after varint 9-byte expansion, got ${classpath.errors.size}:\n" +
+                    classpath.errors.take(5).map(_.toString).mkString("\n")
+            )
+            succeed
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Phase 11 PENDING leaves (un-pended by Phase 11)

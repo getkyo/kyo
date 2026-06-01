@@ -170,22 +170,74 @@ class VarintTest extends Test:
         assert(Varint.readLongNat(view) == Long.MaxValue)
     }
 
-    // Test (Phase 03a B4): readNat rejects continuation past 5 bytes
-    "readNat rejects continuation past 5 bytes (Int overflow guard)" in run {
+    // Test (Phase 08): readNat delegates to readLongNat; limit inherited from readLongNat (10 bytes)
+    // Per actual dotty TastyReader.readNat = readLongNat().toInt: no separate per-byte cap in readNat.
+    // Pins: Q-002 expansion (old 5-byte cap removed; readNat now accepts 6-10 byte encodings).
+    "readNat rejects continuation past 10 bytes (inherited readLongNat cap)" in run {
         // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
+        // 11 bytes with 0x80 CLEAR: readLongNat fires bytes >= 10 after reading the 10th byte.
         import AllowUnsafe.embrace.danger
-        // 6 bytes with 0x80 CLEAR = 6 continuation bytes; cap is 5.
-        val view = viewOf(Array.fill(6)(0x00.toByte))
+        val view = viewOf(Array.fill(11)(0x00.toByte))
         try
             Varint.readNat(view)
             fail("Expected MalformedVarintException but no exception was thrown")
         catch
             case ex: MalformedVarintException =>
                 assert(
-                    ex.getMessage.contains("continuation runs past 5"),
-                    s"Expected message to contain 'continuation runs past 5' but was: ${ex.getMessage}"
+                    ex.getMessage.contains("continuation runs past 10"),
+                    s"Expected message to contain 'continuation runs past 10' but was: ${ex.getMessage}"
                 )
         end try
+    }
+
+    // Test (Phase 08 leaf 2): large-section-offsets-decode
+    // A 6-byte non-minimal encoding of 0 previously threw "5 bytes"; now decodes to 0.
+    // Pins: F-I-005 root cause (large section offsets use 6-9 byte Nat encodings).
+    "readNat decodes 6-byte non-minimal encoding (large-section-offset fix)" in run {
+        // §839 case 3; direct Varint test, single-threaded, no suspension.
+        // Non-minimal encoding of 0 in 6 bytes:
+        //   5 continuation bytes (0x80 CLEAR) each with value bits 0x00,
+        //   1 terminating byte (0x80 SET) with value bits 0x00.
+        //   bytes: 0x00, 0x00, 0x00, 0x00, 0x00, 0x80
+        import AllowUnsafe.embrace.danger
+        val view = viewOf(Array(0x00.toByte, 0x00.toByte, 0x00.toByte, 0x00.toByte, 0x00.toByte, 0x80.toByte))
+        assert(Varint.readNat(view) == 0)
+    }
+
+    // Test (Phase 08 leaf 3): readNat truncates values > Int.MaxValue matching dotty behavior
+    // Per actual dotty TastyReader.readNat = readLongNat().toInt: silently truncates to Int.
+    // Pins: Q-002 parity with dotty's actual readNat implementation.
+    "readNat truncates 9-byte Long.MaxValue encoding to Int (dotty parity)" in run {
+        // §839 case 3; direct Varint truncation test, single-threaded, no suspension.
+        // Long.MaxValue in 9 bytes: 0x7F * 8 continuation + 0xFF terminating.
+        // Long.MaxValue.toInt = -1 (low 32 bits of 0x7FFFFFFFFFFFFFFF).
+        import AllowUnsafe.embrace.danger
+        val bytes = Array(
+            0x7f.toByte,
+            0x7f.toByte,
+            0x7f.toByte,
+            0x7f.toByte,
+            0x7f.toByte,
+            0x7f.toByte,
+            0x7f.toByte,
+            0x7f.toByte,
+            0xff.toByte
+        )
+        val view = viewOf(bytes)
+        assert(Varint.readNat(view) == Long.MaxValue.toInt)
+    }
+
+    // Test (Phase 08 leaf 4): varint-cross-platform-parity
+    // The same synthetic 6-byte stream decoded on JVM, JS, and Native returns the same value.
+    // This test lives in shared/src/test so it runs on all three platforms per HARD RULE 3.
+    // Pins: cross-platform parity for the varint path (HARD RULE 3).
+    "readNat 6-byte non-minimal decoding is consistent across platforms" in run {
+        // §839 case 3; cross-platform parity test, single-threaded, no suspension.
+        // 6-byte non-minimal encoding of value 1:
+        //   5 continuation bytes of 0x00 then terminating byte 0x81 (value bits = 0x01).
+        import AllowUnsafe.embrace.danger
+        val view = viewOf(Array(0x00.toByte, 0x00.toByte, 0x00.toByte, 0x00.toByte, 0x00.toByte, 0x81.toByte))
+        assert(Varint.readNat(view) == 1)
     }
 
     // Test (Phase 03a B4): readLongNat rejects continuation past 10 bytes

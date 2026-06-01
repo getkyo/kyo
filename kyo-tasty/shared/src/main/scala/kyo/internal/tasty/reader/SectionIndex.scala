@@ -2,6 +2,7 @@ package kyo.internal.tasty.reader
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
+import kyo.internal.tasty.binary.MalformedVarintException
 
 /** An index of TASTy section headers, mapping section name to byte range within the file.
   *
@@ -38,6 +39,9 @@ object SectionIndex:
         Sync.Unsafe.defer:
             try Right(readSync(view, names))
             catch
+                case ex: MalformedVarintException =>
+                    val reason = if ex.getMessage != null then ex.getMessage else "malformed varint in section headers"
+                    Left(TastyError.MalformedSection("SectionIndex", reason, view.position))
                 case ex: ArrayIndexOutOfBoundsException =>
                     val reason = if ex.getMessage != null then ex.getMessage else "unexpected end while reading section headers"
                     Left(TastyError.MalformedSection("SectionIndex", reason, view.position))

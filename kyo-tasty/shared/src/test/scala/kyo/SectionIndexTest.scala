@@ -47,12 +47,14 @@ class SectionIndexTest extends Test:
         }
     }
 
-    // Test (Phase 03a INV-010): negative sectionLen yields MalformedSection
+    // Test (Phase 03a INV-010 / updated Phase 08): oversized sectionLen yields MalformedSection
     "negative sectionLen yields MalformedSection" in run {
         // names.length == 1; nameRef=0 (valid).
         // sectionLen encoded as 5-byte Nat: 0x7f,0x7f,0x7f,0x7f,0xff.
-        // Decoding as Int via readNat accumulates 127*(1+128+16384+2097152+268435456) overflowing to negative.
-        // The 5th byte has 0x80 SET (terminating) so the overflow guard (>=5 bytes) does not fire.
+        // Pre-Phase-08: Int accumulator overflows to negative; sectionLen < 0 guard fires.
+        // Post-Phase-08 (Q-002 delegation to readLongNat): readLongNat returns 34359738367L;
+        // readNat truncates to 34359738367L.toInt = -1; sectionLen < 0 guard fires as before.
+        // Both paths produce MalformedSection("SectionIndex", ...).
         val names         = makeNames(1)
         val nameRefBytes  = encodeNat(0)
         val sectionLenNeg = Array(0x7f.toByte, 0x7f.toByte, 0x7f.toByte, 0x7f.toByte, 0xff.toByte)
