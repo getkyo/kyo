@@ -14,6 +14,8 @@ import kyo.Stream
   *  - [[JsonRpcTransport.inMemory]]: paired in-memory channels for testing.
   *  - [[JsonRpcTransport.fromWire]]: wraps a [[JsonRpcWireTransport]] + [[JsonRpcFramer]] + [[JsonRpcCodec]].
   *  - [[JsonRpcTransport.stdio]]: line-delimited stdin/stdout transport for CLI servers.
+  *  - `JsonRpcTransport.contentLengthStdio` (JVM only): Content-Length-framed stdio transport
+  *    for LSP, DAP, BSP, and other header-framed JSON-RPC protocols.
   *
   * @see [[JsonRpcHandler]]
   */
