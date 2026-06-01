@@ -929,6 +929,9 @@ object Yaml:
 
         /** Mapping surface syntax. */
         enum MappingSyntax derives CanEqual:
+            /** Canonical syntax chosen by the CST renderer. */
+            case Canonical
+
             /** Block mapping syntax. */
             case Block
 
@@ -938,6 +941,9 @@ object Yaml:
 
         /** Sequence surface syntax. */
         enum SequenceSyntax derives CanEqual:
+            /** Canonical syntax chosen by the CST renderer. */
+            case Canonical
+
             /** Block sequence syntax. */
             case Block
 

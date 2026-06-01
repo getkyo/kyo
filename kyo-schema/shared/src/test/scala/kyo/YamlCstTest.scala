@@ -44,6 +44,86 @@ class YamlCstTest extends Test:
             assert(doc.render(using Yaml.WriterConfig.Default) == "Alice\n")
         }
 
+        "builds canonical mapping CST from parser events" in {
+            val yaml =
+                """name: Alice
+                  |age: 30
+                  |""".stripMargin
+
+            val events = new Yaml.Events.EventHandler[Chunk[Yaml.Events.Event], DecodeException]:
+                override def event(
+                    context: Chunk[Yaml.Events.Event],
+                    event: Yaml.Events.Event
+                ): Result[DecodeException, Chunk[Yaml.Events.Event]] =
+                    Result.succeed(context :+ event)
+            end events
+
+            val collected =
+                Yaml.Events.visit(yaml, Chunk.empty[Yaml.Events.Event])(events).getOrThrow
+            val doc =
+                Yaml.Cst.fromEvents(collected).getOrThrow
+
+            assertResult(
+                (
+                    rendered = "name: Alice\nage: 30\n",
+                    decoded = Result.succeed(MTPerson("Alice", 30))
+                )
+            ) {
+                val rendered = doc.render(using Yaml.WriterConfig.Default)
+                (
+                    rendered = rendered,
+                    decoded = Yaml.decode[MTPerson](rendered)
+                )
+            }
+        }
+
+        "builds canonical CST from schema values" in {
+            val doc =
+                Yaml.Cst.from(MTPerson("Alice", 30)).getOrThrow
+
+            assertResult(Result.succeed(MTPerson("Alice", 30))) {
+                Yaml.decode[MTPerson](doc.render(using Yaml.WriterConfig.Default))
+            }
+        }
+
+        "builds canonical nested sequence and mapping CST from parser events" in {
+            val yaml =
+                """- name: Alice
+                  |  age: 30
+                  |- name: Bob
+                  |  age: 25
+                  |""".stripMargin
+
+            val events = new Yaml.Events.EventHandler[Chunk[Yaml.Events.Event], DecodeException]:
+                override def event(
+                    context: Chunk[Yaml.Events.Event],
+                    event: Yaml.Events.Event
+                ): Result[DecodeException, Chunk[Yaml.Events.Event]] =
+                    Result.succeed(context :+ event)
+            end events
+
+            val collected =
+                Yaml.Events.visit(yaml, Chunk.empty[Yaml.Events.Event])(events).getOrThrow
+            val doc =
+                Yaml.Cst.fromEvents(collected).getOrThrow
+
+            doc.root match
+                case Present(Yaml.Cst.Node.Sequence(entries, Yaml.Cst.SequenceSyntax.Canonical, _, _, Absent)) =>
+                    assert(entries.size == 2)
+                    entries(0).value match
+                        case Yaml.Cst.Node.Mapping(_, Yaml.Cst.MappingSyntax.Canonical, _, _, Absent) =>
+                        case other =>
+                            fail(s"Expected canonical mapping entry, found $other")
+                    end match
+                case other =>
+                    fail(s"Expected canonical sequence root, found $other")
+            end match
+
+            assertResult(Result.succeed(List(MTPerson("Alice", 30), MTPerson("Bob", 25)))) {
+                Yaml.decode[List[MTPerson]](doc.render(using Yaml.WriterConfig.Default))
+            }
+        }
+
         "renders canonical streams with document separators" in {
             val mark       = Yaml.Mark(0, 1, 1)
             val span       = Yaml.Cst.SourceSpan(mark, mark)
