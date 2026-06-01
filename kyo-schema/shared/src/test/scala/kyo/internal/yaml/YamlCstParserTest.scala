@@ -64,6 +64,48 @@ class YamlCstParserTest extends Test:
             }
         }
 
+        "uses stream source without assigning split bodies as child document source" in {
+            val yaml =
+                """# first
+                  |---
+                  |name: Alice
+                  |---
+                  |name: Bob
+                  |""".stripMargin
+
+            val stream = YamlCstParser.stream(yaml).getOrThrow
+
+            assertResult(
+                (
+                    streamSource = true,
+                    rendered = yaml,
+                    childSources = Chunk(false, false)
+                )
+            ) {
+                (
+                    streamSource = stream.originalSource.isDefined,
+                    rendered = stream.render(using Yaml.WriterConfig.Default),
+                    childSources = stream.documents.map(_.source.isDefined)
+                )
+            }
+        }
+
+        "preserves source and source span for an explicit empty document" in {
+            val yaml =
+                """---
+                  |""".stripMargin
+
+            val doc = YamlCstParser.document(yaml).getOrThrow
+
+            assertResult((source = Maybe(yaml), end = yaml.length, rendered = yaml)) {
+                (
+                    source = doc.source,
+                    end = doc.span.end.index,
+                    rendered = doc.render(using Yaml.WriterConfig.Default)
+                )
+            }
+        }
+
         "rejects an explicit empty document followed by another document as a single document" in {
             val yaml =
                 """---

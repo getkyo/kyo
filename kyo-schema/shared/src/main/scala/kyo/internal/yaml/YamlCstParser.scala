@@ -12,9 +12,9 @@ private[kyo] object YamlCstParser:
         val startIndex =
             firstDocumentIndex(input, docs)
         if docs.isEmpty && !hasDocumentContent(input) then
-            Result.succeed(emptyDocument(input, input))
+            Result.succeed(emptyDocument(input, Maybe(input)))
         else if docs.size - startIndex == 1 then
-            parseDocument(docs(startIndex), input)
+            parseDocument(docs(startIndex), Maybe(input))
         else
             Result.fail(ParseException(
                 Yaml(),
@@ -34,7 +34,7 @@ private[kyo] object YamlCstParser:
         @tailrec def loop(index: Int, acc: Chunk[Cst.Document]): Result[DecodeException, Chunk[Cst.Document]] =
             if index >= docs.size then Result.succeed(acc)
             else
-                parseDocument(docs(index), docs(index)) match
+                parseDocument(docs(index), Absent) match
                     case Result.Success(doc) => loop(index + 1, acc :+ doc)
                     case Result.Failure(e)   => Result.fail(e)
                     case Result.Panic(e)     => Result.panic(e)
@@ -52,7 +52,7 @@ private[kyo] object YamlCstParser:
         else 0
     end firstDocumentIndex
 
-    private def parseDocument(body: String, source: String)(using Frame): Result[DecodeException, Cst.Document] =
+    private def parseDocument(body: String, source: Maybe[String])(using Frame): Result[DecodeException, Cst.Document] =
         if !hasDocumentContent(body) then
             Result.succeed(emptyDocument(body, source))
         else
@@ -63,8 +63,8 @@ private[kyo] object YamlCstParser:
                         Maybe(root),
                         Chunk.empty,
                         Chunk.empty,
-                        spanFor(source),
-                        Maybe(source)
+                        spanFor(source.getOrElse(body)),
+                        source
                     ))
                 case Result.Failure(e) => Result.fail(e)
                 case Result.Panic(e)   => Result.panic(e)
@@ -72,9 +72,9 @@ private[kyo] object YamlCstParser:
         end if
     end parseDocument
 
-    private def emptyDocument(body: String, source: String): Cst.Document =
-        val span = spanFor(body)
-        Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Maybe(source))
+    private def emptyDocument(body: String, source: Maybe[String]): Cst.Document =
+        val span = spanFor(source.getOrElse(body))
+        Cst.Document(Absent, Chunk.empty, Chunk.empty, span, source)
     end emptyDocument
 
     private def toCst(node: Yaml.Node): Cst.Node =
