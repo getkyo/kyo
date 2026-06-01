@@ -2,6 +2,7 @@ package kyo.internal.yaml
 
 import kyo.*
 import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuffer
 
 private[kyo] object YamlCstParser:
 
@@ -53,15 +54,16 @@ private[kyo] object YamlCstParser:
     end firstDocumentIndex
 
     private def parseDocument(body: String, source: Maybe[String])(using Frame): Result[DecodeException, Cst.Document] =
+        val trivia = TriviaIndex(body)
         if !hasDocumentContent(body) then
-            Result.succeed(emptyDocument(body, source))
+            Result.succeed(emptyDocument(body, source, trivia))
         else
             Yaml.parse(body) match
                 case Result.Success(node) =>
-                    val root = toCst(node)
+                    val root = withRootSource(toCst(node, trivia), spanFor(source.getOrElse(body)), trivia)
                     Result.succeed(Cst.Document(
                         Maybe(root),
-                        Chunk.empty,
+                        trivia.documentLeading,
                         Chunk.empty,
                         spanFor(source.getOrElse(body)),
                         source
@@ -72,34 +74,40 @@ private[kyo] object YamlCstParser:
         end if
     end parseDocument
 
-    private def emptyDocument(body: String, source: Maybe[String]): Cst.Document =
+    private def emptyDocument(body: String, source: Maybe[String], trivia: TriviaIndex = TriviaIndex("")): Cst.Document =
         val span = spanFor(source.getOrElse(body))
-        Cst.Document(Absent, Chunk.empty, Chunk.empty, span, source)
+        Cst.Document(Absent, trivia.documentLeading, Chunk.empty, span, source)
     end emptyDocument
 
-    private def toCst(node: Yaml.Node): Cst.Node =
+    private def toCst(node: Yaml.Node, trivia: TriviaIndex): Cst.Node =
         node match
             case Yaml.Node.Mapping(entries, meta) =>
                 val cstEntries = entries.map { case (key, value) =>
-                    val cstKey   = toCst(key)
-                    val cstValue = toCst(value)
-                    Cst.MappingEntry(cstKey, cstValue, Cst.SourceSpan(start(cstKey), end(cstValue)))
+                    val cstKey   = toCst(key, trivia)
+                    val cstValue = withEntryValueSyntax(toCst(value, trivia), start(cstKey), trivia)
+                    Cst.MappingEntry(
+                        cstKey,
+                        cstValue,
+                        Cst.SourceSpan(start(cstKey), end(cstValue)),
+                        trivia.leadingFor(start(cstKey)),
+                        trivia.trailingFor(start(cstKey))
+                    )
                 }
                 Cst.Node.Mapping(
                     cstEntries,
-                    Cst.MappingSyntax.Canonical,
+                    mappingSyntax(meta.mark, trivia),
                     meta,
                     collectionSpan(meta.mark, cstEntries.map(_.span)),
                     Absent
                 )
             case Yaml.Node.Sequence(elements, meta) =>
                 val cstEntries = elements.map { value =>
-                    val cstValue = toCst(value)
+                    val cstValue = toCst(value, trivia)
                     Cst.SequenceEntry(cstValue, span(cstValue))
                 }
                 Cst.Node.Sequence(
                     cstEntries,
-                    Cst.SequenceSyntax.Canonical,
+                    sequenceSyntax(meta.mark, trivia),
                     meta,
                     collectionSpan(meta.mark, cstEntries.map(_.span)),
                     Absent
@@ -112,6 +120,54 @@ private[kyo] object YamlCstParser:
                 Cst.Node.Alias(name, Cst.AliasSyntax.Canonical, nodeSpan, Absent)
         end match
     end toCst
+
+    private def withRootSource(node: Cst.Node, span: Cst.SourceSpan, trivia: TriviaIndex): Cst.Node =
+        val syntaxNode =
+            trivia.firstContentChar.fold(node) { ch =>
+                withCollectionSyntax(node, ch)
+            }
+        withSpan(syntaxNode, span)
+    end withRootSource
+
+    private def withEntryValueSyntax(node: Cst.Node, keyMark: Yaml.Mark, trivia: TriviaIndex): Cst.Node =
+        trivia.valueIndicatorFor(keyMark).fold(node) { ch =>
+            withCollectionSyntax(node, ch)
+        }
+    end withEntryValueSyntax
+
+    private def withCollectionSyntax(node: Cst.Node, ch: Char): Cst.Node =
+        node match
+            case Cst.Node.Mapping(entries, _, meta, span, originalSource) if ch == '{' =>
+                Cst.Node.Mapping(entries, Cst.MappingSyntax.Flow, meta, span, originalSource)
+            case Cst.Node.Sequence(entries, _, meta, span, originalSource) if ch == '[' =>
+                Cst.Node.Sequence(entries, Cst.SequenceSyntax.Flow, meta, span, originalSource)
+            case _ =>
+                node
+        end match
+    end withCollectionSyntax
+
+    private def withSpan(node: Cst.Node, sourceSpan: Cst.SourceSpan): Cst.Node =
+        node match
+            case Cst.Node.Mapping(entries, syntax, meta, _, originalSource) =>
+                Cst.Node.Mapping(entries, syntax, meta, sourceSpan, originalSource)
+            case Cst.Node.Sequence(entries, syntax, meta, _, originalSource) =>
+                Cst.Node.Sequence(entries, syntax, meta, sourceSpan, originalSource)
+            case Cst.Node.Scalar(value, syntax, meta, _, originalSource) =>
+                Cst.Node.Scalar(value, syntax, meta, sourceSpan, originalSource)
+            case Cst.Node.Alias(name, syntax, _, originalSource) =>
+                Cst.Node.Alias(name, syntax, sourceSpan, originalSource)
+        end match
+    end withSpan
+
+    private def mappingSyntax(mark: Yaml.Mark, trivia: TriviaIndex): Cst.MappingSyntax =
+        if trivia.firstNonWhitespaceAt(mark.index).contains('{') then Cst.MappingSyntax.Flow
+        else Cst.MappingSyntax.Block
+    end mappingSyntax
+
+    private def sequenceSyntax(mark: Yaml.Mark, trivia: TriviaIndex): Cst.SequenceSyntax =
+        if trivia.firstNonWhitespaceAt(mark.index).contains('[') then Cst.SequenceSyntax.Flow
+        else Cst.SequenceSyntax.Block
+    end sequenceSyntax
 
     private def scalarSyntax(style: Yaml.ScalarStyle): Cst.ScalarSyntax =
         style match
@@ -209,4 +265,216 @@ private[kyo] object YamlCstParser:
         if index < stop && input.charAt(index).isWhitespace then firstNonWhitespace(input, index + 1, stop)
         else index
     end firstNonWhitespace
+
+    private case class SourceLine(number: Int, start: Int, end: Int, contentStart: Int):
+        def indent: Int =
+            contentStart - start
+    end SourceLine
+
+    final private class TriviaIndex(source: String, lines: Chunk[SourceLine], documentLeadingLines: Set[Int]):
+
+        val documentLeading: Chunk[Cst.Trivia] =
+            leadingDocumentTrivia(lines, 0, Chunk.empty)
+
+        def firstContentChar: Maybe[Char] =
+            firstContentLine(lines, 0).flatMap { line =>
+                if line.contentStart < line.end then Maybe(source.charAt(line.contentStart))
+                else Absent
+            }
+        end firstContentChar
+
+        def firstNonWhitespaceAt(index: Int): Maybe[Char] =
+            if index < 0 || index >= source.length then Absent
+            else
+                val lineEnd = YamlSource.lineEnd(source, index)
+                val stop =
+                    if lineEnd > index && source.charAt(lineEnd - 1) == '\r' then lineEnd - 1
+                    else lineEnd
+                val first = firstNonWhitespace(source, index, stop)
+                if first < stop then Maybe(source.charAt(first))
+                else Absent
+            end if
+        end firstNonWhitespaceAt
+
+        def leadingFor(mark: Yaml.Mark): Chunk[Cst.Trivia] =
+            lineAt(mark.line) match
+                case Present(line) =>
+                    @tailrec def loop(lineNumber: Int, acc: List[Cst.Trivia]): List[Cst.Trivia] =
+                        lineAt(lineNumber) match
+                            case Present(previous)
+                                if isComment(previous) && previous.indent == line.indent && !documentLeadingLines.contains(
+                                    previous.number
+                                ) =>
+                                loop(lineNumber - 1, triviaForComment(previous) :: acc)
+                            case _ =>
+                                acc
+                        end match
+                    end loop
+
+                    Chunk.from(loop(line.number - 1, Nil))
+                case Absent =>
+                    Chunk.empty
+            end match
+        end leadingFor
+
+        def trailingFor(mark: Yaml.Mark): Chunk[Cst.Trivia] =
+            lineAt(mark.line) match
+                case Present(line) =>
+                    commentStart(line) match
+                        case Present(start) if start > line.contentStart =>
+                            Chunk(Cst.Trivia(source.substring(start, line.end), Cst.SourceSpan(markAt(start), markAt(line.end))))
+                        case _ =>
+                            Chunk.empty
+                    end match
+                case Absent =>
+                    Chunk.empty
+            end match
+        end trailingFor
+
+        def valueIndicatorFor(mark: Yaml.Mark): Maybe[Char] =
+            lineAt(mark.line).flatMap { line =>
+                mappingSeparator(line).flatMap { separator =>
+                    val valueStart = firstNonWhitespace(source, separator + 1, line.end)
+                    if valueStart < line.end then Maybe(source.charAt(valueStart))
+                    else Absent
+                }
+            }
+        end valueIndicatorFor
+
+        private def lineAt(lineNumber: Int): Maybe[SourceLine] =
+            if lineNumber <= 0 || lineNumber > lines.size then Absent
+            else Maybe(lines(lineNumber - 1))
+        end lineAt
+
+        @tailrec private def leadingDocumentTrivia(
+            lines: Chunk[SourceLine],
+            index: Int,
+            acc: Chunk[Cst.Trivia]
+        ): Chunk[Cst.Trivia] =
+            if index >= lines.size then acc
+            else
+                val line = lines(index)
+                if isBlank(line) then leadingDocumentTrivia(lines, index + 1, acc)
+                else if isComment(line) then leadingDocumentTrivia(lines, index + 1, acc :+ triviaForComment(line))
+                else acc
+            end if
+        end leadingDocumentTrivia
+
+        @tailrec private def firstContentLine(lines: Chunk[SourceLine], index: Int): Maybe[SourceLine] =
+            if index >= lines.size then Absent
+            else
+                val line = lines(index)
+                if isBlank(line) || isComment(line) || isDirective(line) then firstContentLine(lines, index + 1)
+                else Maybe(line)
+            end if
+        end firstContentLine
+
+        private def triviaForComment(line: SourceLine): Cst.Trivia =
+            Cst.Trivia(source.substring(line.contentStart, line.end), Cst.SourceSpan(markAt(line.contentStart), markAt(line.end)))
+        end triviaForComment
+
+        private def markAt(index: Int): Yaml.Mark =
+            @tailrec def loop(lineIndex: Int): Yaml.Mark =
+                if lineIndex >= lines.size then endMark(source)
+                else
+                    val line = lines(lineIndex)
+                    if index >= line.start && index <= line.end then
+                        Yaml.Mark(index, line.number, index - line.start + 1)
+                    else loop(lineIndex + 1)
+                end if
+            end loop
+
+            loop(0)
+        end markAt
+
+        private def isBlank(line: SourceLine): Boolean =
+            line.contentStart >= line.end
+        end isBlank
+
+        private def isComment(line: SourceLine): Boolean =
+            line.contentStart < line.end && source.charAt(line.contentStart) == '#'
+        end isComment
+
+        private def isDirective(line: SourceLine): Boolean =
+            line.contentStart < line.end && source.charAt(line.contentStart) == '%'
+        end isDirective
+
+        private def commentStart(line: SourceLine): Maybe[Int] =
+            @tailrec def loop(index: Int, single: Boolean, double: Boolean, escape: Boolean): Maybe[Int] =
+                if index >= line.end then Absent
+                else
+                    val ch = source.charAt(index)
+                    if escape then loop(index + 1, single, double, false)
+                    else if double && ch == '\\' then loop(index + 1, single, double, true)
+                    else if !double && ch == '\'' then loop(index + 1, !single, double, false)
+                    else if !single && ch == '"' then loop(index + 1, single, !double, false)
+                    else if !single && !double && ch == '#' && (index == line.start || source.charAt(index - 1).isWhitespace) then
+                        Maybe(index)
+                    else loop(index + 1, single, double, false)
+                    end if
+                end if
+            end loop
+
+            loop(line.contentStart, single = false, double = false, escape = false)
+        end commentStart
+
+        private def mappingSeparator(line: SourceLine): Maybe[Int] =
+            @tailrec def loop(index: Int, single: Boolean, double: Boolean, escape: Boolean): Maybe[Int] =
+                if index >= line.end then Absent
+                else
+                    val ch = source.charAt(index)
+                    if escape then loop(index + 1, single, double, false)
+                    else if double && ch == '\\' then loop(index + 1, single, double, true)
+                    else if !double && ch == '\'' then loop(index + 1, !single, double, false)
+                    else if !single && ch == '"' then loop(index + 1, single, !double, false)
+                    else if !single && !double && ch == ':' then Maybe(index)
+                    else loop(index + 1, single, double, false)
+                    end if
+                end if
+            end loop
+
+            loop(line.contentStart, single = false, double = false, escape = false)
+        end mappingSeparator
+    end TriviaIndex
+
+    private object TriviaIndex:
+
+        def apply(source: String): TriviaIndex =
+            val lines = ArrayBuffer.empty[SourceLine]
+
+            @tailrec def loop(start: Int, number: Int): Unit =
+                if start < source.length then
+                    val lineEnd = YamlSource.lineEnd(source, start)
+                    val stop =
+                        if lineEnd > start && source.charAt(lineEnd - 1) == '\r' then lineEnd - 1
+                        else lineEnd
+                    val contentStart = firstNonWhitespace(source, start, stop)
+                    lines += SourceLine(number, start, stop, contentStart)
+                    loop(if lineEnd < source.length then lineEnd + 1 else source.length, number + 1)
+                end if
+            end loop
+
+            loop(0, 1)
+            val chunk                = Chunk.from(lines)
+            val documentLeadingLines = collectDocumentLeadingLines(source, chunk, 0, Set.empty)
+            new TriviaIndex(source, chunk, documentLeadingLines)
+        end apply
+
+        @tailrec private def collectDocumentLeadingLines(
+            source: String,
+            lines: Chunk[SourceLine],
+            index: Int,
+            acc: Set[Int]
+        ): Set[Int] =
+            if index >= lines.size then acc
+            else
+                val line = lines(index)
+                if line.contentStart >= line.end then collectDocumentLeadingLines(source, lines, index + 1, acc)
+                else if source.charAt(line.contentStart) == '#' then
+                    collectDocumentLeadingLines(source, lines, index + 1, acc + line.number)
+                else acc
+                end if
+            end if
+        end collectDocumentLeadingLines
+    end TriviaIndex
 end YamlCstParser

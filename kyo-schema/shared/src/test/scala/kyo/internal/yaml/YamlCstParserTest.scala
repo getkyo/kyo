@@ -152,5 +152,97 @@ class YamlCstParserTest extends Test:
                 )
             }
         }
+
+        "captures leading and trailing comments as trivia" in {
+            val yaml =
+                """# document comment
+                  |name: Alice # owner
+                  |# service comment
+                  |service:
+                  |  image: app:v1
+                  |""".stripMargin
+
+            val doc = YamlCstParser.document(yaml).getOrThrow
+
+            assertResult(
+                (
+                    leading = Chunk("# document comment"),
+                    trailingOwner = Chunk("# owner"),
+                    serviceLeading = Chunk("# service comment")
+                )
+            ) {
+                val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
+                val nameEntry                            = root.entries(0)
+                val serviceEntry                         = root.entries(1)
+                (
+                    leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
+                    trailingOwner = nameEntry.trailingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text.trim },
+                    serviceLeading = serviceEntry.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text }
+                )
+            }
+        }
+
+        "records scalar syntax for flow quoted and block scalar values" in {
+            val yaml =
+                """plain: hello
+                  |single: 'hello'
+                  |double: "hello"
+                  |literal: |
+                  |  hello
+                  |folded: >
+                  |  hello
+                  |flowSeq: [1, 2]
+                  |flowMap: {a: 1}
+                  |""".stripMargin
+
+            val doc                                  = YamlCstParser.document(yaml).getOrThrow
+            val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
+            val plainValue                           = root.entries(0).value.asInstanceOf[Yaml.Cst.Node.Scalar]
+            val singleValue                          = root.entries(1).value.asInstanceOf[Yaml.Cst.Node.Scalar]
+            val doubleValue                          = root.entries(2).value.asInstanceOf[Yaml.Cst.Node.Scalar]
+            val literalValue                         = root.entries(3).value.asInstanceOf[Yaml.Cst.Node.Scalar]
+            val foldedValue                          = root.entries(4).value.asInstanceOf[Yaml.Cst.Node.Scalar]
+            val flowSequence                         = root.entries(5).value.asInstanceOf[Yaml.Cst.Node.Sequence]
+            val flowMapping                          = root.entries(6).value.asInstanceOf[Yaml.Cst.Node.Mapping]
+
+            assertResult(
+                (
+                    plain = true,
+                    single = true,
+                    double = true,
+                    literal = true,
+                    folded = true,
+                    flowSeq = true,
+                    flowMap = true
+                )
+            ) {
+                (
+                    plain = plainValue.syntax == Yaml.Cst.ScalarSyntax.Plain,
+                    single = singleValue.syntax == Yaml.Cst.ScalarSyntax.SingleQuoted,
+                    double = doubleValue.syntax == Yaml.Cst.ScalarSyntax.DoubleQuoted,
+                    literal = literalValue.syntax == Yaml.Cst.ScalarSyntax.Literal,
+                    folded = foldedValue.syntax == Yaml.Cst.ScalarSyntax.Folded,
+                    flowSeq = flowSequence.syntax == Yaml.Cst.SequenceSyntax.Flow,
+                    flowMap = flowMapping.syntax == Yaml.Cst.MappingSyntax.Flow
+                )
+            }
+        }
+
+        "records a source-backed root span across the full input" in {
+            val yaml =
+                """name: Alice
+                  |""".stripMargin
+
+            val doc                                  = YamlCstParser.document(yaml).getOrThrow
+            val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
+
+            assertResult((start = 0, end = yaml.length, rendered = yaml)) {
+                (
+                    start = root.span.start.index,
+                    end = root.span.end.index,
+                    rendered = doc.render(using Yaml.WriterConfig.Default)
+                )
+            }
+        }
     }
 end YamlCstParserTest
