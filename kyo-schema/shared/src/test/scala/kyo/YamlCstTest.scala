@@ -649,6 +649,55 @@ class YamlCstTest extends Test:
             assert(Yaml.decode[Map[String, List[String]]](rendered) == Result.succeed(Map("items" -> List("new", "next"))))
         }
 
+        "preserves scalar anchors and aliases when rendering changed documents with comments" in {
+            val yaml = """value: &name Alice # keep
+                         |other: old
+                         |copy: *name
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "other", scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("value: &name Alice # keep"))
+            assert(rendered.contains("copy: *name"))
+            assert(Yaml.decode[Map[String, String]](rendered) ==
+                Result.succeed(Map("value" -> "Alice", "other" -> "new", "copy" -> "Alice")))
+        }
+
+        "preserves scalar tags when rendering changed documents with comments" in {
+            val yaml = """value: !!str true # keep
+                         |other: old
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "other", scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("value: !!str true # keep"))
+            assert(Yaml.decode[Map[String, String]](rendered) ==
+                Result.succeed(Map("value" -> "true", "other" -> "new")))
+        }
+
+        "escapes control characters when rendering changed documents with comments" in {
+            val yaml        = "value: old # keep\n"
+            val replacement = scalar("a" + 1.toChar + "b")
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value", replacement).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("\\u0001"))
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("value" -> ("a" + 1.toChar + "b"))))
+        }
+
+        "respects disabled trailing newline when rendering changed documents with comments" in {
+            val yaml = "# keep\nvalue: old\n"
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value", scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default.copy(trailingNewline = false))
+
+            assert(!rendered.endsWith("\n"))
+            assert(rendered == "# keep\nvalue: new")
+        }
+
         "inserts, removes, and renames mapping entries at root" in {
             val base =
                 Yaml.cst("name: Alice\nactive: true\n").getOrThrow

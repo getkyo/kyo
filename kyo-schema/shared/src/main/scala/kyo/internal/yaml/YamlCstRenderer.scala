@@ -105,11 +105,18 @@ private[kyo] object YamlCstRenderer:
             appendTrivia(document.leadingTrivia, 0)
             document.root.foreach(renderNode(_, 0))
             appendTrivia(document.trailingTrivia, 0)
-            if config.trailingNewline && out.nonEmpty && out.charAt(out.length - 1) != '\n' then
-                out.append('\n')
-            end if
             if config.documentMarkers == Yaml.WriterConfig.DocumentMarkers.StartAndEnd then
-                out.append("...\n")
+                if out.nonEmpty && out.charAt(out.length - 1) != '\n' then
+                    out.append('\n')
+                end if
+                out.append("...")
+                if config.trailingNewline then
+                    out.append('\n')
+                end if
+            else if config.trailingNewline && out.nonEmpty && out.charAt(out.length - 1) != '\n' then
+                out.append('\n')
+            else if !config.trailingNewline && out.nonEmpty && out.charAt(out.length - 1) == '\n' then
+                out.setLength(out.length - 1)
             end if
             out.toString
         end document
@@ -210,8 +217,8 @@ private[kyo] object YamlCstRenderer:
 
         private def renderKey(node: Yaml.Cst.Node): String =
             node match
-                case Yaml.Cst.Node.Scalar(value, _, _, _, _) =>
-                    if plainKey(value) then value else doubleQuoted(value)
+                case Yaml.Cst.Node.Scalar(value, _, meta, _, _) =>
+                    prefixed(properties(meta.anchor, meta.tag), if plainKey(value) then value else doubleQuoted(value))
                 case Yaml.Cst.Node.Alias(name, _, _, _) =>
                     "*" + name.value
                 case _ =>
@@ -228,6 +235,11 @@ private[kyo] object YamlCstRenderer:
         end renderInline
 
         private def appendScalar(value: String, meta: Yaml.ScalarMeta): Unit =
+            val prefix = properties(meta.anchor, meta.tag)
+            if prefix.nonEmpty then
+                out.append(prefix)
+                out.append(' ')
+            end if
             meta.style match
                 case Yaml.ScalarStyle.SingleQuoted =>
                     val _ = out.append('\'').append(value.replace("'", "''")).append('\'')
@@ -248,12 +260,32 @@ private[kyo] object YamlCstRenderer:
 
         private def plainScalar(value: String): Boolean =
             value.nonEmpty &&
-                !value.exists(ch => ch == '\n' || ch == '\r') &&
+                !value.exists(ch => ch < ' ' || ch == '[' || ch == ']' || ch == '{' || ch == '}' || ch == ',') &&
                 !value.headOption.exists(ch => ch.isWhitespace || ch == '#' || ch == '-' || ch == '?' || ch == ':') &&
                 !value.endsWith(" ") &&
                 !value.contains(": ") &&
                 !value.contains(" #")
         end plainScalar
+
+        private def properties(anchor: Maybe[Yaml.Anchor], tag: Maybe[Yaml.YamlTag]): String =
+            if anchor.isEmpty && tag.isEmpty then ""
+            else
+                val builder = StringBuilder()
+                tag.foreach { value =>
+                    builder.append(value.value)
+                }
+                anchor.foreach { value =>
+                    if builder.nonEmpty then builder.append(' ')
+                    builder.append('&')
+                    builder.append(value.value)
+                }
+                builder.toString
+        end properties
+
+        private def prefixed(prefix: String, rendered: String): String =
+            if prefix.isEmpty then rendered
+            else prefix + " " + rendered
+        end prefixed
 
         private def doubleQuoted(value: String): String =
             val builder = StringBuilder()
@@ -264,11 +296,22 @@ private[kyo] object YamlCstRenderer:
                 case '\n' => builder.append("\\n")
                 case '\r' => builder.append("\\r")
                 case '\t' => builder.append("\\t")
-                case ch   => builder.append(ch)
+                case ch if ch < ' ' =>
+                    builder.append("\\u")
+                    appendHex4(builder, ch)
+                case ch => builder.append(ch)
             }
             builder.append('"')
             builder.toString
         end doubleQuoted
+
+        private def appendHex4(builder: StringBuilder, ch: Char): Unit =
+            val hex = "0123456789abcdef"
+            builder.append(hex.charAt((ch >> 12) & 0xf))
+            builder.append(hex.charAt((ch >> 8) & 0xf))
+            builder.append(hex.charAt((ch >> 4) & 0xf))
+            builder.append(hex.charAt(ch & 0xf))
+        end appendHex4
 
         private def appendIndent(indent: Int): Unit =
             var index = 0
