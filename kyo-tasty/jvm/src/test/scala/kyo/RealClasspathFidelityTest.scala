@@ -1,0 +1,141 @@
+package kyo
+
+import kyo.internal.TestClasspaths
+
+/** Anchor fidelity test suite for the decoder-fidelity campaign.
+  *
+  * This file owns the cross-cutting invariant leaves (INV-001, INV-003, INV-009, INV-012) that span multiple phases. It also hosts the
+  * TDD discipline pin that verifies every `*FidelityTest.scala` references `TestClasspaths.withClasspath` (HARD RULE 1).
+  *
+  * Leaves owned by Phase 01 are ACTIVE below. Leaves owned by later phases are PENDING until the producing phase un-pends them.
+  */
+class RealClasspathFidelityTest extends Test:
+
+    import AllowUnsafe.embrace.danger
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 01 ACTIVE leaves
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // INV-001 leaf 1 (Phase 01): all-fixes-pin-real-classpath
+    // Given: a scan over every *FidelityTest.scala file in kyo-tasty/jvm/src/test/scala/kyo/
+    // When: parsing each test file's source text
+    // Then: every file contains the literal substring TestClasspaths.withClasspath;
+    //       the count of files is at least 11 (suites listed in Phase 01)
+    // Pins: INV-001 (TDD-real-classpath discipline; HARD RULE 1)
+    "INV-001: every *FidelityTest.scala references TestClasspaths.withClasspath" in run {
+        val worktreeRoot = findWorktreeRoot
+        val testDir      = worktreeRoot.resolve("kyo-tasty/jvm/src/test/scala/kyo")
+        val fidelityFiles =
+            java.nio.file.Files
+                .walk(testDir)
+                .filter: p =>
+                    val name = p.getFileName.toString
+                    name.endsWith("FidelityTest.scala") || name.endsWith("InvariantsTest.scala")
+                .toArray
+                .map(_.asInstanceOf[java.nio.file.Path])
+        val fileCount = fidelityFiles.length
+        assert(
+            fileCount >= 11,
+            s"Expected at least 11 fidelity test files, found $fileCount: ${fidelityFiles.map(_.getFileName).mkString(", ")}"
+        )
+        val missing = fidelityFiles.filterNot: p =>
+            val src = new String(java.nio.file.Files.readAllBytes(p), "UTF-8")
+            src.contains("TestClasspaths.withClasspath")
+        assert(
+            missing.isEmpty,
+            s"The following *FidelityTest files do not reference TestClasspaths.withClasspath:\n${missing.map(_.getFileName).mkString("\n")}"
+        )
+        succeed
+    }
+
+    // INV-001 leaf 2 (Phase 01): forty-five-pending-leaves-at-phase-01
+    // Given: the full fidelity test suite at the Phase 01 commit
+    // When: test runner reports pending counts
+    // Then: at least 45 leaves report pending status; these are un-pended by phases 02..14
+    // Note: this leaf is itself active and asserts the existence of the pending count. The count
+    //       is verified dynamically by checking that the pending markers exist in the other
+    //       *FidelityTest.scala sources. Phases 02..14 reduce this count to 0.
+    // Pins: INV-001 producer
+    "INV-001: at least 45 pending fidelity leaves exist at the Phase 01 commit" in run {
+        val worktreeRoot = findWorktreeRoot
+        val testDir      = worktreeRoot.resolve("kyo-tasty/jvm/src/test/scala/kyo")
+        val allTestFiles =
+            java.nio.file.Files
+                .walk(testDir)
+                .filter(_.getFileName.toString.endsWith(".scala"))
+                .toArray
+                .map(_.asInstanceOf[java.nio.file.Path])
+        var pendingCount = 0
+        allTestFiles.foreach: p =>
+            val src = new String(java.nio.file.Files.readAllBytes(p), "UTF-8")
+            // Count occurrences of "in pending" (ScalaTest pending leaf pattern)
+            var idx = 0
+            while idx < src.length do
+                val found = src.indexOf("in pending", idx)
+                if found == -1 then idx = src.length
+                else
+                    pendingCount += 1
+                    idx = found + 1
+                end if
+            end while
+        assert(
+            pendingCount >= 45,
+            s"Expected at least 45 pending fidelity leaves, found $pendingCount. " +
+                "Each finding from the exploration should be pinned as a pending leaf."
+        )
+        succeed
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 03 PENDING leaves (un-pended by Phase 03)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // INV-003 anchor (Phase 03): no-unknown-tags-anchor
+    // Given: the real classpath (scala-library + kyo-data + kyo-tasty/jvm/classes)
+    // When: loading via Tasty.Classpath.init with the warning sink captured
+    // Then: post-fix (Phase 03) zero warnings matching "unknown TASTy type tag";
+    //       before fix at Phase 01 commit the load reports >= 47,996 such warnings
+    //       (dominated by tags 111 IDENTtpt, 162 APPLIEDtpt, 164 TYPEBOUNDStpt, 176 SELECTin)
+    // Pins: INV-003
+    "INV-003 (Phase 03): zero unknown-TASTy-tag warnings on a clean real-classpath load" in pending
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 08 PENDING leaves (un-pended by Phase 08)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // INV-009 anchor (Phase 08): no-errors-anchor
+    // Given: the real classpath loaded via TestClasspaths.withClasspath
+    // When: asserting cp.errors.size
+    // Then: post-fix (Phase 08) size is 0;
+    //       before fix at Phase 01 commit size is 9 with each message matching
+    //       "varint: continuation runs past 5 bytes"
+    // Pins: INV-009
+    "INV-009 (Phase 08): cp.errors.size == 0 on real-classpath load" in pending
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 11 PENDING leaves (un-pended by Phase 11)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // INV-012 anchor (Phase 11): sentinel-bounded-anchor
+    // Given: the real classpath loaded via TestClasspaths.withClasspath
+    // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
+    // Then: post-fix (Phase 11) size <= 3 (one per failure category);
+    //       before fix at Phase 01 commit size > 3 (up to 11 distinct fabricated names
+    //       from makeUnresolvedSym: termref@N, typeref@N, rec@N, this-unknown, ann, etc.)
+    // Pins: INV-012
+    "INV-012 (Phase 11): SymbolId(-1) sentinel name set size <= 3 on real classpath" in pending
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private def findWorktreeRoot: java.nio.file.Path =
+        var candidate = java.nio.file.Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
+        while candidate != null && !java.nio.file.Files.exists(candidate.resolve("build.sbt")) do
+            candidate = candidate.getParent
+        require(candidate != null, "Could not locate worktree root (no build.sbt found in ancestors of user.dir)")
+        candidate
+    end findWorktreeRoot
+
+end RealClasspathFidelityTest
