@@ -1165,7 +1165,11 @@ object Yaml:
             def source: Maybe[String] =
                 originalSource
 
-            /** Renders this document to YAML. */
+            /** Renders this document to YAML.
+              *
+              * A source-backed document that has not been edited renders its original source unchanged, so `config` only affects documents
+              * built from events or schema values, or documents with edits applied.
+              */
             def render(using config: WriterConfig): String =
                 internal.yaml.YamlCstRenderer.document(this)
 
@@ -1210,7 +1214,11 @@ object Yaml:
             def source: Maybe[String] =
                 originalSource
 
-            /** Renders this stream to YAML. */
+            /** Renders this stream to YAML.
+              *
+              * A source-backed stream that has not been edited renders its original source unchanged, so `config` only affects streams
+              * built from events or schema values, or streams with edits applied.
+              */
             def render(using config: WriterConfig): String =
                 internal.yaml.YamlCstRenderer.stream(this)
         end Stream

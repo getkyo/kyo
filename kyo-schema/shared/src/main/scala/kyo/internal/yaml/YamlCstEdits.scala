@@ -260,6 +260,24 @@ private[kyo] object YamlCstEdits:
     end scalarKey
 
     private def clearSource(node: Cst.Node): Cst.Node =
+        if hasSource(node) then clearSourceDeep(node)
+        else node
+    end clearSource
+
+    private def hasSource(node: Cst.Node): Boolean =
+        node match
+            case Cst.Node.Mapping(entries, _, _, _, source) =>
+                source.isDefined || entries.exists(entry => hasSource(entry.key) || hasSource(entry.value))
+            case Cst.Node.Sequence(entries, _, _, _, source) =>
+                source.isDefined || entries.exists(entry => hasSource(entry.value))
+            case Cst.Node.Scalar(_, _, _, _, source) =>
+                source.isDefined
+            case Cst.Node.Alias(_, _, _, source) =>
+                source.isDefined
+        end match
+    end hasSource
+
+    private def clearSourceDeep(node: Cst.Node): Cst.Node =
         node match
             case Cst.Node.Mapping(entries, syntax, meta, span, _) =>
                 Cst.Node.Mapping(
@@ -282,7 +300,7 @@ private[kyo] object YamlCstEdits:
             case Cst.Node.Alias(name, syntax, span, _) =>
                 Cst.Node.Alias(name, syntax, span, Absent)
         end match
-    end clearSource
+    end clearSourceDeep
 
     private def spanOf(node: Cst.Node): Cst.SourceSpan =
         node match

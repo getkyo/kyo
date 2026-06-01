@@ -52,6 +52,7 @@ private[kyo] object YamlCstRenderer:
 
     private def renderFromEvents(document: Yaml.Cst.Document)(using config: Yaml.WriterConfig): String =
         val renderer = Yaml.Events.Renderer(config)
+        // render returns a plain String, so a failed event emission is rethrown here rather than surfaced as a Result.
         YamlCstBuilder.emitDocument(document, ())(renderer) match
             case Result.Success(_) => renderer.resultString
             case Result.Failure(e) => throw e
@@ -393,11 +394,11 @@ private[kyo] object YamlCstRenderer:
         end appendHex4
 
         private def appendIndent(indent: Int): Unit =
-            var index = 0
-            while index < indent do
-                out.append(' ')
-                index += 1
-            end while
+            @tailrec def loop(remaining: Int): Unit =
+                if remaining > 0 then
+                    out.append(' ')
+                    loop(remaining - 1)
+            loop(indent)
         end appendIndent
 
         private def appendLine(): Unit =

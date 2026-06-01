@@ -25,7 +25,8 @@ private[kyo] object YamlCstBuilder:
     def events(document: Cst.Document): Chunk[Event] =
         val buffer    = ArrayBuffer.empty[Event]
         val collector = Collector[Nothing](buffer)
-        val _         = emitDocument(document, ())(collector).getOrThrow
+        // Collector's error type is Nothing, so emitDocument cannot fail; getOrThrow only surfaces an unexpected panic.
+        val _ = emitDocument(document, ())(collector).getOrThrow
         Chunk.from(buffer)
     end events
 
@@ -59,6 +60,7 @@ private[kyo] object YamlCstBuilder:
             case Cst.Node.Alias(name, _, span, _) =>
                 handler.alias(context, name, span.start)
             case Cst.Node.Mapping(entries, _, meta, span, _) =>
+                // The CST always knows its entry count, so it emits a known size; consumers treat collection size as advisory.
                 handler.mappingStart(context, meta, Maybe(entries.size)).flatMap { c1 =>
                     emitMappingEntries(entries, 0, c1)(handler).flatMap { c2 =>
                         handler.collectionEnd(c2, CollectionKind.Mapping, span.end)
