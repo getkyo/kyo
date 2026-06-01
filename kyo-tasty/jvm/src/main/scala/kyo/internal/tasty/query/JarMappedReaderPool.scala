@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap
   * Multiple fibers/threads that concurrently read different entries from the same JAR share one JarMappedReader. The MappedByteBuffer
   * inside each JarMappedReader is duplicated per `readEntry` call, so concurrent reads are safe.
   *
-  * Lifecycle: installed by JvmFileSource.withReadBatch at the start of a ClasspathOrchestrator.openInto call and released (map cleared) at
+  * Lifecycle: installed by JvmFileSource.withReadBatch at the start of a ClasspathOrchestrator.initInto call and released (map cleared) at
   * the end via Scope.ensure. Clearing the map drops the JarMappedReader references; the OS memory mappings are released when the
   * MappedByteBuffers are GC'd.
   */
@@ -20,11 +20,11 @@ final private[kyo] class JarMappedReaderPool:
       * Thread-safe: ConcurrentHashMap.computeIfAbsent provides the atomic open-if-absent guarantee.
       *
       * @throws java.io.IOException
-      *   if JarMappedReader.open fails (propagated from computeIfAbsent lambda via UncheckedIOException)
+      *   if JarMappedReader.init fails (propagated from computeIfAbsent lambda via UncheckedIOException)
       */
     def get(jarPath: String): JarMappedReader =
         try
-            cache.computeIfAbsent(jarPath, path => JarMappedReader.open(path))
+            cache.computeIfAbsent(jarPath, path => JarMappedReader.init(path))
         catch
             case ex: java.io.UncheckedIOException => throw ex.getCause
     end get

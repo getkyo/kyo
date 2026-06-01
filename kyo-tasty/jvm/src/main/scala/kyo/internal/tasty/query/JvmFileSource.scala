@@ -182,8 +182,8 @@ object JvmFileSource extends FileSource:
             TastyPerfStats.jarReadNs.add(t2 - t1)
             bytes
         else
-            // Fallback: open-on-demand mmap reader (not pooled; GC handles cleanup)
-            val reader = JarMappedReader.open(jarPath)
+            // Fallback: init-on-demand mmap reader (not pooled; GC handles cleanup)
+            val reader = JarMappedReader.init(jarPath)
             val t1     = java.lang.System.nanoTime()
             TastyPerfStats.jarConstructNs.add(t1 - t0)
             val bytes = reader.readEntry(entryName)

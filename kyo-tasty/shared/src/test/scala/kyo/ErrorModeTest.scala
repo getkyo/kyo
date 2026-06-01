@@ -13,7 +13,7 @@ class ErrorModeTest extends Test:
     import AllowUnsafe.embrace.danger
 
     // Leaf id:2 -- ErrorMode enum replaces strict: Boolean
-    // Given: Classpath.open signatures
+    // Given: Classpath.init signatures
     // When: overloads are exercised
     // Then: no overload takes `strict: Boolean`; mode-aware overload accepts ErrorMode
     "ErrorMode.SoftFail and ErrorMode.FailFast are distinct enum cases" in {

@@ -120,7 +120,7 @@ private[kyo] object JarCentralDirectory:
 
     /** Parse all entries in a JAR (regardless of suffix) into a HashMap keyed by entry name.
       *
-      * Called by JarMappedReader.open to build its internal entry index. The MappedByteBuffer is used for EOCD and CEN parsing; the channel
+      * Called by JarMappedReader.init to build its internal entry index. The MappedByteBuffer is used for EOCD and CEN parsing; the channel
       * must be seekable (which MappedByteBuffer is, via position()).
       *
       * Throws java.io.IOException (not TastyError) since this is a private utility called from JarMappedReader where IOException is already
@@ -468,7 +468,7 @@ private[kyo] object JarCentralDirectory:
 
     /** Parse ALL central directory records from cenBuf into a HashMap keyed by entry name.
       *
-      * Used by JarMappedReader.open to build its entry index. Includes all entries (no suffix filter). Directories (names ending with '/')
+      * Used by JarMappedReader.init to build its entry index. Includes all entries (no suffix filter). Directories (names ending with '/')
       * are skipped.
       */
     private[kyo] def parseCenRecordsAll(

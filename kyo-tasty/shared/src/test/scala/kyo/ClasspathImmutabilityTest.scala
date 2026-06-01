@@ -43,12 +43,12 @@ class ClasspathImmutabilityTest extends Test:
     private def openFixtureClasspath(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
-        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureClasspath
 
     // ── Leaf 1: Classpath constructor fields are immutable ───────────────────
 
-    // Given: a Classpath cp returned from Classpath.open.
+    // Given: a Classpath cp returned from Classpath.init.
     // When: any cp field is accessed twice.
     // Then: both accesses return the same reference (val semantics); no reassignment is possible.
     // Pins: INV-003 (Classpath case class fields immutable post-construction).

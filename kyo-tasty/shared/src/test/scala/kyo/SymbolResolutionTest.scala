@@ -66,7 +66,7 @@ class SymbolResolutionTest extends Test:
     end fixtureSource
 
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
 
     // Test 19: two concurrent findClass calls for the same FQN return reference-equal Symbol instances.
     // The fqnIndex is an immutable HashMap populated once during Phase C. Both calls read the same
@@ -208,7 +208,7 @@ class SymbolResolutionTest extends Test:
     //   a) Decode PlainClass.tasty to get real UnresolvedRef placeholders.
     //   b) Take the first placeholder; simulate Phase C with fqnIndex MISS: synthesize Unresolved sentinel.
     //   c) Verify replaceSlot.get() returns Named(sym) with sym.kind == Unresolved and same FQN.
-    //   d) Open a full classpath with ONLY childClassTasty (no base) via openInto and verify
+    //   d) Init a full classpath with ONLY childClassTasty (no base) via initInto and verify
     //      it opens without panic (no unset SingleAssign).
     // Phase 2 Test 2 (redesigned for Phase 07): unresolved cross-file references become Unresolved
     // symbols in the classpath. Verify that ChildClass.tasty opens without panic when base file is absent.

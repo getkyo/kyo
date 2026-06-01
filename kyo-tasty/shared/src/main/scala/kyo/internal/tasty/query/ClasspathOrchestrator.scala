@@ -108,11 +108,11 @@ object ClasspathOrchestrator:
         val moduleIndex: mutable.HashMap[String, Tasty.ModuleDescriptor] = mutable.HashMap.empty
     end MergeState
 
-    /** Open a new classpath from a set of root paths.
+    /** Init a new classpath from a set of root paths.
       *
       * Roots may be directories containing `.tasty` files or individual `.tasty` files.
       */
-    def open(
+    def init(
         roots: Seq[String],
         mode: Tasty.ErrorMode,
         source: FileSource,

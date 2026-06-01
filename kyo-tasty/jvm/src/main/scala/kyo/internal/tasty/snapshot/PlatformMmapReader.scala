@@ -4,14 +4,14 @@ import kyo.*
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.query.FileSource
 
-/** JVM platform: uses JvmMmapReader to open the snapshot as a memory-mapped ByteView. */
+/** JVM platform: uses JvmMmapReader to init the snapshot as a memory-mapped ByteView. */
 object PlatformMmapReader:
 
     def readMapped(
         path: String,
         source: FileSource
     )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError] & Scope) =
-        JvmMmapReader.open(path).flatMap: mappedView =>
+        JvmMmapReader.init(path).flatMap: mappedView =>
             Sync.defer:
                 try SnapshotReader.readMappedView(path, mappedView)
                 catch

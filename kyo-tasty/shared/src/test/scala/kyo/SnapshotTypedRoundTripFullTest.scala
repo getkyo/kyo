@@ -48,7 +48,7 @@ class SnapshotTypedRoundTripFullTest extends Test:
         src.add("root/Outer.tasty", kyo.fixtures.Embedded.outerTasty)
         src.add("root/SomeCaseClass.tasty", kyo.fixtures.Embedded.someCaseClassTasty)
         src.add("root/Color.tasty", kyo.fixtures.Embedded.colorTasty)
-        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openMultiFileCp
 
     // ── Leaf 173: full-roundtrip-multi-jar ───────────────────────────────────

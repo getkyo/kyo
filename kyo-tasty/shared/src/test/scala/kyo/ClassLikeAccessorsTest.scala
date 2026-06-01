@@ -221,7 +221,7 @@ class ClassLikeAccessorsTest extends Test:
     end MemoryFileSource
 
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
 
     // Leaf 52: parents-on-class
     // Given: fixture Symbol.Class with two Type.Named parents pointing to AnyRef + T

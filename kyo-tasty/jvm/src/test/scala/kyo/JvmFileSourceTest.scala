@@ -196,7 +196,7 @@ class JvmFileSourceTest extends Test:
                 ("kyo/Gamma.tasty", knownBytes3)
             )
         )
-        val reader = JarMappedReader.open(jarPath)
+        val reader = JarMappedReader.init(jarPath)
         val r1     = reader.readEntry("kyo/Alpha.tasty")
         val r2     = reader.readEntry("kyo/Beta.tasty")
         val r3     = reader.readEntry("kyo/Gamma.tasty")
@@ -218,7 +218,7 @@ class JvmFileSourceTest extends Test:
                 ("kyo/Gamma.tasty", knownBytes3)
             )
         )
-        val reader = JarMappedReader.open(jarPath)
+        val reader = JarMappedReader.init(jarPath)
 
         val threadCount = 8
         val errors      = new java.util.concurrent.CopyOnWriteArrayList[String]()
@@ -267,7 +267,7 @@ class JvmFileSourceTest extends Test:
         rawBytes(22) = 0; rawBytes(23) = 0; rawBytes(24) = 0; rawBytes(25) = 0
         Files.write(java.nio.file.Paths.get(jarPath), rawBytes)
 
-        val reader = JarMappedReader.open(jarPath)
+        val reader = JarMappedReader.init(jarPath)
         val result = reader.readEntry("kyo/DataDesc.tasty")
         assert(
             java.util.Arrays.equals(result, knownBytes1),
@@ -300,7 +300,7 @@ class JvmFileSourceTest extends Test:
             fos.close()
         end try
 
-        val reader = JarMappedReader.open(jarPath)
+        val reader = JarMappedReader.init(jarPath)
         val result = reader.readEntry("kyo/Stored.tasty")
         assert(
             java.util.Arrays.equals(result, storedBytes),
@@ -380,7 +380,7 @@ class JvmFileSourceTest extends Test:
         writeJar(jarPath, Seq(("kyo/BigOffset.tasty", knownBytes1)))
 
         // Open the reader to get a valid mbb, then inject an oversized lfhOffset via reflection.
-        val reader = JarMappedReader.open(jarPath)
+        val reader = JarMappedReader.init(jarPath)
 
         // Replace the entry in the internal map with one carrying lfhOffset = Int.MaxValue + 1L.
         // Access entries map via reflection (private field).
@@ -416,8 +416,8 @@ class JvmFileSourceTest extends Test:
     // Scenario 1: empty file triggers IOException("empty file") before channel.map() is called.
     // The channel.close() in the finally block must execute before the exception propagates.
     // The exception must be an IOException with "empty file" in the message, confirming
-    // the open() guard fired and the channel was cleanly closed.
-    "P05b-T1: JarMappedReader.open on empty file throws IOException with 'empty file' message" taggedAs jvmOnly in {
+    // the init() guard fired and the channel was cleanly closed.
+    "P05b-T1: JarMappedReader.init on empty file throws IOException with 'empty file' message" taggedAs jvmOnly in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/empty.jar"
         // Write an empty file so RandomAccessFile succeeds but channel.size() == 0.
@@ -425,13 +425,13 @@ class JvmFileSourceTest extends Test:
 
         val caught =
             try
-                JarMappedReader.open(jarPath)
+                JarMappedReader.init(jarPath)
                 None
             catch
                 case ex: java.io.IOException => Some(ex)
                 case t: Throwable            => throw t
 
-        assert(caught.isDefined, "Expected IOException for empty JAR but open() succeeded")
+        assert(caught.isDefined, "Expected IOException for empty JAR but init() succeeded")
         val message = caught.get.getMessage
         assert(
             message.contains("empty file"),
@@ -445,10 +445,10 @@ class JvmFileSourceTest extends Test:
     }
 
     // Phase 05b - B15 scenario 2: malformed JAR content reaches parseAllEntries, which throws.
-    // The channel.close() in the finally block fires before that exception leaves open().
+    // The channel.close() in the finally block fires before that exception leaves init().
     // The thrown exception must be a plain IOException, not a ClosedChannelException, which
     // would indicate the channel was still open when the error was constructed.
-    "P05b-T2: JarMappedReader.open on malformed JAR throws plain IOException from parseAllEntries" taggedAs jvmOnly in {
+    "P05b-T2: JarMappedReader.init on malformed JAR throws plain IOException from parseAllEntries" taggedAs jvmOnly in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/not-a-jar.jar"
         // 4 bytes of garbage: channel.map() succeeds but parseAllEntries rejects the content.
@@ -456,7 +456,7 @@ class JvmFileSourceTest extends Test:
 
         val caught =
             try
-                JarMappedReader.open(jarPath)
+                JarMappedReader.init(jarPath)
                 None
             catch
                 case ex: java.io.IOException => Some(ex)
@@ -571,7 +571,7 @@ class JvmFileSourceTest extends Test:
         val openResult: Result[TastyError, Unit] < Async =
             Abort.run[TastyError]:
                 Scope.run:
-                    ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
+                    ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
                         capturedCp = cp
         openResult.map:
             case Result.Success(_) =>

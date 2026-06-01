@@ -33,7 +33,7 @@ class ClasspathTypedSymbolsTest extends Test:
     end MemoryFileSource
 
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
 
     private def fixtureWith(pairs: (String, Array[Byte])*): MemoryFileSource =
         val src = MemoryFileSource()

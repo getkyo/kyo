@@ -9,12 +9,12 @@ import scala.scalanative.unsigned.*
 
 /** Scala Native POSIX mmap reader.
   *
-  * Opens the snapshot file with open(2), maps it with mmap(2), and registers munmap as a Scope finalizer. The MappedByteView guards against
+  * Inits the snapshot file with open(2), maps it with mmap(2), and registers munmap as a Scope finalizer. The MappedByteView guards against
   * post-munmap reads via an AtomicBoolean flag, throwing IllegalStateException which Symbol.body maps to TastyError.ClasspathClosed.
   */
 object NativeMmapReader:
 
-    def open(path: String)(using Frame): MappedByteView < (Sync & Abort[TastyError] & Scope) =
+    def init(path: String)(using Frame): MappedByteView < (Sync & Abort[TastyError] & Scope) =
         Sync.defer:
             try
                 Zone:
@@ -47,7 +47,7 @@ object NativeMmapReader:
             catch
                 case ex: Throwable =>
                     Abort.fail(TastyError.FileNotFound(s"$path: ${ex.getMessage}"))
-    end open
+    end init
 
 end NativeMmapReader
 

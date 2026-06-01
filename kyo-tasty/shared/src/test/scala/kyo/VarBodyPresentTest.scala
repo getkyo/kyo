@@ -40,7 +40,7 @@ class VarBodyPresentTest extends Test:
         val src = MemoryFileSource()
         // Load the package-level TASTy which contains `var topLevelVar: Int = 0`
         src.add("root/FixtureClasses$package.tasty", kyo.fixtures.Embedded.fixtureClassesPackageTasty)
-        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureClassesCp
 
     // Given: FixtureClasses$package.tasty loaded into a Classpath (contains `var topLevelVar: Int = 0`)

@@ -17,14 +17,14 @@ import kyo.internal.tasty.query.FileSource
   */
 object JvmMmapReader:
 
-    /** Open `path` as a MappedByteView, registering a close finalizer on the Scope.
+    /** Init `path` as a MappedByteView, registering a close finalizer on the Scope.
       *
       * @param path
       *   Absolute filesystem path to the .krfl snapshot file.
       * @return
       *   A MappedByteView over the entire file content. Scope finalizer sets the closed flag.
       */
-    def open(path: String)(using Frame): MappedByteView < (Sync & Abort[TastyError] & Scope) =
+    def init(path: String)(using Frame): MappedByteView < (Sync & Abort[TastyError] & Scope) =
         Sync.defer:
             try
                 val channel = FileChannel.open(Paths.get(path), StandardOpenOption.READ)
@@ -40,6 +40,6 @@ object JvmMmapReader:
             catch
                 case ex: java.io.IOException =>
                     Abort.fail(TastyError.FileNotFound(s"$path: ${ex.getMessage}"))
-    end open
+    end init
 
 end JvmMmapReader

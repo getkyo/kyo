@@ -7,7 +7,7 @@ package kyo.internal.tasty.symbol
   * Outside of `object Tasty`, callers cannot construct a SymbolId from a raw Int.
   *
   * Two SymbolId values produced by the same Classpath compare equal via `==` iff they refer to the same Symbol. SymbolId values are NOT
-  * stable across distinct Classpath instances (different `Classpath.open` calls produce independent id spaces).
+  * stable across distinct Classpath instances (different `Classpath.init` calls produce independent id spaces).
   */
 opaque type SymbolId = Int
 

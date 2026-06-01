@@ -33,7 +33,7 @@ class NativeMmapReaderTest extends Test:
         Abort.run[TastyError](
             NativeFileSource.write(path, content).flatMap: _ =>
                 Scope.run:
-                    NativeMmapReader.open(path).map: view =>
+                    NativeMmapReader.init(path).map: view =>
                         val b = view.readByte()
                         assert(b == 0x42.toByte, s"Expected 0x42 but got $b")
                         succeed
@@ -53,7 +53,7 @@ class NativeMmapReaderTest extends Test:
         Abort.run[TastyError](
             NativeFileSource.write(path, content).flatMap: _ =>
                 Scope.run:
-                    NativeMmapReader.open(path).map: view =>
+                    NativeMmapReader.init(path).map: view =>
                         capturedView = view
                         succeed
         ).map: scopeResult =>

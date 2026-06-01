@@ -60,14 +60,14 @@ class ClasspathOrchestratorPipelineTest extends Test:
         src
     end fixtureSource
 
-    /** Open a classpath using ClasspathOrchestrator.open with the given concurrency. */
+    /** Init a classpath using ClasspathOrchestrator.init with the given concurrency. */
     private def openFixtureClasspath(
         src: FileSource,
         roots: Seq[String] = Seq("root"),
         mode: Tasty.ErrorMode = Tasty.ErrorMode.SoftFail,
         concurrency: Int = 2
     )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(roots, mode, src, concurrency)
+        ClasspathOrchestrator.init(roots, mode, src, concurrency)
     end openFixtureClasspath
 
     // T1: pipeline-produced Classpath contains known FQNs from the fixture.

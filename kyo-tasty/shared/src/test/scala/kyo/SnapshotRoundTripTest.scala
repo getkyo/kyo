@@ -74,7 +74,7 @@ class SnapshotRoundTripTest extends Test:
 
     /** Open a classpath from the in-memory source into a `Tasty.Classpath`. */
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
 
     /** Write a snapshot of the fixture classpath to the given FileSource cache dir. */
     private def writeSnapshot(cacheSrc: MemoryFileSource)(using Frame): String < (Sync & Async & Scope & Abort[TastyError]) =
@@ -419,7 +419,7 @@ class SnapshotRoundTripTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 // Open an empty classpath (no roots, no files): transitions to Ready immediately with empty state
-                ClasspathOrchestrator.open(Seq.empty, Tasty.ErrorMode.SoftFail, emptySrc, 1).flatMap: cp =>
+                ClasspathOrchestrator.init(Seq.empty, Tasty.ErrorMode.SoftFail, emptySrc, 1).flatMap: cp =>
                     SnapshotWriter.write(cp, "cache", digest, cacheSrc).map: _ =>
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
@@ -468,7 +468,7 @@ class SnapshotRoundTripTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 // Cold open: build from TASTy to capture expected values.
-                ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, tastySource, 1).flatMap: coldCp =>
+                ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, tastySource, 1).flatMap: coldCp =>
                     val coldClasses = coldCp.topLevelClasses
                     // Write snapshot.
                     SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:

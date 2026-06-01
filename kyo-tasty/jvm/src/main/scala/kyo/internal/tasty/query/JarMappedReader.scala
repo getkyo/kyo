@@ -13,7 +13,7 @@ import java.util.zip.Inflater
   * underlying buffer (~30 bytes, cheap) so each caller has an independent position cursor. Each call creates its own Inflater instance;
   * Inflater is single-threaded and stateful, so it must NOT be shared or pooled without careful synchronization.
   *
-  * Lifecycle: Created by `JarMappedReader.open`. The MappedByteBuffer is backed by an OS memory mapping that remains valid after the
+  * Lifecycle: Created by `JarMappedReader.init`. The MappedByteBuffer is backed by an OS memory mapping that remains valid after the
   * RandomAccessFile/FileChannel is closed. The mapping is released when the buffer is GC'd (or when the JVM exits). No explicit unmap is
   * performed; attempting to unmap a MappedByteBuffer via sun.misc.Cleaner is unsafe on Java 9+ and is deliberately avoided here.
   */
@@ -137,7 +137,7 @@ end JarMappedReader
 
 object JarMappedReader:
 
-    /** Open a JAR, memory-map it, parse its central directory, and return a JarMappedReader.
+    /** Init a JAR, memory-map it, parse its central directory, and return a JarMappedReader.
       *
       * The RandomAccessFile and FileChannel are closed after mapping; the MappedByteBuffer remains valid because OS memory mappings outlive
       * the file descriptor.
@@ -145,7 +145,7 @@ object JarMappedReader:
       * @throws java.io.IOException
       *   on any I/O error, malformed ZIP/JAR, or multi-disk JAR
       */
-    def open(jarPath: String): JarMappedReader =
+    def init(jarPath: String): JarMappedReader =
         val raf = new RandomAccessFile(jarPath, "r")
         try
             val channel = raf.getChannel
@@ -168,6 +168,6 @@ object JarMappedReader:
             // Closing RAF also closes the channel (if not already closed above); the MappedByteBuffer remains valid.
             raf.close()
         end try
-    end open
+    end init
 
 end JarMappedReader

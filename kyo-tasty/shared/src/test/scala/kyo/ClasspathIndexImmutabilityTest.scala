@@ -54,13 +54,13 @@ class ClasspathIndexImmutabilityTest extends Test:
     end fixtureSource
 
     // Leaf 1: fqnIndex is built once and never mutated.
-    // Given: a Classpath cp from Classpath.open.
+    // Given: a Classpath cp from Classpath.init.
     // When: cp.fqnIndex is captured before and after an arbitrary read operation.
     // Then: both captures are the same Map reference.
     // Pins: INV-008.
     "Leaf 1: fqnIndex is built once and never mutated (val semantics)" in run {
         Scope.run:
-            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
+            Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 val idx1 = cp.fqnIndex
                 // Perform arbitrary read operations
                 val _    = cp.findClass("kyo.fixtures.PlainClass")
@@ -84,7 +84,7 @@ class ClasspathIndexImmutabilityTest extends Test:
     // This test pins INV-008: subclassIndex is constructed as an immutable Map after Pass C.
     "Leaf 2: subclassIndex is a non-null immutable Map after Pass C (INV-008)" in run {
         Scope.run:
-            Abort.run[TastyError](ClasspathOrchestrator.open(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
+            Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 val idx1 = cp.subclassIndex
                 val _    = cp.findClass("kyo.fixtures.PlainClass") // arbitrary read
                 val idx2 = cp.subclassIndex

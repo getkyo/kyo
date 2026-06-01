@@ -898,7 +898,7 @@ object Tasty:
     /** Sealed-trait root of the typed Symbol hierarchy. Every symbol is one of 14 final case classes; pattern matching is exhaustive under
       * `-Xfatal-warnings`.
       *
-      * Constructed by `ClasspathOrchestrator.materializeSymbols` during Pass C of `Classpath.open`. After construction, every field is
+      * Constructed by `ClasspathOrchestrator.materializeSymbols` during Pass C of `Classpath.init`. After construction, every field is
       * immutable. Cross-symbol references use `SymbolId` (an opaque Int) rather than direct `Symbol` pointers to avoid case-class cycles.
       *
       * Resolution methods (`owner`, `fullName`, `binaryName`, etc.) require a `Classpath` in scope and are pure data accessors with no
@@ -1808,11 +1808,11 @@ object Tasty:
 
     /** Immutable snapshot of a fully-loaded TASTy classpath.
       *
-      * All fields are plain immutable values populated once during `open` and never mutated. Reading any field after `open` returns is a
+      * All fields are plain immutable values populated once during `init` and never mutated. Reading any field after `init` returns is a
       * pure operation with no effect row and no `AllowUnsafe`. The sole exception is `decodeBody`, which decodes AST bytes on demand and
       * carries `Sync & Abort[TastyError]`.
       *
-      * Constructor is `private[Tasty]`; instances are obtained exclusively via `Classpath.open`, `Classpath.openCached`,
+      * Constructor is `private[Tasty]`; instances are obtained exclusively via `Classpath.init`, `Classpath.initCached`,
       * `Classpath.fromPickles`, or `Classpath.fromPicklesWithSymbols`.
       *
       * Pins: INV-003 (Classpath case class fields immutable post-construction), INV-004 (bodyMemo excluded from equality).
@@ -2262,7 +2262,7 @@ object Tasty:
         val sentinelUnresolved: Symbol =
             Symbol.Unresolved(SymbolId(-1), Name("<unresolved>"), SymbolId(-1))
 
-        /** Open a classpath from directory/file roots using `ErrorMode.SoftFail` (errors accumulate in `cp.errors`).
+        /** Init a classpath from directory/file roots using `ErrorMode.SoftFail` (errors accumulate in `cp.errors`).
           *
           * Effect row rationale:
           *   - `Async`: parallel per-file decode across the workgroup (subsumes Sync).
@@ -2271,10 +2271,10 @@ object Tasty:
           *
           * One-arg variant: delegates to the canonical two-arg form with `ErrorMode.SoftFail`.
           */
-        def open(roots: Seq[String])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
-            open(roots, ErrorMode.SoftFail)
+        def init(roots: Seq[String])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
+            init(roots, ErrorMode.SoftFail)
 
-        /** Open a classpath from directory/file roots with the given `ErrorMode`.
+        /** Init a classpath from directory/file roots with the given `ErrorMode`.
           *
           * Effect row rationale:
           *   - `Async`: parallel per-file decode across the workgroup (subsumes Sync).
@@ -2284,12 +2284,12 @@ object Tasty:
           * `ErrorMode.SoftFail`: decode errors accumulate in `cp.errors`; classpath is returned. `ErrorMode.FailFast`: any decode error
           * immediately raises `Abort[TastyError]`.
           */
-        def open(roots: Seq[String], mode: ErrorMode)(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
-            openImpl(roots, mode)
+        def init(roots: Seq[String], mode: ErrorMode)(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
+            initImpl(roots, mode)
 
-        /** Open a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
+        /** Init a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
           *
-          * On a cache hit (digest match), deserializes the snapshot directly. On a miss, opens normally then writes a new snapshot.
+          * On a cache hit (digest match), deserializes the snapshot directly. On a miss, initializes normally then writes a new snapshot.
           *
           * Effect row rationale:
           *   - `Sync`: file I/O for snapshot read/write plus JAR, classfile, and TASTy reads on a cache miss.
@@ -2297,8 +2297,8 @@ object Tasty:
           *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
           *   - `Abort[TastyError]`: fatal errors (snapshot mismatch, classpath build failures).
           */
-        def openCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-            openCachedImpl(roots, cacheDir)
+        def initCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+            initCachedImpl(roots, cacheDir)
 
         /** Create a classpath from pre-parsed in-memory pickles. */
         def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < Sync =
@@ -2337,8 +2337,8 @@ object Tasty:
                     canonical = TypeArena.canonical()
                 )
 
-        /** Internal: open implementation, delegates to ClasspathOrchestrator. */
-        private def openImpl(
+        /** Internal: init implementation, delegates to ClasspathOrchestrator. */
+        private def initImpl(
             roots: Seq[String],
             mode: ErrorMode
         )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
@@ -2348,11 +2348,11 @@ object Tasty:
                 "coldLoad",
                 Attributes.empty.add("roots", roots.size.toString)
             ) {
-                ClasspathOrchestrator.open(roots, mode, source, concurrency)
+                ClasspathOrchestrator.init(roots, mode, source, concurrency)
             }
-        end openImpl
+        end initImpl
 
-        private def openCachedImpl(
+        private def initCachedImpl(
             roots: Seq[String],
             cacheDir: String
         )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
@@ -2361,10 +2361,10 @@ object Tasty:
             // Compute digest of root metadata
             Abort.run[TastyError](SnapshotDigest.compute(roots, source)).flatMap:
                 case Result.Failure(_) =>
-                    // Digest computation failed (e.g., browser): fall through to normal open
-                    openImpl(roots, ErrorMode.SoftFail)
+                    // Digest computation failed (e.g., browser): fall through to normal init
+                    initImpl(roots, ErrorMode.SoftFail)
                 case Result.Panic(_) =>
-                    openImpl(roots, ErrorMode.SoftFail)
+                    initImpl(roots, ErrorMode.SoftFail)
                 case Result.Success(digest) =>
                     val hexDigest    = SnapshotDigest.toHexString(digest)
                     val snapshotPath = s"$cacheDir/$hexDigest.krfl"
@@ -2375,13 +2375,13 @@ object Tasty:
                                 case Result.Success(cp) =>
                                     cp
                                 case Result.Failure(_) | Result.Panic(_) =>
-                                    // Snapshot unreadable; fall through to normal open
-                                    openImpl(roots, ErrorMode.SoftFail)
+                                    // Snapshot unreadable; fall through to normal init
+                                    initImpl(roots, ErrorMode.SoftFail)
                         else
-                            // No snapshot; open normally then write snapshot
-                            openImpl(roots, ErrorMode.SoftFail).flatMap: cp =>
+                            // No snapshot; init normally then write snapshot
+                            initImpl(roots, ErrorMode.SoftFail).flatMap: cp =>
                                 Abort.run[TastyError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen(cp)
-        end openCachedImpl
+        end initCachedImpl
 
         /** Internal factory for constructing a Tasty.Classpath case class from the finalized data produced by ClasspathOrchestrator or
           * SnapshotReader.
