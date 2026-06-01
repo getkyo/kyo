@@ -19,7 +19,25 @@ class SymbolIdFidelityTest extends Test:
     //       before Phase 04 every makeUnresolvedSym call produces a fresh name like
     //       termref@N, typeref@N, rec@N, this-unknown, ann, unknown-tpt, <unresolved>
     // Pins: INV-012 partial (F-G-007 partial)
-    "INV-012 partial (Phase 04): SymbolId(-1) sentinel name-set size decreased from Phase 01 baseline" in pending
+    "INV-012 partial (Phase 04): SymbolId(-1) sentinel name-set size decreased from Phase 01 baseline" in run {
+        val cp = TestClasspaths.withClasspath()
+        cp.map: classpath =>
+            import Tasty.Name.asString
+            val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
+            // Phase 01 baseline: up to 11 distinct fabricated names (rec@N, this-unknown, ann,
+            // unknown-type-tag-N, termref@N, typeref@N, rec-placeholder@N, param@N, <unresolved>, etc.).
+            // Phase 04 routes RECthis, this-unknown, and the ClasspathOrchestrator fallback through
+            // TypeUnpickler.sentinelUnresolved, collapsing the set toward a smaller count.
+            // Phase 11 brings it to <= 3.
+            val phase01Baseline = 11
+            assert(
+                sentinelNames.size < phase01Baseline,
+                s"Expected sentinel name-set size < $phase01Baseline (Phase 01 baseline), but got ${sentinelNames.size}. " +
+                    s"Names: ${sentinelNames.mkString(", ")}. " +
+                    s"Phase 04 must have collapsed rec@, this-unknown, and the orchestrator fallback to the shared sentinel."
+            )
+            succeed
+    }
 
     // F-G-007 / INV-012 leaf 2 (Phase 11): sentinel-count-bounded
     // Given: the real classpath loaded via TestClasspaths.withClasspath at the Phase 11 commit

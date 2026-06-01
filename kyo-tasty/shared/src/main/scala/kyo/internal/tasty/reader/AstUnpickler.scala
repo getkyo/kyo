@@ -273,7 +273,7 @@ object AstUnpickler:
                     val payloadBody = view.position
                     // Decode the VALDEF signature type (first type node after NameRef).
                     // This populates typeSession.placeholders with any cross-file refs.
-                    val valTpe   = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
+                    val valTpe   = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val kind     = InternalSymbolKind.fromValdefFlags(flagBits)
                     val flags    = new Tasty.Flags(flagBits)
@@ -304,6 +304,11 @@ object AstUnpickler:
                     // Use a forked sub-view of the payload body.
                     val innerView = view.subView(payloadBody, payloadEnd)
                     ownerStack.append(sym)
+                    // F-A-005 fix: sync ownerStack and ownerAddrStack into typeSession so the THIS-type
+                    // decode branch can find the enclosing class/trait/object when decoding the DEFDEF
+                    // return type. ownerAddrStack stores the Phase-B addr-encoded id for Phase C remap.
+                    typeSession.ownerStack.append(sym)
+                    typeSession.ownerAddrStack.append(nodeAddr)
                     walkStats(
                         innerView,
                         payloadEnd,
@@ -321,11 +326,13 @@ object AstUnpickler:
                         bodyDataByAddr
                     )
                     discard(ownerStack.removeLast())
+                    discard(typeSession.ownerStack.removeLast())
+                    discard(typeSession.ownerAddrStack.removeLast())
                     // Capture the DEFDEF return type by scanning a fresh sub-view:
                     // layout is TYPEPARAM* PARAM* returnType RHS? modifier*.
                     // We skip TYPEPARAM and PARAM nodes, then read one type node.
                     val returnTypeScanView = view.subView(payloadBody, payloadEnd)
-                    val retTpe             = readDefDefReturnType(returnTypeScanView, payloadEnd, typeSession)
+                    val retTpe             = readDefDefReturnType(returnTypeScanView, payloadEnd, typeSession, sectionOffset)
                     retTpe match
                         case Present(t) => typeBySymbol(sym) = t
                         case Absent     => ()
@@ -354,7 +361,7 @@ object AstUnpickler:
                         // are skipped first; scanning stops at SELFDEF, VALDEF, DEFDEF, TYPEDEF, or
                         // any modifier tag (which signals the start of the stat section).
                         val parentScanView = view.subView(templateBodyStart, templatePayloadEnd)
-                        val decodedParents = decodeTemplateParents(parentScanView, templatePayloadEnd, typeSession)
+                        val decodedParents = decodeTemplateParents(parentScanView, templatePayloadEnd, sectionOffset, typeSession)
                         // Advance the outer view past the TEMPLATE payload so that readModifiers
                         // reads modifiers from templatePayloadEnd to payloadEnd.
                         view.goto(templatePayloadEnd)
@@ -373,6 +380,11 @@ object AstUnpickler:
                         // Walk template body to discover members (type params, constructor params, member defs).
                         val templateFork = view.subView(templateBodyStart, templatePayloadEnd)
                         ownerStack.append(sym)
+                        // F-A-005 fix: sync class sym into typeSession.ownerStack and ownerAddrStack
+                        // so THIS-type decode inside member DEFDEFs can find the enclosing class symbol
+                        // and its Phase-B address for Phase C remapping.
+                        typeSession.ownerStack.append(sym)
+                        typeSession.ownerAddrStack.append(nodeAddr)
                         walkStats(
                             templateFork,
                             templatePayloadEnd,
@@ -390,12 +402,14 @@ object AstUnpickler:
                             bodyDataByAddr
                         )
                         discard(ownerStack.removeLast())
+                        discard(typeSession.ownerStack.removeLast())
+                        discard(typeSession.ownerAddrStack.removeLast())
                         // Class-like TYPEDEF: declaredType is Type.Named(sym) assigned in mergeResults.
                         view.goto(payloadEnd)
                     else
                         // Type-level TYPEDEF: decode the type body instead of skipping it.
                         val typeLevelTpe =
-                            try Present(TypeUnpickler.readTypeIntoSession(view, typeSession))
+                            try Present(TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset))
                             catch
                                 case _: Exception =>
                                     // On error, skip to the end of the type body and proceed with modifiers.
@@ -422,7 +436,7 @@ object AstUnpickler:
                     val symName    = names(nameRef)
                     val owner      = currentOwner(ownerStack)
                     // Decode type bounds (first type node after NameRef), if present.
-                    val tpBounds = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
+                    val tpBounds = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
                     val flagBits = readModifiers(view, payloadEnd)
                     val flags    = new Tasty.Flags(flagBits)
                     val sym      = InternalSymbol.makeSymbol(Tasty.SymbolKind.TypeParam, flags, symName)
@@ -440,7 +454,7 @@ object AstUnpickler:
                     val symName    = names(nameRef)
                     val owner      = currentOwner(ownerStack)
                     // Decode parameter type (first type node after NameRef), if present.
-                    val paramTpe = decodeOneTypeIfPresent(view, payloadEnd, typeSession)
+                    val paramTpe = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
                     val flagBits = scanForwardAndCollectFlags(view, payloadEnd)
                     val flags    = new Tasty.Flags(flagBits)
                     val sym      = InternalSymbol.makeSymbol(Tasty.SymbolKind.Parameter, flags, symName)
@@ -478,7 +492,12 @@ object AstUnpickler:
       * MATCHCASEtype) are wire-level tree nodes that carry a Type. Routing them to TypeUnpickler caused 47,996 unknown-tag warnings per load
       * because TypeUnpickler has no handlers for these tags. They must go to TreeUnpickler.decodeTptAsType.
       */
-    private def decodeOneTypeIfPresent(view: ByteView, end: Long, typeSession: TypeUnpickler.DecodeSession)(using
+    private def decodeOneTypeIfPresent(
+        view: ByteView,
+        end: Long,
+        typeSession: TypeUnpickler.DecodeSession,
+        sectionOffset: Int = 0
+    )(using
         Frame,
         AllowUnsafe
     ): Maybe[Tasty.Type] =
@@ -487,13 +506,13 @@ object AstUnpickler:
             if isModifierTag(nextTag) then Absent
             else if isTreeTptTag(nextTag) then
                 // F-I-004 fix: TPT tags route to TreeUnpickler.decodeTptAsType.
-                try Present(TreeUnpickler.decodeTptAsType(view, typeSession, nextTag))
+                try Present(TreeUnpickler.decodeTptAsType(view, typeSession, nextTag, sectionOffset))
                 catch
                     case _: Exception =>
                         view.goto(end)
                         Absent
             else
-                try Present(TypeUnpickler.readTypeIntoSession(view, typeSession))
+                try Present(TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset))
                 catch
                     case _: Exception =>
                         view.goto(end)
@@ -523,8 +542,12 @@ object AstUnpickler:
       *
       * DEFDEF layout (inside the payload): TYPEPARAM* PARAM* returnType RHS? modifier*
       *
-      * This helper skips all leading TYPEPARAM and PARAM nodes (scanning their length-prefixed payloads), then reads the first non-param,
-      * non-modifier node as the return type via `decodeOneTypeIfPresent`.
+      * F-A-001 fix: the DEFDEF return-type slot may contain a METHODtype or POLYtype lambda (for methods with params) or a plain type node
+      * (for nullary methods). The existing decodeOneTypeIfPresent call correctly routes to TypeUnpickler.readTypeIntoSession for all tags,
+      * including METHODtype and POLYtype. The METHODtype/POLYtype inline handlers in TypeUnpickler.decodeTag already produce
+      * Type.TypeLambda(paramIds, resultType). Phase C's remapType previously did not recurse into TypeLambda, so inner Named(trackedNegId)
+      * references were not resolved to final SymbolIds. The real fix is in ClasspathOrchestrator.remapType (now recurses into TypeLambda
+      * and all other composite types), not in this function.
       *
       * Uses a fresh sub-view (returnTypeScanView) that is independent of the outer view, so the outer walk is not affected.
       *
@@ -533,7 +556,8 @@ object AstUnpickler:
     private def readDefDefReturnType(
         returnTypeScanView: ByteView,
         end: Long,
-        typeSession: TypeUnpickler.DecodeSession
+        typeSession: TypeUnpickler.DecodeSession,
+        sectionOffset: Int
     )(using Frame, AllowUnsafe): Maybe[Tasty.Type] =
         try
             // Skip TYPEPARAM and PARAM nodes that precede the return type.
@@ -553,10 +577,15 @@ object AstUnpickler:
                     skip = false
                 end if
             end while
-            // Read the return type node (the first non-param node).
-            decodeOneTypeIfPresent(returnTypeScanView, end, typeSession)
+            // Read the return type node (the first non-param node). METHODtype / POLYtype are routed
+            // through TypeUnpickler.readTypeIntoSession -> decodeTag which already handles both tags
+            // and produces Type.TypeLambda(paramIds, resultType). Phase C remapType now recurses into
+            // TypeLambda (F-A-001 fix) so inner Named(trackedNegId) refs are resolved properly.
+            // sectionOffset is passed so that TYPEREFsymbol / PARAMtype binder lookups can convert
+            // section-relative ASTRef values to the absolute addrMap / binderAddrMap keys.
+            decodeOneTypeIfPresent(returnTypeScanView, end, typeSession, sectionOffset)
         catch
-            case _: Exception => Absent
+            case ex: Exception => Absent
     end readDefDefReturnType
 
     /** Scan the TEMPLATE body sub-view for parent_Type entries and call readTypeIntoSession on each.
@@ -575,6 +604,7 @@ object AstUnpickler:
     private def decodeTemplateParents(
         parentScanView: ByteView,
         end: Long,
+        sectionOffset: Int = 0,
         typeSession: TypeUnpickler.DecodeSession
     )(using Frame, AllowUnsafe): mutable.ArrayBuffer[Tasty.Type] =
         val collected = new mutable.ArrayBuffer[Tasty.Type]()
@@ -615,7 +645,7 @@ object AstUnpickler:
                     val savedPos = parentScanView.position
                     // The first child of APPLY is usually SELECT(NEW(type_ref), <init>).
                     // Attempt to decode it as a type; fall back on any error.
-                    val decoded = TypeUnpickler.readTypeIntoSession(parentScanView, typeSession)
+                    val decoded = TypeUnpickler.readTypeIntoSession(parentScanView, typeSession, sectionOffset)
                     collected += decoded
                     parentScanView.goto(applyEnd)
                 catch
@@ -626,7 +656,7 @@ object AstUnpickler:
                 end try
             else
                 try
-                    val decoded = TypeUnpickler.readTypeIntoSession(parentScanView, typeSession)
+                    val decoded = TypeUnpickler.readTypeIntoSession(parentScanView, typeSession, sectionOffset)
                     collected += decoded
                 catch
                     case _: Exception =>

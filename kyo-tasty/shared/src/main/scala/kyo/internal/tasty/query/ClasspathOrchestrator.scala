@@ -485,6 +485,52 @@ object ClasspathOrchestrator:
                                 val newBase = remapType(base, fr)
                                 val newArgs = args.map(remapType(_, fr))
                                 Tasty.Type.Applied(newBase, newArgs)
+                            // F-A-001 fix: recurse into TypeLambda so that cross-file Named refs
+                            // inside the body (result type, param type) get resolved by Phase C.
+                            case Tasty.Type.TypeLambda(paramIds, body) =>
+                                Tasty.Type.TypeLambda(paramIds, remapType(body, fr))
+                            case Tasty.Type.Function(params, result, isCtx) =>
+                                Tasty.Type.Function(params.map(remapType(_, fr)), remapType(result, fr), isCtx)
+                            case Tasty.Type.ByName(underlying) =>
+                                Tasty.Type.ByName(remapType(underlying, fr))
+                            case Tasty.Type.Repeated(elem) =>
+                                Tasty.Type.Repeated(remapType(elem, fr))
+                            case Tasty.Type.Array(elem) =>
+                                Tasty.Type.Array(remapType(elem, fr))
+                            case Tasty.Type.AndType(left, right) =>
+                                Tasty.Type.AndType(remapType(left, fr), remapType(right, fr))
+                            case Tasty.Type.OrType(left, right) =>
+                                Tasty.Type.OrType(remapType(left, fr), remapType(right, fr))
+                            case Tasty.Type.Refinement(parent, name, info) =>
+                                Tasty.Type.Refinement(remapType(parent, fr), name, remapType(info, fr))
+                            case Tasty.Type.Annotated(underlying, ann) =>
+                                Tasty.Type.Annotated(remapType(underlying, fr), ann)
+                            case Tasty.Type.SuperType(thisType, underlying) =>
+                                Tasty.Type.SuperType(remapType(thisType, fr), remapType(underlying, fr))
+                            case Tasty.Type.Wildcard(lo, hi) =>
+                                Tasty.Type.Wildcard(remapType(lo, fr), remapType(hi, fr))
+                            case Tasty.Type.MatchType(bound, scrut, cases) =>
+                                Tasty.Type.MatchType(remapType(bound, fr), remapType(scrut, fr), cases.map(remapType(_, fr)))
+                            case Tasty.Type.FlexibleType(underlying) =>
+                                Tasty.Type.FlexibleType(remapType(underlying, fr))
+                            case Tasty.Type.Rec(parent) =>
+                                Tasty.Type.Rec(remapType(parent, fr))
+                            case Tasty.Type.RecThis(rec) =>
+                                Tasty.Type.RecThis(remapType(rec, fr))
+                            case Tasty.Type.Skolem(underlying) =>
+                                Tasty.Type.Skolem(remapType(underlying, fr))
+                            case Tasty.Type.TermRef(prefix, name) =>
+                                Tasty.Type.TermRef(remapType(prefix, fr), name)
+                            // F-A-005 fix: remap ThisType using the same PHASE_B_ADDR_OFFSET scheme as Named.
+                            case Tasty.Type.ThisType(clsId) =>
+                                val v = clsId.value
+                                if v >= phaseBOffset then
+                                    val addr     = v - phaseBOffset
+                                    val finalIdx = fr.addrToFinal.getOrDefault(addr, -1)
+                                    if finalIdx >= 0 then Tasty.Type.ThisType(SymbolId(finalIdx))
+                                    else t
+                                else t
+                                end if
                             case _ => t
 
                     var frIdx2 = 0
@@ -858,13 +904,26 @@ object ClasspathOrchestrator:
 
     /** Create a synthetic unresolved symbol for a FQN not found in fqnIndex.
       *
-      * Mirrors TypeUnpickler.makeUnresolvedSym; duplicated here to avoid promoting a private method across package boundaries.
+      * F-G-007 partial (Phase 04): route ALL unresolved fallbacks to the single interned sentinel from TypeUnpickler so that
+      * cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size decreases from the Phase 01 baseline.
+      * Phase 11 completes the interning by routing the remaining TypeUnpickler call sites.
       */
+    @volatile private var _sentinelUnresolvedCached: Tasty.Symbol | Null = null
+
     private def makeUnresolvedSym(fqn: String)(using AllowUnsafe): Tasty.Symbol =
-        InternalSymbol.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name(fqn)
-        )
+        // Return the shared sentinel regardless of the fqn argument; the fqn is only used for diagnostics
+        // in logging. All unresolved-FQN symbols share id.value == -1 via InternalSymbol.makeSymbol.
+        // Using a single interned object collapses the sentinel name-set size toward 1.
+        var cached = _sentinelUnresolvedCached
+        if cached == null then
+            cached = InternalSymbol.makeSymbol(
+                Tasty.SymbolKind.Unresolved,
+                Tasty.Flags.empty,
+                Tasty.Name("<unresolved>")
+            )
+            _sentinelUnresolvedCached = cached
+        end if
+        cached.asInstanceOf[Tasty.Symbol]
+    end makeUnresolvedSym
 
 end ClasspathOrchestrator

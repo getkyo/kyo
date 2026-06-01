@@ -79,9 +79,12 @@ class RealClasspathFidelityTest extends Test:
                     idx = found + 1
                 end if
             end while
+        // Phase 01 baseline: 51 pending leaves. Phases 02-04 each un-pend some leaves.
+        // Phase 04 un-pended 9 leaves, bringing the count to ~42.
+        // The threshold is updated to 30 to give phases 05-15 room to un-pend more.
         assert(
-            pendingCount >= 45,
-            s"Expected at least 45 pending fidelity leaves, found $pendingCount. " +
+            pendingCount >= 30,
+            s"Expected at least 30 pending fidelity leaves, found $pendingCount. " +
                 "Each finding from the exploration should be pinned as a pending leaf."
         )
         succeed

@@ -48,6 +48,21 @@ object TypeUnpickler:
         )
     end MatchCaseSentinel
 
+    /** Interned sentinel symbol for unresolved-type fallbacks (F-G-007 partial).
+      *
+      * A single shared symbol with name "<unresolved>" is reused for ALL unresolved-type placeholder positions
+      * (RECthis miss, this-unknown, unknown-tag, etc.) so that the entire fabricated-name family collapses to
+      * one shared sentinel with id.value == -1. Phase 11 finishes the full interning; Phase 04 routes RECthis
+      * and THIS-unknown through this sentinel.
+      */
+    private[kyo] val sentinelUnresolved: Tasty.Symbol =
+        InternalSymbol.makeSymbol(
+            Tasty.SymbolKind.Unresolved,
+            Tasty.Flags.empty,
+            Tasty.Name("<unresolved>")
+        )
+    end sentinelUnresolved
+
     /** Decode a single type node from `view`.
       *
       * @param view
@@ -181,10 +196,18 @@ object TypeUnpickler:
       *   ByteView positioned at the tag byte of the type node.
       * @param session
       *   Shared decode session for the file being decoded.
+      * @param sectionOffset
+      *   Absolute byte offset of the start of the AST section in the file. Used to convert section-relative ASTRef values (used in
+      *   TYPEREFsymbol, TERMREFsymbol, PARAMtype binder addrs) to absolute positions that match the addrMap and binderAddrMap keys. Must
+      *   be 0 for contexts where addresses are already absolute (e.g., body-decode path with sectionBytes provided).
       * @return
       *   The decoded Tasty.Type, interned in `session.arena`.
       */
-    private[kyo] def readTypeIntoSession(view: ByteView, session: DecodeSession)(using frame: Frame)(using AllowUnsafe): Tasty.Type =
+    private[kyo] def readTypeIntoSession(
+        view: ByteView,
+        session: DecodeSession,
+        sectionOffset: Int = 0
+    )(using frame: Frame)(using AllowUnsafe): Tasty.Type =
         // Pass session.liveAddrMap directly -- no per-call IntMap snapshot.
         // Pass session reference for cross-file FQN tracking so Phase C can remap parent types.
         val ctx = DecodeCtx(
@@ -195,7 +218,7 @@ object TypeUnpickler:
             session.inProgressRec,
             session.binderAddrMap,
             null,
-            0,
+            sectionOffset,
             frame,
             session
         )
@@ -252,6 +275,15 @@ object TypeUnpickler:
         val annotationDecodeErrors: mutable.ArrayBuffer[TastyError] = new mutable.ArrayBuffer()
         // Counter for unique negative IDs: starts at -2 (to distinguish from SymbolId(-1) which is the sentinel).
         private var _unresolvedIdCounter: Int = -2
+
+        // F-A-005 fix: owner stack maintained by AstUnpickler as it enters/exits DEFDEF and TYPEDEF nodes.
+        // The THIS-type branch reads this to resolve THIS to the enclosing class/trait/object symbol.
+        val ownerStack: mutable.ArrayDeque[Tasty.Symbol] = new mutable.ArrayDeque()
+
+        // Parallel stack with the ABSOLUTE node address (from addrMap) of each owner symbol.
+        // This allows the THIS-type branch to emit ThisType(PHASE_B_ADDR_OFFSET + addr) for
+        // proper Phase C remapping via addrToFinal.
+        val ownerAddrStack: mutable.ArrayDeque[Int] = new mutable.ArrayDeque()
 
         def nextUnresolvedId(): Int =
             val id = _unresolvedIdCounter
@@ -326,9 +358,11 @@ object TypeUnpickler:
             // ── Category 2 (tag + Nat) ────────────────────────────────────────────
 
             case TastyFormat.SHAREDtype =>
-                // astRef is a section-relative offset; absRef is the absolute position in sectionBytes.
+                // astRef is a section-relative offset; absRef is the absolute position in file/sectionBytes.
+                // F-A-001 fix: always add sectionOffset to convert section-relative to absolute, since
+                // addrCache keys are absolute (view.positionInt = sectionOffset + sectionRelativeAddr).
                 val astRef = view.readNat()
-                val absRef = if ctx.sectionBytes != null then ctx.sectionOffset + astRef else astRef
+                val absRef = ctx.sectionOffset + astRef
                 ctx.addrCache.getOrElse(
                     absRef, {
                         if ctx.sectionBytes != null then
@@ -360,14 +394,18 @@ object TypeUnpickler:
 
             case TastyFormat.TERMREFdirect =>
                 val astRef = view.readNat()
-                // Use PHASE_B_ADDR_OFFSET + addr as a temporary SymbolId so Phase C can remap via addrMap.
-                if ctx.addrMap.contains(astRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + astRef))
+                // TASTy ASTRef values are section-relative. addrMap keys are absolute (sectionOffset + sectionRelativeAddr).
+                // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
+                val absRef = ctx.sectionOffset + astRef
+                if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
                 else Tasty.Type.Named(makeUnresolvedSym(s"termref@$astRef").id)
 
             case TastyFormat.TYPEREFdirect =>
                 val astRef = view.readNat()
-                // Use PHASE_B_ADDR_OFFSET + addr as a temporary SymbolId so Phase C can remap via addrMap.
-                if ctx.addrMap.contains(astRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + astRef))
+                // TASTy ASTRef values are section-relative. addrMap keys are absolute (sectionOffset + sectionRelativeAddr).
+                // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
+                val absRef = ctx.sectionOffset + astRef
+                if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
                 else Tasty.Type.Named(makeUnresolvedSym(s"typeref@$astRef").id)
 
             case TastyFormat.TERMREFpkg =>
@@ -399,8 +437,11 @@ object TypeUnpickler:
                         ctx.addrCache.get(recAddr) match
                             case Some(recNode) => Tasty.Type.RecThis(recNode)
                             case None          =>
-                                // The Rec node hasn't been decoded yet; return a placeholder.
-                                Tasty.Type.RecThis(Tasty.Type.Named(makeUnresolvedSym(s"rec@$recAddr").id))
+                                // F-A-007 fix: the Rec node hasn't been decoded yet. Use the interned
+                                // sentinelUnresolved instead of a fresh rec@<addr> symbol so that
+                                // no per-address fabricated names leak into cp.symbols.
+                                // Full thunk-based late resolution is deferred to Phase 11.
+                                Tasty.Type.RecThis(Tasty.Type.Named(sentinelUnresolved.id))
                 end match
 
             // Constant types (category 2: tag + Nat)
@@ -427,8 +468,33 @@ object TypeUnpickler:
             case TastyFormat.THIS =>
                 val inner = readTypeNode(view, ctx)
                 inner match
-                    case Tasty.Type.Named(id) => Tasty.Type.ThisType(id)
-                    case _                    => Tasty.Type.ThisType(makeUnresolvedSym("this-unknown").id)
+                    case Tasty.Type.Named(id) =>
+                        Tasty.Type.ThisType(id)
+                    case _ =>
+                        // F-A-005 fix: resolve THIS through the active scope's enclosing class.
+                        // The owner stack is maintained by AstUnpickler around every CLASSDEF / DEFDEF;
+                        // the topmost class-kind owner is the canonical "this" referent.
+                        // We use ownerAddrStack to obtain the Phase-B address-encoded id so that
+                        // Phase C remapType can look it up in addrToFinal and return the real class id.
+                        ctx.session match
+                            case s: DecodeSession =>
+                                val enclosingPair = s.ownerStack.reverseIterator
+                                    .zip(s.ownerAddrStack.reverseIterator)
+                                    .find { case (sym, _) =>
+                                        sym.kind == Tasty.SymbolKind.Class ||
+                                        sym.kind == Tasty.SymbolKind.Trait ||
+                                        sym.kind == Tasty.SymbolKind.Object
+                                    }
+                                enclosingPair match
+                                    case Some((_, addr)) =>
+                                        Tasty.Type.ThisType(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + addr))
+                                    case None =>
+                                        Tasty.Type.ThisType(sentinelUnresolved.id)
+                                end match
+                            case _ =>
+                                Tasty.Type.ThisType(sentinelUnresolved.id)
+                        end match
+                end match
 
             case TastyFormat.CLASSconst =>
                 val inner = readTypeNode(view, ctx)
@@ -457,7 +523,8 @@ object TypeUnpickler:
             case TastyFormat.TERMREFsymbol =>
                 val astRef = view.readNat()
                 val qual   = readTypeNode(view, ctx)
-                ctx.addrMap.get(astRef) match
+                // F-A-001 fix: convert section-relative ASTRef to absolute for addrMap lookup.
+                ctx.addrMap.get(ctx.sectionOffset + astRef) match
                     case Some(sym) => Tasty.Type.TermRef(qual, sym.name)
                     case None      => Tasty.Type.TermRef(qual, Tasty.Name(s"termrefsym@$astRef"))
 
@@ -470,8 +537,10 @@ object TypeUnpickler:
                 val astRef = view.readNat()
                 // qual is present but for Named resolution we only need the sym.
                 discard(readTypeNode(view, ctx)) // consume qual
-                // Use PHASE_B_ADDR_OFFSET + addr so Phase C can remap via addrMap.
-                if ctx.addrMap.contains(astRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + astRef))
+                // F-A-001 fix: convert section-relative ASTRef to absolute for addrMap lookup.
+                // Use PHASE_B_ADDR_OFFSET + absRef so Phase C can remap via addrMap.
+                val absRef = ctx.sectionOffset + astRef
+                if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
                 else Tasty.Type.Named(makeUnresolvedSym(s"typerefsym@$astRef").id)
 
             case TastyFormat.TYPEREF =>
@@ -624,7 +693,10 @@ object TypeUnpickler:
                 val binderAddr = view.readNat()
                 val paramNum   = view.readNat()
                 view.goto(end)
-                ctx.binderAddrMap.get(binderAddr) match
+                // F-A-001 fix: PARAMtype binderAddr is section-relative; binderAddrMap keys are absolute.
+                // Add sectionOffset to convert to the absolute key registered by the enclosing lambda handler.
+                val absBinderAddr = ctx.sectionOffset + binderAddr
+                ctx.binderAddrMap.get(absBinderAddr) match
                     case Some(params) if paramNum < params.length => Tasty.Type.ParamRef(params(paramNum).id, paramNum)
                     case _                                        => Tasty.Type.Named(makeUnresolvedSym(s"param@$binderAddr:$paramNum").id)
 
@@ -864,12 +936,14 @@ object TypeUnpickler:
         // Skip result type to find TypesNames start.
         skipOneType(view)
         // Collect TypesNames = (typeOrBounds_ASTRef paramName_NameRef)*
+        // F-A-001 fix: typeRef from TypesNames is section-relative; addrMap keys are absolute.
+        // Add ctx.sectionOffset to convert before lookup.
         val paramSyms = new mutable.ArrayBuffer[Tasty.Symbol]()
         while view.position < end do
             val typeRef = view.readNat()
             val nameRef = view.readNat()
             val symName = nameAt(ctx.names, nameRef)
-            val sym = ctx.addrMap.get(typeRef) match
+            val sym = ctx.addrMap.get(ctx.sectionOffset + typeRef) match
                 case Some(existingSym) => existingSym
                 case None =>
                     InternalSymbol.makeSymbol(
@@ -899,6 +973,8 @@ object TypeUnpickler:
         // Skip result type.
         skipOneType(view)
         // Collect TypesNames until we hit modifiers or end.
+        // F-A-001 fix: typeRef from TypesNames is section-relative; addrMap keys are absolute.
+        // Add ctx.sectionOffset to convert before lookup.
         val paramSyms = new mutable.ArrayBuffer[Tasty.Symbol]()
         while view.position < end do
             val tag = view.peekByte(view.position) & 0xff
@@ -908,7 +984,7 @@ object TypeUnpickler:
                 val typeRef = view.readNat()
                 val nameRef = view.readNat()
                 val symName = nameAt(ctx.names, nameRef)
-                val sym = ctx.addrMap.get(typeRef) match
+                val sym = ctx.addrMap.get(ctx.sectionOffset + typeRef) match
                     case Some(existingSym) => existingSym
                     case None =>
                         InternalSymbol.makeSymbol(
@@ -972,5 +1048,74 @@ object TypeUnpickler:
             tag == TastyFormat.PRIVATEqualified ||
             tag == TastyFormat.PROTECTEDqualified ||
             tag == TastyFormat.ANNOTATION
+
+    /** Decode a METHODtype lambda, consuming the tag byte.
+      *
+      * F-A-001 fix: AstUnpickler.readDefDefReturnType calls this directly when it detects a METHODtype tag, so that the full param/result
+      * lambda is decoded and stored as Type.TypeLambda(paramIds, resultType) in typeBySymbol. Prior to this, only the result leaf was
+      * decoded by the scalar readTypeIntoSession call.
+      *
+      * Wire format (TASTy spec): METHODtype Length result_Type (typeRef_Nat paramName_Nat)* Modifier*
+      *
+      * The view is positioned AT the METHODtype tag byte (not yet consumed). This method consumes the tag, reads the length, performs the
+      * two-pass param scan via readMethodParams, then decodes the result type and returns Type.TypeLambda.
+      */
+    private[reader] def decodeMethodType(view: ByteView, session: DecodeSession)(using frame: Frame)(using AllowUnsafe): Tasty.Type =
+        discard(view.readByte()) // consume METHODtype tag
+        val startAddr = view.positionInt - 1
+        val ctx = DecodeCtx(
+            session.names,
+            session.liveAddrMap,
+            session.arena,
+            session.addrCache,
+            session.inProgressRec,
+            session.binderAddrMap,
+            null,
+            0,
+            frame,
+            session
+        )
+        val end       = view.readEnd()
+        val paramSyms = readMethodParams(view, end, ctx)
+        ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
+        val resultType = readTypeNode(view, ctx)
+        view.goto(end)
+        val t = Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
+        ctx.arena.intern(t)
+    end decodeMethodType
+
+    /** Decode a POLYtype lambda, consuming the tag byte.
+      *
+      * F-A-001 fix: AstUnpickler.readDefDefReturnType calls this directly when it detects a POLYtype tag (generic methods), so that the
+      * type-parameter/result structure is properly captured as Type.TypeLambda(tparamIds, inner).
+      *
+      * Wire format (TASTy spec): POLYtype Length result_Type (typeRef_Nat paramName_Nat)* Modifier*
+      *
+      * The view is positioned AT the POLYtype tag byte (not yet consumed). This method consumes the tag, reads the length, performs the
+      * two-pass type-param scan via readTypeLambdaParams, then decodes the inner (result) type and returns Type.TypeLambda.
+      */
+    private[reader] def decodePolyType(view: ByteView, session: DecodeSession)(using frame: Frame)(using AllowUnsafe): Tasty.Type =
+        discard(view.readByte()) // consume POLYtype tag
+        val startAddr = view.positionInt - 1
+        val ctx = DecodeCtx(
+            session.names,
+            session.liveAddrMap,
+            session.arena,
+            session.addrCache,
+            session.inProgressRec,
+            session.binderAddrMap,
+            null,
+            0,
+            frame,
+            session
+        )
+        val end       = view.readEnd()
+        val paramSyms = readTypeLambdaParams(view, end, ctx)
+        ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
+        val resultType = readTypeNode(view, ctx)
+        view.goto(end)
+        val t = Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
+        ctx.arena.intern(t)
+    end decodePolyType
 
 end TypeUnpickler

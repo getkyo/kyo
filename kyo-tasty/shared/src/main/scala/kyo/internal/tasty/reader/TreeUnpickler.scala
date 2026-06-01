@@ -1227,7 +1227,8 @@ object TreeUnpickler:
     private[reader] def decodeTptAsType(
         view: ByteView,
         session: TypeUnpickler.DecodeSession,
-        tag: Int
+        tag: Int,
+        sectionOffset: Int = 0
     )(using Frame)(using AllowUnsafe): Tasty.Type =
         discard(view.readByte()) // consume the tag byte
         tag match
@@ -1235,26 +1236,32 @@ object TreeUnpickler:
             case TastyFormat.IDENTtpt =>
                 // IDENTtpt (111): cat-4 (tag + Nat + AST). Nat is a name-ref (discard); AST is the resolved type.
                 discard(view.readNat())
-                TypeUnpickler.readTypeIntoSession(view, session)
+                TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
 
             case TastyFormat.APPLIEDtpt =>
                 // APPLIEDtpt (162): cat-5 (tag + Length + tycon_Tree + arg_Tree*).
+                // F-A-004 fix: use TypeOps.applied to normalize FunctionN/ContextFunctionN/TupleN/Array,
+                // same as the APPLIEDtype handler in TypeUnpickler.decodeTag.
                 val payloadEnd = view.readEnd()
-                val tycon      = TypeUnpickler.readTypeIntoSession(view, session)
+                val tycon      = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 val args       = new scala.collection.mutable.ArrayBuffer[Tasty.Type]()
                 while view.position < payloadEnd do
-                    args += TypeUnpickler.readTypeIntoSession(view, session)
+                    args += TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 end while
                 view.goto(payloadEnd)
-                Tasty.Type.Applied(tycon, Chunk.from(args.toSeq))
+                val fqnHint: String | Null = tycon match
+                    case Tasty.Type.Named(id) if id.value < -1 =>
+                        session.unresolvedIdToFqn.getOrElse(id.value, null)
+                    case _ => null
+                kyo.internal.tasty.type_.TypeOps.applied(tycon, Chunk.from(args.toSeq), fqnHint)
 
             case TastyFormat.TYPEBOUNDStpt =>
                 // TYPEBOUNDStpt (164): cat-5 (tag + Length + lo_Tree + hi_Tree).
                 // Phase 13 will introduce Type.Bounds; until then, Type.Wildcard carries both lo and hi.
                 val payloadEnd = view.readEnd()
-                val lo         = TypeUnpickler.readTypeIntoSession(view, session)
+                val lo         = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 val hi =
-                    if view.position < payloadEnd then TypeUnpickler.readTypeIntoSession(view, session)
+                    if view.position < payloadEnd then TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                     else lo
                 view.goto(payloadEnd)
                 Tasty.Type.Wildcard(lo, hi)
@@ -1263,7 +1270,7 @@ object TreeUnpickler:
                 // ANNOTATEDtpt (154): cat-5 (tag + Length + tpe_Tree + annot_Tree).
                 // Phase 05 wires the annotation term; Phase 03 extracts the underlying type only.
                 val payloadEnd = view.readEnd()
-                val underlying = TypeUnpickler.readTypeIntoSession(view, session)
+                val underlying = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 view.goto(payloadEnd)
                 underlying
 
@@ -1273,9 +1280,9 @@ object TreeUnpickler:
                 val nameRef    = view.readNat()
                 val nm         = session.names(nameRef).asString
                 // Decode qual type to extract its FQN for cross-file resolution.
-                val qualType = TypeUnpickler.readTypeIntoSession(view, session)
+                val qualType = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 // Decode owner type (namespace); used for Phase C FQN resolution.
-                val ownerType = TypeUnpickler.readTypeIntoSession(view, session)
+                val ownerType = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 view.goto(payloadEnd)
                 // Build a qualified FQN: if qual resolves to a tracked cross-file ref, combine it
                 // with the selected name to form the full FQN for Phase C lookup.
@@ -1293,7 +1300,7 @@ object TreeUnpickler:
                 // REFINEDtpt (160): cat-5 (tag + Length + parent_Tree + decl_Tree*).
                 // Phase 03 extracts parent type only; refinement decls are deferred to Phase 05.
                 val payloadEnd = view.readEnd()
-                val parent     = TypeUnpickler.readTypeIntoSession(view, session)
+                val parent     = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 view.goto(payloadEnd)
                 parent
 
@@ -1316,18 +1323,18 @@ object TreeUnpickler:
                     tparamIds += sym.id
                     view.goto(tpEnd)
                 end while
-                val body = TypeUnpickler.readTypeIntoSession(view, session)
+                val body = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 view.goto(payloadEnd)
                 Tasty.Type.TypeLambda(Chunk.from(tparamIds.toSeq), body)
 
             case TastyFormat.MATCHtpt =>
                 // MATCHtpt (191): cat-5 (tag + Length + scrutinee_Tree + bound_Tree + case_Tree*).
                 val payloadEnd = view.readEnd()
-                val scrutinee  = TypeUnpickler.readTypeIntoSession(view, session)
-                val bound      = TypeUnpickler.readTypeIntoSession(view, session)
+                val scrutinee  = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
+                val bound      = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 val cases      = new scala.collection.mutable.ArrayBuffer[Tasty.Type]()
                 while view.position < payloadEnd do
-                    cases += TypeUnpickler.readTypeIntoSession(view, session)
+                    cases += TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 end while
                 Tasty.Type.MatchType(bound, scrutinee, Chunk.from(cases.toSeq))
 
@@ -1336,8 +1343,8 @@ object TreeUnpickler:
                 // Phase 05 will add Type.MatchCase as a first-class ADT case and replace this shape.
                 // Until then, encode as Applied(Named(MatchCaseSentinel), Chunk(pat, rhs)).
                 val payloadEnd = view.readEnd()
-                val pat        = TypeUnpickler.readTypeIntoSession(view, session)
-                val rhs        = TypeUnpickler.readTypeIntoSession(view, session)
+                val pat        = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
+                val rhs        = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 view.goto(payloadEnd)
                 Tasty.Type.Applied(Tasty.Type.Named(TypeUnpickler.MatchCaseSentinel.id), Chunk(pat, rhs))
 
