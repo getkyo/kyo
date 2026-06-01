@@ -28,6 +28,18 @@ class YamlCstTest extends Test:
             case other                             => fail(s"Expected ParseException failure, got $other")
     end parseFailure
 
+    private def scalar(value: String): Yaml.Cst.Node =
+        val mark = Yaml.Mark(0, 1, 1)
+        val span = Yaml.Cst.SourceSpan(mark, mark)
+        Yaml.Cst.Node.Scalar(
+            value,
+            Yaml.Cst.ScalarSyntax.Canonical,
+            Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+            span,
+            Absent
+        )
+    end scalar
+
     "Yaml.Cst public model" - {
 
         "builds structural paths with mapping keys and sequence indexes" in {
@@ -511,6 +523,84 @@ class YamlCstTest extends Test:
 
             assert(rendered == "---\nAlice\n---\n")
             assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(Some("Alice"), None)))
+        }
+    }
+
+    "Yaml.Cst event interop" - {
+
+        "emits scalar events equivalent to CST document" in {
+            val doc = Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+
+            val scalars = doc.events.collect { case Yaml.Events.Event.Scalar(value, _) => value }
+
+            assertResult(Chunk("name", "Alice", "age", "30"))(scalars)
+        }
+
+        "decodes a transformed CST through events without rendering" in {
+            val doc = Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+                .replace(Yaml.Cst.Path.root / "name", scalar("Bob"))
+                .getOrThrow
+            val reader = kyo.internal.yaml.YamlEventReader(doc.events, Yaml.SpecVersion.Yaml12)
+            reader.resetLimits(Yaml.DefaultMaxDepth, Yaml.DefaultMaxCollectionSize)
+
+            assertResult(MTPerson("Bob", 30))(summon[Schema[MTPerson]].readFrom(reader))
+        }
+
+        "emits anchors and aliases from CST events" in {
+            val doc = Yaml.cst("value: &name Alice\ncopy: *name\n").getOrThrow
+
+            assertResult((anchors = Chunk("name"), aliases = Chunk("name"))) {
+                val anchors = doc.events.collect {
+                    case Yaml.Events.Event.Scalar(_, Yaml.ScalarMeta(Present(anchor), _, _, _)) => anchor.value
+                }
+                val aliases = doc.events.collect {
+                    case Yaml.Events.Event.Alias(name, _) => name.value
+                }
+
+                (anchors = anchors, aliases = aliases)
+            }
+        }
+
+        "emits collection metadata tags and anchors from CST events" in {
+            val doc = Yaml.cst("items: &items !!seq\n  - one\n").getOrThrow
+
+            val metadata = doc.events.collect {
+                case Yaml.Events.Event.SequenceStart(Yaml.Meta(anchor, tag, _), size) =>
+                    (
+                        anchor = anchor.map(_.value),
+                        tag = tag.map(_.value),
+                        size = size
+                    )
+            }
+
+            assertResult(
+                Chunk((anchor = Maybe("items"), tag = Maybe("!!seq"), size = Maybe(1)))
+            )(metadata)
+        }
+
+        "emits only stream and document boundaries for empty documents" in {
+            val doc = Yaml.cst("").getOrThrow
+
+            assertResult(
+                Chunk(
+                    "StreamStart",
+                    "DocumentStart",
+                    "DocumentEnd",
+                    "StreamEnd"
+                )
+            ) {
+                doc.events.map {
+                    case Yaml.Events.Event.StreamStart(_)      => "StreamStart"
+                    case Yaml.Events.Event.DocumentStart(_)    => "DocumentStart"
+                    case Yaml.Events.Event.MappingStart(_, _)  => "MappingStart"
+                    case Yaml.Events.Event.SequenceStart(_, _) => "SequenceStart"
+                    case Yaml.Events.Event.Scalar(_, _)        => "Scalar"
+                    case Yaml.Events.Event.Alias(_, _)         => "Alias"
+                    case Yaml.Events.Event.CollectionEnd(_, _) => "CollectionEnd"
+                    case Yaml.Events.Event.DocumentEnd(_)      => "DocumentEnd"
+                    case Yaml.Events.Event.StreamEnd(_)        => "StreamEnd"
+                }
+            }
         }
     }
 
