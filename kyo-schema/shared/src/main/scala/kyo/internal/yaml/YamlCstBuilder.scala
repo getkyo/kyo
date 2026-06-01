@@ -46,11 +46,8 @@ private[kyo] object YamlCstBuilder:
     def events(document: Cst.Document): Chunk[Event] =
         val buffer    = ArrayBuffer.empty[Event]
         val collector = Collector[Nothing](buffer)
-        emitDocument(document, ())(collector) match
-            case Result.Success(_) => Chunk.from(buffer)
-            case Result.Failure(_) => Chunk.empty
-            case Result.Panic(_)   => Chunk.empty
-        end match
+        val _         = emitDocument(document, ())(collector).getOrThrow
+        Chunk.from(buffer)
     end events
 
     def emitDocument[Ctx, Err](

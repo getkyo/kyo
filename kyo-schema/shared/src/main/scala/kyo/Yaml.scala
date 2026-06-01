@@ -951,10 +951,20 @@ object Yaml:
             case Canonical
         end AliasSyntax
 
-        /** Structural path to a YAML CST node. */
+        /** Structural path to a YAML CST node.
+          *
+          * A path describes how to reach a node by YAML structure, not by character offset. [[Path.Segment.Key]] selects a mapping entry by
+          * key text and [[Path.Segment.Index]] selects a sequence entry by zero-based position. The root path has no segments. Use
+          * [[show]] for diagnostics and user-facing edit errors.
+          */
         opaque type Path = Chunk[Path.Segment]
 
-        /** Constructors and accessors for [[Path]]. */
+        /** Constructors and accessors for structural CST paths.
+          *
+          * Paths are opaque over `Chunk[Segment]` so callers can inspect segments without confusing a path with an arbitrary collection.
+          * Appending with `/` keeps edit and lookup call sites compact while still preserving whether each step is a mapping key or a
+          * sequence index.
+          */
         object Path:
             /** One structural path step. */
             enum Segment derives CanEqual:
@@ -1012,7 +1022,13 @@ object Yaml:
             end extension
         end Path
 
-        /** One YAML CST node. */
+        /** One YAML CST node.
+          *
+          * CST nodes carry the decoded structural value, source syntax metadata, and the source span that produced the node. When
+          * `originalSource` is present, renderers may preserve that exact source slice for unchanged source-backed nodes. When it is absent,
+          * renderers emit canonical YAML events from the node content and the supplied writer configuration. Trivia that belongs to entries
+          * or documents is kept outside the node so structural editing can distinguish comments and whitespace from YAML values.
+          */
         enum Node derives CanEqual:
             /** Mapping node with entry CSTs. */
             case Mapping(entries: Chunk[MappingEntry], syntax: MappingSyntax, meta: Meta, span: SourceSpan, originalSource: Maybe[String])
@@ -1050,7 +1066,15 @@ object Yaml:
             trailingTrivia: Chunk[Trivia] = Chunk.empty
         ) derives CanEqual
 
-        /** One YAML document CST. */
+        /** One YAML document CST.
+          *
+          * A document has an optional root node because YAML streams can contain empty documents. `leadingTrivia` and `trailingTrivia`
+          * reserve comments, blank lines, and whitespace that belong to the document rather than a particular node. `span` covers the
+          * document's source extent when it came from text, or a synthetic extent for programmatically constructed documents.
+          *
+          * Rendering is source-preserving when `originalSource` is present: the original text is returned unchanged. Otherwise the document
+          * is rendered canonically by emitting YAML events from the CST. The `events` method exposes that canonical event stream directly.
+          */
         case class Document(
             root: Maybe[Node],
             leadingTrivia: Chunk[Trivia],
@@ -1079,7 +1103,12 @@ object Yaml:
                 internal.yaml.YamlCstEdits.remove(this, path)
         end Document
 
-        /** YAML stream CST containing one or more documents. */
+        /** YAML stream CST containing zero or more documents.
+          *
+          * Stream-level trivia reserves content that belongs outside any individual document. When `originalSource` is present, rendering
+          * returns that full source stream unchanged. When it is absent, each document is rendered canonically and multi-document streams
+          * are separated with explicit `---` markers so the output remains parseable as a YAML stream.
+          */
         case class Stream(
             documents: Chunk[Document],
             leadingTrivia: Chunk[Trivia],
