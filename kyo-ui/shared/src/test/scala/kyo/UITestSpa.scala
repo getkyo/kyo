@@ -29,6 +29,22 @@ abstract class UITestSpa extends Test:
     private val retrySchedule: Schedule =
         Schedule.exponentialBackoff(initial = 1.second, factor = 2, maxBackoff = 8.seconds).take(2)
 
+    /** Marker substring in the unsupported-platform setup failure (kyo.internal.ChromeDownloader). Keep in sync with kyo-browser's BrowserTest. */
+    private val unsupportedPlatformMarker = "cannot auto-download chrome-headless-shell"
+
+    /** On platforms with no chrome-headless-shell (linux-arm64, win-arm64), Chrome launch fails with a BrowserSetupFailedException carrying
+      * install guidance. Translate that one case into a ScalaTest `cancel(...)` so those platforms report the SPA tests as canceled
+      * (skipped) rather than red failures that push the job past its timeout. Mirrors UITest / kyo-browser's BrowserTest.
+      */
+    private def cancelOnUnsupportedPlatform[A, S](
+        f: A < (Async & Scope & Abort[BrowserSetupException] & S)
+    )(using Frame): A < (Async & Scope & Abort[BrowserSetupException] & S) =
+        Abort.recover[BrowserSetupException] { (ex: BrowserSetupException) =>
+            val msg = ex.getMessage
+            if msg != null && msg.contains(unsupportedPlatformMarker) then Sync.defer(cancel(msg))
+            else Abort.fail[BrowserSetupException](ex)
+        } { f }
+
     /** Polls `window.__kyoUiHarnessReady` until it becomes `true` or the budget runs out (40 polls at 50ms = 2s max). The HTML shell sets
       * this flag after importing the bundle's `kyoUiTest` export and assigning it to `window.kyoUiTest`; reading it removes a sleep-based
       * race from the test path.
@@ -111,43 +127,45 @@ abstract class UITestSpa extends Test:
         Frame
     ): A < (Async & Scope & Abort[BrowserException] & S) =
         Retry[BrowserConnectionLostException | BrowserSetupFailedException](retrySchedule) {
-            for
-                bundleBytes <- Abort.run[FileReadException](Path(SpaHarnessLocation.bundleDir, "main.js").readBytes).map {
-                    case Result.Success(bytes) => bytes
-                    case Result.Failure(err)   => Abort.panic(err)
-                    case Result.Panic(t)       => Abort.panic(t)
-                }
-                pageHandler = HttpRoute.getText("/").handler(_ =>
-                    HttpResponse.ok(htmlShell).addHeader("Content-Type", "text/html; charset=utf-8")
-                )
-                bundleHandler = HttpRoute.getBinary("/main.js").handler(_ =>
-                    HttpResponse.ok(bundleBytes).addHeader("Content-Type", "application/javascript; charset=utf-8")
-                )
-                server <- HttpServer.init(0, "localhost")(pageHandler, bundleHandler)
-                result <- Browser.runShared() {
-                    for
-                        _ <- Browser.goto(s"http://localhost:${server.port}/")
-                        _ <- waitForHarness
-                        // `Browser.eval` / `evalJson` do NOT set awaitPromise on CDP Runtime.evaluate
-                        // (only the private `evalJsAwaiting` does), and JSON.stringify on a Promise
-                        // returns "{}". So we fire the scenario async, write its resolved value into
-                        // `window.__kyoUiTestResult`, then poll until that holder is populated. `f`
-                        // then evaluates against the resolved-value expression, which is now a plain
-                        // synchronous JS value that `Browser.eval` and `Browser.evalJson` can return.
-                        _ <- Browser.evalDiscard(
-                            """(() => {
+            cancelOnUnsupportedPlatform {
+                for
+                    bundleBytes <- Abort.run[FileReadException](Path(SpaHarnessLocation.bundleDir, "main.js").readBytes).map {
+                        case Result.Success(bytes) => bytes
+                        case Result.Failure(err)   => Abort.panic(err)
+                        case Result.Panic(t)       => Abort.panic(t)
+                    }
+                    pageHandler = HttpRoute.getText("/").handler(_ =>
+                        HttpResponse.ok(htmlShell).addHeader("Content-Type", "text/html; charset=utf-8")
+                    )
+                    bundleHandler = HttpRoute.getBinary("/main.js").handler(_ =>
+                        HttpResponse.ok(bundleBytes).addHeader("Content-Type", "application/javascript; charset=utf-8")
+                    )
+                    server <- HttpServer.init(0, "localhost")(pageHandler, bundleHandler)
+                    result <- Browser.runShared() {
+                        for
+                            _ <- Browser.goto(s"http://localhost:${server.port}/")
+                            _ <- waitForHarness
+                            // `Browser.eval` / `evalJson` do NOT set awaitPromise on CDP Runtime.evaluate
+                            // (only the private `evalJsAwaiting` does), and JSON.stringify on a Promise
+                            // returns "{}". So we fire the scenario async, write its resolved value into
+                            // `window.__kyoUiTestResult`, then poll until that holder is populated. `f`
+                            // then evaluates against the resolved-value expression, which is now a plain
+                            // synchronous JS value that `Browser.eval` and `Browser.evalJson` can return.
+                            _ <- Browser.evalDiscard(
+                                """(() => {
                               |  window.__kyoUiTestResult = undefined;
                               |  window.__kyoUiTestError = undefined;
                               |  window.kyoUiTest.runScenario('""".stripMargin + scenario + """')
                               |    .then(r => { window.__kyoUiTestResult = r; })
                               |    .catch(e => { window.__kyoUiTestError = String(e); });
                               |})()""".stripMargin
-                        )
-                        _      <- waitForScenarioResult(scenario)
-                        result <- f("window.__kyoUiTestResult")
-                    yield result
-                }
-            yield result
+                            )
+                            _      <- waitForScenarioResult(scenario)
+                            result <- f("window.__kyoUiTestResult")
+                        yield result
+                    }
+                yield result
+            }
         }
     end withSpa
 
