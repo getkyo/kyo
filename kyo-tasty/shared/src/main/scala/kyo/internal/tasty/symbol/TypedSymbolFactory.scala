@@ -189,12 +189,10 @@ private[kyo] object TypedSymbolFactory:
                     memberIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_)))
                 )
             case SymbolKind.EnumCase =>
-                // F-E-007 (Phase 07 partial): enum-case classes are classified as SymbolKind.EnumCase
-                // but materialise as Symbol.Class until Phase 13 adds Symbol.EnumCase as a proper
-                // subtype. The Enum+Case flags on the produced Symbol.Class let callers identify
-                // enum cases via `sym.flags.contains(Flag.Enum) && sym.flags.contains(Flag.Case)`.
-                // Phase 13 will remove `final` from Symbol.Class and add Symbol.EnumCase extends Class.
-                Tasty.Symbol.Class(
+                // F-E-007 (Phase 13): emit Symbol.EnumCase as a proper subtype of Symbol.Class.
+                // Symbol.Class is no longer final; Symbol.EnumCase extends it so callers matching
+                // Symbol.Class still work, but callers can now discriminate via Symbol.EnumCase.
+                Tasty.Symbol.EnumCase(
                     id = sid,
                     name = d.name,
                     flags = d.flags,

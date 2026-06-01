@@ -354,69 +354,32 @@ object ClasspathOrchestrator:
                                 sym.kind == Tasty.SymbolKind.EnumCase
                             newIsStructural || !prevIsStructural
                     if shouldStore then state.fqnIndex(indexKey) = sym
-                    // F-E-001 / Q-003 / HARD RULE 8 dual-index (source FQN):
-                    // Pattern: `<pkg>.<owner>$package$.<TypeName>` -> source FQN is `<pkg>.<TypeName>`.
-                    // Only applies when the opaque type is a DIRECT child of a `$package$` owner:
-                    // the segment after `$package$.` must contain no dot (to avoid indexing nested members).
-                    // Algorithm (per plan Q-003 regex): find `$package$.`, extract <pkg> as everything
-                    // before the last dot before `$package$`, and <TypeName> as the segment after `$package$.`.
-                    if sym.kind == Tasty.SymbolKind.OpaqueType then
-                        val pkgSuffix    = "$package$."
-                        val pkgSuffixIdx = fqn.indexOf(pkgSuffix)
-                        if pkgSuffixIdx >= 0 then
-                            val afterPkg = fqn.substring(pkgSuffixIdx + pkgSuffix.length)
-                            // Only register source FQN for direct opaque type children (no further dots).
-                            if !afterPkg.contains('.') then
-                                val beforePkg      = fqn.substring(0, pkgSuffixIdx) // e.g. "kyo.Maybe"
-                                val lastDot        = beforePkg.lastIndexOf('.')
-                                val pkgPrefix      = if lastDot >= 0 then beforePkg.substring(0, lastDot + 1) else ""
-                                val sourceFqn      = pkgPrefix + afterPkg           // e.g. "kyo." + "Maybe" = "kyo.Maybe"
-                                val existingSource = state.fqnIndex.get(sourceFqn)
-                                val storeSource = existingSource match
-                                    case None       => true
-                                    case Some(prev) => prev.kind != Tasty.SymbolKind.OpaqueType
-                                if storeSource then state.fqnIndex(sourceFqn) = sym
-                            end if
-                        end if
-                    end if
-                    // F-I-006 / HARD RULE 8 dual-index Rule A: Object companion source FQN.
-                    // When the binary key ends in `$` (all Object symbols; line 337 appended it),
-                    // also register the source FQN (key without the trailing `$`).
-                    // e.g. `scala.Predef$` -> also index `scala.Predef`.
-                    // Guard: additive only -- write source key only when NO entry exists yet.
-                    // A class or trait already registered at the source key takes precedence.
-                    // A Val forwarder (non-structural) is overwritten by the Object so that
-                    // the user-facing source FQN resolves to the canonical companion Object.
-                    if sym.kind == Tasty.SymbolKind.Object && indexKey.endsWith("$") then
-                        val sourceFqn = indexKey.stripSuffix("$")
-                        if sourceFqn.nonEmpty then
+                    // HARD RULE 8 / HARD RULE 10: unified source-FQN dual-index via FqnNormalizer.
+                    // Replaces the 3 separate opaque / $-suffix / $. blocks from Phases 06/09.
+                    // canonicalSourceFqn handles all 4 mangling patterns in order; if the result
+                    // differs from indexKey, register the source FQN as an additional key.
+                    // Synthetic names (anonfun, proxy, etc.) are not registered in user-facing indexes.
+                    if !kyo.internal.tasty.symbol.FqnNormalizer.isSyntheticName(indexKey) then
+                        val sourceFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(indexKey)
+                        if sourceFqn != indexKey && sourceFqn.nonEmpty then
                             val existingSource = state.fqnIndex.get(sourceFqn)
                             val storeSource = existingSource match
                                 case None       => true
                                 case Some(prev) =>
-                                    // Object wins over non-structural entries (Val, Method, etc.)
-                                    // but NOT over Class, Trait, EnumCase, or another Object.
-                                    prev.kind != Tasty.SymbolKind.Class &&
-                                    prev.kind != Tasty.SymbolKind.Trait &&
-                                    prev.kind != Tasty.SymbolKind.Object &&
-                                    prev.kind != Tasty.SymbolKind.EnumCase
+                                    // Structural symbols (Class, Trait, Object, EnumCase, OpaqueType) win
+                                    // over non-structural entries; but do not overwrite another structural entry.
+                                    val prevIsStructural = prev.kind == Tasty.SymbolKind.Class ||
+                                        prev.kind == Tasty.SymbolKind.Trait ||
+                                        prev.kind == Tasty.SymbolKind.Object ||
+                                        prev.kind == Tasty.SymbolKind.EnumCase ||
+                                        prev.kind == Tasty.SymbolKind.OpaqueType
+                                    val newIsStructural = sym.kind == Tasty.SymbolKind.Class ||
+                                        sym.kind == Tasty.SymbolKind.Trait ||
+                                        sym.kind == Tasty.SymbolKind.Object ||
+                                        sym.kind == Tasty.SymbolKind.EnumCase ||
+                                        sym.kind == Tasty.SymbolKind.OpaqueType
+                                    newIsStructural && !prevIsStructural
                             if storeSource then state.fqnIndex(sourceFqn) = sym
-                        end if
-                    end if
-                    // F-I-006 / HARD RULE 8 dual-index Rule B: object-nested member source FQN.
-                    // When the binary key contains `$.` (a member nested inside an object, e.g.
-                    // `kyo.Tasty$.Symbol`), also register the source FQN with `$.` replaced by `.`
-                    // (e.g. `kyo.Tasty.Symbol`).
-                    // Rule B is applied AFTER Rule A; an Object key ending in `$` (e.g. `scala.Predef$`)
-                    // does NOT contain `$.` so there is no overlap between the two rules.
-                    // Guard: strictly additive -- write source key ONLY when it is absent.
-                    // If a natural `fr.fqns` iteration has already registered a direct source-FQN
-                    // entry, that entry is more authoritative than any Rule-B-derived key and must
-                    // not be overwritten. Rule B fills gaps; it does not override direct registrations.
-                    if indexKey.contains("$.") then
-                        val sourceFqn = indexKey.replace("$.", ".")
-                        if state.fqnIndex.get(sourceFqn).isEmpty then
-                            state.fqnIndex(sourceFqn) = sym
                         end if
                     end if
                     if seenSyms.add(sym) then state.allSyms += sym
@@ -610,8 +573,19 @@ object ClasspathOrchestrator:
                                     val finalIdx = fr.addrToFinal.getOrDefault(addr, -1)
                                     if finalIdx >= 0 then Tasty.Type.ThisType(SymbolId(finalIdx))
                                     else t
+                                else if v < -1 then
+                                    // F-A-005 cross-file: FQN-tracked nested-class ThisType.
+                                    val finalIdx = fr.negIdToFinal.getOrDefault(v, -1)
+                                    if finalIdx >= 0 then Tasty.Type.ThisType(SymbolId(finalIdx))
+                                    else t
                                 else t
                                 end if
+                            // F-A-009: TypeRef must recurse like TermRef.
+                            case Tasty.Type.TypeRef(qual, name) =>
+                                Tasty.Type.TypeRef(remapType(qual, fr), name)
+                            // F-A-010: Bounds must recurse into lo and hi.
+                            case Tasty.Type.Bounds(lo, hi) =>
+                                Tasty.Type.Bounds(remapType(lo, fr), remapType(hi, fr))
                             case _ => t
 
                     var frIdx2 = 0
@@ -785,11 +759,31 @@ object ClasspathOrchestrator:
                                     fqnToId(fqn)
                                 else -1
                                 end if
+                            case Tasty.Type.TypeRef(Tasty.Type.Named(qualSid), memberName)
+                                if qualSid.value >= 0 =>
+                                // F-A-009: TypeRef may also carry @Child type args after this phase.
+                                val qualFqn = qualIdToFqn(qualSid.value)
+                                if qualFqn != null then
+                                    val fqn = if qualFqn.nonEmpty then qualFqn + "." + memberName.asString
+                                    else memberName.asString
+                                    fqnToId(fqn)
+                                else -1
+                                end if
                             case Tasty.Type.TermRef(Tasty.Type.ThisType(clsSid), memberName)
                                 if clsSid.value >= 0 =>
                                 // Enum case encoding: TermRef(ThisType(enclosingClassId), caseName).
                                 // The qualifier is the enclosing class's ThisType; build the FQN from
                                 // enclosingClass FQN + "." + caseName.
+                                val qualFqn = qualIdToFqn(clsSid.value)
+                                if qualFqn != null then
+                                    val fqn = if qualFqn.nonEmpty then qualFqn + "." + memberName.asString
+                                    else memberName.asString
+                                    fqnToId(fqn)
+                                else -1
+                                end if
+                            case Tasty.Type.TypeRef(Tasty.Type.ThisType(clsSid), memberName)
+                                if clsSid.value >= 0 =>
+                                // F-A-009 parallel: TypeRef(ThisType(...), name) for enum cases.
                                 val qualFqn = qualIdToFqn(clsSid.value)
                                 if qualFqn != null then
                                     val fqn = if qualFqn.nonEmpty then qualFqn + "." + memberName.asString
@@ -815,7 +809,12 @@ object ClasspathOrchestrator:
                                     anns(ai).annotationType match
                                         case Tasty.Type.Applied(Tasty.Type.TermRef(_, childName), args)
                                             if args.size == 1 && childName.asString == "Child" =>
-                                            // @Child[T] enriched tycon: extract the subclass TypeRef T.
+                                            // @Child[T] enriched tycon (TermRef form, pre-Phase-13).
+                                            val subId = resolveChildRef(args(0))
+                                            if subId >= 0 then buf += subId
+                                        case Tasty.Type.Applied(Tasty.Type.TypeRef(_, childName), args)
+                                            if args.size == 1 && childName.asString == "Child" =>
+                                            // F-A-009: @Child[T] enriched tycon now arrives as TypeRef after TYPEREF fix.
                                             val subId = resolveChildRef(args(0))
                                             if subId >= 0 then buf += subId
                                         case _ => ()
@@ -827,6 +826,122 @@ object ClasspathOrchestrator:
                             end if
                         end if
                         permitIdx += 1
+                    end while
+
+                    // Sub-target 3: Cross-file TYPEREFsymbol resolution.
+                    // Build a global addr -> finalIdx map from all per-file addrToFinal maps.
+                    // Any Named(PHASE_B_ADDR_OFFSET + addr) that was left unresolved by the per-file
+                    // remapType pass (because the addr belongs to a different file) is resolved here.
+                    // HARD RULE 7: runs before materializeSymbols.
+                    val globalAddrToFinal = new java.util.HashMap[Int, Int](count * 2)
+                    var xfFrIdx           = 0
+                    for fr <- fileResults do
+                        val frRemap = fileRemaps(xfFrIdx)
+                        frRemap.addrToFinal.forEach: (addr, finalIdx) =>
+                            discard(globalAddrToFinal.putIfAbsent(addr, finalIdx))
+                        xfFrIdx += 1
+                    end for
+
+                    /** Rewrite cross-file Named refs using the global address map. */
+                    def rewriteCrossFile(t: Tasty.Type): Tasty.Type =
+                        t match
+                            case Tasty.Type.Named(id) if id.value >= phaseBOffset =>
+                                val addr     = id.value - phaseBOffset
+                                val finalIdx = globalAddrToFinal.getOrDefault(addr, -1)
+                                if finalIdx >= 0 then Tasty.Type.Named(SymbolId(finalIdx))
+                                else t
+                            case Tasty.Type.Named(_) => t
+                            case Tasty.Type.Applied(base, args) =>
+                                Tasty.Type.Applied(rewriteCrossFile(base), args.map(rewriteCrossFile))
+                            case Tasty.Type.TypeLambda(paramIds, body) =>
+                                Tasty.Type.TypeLambda(paramIds, rewriteCrossFile(body))
+                            case Tasty.Type.Wildcard(lo, hi) =>
+                                Tasty.Type.Wildcard(rewriteCrossFile(lo), rewriteCrossFile(hi))
+                            case Tasty.Type.Bounds(lo, hi) =>
+                                Tasty.Type.Bounds(rewriteCrossFile(lo), rewriteCrossFile(hi))
+                            case Tasty.Type.SuperType(s, m) =>
+                                Tasty.Type.SuperType(rewriteCrossFile(s), rewriteCrossFile(m))
+                            case Tasty.Type.ThisType(clsId) =>
+                                val v = clsId.value
+                                if v >= phaseBOffset then
+                                    val addr     = v - phaseBOffset
+                                    val finalIdx = globalAddrToFinal.getOrDefault(addr, -1)
+                                    if finalIdx >= 0 then Tasty.Type.ThisType(SymbolId(finalIdx))
+                                    else t
+                                else t
+                                end if
+                            case Tasty.Type.TermRef(prefix, name) =>
+                                Tasty.Type.TermRef(rewriteCrossFile(prefix), name)
+                            case Tasty.Type.TypeRef(qual, name) =>
+                                Tasty.Type.TypeRef(rewriteCrossFile(qual), name)
+                            case Tasty.Type.Function(params, result, isCtx) =>
+                                Tasty.Type.Function(params.map(rewriteCrossFile), rewriteCrossFile(result), isCtx)
+                            case Tasty.Type.AndType(l, r) =>
+                                Tasty.Type.AndType(rewriteCrossFile(l), rewriteCrossFile(r))
+                            case Tasty.Type.OrType(l, r) =>
+                                Tasty.Type.OrType(rewriteCrossFile(l), rewriteCrossFile(r))
+                            case _ => t
+                    end rewriteCrossFile
+
+                    // Apply cross-file rewrite to parentTypes and declaredType.
+                    var xfIdx = 0
+                    while xfIdx < count do
+                        val desc = descs(xfIdx)
+                        if desc.parentTypes.nonEmpty then
+                            desc.parentTypes = desc.parentTypes.map(rewriteCrossFile)
+                        end if
+                        desc.declaredType match
+                            case Maybe.Present(t) =>
+                                val rewritten = rewriteCrossFile(t)
+                                if rewritten ne t then desc.declaredType = Maybe(rewritten)
+                            case Maybe.Absent => ()
+                        end match
+                        xfIdx += 1
+                    end while
+
+                    // Sub-target 5: Q-005 default parent injection.
+                    // For classes/traits/enum-cases with empty parentTypes after cross-file resolution,
+                    // inject a synthetic default parent. Run AFTER cross-file resolution so cross-file
+                    // resolved parents are visible before deciding whether to inject.
+                    // HARD RULE 7: runs before materializeSymbols.
+
+                    def lookupFqnFinalId(fqn: String): Int =
+                        state.fqnIndex.get(fqn) match
+                            case Some(p) => symbolIdMap.getOrDefault(p, -1)
+                            case None    => -1
+                    end lookupFqnFinalId
+
+                    var qIdx = 0
+                    while qIdx < count do
+                        val desc = descs(qIdx)
+                        val k    = desc.kind
+                        if (k == Tasty.SymbolKind.Class || k == Tasty.SymbolKind.Trait || k == Tasty.SymbolKind.EnumCase) &&
+                            desc.parentTypes.isEmpty
+                        then
+                            val fqn = idToFqnForPermits.get(qIdx)
+                            if fqn != null then
+                                val syntheticParent: Maybe[Tasty.Type] =
+                                    if fqn == "java.lang.Object" || fqn == "scala.Any" || fqn == "scala.AnyRef" then
+                                        Maybe.Absent
+                                    else if fqn == "scala.AnyVal" then
+                                        val anyId = lookupFqnFinalId("scala.Any")
+                                        if anyId >= 0 then Maybe(Tasty.Type.Named(SymbolId(anyId)))
+                                        else Maybe.Absent
+                                    else if kyo.internal.tasty.symbol.FqnNormalizer.isValueClass(fqn) then
+                                        val anyValId = lookupFqnFinalId("scala.AnyVal")
+                                        if anyValId >= 0 then Maybe(Tasty.Type.Named(SymbolId(anyValId)))
+                                        else Maybe.Absent
+                                    else
+                                        val anyRefId = lookupFqnFinalId("scala.AnyRef")
+                                        if anyRefId >= 0 then Maybe(Tasty.Type.Named(SymbolId(anyRefId)))
+                                        else Maybe.Absent
+                                end syntheticParent
+                                syntheticParent match
+                                    case Maybe.Present(t) => desc.parentTypes = Chunk(t)
+                                    case Maybe.Absent     => ()
+                            end if
+                        end if
+                        qIdx += 1
                     end while
 
                     for fr <- fileResults do

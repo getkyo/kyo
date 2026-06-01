@@ -621,13 +621,13 @@ object TreeUnpickler:
                 Tasty.Tree.SelectOuter(qual, nm, levels, tpe)
 
             case TastyFormat.REPEATED =>
+                // F-B-005: REPEATED encodes a varargs sequence; emit Tree.SeqLiteral.
                 val end   = view.readEnd()
                 val trees = readTreesUntil(view, end, ctx)
                 view.goto(end)
-                // Represent as Apply to SeqLiteral-like.
-                Tasty.Tree.Apply(
-                    Tasty.Tree.Ident(Tasty.Name("_repeated"), Tasty.Type.Named(makeUnresolvedSym("repeated").id)),
-                    trees
+                Tasty.Tree.SeqLiteral(
+                    trees,
+                    Tasty.Type.Wildcard(Tasty.Type.Named(makeUnresolvedSym("Nothing").id), Tasty.Type.Named(makeUnresolvedSym("Any").id))
                 )
 
             case TastyFormat.BIND =>
@@ -771,15 +771,14 @@ object TreeUnpickler:
             // Cat-5 handlers for type-form tags that appear in term position.
 
             case TastyFormat.TERMREFin =>
-                // TERMREFin: cat-5 (tag + Length + NameRef + qual_Type + owner_Type).
-                // Term-position path-dependent reference. Deferred to Phase 13 Tree.TermRef;
-                // until then, decode as Select(Ident(name, qualType), name, qualType).
+                // F-B-004: TERMREFin (174) is a term-position path-dependent reference.
+                // Wire format: tag + Length + NameRef + qual_Type + owner_Type.
                 val end     = view.readEnd()
                 val nameRef = view.readNat()
                 val nm      = nameFromRef(nameRef, ctx)
                 val qual    = readType(view, ctx)
                 view.goto(end)
-                Tasty.Tree.Select(Tasty.Tree.Ident(nm, qual), nm, qual)
+                Tasty.Tree.TermRef(Tasty.Tree.Ident(nm, qual), nm)
 
             case TastyFormat.TYPEREFin =>
                 // TYPEREFin: cat-5 (tag + Length + NameRef + qual_Type + owner_Type).
@@ -1024,20 +1023,27 @@ object TreeUnpickler:
         Chunk.from(buf.toSeq)
     end readCaseDefs
 
-    /** Read optional guard + mandatory body from a CASEDEF payload (after pattern has been read). */
+    /** Read optional guard + mandatory body from a CASEDEF payload (after pattern has been read).
+      *
+      * F-B-008: uses explicit GUARD-tag (135) peek instead of a heuristic. The GUARD tag is a
+      * category-5 (length-prefixed) node. When present, consume its tag byte, read the length prefix,
+      * decode the guard tree, then read the body. When absent, the next node is the body directly.
+      */
     private def readCaseDefGuardAndBody(view: ByteView, end: Long, ctx: DecodeCtx)(using AllowUnsafe): (Maybe[Tasty.Tree], Tasty.Tree) =
-        // dotty places guard then body; guard is optional.
-        // Heuristic: if two trees remain, first is guard, second is body. If one, it is the body.
         if view.position >= end then
             (Maybe.Absent, Tasty.Tree.Unknown(0, 0))
         else
-            val first = readTree(view, ctx)
-            if view.position < end then
-                val body = readTree(view, ctx)
-                (Maybe(first), body)
-            else
-                (Maybe.Absent, first)
-            end if
+            val maybeGuard =
+                if view.position < end && (view.peekByte(view.position) & 0xff) == TastyFormat.GUARD then
+                    discard(view.readByte()) // consume GUARD tag
+                    val gEnd = view.readEnd()
+                    val g    = readTree(view, ctx)
+                    view.goto(gEnd)
+                    Maybe(g)
+                else
+                    Maybe.Absent
+            val body = readTree(view, ctx)
+            (maybeGuard, body)
         end if
     end readCaseDefGuardAndBody
 
@@ -1389,14 +1395,14 @@ object TreeUnpickler:
 
             case TastyFormat.TYPEBOUNDStpt =>
                 // TYPEBOUNDStpt (164): cat-5 (tag + Length + lo_Tree + hi_Tree).
-                // Phase 13 will introduce Type.Bounds; until then, Type.Wildcard carries both lo and hi.
+                // F-A-010: explicit declared bounds use Type.Bounds, not Type.Wildcard.
                 val payloadEnd = view.readEnd()
                 val lo         = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 val hi =
                     if view.position < payloadEnd then TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                     else lo
                 view.goto(payloadEnd)
-                Tasty.Type.Wildcard(lo, hi)
+                Tasty.Type.Bounds(lo, hi)
 
             case TastyFormat.ANNOTATEDtpt =>
                 // ANNOTATEDtpt (154): cat-5 (tag + Length + tpe_Tree + annot_Tree).

@@ -590,6 +590,10 @@ object SnapshotWriter:
             case Tasty.Type.TermRef(qual, name) =>
                 val q = tyconFqn(qual, symbolById, fqnBySymbol)
                 if q.nonEmpty then q + "." + name.asString else name.asString
+            case Tasty.Type.TypeRef(qual, name) =>
+                // F-A-009: TYPEREF now emits TypeRef; serialize the same way as TermRef.
+                val q = tyconFqn(qual, symbolById, fqnBySymbol)
+                if q.nonEmpty then q + "." + name.asString else name.asString
             case Tasty.Type.Applied(base, _) =>
                 tyconFqn(base, symbolById, fqnBySymbol)
             case _ => ""

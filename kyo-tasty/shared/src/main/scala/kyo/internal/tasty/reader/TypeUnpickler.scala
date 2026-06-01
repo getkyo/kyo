@@ -598,11 +598,10 @@ object TypeUnpickler:
                 Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
 
             case TastyFormat.TYPEREF =>
+                // F-A-009: TYPEREF (117) is a type-position reference, distinct from TermRef.
                 val nameRef = view.readNat()
                 val qual    = readTypeNode(view, ctx)
-                // For TYPEREF, try to resolve from qual context; return Named if resolvable.
-                // For now, build a TermRef-style qualified reference.
-                Tasty.Type.TermRef(qual, nameAt(ctx.names, nameRef))
+                Tasty.Type.TypeRef(qual, nameAt(ctx.names, nameRef))
 
             // ── Category 5 (tag + Length + payload) ──────────────────────────────
 
@@ -810,7 +809,8 @@ object TypeUnpickler:
                         val hi = readTypeNode(view, ctx)
                         // Skip variance tags.
                         view.goto(end)
-                        Tasty.Type.Wildcard(lo, hi)
+                        // F-A-010: TYPEBOUNDS with explicit hi is a declared bounds, not a wildcard.
+                        Tasty.Type.Bounds(lo, hi)
                     end if
                 end if
 
@@ -844,12 +844,12 @@ object TypeUnpickler:
 
             case TastyFormat.TYPEBOUNDStpt =>
                 // TYPEBOUNDStpt (164): cat-5 (tag + Length + lo_Tree + hi_Tree).
-                // Phase 13 will add Type.Bounds; until then materialize as Type.Wildcard.
+                // F-A-010: explicit bounds use Type.Bounds, not Type.Wildcard.
                 val end = view.readEnd()
                 val lo  = readTypeNode(view, ctx)
                 val hi  = if view.position < end then readTypeNode(view, ctx) else lo
                 view.goto(end)
-                Tasty.Type.Wildcard(lo, hi)
+                Tasty.Type.Bounds(lo, hi)
 
             case TastyFormat.ANNOTATEDtpt =>
                 // ANNOTATEDtpt (154): cat-5 (tag + Length + tpe_Tree + annot_Tree).

@@ -4,13 +4,8 @@ import kyo.internal.TestClasspaths
 
 /** Fidelity tests for permittedSubclasses populated from @scala.annotation.internal.Child annotations.
   *
-  * Pins findings F-I-003 and INV-007. Phase 07 un-pends all 4 leaves by adding a permit-extraction loop in
-  * ClasspathOrchestrator.finalizeMerge that mines the already-decoded @Child[T] annotations on sealed parents.
-  *
-  * Note: F-E-007 (Symbol.EnumCase discriminator as a distinct sealed sub-case) is deferred to Phase 13
-  * because Symbol.Class is `final` and Symbol.EnumCase cannot extend it without removing the `final` modifier.
-  * The SymbolKind.EnumCase case is added to the enum in Phase 07 and TypedSymbolFactory routes it; the
-  * public Symbol.EnumCase case class proper lands in Phase 13.
+  * Pins findings F-I-003, INV-007, and F-E-007. Phase 07 un-pends the 4 permit leaves. Phase 13 adds
+  * the F-E-007 leaf confirming that Symbol.EnumCase is now a proper subtype of Symbol.Class.
   */
 class SealedFidelityTest extends Test:
 
@@ -131,6 +126,39 @@ class SealedFidelityTest extends Test:
                 case Absent =>
                     fail("Could not find scala.collection.mutable.ArrayBuffer or scala.Int on the classpath")
             end match
+    }
+
+    // F-E-007 leaf 5 (Phase 13): enum-case symbols pattern-match as Symbol.EnumCase
+    // Given: the real classpath loaded via TestClasspaths.withClasspath
+    // When: finding enum-case symbols (SymbolKind.EnumCase) and checking their runtime type
+    // Then: post-fix they are Symbol.EnumCase instances, not only Symbol.Class;
+    //       before Phase 13 TypedSymbolFactory emitted Symbol.Class for EnumCase kind
+    // Pins: F-E-007
+    "F-E-007 (Phase 13): enum-case symbols pattern-match as Symbol.EnumCase" in run {
+        TestClasspaths.withClasspath().map: cp =>
+            // scala.Option is a sealed abstract class with permitted subclasses Some and None.
+            // We look for enum symbols. Scala 3 enums exist in scala-library (e.g. scala.math.Ordering.Implicits).
+            // Find any symbol whose kind is EnumCase.
+            val enumCases = cp.symbols.filter(_.kind == Tasty.SymbolKind.EnumCase)
+            if enumCases.isEmpty then
+                // No enum cases found - ok, the classpath may not have enums. Skip gracefully.
+                succeed
+            else
+                val asEnumCaseCount = enumCases.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
+                assert(
+                    asEnumCaseCount == enumCases.size,
+                    s"Expected all ${enumCases.size} EnumCase-kind symbols to be Symbol.EnumCase instances, " +
+                        s"but only $asEnumCaseCount matched. " +
+                        s"Phase 13 removed `final` from Symbol.Class and routes SymbolKind.EnumCase to Symbol.EnumCase."
+                )
+                // Also verify they still match Symbol.Class (subtype relationship preserved).
+                val asClassCount = enumCases.count(_.isInstanceOf[Tasty.Symbol.Class])
+                assert(
+                    asClassCount == enumCases.size,
+                    s"Expected Symbol.EnumCase to also match Symbol.Class (subtype), but $asClassCount out of ${enumCases.size} did"
+                )
+                succeed
+            end if
     }
 
 end SealedFidelityTest

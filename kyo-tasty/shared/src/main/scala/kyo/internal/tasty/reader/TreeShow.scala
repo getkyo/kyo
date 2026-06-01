@@ -66,27 +66,39 @@ private[kyo] object TreeShow:
             case Tasty.Tree.RefinedType(parent, n, _) => s"${show(parent, cp)} { ${n.asString} }"
             case Tasty.Tree.AppliedType(tycon, args) =>
                 s"${show(tycon, cp)}[${args.map(show(_, cp)).mkString(", ")}]"
-            case Tasty.Tree.TypeBounds(lo, hi)       => s"${show(lo, cp)} .. ${show(hi, cp)}"
-            case Tasty.Tree.AnnotatedType(parent, _) => show(parent, cp)
-            case Tasty.Tree.AndType(left, right)     => s"${show(left, cp)} & ${show(right, cp)}"
-            case Tasty.Tree.OrType(left, right)      => s"${show(left, cp)} | ${show(right, cp)}"
-            case Tasty.Tree.ByNameType(arg)          => s"=> ${show(arg, cp)}"
-            case Tasty.Tree.MatchType(_, scr, _)     => s"${show(scr, cp)} match { ... }"
-            case Tasty.Tree.FlexibleType(arg)        => s"${show(arg, cp)}?"
-            case Tasty.Tree.IdentTpt(name, _)        => name.asString
-            case Tasty.Tree.SelectTpt(qual, name)    => s"${show(qual, cp)}.${name.asString}"
-            case Tasty.Tree.SingletonTpt(tpe)        => s"${show(tpe, cp)}.type"
-            case Tasty.Tree.TermRefPkg(name)         => name.asString
-            case Tasty.Tree.TypeRefPkg(name)         => name.asString
-            case Tasty.Tree.TermRefSymbol(addr, _)   => s"<termref@$addr>"
-            case Tasty.Tree.TypeRefSymbol(addr, _)   => s"<typeref@$addr>"
-            case Tasty.Tree.TermRefDirect(addr)      => s"<termdirect@$addr>"
-            case Tasty.Tree.TypeRefDirect(addr)      => s"<typedirect@$addr>"
-            case Tasty.Tree.SelectIn(qual, name, _)  => s"${show(qual, cp)}.${name.asString}"
-            case Tasty.Tree.Import(qual, _)          => s"import ${show(qual, cp)}.{...}"
-            case Tasty.Tree.Export(qual, _)          => s"export ${show(qual, cp)}.{...}"
-            case Tasty.Tree.AnnotationNode(ann, _)   => s"@${show(ann, cp)}"
-            case Tasty.Tree.Unknown(tag, _)          => s"<unknown:$tag>"
+            case Tasty.Tree.TypeBounds(lo, hi)            => s"${show(lo, cp)} .. ${show(hi, cp)}"
+            case Tasty.Tree.AnnotatedType(parent, _)      => show(parent, cp)
+            case Tasty.Tree.AndType(left, right)          => s"${show(left, cp)} & ${show(right, cp)}"
+            case Tasty.Tree.OrType(left, right)           => s"${show(left, cp)} | ${show(right, cp)}"
+            case Tasty.Tree.ByNameType(arg)               => s"=> ${show(arg, cp)}"
+            case Tasty.Tree.MatchType(_, scr, _)          => s"${show(scr, cp)} match { ... }"
+            case Tasty.Tree.FlexibleType(arg)             => s"${show(arg, cp)}?"
+            case Tasty.Tree.IdentTpt(name, _)             => name.asString
+            case Tasty.Tree.SelectTpt(qual, name)         => s"${show(qual, cp)}.${name.asString}"
+            case Tasty.Tree.SingletonTpt(tpe)             => s"${show(tpe, cp)}.type"
+            case Tasty.Tree.TermRefPkg(name)              => name.asString
+            case Tasty.Tree.TypeRefPkg(name)              => name.asString
+            case Tasty.Tree.TermRefSymbol(addr, _)        => s"<termref@$addr>"
+            case Tasty.Tree.TypeRefSymbol(addr, _)        => s"<typeref@$addr>"
+            case Tasty.Tree.TermRefDirect(addr)           => s"<termdirect@$addr>"
+            case Tasty.Tree.TypeRefDirect(addr)           => s"<typedirect@$addr>"
+            case Tasty.Tree.SelectIn(qual, name, _)       => s"${show(qual, cp)}.${name.asString}"
+            case Tasty.Tree.Import(qual, _)               => s"import ${show(qual, cp)}.{...}"
+            case Tasty.Tree.Export(qual, _)               => s"export ${show(qual, cp)}.{...}"
+            case Tasty.Tree.AnnotationNode(ann, _)        => s"@${show(ann, cp)}"
+            case Tasty.Tree.TermRef(prefix, name)         => s"${show(prefix, cp)}.${name.asString}"
+            case Tasty.Tree.SeqLiteral(elems, _)          => s"[${elems.map(show(_, cp)).mkString(", ")}]"
+            case Tasty.Tree.TypeRefTree(qual, name)       => s"${show(qual, cp)}.${name.asString}"
+            case Tasty.Tree.SelfDef(name, _)              => s"self $name"
+            case Tasty.Tree.SelectOuter(qual, name, _, _) => s"${show(qual, cp)}.${name.asString}"
+            case Tasty.Tree.Imported(qual)                => show(qual, cp)
+            case Tasty.Tree.Renamed(name)                 => name.asString
+            case Tasty.Tree.ByNameTpt(inner)              => s"=> ${inner.show(using cp)}"
+            case Tasty.Tree.Bounded(bound)                => show(bound, cp)
+            case Tasty.Tree.ExplicitTpt(inner)            => inner.show(using cp)
+            case Tasty.Tree.Elided(inner)                 => inner.show(using cp)
+            case Tasty.Tree.RecThisAddr(addr)             => s"<recthis@$addr>"
+            case Tasty.Tree.Unknown(tag, _)               => s"<unknown:$tag>"
         end match
     end show
 

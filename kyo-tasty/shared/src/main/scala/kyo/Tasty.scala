@@ -453,6 +453,23 @@ object Tasty:
           */
         case MatchCase(pat: Type, rhs: Type)
 
+        /** Type-position reference (F-A-009). Wire tag TYPEREF (117).
+          *
+          * Semantically distinct from TermRef (term-position reference). Previously all TYPEREF
+          * nodes were decoded as Type.TermRef; this case corrects the shape. Callers that need
+          * to distinguish type references from term references should match on TypeRef.
+          * typeFqnString handles both TermRef and TypeRef for annotation FQN matching.
+          */
+        case TypeRef(qual: Type, name: Name)
+
+        /** Explicit type bounds (F-A-010). Wire tags TYPEBOUNDS (163) and TYPEBOUNDStpt (164).
+          *
+          * Represents `lo .. hi` as declared in source. Previously both tags decoded as
+          * Type.Wildcard(lo, hi); Type.Bounds is semantically distinct and allows callers to
+          * identify explicit bounds positions vs wildcard usage sites.
+          */
+        case Bounds(lo: Type, hi: Type)
+
         /** Structural subtype check.
           *
           * Pure: walks Type cases recursively; uses cp.symbol(id) to resolve parents when needed. Returns Sub when this is a subtype of
@@ -483,6 +500,8 @@ object Tasty:
             case MatchType(b, sc, cases)  => Chunk(b, sc) ++ cases
             case FlexibleType(u)          => Chunk(u)
             case MatchCase(p, r)          => Chunk(p, r)
+            case TypeRef(qual, _)         => Chunk(qual)
+            case Bounds(lo, hi)           => Chunk(lo, hi)
             case _                        => Chunk.empty
 
         /** Visit this type and every structural descendant in pre-order (self first). */
@@ -880,6 +899,23 @@ object Tasty:
         /** Type-position reference by name and qualifier (TYPEREF tag). */
         final case class TypeRefTree(qual: Tree, name: Name) extends Tree:
             def children: Chunk[Tree] = Chunk(qual)
+
+        /** Term-position path-dependent reference (F-B-004). Wire tag TERMREFin (174).
+          *
+          * prefix is the qualifier tree (encoded as Tree.Ident(name, qualType)). name identifies the
+          * referenced member. Replaces the fabricated Tree.Select placeholder from Phase 05.
+          */
+        final case class TermRef(prefix: Tree, name: Name) extends Tree:
+            def children: Chunk[Tree] = Chunk(prefix)
+
+        /** Repeated (varargs) sequence literal (F-B-005). Wire tag REPEATED (149).
+          *
+          * elems are the element trees. tpe is Type.Wildcard(Nothing, Any) as a placeholder until
+          * a future phase infers the element type from context.
+          * Replaces the fabricated Tree.Apply(Ident("_repeated", ...), trees) placeholder.
+          */
+        final case class SeqLiteral(elems: Chunk[Tree], tpe: Type) extends Tree:
+            def children: Chunk[Tree] = elems
 
         /** Self type definition in a class template (SELFDEF tag). */
         final case class SelfDef(name: Name, tpe: Tree) extends Tree:
@@ -1468,7 +1504,7 @@ object Tasty:
 
         // ── 14 final case classes ─────────────────────────────────────────────
 
-        final case class Class private[kyo] (
+        case class Class private[kyo] (
             id: SymbolId,
             name: Name,
             flags: Flags,
@@ -1493,6 +1529,111 @@ object Tasty:
                             case c: ClassLike => Chunk(c)
                             case _            => Chunk.empty
         end Class
+
+        /** Enum-case symbol (F-E-007). Represents a single case of a Scala 3 enum.
+          *
+          * Extends Symbol.Class so that callers treating enum cases as class-like symbols continue to
+          * work without changes. The Enum and Case flags are always set on this symbol. ownerId is the
+          * enclosing enum sealed class.
+          *
+          * Pattern-match on Symbol.EnumCase before Symbol.Class in an exhaustive match to specialize
+          * enum-case handling. Any Symbol.EnumCase also matches Symbol.Class (it is a subtype).
+          *
+          * @param id
+          *   Unique symbol identifier within this Classpath.
+          * @param name
+          *   Simple name of this enum case as it appears in source.
+          * @param flags
+          *   Flags; always includes Flag.Enum and Flag.Case.
+          * @param ownerId
+          *   SymbolId of the enclosing enum class.
+          * @param parentTypes
+          *   Parent types (the enum class itself is always among them).
+          */
+        // Scala 3 prohibits case-to-case inheritance; EnumCase is a plain final class extending Class.
+        // It has structural equals/hashCode/toString manually implemented to match case-class behavior.
+        // Use the companion object unapply for pattern matching: case Symbol.EnumCase(id, name, ...).
+        final class EnumCase private[kyo] (
+            override val id: SymbolId,
+            override val name: Name,
+            override val flags: Flags,
+            override val ownerId: SymbolId,
+            override val scaladoc: Maybe[String],
+            override val sourcePosition: Maybe[Position],
+            override val javaMetadata: Maybe[JavaMetadata],
+            override val parentTypes: Chunk[Type],
+            override val typeParamIds: Chunk[SymbolId],
+            override val declarationIds: Chunk[SymbolId],
+            override val permittedSubclassIds: Maybe[Chunk[SymbolId]],
+            override val annotations: Chunk[Annotation],
+            override val javaAnnotations: Chunk[JavaAnnotation],
+            override val body: Maybe[SymbolBody]
+        ) extends Class(
+                id,
+                name,
+                flags,
+                ownerId,
+                scaladoc,
+                sourcePosition,
+                javaMetadata,
+                parentTypes,
+                typeParamIds,
+                declarationIds,
+                permittedSubclassIds,
+                annotations,
+                javaAnnotations,
+                body
+            ):
+            override def permittedSubclasses(using cp: Classpath): Maybe[Chunk[ClassLike]] =
+                permittedSubclassIds.map: ids =>
+                    ids.flatMap: id =>
+                        cp.symbol(id) match
+                            case c: ClassLike => Chunk(c)
+                            case _            => Chunk.empty
+            override def equals(that: Any): Boolean = that match
+                case t: EnumCase => id == t.id
+                case _           => false
+            override def hashCode(): Int = id.hashCode
+            override def toString: String =
+                import Name.asString
+                s"Symbol.EnumCase(${id.value}, ${name.asString})"
+        end EnumCase
+
+        object EnumCase:
+            private[kyo] def apply(
+                id: SymbolId,
+                name: Name,
+                flags: Flags,
+                ownerId: SymbolId,
+                scaladoc: Maybe[String],
+                sourcePosition: Maybe[Position],
+                javaMetadata: Maybe[JavaMetadata],
+                parentTypes: Chunk[Type],
+                typeParamIds: Chunk[SymbolId],
+                declarationIds: Chunk[SymbolId],
+                permittedSubclassIds: Maybe[Chunk[SymbolId]],
+                annotations: Chunk[Annotation],
+                javaAnnotations: Chunk[JavaAnnotation],
+                body: Maybe[SymbolBody]
+            ): EnumCase =
+                new EnumCase(
+                    id,
+                    name,
+                    flags,
+                    ownerId,
+                    scaladoc,
+                    sourcePosition,
+                    javaMetadata,
+                    parentTypes,
+                    typeParamIds,
+                    declarationIds,
+                    permittedSubclassIds,
+                    annotations,
+                    javaAnnotations,
+                    body
+                )
+            def unapply(e: EnumCase): Some[SymbolId] = Some(e.id)
+        end EnumCase
 
         final case class Trait private[kyo] (
             id: SymbolId,
@@ -1958,6 +2099,27 @@ object Tasty:
         def findConcreteClass(fqn: String): Maybe[Symbol.Class] =
             findClass(fqn).filter(!_.isAbstract)
 
+        /** Count of type references that could not be resolved to a final SymbolId after all resolution passes.
+          *
+          * Nonzero values indicate cross-file TYPEREFsymbol targets not found in the loaded classpath
+          * (e.g., JDK types when no JDK roots are passed to Classpath.init). This metric provides
+          * visibility into how many Named(-1) sentinels remain in parentTypes after the cross-file
+          * resolution pass.
+          *
+          * Note: a count > 0 is expected behavior when the classpath does not include all transitive
+          * dependencies. It is not an error condition.
+          */
+        def unresolvedTypeReferenceCount: Int =
+            val sentinelId = Classpath.sentinelUnresolved.id.value
+            symbols.foldLeft(0): (acc, sym) =>
+                sym match
+                    case c: Symbol.ClassLike =>
+                        acc + c.parentTypes.count:
+                            case Type.Named(id) => id.value == sentinelId
+                            case _              => false
+                    case _ => acc
+        end unresolvedTypeReferenceCount
+
         /** Look up a trait symbol by fully-qualified dotted name.
           *
           * Returns `Absent` when the FQN resolves to a non-Trait symbol. Use `findClassLike` for the broader case.
@@ -2213,6 +2375,10 @@ object Tasty:
             t match
                 case Type.Named(id) => fullName(symbol(id)).asString
                 case Type.TermRef(qual, name) =>
+                    val q = typeFqnString(qual)
+                    if q.nonEmpty then q + "." + name.asString else name.asString
+                case Type.TypeRef(qual, name) =>
+                    // F-A-009: TYPEREF now emits TypeRef; annotation FQN matching must handle both forms.
                     val q = typeFqnString(qual)
                     if q.nonEmpty then q + "." + name.asString else name.asString
                 case Type.Applied(base, _) =>

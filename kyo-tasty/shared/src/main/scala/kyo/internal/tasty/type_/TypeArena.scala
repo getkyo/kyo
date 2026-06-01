@@ -78,6 +78,10 @@ final class TypeArena:
                     Tasty.Type.TypeLambda(paramIds, internRec(body, depth))
                 case Tasty.Type.MatchCase(pat, rhs) =>
                     Tasty.Type.MatchCase(internRec(pat, depth), internRec(rhs, depth))
+                case Tasty.Type.TypeRef(qual, name) =>
+                    Tasty.Type.TypeRef(internRec(qual, depth), name)
+                case Tasty.Type.Bounds(lo, hi) =>
+                    Tasty.Type.Bounds(internRec(lo, depth), internRec(hi, depth))
             end match
         end recurse
 
@@ -203,6 +207,10 @@ object TypeKey:
                 31 * computeHash(u) + 13
             case Tasty.Type.MatchCase(pat, rhs) =>
                 31 * computeHash(pat) + computeHash(rhs) + 14
+            case Tasty.Type.TypeRef(qual, name) =>
+                31 * computeHash(qual) + name.hashCode + 15
+            case Tasty.Type.Bounds(lo, hi) =>
+                31 * computeHash(lo) + computeHash(hi) + 16
 
     def structuralEquals(a: Tasty.Type, b: Tasty.Type): Boolean =
         (a, b) match
@@ -258,6 +266,10 @@ object TypeKey:
                 structuralEquals(u1, u2)
             case (Tasty.Type.MatchCase(p1, r1), Tasty.Type.MatchCase(p2, r2)) =>
                 structuralEquals(p1, p2) && structuralEquals(r1, r2)
+            case (Tasty.Type.TypeRef(q1, n1), Tasty.Type.TypeRef(q2, n2)) =>
+                structuralEquals(q1, q2) && n1 == n2
+            case (Tasty.Type.Bounds(lo1, hi1), Tasty.Type.Bounds(lo2, hi2)) =>
+                structuralEquals(lo1, lo2) && structuralEquals(hi1, hi2)
             case _ =>
                 false
 

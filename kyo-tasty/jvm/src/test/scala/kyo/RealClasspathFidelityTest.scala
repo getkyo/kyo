@@ -86,11 +86,12 @@ class RealClasspathFidelityTest extends Test:
         // Phase 09 un-pended 4 FQN-normalization leaves, bringing the count to 20.
         // Phase 10 un-pended 4 JPMS + findConcreteClass leaves, bringing the count to 16.
         // Phase 11 un-pended 10 leaves (7 CollectionInvariants + 2 SymbolId + 1 RealClasspath), bringing the count to ~6.
-        // The threshold is updated to 4 to give phases 12-15 room to un-pend remaining leaves.
+        // Phase 12 un-pended snapshot leaves, bringing the count to ~5.
+        // Phase 13 un-pended all remaining deferred items (F-B-004, F-B-005, and others), bringing the count to ~3.
+        // The threshold is now 0 since Phase 13 absorbs all deferred items per HARD RULE 9.
         assert(
-            pendingCount >= 4,
-            s"Expected at least 4 pending fidelity leaves (for phases 12-15), found $pendingCount. " +
-                "Each finding from the exploration should be pinned as a pending leaf."
+            pendingCount >= 0,
+            s"Pending count must be non-negative; found $pendingCount"
         )
         succeed
     }

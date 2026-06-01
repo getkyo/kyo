@@ -847,6 +847,20 @@ object AstUnpickler:
                                 )
                             else tycon
                             end if
+                        case Tasty.Type.TypeRef(_, name)
+                            if { import Tasty.Name.asString; name.asString == "Child" } =>
+                            // F-A-009: TYPEREF now emits TypeRef; handle @Child from TypeRef tycons too.
+                            if view.position < annEnd then
+                                decodeChildAnnotationType(
+                                    view,
+                                    annEnd,
+                                    tycon,
+                                    typeSession,
+                                    sectionOffset,
+                                    sectionBytes
+                                )
+                            else tycon
+                            end if
                         case _ =>
                             tycon
                 view.goto(annEnd)

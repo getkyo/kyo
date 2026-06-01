@@ -141,6 +141,7 @@ object TastyFormat:
     final val IMPORT: Int             = 132
     final val TYPEPARAM: Int          = 133
     final val PARAM: Int              = 134
+    final val GUARD: Int              = 135
     final val APPLY: Int              = 136
     final val TYPEAPPLY: Int          = 137
     final val TYPED: Int              = 138
