@@ -717,9 +717,9 @@ object Result:
     inline given [E, A]: CanEqual[Result[E, A], Panic]                                         = CanEqual.derived
 
     given [E, A, ResultEA <: Result[E, A]](using re: Render[E], ra: Render[A]): Render[ResultEA] with
-        def asText(value: ResultEA): String = value match
-            case Success(a)    => s"Success(${ra.asText(a.asInstanceOf[A])})"
-            case f: Failure[?] => s"Failure(${re.asText(f.failure.asInstanceOf[E])})"
+        def asString(value: ResultEA): String = value match
+            case Success(a)    => s"Success(${ra.asString(a.asInstanceOf[A])})"
+            case f: Failure[?] => s"Failure(${re.asString(f.failure.asInstanceOf[E])})"
             case other         => other.toString()
     end given
 

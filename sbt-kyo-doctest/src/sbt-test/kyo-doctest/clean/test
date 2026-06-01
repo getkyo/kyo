@@ -1,0 +1,4 @@
+# Clean: doctest then doctestClean then doctest is cold again.
+> doctest
+> doctestClean
+> doctest

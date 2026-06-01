@@ -1,0 +1,2 @@
+# Scalac-options: -Werror turns unused import warning into a failure; doctest exits 1.
+-> doctest

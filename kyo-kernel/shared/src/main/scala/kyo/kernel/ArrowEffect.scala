@@ -398,6 +398,26 @@ object ArrowEffect:
         handleFirstLoop(v, Context.empty)
     end handleFirst
 
+    /** Inspects the head suspension of `v`. If it matches `effectTag`, invokes `f` with the suspension's input;
+      * otherwise does nothing. Unlike [[handleFirst]] this never enters the Safepoint, never executes the
+      * continuation, and never schedules a continuation. It is intended for purely-inspecting handlers that
+      * read the input as a value and produce side effects directly (e.g. registering an interrupt cascade
+      * link). Used by `IOTask.ensureInterrupt` to walk a stalled `curr` after the fiber's promise has already
+      * been completed (e.g. by an interrupt), so the Safepoint preempt flag would otherwise short-circuit the
+      * walk.
+      */
+    private[kyo] inline def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline f: [C] => I[C] => Unit
+    ): Unit =
+        v match
+            case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag <:< kyo.tag =>
+                f[Any](kyo.input)
+            case _ => ()
+    end dispatchFirst
+
     /** Handles an arrow effect with a loop-based approach for greater flexibility.
       *
       * This variant provides two key advantages over basic handle:

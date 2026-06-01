@@ -73,6 +73,35 @@ class ChunkTest extends Test:
                 val chunk = Chunk.from(list)
                 assert(chunk.isInstanceOf[Chunk.internal.Compact[Int]])
             }
+
+            "with exact size hint" - {
+                "pre-sizes the copy of a non-IndexedSeq, same result as no hint" in {
+                    val list  = List(1, 2, 3, 4, 5)
+                    val hint  = Chunk.from(list, list.size)
+                    val plain = Chunk.from(list)
+                    assert(hint == Seq(1, 2, 3, 4, 5))
+                    assert(hint == plain)
+                    assert(hint.isInstanceOf[Chunk.internal.Compact[Int]])
+                }
+
+                "keeps the zero-copy FromSeq fast path for IndexedSeq input" in {
+                    val vector = Vector(1, 2, 3)
+                    val chunk  = Chunk.from(vector, vector.size)
+                    assert(chunk == Seq(1, 2, 3))
+                    assert(chunk.isInstanceOf[Chunk.internal.FromSeq[Int]])
+                }
+
+                "negative hint falls back to size-agnostic copying" in {
+                    val list  = List(1, 2, 3)
+                    val chunk = Chunk.from(list, -1)
+                    assert(chunk == Seq(1, 2, 3))
+                }
+
+                "empty source" in {
+                    val chunk = Chunk.from(List.empty[Int], 0)
+                    assert(chunk.isEmpty && (chunk eq Chunk.empty))
+                }
+            }
         }
 
         "Maybe" - {

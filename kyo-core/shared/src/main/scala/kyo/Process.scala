@@ -182,13 +182,13 @@ object Process:
         val SIGTERM = Signaled(15)
 
         given Render[ExitCode] with
-            def asText(value: ExitCode): Text =
+            def asString(value: ExitCode): String =
                 value match
-                    case Success       => Text("ExitCode.Success")
-                    case Failure(code) => Text(s"ExitCode.Failure($code)")
+                    case Success       => "ExitCode.Success"
+                    case Failure(code) => s"ExitCode.Failure($code)"
                     case Signaled(n) =>
                         val name = value.signalName.getOrElse(s"signal $n")
-                        Text(s"ExitCode.Signaled($n, $name)")
+                        s"ExitCode.Signaled($n, $name)"
         end given
 
     end ExitCode

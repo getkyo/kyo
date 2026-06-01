@@ -24,6 +24,12 @@ Thank you for considering contributing to this project! We welcome all contribut
     - [Markdown Formatting](#markdown-formatting)
     - [Inline Comments](#inline-comments)
   - [File Organization](#file-organization)
+- [Module READMEs](#module-readmes)
+  - [Structure](#structure)
+  - [Writing Style](#writing-style)
+  - [Avoid](#avoid)
+  - [Runnable Modules](#runnable-modules)
+  - [Self-Review Checklist](#self-review-checklist)
 - [Optimization](#optimization)
   - [Performance](#performance)
   - [Zero-Cost Type Design](#zero-cost-type-design)
@@ -633,6 +639,16 @@ Use sparingly — only for types that users reference frequently enough that qua
 
 ---
 
+## Module READMEs
+
+Every module ships a `README.md` aimed at a developer evaluating or first using it. It positions the module, shows how to install and use it, and introduces features in an order a reader can stop at any time with a coherent picture. It is not a reference manual (scaladoc covers the full API) and not a tutorial (`kyo-examples` covers end-to-end programs).
+
+To add or revise a module README, use the [`/readme` skill](.claude/skills/readme/SKILL.md). The skill is the authoritative source for both structure and writing style: it orchestrates source analysis, drafting, multi-axis critique, and doctest verification, and it carries the conventions every Kyo README follows (opening hook, capability summary, topical ordering, code-example rules, gotcha markers, and so on). `kyo-http/README.md` and `kyo-schema/README.md` are the working models the skill draws from.
+
+`sbt <module>/doctest` validates that every fenced Scala block in the README compiles against the module's classpath. CI runs `sbt doctest` over the full project.
+
+---
+
 ## Optimization
 
 ### Performance
@@ -677,7 +693,6 @@ Kyo achieves zero-cost abstractions through opaque types. When designing a new t
 | Opaque over JVM type   | `Instant = JInstant`                         | Existing class               | Wrapping a well-tested JVM type with a safer/simpler API      |
 | Opaque over union      | `Maybe[A] = Absent \| Present[A]`            | Union of subtypes            | Discriminated types where the success path avoids boxing      |
 | Opaque over array      | `Span[A] = Array[? <: A]`                    | Mutable array                | Immutable view of array data without copying                  |
-| Opaque with lazy ops   | `Text = String \| Op`                        | String or deferred operation | When operations can be deferred until materialization          |
 | Opaque over Unsafe     | `Channel[A] = Channel.Unsafe[A]`             | Unsafe implementation        | Concurrent types with safe/unsafe tiers (see Unsafe Boundary) |
 | Effect alias           | `Async <: (Sync & Async.Join)`               | Subtype bounds               | Composing effects via subtype relationships                   |
 | Subtype-bounded opaque | `Queue.Unbounded[A] <: Queue[A] = Queue[A]`  | Parent opaque                | Expressing subtype relationships between opaque types         |

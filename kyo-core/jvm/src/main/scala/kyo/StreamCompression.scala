@@ -11,7 +11,7 @@ import scala.annotation.tailrec
 
 object StreamCompression:
 
-    final class StreamCompressionException(cause: Text | Throwable)(using Frame) extends KyoException("", cause)
+    final class StreamCompressionException(cause: String | Throwable)(using Frame) extends KyoException("", cause)
 
     enum CompressionLevel(val value: Int) derives CanEqual:
         case Default         extends CompressionLevel(-1)

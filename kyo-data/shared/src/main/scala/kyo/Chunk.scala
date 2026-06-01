@@ -611,7 +611,19 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
           * @return
           *   a new Chunk.Indexed containing the elements from the IterableOnce
           */
-        def from[A](source: IterableOnce[A]): Indexed[A] =
+        def from[A](source: IterableOnce[A]): Indexed[A] = from(source, -1)
+
+        /** Like [[from]] but, when the source must be copied (it is neither already an Indexed Chunk nor an `IndexedSeq`), pre-allocates the
+          * backing array to `exactSize` instead of growing a builder. Copying an unsized source such as a `List` otherwise pays the
+          * builder's resize-and-trim cost; passing its known size skips both allocations. The zero-copy `IndexedSeq` fast path is preserved.
+          *
+          * INTERNAL: `exactSize` must equal the source's element count; a negative value means "unknown" and falls back to size-agnostic
+          * copying (the single-argument [[from]] delegates here with `-1`).
+          *
+          * @param exactSize
+          *   the source's element count, or negative if unknown
+          */
+        private[kyo] def from[A](source: IterableOnce[A], exactSize: Int): Indexed[A] =
             source match
                 case chunk: Chunk.Indexed[A] @unchecked => chunk
                 case other =>
@@ -622,7 +634,12 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
                             other match
                                 case seq: IndexedSeq[A] @unchecked => FromSeq(seq)
                                 case _ =>
-                                    val array = other.iterator.toArray(using erasedTag[A])
+                                    val array =
+                                        if exactSize > 0 then
+                                            val buf = erasedTag[A].newArray(exactSize)
+                                            val _   = other.iterator.copyToArray(buf)
+                                            buf
+                                        else other.iterator.toArray(using erasedTag[A])
                                     array.length match
                                         case 0 => empty[A]
                                         case 1 => single(array(0))
@@ -704,6 +721,17 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
         source match
             case chunk: Chunk.Indexed[A] @unchecked => chunk
             case other                              => Indexed.from(other)
+        end match
+    end from
+
+    /** Like [[from]] but pre-allocates the backing array to `exactSize` when a copy is required, skipping the growable-builder resize a copy
+      * of an unsized source (e.g. a `List`) incurs while keeping the zero-copy `IndexedSeq` fast path. INTERNAL: `exactSize` must equal the
+      * source's element count; a negative value means "unknown".
+      */
+    private[kyo] def from[A](source: IterableOnce[A], exactSize: Int): Chunk[A] =
+        source match
+            case chunk: Chunk.Indexed[A] @unchecked => chunk
+            case other                              => Indexed.from(other, exactSize)
         end match
     end from
 

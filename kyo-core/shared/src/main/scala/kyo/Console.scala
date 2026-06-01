@@ -29,28 +29,28 @@ final case class Console(unsafe: Console.Unsafe):
       * @param s
       *   The string to print.
       */
-    def print(s: Text)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.print(s.show))
+    def print(s: String)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.print(s))
 
     /** Prints a string to the console's error stream without a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printErr(s: Text)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.printErr(s.show))
+    def printErr(s: String)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.printErr(s))
 
     /** Prints a string to the console followed by a newline.
       *
       * @param s
       *   The string to print.
       */
-    def println(s: Text)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.printLine(s.show))
+    def println(s: String)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.printLine(s))
 
     /** Prints a string to the console's error stream followed by a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printLineErr(s: Text)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.printLineErr(s.show))
+    def printLineErr(s: String)(using Frame): Unit < Sync = Sync.Unsafe.defer(unsafe.printLineErr(s))
 
     /** Checks if an error occurred in the console output or error streams.
       *
