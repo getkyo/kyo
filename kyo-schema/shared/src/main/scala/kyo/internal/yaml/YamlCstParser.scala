@@ -15,7 +15,8 @@ private[kyo] object YamlCstParser:
         if docs.isEmpty && !hasDocumentContent(input) then
             Result.succeed(emptyDocument(input, Maybe(input)))
         else if docs.size - startIndex == 1 then
-            parseDocument(docs(startIndex), Maybe(input))
+            val body = docs(startIndex)
+            parseDocument(body, Maybe(input), sourceBodyStart(input, body))
         else
             Result.fail(ParseException(
                 Yaml(),
@@ -53,19 +54,24 @@ private[kyo] object YamlCstParser:
         else 0
     end firstDocumentIndex
 
-    private def parseDocument(body: String, source: Maybe[String])(using Frame): Result[DecodeException, Cst.Document] =
-        val trivia = TriviaIndex(body)
+    private def parseDocument(body: String, source: Maybe[String], markOffset: Int = 0)(using
+        Frame
+    ): Result[DecodeException, Cst.Document] =
+        val sourceText   = source.getOrElse(body)
+        val bodyTrivia   = TriviaIndex(body)
+        val sourceTrivia = TriviaIndex(sourceText)
         if !hasDocumentContent(body) then
-            Result.succeed(emptyDocument(body, source, trivia))
+            Result.succeed(emptyDocument(body, source, sourceTrivia))
         else
             Yaml.parse(body) match
                 case Result.Success(node) =>
-                    val root = withRootSource(toCst(node, trivia), spanFor(source.getOrElse(body)), trivia)
+                    val adjusted = adjustNode(toCst(node, bodyTrivia), sourceText, markOffset)
+                    val root     = withRootSource(adjusted, spanFor(sourceText), sourceTrivia)
                     Result.succeed(Cst.Document(
                         Maybe(root),
-                        trivia.documentLeading,
+                        sourceTrivia.documentLeading,
                         Chunk.empty,
-                        spanFor(source.getOrElse(body)),
+                        spanFor(sourceText),
                         source
                     ))
                 case Result.Failure(e) => Result.fail(e)
@@ -78,6 +84,37 @@ private[kyo] object YamlCstParser:
         val span = spanFor(source.getOrElse(body))
         Cst.Document(Absent, trivia.documentLeading, Chunk.empty, span, source)
     end emptyDocument
+
+    private def sourceBodyStart(source: String, body: String): Int =
+        if body.isEmpty then 0
+        else
+            explicitDocumentBodyStart(source) match
+                case Present(start) if start <= source.length && source.startsWith(body, start) =>
+                    start
+                case _ =>
+                    val index = source.indexOf(body)
+                    if index >= 0 then index else 0
+            end match
+        end if
+    end sourceBodyStart
+
+    private def explicitDocumentBodyStart(source: String): Maybe[Int] =
+        @tailrec def loop(start: Int): Maybe[Int] =
+            if start >= source.length then Absent
+            else
+                val lineEnd = YamlSource.lineEnd(source, start)
+                val stop =
+                    if lineEnd > start && source.charAt(lineEnd - 1) == '\r' then lineEnd - 1
+                    else lineEnd
+                if startsWithMarker(source, start, stop, "---") then
+                    Maybe(if lineEnd < source.length then lineEnd + 1 else source.length)
+                else loop(if lineEnd < source.length then lineEnd + 1 else source.length)
+                end if
+            end if
+        end loop
+
+        loop(0)
+    end explicitDocumentBodyStart
 
     private def toCst(node: Yaml.Node, trivia: TriviaIndex): Cst.Node =
         node match
@@ -159,6 +196,73 @@ private[kyo] object YamlCstParser:
         end match
     end withSpan
 
+    private def adjustNode(node: Cst.Node, source: String, offset: Int): Cst.Node =
+        if offset == 0 then node
+        else
+            node match
+                case Cst.Node.Mapping(entries, syntax, meta, span, originalSource) =>
+                    Cst.Node.Mapping(
+                        entries.map(adjustMappingEntry(_, source, offset)),
+                        syntax,
+                        adjustMeta(meta, source, offset),
+                        adjustSpan(span, source, offset),
+                        originalSource
+                    )
+                case Cst.Node.Sequence(entries, syntax, meta, span, originalSource) =>
+                    Cst.Node.Sequence(
+                        entries.map(adjustSequenceEntry(_, source, offset)),
+                        syntax,
+                        adjustMeta(meta, source, offset),
+                        adjustSpan(span, source, offset),
+                        originalSource
+                    )
+                case Cst.Node.Scalar(value, syntax, meta, span, originalSource) =>
+                    Cst.Node.Scalar(value, syntax, adjustScalarMeta(meta, source, offset), adjustSpan(span, source, offset), originalSource)
+                case Cst.Node.Alias(name, syntax, span, originalSource) =>
+                    Cst.Node.Alias(name, syntax, adjustSpan(span, source, offset), originalSource)
+            end match
+        end if
+    end adjustNode
+
+    private def adjustMappingEntry(entry: Cst.MappingEntry, source: String, offset: Int): Cst.MappingEntry =
+        Cst.MappingEntry(
+            adjustNode(entry.key, source, offset),
+            adjustNode(entry.value, source, offset),
+            adjustSpan(entry.span, source, offset),
+            entry.leadingTrivia.map(adjustTrivia(_, source, offset)),
+            entry.trailingTrivia.map(adjustTrivia(_, source, offset))
+        )
+    end adjustMappingEntry
+
+    private def adjustSequenceEntry(entry: Cst.SequenceEntry, source: String, offset: Int): Cst.SequenceEntry =
+        Cst.SequenceEntry(
+            adjustNode(entry.value, source, offset),
+            adjustSpan(entry.span, source, offset),
+            entry.leadingTrivia.map(adjustTrivia(_, source, offset)),
+            entry.trailingTrivia.map(adjustTrivia(_, source, offset))
+        )
+    end adjustSequenceEntry
+
+    private def adjustMeta(meta: Yaml.Meta, source: String, offset: Int): Yaml.Meta =
+        meta.copy(mark = adjustMark(meta.mark, source, offset))
+    end adjustMeta
+
+    private def adjustScalarMeta(meta: Yaml.ScalarMeta, source: String, offset: Int): Yaml.ScalarMeta =
+        meta.copy(mark = adjustMark(meta.mark, source, offset))
+    end adjustScalarMeta
+
+    private def adjustTrivia(trivia: Cst.Trivia, source: String, offset: Int): Cst.Trivia =
+        Cst.Trivia(trivia.text, adjustSpan(trivia.span, source, offset))
+    end adjustTrivia
+
+    private def adjustSpan(span: Cst.SourceSpan, source: String, offset: Int): Cst.SourceSpan =
+        Cst.SourceSpan(adjustMark(span.start, source, offset), adjustMark(span.end, source, offset))
+    end adjustSpan
+
+    private def adjustMark(mark: Yaml.Mark, source: String, offset: Int): Yaml.Mark =
+        markAt(source, mark.index + offset)
+    end adjustMark
+
     private def mappingSyntax(mark: Yaml.Mark, trivia: TriviaIndex): Cst.MappingSyntax =
         if trivia.firstNonWhitespaceAt(mark.index).contains('{') then Cst.MappingSyntax.Flow
         else Cst.MappingSyntax.Block
@@ -199,6 +303,16 @@ private[kyo] object YamlCstParser:
 
     private def spanFor(input: String): Cst.SourceSpan =
         Cst.SourceSpan(Yaml.Mark(0, 1, 1), endMark(input))
+
+    private def markAt(input: String, target: Int): Yaml.Mark =
+        @tailrec def loop(index: Int, line: Int, column: Int): Yaml.Mark =
+            if index >= input.length || index >= target then Yaml.Mark(index, line, column)
+            else if input.charAt(index) == '\n' then loop(index + 1, line + 1, 1)
+            else loop(index + 1, line, column + 1)
+        end loop
+
+        loop(0, 1, 1)
+    end markAt
 
     private def endMark(input: String): Yaml.Mark =
         @tailrec def loop(index: Int, line: Int, column: Int): Yaml.Mark =
