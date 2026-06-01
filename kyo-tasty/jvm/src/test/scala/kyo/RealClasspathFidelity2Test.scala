@@ -125,8 +125,8 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     "F-A2-011 (Phase 2.08 PENDING): given priority flags decoded from Using/Implicit modifier bits" in pending
     // F-A2-012: polymorphic function types (Phase 2.08)
     "F-A2-012 (Phase 2.08 PENDING): polymorphic function type decoded as TypeLambda wrapper" in pending
-    // F-A2-013: repeated parameters (Phase 2.06)
-    "F-A2-013 (Phase 2.06 PENDING): scala.List$.apply first param declaredType is Type.Repeated" in pending
+    // F-A2-013: repeated parameters (Phase 2.06) -- un-pended; see VarargsFidelity2Test
+    "F-A2-013 (Phase 2.06): scala.List$.apply first param declaredType is Type.Repeated -- see VarargsFidelity2Test" in pending
     // F-A2-014: structural types (Phase 2.08)
     "F-A2-014 (Phase 2.08 PENDING): structural type decoded as Type.Refinement with non-empty members" in pending
     // F-A2-015: capture sets experimental (Phase 2.09 confirmation pin)

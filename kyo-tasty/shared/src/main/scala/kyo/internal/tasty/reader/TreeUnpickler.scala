@@ -1406,11 +1406,31 @@ object TreeUnpickler:
 
             case TastyFormat.ANNOTATEDtpt =>
                 // ANNOTATEDtpt (154): cat-5 (tag + Length + tpe_Tree + annot_Tree).
-                // Phase 05 wires the annotation term; Phase 03 extracts the underlying type only.
+                // F-A2-013: if the annotation is @scala.annotation.internal.Repeated, the
+                // parameter is a varargs parameter and the type should be wrapped in Type.Repeated.
+                // The annotation term decodes via APPLY(NEW(Repeated_class), ...) which TypeUnpickler
+                // unwraps to the Repeated class's type as Named(negId) with FQN in unresolvedIdToFqn.
                 val payloadEnd = view.readEnd()
                 val underlying = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
+                val isRepeated =
+                    if view.position < payloadEnd then
+                        try
+                            val annotType = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
+                            // The annotation FQN may be a SIGNED constructor name like
+                            // "<init>:scala.annotation.internal.Repeated()" or the plain class FQN.
+                            // Both forms contain the class name as a substring.
+                            annotType match
+                                case Tasty.Type.Named(sid) if sid.value < -1 =>
+                                    session.unresolvedIdToFqn.getOrElse(sid.value, "").contains(
+                                        kyo.internal.tasty.type_.TypeOps.RepeatedAnnotationFqn
+                                    )
+                                case _ => false
+                            end match
+                        catch case _: Exception => false
+                    else false
                 view.goto(payloadEnd)
-                underlying
+                if isRepeated then Tasty.Type.Repeated(underlying)
+                else underlying
 
             case TastyFormat.SELECTin =>
                 // SELECTin (176): cat-5 (tag + Length + nameRef + qual_Tree + owner_Tree).

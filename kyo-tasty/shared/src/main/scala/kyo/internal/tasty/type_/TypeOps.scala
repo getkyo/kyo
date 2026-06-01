@@ -14,9 +14,14 @@ import kyo.Tasty
   *   - scala.ContextFunctionN[A1..AN, R] => ContextFunction(Chunk(A1..AN), R)
   *   - scala.TupleN[T1..TN] => Tuple(Chunk(T1..TN))
   *   - scala.Array[T] => Array(T)
+  *   - scala.<repeated>[T] (APPLIEDtype base) => Repeated(T) (F-A2-013 fallback)
   *   - AndType(scala.Singleton, X) => X
   *   - AndType(X, scala.Singleton) => X
   *   - anything else => Applied(base, args)
+  *
+  * Varargs detection (F-A2-013): the primary mechanism is in TreeUnpickler.decodeTptAsType at the
+  * ANNOTATEDtpt case. Scala 3 TASTy encodes `xs: A*` as ANNOTATEDtpt(@scala.annotation.internal.Repeated,
+  * underlying_elem_type). When the annotation is @Repeated the tpe_Tree is wrapped in Type.Repeated.
   */
 object TypeOps:
 
@@ -25,12 +30,20 @@ object TypeOps:
     private val TuplePrefix           = "scala.Tuple"
     private val ArrayFqn              = "scala.Array"
     private val SingletonFqn          = "scala.Singleton"
+    // F-A2-013: varargs parameters in Scala 3 TASTy are encoded as ANNOTATEDtpt wrapping the element
+    // type with annotation @scala.annotation.internal.Repeated. TreeUnpickler.decodeTptAsType detects
+    // this annotation by checking the FQN against RepeatedAnnotationFqn and returns Type.Repeated(elem).
+    // The APPLIEDtype route via RepeatedFqn and RepeatedSimple is kept for cases where <repeated> appears
+    // as an APPLIEDtype base directly (different Scala version encodings or cross-file scenarios).
+    val RepeatedFqn           = "scala.<repeated>"
+    val RepeatedAnnotationFqn = "scala.annotation.internal.Repeated"
 
     private val FunctionSimple        = "Function"
     private val ContextFunctionSimple = "ContextFunction"
     private val TupleSimple           = "Tuple"
     private val ArraySimple           = "Array"
     private val SingletonSimple       = "Singleton"
+    private val RepeatedSimple        = "<repeated>"
 
     /** Smart constructor for APPLIEDtype normalization.
       *
@@ -61,6 +74,10 @@ object TypeOps:
                 Tasty.Type.Tuple(args)
             else if fqn == ArrayFqn && args.size == 1 then
                 Tasty.Type.Array(args.head)
+            else if fqn == RepeatedFqn && args.size == 1 then
+                // F-A2-013: scala.<repeated>[T] is the internal type of varargs parameters.
+                // Collapse APPLIEDtype(Named(negId: scala.<repeated>), [T]) to Type.Repeated(T).
+                Tasty.Type.Repeated(args.head)
             else
                 Tasty.Type.Applied(base, args)
         else
@@ -86,6 +103,10 @@ object TypeOps:
                         Tasty.Type.Tuple(args)
                     else if simpleName == ArraySimple && args.size == 1 then
                         Tasty.Type.Array(args.head)
+                    else if simpleName == RepeatedSimple && args.size == 1 then
+                        // F-A2-013: same-file TypeRef(pkg, "<repeated>") path for varargs types.
+                        // Collapse APPLIEDtype(TypeRef(scalaPkg, "<repeated>"), [T]) to Type.Repeated(T).
+                        Tasty.Type.Repeated(args.head)
                     else
                         Tasty.Type.Applied(base, args)
                     end if
