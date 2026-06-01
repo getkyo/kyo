@@ -23,19 +23,32 @@ private[kyo] object YamlCstRenderer:
             case Present(source) => source
             case Absent =>
                 val builder = StringBuilder()
+                val childConfig =
+                    if stream.documents.size > 1 then config.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.None)
+                    else config
 
                 @tailrec def loop(index: Int): String =
-                    if index >= stream.documents.size then builder.toString
+                    if index >= stream.documents.size then
+                        appendStreamEndMarker()
+                        builder.toString
                     else
                         if stream.documents.size > 1 then
                             if builder.nonEmpty && builder.charAt(builder.length - 1) != '\n' then
                                 val _ = builder.append('\n')
                             val _ = builder.append("---\n")
                         end if
-                        val _ = builder.append(document(stream.documents(index)))
+                        val _ = builder.append(document(stream.documents(index))(using childConfig))
                         loop(index + 1)
                     end if
                 end loop
+
+                def appendStreamEndMarker(): Unit =
+                    if stream.documents.size > 1 && config.documentMarkers == Yaml.WriterConfig.DocumentMarkers.StartAndEnd then
+                        if builder.nonEmpty && builder.charAt(builder.length - 1) != '\n' then
+                            val _ = builder.append('\n')
+                        val _ = builder.append("...\n")
+                    end if
+                end appendStreamEndMarker
 
                 loop(0)
         end match

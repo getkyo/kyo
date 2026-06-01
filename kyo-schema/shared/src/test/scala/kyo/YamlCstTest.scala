@@ -133,6 +133,60 @@ class YamlCstTest extends Test:
             assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
         }
 
+        "renders canonical streams once with start document markers" in {
+            val mark     = Yaml.Mark(0, 1, 1)
+            val span     = Yaml.Cst.SourceSpan(mark, mark)
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val scalarDoc =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(
+                        "Alice",
+                        Yaml.Cst.ScalarSyntax.Canonical,
+                        Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                        span,
+                        Absent
+                    )),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.Start)
+            val stream   = Yaml.Cst.Stream(Chunk(emptyDoc, scalarDoc), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = stream.render(using config)
+
+            assert(rendered == "---\n---\nAlice\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
+        }
+
+        "renders canonical streams once with start and end document markers" in {
+            val mark     = Yaml.Mark(0, 1, 1)
+            val span     = Yaml.Cst.SourceSpan(mark, mark)
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val scalarDoc =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(
+                        "Alice",
+                        Yaml.Cst.ScalarSyntax.Canonical,
+                        Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                        span,
+                        Absent
+                    )),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+            val stream   = Yaml.Cst.Stream(Chunk(emptyDoc, scalarDoc), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = stream.render(using config)
+
+            assert(rendered == "---\n---\nAlice\n...\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
+        }
+
         "renders canonical streams with consecutive empty documents" in {
             val mark = Yaml.Mark(0, 1, 1)
             val span = Yaml.Cst.SourceSpan(mark, mark)
