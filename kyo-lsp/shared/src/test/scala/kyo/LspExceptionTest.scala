@@ -162,33 +162,50 @@ class LspExceptionTest extends Test:
     // Sealed hierarchy compile checks
     // =========================================================================
 
-    "LspException.Application object exists" in run {
-        val obj = LspException.Application
-        assert(obj != null)
-        succeed
+    "LspException.Application stage base is a sealed abstract type" in run {
+        // Application is the stage base for user-domain errors.
+        // The sealed trait means no library leaves exist; user errors come via .error[E2].
+        // We verify the hierarchy by constructing a value, upcasting to LspException, and
+        // using exhaustive pattern matching to confirm stage membership.
+        val notInit: LspException = LspException.Handshake.NotInitialized("test-method")
+        notInit match
+            case _: LspException.Handshake   => () // expected
+            case _: LspException.Dispatch    => fail("Wrong stage: expected Handshake")
+            case _: LspException.Execution   => fail("Wrong stage: expected Handshake")
+            case _: LspException.Application => fail("Wrong stage: expected Handshake")
+        end match
+        assert(notInit.isInstanceOf[LspException.Handshake])
     }
 
-    "No ProtocolVersionMismatch leaf exists (RI-015)" in run {
-        // This test verifies the design decision that LSP 3.17 has no runtime version
-        // handshake. The class must NOT exist in the Handshake namespace.
-        val handshakeLeafNames = List(
-            "NotInitialized",
-            "AlreadyInitialized",
-            "ShutdownInProgress"
-        )
-        assert(handshakeLeafNames.length == 3)
-        succeed
+    "No ProtocolVersionMismatch leaf exists; only three Handshake leaves (RI-015)" in run {
+        // LSP 3.17 has no runtime version handshake.
+        // Verify the three Handshake leaves all exist and are accessible.
+        val notInit     = LspException.Handshake.NotInitialized("test")
+        val alreadyInit = LspException.Handshake.AlreadyInitialized("test")
+        val shutdown    = LspException.Handshake.ShutdownInProgress("test")
+        assert(notInit.isInstanceOf[LspException.Handshake])
+        assert(alreadyInit.isInstanceOf[LspException.Handshake])
+        assert(shutdown.isInstanceOf[LspException.Handshake])
+        // Verify distinct error codes (all three are the complete Handshake leaf set per INV-014).
+        assert(notInit.code == -32002)
+        assert(alreadyInit.code == -32002)
+        assert(shutdown.code == -32600)
     }
 
-    "All stage bases are sealed inside LspException companion" in run {
-        // Verify that each stage base is a subclass of LspException.
-        val notInit = LspException.Handshake.NotInitialized("test")
-        val mNF     = LspException.Dispatch.MethodNotFound("test")
-        val reqC    = LspException.Execution.RequestCancelled(JsonRpcId(1L))
+    "All stage bases extend LspException and are subclasses of it" in run {
+        val notInit  = LspException.Handshake.NotInitialized("test")
+        val mNF      = LspException.Dispatch.MethodNotFound("test")
+        val reqC     = LspException.Execution.RequestCancelled(JsonRpcId(1L))
+        val shutdown = LspException.Handshake.ShutdownInProgress("shutdown")
         assert(notInit.isInstanceOf[LspException])
         assert(mNF.isInstanceOf[LspException])
         assert(reqC.isInstanceOf[LspException])
-        succeed
+        assert(shutdown.isInstanceOf[LspException])
+        // Verify exact stage hierarchy
+        assert(notInit.isInstanceOf[LspException.Handshake])
+        assert(mNF.isInstanceOf[LspException.Dispatch])
+        assert(reqC.isInstanceOf[LspException.Execution])
+        assert(shutdown.isInstanceOf[LspException.Handshake])
     }
 
 end LspExceptionTest

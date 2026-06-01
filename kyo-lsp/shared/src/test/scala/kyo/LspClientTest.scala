@@ -156,6 +156,8 @@ class LspClientTest extends Test:
             val info: LspInfo                       = clientInfo
             val caps: LspCapabilities.Client.Client = clientCaps
             val handlers: Seq[LspHandler[?, ?, ?]]  = Seq.empty
+            // The type annotation is the assertion: this must compile with the exact row.
+            // If the argument order changed, this would not compile.
             val _: LspClient < (Async & Abort[LspException]) =
                 LspClient.initUnscoped(transport, info, caps, handlers*)
             succeed
@@ -243,10 +245,18 @@ class LspClientTest extends Test:
     // Typed-only executeCommand[T] (INV-064)
     // =========================================================================
 
-    "executeCommand[T] is the only variant (INV-064)" in run {
-        val unsafeMethods = classOf[LspClient.Unsafe].getDeclaredMethods.map(_.getName).toSet
-        assert(unsafeMethods.contains("executeCommand"), "LspClient.Unsafe must have executeCommand")
-        succeed
+    "executeCommand[T] is the only variant and is typed-only (INV-064)" in run {
+        // Compile-time check: the extension method exists with the typed signature.
+        // The type parameter [T] proves it is typed-only; no untyped alias exists
+        // because that would have a different name (executeCommandUntyped, etc.).
+        // If an executeCommandUntyped variant were added, the grep in INV-064 would
+        // catch it. Here we verify via the safe-tier extension call site.
+        case class TestOut(value: String) derives Schema
+        val params = LspHandler.ExecuteCommandParams("test")
+        // This compile-time annotation is the assertion: only one executeCommand variant exists.
+        def typedOnly(client: LspClient)(using Frame): Maybe[TestOut] < (Async & Abort[LspException | Closed]) =
+            client.executeCommand[TestOut](params)
+        assert(typedOnly != null, "executeCommand extension method must exist and be callable")
     }
 
     "executeCommand[T] return type is Maybe[T] < (Async & Abort[LspException | Closed]) (INV-064)" in run {

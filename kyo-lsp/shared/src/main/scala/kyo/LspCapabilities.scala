@@ -169,7 +169,6 @@ object LspCapabilities:
             notebookDocument: Maybe[NotebookDocumentClientCapabilities] = Absent,
             window: Maybe[WindowClientCapabilities] = Absent,
             general: Maybe[GeneralClientCapabilities] = Absent,
-            // flow-allow: Structure carve-out per INV-055 (raw JSON slot for experimental)
             private[kyo] _rawExperimental: Maybe[String] = Absent
         ) derives CanEqual
 
@@ -198,6 +197,7 @@ object LspCapabilities:
             diagnostics: Maybe[DiagnosticWorkspaceClientCapabilities] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for workspace edit operations (apply edits, resource operations). */
         final case class WorkspaceEditClientCapabilities(
             documentChanges: Maybe[Boolean] = Absent,
             resourceOperations: Chunk[String] = Chunk.empty,
@@ -206,15 +206,19 @@ object LspCapabilities:
             changeAnnotationSupport: Maybe[ChangeAnnotationSupportOptions] = Absent
         ) derives Schema, CanEqual
 
+        /** Whether the client groups workspace edit change annotations by label on display. */
         final case class ChangeAnnotationSupportOptions(groupsOnLabel: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `workspace/didChangeConfiguration` notifications. */
         final case class DidChangeConfigurationClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `workspace/didChangeWatchedFiles` notifications. */
         final case class DidChangeWatchedFilesClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             relativePatternSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `workspace/symbol` requests. */
         final case class WorkspaceSymbolClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             symbolKind: Maybe[SymbolKindOptions] = Absent,
@@ -222,18 +226,25 @@ object LspCapabilities:
             resolveSupport: Maybe[ResolveSupport] = Absent
         ) derives Schema, CanEqual
 
+        /** Which symbol kind values the client can display. */
         final case class SymbolKindOptions(valueSet: Chunk[LspHandler.SymbolKind] = Chunk.empty) derives Schema, CanEqual
 
+        /** Which symbol tag values the client can display. */
         final case class SymbolTagSupportOptions(valueSet: Chunk[LspHandler.SymbolTag] = Chunk.empty) derives Schema, CanEqual
 
+        /** Properties a client can resolve in a second request for a symbol or item. */
         final case class ResolveSupport(properties: Chunk[String]) derives Schema, CanEqual
 
+        /** Client capabilities for `workspace/executeCommand` requests. */
         final case class ExecuteCommandClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Whether the client can refresh semantic tokens workspace-wide on a server request. */
         final case class SemanticTokensWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Whether the client can refresh code lenses workspace-wide on a server request. */
         final case class CodeLensWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for workspace file operation notifications and requests. */
         final case class FileOperationsClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             didCreate: Maybe[Boolean] = Absent,
@@ -244,10 +255,13 @@ object LspCapabilities:
             willDelete: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Whether the client can refresh inline values workspace-wide on a server request. */
         final case class InlineValueWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Whether the client can refresh inlay hints workspace-wide on a server request. */
         final case class InlayHintWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Whether the client can refresh diagnostics workspace-wide on a server request. */
         final case class DiagnosticWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
         // --- TextDocument client capabilities ---
@@ -286,6 +300,7 @@ object LspCapabilities:
             diagnostic: Maybe[DiagnosticClientCapabilities] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for text document synchronization events. */
         final case class TextDocumentSyncClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             willSave: Maybe[Boolean] = Absent,
@@ -293,6 +308,7 @@ object LspCapabilities:
             didSave: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/completion` requests. */
         final case class CompletionClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             completionItem: Maybe[CompletionItemClientCapabilities] = Absent,
@@ -302,6 +318,7 @@ object LspCapabilities:
             completionList: Maybe[CompletionListClientCapabilities] = Absent
         ) derives Schema, CanEqual
 
+        /** Fine-grained completion item capabilities (snippet, tags, insert mode, etc.). */
         final case class CompletionItemClientCapabilities(
             snippetSupport: Maybe[Boolean] = Absent,
             commitCharactersSupport: Maybe[Boolean] = Absent,
@@ -315,57 +332,72 @@ object LspCapabilities:
             labelDetailsSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Which completion item tags the client can display. */
         final case class CompletionItemTagSupportOptions(valueSet: Chunk[LspHandler.CompletionItemTag]) derives Schema, CanEqual
 
+        /** Which insert text modes the client can apply. */
         final case class InsertTextModeSupport(valueSet: Chunk[LspHandler.InsertTextMode]) derives Schema, CanEqual
 
+        /** Which completion item kind values the client can display. */
         final case class CompletionItemKindOptions(valueSet: Chunk[LspHandler.CompletionItemKind] = Chunk.empty) derives Schema, CanEqual
 
+        /** Client-supported default properties for completion lists. */
         final case class CompletionListClientCapabilities(itemDefaults: Chunk[String] = Chunk.empty) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/hover` requests. */
         final case class HoverClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             contentFormat: Chunk[LspHandler.MarkupKind] = Chunk.empty
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/signatureHelp` requests. */
         final case class SignatureHelpClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             signatureInformation: Maybe[SignatureInformationClientCapabilities] = Absent,
             contextSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Signature information details the client can display. */
         final case class SignatureInformationClientCapabilities(
             documentationFormat: Chunk[LspHandler.MarkupKind] = Chunk.empty,
             parameterInformation: Maybe[ParameterInformationClientCapabilities] = Absent,
             activeParameterSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Whether the client supports label offsets in parameter information. */
         final case class ParameterInformationClientCapabilities(labelOffsetSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/declaration` requests. */
         final case class DeclarationClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             linkSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/definition` requests. */
         final case class DefinitionClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             linkSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/typeDefinition` requests. */
         final case class TypeDefinitionClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             linkSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/implementation` requests. */
         final case class ImplementationClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             linkSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/references` requests. */
         final case class ReferenceClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/documentHighlight` requests. */
         final case class DocumentHighlightClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/documentSymbol` requests. */
         final case class DocumentSymbolClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             symbolKind: Maybe[SymbolKindOptions] = Absent,
@@ -374,6 +406,7 @@ object LspCapabilities:
             labelSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/codeAction` requests. */
         final case class CodeActionClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             codeActionLiteralSupport: Maybe[CodeActionLiteralSupportOptions] = Absent,
@@ -384,27 +417,36 @@ object LspCapabilities:
             honorsChangeAnnotations: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Code action kind subsets the client can display. */
         final case class CodeActionLiteralSupportOptions(
             codeActionKind: CodeActionKindOptions
         ) derives Schema, CanEqual
 
+        /** Which code action kind values the client can display. */
         final case class CodeActionKindOptions(valueSet: Chunk[LspHandler.CodeActionKind]) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/codeLens` requests. */
         final case class CodeLensClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/documentLink` requests. */
         final case class DocumentLinkClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             tooltipSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/documentColor` requests. */
         final case class DocumentColorClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/formatting` requests. */
         final case class DocumentFormattingClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/rangeFormatting` requests. */
         final case class DocumentRangeFormattingClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/onTypeFormatting` requests. */
         final case class DocumentOnTypeFormattingClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/rename` requests. */
         final case class RenameClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             prepareSupport: Maybe[Boolean] = Absent,
@@ -412,6 +454,7 @@ object LspCapabilities:
             honorsChangeAnnotations: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/publishDiagnostics` notifications. */
         final case class PublishDiagnosticsClientCapabilities(
             relatedInformation: Maybe[Boolean] = Absent,
             tagSupport: Maybe[DiagnosticTagSupportOptions] = Absent,
@@ -420,8 +463,10 @@ object LspCapabilities:
             dataSupport: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Which diagnostic tag values the client can display. */
         final case class DiagnosticTagSupportOptions(valueSet: Chunk[LspHandler.DiagnosticTag]) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/foldingRange` requests. */
         final case class FoldingRangeClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             rangeLimit: Maybe[Int] = Absent,
@@ -430,16 +475,22 @@ object LspCapabilities:
             foldingRange: Maybe[FoldingRangeOptions] = Absent
         ) derives Schema, CanEqual
 
+        /** Which folding range kind values the client can display. */
         final case class FoldingRangeKindOptions(valueSet: Chunk[LspHandler.FoldingRangeKind] = Chunk.empty) derives Schema, CanEqual
 
+        /** Folding range display options (e.g. collapsed text support). */
         final case class FoldingRangeOptions(collapsedText: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/selectionRange` requests. */
         final case class SelectionRangeClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/linkedEditingRange` requests. */
         final case class LinkedEditingRangeClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/prepareCallHierarchy` requests. */
         final case class CallHierarchyClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/semanticTokens` requests. */
         final case class SemanticTokensClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             requests: SemanticTokensRequestsCapabilities,
@@ -452,22 +503,28 @@ object LspCapabilities:
             augmentsSyntaxTokens: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Which semantic token request types (range / full) the client supports. */
         final case class SemanticTokensRequestsCapabilities(
             range: Maybe[Boolean] = Absent,
             full: Maybe[Boolean] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/moniker` requests. */
         final case class MonikerClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/prepareTypeHierarchy` requests. */
         final case class TypeHierarchyClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/inlineValue` requests. */
         final case class InlineValueClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/inlayHint` requests. */
         final case class InlayHintClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             resolveSupport: Maybe[ResolveSupport] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `textDocument/diagnostic` requests. */
         final case class DiagnosticClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             relatedDocumentSupport: Maybe[Boolean] = Absent
@@ -480,6 +537,7 @@ object LspCapabilities:
             synchronization: Maybe[NotebookDocumentSyncClientCapabilities] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for notebook document synchronization. */
         final case class NotebookDocumentSyncClientCapabilities(
             dynamicRegistration: Maybe[Boolean] = Absent,
             executionSummarySupport: Maybe[Boolean] = Absent
@@ -494,12 +552,15 @@ object LspCapabilities:
             showDocument: Maybe[ShowDocumentClientCapabilities] = Absent
         ) derives Schema, CanEqual
 
+        /** Client capabilities for `window/showMessageRequest` requests. */
         final case class ShowMessageRequestClientCapabilities(
             messageActionItem: Maybe[MessageActionItemClientCapabilities] = Absent
         ) derives Schema, CanEqual
 
+        /** Whether the client supports additional properties on message action items. */
         final case class MessageActionItemClientCapabilities(additionalPropertiesSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
 
+        /** Whether the client supports the `window/showDocument` request. */
         final case class ShowDocumentClientCapabilities(support: Boolean) derives Schema, CanEqual
 
         // --- General client capabilities ---
@@ -512,13 +573,16 @@ object LspCapabilities:
             positionEncodings: Chunk[LspHandler.PositionEncodingKind] = Chunk.empty
         ) derives Schema, CanEqual
 
+        /** Options for stale request handling (cancel vs retry on content modified). */
         final case class StaleRequestSupportOptions(
             cancel: Boolean,
             retryOnContentModified: Chunk[String]
         ) derives Schema, CanEqual
 
+        /** Client's regular expression engine name and version. */
         final case class RegularExpressionsClientCapabilities(engine: String, version: Maybe[String] = Absent) derives Schema, CanEqual
 
+        /** Client's Markdown parser name, version, and allowed HTML tags. */
         final case class MarkdownClientCapabilities(
             parser: String,
             version: Maybe[String] = Absent,

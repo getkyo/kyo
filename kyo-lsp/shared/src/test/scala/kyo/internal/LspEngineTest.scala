@@ -34,9 +34,11 @@ class LspEngineTest extends Test:
             // this would Allow. Since handshake goes first, it should Reject.
             val env = JsonRpcRequest(JsonRpcId(1), "textDocument/completion", Absent, Absent)
             Sync.Unsafe.evalOrThrow(composed.beforeDispatch(env)) match
-                case JsonRpcMessageGate.Decision.Reject(_) => assert(true)
-                case JsonRpcMessageGate.Decision.Allow     => fail("Should have been rejected by handshake gate")
-                case JsonRpcMessageGate.Decision.Drop      => fail("Should have been rejected by handshake gate")
+                case JsonRpcMessageGate.Decision.Reject(response) =>
+                    // The rejection carries a JsonRpcResponse; verify it is an error response (error field is Present).
+                    assert(response.error.isDefined, s"Expected error response, got: $response")
+                case JsonRpcMessageGate.Decision.Allow => fail("Should have been rejected by handshake gate")
+                case JsonRpcMessageGate.Decision.Drop  => fail("Should have been rejected by handshake gate")
             end match
         }
 

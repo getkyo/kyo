@@ -56,8 +56,11 @@ class LspBooleanOrTest extends Test:
     "BooleanOr decodes empty object -> Options(T)" in {
         val v = decode[LspHandler.BooleanOr[LspHandler.SaveOptions]]("{}")
         v match
-            case LspHandler.BooleanOr.Options(_) => assert(true)
-            case other                           => assert(false, s"Expected Options, got $other")
+            case LspHandler.BooleanOr.Options(opts) =>
+                // Verify decoded case and that the nested options is the right type.
+                assert(opts.isInstanceOf[LspHandler.SaveOptions], s"Expected SaveOptions inside Options, got ${opts.getClass}")
+            case other => assert(false, s"Expected Options, got $other")
+        end match
     }
 
     // ---- BooleanOr[T] round-trip tests ----
@@ -141,8 +144,10 @@ class LspBooleanOrTest extends Test:
         val back = roundtrip(opts)
         assert(back.openClose == Present(true))
         back.save match
-            case Present(LspHandler.BooleanOr.Bool(true)) => assert(true)
-            case other                                    => assert(false, s"Expected BooleanOr.Bool(true), got $other")
+            case Present(LspHandler.BooleanOr.Bool(b)) =>
+                assert(b, s"Expected BooleanOr.Bool(true), got BooleanOr.Bool(false)")
+            case other => assert(false, s"Expected BooleanOr.Bool(true), got $other")
+        end match
     }
 
     "TextDocumentSyncOptions with BooleanOr.Options save round-trips" in {

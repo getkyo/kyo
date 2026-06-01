@@ -55,8 +55,9 @@ class LspConfigTest extends Test:
 
     "require" - {
         "passes for default config" in {
+            // Should not throw; also verify the validated config matches default.
             LspConfig.require(LspConfig.default)
-            succeed
+            assert(LspConfig.default.positionEncodings.nonEmpty)
         }
         "throws when positionEncodings is empty" in {
             val bad = LspConfig.default.withPositionEncodings(Chunk.empty)
@@ -76,7 +77,7 @@ class LspConfigTest extends Test:
                 Chunk(LspHandler.PositionEncodingKind.UTF16, LspHandler.PositionEncodingKind.UTF8)
             )
             LspConfig.require(cfg)
-            succeed
+            assert(cfg.positionEncodings.size == 2)
         }
     }
 
