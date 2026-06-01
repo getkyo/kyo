@@ -22,6 +22,11 @@ object SymbolKind:
     def fromTypedefTemplateFlags(flags: Long): Tasty.SymbolKind =
         if (flags & Tasty.Flag.Trait.bit) != 0L then Tasty.SymbolKind.Trait
         else if (flags & Tasty.Flag.Module.bit) != 0L then Tasty.SymbolKind.Object
+        else if (flags & Tasty.Flag.Enum.bit) != 0L && (flags & Tasty.Flag.Case.bit) != 0L then
+            // F-E-007: enum-case classes carry both the Enum and Case flags.
+            // Enum-case OBJECTS additionally carry Module; the Module branch above handles those,
+            // ensuring only class-form enum cases (no Module flag) reach this branch.
+            Tasty.SymbolKind.EnumCase
         else Tasty.SymbolKind.Class
 
     /** Resolve SymbolKind from a TYPEDEF modifier flags bitmask and the sub-tree tag, where the caller has confirmed the TYPEDEF payload

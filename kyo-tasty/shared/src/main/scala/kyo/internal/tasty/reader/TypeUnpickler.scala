@@ -367,6 +367,10 @@ object TypeUnpickler:
                     absRef, {
                         if ctx.sectionBytes != null then
                             // Cache miss during body decode: re-decode the type at absRef from full section bytes.
+                            // Pass ctx.session to the fork context so that cross-file FQN refs (TERMREFpkg,
+                            // TYPEREFpkg) encountered during re-decode produce tracked unique negative IDs
+                            // rather than the unresolved sentinel. Without this, @Child annotation type args
+                            // decoded via SHAREDtype back-references lose their cross-file FQN tracking.
                             val forkView = ByteView(ctx.sectionBytes, absRef, ctx.sectionBytes.length)
                             val forkCtx = DecodeCtx(
                                 ctx.names,
@@ -377,7 +381,8 @@ object TypeUnpickler:
                                 ctx.binderAddrMap,
                                 ctx.sectionBytes,
                                 ctx.sectionOffset,
-                                ctx.frame
+                                ctx.frame,
+                                ctx.session
                             )
                             val t = readTypeNode(forkView, forkCtx)
                             ctx.addrCache(absRef) = t
@@ -524,9 +529,16 @@ object TypeUnpickler:
                 val astRef = view.readNat()
                 val qual   = readTypeNode(view, ctx)
                 // F-A-001 fix: convert section-relative ASTRef to absolute for addrMap lookup.
-                ctx.addrMap.get(ctx.sectionOffset + astRef) match
+                val absRefTerm = ctx.sectionOffset + astRef
+                ctx.addrMap.get(absRefTerm) match
                     case Some(sym) => Tasty.Type.TermRef(qual, sym.name)
-                    case None      => Tasty.Type.TermRef(qual, Tasty.Name(s"termrefsym@$astRef"))
+                    case None      =>
+                        // F-I-003 fix: for forward references (same file, not yet in addrMap),
+                        // emit Named(PHASE_B_ADDR_OFFSET + absRef). Phase C remaps to the final
+                        // SymbolId via addrToFinal, allowing resolveChildRef to extract it.
+                        // If truly unresolvable (different file), Phase C returns Named(-1).
+                        Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRefTerm))
+                end match
 
             case TastyFormat.TERMREF =>
                 val nameRef = view.readNat()
@@ -539,9 +551,14 @@ object TypeUnpickler:
                 discard(readTypeNode(view, ctx)) // consume qual
                 // F-A-001 fix: convert section-relative ASTRef to absolute for addrMap lookup.
                 // Use PHASE_B_ADDR_OFFSET + absRef so Phase C can remap via addrMap.
+                // F-I-003 fix: always emit PHASE_B_ADDR_OFFSET + absRef regardless of whether
+                // addrMap contains absRef yet. For @Child annotation forward references, the
+                // referenced symbol may not yet be in addrMap (decoded later in the same file).
+                // Phase C's addrToFinal map is built from the COMPLETE addrMap and resolves these.
+                // If absRef is truly from a different file, addrToFinal will not contain it and
+                // Phase C leaves it as Named(-1) (same behavior as before this fix).
                 val absRef = ctx.sectionOffset + astRef
-                if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
-                else Tasty.Type.Named(makeUnresolvedSym(s"typerefsym@$astRef").id)
+                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
 
             case TastyFormat.TYPEREF =>
                 val nameRef = view.readNat()

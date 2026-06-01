@@ -940,7 +940,8 @@ object SnapshotReader:
             case 10 => AbstractType
             case 11 => TypeParam
             case 12 => Parameter
-            case 13 => Unresolved
+            case 13 => EnumCase
+            case 14 => Unresolved
             case _  => Unresolved
         end match
     end kindFromOrd

@@ -284,7 +284,7 @@ object AstUnpickler:
                     // Decode the VALDEF signature type (first type node after NameRef).
                     // This populates typeSession.placeholders with any cross-file refs.
                     val valTpe               = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
-                    val (flagBits, pendAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset)
+                    val (flagBits, pendAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                     val kind                 = InternalSymbolKind.fromValdefFlags(flagBits)
                     val flags                = new Tasty.Flags(flagBits)
                     val sym                  = InternalSymbol.makeSymbol(kind, flags, symName)
@@ -305,7 +305,7 @@ object AstUnpickler:
                     val symName             = names(nameRef)
                     val owner               = currentOwner(ownerStack)
                     val payloadBody         = view.position
-                    val (flagBits, defAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset)
+                    val (flagBits, defAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                     val flags               = new Tasty.Flags(flagBits)
                     val sym                 = InternalSymbol.makeSymbol(Tasty.SymbolKind.Method, flags, symName)
                     ownerBySymbol(sym) = owner
@@ -381,7 +381,7 @@ object AstUnpickler:
                         // reads modifiers from templatePayloadEnd to payloadEnd.
                         view.goto(templatePayloadEnd)
                         // Modifiers follow the TEMPLATE node.
-                        val (flagBits, tmplAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset)
+                        val (flagBits, tmplAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                         val kind                 = InternalSymbolKind.fromTypedefTemplateFlags(flagBits)
                         val flags                = new Tasty.Flags(flagBits)
                         val sym                  = InternalSymbol.makeSymbol(kind, flags, symName)
@@ -434,7 +434,7 @@ object AstUnpickler:
                                     discard(view.readByte()) // consume the type sub-tree tag (already peeked)
                                     skipTreeBody(nextTag, view)
                                     Absent
-                        val (flagBits, typeAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset)
+                        val (flagBits, typeAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                         val kind                 = InternalSymbolKind.fromTypedefTypeFlagsAndBody(flagBits, nextTag)
                         val flags                = new Tasty.Flags(flagBits)
                         // Type-level TYPEDEF: no body to decode; bodyStart == bodyEnd == payloadEnd sentinel.
@@ -457,7 +457,7 @@ object AstUnpickler:
                     val owner      = currentOwner(ownerStack)
                     // Decode type bounds (first type node after NameRef), if present.
                     val tpBounds           = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
-                    val (flagBits, tpAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset)
+                    val (flagBits, tpAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                     val flags              = new Tasty.Flags(flagBits)
                     val sym                = InternalSymbol.makeSymbol(Tasty.SymbolKind.TypeParam, flags, symName)
                     ownerBySymbol(sym) = owner
@@ -477,7 +477,7 @@ object AstUnpickler:
                     val owner      = currentOwner(ownerStack)
                     // Decode parameter type (first type node after NameRef), if present.
                     val paramTpe              = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
-                    val (flagBits, paramAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset)
+                    val (flagBits, paramAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                     val flags                 = new Tasty.Flags(flagBits)
                     val sym                   = InternalSymbol.makeSymbol(Tasty.SymbolKind.Parameter, flags, symName)
                     ownerBySymbol(sym) = owner
@@ -708,7 +708,8 @@ object AstUnpickler:
         view: ByteView,
         end: Long,
         typeSession: TypeUnpickler.DecodeSession,
-        sectionOffset: Int
+        sectionOffset: Int,
+        sectionBytes: Array[Byte]
     )(using Frame, AllowUnsafe): (Long, mutable.ArrayBuffer[Tasty.Annotation]) =
         var flagBits = 0L
         val annBuf   = new mutable.ArrayBuffer[Tasty.Annotation]()
@@ -720,7 +721,7 @@ object AstUnpickler:
                 tag match
                     case TastyFormat.ANNOTATION =>
                         val annEnd = view.readEnd()
-                        decodeAnnotationBlock(view, annEnd, typeSession, sectionOffset) match
+                        decodeAnnotationBlock(view, annEnd, typeSession, sectionOffset, sectionBytes) match
                             case Present(ann) => annBuf += ann
                             case Absent       => ()
                     case TastyFormat.PRIVATEqualified =>
@@ -752,7 +753,8 @@ object AstUnpickler:
         view: ByteView,
         end: Long,
         typeSession: TypeUnpickler.DecodeSession,
-        sectionOffset: Int
+        sectionOffset: Int,
+        sectionBytes: Array[Byte]
     )(using Frame, AllowUnsafe): (Long, mutable.ArrayBuffer[Tasty.Annotation]) =
         var flagBits = 0L
         val annBuf   = new mutable.ArrayBuffer[Tasty.Annotation]()
@@ -761,7 +763,7 @@ object AstUnpickler:
             modTag match
                 case TastyFormat.ANNOTATION =>
                     val annEnd = view.readEnd()
-                    decodeAnnotationBlock(view, annEnd, typeSession, sectionOffset) match
+                    decodeAnnotationBlock(view, annEnd, typeSession, sectionOffset, sectionBytes) match
                         case Present(ann) => annBuf += ann
                         case Absent       => ()
                 case TastyFormat.PRIVATEqualified =>
@@ -801,7 +803,8 @@ object AstUnpickler:
         view: ByteView,
         annEnd: Long,
         typeSession: TypeUnpickler.DecodeSession,
-        sectionOffset: Int
+        sectionOffset: Int,
+        sectionBytes: Array[Byte]
     )(using Frame, AllowUnsafe): Maybe[Tasty.Annotation] =
         if view.position >= annEnd then return Absent
         val nextTag = view.peekByte(view.position) & 0xff
@@ -822,12 +825,85 @@ object AstUnpickler:
         tyconResult match
             case Absent         => Absent
             case Present(tycon) =>
-                // Skip remaining bytes (fullAnnotation_Term) -- lazy args decode not wired yet.
-                // Phase 05 wire-decodes the tycon only; args decode is body-tree path per HARD RULE 7.
+                // F-I-003 fix: for @scala.annotation.internal.Child[T] annotations, decode the
+                // fullAnnotation_Term to extract the permitted-subclass TypeRef T. This is needed
+                // by the permit-extraction loop in ClasspathOrchestrator.finalizeMerge (Phase 07).
+                //
+                // @Child[T] annotations have tycon = Type.TermRef(<pkg>, Name("Child")).
+                // The fullAnnotation_Term is: APPLY Length NEW APPLIEDtpt Length <Child_tpt> <T_typeref>.
+                // We decode the T_typeref and store it as Type.Applied(tycon, Chunk(T)).
+                val enrichedTycon =
+                    tycon match
+                        case Tasty.Type.TermRef(_, name)
+                            if { import Tasty.Name.asString; name.asString == "Child" } =>
+                            if view.position < annEnd then
+                                decodeChildAnnotationType(
+                                    view,
+                                    annEnd,
+                                    tycon,
+                                    typeSession,
+                                    sectionOffset,
+                                    sectionBytes
+                                )
+                            else tycon
+                            end if
+                        case _ =>
+                            tycon
                 view.goto(annEnd)
-                Present(Tasty.Annotation(tycon, Maybe.Absent))
+                Present(Tasty.Annotation(enrichedTycon, Maybe.Absent))
         end match
     end decodeAnnotationBlock
+
+    /** Extract the type argument from a @Child[T] annotation fullAnnotation_Term.
+      *
+      * F-I-003: @Child[T] encodes the permitted-subclass TypeRef T inside:
+      *   APPLY Length ( TYPEAPPLY Length ( constructor_ref  T_typeref ) )
+      * This helper navigates the APPLY > TYPEAPPLY wrapper, skips the constructor_ref (the Child
+      * constructor reference), and decodes the T_typeref. On success returns
+      * `Type.Applied(tycon, Chunk(T))` which Phase 07's finalizeMerge can pattern-match.
+      * On any failure returns the original tycon (graceful degradation, no sentinel injection).
+      */
+    private def decodeChildAnnotationType(
+        view: ByteView,
+        annEnd: Long,
+        tycon: Tasty.Type,
+        typeSession: TypeUnpickler.DecodeSession,
+        sectionOffset: Int,
+        sectionBytes: Array[Byte]
+    )(using Frame, AllowUnsafe): Tasty.Type =
+        val savedPos = view.position
+        try
+            // Expect APPLY (tag 136)
+            if (view.peekByte(view.position) & 0xff) != TastyFormat.APPLY then return tycon
+            val _        = view.readByte()
+            val applyEnd = view.readEnd()
+            if view.position >= applyEnd then return tycon
+            val innerTag = view.peekByte(view.position) & 0xff
+            // @Child[T] encodes as: APPLY(TYPEAPPLY(fn T_ref)) where T_ref is the subclass type.
+            // TYPEAPPLY = 137: tag + Length + fn_Term + type_arg_Term+.
+            if innerTag != TastyFormat.TYPEAPPLY then return tycon
+            val _         = view.readByte()
+            val tapplyEnd = view.readEnd()
+            if view.position >= tapplyEnd then return tycon
+            // Skip the fn_Term (the constructor reference for Child).
+            skipTree(view)
+            if view.position >= tapplyEnd then return tycon
+            // Decode the first type argument: the permitted-subclass TypeRef T.
+            // Use readTypeIntoSessionWithBytes so that SHAREDtype cache misses can re-decode
+            // from sectionBytes rather than falling back to the unresolved sentinel.
+            val typeArgTag = view.peekByte(view.position) & 0xff
+            val subT =
+                if isTreeTptTag(typeArgTag) then
+                    TreeUnpickler.decodeTptAsType(view, typeSession, typeArgTag, sectionOffset)
+                else
+                    TypeUnpickler.readTypeIntoSessionWithBytes(view, typeSession, sectionBytes, sectionOffset)
+            Tasty.Type.Applied(tycon, kyo.Chunk(subT))
+        catch
+            case _: Exception =>
+                view.goto(savedPos)
+                tycon
+        end try
+    end decodeChildAnnotationType
 
     private def isModifierTag(tag: Int): Boolean =
         (tag >= 1 && tag <= 59) ||

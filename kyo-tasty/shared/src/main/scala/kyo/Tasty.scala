@@ -173,7 +173,7 @@ object Tasty:
     enum SymbolKind derives CanEqual:
         case Package, Class, Trait, Object, Method, Field, Val, Var,
             TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter,
-            Unresolved
+            EnumCase, Unresolved
     end SymbolKind
 
     // ── Error mode ───────────────────────────────────────────────────────────
@@ -2171,6 +2171,10 @@ object Tasty:
                 case Type.TermRef(qual, name) =>
                     val q = typeFqnString(qual)
                     if q.nonEmpty then q + "." + name.asString else name.asString
+                case Type.Applied(base, _) =>
+                    // F-I-003 fix: @Child[T] enrichment wraps the TermRef tycon in Applied(tycon, Chunk(T)).
+                    // For FQN matching, use the unapplied base type.
+                    typeFqnString(base)
                 case _ => ""
             end match
         end typeFqnString

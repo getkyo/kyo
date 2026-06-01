@@ -5,21 +5,23 @@ package kyo
   * Phase 21g (T2). Cross-references Tasty.scala SymbolKind definition. The plan listed provisional names (Module, ParamVal, ParamType,
   * Constructor) that do not match the actual enum; this test is authoritative against the real Tasty.scala definition.
   *
-  * Actual SymbolKind cases (Tasty.scala line 144-148): Package, Class, Trait, Object, Method, Field, Val, Var, TypeAlias, OpaqueType,
-  * AbstractType, TypeParam, Parameter, Unresolved Total: 14 cases.
+  * Phase 07 adds: EnumCase. Total is now 15 cases.
+  *
+  * Actual SymbolKind cases: Package, Class, Trait, Object, Method, Field, Val, Var, TypeAlias, OpaqueType, AbstractType, TypeParam,
+  * Parameter, EnumCase, Unresolved. Total: 15 cases.
   */
 class SymbolKindTest extends Test:
 
     // Test 8 (T2, SymbolKind): enum contains every documented case and has the expected count.
     // Given: Tasty.SymbolKind.values array.
     // When: converted to a Set.
-    // Then: the set contains all 14 documented cases; values.length == 14.
-    // Pins: T2.
-    "SymbolKind.values contains all 14 documented cases" in {
+    // Then: the set contains all 15 documented cases (Phase 07 added EnumCase); values.length == 15.
+    // Pins: T2, F-E-007 (Phase 07).
+    "SymbolKind.values contains all 15 documented cases" in {
         val values = Tasty.SymbolKind.values
         assert(
-            values.length == 14,
-            s"Expected 14 SymbolKind cases but got ${values.length}: ${values.mkString(", ")}"
+            values.length == 15,
+            s"Expected 15 SymbolKind cases but got ${values.length}: ${values.mkString(", ")}"
         )
         val kindSet = values.toSet
         val expected: List[Tasty.SymbolKind] = List(
@@ -36,6 +38,7 @@ class SymbolKindTest extends Test:
             Tasty.SymbolKind.AbstractType,
             Tasty.SymbolKind.TypeParam,
             Tasty.SymbolKind.Parameter,
+            Tasty.SymbolKind.EnumCase,
             Tasty.SymbolKind.Unresolved
         )
         val missing = expected.filterNot(kindSet.contains)

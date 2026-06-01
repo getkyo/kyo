@@ -340,9 +340,11 @@ object ClasspathOrchestrator:
                         case None => true
                         case Some(prev) =>
                             val prevIsStructural = prev.kind == Tasty.SymbolKind.Class ||
-                                prev.kind == Tasty.SymbolKind.Trait || prev.kind == Tasty.SymbolKind.Object
+                                prev.kind == Tasty.SymbolKind.Trait || prev.kind == Tasty.SymbolKind.Object ||
+                                prev.kind == Tasty.SymbolKind.EnumCase
                             val newIsStructural = sym.kind == Tasty.SymbolKind.Class ||
-                                sym.kind == Tasty.SymbolKind.Trait || sym.kind == Tasty.SymbolKind.Object
+                                sym.kind == Tasty.SymbolKind.Trait || sym.kind == Tasty.SymbolKind.Object ||
+                                sym.kind == Tasty.SymbolKind.EnumCase
                             newIsStructural || !prevIsStructural
                     if shouldStore then state.fqnIndex(indexKey) = sym
                     // F-E-001 / Q-003 / HARD RULE 8 dual-index (source FQN):
@@ -375,7 +377,8 @@ object ClasspathOrchestrator:
                         case Tasty.SymbolKind.Package =>
                             state.packages += sym
                             state.packageIndex(fqn) = sym
-                        case Tasty.SymbolKind.Class | Tasty.SymbolKind.Trait | Tasty.SymbolKind.Object =>
+                        case Tasty.SymbolKind.Class | Tasty.SymbolKind.Trait | Tasty.SymbolKind.Object |
+                            Tasty.SymbolKind.EnumCase =>
                             state.topLevelCls += sym
                         case _ =>
                             ()
@@ -598,14 +601,17 @@ object ClasspathOrchestrator:
                         frIdx3 += 1
                     end for
 
-                    // Default declaredType for Class/Trait/Object: Type.Named(SymbolId(i)).
+                    // Default declaredType for Class/Trait/Object/EnumCase: Type.Named(SymbolId(i)).
                     // N-03 fix: use SymbolId(i) not sym.id (which was SymbolId(-1) for all partial symbols).
                     i = 0
                     for sym <- allPartial do
                         if descs(i).declaredType.isEmpty then
                             val k = sym.kind
-                            if k == Tasty.SymbolKind.Class || k == Tasty.SymbolKind.Trait || k == Tasty.SymbolKind.Object then
+                            if k == Tasty.SymbolKind.Class || k == Tasty.SymbolKind.Trait
+                                || k == Tasty.SymbolKind.Object || k == Tasty.SymbolKind.EnumCase
+                            then
                                 descs(i).declaredType = Maybe(Tasty.Type.Named(SymbolId(i)))
+                            end if
                         end if
                         i += 1
                     end for
@@ -642,6 +648,127 @@ object ClasspathOrchestrator:
                         end for
                         frIdxAnn += 1
                     end for
+
+                    // F-I-003 / INV-007 fix: populate permittedSubclassIds by mining @Child annotations.
+                    //
+                    // Scala 3 TASTy encodes sealed children as @scala.annotation.internal.Child[T]
+                    // annotations on the sealed parent. Phase 07 extends the annotation decoder in
+                    // AstUnpickler.decodeChildAnnotationType to decode the fullAnnotation_Term for
+                    // @Child annotations and produce Type.Applied(TermRef(_, "Child"), Chunk(subT)).
+                    // The first type argument (subT) is the permitted-subclass TypeRef.
+                    //
+                    // This loop runs AFTER the annotation-merge loop above so descs(idx).annotations
+                    // already contains fully-remapped final SymbolIds. We identify @Child by matching
+                    // Type.Applied(Type.TermRef(_, name), args) where name.asString == "Child".
+                    //
+                    // Two TypeRef shapes seen in practice:
+                    //   (a) Type.Named(id) -- direct same-file reference, id >= 0 is a final SymbolId.
+                    //   (b) Type.TermRef(Type.Named(qualId), name) -- TYPEREF with a qualifier, i.e.
+                    //       "name in the scope of symbol qualId". Construct the FQN and look up in
+                    //       state.fqnIndex to get the final SymbolId.
+                    import kyo.Tasty.Name.asString
+
+                    // Build a reverse index: final SymbolId value -> FQN string, for use by resolveChildRef.
+                    // This is a lightweight reverse of state.fqnIndex used only for permit extraction.
+                    val idToFqnForPermits = new java.util.HashMap[Int, String](state.fqnIndex.size * 2)
+                    for (fqn, partialSym) <- state.fqnIndex do
+                        val idx = symbolIdMap.getOrDefault(partialSym, -1)
+                        if idx >= 0 && !idToFqnForPermits.containsKey(idx) then
+                            discard(idToFqnForPermits.put(idx, fqn))
+                    end for
+
+                    /** Resolve a Type (subclass ref from @Child annotation) to a final SymbolId value.
+                      *
+                      * Handles Type.Named (direct ref) and Type.TermRef (TYPEREF with qualifier).
+                      * For singleton objects like scala.None, the @Child annotation references the
+                      * module val FQN (scala.None). We detect this by checking if the resolved symbol
+                      * is a Val kind (module val), then resolve to the module class FQN (scala.None$).
+                      *
+                      * Returns -1 if unresolvable (entry skipped per HARD RULE 2).
+                      */
+                    /** Resolve a qualifier SymbolId to its FQN string, or null if unresolvable. */
+                    def qualIdToFqn(qualId: Int): String | Null =
+                        idToFqnForPermits.get(qualId)
+                    end qualIdToFqn
+
+                    /** Look up a FQN in fqnIndex and return its final SymbolId, handling module vals.
+                      * If the direct lookup hits a Val kind (module val), redirect to the module class "$" FQN.
+                      */
+                    def fqnToId(fqn: String): Int =
+                        state.fqnIndex.get(fqn) match
+                            case Some(p) =>
+                                val rawId = symbolIdMap.getOrDefault(p, -1)
+                                if rawId >= 0 && rawId < count && descs(rawId).kind == Tasty.SymbolKind.Val then
+                                    state.fqnIndex.get(fqn + "$") match
+                                        case Some(p2) =>
+                                            val moduleId = symbolIdMap.getOrDefault(p2, -1)
+                                            if moduleId >= 0 then moduleId else rawId
+                                        case None => rawId
+                                else rawId
+                                end if
+                            case None =>
+                                // Fallback: try the module class FQN (for singleton objects encoded as "$").
+                                state.fqnIndex.get(fqn + "$") match
+                                    case Some(p) => symbolIdMap.getOrDefault(p, -1)
+                                    case None    => -1
+                    end fqnToId
+
+                    def resolveChildRef(t: Tasty.Type): Int =
+                        t match
+                            case Tasty.Type.Named(sid) if sid.value >= 0 =>
+                                sid.value
+                            case Tasty.Type.TermRef(Tasty.Type.Named(qualSid), memberName)
+                                if qualSid.value >= 0 =>
+                                val qualFqn = qualIdToFqn(qualSid.value)
+                                if qualFqn != null then
+                                    val fqn = if qualFqn.nonEmpty then qualFqn + "." + memberName.asString
+                                    else memberName.asString
+                                    fqnToId(fqn)
+                                else -1
+                                end if
+                            case Tasty.Type.TermRef(Tasty.Type.ThisType(clsSid), memberName)
+                                if clsSid.value >= 0 =>
+                                // Enum case encoding: TermRef(ThisType(enclosingClassId), caseName).
+                                // The qualifier is the enclosing class's ThisType; build the FQN from
+                                // enclosingClass FQN + "." + caseName.
+                                val qualFqn = qualIdToFqn(clsSid.value)
+                                if qualFqn != null then
+                                    val fqn = if qualFqn.nonEmpty then qualFqn + "." + memberName.asString
+                                    else memberName.asString
+                                    fqnToId(fqn)
+                                else -1
+                                end if
+                            case _ => -1
+                    end resolveChildRef
+
+                    var permitIdx = 0
+                    while permitIdx < count do
+                        val desc = descs(permitIdx)
+                        val k    = desc.kind
+                        if k == Tasty.SymbolKind.Class || k == Tasty.SymbolKind.Trait
+                            || k == Tasty.SymbolKind.EnumCase
+                        then
+                            val anns = desc.annotations
+                            if anns.nonEmpty then
+                                val buf = new scala.collection.mutable.ArrayBuffer[Int]()
+                                var ai  = 0
+                                while ai < anns.size do
+                                    anns(ai).annotationType match
+                                        case Tasty.Type.Applied(Tasty.Type.TermRef(_, childName), args)
+                                            if args.size == 1 && childName.asString == "Child" =>
+                                            // @Child[T] enriched tycon: extract the subclass TypeRef T.
+                                            val subId = resolveChildRef(args(0))
+                                            if subId >= 0 then buf += subId
+                                        case _ => ()
+                                    end match
+                                    ai += 1
+                                end while
+                                if buf.nonEmpty then
+                                    desc.permittedSubclassIds = Maybe(Chunk.from(buf.toSeq))
+                            end if
+                        end if
+                        permitIdx += 1
+                    end while
 
                     for fr <- fileResults do
                         for (sym, (bodyStart, bodyEnd)) <- fr.bodyDataByAddr do
@@ -751,7 +878,9 @@ object ClasspathOrchestrator:
             val fqn = idToFqn.get(s.id.value)
             if fqn != null then
                 val companionFqn =
-                    if s.kind == Tasty.SymbolKind.Class || s.kind == Tasty.SymbolKind.Trait then
+                    if s.kind == Tasty.SymbolKind.Class || s.kind == Tasty.SymbolKind.Trait
+                        || s.kind == Tasty.SymbolKind.EnumCase
+                    then
                         fqn + "$"
                     else if s.kind == Tasty.SymbolKind.Object then
                         if fqn.endsWith("$") then fqn.dropRight(1) else fqn

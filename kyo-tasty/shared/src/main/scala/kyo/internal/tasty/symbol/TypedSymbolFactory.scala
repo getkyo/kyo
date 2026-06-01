@@ -188,6 +188,28 @@ private[kyo] object TypedSymbolFactory:
                     ownerId = ownerSid,
                     memberIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_)))
                 )
+            case SymbolKind.EnumCase =>
+                // F-E-007 (Phase 07 partial): enum-case classes are classified as SymbolKind.EnumCase
+                // but materialise as Symbol.Class until Phase 13 adds Symbol.EnumCase as a proper
+                // subtype. The Enum+Case flags on the produced Symbol.Class let callers identify
+                // enum cases via `sym.flags.contains(Flag.Enum) && sym.flags.contains(Flag.Case)`.
+                // Phase 13 will remove `final` from Symbol.Class and add Symbol.EnumCase extends Class.
+                Tasty.Symbol.Class(
+                    id = sid,
+                    name = d.name,
+                    flags = d.flags,
+                    ownerId = ownerSid,
+                    scaladoc = d.scaladoc,
+                    sourcePosition = d.sourcePosition,
+                    javaMetadata = d.javaMetadata,
+                    parentTypes = d.parentTypes,
+                    typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
+                    declarationIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_))),
+                    permittedSubclassIds = d.permittedSubclassIds.map(_.map(SymbolId(_))),
+                    annotations = d.annotations,
+                    javaAnnotations = d.javaAnnotations,
+                    body = d.body
+                )
             case SymbolKind.Unresolved =>
                 Tasty.Symbol.Unresolved(sid, d.name, ownerSid, d.flags)
         end match
