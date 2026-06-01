@@ -13,6 +13,7 @@ val zioVersion       = "2.1.24"
 val catsVersion      = "3.7.0"
 val oxVersion        = "1.0.4"
 val scalaTestVersion = "3.2.19"
+val flexmarkVersion  = "0.64.8"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
 
@@ -247,7 +248,8 @@ lazy val kyoJVM: Project = project
         `kyo-compat`,
         `kyo-doctest`.jvm,
         `sbt-kyo-doctest`,
-        `root-readme`
+        `root-readme`,
+        `kyo-website`.jvm
     )
 
 lazy val kyoJS = project
@@ -282,6 +284,8 @@ lazy val kyoJS = project
         `kyo-browser`.js,
         `kyo-ui`.js,
         `kyo-ui-spa-harness`.js,
+        `kyo-website`.js,
+        `kyo-website-bundle`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
@@ -1283,6 +1287,44 @@ lazy val `kyo-ui-spa-harness` =
             `js-settings`,
             scalaJSUseMainModuleInitializer := true,
             Compile / mainClass             := Some("kyo.internal.spa.SpaHarnessMain"),
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
+        )
+
+// The website: shared apps + page wrapper + content model; JVM side carries the SSG generator and
+// the build-time flexmark Markdown->HTML step; JS side is the browser-mounted chrome. flexmark is a
+// JVM-only dependency (D1: Markdown->HTML runs build-time on the JVM; INV-005). Native is not a
+// target: the generator needs one host and the deploy runs on JVM.
+lazy val `kyo-website` =
+    crossProject(JSPlatform, JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-website"))
+        .dependsOn(`kyo-ui`)
+        .settings(`kyo-settings`)
+        .settings(publish / skip := true)
+        .disablePlugins(MimaPlugin)
+        .jvmSettings(
+            libraryDependencies ++= Seq(
+                "com.vladsch.flexmark" % "flexmark"            % flexmarkVersion,
+                "com.vladsch.flexmark" % "flexmark-ext-tables" % flexmarkVersion
+            )
+        )
+
+// The single browser-loadable ESModule bundle (chrome only), mirroring kyo-ui-spa-harness. Its
+// Compile classpath holds kyo-website.js + kyo-ui.js so the linked bundle has no Node-only require
+// calls and loads in Chrome as `<script type="module">`. fullLinkJS in deploy (INV-008).
+lazy val `kyo-website-bundle` =
+    crossProject(JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-website-bundle"))
+        .dependsOn(`kyo-website`)
+        .settings(`kyo-settings`)
+        .settings(publish / skip := true)
+        .disablePlugins(MimaPlugin)
+        .jsSettings(
+            `js-settings`,
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some("kyo.website.WebsiteBundleMain"),
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
         )
 
