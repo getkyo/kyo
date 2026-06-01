@@ -66,12 +66,44 @@ class YamlCstTest extends Test:
             assertResult(
                 (
                     rendered = "name: Alice\nage: 30\n",
+                    rootSyntax = Yaml.Cst.MappingSyntax.Canonical,
+                    rootSource = Absent,
+                    entries = Chunk(
+                        (key = "name", value = "Alice"),
+                        (key = "age", value = "30")
+                    ),
                     decoded = Result.succeed(MTPerson("Alice", 30))
                 )
             ) {
                 val rendered = doc.render(using Yaml.WriterConfig.Default)
+                val mapping =
+                    doc.root match
+                        case Present(Yaml.Cst.Node.Mapping(entries, syntax, _, _, source)) =>
+                            (
+                                syntax = syntax,
+                                source = source,
+                                entries = entries.map {
+                                    case Yaml.Cst.MappingEntry(
+                                            Yaml.Cst.Node.Scalar(key, _, _, _, _),
+                                            Yaml.Cst.Node.Scalar(value, _, _, _, _),
+                                            _,
+                                            _,
+                                            _
+                                        ) =>
+                                        (key = key, value = value)
+                                    case other =>
+                                        fail(s"Expected scalar mapping entry, found $other")
+                                }
+                            )
+                        case other =>
+                            fail(s"Expected canonical mapping root, found $other")
+                    end match
+                end mapping
                 (
                     rendered = rendered,
+                    rootSyntax = mapping.syntax,
+                    rootSource = mapping.source,
+                    entries = mapping.entries,
                     decoded = Yaml.decode[MTPerson](rendered)
                 )
             }
@@ -81,8 +113,69 @@ class YamlCstTest extends Test:
             val doc =
                 Yaml.Cst.from(MTPerson("Alice", 30)).getOrThrow
 
-            assertResult(Result.succeed(MTPerson("Alice", 30))) {
-                Yaml.decode[MTPerson](doc.render(using Yaml.WriterConfig.Default))
+            assertResult(
+                (
+                    documentSource = Absent,
+                    rootSyntax = Yaml.Cst.MappingSyntax.Canonical,
+                    rootSource = Absent,
+                    entries = Chunk(
+                        (
+                            key = "name",
+                            keySyntax = Yaml.Cst.ScalarSyntax.Canonical,
+                            keySource = Absent,
+                            value = "Alice",
+                            valueSyntax = Yaml.Cst.ScalarSyntax.Canonical,
+                            valueSource = Absent
+                        ),
+                        (
+                            key = "age",
+                            keySyntax = Yaml.Cst.ScalarSyntax.Canonical,
+                            keySource = Absent,
+                            value = "30",
+                            valueSyntax = Yaml.Cst.ScalarSyntax.Canonical,
+                            valueSource = Absent
+                        )
+                    ),
+                    decoded = Result.succeed(MTPerson("Alice", 30))
+                )
+            ) {
+                val mapping =
+                    doc.root match
+                        case Present(Yaml.Cst.Node.Mapping(entries, syntax, _, _, source)) =>
+                            (
+                                syntax = syntax,
+                                source = source,
+                                entries = entries.map {
+                                    case Yaml.Cst.MappingEntry(
+                                            Yaml.Cst.Node.Scalar(key, keySyntax, _, _, keySource),
+                                            Yaml.Cst.Node.Scalar(value, valueSyntax, _, _, valueSource),
+                                            _,
+                                            _,
+                                            _
+                                        ) =>
+                                        (
+                                            key = key,
+                                            keySyntax = keySyntax,
+                                            keySource = keySource,
+                                            value = value,
+                                            valueSyntax = valueSyntax,
+                                            valueSource = valueSource
+                                        )
+                                    case other =>
+                                        fail(s"Expected scalar mapping entry, found $other")
+                                }
+                            )
+                        case other =>
+                            fail(s"Expected canonical mapping root, found $other")
+                    end match
+                end mapping
+                (
+                    documentSource = doc.originalSource,
+                    rootSyntax = mapping.syntax,
+                    rootSource = mapping.source,
+                    entries = mapping.entries,
+                    decoded = Yaml.decode[MTPerson](doc.render(using Yaml.WriterConfig.Default))
+                )
             }
         }
 
