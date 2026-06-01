@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.tasty.binary.Utf8
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.PlatformFileSource
+import kyo.internal.tasty.query.PlatformModuleOps
 import kyo.internal.tasty.query.TastyStat
 import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
 import kyo.internal.tasty.snapshot.SnapshotReader
@@ -1906,6 +1907,8 @@ object Tasty:
           * Pure O(1) lookup in the immutable fqnIndex. Returns `Absent` if the FQN is not registered or resolves to a non-Class symbol
           * (e.g., a Trait or Object). Use `findClassLike` to match any class-like symbol regardless of subtype.
           *
+          * Includes sealed abstract classes (e.g. `scala.Option`); use `findConcreteClass` to restrict to non-abstract classes.
+          *
           * Example:
           * {{{
           *   val sym: Maybe[Symbol.Class] = cp.findClass("scala.collection.List")
@@ -1918,6 +1921,23 @@ object Tasty:
                         case c: Symbol.Class => Maybe(c)
                         case _               => Maybe.Absent
                 case None => Maybe.Absent
+
+        /** Look up a concrete (non-abstract) class symbol by fully-qualified dotted name.
+          *
+          * Returns `Absent` when the FQN is not registered, when the symbol is not a Class, or when the matched Class has the Abstract
+          * flag set (e.g. `scala.Option`, `scala.Either`). Use `findClass` when abstract classes are acceptable.
+          *
+          * Q-004 layered addition: `findClass` remains permissive per HARD RULE 4; this method is the narrow accessor for callers that
+          * need a concrete, instantiable class.
+          *
+          * Example:
+          * {{{
+          *   cp.findConcreteClass("scala.Some")    // Present(_)
+          *   cp.findConcreteClass("scala.Option")  // Absent (abstract)
+          * }}}
+          */
+        def findConcreteClass(fqn: String): Maybe[Symbol.Class] =
+            findClass(fqn).filter(!_.isAbstract)
 
         /** Look up a trait symbol by fully-qualified dotted name.
           *
@@ -2350,6 +2370,21 @@ object Tasty:
           */
         def init(roots: Seq[String], mode: ErrorMode)(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
             initImpl(roots, mode)
+
+        /** Init the classpath and additionally pre-load JDK `module-info.class` entries from the JDK module image.
+          *
+          * Q-006 / F-D-001: opt-in JDK auto-discovery. On JVM, reads module-info.class files for all JDK modules from the `jrt:/`
+          * virtual filesystem (mounted automatically by the JVM) and merges them into the returned classpath's `moduleIndex`. After the
+          * call, `cp.findModule("java.base")` and other JDK modules resolve. On Scala.js and Scala Native, `jrt:/` is not available;
+          * this method fails with `TastyError.UnsupportedPlatform`.
+          *
+          * Effect row: identical to `init` (Async + Scope + Abort[TastyError]).
+          */
+        def initWithPlatformModules(roots: Seq[String])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
+            for
+                cp         <- init(roots, ErrorMode.SoftFail)
+                jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
+            yield cp.copy(moduleIndex = cp.moduleIndex ++ jdkModules)
 
         /** Init a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
           *

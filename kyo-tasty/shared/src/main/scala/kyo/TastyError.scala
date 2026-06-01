@@ -66,4 +66,11 @@ enum TastyError derives CanEqual:
       *   - An unrecognized TASTy tag during tree decode -- use Tree.Unknown for graceful degradation.
       */
     case NotImplemented(feature: String)
+
+    /** A platform-specific feature was invoked on a platform that does not support it.
+      *
+      * The primary use case is `Classpath.initWithPlatformModules`, which resolves `jrt-fs.jar` from `java.home` and is therefore
+      * JVM-only. Calling it on Scala.js or Scala Native raises this error. The `feature` string identifies the unsupported operation.
+      */
+    case UnsupportedPlatform(feature: String)
 end TastyError

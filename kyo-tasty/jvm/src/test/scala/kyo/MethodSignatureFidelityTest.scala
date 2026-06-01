@@ -317,4 +317,28 @@ class MethodSignatureFidelityTest extends Test:
             succeed
     }
 
+    // Q-004 leaf (Phase 10): findConcreteClass-excludes-abstract
+    // Given: the real classpath
+    // When: calling cp.findConcreteClass("scala.Option") and cp.findConcreteClass("scala.Some")
+    // Then: findConcreteClass("scala.Option") returns Absent (Option is abstract);
+    //       findConcreteClass("scala.Some") returns Present(_);
+    //       findClass("scala.Option") still returns Present(_) (permissive default unchanged)
+    // Pins: Q-004 (findConcreteClass layered addition; Phase 10 early delivery per prep.md)
+    "Q-004 (Phase 10): findConcreteClass excludes abstract classes while findClass remains permissive" in run {
+        TestClasspaths.withClasspath().map: cp =>
+            assert(
+                cp.findConcreteClass("scala.Option").isEmpty,
+                "findConcreteClass(\"scala.Option\") returned Present; scala.Option is abstract and should be excluded"
+            )
+            assert(
+                cp.findConcreteClass("scala.Some").isDefined,
+                "findConcreteClass(\"scala.Some\") returned Absent; scala.Some is concrete and should be Present"
+            )
+            assert(
+                cp.findClass("scala.Option").isDefined,
+                "findClass(\"scala.Option\") returned Absent; findClass must remain permissive (Q-004 HARD RULE 4)"
+            )
+            succeed
+    }
+
 end MethodSignatureFidelityTest
