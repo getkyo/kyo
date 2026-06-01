@@ -344,6 +344,10 @@ object Subtyping:
                 ps1.length == ps2.length &&
                 chunkPairsEquivAlpha(ps1, ps2, idx1, idx2) &&
                 typeEquivAlpha(r1, r2, idx1, idx2)
+            case (Tasty.Type.ContextFunction(ps1, r1), Tasty.Type.ContextFunction(ps2, r2)) =>
+                ps1.length == ps2.length &&
+                chunkPairsEquivAlpha(ps1, ps2, idx1, idx2) &&
+                typeEquivAlpha(r1, r2, idx1, idx2)
             case _ =>
                 // No structural match: not alpha-equivalent
                 false
@@ -383,6 +387,8 @@ object Subtyping:
                 Tasty.Type.Wildcard(substituteRecThis(lo, recNode), substituteRecThis(hi, recNode))
             case Tasty.Type.Function(params, result, ctx) =>
                 Tasty.Type.Function(params.map(substituteRecThis(_, recNode)), substituteRecThis(result, recNode), ctx)
+            case Tasty.Type.ContextFunction(params, result) =>
+                Tasty.Type.ContextFunction(params.map(substituteRecThis(_, recNode)), substituteRecThis(result, recNode))
             case other => other
 
 end Subtyping

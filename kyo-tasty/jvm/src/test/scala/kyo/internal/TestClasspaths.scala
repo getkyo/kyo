@@ -69,8 +69,21 @@ private[kyo] object TestClasspaths:
             )
         )
 
+    /** Subset: kyo-core compiled classes directory, when available on the test classpath.
+      *
+      * kyo-core is a transitive dependency of kyo-tasty that uses context functions (`?=>`) internally (AllowUnsafe ?=>, Safepoint ?=>).
+      * Including it extends the real-classpath coverage to include ContextFunctionN usage sites.
+      */
+    lazy val kyoCore: Seq[String] =
+        all.filter: p =>
+            (p.contains("/kyo-core") && p.endsWith("/classes")) ||
+                (p.contains("/kyo-core") && p.endsWith(".jar"))
+
     /** A standard 3-root combo used by most fidelity tests: kyo-tasty + kyo-data + scala-library. */
     lazy val standard: Seq[String] = kyoTasty ++ kyoData ++ scalaLibrary
+
+    /** A broader combo that adds kyo-core to the standard set, enabling ContextFunctionN coverage. */
+    lazy val standardWithKyoCore: Seq[String] = standard ++ kyoCore
 
     /** Load a `Tasty.Classpath` from the given roots using `ErrorMode.SoftFail`.
       *

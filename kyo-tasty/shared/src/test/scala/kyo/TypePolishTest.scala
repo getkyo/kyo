@@ -150,7 +150,8 @@ class TypePolishTest extends Test:
                 Tasty.Type.Wildcard(n, n),
                 Tasty.Type.Skolem(n),
                 Tasty.Type.MatchType(n, n, Chunk.empty),
-                Tasty.Type.FlexibleType(n)
+                Tasty.Type.FlexibleType(n),
+                Tasty.Type.ContextFunction(Chunk(n), n)
             )
             cases.foreach: t =>
                 val s = t.show

@@ -425,6 +425,18 @@ object Tasty:
         case Applied(base: Type, args: Chunk[Type])
         case TypeLambda(paramIds: Chunk[SymbolId], body: Type)
         case Function(params: Chunk[Type], result: Type, isContext: Boolean)
+
+        /** Context function type: `(A1, ..., AN) ?=> R`.
+          *
+          * Wire-level: `APPLIEDtype` whose constructor has FQN `scala.ContextFunctionN`. Previously decoded as
+          * `Type.Function(params, result, isContext = true)`. This dedicated case is structurally distinct so callers can
+          * pattern-match `?=>` vs `=>` without testing a Boolean flag, and `Type.Function` remains unchanged for
+          * backward compatibility (HARD RULE 4 layered preservation).
+          *
+          * F-A2-005: every method decoded from a `scala.ContextFunctionN` applied type now produces this case;
+          * methods decoded from `scala.FunctionN` continue to produce `Type.Function(_, _, isContext = false)`.
+          */
+        case ContextFunction(params: Chunk[Type], result: Type)
         case Tuple(elements: Chunk[Type])
         case ByName(underlying: Type)
         case Repeated(elem: Type)
@@ -481,28 +493,29 @@ object Tasty:
 
         /** First-level structural children of this Type. Leaf cases return an empty Chunk. */
         def children: Chunk[Type] = this match
-            case Applied(base, args)      => base +: args
-            case TypeLambda(_, body)      => Chunk(body)
-            case Function(params, ret, _) => params :+ ret
-            case Tuple(elements)          => elements
-            case ByName(t)                => Chunk(t)
-            case Repeated(t)              => Chunk(t)
-            case Array(t)                 => Chunk(t)
-            case Refinement(p, _, i)      => Chunk(p, i)
-            case Rec(p)                   => Chunk(p)
-            case RecThis(rec)             => Chunk(rec)
-            case AndType(l, r)            => Chunk(l, r)
-            case OrType(l, r)             => Chunk(l, r)
-            case Annotated(u, _)          => Chunk(u)
-            case SuperType(s, m)          => Chunk(s, m)
-            case Wildcard(lo, hi)         => Chunk(lo, hi)
-            case Skolem(u)                => Chunk(u)
-            case MatchType(b, sc, cases)  => Chunk(b, sc) ++ cases
-            case FlexibleType(u)          => Chunk(u)
-            case MatchCase(p, r)          => Chunk(p, r)
-            case TypeRef(qual, _)         => Chunk(qual)
-            case Bounds(lo, hi)           => Chunk(lo, hi)
-            case _                        => Chunk.empty
+            case Applied(base, args)          => base +: args
+            case TypeLambda(_, body)          => Chunk(body)
+            case Function(params, ret, _)     => params :+ ret
+            case ContextFunction(params, ret) => params :+ ret
+            case Tuple(elements)              => elements
+            case ByName(t)                    => Chunk(t)
+            case Repeated(t)                  => Chunk(t)
+            case Array(t)                     => Chunk(t)
+            case Refinement(p, _, i)          => Chunk(p, i)
+            case Rec(p)                       => Chunk(p)
+            case RecThis(rec)                 => Chunk(rec)
+            case AndType(l, r)                => Chunk(l, r)
+            case OrType(l, r)                 => Chunk(l, r)
+            case Annotated(u, _)              => Chunk(u)
+            case SuperType(s, m)              => Chunk(s, m)
+            case Wildcard(lo, hi)             => Chunk(lo, hi)
+            case Skolem(u)                    => Chunk(u)
+            case MatchType(b, sc, cases)      => Chunk(b, sc) ++ cases
+            case FlexibleType(u)              => Chunk(u)
+            case MatchCase(p, r)              => Chunk(p, r)
+            case TypeRef(qual, _)             => Chunk(qual)
+            case Bounds(lo, hi)               => Chunk(lo, hi)
+            case _                            => Chunk.empty
 
         /** Visit this type and every structural descendant in pre-order (self first). */
         def foreach(f: Type => Unit): Unit =
@@ -526,6 +539,7 @@ object Tasty:
                 case Applied(base, args)    => s"${base.show}[${args.map(_.show).mkString(", ")}]"
                 case Array(elem)            => s"${elem.show}[]"
                 case Function(ps, r, isCtx) => s"(${ps.map(_.show).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${r.show}"
+                case ContextFunction(ps, r) => s"(${ps.map(_.show).mkString(", ")}) ?=> ${r.show}"
                 case Tuple(es)              => s"(${es.map(_.show).mkString(", ")})"
                 case other                  => other.toString
             end match
@@ -1708,14 +1722,15 @@ object Tasty:
 
             /** The return type derived from `declaredType`.
               *
-              * When `declaredType` is `Type.Function(params, result, isContext)`, returns `result`. For any other declared type shape the
-              * value is returned as-is. Best-effort per Q-002 resolution: a method whose type is not yet a Function (e.g., a Scala 2 stub)
-              * returns the raw declared type.
+              * When `declaredType` is `Type.Function(params, result, isContext)` or `Type.ContextFunction(params, result)`, returns
+              * `result`. For any other declared type shape the value is returned as-is. Best-effort per Q-002 resolution: a method whose
+              * type is not yet a Function (e.g., a Scala 2 stub) returns the raw declared type.
               */
             def returnType(using cp: Classpath): Maybe[Type] =
                 declaredType.map:
-                    case Type.Function(_, result, _) => result
-                    case other                       => other
+                    case Type.Function(_, result, _)     => result
+                    case Type.ContextFunction(_, result) => result
+                    case other                           => other
 
             /** True when this method is a constructor (name == "<init>"). */
             def isConstructor: Boolean =

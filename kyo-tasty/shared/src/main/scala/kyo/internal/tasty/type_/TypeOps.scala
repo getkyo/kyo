@@ -11,7 +11,7 @@ import kyo.Tasty
   *
   * Normalization table:
   *   - scala.FunctionN[A1..AN, R] => Function(Chunk(A1..AN), R, false)
-  *   - scala.ContextFunctionN[A1..AN, R] => Function(Chunk(A1..AN), R, true)
+  *   - scala.ContextFunctionN[A1..AN, R] => ContextFunction(Chunk(A1..AN), R)
   *   - scala.TupleN[T1..TN] => Tuple(Chunk(T1..TN))
   *   - scala.Array[T] => Array(T)
   *   - AndType(scala.Singleton, X) => X
@@ -52,7 +52,10 @@ object TypeOps:
                 if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last, false)
                 else Tasty.Type.Applied(base, args)
             else if fqn.startsWith(ContextFunctionPrefix) && isDigitSuffix(fqn, ContextFunctionPrefix.length) then
-                if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last, true)
+                // F-A2-005: ContextFunctionN decodes to ContextFunction, not Function(_, _, true).
+                // This keeps context-function and plain-function types structurally distinct so callers
+                // can pattern-match without testing a Boolean flag, per OQ-005 resolution.
+                if args.nonEmpty then Tasty.Type.ContextFunction(args.dropRight(1), args.last)
                 else Tasty.Type.Applied(base, args)
             else if fqn.startsWith(TuplePrefix) && isDigitSuffix(fqn, TuplePrefix.length) then
                 Tasty.Type.Tuple(args)
@@ -61,10 +64,31 @@ object TypeOps:
             else
                 Tasty.Type.Applied(base, args)
         else
-            // Fall back to simple-name heuristic for phase-B local symbols
+            // Fall back to simple-name matching for TypeRef-based constructors.
+            // In Scala 3's TASTy, types like ContextFunction1[A, B] in parent-type position
+            // are encoded as Applied(TypeRef(qualifier, "ContextFunction1"), args) where the
+            // TypeRef's name is the simple class name. The fqnHint mechanism only fires for
+            // Named(trackedNegId) bases; TypeRef bases are encountered in TEMPLATE parents
+            // (decoded via parentTypes path) where no unresolvedIdToFqn entry exists.
+            // F-A2-005: recognise the TypeRef simple-name pattern so ContextFunctionN parent
+            // types also decode to ContextFunction rather than remaining as raw Applied.
             base match
-                case Tasty.Type.Named(_) =>
-                    Tasty.Type.Applied(base, args)
+                case Tasty.Type.TypeRef(_, nm) =>
+                    import kyo.Tasty.Name.asString
+                    val simpleName = nm.asString
+                    if simpleName.startsWith(FunctionSimple) && isDigitSuffix(simpleName, FunctionSimple.length) then
+                        if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last, false)
+                        else Tasty.Type.Applied(base, args)
+                    else if simpleName.startsWith(ContextFunctionSimple) && isDigitSuffix(simpleName, ContextFunctionSimple.length) then
+                        if args.nonEmpty then Tasty.Type.ContextFunction(args.dropRight(1), args.last)
+                        else Tasty.Type.Applied(base, args)
+                    else if simpleName.startsWith(TupleSimple) && isDigitSuffix(simpleName, TupleSimple.length) then
+                        Tasty.Type.Tuple(args)
+                    else if simpleName == ArraySimple && args.size == 1 then
+                        Tasty.Type.Array(args.head)
+                    else
+                        Tasty.Type.Applied(base, args)
+                    end if
                 case _ =>
                     Tasty.Type.Applied(base, args)
         end if

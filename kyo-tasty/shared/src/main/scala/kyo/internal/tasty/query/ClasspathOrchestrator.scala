@@ -652,6 +652,8 @@ object ClasspathOrchestrator:
                                 Tasty.Type.TypeLambda(paramIds, remapType(body, fr))
                             case Tasty.Type.Function(params, result, isCtx) =>
                                 Tasty.Type.Function(params.map(remapType(_, fr)), remapType(result, fr), isCtx)
+                            case Tasty.Type.ContextFunction(params, result) =>
+                                Tasty.Type.ContextFunction(params.map(remapType(_, fr)), remapType(result, fr))
                             case Tasty.Type.ByName(underlying) =>
                                 Tasty.Type.ByName(remapType(underlying, fr))
                             case Tasty.Type.Repeated(elem) =>
@@ -1079,6 +1081,8 @@ object ClasspathOrchestrator:
                                 Tasty.Type.TypeRef(rewriteCrossFile(qual), name)
                             case Tasty.Type.Function(params, result, isCtx) =>
                                 Tasty.Type.Function(params.map(rewriteCrossFile), rewriteCrossFile(result), isCtx)
+                            case Tasty.Type.ContextFunction(params, result) =>
+                                Tasty.Type.ContextFunction(params.map(rewriteCrossFile), rewriteCrossFile(result))
                             case Tasty.Type.AndType(l, r) =>
                                 Tasty.Type.AndType(rewriteCrossFile(l), rewriteCrossFile(r))
                             case Tasty.Type.OrType(l, r) =>

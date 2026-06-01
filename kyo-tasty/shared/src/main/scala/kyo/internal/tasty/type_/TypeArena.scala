@@ -44,6 +44,8 @@ final class TypeArena:
                     Tasty.Type.Applied(internRec(base, depth), args.map(internRec(_, depth)))
                 case Tasty.Type.Function(ps, r, ctx) =>
                     Tasty.Type.Function(ps.map(internRec(_, depth)), internRec(r, depth), ctx)
+                case Tasty.Type.ContextFunction(ps, r) =>
+                    Tasty.Type.ContextFunction(ps.map(internRec(_, depth)), internRec(r, depth))
                 case Tasty.Type.Tuple(elems) =>
                     Tasty.Type.Tuple(elems.map(internRec(_, depth)))
                 case Tasty.Type.ByName(u) =>
@@ -168,6 +170,10 @@ object TypeKey:
             case Tasty.Type.Function(ps, r, ctx) =>
                 val psHash = ps.foldLeft(1)((acc, p) => acc * 31 + computeHash(p))
                 31 * psHash + computeHash(r) + (if ctx then 1 else 0)
+            case Tasty.Type.ContextFunction(ps, r) =>
+                val psHash = ps.foldLeft(1)((acc, p) => acc * 31 + computeHash(p))
+                // Offset by 17 to avoid colliding with Function hash (which uses 0 or 1)
+                31 * psHash + computeHash(r) + 17
             case Tasty.Type.Tuple(elems) =>
                 elems.foldLeft(1)((acc, e) => acc * 31 + computeHash(e))
             case Tasty.Type.ByName(u) =>
@@ -225,6 +231,10 @@ object TypeKey:
                 ps1.length == ps2.length && structuralEquals(body1, body2)
             case (Tasty.Type.Function(ps1, r1, ctx1), Tasty.Type.Function(ps2, r2, ctx2)) =>
                 ctx1 == ctx2 && ps1.length == ps2.length &&
+                ps1.zip(ps2).forall((x, y) => structuralEquals(x, y)) &&
+                structuralEquals(r1, r2)
+            case (Tasty.Type.ContextFunction(ps1, r1), Tasty.Type.ContextFunction(ps2, r2)) =>
+                ps1.length == ps2.length &&
                 ps1.zip(ps2).forall((x, y) => structuralEquals(x, y)) &&
                 structuralEquals(r1, r2)
             case (Tasty.Type.Tuple(e1), Tasty.Type.Tuple(e2)) =>
