@@ -35,6 +35,23 @@ import scala.language.implicitConversions
   */
 final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
 
+    // Span is an opaque Array; case-class equals would use reference equality for the props field.
+    // Override to compare element-by-element so value semantics hold.
+    override def equals(that: Any): Boolean = that match
+        case s: Style =>
+            props.size == s.props.size &&
+            (0 until props.size).forall(i => props(i) == s.props(i))
+        case _ => false
+
+    override def hashCode: Int =
+        var h = 1
+        var i = 0
+        while i < props.size do
+            h = 31 * h + props(i).hashCode
+            i += 1
+        h
+    end hashCode
+
     import Style.*
     import Style.Prop.*
 
@@ -587,6 +604,7 @@ object Style:
         final case class Rgb private[kyo] (r: Int, g: Int, b: Int)             extends Color
         final case class Rgba private[kyo] (r: Int, g: Int, b: Int, a: Double) extends Color
         case object Transparent                                                extends Color
+        final case class Var private[kyo] (name: String)                       extends Color
 
         private def clamp255(v: Int): Int      = math.max(0, math.min(255, v))
         private def clamp01(v: Double): Double = math.max(0.0, math.min(1.0, v))
@@ -627,6 +645,12 @@ object Style:
         val pink: Color        = Hex("#ec4899")
         val gray: Color        = Hex("#6b7280")
         val slate: Color       = Hex("#64748b")
+
+        /** A CSS custom-property reference: `Color.variable("accent")` renders as `var(--accent)` in
+          * declarations. Use it with [[kyo.Stylesheet.vars]] to define the property and [[kyo.Style.color]]/
+          * [[kyo.Style.bg]] to reference it.
+          */
+        def variable(name: String): Color = Var(name)
     end Color
 
     // ---- Enums ----

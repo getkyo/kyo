@@ -198,6 +198,67 @@ object UI:
             }
         }
 
+    /** The base CSS reset kyo-ui relies on for correct layout: `box-sizing: border-box`, the
+      * flex-column / flex-row element defaults, `[data-kyo-reactive] { display: contents }`, the
+      * list/heading/anchor/table normalizations, and `[hidden] { display: none }`.
+      *
+      * Every kyo-ui runner injects this automatically (`runMount` via the DOM stylesheet,
+      * `runHandlers` and the page runner via the document `<head>`), so a normal app never names
+      * it. It is public for one case: a static site that hand-builds its own HTML document and
+      * wants the framework reset in its `<head>`. Emit it BEFORE any custom stylesheet so custom
+      * rules win at equal specificity (CSS is last-declaration-wins). `UI.runRenderPage` already
+      * does this ordering for you; reach for `UI.baseCss` directly only when you assemble the
+      * document yourself.
+      */
+    val baseCss: String = HtmlRenderer.baseCss
+
+    /** Configuration for the `<head>` of a full HTML document produced by [[kyo.UI.runRenderPage]].
+      *
+      * `title` becomes the `<title>` (attribute-escaped). `meta` is a sequence of
+      * `(name, content)` pairs each emitted as `<meta name="..." content="...">` (both escaped),
+      * for SEO/OpenGraph/viewport tags; the renderer always prepends `charset=utf-8` and a
+      * responsive `viewport` so a minimal `PageHead` is still a valid document. `links` is a
+      * sequence of `(rel, href)` pairs each emitted as `<link rel="..." href="...">` (escaped),
+      * for canonical, icons, preconnect, and stylesheet links such as web fonts. `css` is extra
+      * stylesheet text emitted in a `<style>` block AFTER [[kyo.UI.baseCss]] so site rules win at
+      * equal specificity. `moduleScript` is an optional `<script type="module" src="...">` ESModule
+      * reference (a custom Scala.js bundle); `Absent` emits no script.
+      */
+    final case class PageHead(
+        title: String,
+        meta: Seq[(String, String)] = Seq.empty,
+        links: Seq[(String, String)] = Seq.empty,
+        css: String = "",
+        moduleScript: Maybe[String] = Absent
+    ) derives CanEqual
+
+    /** Read-only stream of a COMPLETE HTML document (`<!DOCTYPE html>` ... `</html>`) for static-site
+      * generation and SSR. Like [[kyo.UI.runRender]], the first emission is the initial render and each
+      * later emission is a full re-render whenever any signal changes; unlike `runRender` (which emits
+      * a body FRAGMENT), this wraps the fragment in a document with a configurable head and an
+      * optional module `<script>`.
+      *
+      * The head is built from `head`: charset + viewport are always present, then the `meta`/`links`
+      * pairs, then a single `<style>` block containing [[kyo.UI.baseCss]] strictly before `head.css` so
+      * custom rules override the framework reset. The body holds the rendered UI fragment; the
+      * optional module script is emitted last, before `</html>`, so the page paints before the bundle
+      * loads. Take the first emission for a one-shot SSG snapshot.
+      *
+      * This is the SSG counterpart to [[kyo.UI.runHandlers]] (which serves a server-push page with the
+      * SSE client baked in): `runRenderPage` produces a static document that links YOUR bundle, with
+      * no kyo-ui server-push client injected.
+      */
+    def runRenderPage(head: PageHead)(ui: UI)(using Frame): Stream[String, Async] =
+        runRender(ui).map(fragment => HtmlRenderer.page(head, fragment))
+
+    /** The base CSS plus a stylesheet, ready to drop into [[kyo.UI.PageHead.css]]: returns
+      * `sheet.render` (the stylesheet alone). [[kyo.UI.runRenderPage]] already prepends [[kyo.UI.baseCss]],
+      * so pass `sheet.render` as `PageHead.css` directly; this helper is the named, discoverable
+      * bridge from a `Stylesheet` value to the page head, parallel to how `baseCss` is the bridge for
+      * the reset.
+      */
+    def stylesheetCss(sheet: Stylesheet)(using Frame): String = sheet.render
+
     /** A property value that is either a constant or a reactive [[kyo.SignalRef]].
       *
       * Setters that accept both a plain value and a writable signal (the `value`/`checked` family) store their argument as a `Bound`:
@@ -468,6 +529,14 @@ object UI:
                 withAttrs(attrs.copy(dataAttrs = attrs.dataAttrs ++ pairs))
             end data
 
+            /** Adds a CSS class to this element (emitted as `class="..."`); repeated calls space-join.
+              * The class is the stable hook a [[kyo.Stylesheet]] class rule ([[kyo.Selector.cls]])
+              * targets, so document-level rules (`@media`, shared component styles, `:hover` against a
+              * named class) apply to it. For per-element one-off styling use [[style]] instead; the two
+              * coexist on one element.
+              */
+            def cssClass(name: String): Self = withAttrs(attrs.copy(cssClasses = attrs.cssClasses :+ name))
+
             // Internal JS property setter (used by Checkbox.indeterminate, etc.)
             private[kyo] def jsProp(name: String, value: String): Self =
                 withAttrs(attrs.copy(jsProps = attrs.jsProps.updated(name, value)))
@@ -597,7 +666,8 @@ object UI:
             onBlurEvt: Maybe[MouseEvent => Any < Async] = Absent,
             ariaAttrs: Map[String, String] = Map.empty,
             dataAttrs: Map[String, String] = Map.empty,
-            jsProps: Map[String, String] = Map.empty
+            jsProps: Map[String, String] = Map.empty,
+            cssClasses: Chunk[String] = Chunk.empty
         )
 
         // ---- Non-element AST cases ----

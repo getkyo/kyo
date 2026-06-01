@@ -14,6 +14,7 @@ private[kyo] object CssStyleRenderer:
         case Color.Rgb(r, g, b)     => s"rgb($r, $g, $b)"
         case Color.Rgba(r, g, b, a) => s"rgba($r, $g, $b, ${fmt(a)})"
         case Color.Transparent      => "transparent"
+        case Color.Var(name)        => s"var(--$name)"
 
     def size(s: Length): String = s match
         case Length.Px(v)  => if v == 0 then "0" else s"${fmt(v)}px"
@@ -79,7 +80,7 @@ private[kyo] object CssStyleRenderer:
         case Overflow.scroll  => "scroll"
         case Overflow.auto    => "auto"
 
-    private def fontWeight(v: FontWeight): String = v match
+    private[kyo] def fontWeightCss(v: FontWeight): String = v match
         case FontWeight.normal => "normal"
         case FontWeight.bold   => "bold"
         case FontWeight.w100   => "100"
@@ -92,7 +93,7 @@ private[kyo] object CssStyleRenderer:
         case FontWeight.w800   => "800"
         case FontWeight.w900   => "900"
 
-    private def fontStyle(v: FontStyle): String = v match
+    private[kyo] def fontStyleCss(v: FontStyle): String = v match
         case FontStyle.normal => "normal"
         case FontStyle.italic => "italic"
 
@@ -154,8 +155,8 @@ private[kyo] object CssStyleRenderer:
         case MinHeight(v)      => s"min-height: ${size(v)};"
         case MaxHeight(v)      => s"max-height: ${size(v)};"
         case FontSizeProp(v)   => s"font-size: ${size(v)};"
-        case FontWeightProp(v) => s"font-weight: ${fontWeight(v)};"
-        case FontStyleProp(v)  => s"font-style: ${fontStyle(v)};"
+        case FontWeightProp(v) => s"font-weight: ${fontWeightCss(v)};"
+        case FontStyleProp(v)  => s"font-style: ${fontStyleCss(v)};"
         case FontFamilyProp(v) =>
             val cssValue = v match
                 case FontFamily.SansSerif    => "sans-serif"

@@ -25,6 +25,33 @@ private[kyo] object HtmlRenderer:
            |</body>
            |</html>""".stripMargin
 
+    /** Wrap body HTML in a complete static HTML document with a configurable head (for SSG/SSR).
+      *
+      * Unlike `renderPage` (which injects the SSE client JS for server-push), this helper emits a
+      * clean static document with an optional module script: the caller's bundle or nothing. The
+      * `baseCss` reset is always emitted before `head.css` so framework defaults can be overridden.
+      * Called by `UI.runRenderPage`.
+      */
+    private[kyo] def page(head: UI.PageHead, body: String): String =
+        val metaTags = head.meta.map((n, c) => s"""<meta name="${esc(n)}" content="${esc(c)}">""").mkString
+        val linkTags = head.links.map((r, h) => s"""<link rel="${esc(r)}" href="${esc(h)}">""").mkString
+        val script = head.moduleScript match
+            case Present(src) => s"""<script type="module" src="${esc(src)}"></script>"""
+            case Absent       => ""
+        s"""<!DOCTYPE html>
+           |<html lang="en">
+           |<head>
+           |<meta charset="utf-8">
+           |<meta name="viewport" content="width=device-width, initial-scale=1">
+           |<title>${esc(head.title)}</title>
+           |$metaTags$linkTags
+           |<style>$baseCss${head.css}</style>
+           |</head>
+           |<body>$body</body>
+           |$script
+           |</html>""".stripMargin
+    end page
+
     // ---- Core rendering ----
 
     private def renderTo(sb: StringBuilder, ui: UI, path: Seq[String])(using Frame): Unit < Sync =
@@ -213,6 +240,7 @@ private[kyo] object HtmlRenderer:
 
     private def renderCommonAttrs(sb: StringBuilder, attrs: Attrs): Unit =
         attrs.identifier.foreach(id => w(sb, s""" id="${esc(id)}""""))
+        if attrs.cssClasses.nonEmpty then w(sb, s""" class="${esc(attrs.cssClasses.mkString(" "))}"""")
         attrs.hidden.foreach(v => if v then w(sb, " hidden"))
         attrs.tabIndex.foreach(n => w(sb, s""" tabindex="$n""""))
         attrs.focusTrap.foreach(v => if v then w(sb, """ data-kyo-focus-trap="1""""))
@@ -465,7 +493,7 @@ private[kyo] object HtmlRenderer:
 
     // ---- Helpers ----
 
-    private val baseCss =
+    private[kyo] val baseCss =
         """*, *::before, *::after { box-sizing: border-box; }
           |body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
           |div, section, main, header, footer, form, article, aside, p, ul, ol, pre, code, h1, h2, h3, h4, h5, h6, label { display: flex; flex-direction: column; }

@@ -20,6 +20,10 @@ private[kyo] object DomBackend:
         }
     end mount
 
+    /** Injects a rendered stylesheet CSS string into the live document. */
+    private[kyo] def injectStylesheet(sheet: Stylesheet)(using Frame): Unit < Sync =
+        Sync.defer(DomStyleSheet.injectStylesheet(sheet.render))
+
     private def mountInto(ui: UI, container: dom.Element)(using Frame): Unit < (Async & Scope) =
         for
             _    <- DomStyleSheet.injectBase()
