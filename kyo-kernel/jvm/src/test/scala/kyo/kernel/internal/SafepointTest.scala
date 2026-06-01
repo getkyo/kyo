@@ -3,7 +3,6 @@ package kyo.kernel.internal
 import kyo.*
 import kyo.Result.Error
 import kyo.Result.Panic
-import kyo.Tag
 import kyo.Tagged.*
 import kyo.kernel.*
 import scala.concurrent.Await
@@ -305,7 +304,7 @@ class SafepointTest extends Test:
                 val logs = ArrayBuffer.empty[String]
 
                 def enter(frame: Frame, value: Any): Boolean =
-                    logs += s"Entering ${frame.methodName} with value: $value"
+                    logs += s"Entering ${frame.callerName} with value: $value"
                     true
                 end enter
 

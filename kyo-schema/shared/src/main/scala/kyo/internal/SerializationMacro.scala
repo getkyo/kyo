@@ -72,7 +72,7 @@ private[internal] object SerializationMacro:
                     $maybeAccess match
                         case kyo.Present(innerVal) =>
                             $writer.fieldBytes($fieldBytes($idxExpr), $fidExpr)
-                            $schemaExpr.serializeWrite(innerVal, $writer)
+                            kyo.internal.SchemaSerializer.writeTo($schemaExpr, innerVal, $writer)(using kyo.Frame.internal)
                         case _ => ()
                 })
             else if optionFields.contains(idx) then
@@ -80,7 +80,7 @@ private[internal] object SerializationMacro:
                 List('{
                     if $optAccess.isDefined then
                         $writer.fieldBytes($fieldBytes($idxExpr), $fidExpr)
-                        $schemaExpr.serializeWrite($optAccess, $writer)
+                        kyo.internal.SchemaSerializer.writeTo($schemaExpr, $optAccess, $writer)(using kyo.Frame.internal)
                 })
             else if isPrimitiveType(ft) then
                 // Primitive field: emit a direct typed Writer call. No Function2.apply, no autoboxing.
@@ -114,7 +114,7 @@ private[internal] object SerializationMacro:
                             case None =>
                                 List(
                                     '{ $writer.fieldBytes($fieldBytes($idxExpr), $fidExpr) },
-                                    '{ $schemaExpr.serializeWrite($fieldAccess, $writer) }
+                                    '{ kyo.internal.SchemaSerializer.writeTo($schemaExpr, $fieldAccess, $writer)(using kyo.Frame.internal) }
                                 )
                         end match
                 end match
@@ -550,7 +550,7 @@ private[internal] object SerializationMacro:
     ): Expr[Unit] =
         import quotes.reflect.*
         val resultExpr = valueTerm.asExprOf[kyo.Result[Any, Any]]
-        (errTpe.asType, okTpe.asType) match
+        ((errTpe.asType, okTpe.asType): @unchecked) match
             case ('[e], '[a]) =>
                 val writeOk: quotes.reflect.Term => Expr[Unit]  = t => primitiveWriteExpr(okTpe, writer, t)
                 val writeErr: quotes.reflect.Term => Expr[Unit] = t => primitiveWriteExpr(errTpe, writer, t)
@@ -603,7 +603,7 @@ private[internal] object SerializationMacro:
         // inside the emitted code; the returned `Expr` is spliced into that same scope.
         val readOk: Expr[Reader] => Expr[Any]  = r => primitiveReadExpr(okTpe, r)
         val readErr: Expr[Reader] => Expr[Any] = r => primitiveReadExpr(errTpe, r)
-        (errTpe.asType, okTpe.asType) match
+        ((errTpe.asType, okTpe.asType): @unchecked) match
             case ('[e], '[a]) =>
                 '{
                     kyo.discard($reader.objectStart())
@@ -837,11 +837,12 @@ private[internal] object SerializationMacro:
             if isMaybe then
                 // Maybe[T]: wrap the inner serializeRead result in kyo.Present.
                 ft.asType match
-                    case '[t] => '{ kyo.Present($schemaExpr.serializeRead($reader)).asInstanceOf[t] }
+                    case '[t] =>
+                        '{ kyo.Present(kyo.internal.SchemaSerializer.readFrom($schemaExpr, $reader)(using $reader.frame)).asInstanceOf[t] }
             else if isOption then
                 // Option[T]: the Option schema's serializeRead already yields Option[T].
                 ft.asType match
-                    case '[t] => '{ $schemaExpr.serializeRead($reader).asInstanceOf[t] }
+                    case '[t] => '{ kyo.internal.SchemaSerializer.readFrom($schemaExpr, $reader)(using $reader.frame).asInstanceOf[t] }
             else if fieldIsPrimitive(idx) then
                 // Direct primitive reader call — no boxing.
                 primitiveReadExpr(ft, reader)
@@ -859,7 +860,13 @@ private[internal] object SerializationMacro:
                                     case '[t] => '{ $readExpr.asInstanceOf[t] }
                             case None =>
                                 ft.asType match
-                                    case '[t] => '{ $schemaExpr.serializeRead($reader).asInstanceOf[t] }
+                                    case '[t] =>
+                                        '{
+                                            kyo.internal.SchemaSerializer.readFrom(
+                                                $schemaExpr,
+                                                $reader
+                                            )(using $reader.frame).asInstanceOf[t]
+                                        }
                         end match
                 end match
             end if

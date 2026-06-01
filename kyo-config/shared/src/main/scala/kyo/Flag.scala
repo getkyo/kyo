@@ -138,8 +138,8 @@ object Flag {
                     case Left(e)  => throw FlagValueParseException(flagName, s, typeName, e)
                 }
             catch {
-                case e: FlagException => throw e
-                case e: Exception     => throw FlagValueParseException(flagName, s, typeName, e)
+                case e: FlagException       => throw e
+                case e: java.lang.Exception => throw FlagValueParseException(flagName, s, typeName, e)
             }
     }
 

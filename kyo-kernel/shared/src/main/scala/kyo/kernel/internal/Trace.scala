@@ -124,7 +124,7 @@ private[kyo] object Trace:
                     }.map { frame =>
                         StackTraceElement(
                             frame.snippetShort.reverse.padTo(toPad, ' ').reverse + " @ " + frame.className,
-                            frame.methodName,
+                            frame.callerName,
                             frame.position.fileName,
                             frame.position.lineNumber
                         )

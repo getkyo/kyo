@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Codec.Reader
 import kyo.Codec.Writer
+import kyo.Schema.*
 import kyo.internal.JsonReader
 import kyo.internal.JsonWriter
 

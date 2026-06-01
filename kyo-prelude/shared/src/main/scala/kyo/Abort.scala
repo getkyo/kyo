@@ -2,7 +2,7 @@ package kyo
 
 import kernel.ArrowEffect
 import kyo.Result.*
-import kyo.Tag
+import kyo.internal.Reducible
 import kyo.kernel.Effect
 import scala.annotation.targetName
 
@@ -12,6 +12,7 @@ import scala.annotation.targetName
   * them in a composable way. It serves as a more powerful alternative to exceptions that integrates with Kyo's effect system.
   *
   * A computation using Abort can complete in three distinct ways:
+  *
   *   - `Success[A]`: The computation completes successfully with a value of type A
   *   - `Failure[E]`: An expected business/domain failure with a meaningful error value of type E
   *   - `Panic(ex: Throwable)`: An unexpected exception, similar to unchecked exceptions

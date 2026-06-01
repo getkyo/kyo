@@ -203,6 +203,7 @@ object Fields:
       *
       * Note: both `Pin` and `Exact` can be replaced by `Precise` (from `scala.language.experimental.modularity`) once it becomes stable.
       * `Precise` prevents the widening directly, removing the need to decompose `R`:
+      *
       * {{{
       * def modify[A : Precise](f: Def[Fields] => Def[A]): Record[A]
       * }}}

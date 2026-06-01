@@ -9,6 +9,7 @@ import java.util.concurrent.CopyOnWriteArraySet
   * messages to a single consumer, Hub enables multiple consumers to receive and process the same messages.
   *
   * Message flow and buffering:
+  *
   *   - Publishers send messages to the Hub's main buffer
   *   - A dedicated fiber distributes messages from the Hub buffer to each listener's individual buffer
   *   - Each listener consumes messages from its own buffer at its own pace
@@ -84,6 +85,7 @@ final class Hub[A] private[kyo] (
     /** Closes the Hub and returns any remaining messages.
       *
       * When closed:
+      *
       *   - The Hub stops accepting new messages
       *   - All listeners are automatically closed
       *   - Any blocked publishers are unblocked with a Closed failure
@@ -265,6 +267,7 @@ object Hub:
       * receives messages that were published after its creation.
       *
       * Message processing:
+      *
       *   - Messages matching the filter are added to the Listener's buffer
       *   - When the buffer is full, backpressure is applied to the Hub
       *   - The Listener can be closed independently of the Hub
@@ -309,6 +312,7 @@ object Hub:
         /** Takes an element from the Listener's buffer, potentially blocking if the buffer is empty.
           *
           * This operation will block until:
+          *
           *   - A message matching the listener's filter becomes available
           *   - The Hub or this Listener is closed (resulting in a Closed failure)
           *
@@ -319,11 +323,11 @@ object Hub:
           */
         def take(using Frame): A < (Async & Abort[Closed]) = child.take
 
-        /** Takes [[n]] elements from the Listener's buffer, blocking until enough elements are present. Note that if enough elements are
-          * not added to the buffer it can block indefinitely.
+        /** Takes `n` elements from the Listener's buffer, blocking until enough elements are present. Note that if enough elements are not
+          * added to the buffer it can block indefinitely.
           *
           * @return
-          *   Chunk of [[n]] elements
+          *   Chunk of `n` elements
           */
         def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
             child.takeExactly(n)
@@ -346,6 +350,7 @@ object Hub:
         /** Stream elements from listener, optionally specifying a maximum chunk size.
           *
           * This streaming operation:
+          *
           *   - Continues until the Hub or Listener is closed
           *   - Completes normally when closed (use streamFailing for failure behavior)
           *   - Only emits messages that match this listener's filter

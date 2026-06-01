@@ -31,6 +31,7 @@ final class HttpWebSocket private[kyo] (
     private[kyo] val inbound: Channel[HttpWebSocket.Payload],
     private[kyo] val outbound: Channel[HttpWebSocket.Payload],
     private[kyo] val closeReasonRef: AtomicRef[Maybe[(Int, String)]],
+    private[kyo] val peerClosedPromise: Fiber.Promise[Unit, Any],
     private[kyo] val closeFn: (Int, String) => Unit < Async
 ):
 
@@ -62,6 +63,22 @@ final class HttpWebSocket private[kyo] (
     def closeReason(using Frame): Maybe[(Int, String)] < Sync =
         closeReasonRef.get
 
+    /** Completes when the remote peer closes the WebSocket (graceful close frame or transport EOF).
+      *
+      * The backend does NOT automatically close the outbound channel on peer close. Applications that
+      * compose long-lived sender/receiver fibers (e.g. via `Async.race`) should include `onPeerClose`
+      * in the race to terminate promptly when the peer goes away:
+      *
+      * {{{
+      * Async.race(sender, receiver, ws.onPeerClose).unit
+      * }}}
+      *
+      * For graceful peer-initiated close, [[closeReason]] returns the code and reason after this
+      * completes. For abnormal close (transport EOF without a close frame), [[closeReason]] returns
+      * `Absent`.
+      */
+    def onPeerClose(using Frame): Unit < Async = peerClosedPromise.get.unit
+
 end HttpWebSocket
 
 object HttpWebSocket:
@@ -79,7 +96,10 @@ object HttpWebSocket:
       * @param bufferSize
       *   Channel capacity for inbound and outbound message queues. Controls backpressure — when a channel is full, the sender suspends.
       * @param maxFrameSize
-      *   Maximum size in bytes of a single HttpWebSocket frame. Frames exceeding this limit cause the connection to close.
+      *   Maximum size in bytes of a single HttpWebSocket frame. Frames exceeding this limit cause the connection to close. Default is 16 MiB,
+      *   which comfortably handles realistic single-frame payloads (Chrome CDP screenshots up to ~4K, large RPC responses, base64-encoded
+      *   binary uploads) while still capping pathological remotes. Lower it for memory-sensitive deployments; raise it for clients that need
+      *   to receive larger frames in one go.
       * @param autoPingInterval
       *   If set, the backend sends ping frames at this interval to keep the connection alive through proxies.
       * @param closeTimeout
@@ -89,7 +109,7 @@ object HttpWebSocket:
       */
     case class Config(
         bufferSize: Int = 32,
-        maxFrameSize: Int = 65536,
+        maxFrameSize: Int = 16 * 1024 * 1024,
         autoPingInterval: Maybe[Duration] = Absent,
         closeTimeout: Duration = 5.seconds,
         subprotocols: Seq[String] = Seq.empty
@@ -110,21 +130,27 @@ object HttpWebSocket:
             Channel.initWith[Payload](32) { ch2to1 =>
                 AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeRef1 =>
                     AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeRef2 =>
-                        val doClose: (Int, String) => Unit < Async = (code, reason) =>
-                            closeRef1.set(Present((code, reason)))
-                                .andThen(closeRef2.set(Present((code, reason))))
-                                .andThen(ch1to2.close.unit)
-                                .andThen(ch2to1.close.unit)
-                        val ws1 = new HttpWebSocket(ch2to1, ch1to2, closeRef1, doClose)
-                        val ws2 = new HttpWebSocket(ch1to2, ch2to1, closeRef2, doClose)
-                        Sync.ensure {
-                            ch1to2.close.unit.andThen(ch2to1.close.unit)
-                        } {
-                            // Race: when either party completes, close channels to unblock the other
-                            Async.raceFirst(
-                                Abort.run[Closed](p1(ws1)).unit,
-                                Abort.run[Closed](p2(ws2)).unit
-                            ).unit
+                        Fiber.Promise.init[Unit, Any].map { peerClosed1 =>
+                            Fiber.Promise.init[Unit, Any].map { peerClosed2 =>
+                                val doClose: (Int, String) => Unit < Async = (code, reason) =>
+                                    closeRef1.set(Present((code, reason)))
+                                        .andThen(closeRef2.set(Present((code, reason))))
+                                        .andThen(peerClosed1.completeUnit.unit)
+                                        .andThen(peerClosed2.completeUnit.unit)
+                                        .andThen(ch1to2.close.unit)
+                                        .andThen(ch2to1.close.unit)
+                                val ws1 = new HttpWebSocket(ch2to1, ch1to2, closeRef1, peerClosed1, doClose)
+                                val ws2 = new HttpWebSocket(ch1to2, ch2to1, closeRef2, peerClosed2, doClose)
+                                Sync.ensure {
+                                    ch1to2.close.unit.andThen(ch2to1.close.unit)
+                                } {
+                                    // Race: when either party completes, close channels to unblock the other
+                                    Async.raceFirst(
+                                        Abort.run[Closed](p1(ws1)).unit,
+                                        Abort.run[Closed](p2(ws2)).unit
+                                    ).unit
+                                }
+                            }
                         }
                     }
                 }

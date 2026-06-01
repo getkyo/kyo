@@ -232,9 +232,9 @@ class JsonTest extends Test:
 
         "number with many digits does not cause DoS" in {
             val manyDigits = "0." + "1" * 1000
-            val start      = System.currentTimeMillis()
+            val start      = java.lang.System.currentTimeMillis()
             val result     = Json.decode[BigDecimal](manyDigits)
-            val elapsed    = System.currentTimeMillis() - start
+            val elapsed    = java.lang.System.currentTimeMillis() - start
 
             assert(elapsed < 5000, s"Parsing took too long: ${elapsed}ms")
         }
@@ -1828,9 +1828,9 @@ class JsonTest extends Test:
         // spray-json #287 — BigDecimal with absurd scale accepted
         // https://github.com/spray/spray-json/issues/287
         "huge exponent BigDecimal does not hang" in {
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[BigDecimal]("\"1e-100000000\"")
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"BigDecimal with huge exponent took ${elapsed}ms")
         }
 
@@ -1838,9 +1838,9 @@ class JsonTest extends Test:
         // https://github.com/circe/circe/issues/1040
         "million-digit number does not cause DoS" in {
             val json    = "1" + "0" * 999999
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[Double](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Million-digit number took ${elapsed}ms")
         }
 
@@ -1936,18 +1936,18 @@ class JsonTest extends Test:
         // https://github.com/plokhotnyuk/jsoniter-scala/issues/282
         "BigDecimal with many fractional zeros does not DoS" in {
             val json    = "\"0." + "0" * 100000 + "1\""
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[BigDecimal](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"BigDecimal fractional zeros took ${elapsed}ms")
         }
 
         // spray-json #287 — huge positive exponent BigDecimal
         // https://github.com/spray/spray-json/issues/287
         "huge positive exponent BigDecimal does not hang" in {
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[BigDecimal]("\"1e1000000000\"")
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"BigDecimal 1e1000000000 took ${elapsed}ms")
         }
 
@@ -1956,9 +1956,9 @@ class JsonTest extends Test:
         "object with unexpected large number field does not DoS" in {
             val bigNum  = "1" + "0" * 100000
             val json    = s"""{"name":"Alice","age":30,"unexpected":$bigNum}"""
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[MTPerson](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Skipping large unexpected number took ${elapsed}ms")
         }
 
@@ -1967,16 +1967,16 @@ class JsonTest extends Test:
         "small exponent notation does not amplify into huge BigDecimal" in {
             // "1e100000" is 8 bytes but BigDecimal("1e100000") has scale=-100000
             // Operations on it can allocate massive backing arrays
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[BigDecimal]("\"1e100000\"")
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"BigDecimal amplification took ${elapsed}ms")
             result match
                 case Result.Success(v) =>
                     // Encoding it back must also be fast (no expansion)
-                    val start2   = System.currentTimeMillis()
+                    val start2   = java.lang.System.currentTimeMillis()
                     val encoded  = Json.encode(v)
-                    val elapsed2 = System.currentTimeMillis() - start2
+                    val elapsed2 = java.lang.System.currentTimeMillis() - start2
                     assert(elapsed2 < 5000, s"BigDecimal re-encoding took ${elapsed2}ms")
                 case Result.Failure(_) => succeed
             end match
@@ -1989,18 +1989,18 @@ class JsonTest extends Test:
         // General — large number of object fields (memory exhaustion)
         "object with many fields does not exhaust memory" in {
             val json    = (0 until 100000).map(i => s""""k$i":$i""").mkString("{", ",", "}")
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[Map[String, Int]](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 10000, s"Parsing 100K fields took ${elapsed}ms")
         }
 
         // General — large array
         "large array does not cause DoS" in {
             val json    = (0 until 100000).mkString("[", ",", "]")
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[List[Int]](json)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 10000, s"Parsing 100K element array took ${elapsed}ms")
         }
 
@@ -2028,27 +2028,27 @@ class JsonTest extends Test:
         // General — very long string
         "very long string does not cause DoS" in {
             val longStr = "\"" + "a" * 1000000 + "\""
-            val start   = System.currentTimeMillis()
+            val start   = java.lang.System.currentTimeMillis()
             val result  = Json.decode[String](longStr)
-            val elapsed = System.currentTimeMillis() - start
+            val elapsed = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Parsing 1M char string took ${elapsed}ms")
         }
 
         // General — string with many escape sequences
         "string with many escapes does not cause DoS" in {
             val escapedStr = "\"" + "\\n" * 100000 + "\""
-            val start      = System.currentTimeMillis()
+            val start      = java.lang.System.currentTimeMillis()
             val result     = Json.decode[String](escapedStr)
-            val elapsed    = System.currentTimeMillis() - start
+            val elapsed    = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Parsing 100K escapes took ${elapsed}ms")
         }
 
         // General — string with many unicode escapes
         "string with many unicode escapes does not cause DoS" in {
             val unicodeStr = "\"" + "\\u0041" * 100000 + "\""
-            val start      = System.currentTimeMillis()
+            val start      = java.lang.System.currentTimeMillis()
             val result     = Json.decode[String](unicodeStr)
-            val elapsed    = System.currentTimeMillis() - start
+            val elapsed    = java.lang.System.currentTimeMillis() - start
             assert(elapsed < 5000, s"Parsing 100K unicode escapes took ${elapsed}ms")
             result match
                 case Result.Success(s) => assert(s == "A" * 100000)
@@ -2077,6 +2077,79 @@ class JsonTest extends Test:
                 assert(decoded == v, s"Double round-trip failed: $v -> $json -> $decoded")
             }
             succeed
+        }
+    }
+
+    // ===================================================================
+    // Generic case class default-value derivation (regression: MacroUtils.getDefault
+    // must apply type arguments to the generated default-method ref). The bug
+    // surfaced as "Expected an expression. This is a partially applied Term"
+    // at Schema-derivation time for any generic case class with at least one
+    // default-valued field. The fix lives in `MacroUtils.getDefault` and the
+    // tests below pin both the "Schema derives at all" property and the
+    // "decode honors the default" / "round-trip preserves omitted-vs-present"
+    // properties.
+    // ===================================================================
+
+    "generic case class with defaults" - {
+
+        "MTGenericDefault[Int]: Schema derives without macro error (compile-time pin)" in {
+            // The mere presence of `derives Schema` on a generic case class with a default
+            // previously crashed at macro-expansion. Summoning the Schema here forces the
+            // macro to run; a regression would fail the compile, not the assertion.
+            val _ = summon[Schema[MTGenericDefault[Int]]]
+            succeed
+        }
+
+        "MTGenericDefault[Int]: omitted default decodes to the declared default" in {
+            // Input lacks `tag`; the macro-driven decoder must source the default from the
+            // generic companion's `<init>$default$2[A]: String` method, applying the type
+            // arg `Int`. Pre-fix: macro never compiled; post-fix: default is honored.
+            val json    = """{"value":42}"""
+            val decoded = Json.decode[MTGenericDefault[Int]](json).getOrThrow
+            assert(decoded == MTGenericDefault[Int](42, "default"))
+        }
+
+        "MTGenericDefault[String]: explicit value overrides the default and round-trips" in {
+            val original = MTGenericDefault[String]("hi", tag = "custom")
+            val encoded  = Json.encode(original)
+            val decoded  = Json.decode[MTGenericDefault[String]](encoded).getOrThrow
+            assert(decoded == original)
+        }
+
+        "MTGenericMaybe[Int]: both Maybe-defaulted fields decode from empty object" in {
+            // Two Maybe[?]-typed fields with Absent defaults. The macro fix must apply the
+            // [Int] type arg to BOTH default methods independently.
+            val json    = """{}"""
+            val decoded = Json.decode[MTGenericMaybe[Int]](json).getOrThrow
+            assert(decoded == MTGenericMaybe[Int]())
+        }
+
+        "MTGenericMaybe[Int]: Present(value) round-trips through encode/decode" in {
+            val original = MTGenericMaybe[Int](result = Present(7))
+            val encoded  = Json.encode(original)
+            val decoded  = Json.decode[MTGenericMaybe[Int]](encoded).getOrThrow
+            assert(decoded == original)
+        }
+
+        "MTGenericMaybe[String]: error-only payload preserves both fields" in {
+            val original = MTGenericMaybe[String](error = Present("bad"))
+            val encoded  = Json.encode(original)
+            val decoded  = Json.decode[MTGenericMaybe[String]](encoded).getOrThrow
+            assert(decoded == original)
+        }
+
+        "MTGenericTwoParam[Int, String]: two type params with one default field" in {
+            val original = MTGenericTwoParam[Int, String](1, "a")
+            val encoded  = Json.encode(original)
+            val decoded  = Json.decode[MTGenericTwoParam[Int, String]](encoded).getOrThrow
+            assert(decoded == original)
+        }
+
+        "MTGenericTwoParam[Int, String]: omitted default decodes to 'pair'" in {
+            val json    = """{"first":3,"second":"x"}"""
+            val decoded = Json.decode[MTGenericTwoParam[Int, String]](json).getOrThrow
+            assert(decoded == MTGenericTwoParam[Int, String](3, "x", "pair"))
         }
     }
 

@@ -21,8 +21,8 @@ object Maybe:
 
     given [A, MaybeA <: Maybe[A]](using ra: Render[A]): Render[MaybeA] with
         given CanEqual[Absent, MaybeA] = CanEqual.derived
-        def asText(value: MaybeA): String = (value: Maybe[A]) match
-            case Present(a) => s"Present(${ra.asText(a)})"
+        def asString(value: MaybeA): String = (value: Maybe[A]) match
+            case Present(a) => s"Present(${ra.asString(a)})"
             case Absent     => "Absent"
             case _          => throw IllegalStateException()
     end given

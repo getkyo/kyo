@@ -2,24 +2,19 @@ package kyo
 
 import scala.language.implicitConversions
 
-/** Provides Text representation of a type. Needed for customizing how to display opaque types as alternative to toString
+/** Provides String representation of a type. Needed for customizing how to display opaque types as alternative to toString
   */
 abstract class Render[A] extends Serializable:
-    def asText(value: A): Text
-    final def asString(value: A): String = asText(value).show
+    def asString(value: A): String
 
-sealed trait LowPriorityRenders:
-    given [A]: Render[A] with
-        def asText(value: A): Text = value.toString
-
-object Render extends LowPriorityRenders:
+object Render extends kyo.internal.LowPriorityRenders:
     inline def apply[A](using r: Render[A]): Render[A] = r
 
-    def from[A](impl: A => Text): Render[A] =
+    def from[A](impl: A => String): Render[A] =
         new Render[A]:
-            def asText(value: A): Text = impl(value)
+            def asString(value: A): String = impl(value)
 
-    def asText[A](value: A)(using r: Render[A]): Text = r.asText(value)
+    def asString[A](value: A)(using r: Render[A]): String = r.asString(value)
 
     import scala.compiletime.*
 
@@ -32,11 +27,11 @@ object Render extends LowPriorityRenders:
             val valIter                         = value.asInstanceOf[Product].productIterator
             val showIter: Iterator[Render[Any]] = shows.productIterator.asInstanceOf
             if valIter.hasNext then
-                builder.append(showIter.next().asText(valIter.next()))
+                builder.append(showIter.next().asString(valIter.next()))
                 ()
             while valIter.hasNext do
                 builder.append(",")
-                builder.append(showIter.next().asText(valIter.next()))
+                builder.append(showIter.next().asString(valIter.next()))
                 ()
             end while
             builder.append(")")
@@ -49,7 +44,7 @@ object Render extends LowPriorityRenders:
             Render.from: (value: A) =>
                 val caseIndex                 = sumMir.ordinal(value)
                 val showInstance: Render[Any] = shows.productElement(caseIndex).asInstanceOf
-                showInstance.asText(value)
+                showInstance.asString(value)
         case singMir: scala.deriving.Mirror.Singleton =>
             val label: String = constValue[singMir.MirroredLabel]
             Render.from(_ => label)
@@ -69,24 +64,24 @@ object Render extends LowPriorityRenders:
                             sumRender[A, prodMir.type](label, prodMir)
                     end match
 
+    type Rendered = Rendered.Value
+
+    object Rendered:
+        opaque type Value <: String = String
+        implicit def apply[A](value: A)(using render: Render[A]): Rendered =
+            render.asString(value)
+    end Rendered
+
 end Render
 
-type Rendered = Rendered.Value
-
-object Rendered:
-    opaque type Value <: Text = Text
-    implicit def apply[A](value: A)(using render: Render[A]): Rendered =
-        render.asText(value)
-end Rendered
-
 extension (sc: StringContext)
-    def t(args: Rendered*): Text =
+    def render(args: Render.Rendered*): String =
         StringContext.checkLengths(args, sc.parts)
-        val pi         = sc.parts.iterator
-        val ai         = args.iterator
-        var text: Text = pi.next()
+        val pi      = sc.parts.iterator
+        val ai      = args.iterator
+        val builder = java.lang.StringBuilder(pi.next())
         while ai.hasNext do
-            text = text + ai.next()
-            text = text + StringContext.processEscapes(pi.next())
-        text
+            discard(builder.append(ai.next()))
+            discard(builder.append(StringContext.processEscapes(pi.next())))
+        builder.toString
 end extension

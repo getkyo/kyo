@@ -5,7 +5,7 @@ import kyo.scheduler.IOPromise
 
 /** A TCP connection bundling handle, channels, and pumps.
   *
-  * ## Architecture
+  * #### Architecture
   *
   * ```
   * Socket ←→ Driver ←→ Pumps ←→ Channels ←→ User code
@@ -13,14 +13,14 @@ import kyo.scheduler.IOPromise
   *                 Connection owns these
   * ```
   *
-  * ## Lifecycle
+  * #### Lifecycle
   *
   *   1. `init()` creates channels and pumps
   *   2. `start()` starts the pumps (begins I/O)
   *   3. User reads from `inbound`, writes to `outbound`
   *   4. `close()` stops pumps and closes handle
   *
-  * ## Backpressure
+  * #### Backpressure
   *
   * Channel capacity controls backpressure. When inbound channel fills, ReadPump stops requesting reads, causing TCP flow control. When
   * outbound channel fills, writers block until WritePump drains data.

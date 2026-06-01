@@ -161,11 +161,14 @@ object `<`:
           * function.
           *
           * For example, instead of:
-          * ```
+          *
+          * ```scala
           * Env.run(1)(Abort.run(computation))
           * ```
+          *
           * You can write:
-          * ```
+          *
+          * ```scala
           * computation.handle(Abort.run, Env.run(1))
           * ```
           *
@@ -376,7 +379,7 @@ object `<`:
           *
           * @return
           *   The final result of type `A` after evaluating the computation
-          * @throws IllegalStateException
+          * @throws java.lang.IllegalStateException
           *   if unhandled effects remain in the computation
           */
         inline def eval(using inline frame: Frame): A =
@@ -470,9 +473,9 @@ object `<`:
         (a1, a2, a3, a4, a5, a6) => lift(f(a1, a2, a3, a4, a5, a6))
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
-        def asText(value: APendingS): Text = value match
+        def asString(value: APendingS): String = value match
             case sus: Kyo[?, ?]  => sus.toString
-            case a: A @unchecked => s"Kyo(${ra.asText(a)})"
+            case a: A @unchecked => s"Kyo(${ra.asString(a)})"
     end given
 
 end `<`

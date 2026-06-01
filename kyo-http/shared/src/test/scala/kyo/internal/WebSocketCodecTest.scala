@@ -30,6 +30,44 @@ class WebSocketCodecTest extends kyo.Test:
         def writtenString: String = new String(output.toByteArray, Utf8)
     end MockConn
 
+    /** Build an unmasked WebSocket frame (server-to-client direction).
+      *
+      * Layout:
+      *   - byte 0: FIN bit + opcode
+      *   - byte 1: payload-length encoding (7-bit, 16-bit, or 64-bit)
+      *   - bytes after length: payload (no masking key for server frames)
+      */
+    private def makeFrame(opcode: Int, fin: Boolean, payload: Array[Byte]): Array[Byte] =
+        val finBit = if fin then 0x80 else 0
+        val b0     = ((finBit | opcode) & 0xff).toByte
+        val len    = payload.length
+        val header =
+            if len < 126 then
+                Array[Byte](b0, len.toByte)
+            else if len < 65536 then
+                Array[Byte](
+                    b0,
+                    126.toByte,
+                    ((len >> 8) & 0xff).toByte,
+                    (len & 0xff).toByte
+                )
+            else
+                val ll = len.toLong
+                Array[Byte](
+                    b0,
+                    127.toByte,
+                    ((ll >> 56) & 0xff).toByte,
+                    ((ll >> 48) & 0xff).toByte,
+                    ((ll >> 40) & 0xff).toByte,
+                    ((ll >> 32) & 0xff).toByte,
+                    ((ll >> 24) & 0xff).toByte,
+                    ((ll >> 16) & 0xff).toByte,
+                    ((ll >> 8) & 0xff).toByte,
+                    (ll & 0xff).toByte
+                )
+        header ++ payload
+    end makeFrame
+
     // ── Accept key ──────────────────────────────────────────────
 
     "computeAcceptKey" - {
@@ -163,6 +201,36 @@ class WebSocketCodecTest extends kyo.Test:
             val longReason = "x" * 200
             val payload    = WebSocketCodec.encodeClosePayload(1000, longReason)
             assert(payload.size == 2 + 123) // 125 max total, minus 2 for code
+        }
+    }
+
+    // ── Fragmented messages (continuation frames) ──────────────
+
+    "fragmented messages (continuation frames) reassemble into a single message" - {
+        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1" in run {
+            pending
+            // Spec: a WebSocket message MAY be split across multiple frames per RFC 6455.
+            // The first frame carries the opcode (text or binary) with FIN=0; subsequent
+            // frames use opcode 0x0 (continuation) with FIN=0; the final frame uses
+            // opcode 0x0 with FIN=1. WebSocketCodec.readFrameWith should reassemble
+            // the concatenated payload and yield a single Payload value with the
+            // original text opcode.
+            //
+            // Current behavior: readFrameWith delivers each frame raw (opcode 0x1 for
+            // the first, 0x0 for the continuations), and maxFrameSize is checked per
+            // individual frame. The kyo-http 16 MiB default is a per-frame pragmatic
+            // ceiling; proper reassembly is the follow-up.
+            val frame1 = makeFrame(opcode = 0x1, fin = false, payload = "AAA".getBytes(Utf8))
+            val frame2 = makeFrame(opcode = 0x0, fin = false, payload = "BBB".getBytes(Utf8))
+            val frame3 = makeFrame(opcode = 0x0, fin = true, payload = "CCC".getBytes(Utf8))
+            val mock   = new MockConn(frame1 ++ frame2 ++ frame3)
+            WebSocketCodec.readFrameWith(mock.read, mock, Int.MaxValue) { (payload, _) =>
+                payload match
+                    case HttpWebSocket.Payload.Text(s) =>
+                        assert(s == "AAABBBCCC")
+                    case other =>
+                        fail(s"expected Text payload with reassembled content, got $other")
+            }
         }
     }
 
@@ -355,6 +423,47 @@ class WebSocketCodecTest extends kyo.Test:
         Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map { result =>
             assert(result.isFailure)
         }
+    }
+
+    "decodeClosePayload extracts code and reason" in {
+        val payload = Span.fromUnsafe(Array[Byte](
+            ((4001 >> 8) & 0xff).toByte,
+            (4001 & 0xff).toByte
+        ) ++ "bye".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        val (code, reason) = WebSocketCodec.decodeClosePayload(payload)
+        assert(code == 4001)
+        assert(reason == "bye")
+    }
+
+    "decodeClosePayload returns (1005, \"\") on empty payload" in {
+        val (code, reason) = WebSocketCodec.decodeClosePayload(Span.empty[Byte])
+        assert(code == 1005)
+        assert(reason == "")
+    }
+
+    "decodeClosePayload returns (code, \"\") when only the 2-byte code is present" in {
+        val payload        = Span.fromUnsafe(Array[Byte](0x03, 0xe8.toByte)) // 1000
+        val (code, reason) = WebSocketCodec.decodeClosePayload(payload)
+        assert(code == 1000)
+        assert(reason == "")
+    }
+
+    "parseResponseSubprotocol extracts the value (case-insensitive)" in {
+        val r1 = WebSocketCodec.parseResponseSubprotocol(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nSec-WebSocket-Protocol: graphql-transport-ws\r\n\r\n"
+        )
+        assert(r1.contains("graphql-transport-ws"))
+        val r2 = WebSocketCodec.parseResponseSubprotocol(
+            "HTTP/1.1 101 Switching Protocols\r\nsec-websocket-protocol:  chat  \r\n\r\n"
+        )
+        assert(r2.contains("chat"))
+    }
+
+    "parseResponseSubprotocol returns None when header absent" in {
+        val r = WebSocketCodec.parseResponseSubprotocol(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
+        )
+        assert(r.isEmpty)
     }
 
 end WebSocketCodecTest

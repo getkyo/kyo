@@ -11,6 +11,7 @@ import kyo.internal.PathPlatformSpecific
   * `Abort[FileFsException]`. This means the compiler enforces that callers handle (or propagate) every possible failure mode.
   *
   * Paths are constructed via the `/` operator or the `apply` factory:
+  *
   * {{{
   * val config = Path / "etc" / "app" / "config.toml"
   * val data   = Path("var", "data", "app")
@@ -25,12 +26,12 @@ import kyo.internal.PathPlatformSpecific
   * Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`) return `false` for inaccessible paths rather than
   * failing — they require only `Sync`, not `Abort`.
   *
-  * '''Streaming operations''' (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`) return `Stream` values that carry
+  * **Streaming operations** (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`) return `Stream` values that carry
   * `Scope` in their effect type. The underlying OS resource (file handle, directory handle) is acquired when the stream starts and released
   * when the enclosing `Scope` closes — whether by normal completion, error, or cancellation.
   *
   * @see
-  *   [[kyo.FileException]] for the typed error hierarchy
+  *   [[FileException]] for the typed error hierarchy
   * @see
   *   [[kyo.Path.Unsafe]] for the abstract platform-specific implementation class
   */

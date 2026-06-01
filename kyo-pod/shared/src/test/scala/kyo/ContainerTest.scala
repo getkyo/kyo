@@ -341,7 +341,7 @@ class ContainerTest extends Test:
             assert(ContainerPortConflictException(8080, "x").getMessage.contains("8080"))
             assert(ContainerAuthException("ghcr.io", "denied").registry == "ghcr.io")
             assert(ContainerAuthException("ghcr.io", "denied").getMessage.contains("ghcr.io"))
-            // 2-arg call uses default cause = ""; ContainerException.scala:194
+            // 2-arg call uses default cause = ""
             assert(ContainerBuildFailedException("/ctx", "tar failed").getMessage.contains("tar failed"))
             // 3-arg call with cause: confirm Throwable cause is reflected
             val ex = ContainerBuildFailedException("/ctx", "tar failed", new RuntimeException("inner"))

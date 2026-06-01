@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.ChunkBuilder
 import kyo.kernel.ArrowEffect
 import scala.annotation.implicitNotFound
 import scala.util.NotGiven
@@ -684,7 +683,7 @@ object StreamCoreExtensions:
           * boundaries.
           *
           * @note
-          *   Keeps a separate buffer for background fibers, which means that the number of chunks in memory can be up to 2*[[bufferSize]]
+          *   Keeps a separate buffer for background fibers, which means that the number of chunks in memory can be up to 2*`bufferSize`
           *
           * @param parallel
           *   Maximum number of elements to transform in parallel at a time
@@ -791,7 +790,7 @@ object StreamCoreExtensions:
         /** Applies effectful transformation of stream chunks asynchronously, mapping chunk in parallel. Does not preserve chunk boundaries.
           *
           * @note
-          *   Keeps a separate buffer for background fibers, which means that the number of chunks in memory can be up to 2*[[bufferSize]]
+          *   Keeps a separate buffer for background fibers, which means that the number of chunks in memory can be up to 2*`bufferSize`
           *
           * @param f
           *   Asynchronous transformation of stream elements
@@ -913,7 +912,7 @@ object StreamCoreExtensions:
           * @param bufferSize
           *   Size of underlying channel communicating streamed elements to broadcasted streams
           * @return
-          *   Chunk of streams of length [[numStreams]] containing the broadcasted streams
+          *   Chunk of streams of length `numStreams` containing the broadcasted streams
           */
         def broadcastN(numStreams: Int, bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
@@ -941,7 +940,7 @@ object StreamCoreExtensions:
           *   This method should only be used when it is not necessary for each evaluation of the resulting stream to consume all the
           *   elements of the original stream. Elements handled by all currently running instances of the stream prior to a subsequent runs
           *   will be lost. As soon a single run commences, elements will start being pulled from the original stream and may be lost prior
-          *   to subsequent runs. To guarantee all runs handle the same elements, use [[broadcastDynamicWith]] or [[broadcast[N]]].
+          *   to subsequent runs. To guarantee all runs handle the same elements, use [[broadcastDynamicWith]] or [[broadcastN]].
           * @param bufferSize
           *   Size of underlying channel communicating streamed elements to broadcasted stream
           * @return
@@ -989,11 +988,11 @@ object StreamCoreExtensions:
         end broadcastDynamic
 
         /** Use a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. The original stream will not
-          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter [[fn]]. Original stream
+          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter `fn`. Original stream
           * begins to run the first time any subscribed stream is run.
           *
           * @note
-          *   Do not await evaluation of subscribed streams within [[fn]].
+          *   Do not await evaluation of subscribed streams within `fn`.
           * @param bufferSize
           *   Size of underlying channel communicating streamed elements to broadcasted stream
           * @return
@@ -1013,13 +1012,13 @@ object StreamCoreExtensions:
                     streamHub.consume(stream).andThen(a)
 
         /** Use a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. The original stream will not
-          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter [[fn]]. Original stream
+          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter `fn`. Original stream
           * begins to run the first time any subscribed stream is run.
           *
           * Uses a default buffer size.
           *
           * @note
-          *   Do not await evaluation of subscribed streams within [[fn]].
+          *   Do not await evaluation of subscribed streams within `fn`.
           * @return
           *   A resourceful, asynchronous effect producing a stream that can be run multiple times in parallel
           */
@@ -1036,11 +1035,11 @@ object StreamCoreExtensions:
                 fn(streamHub).map: a =>
                     streamHub.consume(stream).andThen(a)
 
-        /** Collects values that are emitted by the original stream within the duration [[maxTime]] up to the amount [[maxSize]] and emits
-          * them as a chunk.
+        /** Collects values that are emitted by the original stream within the duration `maxTime` up to the amount `maxSize` and emits them
+          * as a chunk.
           *
-          * If no elements are emitted by the original stream within [[maxTime]], as soon as any other elements are emitted the result
-          * stream will emit them as a group.
+          * If no elements are emitted by the original stream within `maxTime`, as soon as any other elements are emitted the result stream
+          * will emit them as a group.
           *
           * @param maxSize
           *   Maximum number of elements to be collected within a single duration. Values of less than one are ignored and treated as one.

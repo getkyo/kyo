@@ -9,9 +9,6 @@ import ch.qos.logback.core.Context
 import ch.qos.logback.core.OutputStreamAppender
 import ch.qos.logback.core.encoder.Encoder
 import ch.qos.logback.core.status.Status
-import kyo.Log
-import kyo.Test
-import kyo.Text
 import org.slf4j.LoggerFactory
 import scala.util.control.NoStackTrace
 
@@ -71,7 +68,7 @@ class SLF4JLogTest extends Test:
         appender.start()
         logger.addAppender(appender)
 
-        val text: Text = "info message - hidden"
+        val text: String = "info message - hidden"
         Log.let(SLF4JLog("kyo.logging")) {
             for
                 _ <- Log.trace("won't show up")

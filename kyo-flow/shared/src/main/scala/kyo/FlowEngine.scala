@@ -73,7 +73,7 @@ final class FlowEngine private (
                                                 discard(inputMeta.schema.encodeString[Json](value)); true
                                             catch case _: Throwable => false
                                         if !valid then
-                                            Abort.fail[FlowSignalTypeMismatchException](FlowSignalTypeMismatchException(
+                                            Abort.fail(FlowSignalTypeMismatchException(
                                                 inputMeta.name,
                                                 inputMeta.tag.show,
                                                 value.getClass.getSimpleName
@@ -319,9 +319,9 @@ final class FlowEngine private (
       *
       * The runner wraps the entire flow execution, providing effect handlers that step bodies need.
       *
-      * {{{
+      * ```scala
       * engine.register(wfId, flow)([v] => c => Env.run(config)(c))
-      * }}}
+      * ```
       */
     def register[S](id: Flow.Id.Workflow, flow: Flow[?, ?, S])(
         runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])

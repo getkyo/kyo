@@ -31,7 +31,7 @@ import scala.util.matching.Regex
   * @see
   *   [[kyo.Parse.attempt]], [[kyo.Parse.peek]] for parsers with look-ahead and backtracking
   * @see
-  *   [[kyo.Parse.run]] for executing parsers against input text
+  *   [[kyo.Parse.runResult]] and [[kyo.Parse.runOrAbort]] for executing parsers against input text
   */
 sealed trait Parse[In] extends ArrowEffect[[in] =>> Parse.Op[In, in], Id]
 
@@ -369,13 +369,13 @@ object Parse:
     /** Matches exact text
       *
       * @param str
-      *   Text to match
+      *   String to match
       * @return
       *   Unit if text matches
       */
-    def literal(text: Text)(using Frame): Text < Parse[Char] =
+    def literal(text: String)(using Frame): String < Parse[Char] =
         read(in =>
-            if in.remaining.startsWith(text.toString) then
+            if in.remaining.startsWith(text) then
                 Result.succeed((in.advance(text.length), text))
             else
                 Result.fail(Chunk(ParseFailure(s"Expected: $text", in.position)))
@@ -791,8 +791,8 @@ object Parse:
       * @return
       *   Unit after consuming whitespace
       */
-    def whitespaces(using Frame): Text < Parse[Char] =
-        Parse.readWhile[Char](_.isWhitespace).map(c => Text(c.mkString))
+    def whitespaces(using Frame): String < Parse[Char] =
+        Parse.readWhile[Char](_.isWhitespace).map(_.mkString)
 
     /** Parses an integer
       *
@@ -837,12 +837,12 @@ object Parse:
       * @return
       *   Parsed identifier text
       */
-    def identifier(using Frame): Text < Parse[Char] =
+    def identifier(using Frame): String < Parse[Char] =
         Parse.read: in =>
             val remaining = in.remaining
             remaining.headMaybe.filter(c => c.isLetter || c == '_').map(_ =>
                 val text = remaining.takeWhile(c => c.isLetterOrDigit || c == '_')
-                (in.advance(text.length), Text(text.mkString))
+                (in.advance(text.length), text.mkString)
             ).toResult(Result.fail(Chunk(ParseFailure("Invalid identifier", in.position))))
 
     /** Matches text using regex pattern
@@ -852,9 +852,9 @@ object Parse:
       * @return
       *   Matched text
       */
-    def regex(pattern: Regex)(using Frame): Text < Parse[Char] =
+    def regex(pattern: Regex)(using Frame): String < Parse[Char] =
         Parse.read(in =>
-            Maybe.fromOption(pattern.findPrefixOf(in.remaining.mkString).map(m => (in.advance(m.length), Text(m))))
+            Maybe.fromOption(pattern.findPrefixOf(in.remaining.mkString).map(m => (in.advance(m.length), m)))
                 .toResult(Result.fail(Chunk(ParseFailure("Regex didn't match", in.position))))
         )
 
@@ -865,7 +865,7 @@ object Parse:
       * @return
       *   Matched text
       */
-    def regex(pattern: String)(using Frame): Text < Parse[Char] =
+    def regex(pattern: String)(using Frame): String < Parse[Char] =
         regex(pattern.r)
 
     def entireInput[Out](using Frame)[In, S](parser: Out < (Parse[In] & S))(using Tag[Parse[In]]): Out < (Parse[In] & S) =
@@ -984,9 +984,6 @@ object Parse:
     def runResult[Out, S](input: String)(parser: Out < (Parse[Char] & S))(using Frame): ParseResult[Out] < S =
         runResult(Chunk.from(input))(parser)
 
-    def runResult[Out, S](input: Text)(parser: Out < (Parse[Char] & S))(using Frame): ParseResult[Out] < S =
-        runResult(input.toChunk)(parser)
-
     def runOrAbort[In, Out, S](input: Chunk[In])(parser: Out < (Parse[In] & S))(using
         Tag[In],
         Tag[Parse[In]],
@@ -995,9 +992,6 @@ object Parse:
         runResult(input)(parser).map(_.orAbort)
 
     def runOrAbort[Out, S](input: String)(parser: Out < (Parse[Char] & S))(using Frame): Out < (Abort[ParseError] & S) =
-        runResult(input)(parser).map(_.orAbort)
-
-    def runOrAbort[Out, S](input: Text)(parser: Out < (Parse[Char] & S))(using Frame): Out < (Abort[ParseError] & S) =
         runResult(input)(parser).map(_.orAbort)
 
     /** Runs a parser on a stream of text input, emitting parsed results as they become available. This streaming parser accumulates text
@@ -1016,24 +1010,26 @@ object Parse:
       * @return
       *   Stream of successfully parsed results, which can abort with ParseFailed
       */
-    def runStream[A, S, S2](input: Stream[Text, S])(v: A < (Parse[Char] & S2))(
+    def runStream[A, S, S2](input: Stream[String, S])(v: A < (Parse[Char] & S2))(
         using
         Frame,
-        Tag[Emit[Chunk[Text]]],
+        Tag[Emit[Chunk[String]]],
         Tag[Emit[Chunk[A]]]
     ): Stream[A, S & S2 & Abort[ParseError]] =
         Stream {
             input.emit.handle {
                 // Maintains a running buffer of text and repeatedly attempts parsing
-                Emit.runFold[Chunk[Text]](Text.empty) {
-                    (acc: Text, curr: Chunk[Text]) =>
+                Emit.runFold[Chunk[String]]("") {
+                    (acc: String, curr: Chunk[String]) =>
                         // Concatenate new chunks with existing accumulated text
-                        val text = acc + curr.foldLeft(Text.empty)(_ + _)
+                        val builder = new java.lang.StringBuilder(acc)
+                        curr.foreach(builder.append)
+                        val text = builder.toString
                         if text.isEmpty then
                             // If no text to parse, request more input
                             text
                         else
-                            runState(ParseState(ParseInput(text.toChunk, 0), Chunk.empty))(v).map((state, result) =>
+                            runState(ParseState(ParseInput(Chunk.from(text), 0), Chunk.empty))(v).map((state, result) =>
                                 if result.isFailure || state.input.done then
                                     // Parser failed or consumed all input - might need more text to complete
                                     // the next parse, so continue
@@ -1041,7 +1037,7 @@ object Parse:
                                 else
                                     // Successfully parsed a value with remaining text.
                                     // Emit the parsed value and continue with unconsumed text
-                                    Emit.valueWith(Chunk(result.out.get))(Text(state.input.remaining.mkString))
+                                    Emit.valueWith(Chunk(result.out.get))(state.input.remaining.mkString)
                             )
                         end if
                 }

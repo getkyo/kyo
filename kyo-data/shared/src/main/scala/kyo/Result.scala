@@ -10,6 +10,7 @@ import scala.util.control.NonFatal
   * maintaining type safety.
   *
   * Result has the following possible states:
+  *
   *   - `Success[A]`: Contains a successful value of type `A`
   *   - `Error[E]`: Base type for both Failure and Panic
   *     - `Failure[E]`: Represents expected errors of type `E`
@@ -18,6 +19,7 @@ import scala.util.control.NonFatal
   * For a narrower version of Result that includes only `Success[A]` and `Failure[E]`, see `Result.Partial[E, A]`.
   *
   * Result provides several groups of operations:
+  *
   *   - Fold operations (`fold`, `foldError`, `foldOrThrow`) for matching on the different states
   *   - Map operations (`map`, `mapError`, `mapFailure`, `mapPanic`) for transforming specific states
   *   - FlatMap operations (`flatMap`, `flatMapError`, `flatMapFailure`, `flatMapPanic`) for sequencing computations and handling errors
@@ -397,13 +399,11 @@ object Result:
         /** Gets the successful value or throws the error.
           *
           * @param ev
-          *   Evidence that E is a subtype of Throwable
+          *   Evidence that `E` is a subtype of `Throwable`
           * @return
           *   The successful value
-          * @throws E
-          *   if the Result is a Failure
           * @throws Throwable
-          *   if the Result is a Panic
+          *   if the Result is a Failure (the underlying `E`) or a Panic
           */
         def getOrThrow(
             using
@@ -717,9 +717,9 @@ object Result:
     inline given [E, A]: CanEqual[Result[E, A], Panic]                                         = CanEqual.derived
 
     given [E, A, ResultEA <: Result[E, A]](using re: Render[E], ra: Render[A]): Render[ResultEA] with
-        def asText(value: ResultEA): String = value match
-            case Success(a)    => s"Success(${ra.asText(a.asInstanceOf[A])})"
-            case f: Failure[?] => s"Failure(${re.asText(f.failure.asInstanceOf[E])})"
+        def asString(value: ResultEA): String = value match
+            case Success(a)    => s"Success(${ra.asString(a.asInstanceOf[A])})"
+            case f: Failure[?] => s"Failure(${re.asString(f.failure.asInstanceOf[E])})"
             case other         => other.toString()
     end given
 
@@ -727,10 +727,12 @@ object Result:
       * equivalent of Either.
       *
       * Result has the following possible states:
+      *
       *   - `Success[A]`: Contains a successful value of type `A`
       *   - `Failure[E]`: Represents expected errors of type `E`
       *
       * Being a subtype of Result, Result.Partial supports all the operations of Result as a few narrower versions of these methods:
+      *
       *   - foldPartial
       *   - toEitherPartial
       *   - flattenPartial

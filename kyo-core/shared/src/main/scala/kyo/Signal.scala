@@ -8,10 +8,12 @@ import scala.annotation.tailrec
   * changes.
   *
   * Signal provides two fundamental operations:
+  *
   *   - `current`: synchronous access to the current value
   *   - `next`: asynchronous notification of the next change
   *
   * Changes can be observed through streaming operations:
+  *
   *   - `streamCurrent`: emits the current value continuously
   *   - `streamChanges`: emits only when values change
   *
@@ -20,6 +22,7 @@ import scala.annotation.tailrec
   * is critical.
   *
   * The companion object provides these creation methods:
+  *
   *   - `Signal.initRef[A]`: creates a mutable `Signal.Ref[A]` initialized with a starting value
   *   - `Signal.initConst[A]`: creates an immutable `Signal[A]` that always returns the same value
   *   - `Signal.initRaw[A]`: (low-level API) creates a custom `Signal[A]` by directly implementing its fundamental operations, primarily
@@ -86,10 +89,69 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       *   A new signal containing transformed values
       */
     @nowarn("msg=anonymous")
-    inline def map[B](inline f: A => B)(using CanEqual[B, B]): Signal[B] =
+    inline def map[B](inline f: A => B)(using CanEqual[B, B], Frame): Signal[B] =
         Signal.initRaw(
             currentWith = [C, S] => g => self.currentWith(a => g(f(a))),
             nextWith = [C, S] => g => self.nextWith(a => g(f(a)))
+        )
+
+    /** Dynamically switches to an inner signal based on the current value.
+      *
+      * When the outer signal changes, switches to the new inner signal produced by `f`. When the current inner signal changes, propagates
+      * that change. This is switchMap semantics (no monad laws): the previous inner is implicitly dropped on outer change. The caller
+      * re-arms via `nextWith` in a loop matching the `streamChanges` driver pattern.
+      *
+      * Note: like `streamChanges`, may skip intermediate values if changes occur faster than they can be processed. The read/arm race
+      * window in `SignalRef` propagates here.
+      *
+      * @param f
+      *   The function that produces an inner signal from the current value
+      * @return
+      *   A new signal that tracks the current inner signal
+      */
+    @nowarn("msg=anonymous")
+    inline def switchMap[B](inline f: A => Signal[B])(using CanEqual[B, B], Frame): Signal[B] =
+        Signal.initRaw(
+            currentWith = [C, S] => g => self.currentWith(a => f(a).currentWith(g)),
+            nextWith = [C, S] =>
+                g =>
+                    self.currentWith { a =>
+                        val inner = f(a)
+                        Signal.awaitAny(Seq(self, inner))
+                            .andThen(self.currentWith { a2 =>
+                                (if a2 == a then inner else f(a2)).currentWith(g)
+                            })
+                }
+        )
+
+    /** Pairs this signal with another, waiting for both to change before emitting.
+      *
+      * @param other
+      *   The signal to pair with
+      * @return
+      *   A signal of pairs that updates only when both inputs have changed since the last emit
+      */
+    @nowarn("msg=anonymous")
+    inline def zip[B](other: Signal[B])(using CanEqual[(A, B), (A, B)], Frame): Signal[(A, B)] =
+        Signal.initRaw(
+            currentWith = [C, S] => g => self.currentWith(a => other.currentWith(b => g((a, b)))),
+            nextWith = [C, S] => g => Async.zip(self.next, other.next).andThen(self.currentWith(a => other.currentWith(b => g((a, b)))))
+        )
+
+    /** Pairs this signal with another, emitting when either changes (Rx combineLatest semantics).
+      *
+      * Note: like `streamChanges`, may skip intermediate values if changes occur faster than they can be processed.
+      *
+      * @param other
+      *   The signal to pair with
+      * @return
+      *   A signal of pairs that updates when either input changes
+      */
+    @nowarn("msg=anonymous")
+    inline def combineLatest[B](other: Signal[B])(using CanEqual[(A, B), (A, B)], Frame): Signal[(A, B)] =
+        Signal.initRaw(
+            currentWith = [C, S] => g => self.currentWith(a => other.currentWith(b => g((a, b)))),
+            nextWith = [C, S] => g => Signal.awaitAny(Seq(self, other)).andThen(self.currentWith(a => other.currentWith(b => g((a, b)))))
         )
 
     /** Creates a stream that continuously emits the current value of the signal.
@@ -134,6 +196,60 @@ end Signal
 export Signal.SignalRef
 
 object Signal:
+
+    /** Waits for any of the given signals to change.
+      *
+      * @param signals
+      *   The signals to watch
+      */
+    def awaitAny(signals: Seq[Signal[?]])(using Frame): Unit < Async =
+        if signals.isEmpty then ()
+        else Async.race(signals.map(_.next)).unit
+
+    /** Zips a sequence of signals, waiting for all to change before emitting.
+      *
+      * @param signals
+      *   The signals to zip
+      * @return
+      *   A signal of Chunk that updates when all inputs have changed
+      */
+    @nowarn("msg=anonymous")
+    inline def zipAll[A](signals: Seq[Signal[A]])(
+        using
+        Frame,
+        CanEqual[A, A],
+        CanEqual[Chunk[A], Chunk[A]]
+    ): Signal[Chunk[A]] =
+        signals.size match
+            case 0 => initConst(Chunk.empty[A])
+            case 1 => signals.head.map(Chunk(_))
+            case n =>
+                val sigs = Chunk.from(signals, n)
+                initRaw(
+                    currentWith = [B, S] => f => Kyo.foreach(sigs)(_.current).map(f),
+                    nextWith = [B, S] => f => Async.foreachDiscard(sigs, sigs.size)(_.next).andThen(Kyo.foreach(sigs)(_.current).map(f))
+                )
+
+    /** Zips a sequence of signals, emitting when any changes.
+      *
+      * Note: like `streamChanges`, may skip intermediate values if changes occur faster than they can be processed.
+      *
+      * @param signals
+      *   The signals to zip
+      * @return
+      *   A signal of Chunk that updates when any input changes
+      */
+    @nowarn("msg=anonymous")
+    inline def combineLatestAll[A](signals: Seq[Signal[A]])(using Frame, CanEqual[A, A]): Signal[Chunk[A]] =
+        signals.size match
+            case 0 => initConst(Chunk.empty[A])
+            case 1 => signals.head.map(Chunk(_))
+            case n =>
+                val sigs = Chunk.from(signals, n)
+                initRaw(
+                    currentWith = [C, S] => g => Kyo.foreach(sigs)(_.current).map(g),
+                    nextWith = [C, S] => g => awaitAny(sigs).andThen(Kyo.foreach(sigs)(_.current).map(g))
+                )
 
     private inline val missingCanEqual =
         "Cannot create Signal because values of type '${A}' cannot be compared for equality to detect changes. Make sure there is a 'CanEqual[${A}, ${A}]' instance available."
@@ -407,6 +523,7 @@ object Signal:
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details.
           *
           * The implementation uses two atomic references to manage state:
+          *
           *   - An `AtomicRef[A]` storing the current value
           *   - An `AtomicRef[Promise]` managing change notifications
           *
@@ -493,7 +610,11 @@ object Signal:
             def init[A](initial: A)(using AllowUnsafe, CanEqual[A, A]): Unsafe[A] =
                 Unsafe(
                     AtomicRef.Unsafe.init(initial),
-                    AtomicRef.Unsafe.init(Promise.Unsafe.init())
+                    // Use initMasked so that interrupting one subscriber cannot propagate through the
+                    // signal's next-promise and accidentally interrupt other subscribers waiting on the
+                    // same signal. All subsequent promises (created in onUpdate) are already masked for
+                    // the same reason; the initial promise must be consistent.
+                    AtomicRef.Unsafe.init(Promise.Unsafe.initMasked())
                 )
         end Unsafe
 

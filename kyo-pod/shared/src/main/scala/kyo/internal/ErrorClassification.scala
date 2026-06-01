@@ -4,8 +4,8 @@ import kyo.*
 
 /** Shared error-classification primitives used by HttpContainerBackend and ShellBackend.
   *
-  * Both backends need to map a [[ResourceContext]] to the correct [[ContainerException]] subtype when the daemon signals resource-not-found
-  * or conflict. This object is the single place where that dispatch lives.
+  * Both backends need to map a [[ResourceContext]] to the correct [[ContainerException]] subtype when the daemon signals
+  * resource-not-found or conflict. This object is the single place where that dispatch lives.
   *
   * @see
   *   [[DaemonErrorPhrases]] for the shared phrase vocabulary used by both backends.

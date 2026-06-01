@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Tag
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 import scala.annotation.targetName
@@ -650,6 +649,7 @@ object Pipe:
       *
       * This operation maintains the order of elements while potentially redistributing them into new chunks. Smaller chunks may occur in
       * two cases:
+      *
       *   - When there aren't enough remaining elements to form a complete chunk
       *   - When the input stream emits an empty chunk
       *

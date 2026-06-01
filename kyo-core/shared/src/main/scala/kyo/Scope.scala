@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Result.Error
 import kyo.Result.Panic
-import kyo.Tag
 import kyo.kernel.ContextEffect
 
 /** A structured effect for safe acquisition and finalization of resources.
@@ -13,6 +12,7 @@ import kyo.kernel.ContextEffect
   * corresponding cleanup step.
   *
   * Key features:
+  *
   *   - Automatic resource finalization through `Scope.run` when computations complete or fail
   *   - Compositional API allowing resource dependencies to be built up safely with `acquireRelease` and `acquire`
   *   - Support for parallel cleanup through configurable concurrency levels with `run(closeParallelism)(...)`

@@ -8,10 +8,11 @@ import scala.util.boundary
   * composability than manual locking, applications must be designed to handle potentially frequent transaction retries.
   *
   * > IMPORTANT: Transactions are atomic, isolated, and composable but may retry multiple times before success. Side effects (like I/O)
-  * inside transactions must be used with caution as they will be re-executed on retry. Pure operations that only modify transactional
-  * references are safe and encouraged, while external side effects should be performed after the transaction commits.
+  * > inside transactions must be used with caution as they will be re-executed on retry. Pure operations that only modify transactional
+  * > references are safe and encouraged, while external side effects should be performed after the transaction commits.
   *
   * The core operations are:
+  *
   *   - TRef.init creates transactional references that can be shared between threads
   *   - TRef.get and TRef.set read and modify references within transactions
   *   - STM.run executes transactions that either fully commit or rollback
@@ -19,6 +20,7 @@ import scala.util.boundary
   *   - Configurable retry schedules via STM.run's retrySchedule parameter
   *
   * The implementation uses optimistic execution with lock-based validation during commit:
+  *
   *   - Transactions execute without acquiring locks, tracking reads and writes in a local log
   *   - During commit, read-write locks are acquired on affected TRefs to ensure consistency:
   *     - Multiple readers can hold shared locks on a TRef during commit

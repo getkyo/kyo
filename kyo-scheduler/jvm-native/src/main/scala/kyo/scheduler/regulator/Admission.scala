@@ -17,13 +17,13 @@ import scala.util.hashing.MurmurHash3
   * The Admission regulator protects the system from overload by monitoring scheduler queuing delays and selectively rejecting tasks when
   * delays increase. It maintains an admission percentage that adjusts dynamically based on measured delays.
   *
-  * ==Queuing Delay Measurement==
+  * #### Queuing Delay Measurement
   *
   * The regulator probes for queuing delays by periodically submitting special timing tasks into the scheduler and measuring how long they
   * wait before execution. A probe task simply measures the time between its creation and execution. High variance or increasing delays in
   * these measurements indicate scheduler congestion, triggering reductions in the admission rate to alleviate pressure.
   *
-  * ==Rejection Mechanism==
+  * #### Rejection Mechanism
   *
   * Tasks are rejected using a deterministic hashing mechanism that provides stable and consistent admission decisions within time windows.
   * Each task key (string or integer) is hashed using a large prime number multiplication and the current time window to generate a value
@@ -48,7 +48,7 @@ import scala.util.hashing.MurmurHash3
   *   - Load balancing through prime number distribution
   *   - Fair access patterns over time for all users
   *
-  * ==Load Shedding Pattern==
+  * #### Load Shedding Pattern
   *
   * The system responds to increasing pressure through a gradual and predictable load shedding pattern:
   *
@@ -58,13 +58,13 @@ import scala.util.hashing.MurmurHash3
   *   - During recovery, admission percentage gradually increases
   *   - Previously rejected tasks may be admitted in new time windows
   *
-  * ==Backpressure Characteristics==
+  * #### Backpressure Characteristics
   *
   * This design creates an effective backpressure mechanism with several key characteristics. Load reduces predictably as the admission
   * percentage drops, avoiding the oscillation patterns common with random rejection strategies. The system maintains a stable subset of
   * flowing traffic within each time window, while providing natural queue-like behavior for rejected requests.
   *
-  * ==Distributed Systems Context==
+  * #### Distributed Systems Context
   *
   * The admission control mechanism is particularly effective in microservices architectures. Consistent rejection patterns help downstream
   * services manage their own load effectively, while enabling client libraries to implement intelligent backoff strategies. The predictable

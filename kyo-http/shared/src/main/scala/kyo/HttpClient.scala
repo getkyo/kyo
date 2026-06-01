@@ -20,7 +20,7 @@ import kyo.internal.client.HttpClientBackend
   * activate when a `Schedule` is set in the config. Redirects follow up to `maxRedirects` hops and switch to GET on 303 See Other per RFC
   * 9110. A timeout cancels the entire operation including in-progress retries.
   *
-  * ==Error handling on non-2xx responses==
+  * #### Error handling on non-2xx responses
   *
   * Body-only methods (`getText`, `getJson`, etc.) always fail with `HttpStatusException` on non-2xx status codes. `*Response` methods
   * (`getTextResponse`, `getJsonResponse`, etc.) also fail by default, but accept `failOnError = false` to return the raw response for

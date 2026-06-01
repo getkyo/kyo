@@ -3255,13 +3255,6 @@ class SchemaTest extends Test:
                 assert(decoded == duration)
             }
 
-            "kyo.Text roundtrip" in {
-                given Schema[kyo.Text] = summon[Schema[kyo.Text]]
-                val text               = kyo.Text("hello")
-                val encoded            = Json.encode(text)
-                val decoded            = Json.decode[kyo.Text](encoded).getOrThrow
-                assert(decoded == text)
-            }
         }
 
         "Schema Tag encode/decode - static tag" in {
@@ -4427,7 +4420,7 @@ class SchemaTest extends Test:
                 val back   = auditJsonRoundTrip(frame)(using schema)
                 assert(frame.toString == back.toString)
                 assert(back.className.nonEmpty)
-                assert(back.methodName.nonEmpty)
+                assert(back.callerName.nonEmpty)
             }
 
             "Tag[Int] round-trip — static tag" in {

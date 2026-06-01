@@ -11,6 +11,7 @@ import scala.annotation.tailrec
   * and minimal synchronization overhead.
   *
   * Key features:
+  *
   *   - Non-blocking, lock-free implementation (using JCTools on the JVM, with platform-specific implementations elsewhere)
   *   - Different specialized implementations for various producer-consumer patterns
   *   - Bounded capacity (`Queue.init`) with clear backpressure semantics
@@ -27,15 +28,14 @@ import scala.annotation.tailrec
   * WARNING: Unbounded queues can lead to memory exhaustion if producers consistently outpace consumers. In production systems, bounded
   * queues or overflow strategies (dropping/sliding) are generally safer choices unless you can guarantee bounded growth.
   *
+  * @tparam A
+  *   the type of elements in the queue
   * @see
   *   [[kyo.Channel]] For a higher-level, fiber-aware communication primitive
   * @see
   *   [[kyo.Access]] For available producer-consumer access patterns
   * @see
   *   [[kyo.Queue.Unbounded]] For dynamically-sized queue variant
-  *
-  * @tparam A
-  *   the type of elements in the queue
   */
 opaque type Queue[A] = Queue.Unsafe[A]
 
@@ -107,10 +107,10 @@ object Queue:
           */
         def drain(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.drain()))
 
-        /** Takes up to [[max]] elements from the queue.
+        /** Takes up to `max` elements from the queue.
           *
           * @return
-          *   a sequence of up to [[max]] elements from the queue.
+          *   a sequence of up to `max` elements from the queue.
           */
         def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.drainUpTo(max)))
 

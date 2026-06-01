@@ -41,7 +41,7 @@ object CodecMacro:
         val caseFields = sym.caseFields
 
         caseFields.zipWithIndex.flatMap { (field, idx) =>
-            MacroUtils.getDefault(sym, idx).map(field.name -> _)
+            MacroUtils.getDefault(tpe, idx).map(field.name -> _)
         }.toMap
     end caseClassDefaultsPublic
 

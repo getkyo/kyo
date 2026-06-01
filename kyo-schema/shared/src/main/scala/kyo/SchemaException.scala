@@ -1,14 +1,12 @@
 package kyo
 
-import kyo.Codec
-
 /** Base class for all exceptions raised by the kyo-schema module.
   *
   * Subtypes are grouped by the operation that raised them: DecodeException for deserialization failures, ValidationException for constraint
   * violations, TransformException for schema manipulation errors, and NavigationException for path traversal failures.
   */
 // --- Base ---
-sealed abstract class SchemaException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class SchemaException(message: String, cause: String | Throwable = "")(using Frame)
     extends KyoException(message, cause)
 
 // --- Operation markers ---

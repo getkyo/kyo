@@ -6,6 +6,7 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
+import kyo.internal.Reducible
 import kyo.scheduler.IOPromise
 import kyo.scheduler.util.Threads
 import scala.annotation.tailrec
@@ -14,6 +15,7 @@ import scala.collection.mutable.PriorityQueue
 /** A clock that provides time-related operations and utilities for managing temporal aspects of computations.
   *
   * Clock offers a comprehensive set of functionality for:
+  *
   *   - Accessing current time (both wall-clock via `now` and monotonic via `nowMonotonic`)
   *   - Measuring elapsed time with `stopwatch` and the `Stopwatch` class
   *   - Setting deadlines with `deadline` and checking timeouts with `isOverdue`
@@ -52,6 +54,7 @@ final case class Clock(unsafe: Clock.Unsafe):
     /** Gets the current time as an Instant.
       *
       * This method returns the current wall-clock time, which corresponds to actual calendar time. Use this method when you need:
+      *
       *   - Human-readable timestamps for logs, reports, or user interfaces
       *   - Date/time calculations related to real-world time (dates, time zones, etc.)
       *   - Time values that will be persisted or communicated outside the application
@@ -70,6 +73,7 @@ final case class Clock(unsafe: Clock.Unsafe):
       *
       * This method returns a strictly monotonically increasing time value, guaranteed to always move forward. Use this method when you
       * need:
+      *
       *   - Measuring elapsed time between operations
       *   - Calculating timeouts and deadlines
       *   - Performance timing or benchmarking

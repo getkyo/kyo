@@ -1,6 +1,14 @@
 package kyo
 
+object TChunkTest:
+    final case class InitWithBoom()     extends RuntimeException
+    final case class UseBoom()          extends RuntimeException("boom")
+    final case class FilterBoom(i: Int) extends RuntimeException
+    final case class MidFilterBoom()    extends RuntimeException
+end TChunkTest
+
 class TChunkTest extends Test:
+    import TChunkTest.*
 
     "init" - {
         "creates an empty chunk" in run {
@@ -422,10 +430,9 @@ class TChunkTest extends Test:
             }
 
             "f that throws surfaces the thrown exception" in run {
-                final case class Boom() extends RuntimeException
-                val program: Int < Sync = TChunk.initWith(Chunk(1)) { _ => throw Boom() }
+                val program: Int < Sync = TChunk.initWith(Chunk(1)) { _ => throw InitWithBoom() }
                 Abort.run[Throwable](program).map { r =>
-                    assert(r.isError && r.failureOrPanic.get.isInstanceOf[Boom])
+                    assert(r.isError && r.failureOrPanic.get.isInstanceOf[InitWithBoom])
                 }
             }
 
@@ -620,20 +627,19 @@ class TChunkTest extends Test:
             }
 
             "f that throws surfaces panic and rolls back" in run {
-                final case class Boom() extends RuntimeException("boom")
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     r <- Abort.run[Throwable] {
                         STM.run {
                             for
                                 _   <- chunk.append(99)
-                                out <- chunk.use(_ => throw Boom())
+                                out <- chunk.use(_ => throw UseBoom())
                             yield out
                         }
                     }
                     snap <- STM.run(chunk.snapshot)
                 yield
-                    assert(r.isPanic && r.failureOrPanic.get.isInstanceOf[Boom])
+                    assert(r.isPanic && r.failureOrPanic.get.isInstanceOf[UseBoom])
                     assert(snap == Chunk(1, 2, 3))
                 end for
             }
@@ -1007,17 +1013,16 @@ class TChunkTest extends Test:
             }
 
             "predicate that throws rolls back chunk" in run {
-                final case class Boom(i: Int) extends RuntimeException
                 for
                     chunk <- TChunk.init((1 to 10)*)
                     r <- Abort.run[Throwable] {
                         STM.run {
-                            chunk.filter { i => if i == 5 then throw Boom(i) else i % 2 == 0 }
+                            chunk.filter { i => if i == 5 then throw FilterBoom(i) else i % 2 == 0 }
                         }
                     }
                     snap <- STM.run(chunk.snapshot)
                 yield
-                    assert(r.isPanic && r.failureOrPanic.get.isInstanceOf[Boom])
+                    assert(r.isPanic && r.failureOrPanic.get.isInstanceOf[FilterBoom])
                     assert(snap == Chunk.from(1 to 10))
                 end for
             }
@@ -1064,7 +1069,6 @@ class TChunkTest extends Test:
             }
 
             "predicate panic mid-iteration rolls back without partial removals" in run {
-                final case class MidFilterBoom() extends RuntimeException
                 for
                     chunk <- TChunk.init((1 to 10)*)
                     r <- Abort.run[Throwable] {

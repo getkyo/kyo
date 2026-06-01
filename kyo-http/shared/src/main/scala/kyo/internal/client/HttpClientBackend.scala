@@ -731,47 +731,70 @@ final private[kyo] class HttpClientBackend[Handle] private (
         Channel.initUnscopedWith[HttpWebSocket.Payload](config.bufferSize) { inbound =>
             Channel.initUnscopedWith[HttpWebSocket.Payload](config.bufferSize) { outbound =>
                 AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeReasonRef =>
-                    val closeFn: (Int, String) => Unit < Async = (code, reason) =>
-                        closeReasonRef.set(Present((code, reason))).andThen {
-                            outbound.close.unit
-                        }
-                    val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, closeFn)
+                    Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
+                        val closeFn: (Int, String) => Unit < Async = (code, reason) =>
+                            closeReasonRef.set(Present((code, reason))).andThen {
+                                outbound.close.unit
+                            }
+                        val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
 
-                    Fiber.initUnscoped {
-                        Loop(wsStream) { stream =>
-                            WebSocketCodec.readFrameWith(stream, transportStream, config.maxFrameSize) { (frame, remaining) =>
-                                inbound.put(frame).andThen(Loop.continue(remaining))
-                            }
-                        }
-                    }.map { readFiber =>
                         Fiber.initUnscoped {
-                            readFiber.getResult.map { _ =>
-                                inbound.close.unit
+                            Loop(wsStream) { stream =>
+                                WebSocketCodec.readFrameWith(
+                                    stream,
+                                    transportStream,
+                                    config.maxFrameSize,
+                                    (cr: (Int, String)) => closeReasonRef.set(Present(cr))
+                                ) { (frame, remaining) =>
+                                    inbound.put(frame).andThen(Loop.continue(remaining))
+                                }
                             }
-                        }.map { monitorFiber =>
+                        }.map { readFiber =>
                             Fiber.initUnscoped {
-                                Abort.run[Closed] {
-                                    Loop.foreach {
-                                        outbound.take.map { frame =>
-                                            WebSocketCodec.writeFrame(transportStream, frame, mask = true).andThen(Loop.continue)
+                                // Signal peer close and close inbound (so consumers of ws.stream see natural termination).
+                                // Do NOT close outbound here; the write fiber owns outbound lifecycle (closes on its own exit
+                                // via user-initiated ws.close, write failure, or the outer Sync.ensure cleanup). Users that want
+                                // to react to peer close compose ws.onPeerClose into their sender/receiver race.
+                                readFiber.getResult.map { result =>
+                                    val log = result match
+                                        case Result.Failure(e) => Log.warn(s"HttpWebSocket client reader failed: $e")
+                                        case Result.Panic(t)   => Log.warn("HttpWebSocket client reader panicked", t)
+                                        case Result.Success(_) => Kyo.unit
+                                    log.andThen(inbound.close.unit).andThen(peerClosedPromise.completeUnit.unit)
+                                }
+                            }.map { monitorFiber =>
+                                Fiber.initUnscoped {
+                                    // Write fiber: drains outbound to wire. Exits on outbound.close OR wire-write failure.
+                                    // On wire failure (peer-dead, transport error), closes outbound so subsequent ws.put
+                                    // calls fail with Closed, preserving the put-after-close contract.
+                                    Abort.run[Throwable] {
+                                        Loop.foreach {
+                                            outbound.take.map { frame =>
+                                                WebSocketCodec.writeFrame(transportStream, frame, mask = true).andThen(Loop.continue)
+                                            }
                                         }
+                                    }.map { result =>
+                                        val log = result match
+                                            case Result.Failure(_: Closed) => Kyo.unit
+                                            case Result.Failure(e)         => Log.warn(s"HttpWebSocket client writer failed: $e")
+                                            case Result.Panic(t)           => Log.warn("HttpWebSocket client writer panicked", t)
+                                            case Result.Success(_)         => Kyo.unit
+                                        log.andThen(closeReasonRef.get).map {
+                                            case Present((code, reason)) =>
+                                                Abort.run[Any](WebSocketCodec.writeClose(transportStream, code, reason, mask = true)).unit
+                                            case Absent => Kyo.unit
+                                        }.andThen(outbound.close).unit
                                     }
-                                }.map { _ =>
-                                    closeReasonRef.get.map {
-                                        case Present((code, reason)) =>
-                                            Abort.run[Any](WebSocketCodec.writeClose(transportStream, code, reason, mask = true)).unit
-                                        case Absent => Kyo.unit
+                                }.map { writeFiber =>
+                                    Sync.ensure(
+                                        readFiber.interrupt.unit
+                                            .andThen(writeFiber.interrupt.unit)
+                                            .andThen(monitorFiber.interrupt.unit)
+                                            .andThen(inbound.close.unit)
+                                            .andThen(outbound.close.unit)
+                                    ) {
+                                        f(ws)
                                     }
-                                }.andThen(outbound.close).unit
-                            }.map { writeFiber =>
-                                Sync.ensure(
-                                    readFiber.interrupt.unit
-                                        .andThen(writeFiber.interrupt.unit)
-                                        .andThen(monitorFiber.interrupt.unit)
-                                        .andThen(inbound.close.unit)
-                                        .andThen(outbound.close.unit)
-                                ) {
-                                    f(ws)
                                 }
                             }
                         }
@@ -953,7 +976,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
         // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough — they transform the request
         // and forward next's result unchanged.
         // Auto-discovered filters (e.g. W3C trace context from kyo-stats-otlp) are composed first.
-        val clientFilter = HttpFilterFactory.composedClient
+        val clientFilter = HttpFilter.Factory.composedClient
         val routeFilter  = route.filter
         if (clientFilter eq HttpFilter.noop) && (routeFilter eq HttpFilter.noop) then
             // Fast path: no filters configured — call impl directly without filter closure

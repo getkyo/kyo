@@ -300,51 +300,89 @@ private[kyo] object UnsafeServerDispatch:
         Channel.initUnscopedWith[HttpWebSocket.Payload](wsHandler.wsConfig.bufferSize) { inbound =>
             Channel.initUnscopedWith[HttpWebSocket.Payload](wsHandler.wsConfig.bufferSize) { outbound =>
                 AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeReasonRef =>
-                    val closeFn: (Int, String) => Unit < Async = (code, reason) =>
-                        closeReasonRef.set(Present((code, reason))).andThen {
-                            WebSocketCodec.writeClose(conn, code, reason, mask = false)
-                        }
-                    val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, closeFn)
-                    val wsUrl = HttpUrl.parse(path) match
-                        case Result.Success(u) => u
-                        case _                 => HttpUrl.parse("/").getOrThrow
-                    val request = HttpRequest(HttpMethod.GET, wsUrl, headers, Record.empty)
+                    Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
+                        // closeFn routes ws.close through the outbound channel: set closeReasonRef + close outbound.
+                        // The write fiber drains remaining frames then emits the close frame inline (single writer to
+                        // conn), eliminating the put/close race that surfaced under caliban WS load on arm64 CI.
+                        val closeFn: (Int, String) => Unit < Async = (code, reason) =>
+                            closeReasonRef.set(Present((code, reason))).andThen {
+                                outbound.close.unit
+                            }
+                        val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
+                        val wsUrl = HttpUrl.parse(path) match
+                            case Result.Success(u) => u
+                            case _                 => HttpUrl.parse("/").getOrThrow
+                        val request = HttpRequest(HttpMethod.GET, wsUrl, headers, Record.empty)
 
-                    Fiber.initUnscoped {
-                        Loop(conn.read) { stream =>
-                            WebSocketCodec.readFrameWith(stream, conn, wsHandler.wsConfig.maxFrameSize) { (frame, remaining) =>
-                                inbound.put(frame).andThen(Loop.continue(remaining))
-                            }
-                        }
-                    }.map { readFiber =>
                         Fiber.initUnscoped {
-                            readFiber.getResult.map { _ =>
-                                inbound.close.unit.andThen(outbound.close.unit)
+                            Loop(conn.read) { stream =>
+                                WebSocketCodec.readFrameWith(
+                                    stream,
+                                    conn,
+                                    wsHandler.wsConfig.maxFrameSize,
+                                    (cr: (Int, String)) => closeReasonRef.set(Present(cr))
+                                ) { (frame, remaining) =>
+                                    inbound.put(frame).andThen(Loop.continue(remaining))
+                                }
                             }
-                        }.map { monitorFiber =>
+                        }.map { readFiber =>
                             Fiber.initUnscoped {
-                                Abort.run[Closed] {
-                                    Loop.foreach {
-                                        outbound.take.map { frame =>
-                                            WebSocketCodec.writeFrame(conn, frame, mask = false).andThen(Loop.continue)
+                                // Monitor: on read EOF (peer close), close inbound and complete peerClosedPromise so
+                                // ws.onPeerClose fires. Outbound is intentionally NOT closed here — applications that
+                                // want the sender fiber to exit promptly on peer close compose ws.onPeerClose into
+                                // their own race (see HttpWebSocket.onPeerClose docs).
+                                readFiber.getResult.map { result =>
+                                    val log = result match
+                                        case Result.Failure(e) => Log.warn(s"HttpWebSocket server reader failed: $e")
+                                        case Result.Panic(t)   => Log.warn("HttpWebSocket server reader panicked", t)
+                                        case Result.Success(_) => Kyo.unit
+                                    log.andThen(inbound.close.unit).andThen(peerClosedPromise.completeUnit.unit)
+                                }
+                            }.map { monitorFiber =>
+                                Fiber.initUnscoped {
+                                    // Write fiber: drains outbound, then emits the close frame inline (single writer
+                                    // to conn), then closes outbound. Broader Abort.run[Throwable] preserves the
+                                    // pre-existing "log + close outbound on wire failure" contract.
+                                    Abort.run[Throwable] {
+                                        Loop.foreach {
+                                            outbound.take.map { frame =>
+                                                WebSocketCodec.writeFrame(conn, frame, mask = false).andThen(Loop.continue)
+                                            }
                                         }
+                                    }.map { result =>
+                                        val log = result match
+                                            case Result.Failure(_: Closed) => Kyo.unit
+                                            case Result.Failure(e)         => Log.warn(s"HttpWebSocket server writer failed: $e")
+                                            case Result.Panic(t)           => Log.warn("HttpWebSocket server writer panicked", t)
+                                            case Result.Success(_)         => Kyo.unit
+                                        log.andThen {
+                                            closeReasonRef.get.map {
+                                                case Present((code, reason)) =>
+                                                    Abort.run[Any](WebSocketCodec.writeClose(conn, code, reason, mask = false)).unit
+                                                case Absent => Kyo.unit
+                                            }
+                                        }.andThen(outbound.close.unit)
                                     }
-                                }.andThen(outbound.close).unit
-                            }.map { writeFiber =>
-                                Sync.ensure(
-                                    readFiber.interrupt.unit
-                                        .andThen(writeFiber.interrupt.unit)
-                                        .andThen(monitorFiber.interrupt.unit)
-                                        .andThen(outbound.close.unit)
-                                ) {
-                                    Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
-                                        closeReasonRef.get.map {
-                                            case Absent =>
-                                                readFiber.done.map { isDone =>
-                                                    if isDone then Kyo.unit
-                                                    else Abort.run[Any](WebSocketCodec.writeClose(conn, 1000, "", mask = false)).unit
-                                                }
-                                            case _ => Kyo.unit
+                                }.map { writeFiber =>
+                                    Sync.ensure(
+                                        readFiber.interrupt.unit
+                                            .andThen(writeFiber.interrupt.unit)
+                                            .andThen(monitorFiber.interrupt.unit)
+                                            .andThen(outbound.close.unit)
+                                    ) {
+                                        Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
+                                            // After handler returns: if no close reason was registered AND the reader
+                                            // hasn't already observed EOF, install a 1000 close reason and signal the
+                                            // write fiber by closing outbound. Then await writeFiber so the close frame
+                                            // hits the wire before the Sync.ensure finalizer interrupts the write fiber.
+                                            closeReasonRef.get.map {
+                                                case Absent =>
+                                                    readFiber.done.map { isDone =>
+                                                        if isDone then Kyo.unit
+                                                        else closeReasonRef.set(Present((1000, ""))).andThen(outbound.close.unit)
+                                                    }
+                                                case _ => outbound.close.unit
+                                            }.andThen(writeFiber.get.unit)
                                         }
                                     }
                                 }
@@ -686,8 +724,6 @@ private[kyo] object UnsafeServerDispatch:
         streamCtx.outbound.offer(Span.fromUnsafe(continueBytes)) match
             case Result.Success(_)         => ()
             case Result.Failure(_: Closed) => ()
-            case Result.Failure(e) =>
-                Log.live.unsafe.error("UnsafeServerDispatch: unexpected failure writing 100 Continue", e)
             case Result.Panic(t) =>
                 Log.live.unsafe.error("UnsafeServerDispatch: panic writing 100 Continue", t)
         end match

@@ -11,23 +11,27 @@ import scala.language.implicitConversions
   * `Record["name" ~ String & "age" ~ Int]` describes a record with a `name` field of type `String` and an `age` field of type `Int`. Fields
   * are created with the `~` extension on `String` and combined with `&`. Case classes can also be converted via `fromProduct`.
   *
-  * =Subtyping via Implicit Conversion=
-  * The type parameter `F` is '''invariant''', but an implicit `widen` conversion in the companion object allows a `Record[A]` to be used
+  * #### Subtyping via Implicit Conversion
+  *
+  * The type parameter `F` is **invariant**, but an implicit `widen` conversion in the companion object allows a `Record[A]` to be used
   * wherever a `Record[B]` is expected, provided `A <: B`. Since `"name" ~ String & "age" ~ Int <: "name" ~ String` by Scala's intersection
   * subtyping rules, a record with more fields can be assigned where fewer are expected. This gives the effect of structural subtyping while
   * keeping the type parameter invariant, which avoids the unsoundness issues that a covariant parameter would introduce with `~`'s
   * contravariant `Value` position. After widening, the underlying data still contains all original fields; use `compact` to strip fields
   * not present in the declared type.
   *
-  * =Duplicate Fields=
+  * #### Duplicate Fields
+  *
   * The same field name may appear with different types. Scala normalizes `"f" ~ Int & "f" ~ String` to `"f" ~ (Int | String)` because `~`
   * is contravariant in `Value`, so duplicates merge into a union at the type level.
   *
-  * =Field Access=
+  * #### Field Access
+  *
   * Fields are accessed via `selectDynamic` with compile-time verification through `Fields.Have`. The return type is fully inferred, so no
   * type ascription is needed. For field names that are not valid Scala identifiers (e.g., `"user-name"`, `"&"`), use `getField` instead.
   *
-  * =Equality=
+  * #### Equality
+  *
   * A `CanEqual` given enables `==` and `!=` when `Fields.Comparable` is available (i.e., all value types have `CanEqual`). Field order does
   * not affect equality. Without `Comparable` evidence, `==` will not compile, preventing accidental comparisons on non-comparable types.
   *
@@ -186,7 +190,7 @@ object Record:
             value.dict.foreach: (name, v) =>
                 if renders.contains(name) then
                     if !first then discard(sb.append(" & "))
-                    discard(sb.append(name).append(" ~ ").append(renders.get(name).asText(v)))
+                    discard(sb.append(name).append(" ~ ").append(renders.get(name).asString(v)))
                     first = false
             sb.toString
 

@@ -7,12 +7,14 @@ import scala.annotation.tailrec
   *
   * Meter provides a structured mechanism for controlling access to shared resources, acting as a gatekeeper for concurrent operations. It
   * supports different concurrency control models through its factory methods:
+  *
   *   - `initMutex`: Creates a binary semaphore allowing only one operation at a time, ideal for protecting critical sections
   *   - `initSemaphore`: Creates a counter-based control limiting concurrent operations, balancing throughput with resource constraints
   *   - `initRateLimiter`: Creates a time-based control limiting operations to a specified rate, preventing overload while maintaining
   *     throughput
   *
   * All Meter implementations can be configured as reentrant (default) or non-reentrant:
+  *
   *   - Reentrant meters allow nested calls from the same fiber, avoiding deadlocks in recursive scenarios
   *   - Non-reentrant meters block nested calls from the same fiber, enforcing stricter concurrency guarantees
   *

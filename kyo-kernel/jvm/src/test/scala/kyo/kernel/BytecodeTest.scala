@@ -1,7 +1,6 @@
 package kyo.kernel
 
 import kyo.*
-import kyo.Tag
 import scala.reflect.ClassTag
 
 class BytecodeTest extends Test:
@@ -42,7 +41,7 @@ class BytecodeTest extends Test:
 
     def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =
         import javassist.*
-        val classpath = System.getProperty("java.class.path")
+        val classpath = java.lang.System.getProperty("java.class.path")
         val classPool = ClassPool.getDefault
         classpath.split(java.io.File.pathSeparator).foreach { path =>
             classPool.insertClassPath(path)

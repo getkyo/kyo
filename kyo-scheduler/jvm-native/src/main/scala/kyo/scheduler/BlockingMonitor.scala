@@ -18,23 +18,23 @@ import scala.util.control.NonFatal
   *
   * The monitor provides two capabilities from a single background thread:
   *
-  * ==Blocking compensation==
+  * #### Blocking compensation
   *
   * Blocked workers have their `blocked` flag set. The scheduler reads this in checkAvailability to stop routing new tasks to blocked
   * workers and draining their queues to other workers.
   *
-  * ==Interrupt dispatch==
+  * #### Interrupt dispatch
   *
   * When a fiber is interrupted, the task reports it via needsInterrupt() and the monitor is woken for an immediate scan via wake(). If the
   * worker's thread is blocked, Thread.interrupt() is dispatched to wake it from the blocking operation. The monitor re-interrupts on
   * subsequent cycles if the thread re-blocks (e.g., code that catches InterruptedException and retries).
   *
-  * ==Timing and pressure adaptation==
+  * #### Timing and pressure adaptation
   *
   * The monitor parks between scans using LockSupport.parkNanos and can be woken early by wake(). Two parameters control timing:
   *
-  *   - '''intervalNs''' (default 2ms, `-Dkyo.scheduler.blockingMonitorIntervalNs`): the periodic scan cadence for blocking compensation.
-  *   - '''minIntervalNs''' (default 500μs, `-Dkyo.scheduler.blockingMonitorMinIntervalNs`): the minimum time between scans, controlling the
+  *   - **intervalNs** (default 2ms, `-Dkyo.scheduler.blockingMonitorIntervalNs`): the periodic scan cadence for blocking compensation.
+  *   - **minIntervalNs** (default 500μs, `-Dkyo.scheduler.blockingMonitorMinIntervalNs`): the minimum time between scans, controlling the
   *     fastest response to wake() for interrupt dispatch.
   *
   * Safety against false positives is handled by pressure-scaled block thresholds, not by the scan interval. Each cycle, the monitor

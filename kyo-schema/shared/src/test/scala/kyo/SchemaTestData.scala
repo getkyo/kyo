@@ -7,6 +7,14 @@ case class MTTeam(name: String, lead: MTPersonAddr, members: List[MTPersonAddr])
 case class MTCompany(name: String, hq: MTTeam) derives CanEqual
 case class MTConfig(host: String, port: Int = 8080, ssl: Boolean = false) derives CanEqual
 case class MTPair[A, B](first: A, second: B) derives CanEqual
+
+// Generic case classes WITH default values. Regression coverage for the macro bug where
+// `MacroUtils.getDefault` failed to apply the case class's type arguments to the generated
+// `$lessinit$greater$default$N` method, raising "Expected an expression. This is a partially
+// applied Term" at Schema-derivation time.
+case class MTGenericDefault[A](value: A, tag: String = "default") derives CanEqual
+case class MTGenericMaybe[A](result: Maybe[A] = Absent, error: Maybe[String] = Absent) derives CanEqual
+case class MTGenericTwoParam[A, B](first: A, second: B, label: String = "pair") derives CanEqual
 case class MTOrder(id: Int, items: List[MTItem]) derives CanEqual
 case class MTItem(name: String, price: Double) derives CanEqual
 case class MTWrapper(value: String) derives CanEqual

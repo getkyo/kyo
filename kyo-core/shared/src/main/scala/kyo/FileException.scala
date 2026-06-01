@@ -20,11 +20,11 @@ import java.io.IOException
   * @param message
   *   A description of the error
   * @param cause
-  *   Either a Text explanation or a Throwable that caused this exception
+  *   Either a String explanation or a Throwable that caused this exception
   * @see
   *   [[Path]] for the file operations that raise these exceptions
   */
-sealed abstract class FileException(message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class FileException(message: String, cause: String | Throwable = "")(using Frame)
     extends KyoException(message, cause)
 
 /** Marker trait for exceptions that can occur during file read operations. */
@@ -103,4 +103,4 @@ case class FileIOException(path: Path, cause: IOException)(using Frame)
 
 object FileException:
     given Render[FileException] with
-        def asText(value: FileException): Text = Text(value.getMessage)
+        def asString(value: FileException): String = value.getMessage
