@@ -460,7 +460,7 @@ object Yaml:
           * the callbacks relevant to a tool; callbacks return the context unchanged by default. Use [[EventHandler]] when pattern matching
           * on first-class [[Event]] values is more convenient than overriding individual callbacks.
           */
-        trait Handler[Ctx, Err]:
+        trait Handler[Ctx, +Err]:
             /** Handles the start of a YAML stream. */
             def streamStart(context: Ctx, mark: Mark): Result[Err, Ctx] =
                 Result.succeed(context)
@@ -703,8 +703,8 @@ object Yaml:
       * delegate to [[Yaml.decode]] and [[Yaml.encode]] so ordinary reads and writes stay on the direct fast paths. With processors,
       * `visit`, `render`, and `write` route events through the configured middleware before reaching the terminal handler.
       *
-      * Processor-backed `decode` is intentionally wired later through the direct event reader path. The final design reads transformed
-      * events into `Schema` without rendering YAML text, without building a YAML DOM, and without using the JSON reader bridge.
+      * Processor-backed `decode` reads transformed events into `Schema` through a direct YAML event reader. It does not render YAML text,
+      * build a YAML DOM, or use the JSON reader bridge.
       *
       * Pipelines are immutable; methods such as [[reader]], [[writer]], and [[through]] return a new pipeline.
       */
@@ -785,7 +785,7 @@ object Yaml:
                     case Absent =>
                         Events.visit(source, context)(handler)
                     case Present(current) =>
-                        Events.visit(source, context)(current.andThen(widenHandler(handler)))
+                        Events.visit(source, context)(current.andThen(handler))
                 end match
             }
         end visit
@@ -814,7 +814,7 @@ object Yaml:
                 case Absent =>
                     Events.write(value, context)(handler)(using schema, writerConfig, frame)
                 case Present(current) =>
-                    Events.write(value, context)(current.andThen(widenHandler(handler)))(using schema, writerConfig, frame)
+                    Events.write(value, context)(current.andThen(handler))(using schema, writerConfig, frame)
             end match
         end write
 
@@ -863,37 +863,6 @@ object Yaml:
                 processor(downstream)
         end new
     end widenProcessor
-
-    private def widenHandler[Ctx, Err1, Err2](handler: Events.Handler[Ctx, Err2]): Events.Handler[Ctx, Err1 | Err2] =
-        new Events.Handler[Ctx, Err1 | Err2]:
-            override def streamStart(context: Ctx, mark: Mark): Result[Err1 | Err2, Ctx] =
-                handler.streamStart(context, mark)
-
-            override def documentStart(context: Ctx, mark: Mark): Result[Err1 | Err2, Ctx] =
-                handler.documentStart(context, mark)
-
-            override def mappingStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err1 | Err2, Ctx] =
-                handler.mappingStart(context, meta, size)
-
-            override def sequenceStart(context: Ctx, meta: Meta, size: Maybe[Int]): Result[Err1 | Err2, Ctx] =
-                handler.sequenceStart(context, meta, size)
-
-            override def scalar(context: Ctx, value: String, meta: ScalarMeta): Result[Err1 | Err2, Ctx] =
-                handler.scalar(context, value, meta)
-
-            override def alias(context: Ctx, name: Anchor, mark: Mark): Result[Err1 | Err2, Ctx] =
-                handler.alias(context, name, mark)
-
-            override def collectionEnd(context: Ctx, kind: Events.CollectionKind, mark: Mark): Result[Err1 | Err2, Ctx] =
-                handler.collectionEnd(context, kind, mark)
-
-            override def documentEnd(context: Ctx, mark: Mark): Result[Err1 | Err2, Ctx] =
-                handler.documentEnd(context, mark)
-
-            override def streamEnd(context: Ctx, mark: Mark): Result[Err1 | Err2, Ctx] =
-                handler.streamEnd(context, mark)
-        end new
-    end widenHandler
 
     /** YAML node tree built only by [[parse]] and [[parseAll]].
       *
