@@ -275,7 +275,7 @@ Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-act
 
 ### Domain modules
 
-Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation.
+Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation, and web UIs.
 
 | Module                                                 | JVM | JS  | Native | Identity                                                                                                  |
 | ------------------------------------------------------ | --- | --- | ------ | --------------------------------------------------------------------------------------------------------- |
@@ -284,6 +284,7 @@ Domain-shaped modules: parsing, durable workflows, container management, low-lat
 | [kyo-pod](kyo-pod/README.md)                           | ✅   | ✅   | ✅      | Docker and Podman client cross-compiled to JVM/JS/Native, streaming logs/stats, scope-managed cleanup     |
 | [kyo-aeron](kyo-aeron/README.md)                       | ✅   | ❌   | ❌      | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API             |
 | [kyo-browser](kyo-browser/README.md)                   | ✅   | ✅   | ✅      | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown |
+| [kyo-ui](kyo-ui/README.md)                             | ✅   | ✅   | ✅      | Web UIs as pure values: one `UI` runs as a Scala.js DOM app (`runMount`), server HTML-over-SSE (`runHandlers`), or SSR stream (`runRender`); first-class `Signal` reactivity, compile-checked HTML |
 
 ### Observability
 
