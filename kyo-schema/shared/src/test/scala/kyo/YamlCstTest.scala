@@ -528,12 +528,58 @@ class YamlCstTest extends Test:
 
     "Yaml.Cst event interop" - {
 
-        "emits scalar events equivalent to CST document" in {
+        "emits scalar and structural events equivalent to CST document" in {
             val doc = Yaml.cst("name: Alice\nage: 30\n").getOrThrow
 
-            val scalars = doc.events.collect { case Yaml.Events.Event.Scalar(value, _) => value }
+            def shape(
+                event: String,
+                size: Maybe[Int] = Absent,
+                value: Maybe[String] = Absent,
+                collection: Maybe[String] = Absent
+            ) =
+                (
+                    event = event,
+                    size = size,
+                    value = value,
+                    collection = collection
+                )
+            end shape
 
-            assertResult(Chunk("name", "Alice", "age", "30"))(scalars)
+            assertResult(
+                Chunk(
+                    shape("StreamStart"),
+                    shape("DocumentStart"),
+                    shape("MappingStart", size = Maybe(2)),
+                    shape("Scalar", value = Maybe("name")),
+                    shape("Scalar", value = Maybe("Alice")),
+                    shape("Scalar", value = Maybe("age")),
+                    shape("Scalar", value = Maybe("30")),
+                    shape("CollectionEnd", collection = Maybe("Mapping")),
+                    shape("DocumentEnd"),
+                    shape("StreamEnd")
+                )
+            ) {
+                doc.events.map {
+                    case Yaml.Events.Event.StreamStart(_) =>
+                        shape("StreamStart")
+                    case Yaml.Events.Event.DocumentStart(_) =>
+                        shape("DocumentStart")
+                    case Yaml.Events.Event.MappingStart(_, size) =>
+                        shape("MappingStart", size = size)
+                    case Yaml.Events.Event.SequenceStart(_, size) =>
+                        shape("SequenceStart", size = size)
+                    case Yaml.Events.Event.Scalar(value, _) =>
+                        shape("Scalar", value = Maybe(value))
+                    case Yaml.Events.Event.Alias(name, _) =>
+                        shape("Alias", value = Maybe(name.value))
+                    case Yaml.Events.Event.CollectionEnd(kind, _) =>
+                        shape("CollectionEnd", collection = Maybe(kind.toString))
+                    case Yaml.Events.Event.DocumentEnd(_) =>
+                        shape("DocumentEnd")
+                    case Yaml.Events.Event.StreamEnd(_) =>
+                        shape("StreamEnd")
+                }
+            }
         }
 
         "decodes a transformed CST through events without rendering" in {
@@ -576,6 +622,35 @@ class YamlCstTest extends Test:
             assertResult(
                 Chunk((anchor = Maybe("items"), tag = Maybe("!!seq"), size = Maybe(1)))
             )(metadata)
+        }
+
+        "emits mapping metadata tags and anchors from CST events" in {
+            val doc = Yaml.cst("value: !local &map\n  a: 1\ncopy: *map\n").getOrThrow
+
+            val metadata = doc.events.collect {
+                case Yaml.Events.Event.MappingStart(Yaml.Meta(Present(anchor), tag, _), size) =>
+                    (
+                        anchor = Maybe(anchor),
+                        tag = tag,
+                        size = size
+                    )
+            }
+            val aliases = doc.events.collect {
+                case Yaml.Events.Event.Alias(name, _) => name
+            }
+
+            assertResult(
+                (
+                    mappings = Chunk((
+                        anchor = Maybe(Yaml.Anchor("map")),
+                        tag = Maybe(Yaml.YamlTag("!local")),
+                        size = Maybe(1)
+                    )),
+                    aliases = Chunk(Yaml.Anchor("map"))
+                )
+            ) {
+                (mappings = metadata, aliases = aliases)
+            }
         }
 
         "emits only stream and document boundaries for empty documents" in {
