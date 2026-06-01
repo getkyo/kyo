@@ -650,7 +650,7 @@ object TypeUnpickler:
                                 s.unresolvedIdToFqn.getOrElse(sid.value, simpleName)
                             case _ =>
                                 simpleName
-                        val fullFqn = if qualFqn != simpleName && qualFqn.nonEmpty then qualFqn + "." + simpleName else simpleName
+                        val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + simpleName else simpleName
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case _ =>
                         Tasty.Type.Named(makeUnresolvedSym(simpleName).id)

@@ -836,10 +836,16 @@ object ClasspathOrchestrator:
         var cur   = sym
         // Sentinel: the root symbol owns itself (added as self-ref) or doesn't appear in ownerBySymbol.
         val visited = new java.util.HashSet[Tasty.Symbol]()
-        while cur != null && visited.add(cur) do
+        var done    = false
+        while !done && cur != null && visited.add(cur) do
             val n = cur.name.asString
             if n.nonEmpty then parts.prepend(n)
-            cur = ownerBySymbol.getOrElse(cur, null)
+            // Package symbols store the full dotted package name (e.g. "scala.collection.immutable")
+            // in a single Name field. Walking further up through package owners would re-prepend the
+            // individual package segments that are already embedded in that flat name, doubling them.
+            // Stop here: the flat name is the entire package prefix for this symbol.
+            if cur.kind == Tasty.SymbolKind.Package then done = true
+            else cur = ownerBySymbol.getOrElse(cur, null)
         end while
         parts.filter(_.nonEmpty).mkString(".")
     end computeFqn
