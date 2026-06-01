@@ -140,16 +140,16 @@ class RealClasspathFidelity2Test extends Test:
     "F-A3-004 (Phase 2.03 PENDING): JDK synthetic-static accessor resolves via findSymbol" in pending
     // F-A3-005: JPMS module count confirmation (Phase 2.03)
     "F-A3-005 (Phase 2.03 PENDING): cp.moduleIndex.size == 69 after jrt:/ walker addition" in pending
-    // F-A4-001: finalizeMerge ghost fqnIndex entries (Phase 2.02)
-    "F-A4-001 (Phase 2.02 PENDING): cold.fqnIndex.size == warm.fqnIndex.size and both >= 110,000" in pending
-    // F-A4-002: cold-warm parentTypes discrepancy (Phase 2.02)
-    "F-A4-002 (Phase 2.02 PENDING): cold.unresolvedRefs == warm.unresolvedRefs == 0" in pending
+    // F-A4-001: finalizeMerge ghost fqnIndex entries (Phase 2.02 ACTIVE -- see SnapshotFidelity2Test)
+    "F-A4-001 (Phase 2.02): cold.fqnIndex.size == warm.fqnIndex.size -- see SnapshotFidelity2Test INV-013" in pending
+    // F-A4-002: cold-warm parentTypes discrepancy (Phase 2.02 ACTIVE -- see SnapshotFidelity2Test)
+    "F-A4-002 (Phase 2.02): cold.unresolvedRefs == warm.unresolvedRefs == 0 -- see SnapshotFidelity2Test" in pending
     // F-A4-003: snapshot version downgrade (Phase 2.09)
     "F-A4-003 (Phase 2.09 PENDING): snapshot version downgrade detected and handled as FileNotFound" in pending
     // F-A4-004: concurrent reader+writer (Phase 2.09)
     "F-A4-004 (Phase 2.09 PENDING): concurrent snapshot reader+writer does not corrupt the written file" in pending
-    // F-A4-005: snapshot idempotency byte-equality (Phase 2.02)
-    "F-A4-005 (Phase 2.02 PENDING): two independent cold-init invocations write byte-equal .krfl files" in pending
+    // F-A4-005: snapshot idempotency byte-equality (Phase 2.02 ACTIVE -- see SnapshotFidelity2Test)
+    "F-A4-005 (Phase 2.02): two independent cold-init invocations write byte-equal .krfl files -- see SnapshotFidelity2Test" in pending
     // F-A5-001: requireSymbol (Phase 2.07)
     "F-A5-001 (Phase 2.07 PENDING): cp.requireSymbol('non.existent') aborts with TastyError.SymbolNotFound" in pending
     // F-A5-002: SoftFail FileNotFound (Phase 2.07)

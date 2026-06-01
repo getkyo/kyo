@@ -137,9 +137,6 @@ object SnapshotWriter:
 
         // --- Build section payloads ---
 
-        // NAMES section: length-prefixed UTF-8 strings
-        val namesBytes = serializeNamePool(namePool.toSeq)
-
         // SYMBOLS section: fixed record per symbol (includes body offsets into BODY_BYTES)
         val symbolsBytes = serializeSymbols(symbolList, symNames, symFqns, symbolId, symBodyStarts, symBodyEnds)
 
@@ -157,13 +154,20 @@ object SnapshotWriter:
         // PARENTS section: for each symbol, store the list of symbol IDs of Named parent types.
         // Non-Named parents (complex types) are encoded as -1 and skipped on read.
         // Named(symbolId) carries SymbolId.value as the serialized index.
+        // F-A4-002 defensive filter: drop Named(SymbolId(-1)) sentinel entries before encoding.
+        // After the F-A4-001 finalizeMerge fix Named(-1) should not appear in parentTypes, but this
+        // filter provides defense-in-depth so a future regression does not silently corrupt warm loads
+        // by encoding -1 in a slot that is indistinguishable from the non-Named sentinel.
         val parentsBytes = serializeSymbolRelLists(
             symbolList,
             symbolId,
             sym =>
                 (sym match
-                    case c: Tasty.Symbol.ClassLike => c.parentTypes
-                    case _                         => Chunk.empty
+                    case c: Tasty.Symbol.ClassLike =>
+                        c.parentTypes.filter:
+                            case Tasty.Type.Named(id) => id.value != -1
+                            case _                    => true
+                    case _ => Chunk.empty
                 ).map:
                     case Tasty.Type.Named(id) => id.value
                     case _                    => -1
@@ -240,7 +244,19 @@ object SnapshotWriter:
         // dual-index source-FQN aliases for Object companions and opaque types).
         // Warm-load reconstruction uses this section verbatim instead of rebuilding from
         // per-symbol fqnId, which only stored ONE FQN per symbol.
+        // NOTE: serializeFqnIndex calls internName for every fqnIndex key. This MUST execute before
+        // serializeNamePool so all FQN strings are present in the name pool that the reader uses to
+        // decode FQNIDX__ name IDs. Moving serializeFqnIndex after serializeNamePool causes the reader
+        // to skip entries whose name IDs exceed the stored pool length (the root cause of the cold/warm
+        // fqnIndex.size gap fixed by this phase).
         val fqnIdxBytes = serializeFqnIndex(cp.fqnIndex, symbolList, symbolId, internName)
+
+        // NAMES section: length-prefixed UTF-8 strings.
+        // Built AFTER all internName calls (symNames, symFqns, annotsBytes, fqnIdxBytes) so the pool
+        // is complete before serialization. Earlier placement caused FQNIDX__ name IDs to reference
+        // entries beyond the serialized pool length, silently dropping 47,256 fqnIndex entries on
+        // warm load.
+        val namesBytes = serializeNamePool(namePool.toSeq)
 
         val sections = Seq(
             (SnapshotFormat.sectionNAMES, namesBytes),
@@ -551,10 +567,28 @@ object SnapshotWriter:
             symIdToIdx(sym.id.value) = idx
         end for
         // Collect valid entries: (namePoolId, snapshotIdx).
-        val entries = fqnIndex.toSeq.flatMap: (fqn, id) =>
+        // F-A4-001 secondary fix: when symIdToIdx.get(id.value) misses (i.e. id.value == -1 due to a
+        // ghost entry from finalizeMerge that the Path-1 fix may not have reached), fall back to a
+        // FQN-string lookup. canonicalSourceFqn maps the binary-alias form back to source form; if the
+        // canonical form is present in fqnIndex with a valid SymbolId, use that snapshot index.
+        // This ensures EVERY entry in fqnIndex is serialized, eliminating the cold/warm size gap.
+        // F-A4-005 determinism: sort by fqn before building entries so FQNIDX__ byte layout is stable
+        // regardless of Map iteration order (which varies with runtime state despite String hashCode
+        // being deterministic, since Map bucket layout also depends on load factor and capacity).
+        val entries = fqnIndex.toSeq.sortBy(_._1).flatMap: (fqn, id) =>
             symIdToIdx.get(id.value) match
                 case Some(idx) => Some((internName(fqn), idx))
-                case None      => None
+                case None =>
+                    val canonFqn = FqnNormalizer.canonicalSourceFqn(fqn)
+                    if canonFqn != fqn then
+                        fqnIndex.get(canonFqn) match
+                            case Some(canonId) =>
+                                symIdToIdx.get(canonId.value) match
+                                    case Some(idx) => Some((internName(fqn), idx))
+                                    case None      => None
+                            case None => None
+                    else None
+                    end if
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
         baos.write(tmp)
         for (nameId, idx) <- entries do

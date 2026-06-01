@@ -87,4 +87,59 @@ private[kyo] object TestClasspaths2:
     /** Subset: the kyo-tasty compiled classes directory or jar from the test classpath (same subset as TestClasspaths.kyoTasty). */
     def kyoTastyRoots: Seq[String] = TestClasspaths.kyoTasty
 
+    /** Perform a cold load then write a snapshot to a temp dir and read it back, returning (cold, warm).
+      *
+      * Used by SnapshotFidelity2Test for INV-013 and INV-101-DF2 assertions. Both classpaths are fully
+      * loaded before the tuple is returned; callers can compare any field.
+      */
+    def standardWithSnapshot(
+        roots: Seq[String] = standardRoots
+    )(using Frame): (Tasty.Classpath, Tasty.Classpath) < (Async & Scope & Abort[TastyError]) =
+        TestClasspaths.withClasspath(roots).flatMap: coldCp =>
+            Sync.defer:
+                java.nio.file.Files.createTempDirectory("kyo-df2-snapshot").toString
+            .flatMap: tmpDir =>
+                val digest  = Array[Byte](0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27)
+                val platSrc = kyo.internal.tasty.query.PlatformFileSource.get
+                kyo.internal.tasty.snapshot.SnapshotWriter.write(coldCp, tmpDir, digest, platSrc).flatMap: _ =>
+                    val hexDigest    = kyo.internal.tasty.snapshot.DigestComputer.toHexString(digest)
+                    val snapshotPath = s"$tmpDir/$hexDigest.krfl"
+                    kyo.internal.tasty.snapshot.SnapshotReader.read(snapshotPath, platSrc).map: warmCp =>
+                        (coldCp, warmCp)
+
+    /** Perform two independent cold loads and write each to a fresh snapshot, returning both byte arrays.
+      *
+      * Used by SnapshotFidelity2Test for the byte-equality idempotency check (F-A4-005). Each load is
+      * completely independent: separate Classpath instances, separate temp directories, same input roots.
+      *
+      * Uses concurrency=1 to ensure deterministic symbol ordering. The parallel multi-file decoder
+      * produces non-deterministic file processing order, which would change symbol indices between runs.
+      * With a single decoder the file processing order is determined solely by the file walker, which is
+      * stable for the same roots (directory listing order is stable on all supported platforms).
+      */
+    def twoColdInits(
+        roots: Seq[String] = standardRoots
+    )(using Frame): (Array[Byte], Array[Byte]) < (Async & Scope & Abort[TastyError]) =
+        val digest  = Array[Byte](0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37)
+        val platSrc = kyo.internal.tasty.query.PlatformFileSource.get
+        kyo.internal.tasty.query.ClasspathOrchestrator.init(roots, Tasty.ErrorMode.SoftFail, platSrc, 1).flatMap: cp1 =>
+            Sync.defer:
+                java.nio.file.Files.createTempDirectory("kyo-df2-snap-a").toString
+            .flatMap: tmpA =>
+                kyo.internal.tasty.snapshot.SnapshotWriter.write(cp1, tmpA, digest, platSrc).flatMap: _ =>
+                    val hexA  = kyo.internal.tasty.snapshot.DigestComputer.toHexString(digest)
+                    val pathA = s"$tmpA/$hexA.krfl"
+                    kyo.internal.tasty.query.ClasspathOrchestrator.init(roots, Tasty.ErrorMode.SoftFail, platSrc, 1).flatMap: cp2 =>
+                        Sync.defer:
+                            java.nio.file.Files.createTempDirectory("kyo-df2-snap-b").toString
+                        .flatMap: tmpB =>
+                            val digest2 = Array[Byte](0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37)
+                            kyo.internal.tasty.snapshot.SnapshotWriter.write(cp2, tmpB, digest2, platSrc).flatMap: _ =>
+                                val hexB  = kyo.internal.tasty.snapshot.DigestComputer.toHexString(digest2)
+                                val pathB = s"$tmpB/$hexB.krfl"
+                                platSrc.read(pathA).flatMap: bytesA =>
+                                    platSrc.read(pathB).map: bytesB =>
+                                        (bytesA, bytesB)
+    end twoColdInits
+
 end TestClasspaths2

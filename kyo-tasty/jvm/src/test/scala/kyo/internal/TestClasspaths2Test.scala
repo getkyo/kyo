@@ -28,13 +28,23 @@ class TestClasspaths2Test extends kyo.Test:
             succeed
     }
 
-    // Leaf 2 (Phase 2.01 -> PENDING; un-pends in Phase 2.02): cold-vs-warm-loader-determinism
-    // Given: the standard classpath loaded twice
-    // When: comparing symbol counts across invocations
-    // Then: both invocations return a usable Classpath with symbols.size > 0
-    //       (full cold-vs-warm equality is validated by Phase 2.02's SnapshotFidelity2Test)
-    // Pins: INV-101-DF2 producer-consumer link (scaffold; cold-warm equivalence un-pended in Phase 2.02)
-    "cold-vs-warm-loader-determinism" in pending
+    // Leaf 2 (Phase 2.02 ACTIVE): cold-vs-warm-loader-determinism
+    // Given: the standard classpath loaded cold then snapshot-read as warm
+    // When: comparing symbol counts across cold and warm
+    // Then: cold.symbols.size == warm.symbols.size and cold.fqnIndex.size == warm.fqnIndex.size
+    // Pins: INV-101-DF2 producer-consumer link
+    "cold-vs-warm-loader-determinism" in run {
+        TestClasspaths2.standardWithSnapshot().map: (cold, warm) =>
+            assert(
+                cold.symbols.size == warm.symbols.size,
+                s"cold.symbols.size (${cold.symbols.size}) != warm.symbols.size (${warm.symbols.size})"
+            )
+            assert(
+                cold.fqnIndex.size == warm.fqnIndex.size,
+                s"cold.fqnIndex.size (${cold.fqnIndex.size}) != warm.fqnIndex.size (${warm.fqnIndex.size})"
+            )
+            succeed
+    }
 
     // Leaf 3 (Phase 2.01): standard-classpath-includes-stdlib-kyodata-kyotasty
     // Given: a fresh JVM

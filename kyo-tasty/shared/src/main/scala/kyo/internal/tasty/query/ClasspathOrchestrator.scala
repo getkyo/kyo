@@ -64,6 +64,13 @@ object ClasspathOrchestrator:
       */
     final private case class FileResult(
         fqns: Chunk[(String, Tasty.Symbol)],
+        /** All symbols from this file in TASTy parse order (deterministic depth-first traversal of the AST).
+          *
+          * Used in mergeOneInto to accumulate allSyms in a stable order across runs, ensuring that symbol IDs
+          * are deterministic for byte-equal snapshot idempotency (F-A4-005). Previously allSyms was populated
+          * from ownerBySymbol.keys which uses identity-hash order and is non-deterministic.
+          */
+        symbolsInOrder: Chunk[Tasty.Symbol],
         arena: TypeArena,
         errors: Seq[TastyError],
         placeholders: Chunk[Nothing], // placeholder field; always empty after Phase 07
@@ -275,11 +282,16 @@ object ClasspathOrchestrator:
         source: FileSource
     )(using Frame): Unit < (Sync & Async & Abort[TastyError]) =
         source.list(root, Chunk(".tasty", "module-info.class")).flatMap: listed =>
-            val entries: Chunk[String] =
+            val unsorted: Chunk[String] =
                 if listed.isEmpty then
                     if root.endsWith(".tasty") || root.endsWith("module-info.class") then Chunk(root)
                     else Chunk.empty
                 else listed
+            // F-A4-005 determinism: sort entries so file processing order is stable across filesystem
+            // enumeration orders. Different platforms and JAR implementations enumerate entries in
+            // varying orders; a lexicographic sort gives deterministic symbol IDs, enabling byte-equal
+            // snapshot idempotency when concurrency == 1.
+            val entries = Chunk.from(unsorted.iterator.toSeq.sorted)
             Kyo.foreach(entries): entry =>
                 val kind =
                     if entry.endsWith("module-info.class") then "module-info.class"
@@ -331,12 +343,13 @@ object ClasspathOrchestrator:
             case FileResultCase(fr) =>
                 // Add ALL symbols (including members) to allSyms so that finalizeMerge can look them
                 // up by index when building typeParamIds/declarationIds.
-                // First add all symbols from ownerBySymbol (covers all non-root AST symbols).
+                // F-A4-005 determinism fix: use symbolsInOrder (TASTy parse order, stable DFS) rather
+                // than ownerBySymbol.keys/values which uses identity-hash iteration order. Identity
+                // hashCodes vary across JVM runs, making symbol IDs non-deterministic and breaking
+                // byte-equal snapshot idempotency. symbolsInOrder preserves the AstUnpickler traversal
+                // order, which is deterministic given the same input bytes.
                 val seenSyms = new java.util.HashSet[Tasty.Symbol]()
-                for sym <- fr.ownerBySymbol.keys do
-                    if seenSyms.add(sym) then state.allSyms += sym
-                end for
-                for sym <- fr.ownerBySymbol.values do
+                for sym <- fr.symbolsInOrder do
                     if seenSyms.add(sym) then state.allSyms += sym
                 end for
 
@@ -978,7 +991,23 @@ object ClasspathOrchestrator:
 
                     val newFqnIndex = state.fqnIndex.map { case (fqn, partial) =>
                         val idx = symbolIdMap.getOrDefault(partial, -1)
-                        if idx >= 0 then (fqn, finalSymbols(idx)) else (fqn, partial)
+                        if idx >= 0 then (fqn, finalSymbols(idx))
+                        else
+                            // F-A4-001 fix: binary-alias FQN keys (e.g. "scala.Predef$") store a partial
+                            // symbol whose identity does not appear in symbolIdMap because the same logical
+                            // symbol was stored under the canonical source form ("scala.Predef"). Fall back
+                            // to a FQN-string lookup: canonicalize this fqn, look up the canonical partial
+                            // in state.fqnIndex, then resolve that partial via symbolIdMap.
+                            val canonFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(fqn)
+                            val fallbackIdx =
+                                if canonFqn != fqn then
+                                    state.fqnIndex.get(canonFqn) match
+                                        case Some(canonPartial) => symbolIdMap.getOrDefault(canonPartial, -1)
+                                        case None               => -1
+                                else -1
+                            if fallbackIdx >= 0 then (fqn, finalSymbols(fallbackIdx))
+                            else (fqn, partial)
+                        end if
                     }
                     val newPackageIndex = state.packageIndex.map { case (pkg, partial) =>
                         val idx = symbolIdMap.getOrDefault(partial, -1)
@@ -1178,6 +1207,7 @@ object ClasspathOrchestrator:
     private def emptyFileResultWithError(file: String, err: TastyError): FileResult =
         FileResult(
             Chunk.empty,
+            Chunk.empty,
             TypeArena.canonical(),
             Seq(err),
             Chunk.empty[Nothing],
@@ -1260,6 +1290,12 @@ object ClasspathOrchestrator:
                 if fqn.nonEmpty then Chunk((fqn, sym)) else Chunk.empty
             FileResult(
                 pairs,
+                // Include rootSymbol (the synthetic per-file Package("") symbol) first so that top-level
+                // symbols can correctly point to it as their owner in finalizeMerge. rootSymbol is at
+                // allSymbols(0) which is excluded from pass1Result.symbols by allSymbols.tail; re-adding
+                // it here gives consistent symbol ordering: root first, then all other symbols in TASTy
+                // parse order (depth-first).
+                Chunk(pass1Result.rootSymbol) ++ pass1Result.symbols,
                 arena,
                 pass1Result.annotationDecodeErrors,
                 Chunk.empty[Nothing],
