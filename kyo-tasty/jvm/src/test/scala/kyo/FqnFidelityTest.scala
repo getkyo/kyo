@@ -146,4 +146,107 @@ class FqnFidelityTest extends Test:
                 case Result.Panic(t)   => throw t
     }
 
+    // F-I-006 leaf 1 (Phase 09): source-fqn-resolves
+    // Given: the real classpath loaded via TestClasspaths.withClasspath
+    // When: cp.findSymbol("scala.Predef") -- source FQN without trailing `$`
+    // Then: post-fix returns Present(_: Symbol.Object);
+    //       before fix returns Absent because only the binary key "scala.Predef$" was indexed
+    // Pins: F-I-006 (HARD RULE 8: source FQN must resolve)
+    "F-I-006 (Phase 09): cp.findSymbol(scala.Predef) returns Present(Symbol.Object)" in run {
+        TestClasspaths.withClasspath().map: cp =>
+            cp.findSymbol("scala.Predef") match
+                case Present(sym: Tasty.Symbol.Object) =>
+                    succeed
+                case Present(sym) =>
+                    fail(
+                        s"cp.findSymbol(scala.Predef) returned Present but wrong kind: ${sym.kind}. " +
+                            s"Expected Symbol.Object."
+                    )
+                case Absent =>
+                    val related = cp.fqnIndex.keys
+                        .filter(k => k.startsWith("scala.Predef"))
+                        .toSeq
+                        .sorted
+                        .take(5)
+                    fail(
+                        s"cp.findSymbol(scala.Predef) returned Absent. " +
+                            s"Related fqnIndex keys: ${related.mkString(", ")}"
+                    )
+    }
+
+    // F-I-006 leaf 2 (Phase 09): binary-fqn-still-resolves
+    // Given: the real classpath
+    // When: cp.findSymbol("scala.Predef$") -- binary FQN with trailing `$`
+    // Then: Present(_) both before and after fix (primary binary key preserved; layered compat)
+    // Pins: F-I-006 layer-don't-restrict (HARD RULE 4)
+    "F-I-006 (Phase 09): cp.findSymbol(scala.Predef$) still returns Present (binary key preserved)" in run {
+        TestClasspaths.withClasspath().map: cp =>
+            cp.findSymbol("scala.Predef$") match
+                case Present(_) =>
+                    succeed
+                case Absent =>
+                    fail(
+                        s"cp.findSymbol(scala.Predef$$) returned Absent; the primary binary key " +
+                            s"must remain indexed (HARD RULE 4 layered compat)."
+                    )
+    }
+
+    // F-I-006 leaf 3 (Phase 09): both-fqns-same-symbol
+    // Given: the real classpath
+    // When: cp.findSymbol("kyo.Tasty.Symbol") and cp.findSymbol("kyo.Tasty$.Symbol")
+    // Then: post-fix both Present(s) with same s.id;
+    //       before fix the source FQN "kyo.Tasty.Symbol" was Absent (only "kyo.Tasty$.Symbol" indexed)
+    // Pins: F-I-006 identity contract (HARD RULE 8 + HARD RULE 7: same Symbol instance, no mutation)
+    "F-I-006 (Phase 09): kyo.Tasty.Symbol and kyo.Tasty$.Symbol resolve to the same Symbol id" in run {
+        TestClasspaths.withClasspath().map: cp =>
+            val sourceLookup = cp.findSymbol("kyo.Tasty.Symbol")
+            val binaryLookup = cp.findSymbol("kyo.Tasty$.Symbol")
+            (sourceLookup, binaryLookup) match
+                case (Present(s1), Present(s2)) =>
+                    assert(
+                        s1.id == s2.id,
+                        s"Both keys resolve but to DIFFERENT symbols: source id=${s1.id}, binary id=${s2.id}. " +
+                            s"Dual-index must point both keys to the same Symbol instance."
+                    )
+                    succeed
+                case (Absent, _) =>
+                    val related = cp.fqnIndex.keys
+                        .filter(k => k.contains("Tasty") && k.contains("Symbol"))
+                        .toSeq
+                        .sorted
+                        .take(5)
+                    fail(
+                        s"cp.findSymbol(kyo.Tasty.Symbol) returned Absent (source FQN not indexed). " +
+                            s"Related keys: ${related.mkString(", ")}"
+                    )
+                case (_, Absent) =>
+                    fail(
+                        s"cp.findSymbol(kyo.Tasty$$.Symbol) returned Absent; the primary binary key " +
+                            s"must remain indexed (HARD RULE 4)."
+                    )
+                case (_, _) =>
+                    fail(s"Unexpected match: sourceLookup=$sourceLookup binaryLookup=$binaryLookup")
+            end match
+    }
+
+    // F-I-006 leaf 4 (Phase 09): non-existent-still-absent
+    // Given: the real classpath
+    // When: cp.findSymbol("nonexistent.Type") and cp.findSymbol("nonexistent.Type$")
+    // Then: both Absent; the dual-index does not fabricate entries for non-existent keys
+    // Pins: F-I-006 negative case (no false positives from dual-index writes)
+    "F-I-006 (Phase 09): cp.findSymbol(nonexistent.Type) and cp.findSymbol(nonexistent.Type$) return Absent" in run {
+        TestClasspaths.withClasspath().map: cp =>
+            val r1 = cp.findSymbol("nonexistent.Type")
+            val r2 = cp.findSymbol("nonexistent.Type$")
+            assert(
+                r1.isEmpty,
+                s"cp.findSymbol(nonexistent.Type) returned Present; dual-index fabricated a spurious entry."
+            )
+            assert(
+                r2.isEmpty,
+                s"cp.findSymbol(nonexistent.Type$$) returned Present; dual-index fabricated a spurious entry."
+            )
+            succeed
+    }
+
 end FqnFidelityTest

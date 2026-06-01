@@ -372,6 +372,46 @@ object ClasspathOrchestrator:
                             end if
                         end if
                     end if
+                    // F-I-006 / HARD RULE 8 dual-index Rule A: Object companion source FQN.
+                    // When the binary key ends in `$` (all Object symbols; line 337 appended it),
+                    // also register the source FQN (key without the trailing `$`).
+                    // e.g. `scala.Predef$` -> also index `scala.Predef`.
+                    // Guard: additive only -- write source key only when NO entry exists yet.
+                    // A class or trait already registered at the source key takes precedence.
+                    // A Val forwarder (non-structural) is overwritten by the Object so that
+                    // the user-facing source FQN resolves to the canonical companion Object.
+                    if sym.kind == Tasty.SymbolKind.Object && indexKey.endsWith("$") then
+                        val sourceFqn = indexKey.stripSuffix("$")
+                        if sourceFqn.nonEmpty then
+                            val existingSource = state.fqnIndex.get(sourceFqn)
+                            val storeSource = existingSource match
+                                case None       => true
+                                case Some(prev) =>
+                                    // Object wins over non-structural entries (Val, Method, etc.)
+                                    // but NOT over Class, Trait, EnumCase, or another Object.
+                                    prev.kind != Tasty.SymbolKind.Class &&
+                                    prev.kind != Tasty.SymbolKind.Trait &&
+                                    prev.kind != Tasty.SymbolKind.Object &&
+                                    prev.kind != Tasty.SymbolKind.EnumCase
+                            if storeSource then state.fqnIndex(sourceFqn) = sym
+                        end if
+                    end if
+                    // F-I-006 / HARD RULE 8 dual-index Rule B: object-nested member source FQN.
+                    // When the binary key contains `$.` (a member nested inside an object, e.g.
+                    // `kyo.Tasty$.Symbol`), also register the source FQN with `$.` replaced by `.`
+                    // (e.g. `kyo.Tasty.Symbol`).
+                    // Rule B is applied AFTER Rule A; an Object key ending in `$` (e.g. `scala.Predef$`)
+                    // does NOT contain `$.` so there is no overlap between the two rules.
+                    // Guard: strictly additive -- write source key ONLY when it is absent.
+                    // If a natural `fr.fqns` iteration has already registered a direct source-FQN
+                    // entry, that entry is more authoritative than any Rule-B-derived key and must
+                    // not be overwritten. Rule B fills gaps; it does not override direct registrations.
+                    if indexKey.contains("$.") then
+                        val sourceFqn = indexKey.replace("$.", ".")
+                        if state.fqnIndex.get(sourceFqn).isEmpty then
+                            state.fqnIndex(sourceFqn) = sym
+                        end if
+                    end if
                     if seenSyms.add(sym) then state.allSyms += sym
                     sym.kind match
                         case Tasty.SymbolKind.Package =>
