@@ -744,7 +744,7 @@ object Yaml:
             processor match
                 case Absent => Yaml.decode[A](input, readerConfig)
                 case Present(current) =>
-                    selectedSource(input).flatMap { source =>
+                    decodeSource(input).flatMap { source =>
                         internal.YamlEventScanner.collect(source, current).flatMap { events =>
                             Result.catching[DecodeException] {
                                 val reader = internal.YamlEventReader(events, readerConfig.yamlVersion)
@@ -823,6 +823,33 @@ object Yaml:
                 case Present(index) => selectDocument(input, index)
                 case Absent         => Result.succeed(input)
         end selectedSource
+
+        private def decodeSource(input: String)(using Frame): Result[DecodeException, String] =
+            readerConfig.documentIndex match
+                case Present(index) =>
+                    selectDocument(input, index)
+                case Absent if !internal.YamlDocuments.requiresSplit(input) =>
+                    Result.succeed(input)
+                case Absent =>
+                    val docs = splitDocuments(input)
+                    readerConfig.documentMode match
+                        case ReaderConfig.DocumentMode.MergeTopLevelMappings =>
+                            Result.succeed(internal.YamlDocuments.mergeTopLevelMappings(docs))
+                        case ReaderConfig.DocumentMode.SingleDocument =>
+                            if docs.size == 1 then Result.succeed(docs(0))
+                            else if docs.isEmpty && input.trim.isEmpty then Result.succeed(input)
+                            else
+                                Result.fail(ParseException(
+                                    Yaml(),
+                                    "",
+                                    "Unexpected content after YAML document end",
+                                    Nil,
+                                    0
+                                ))
+                            end if
+                    end match
+            end match
+        end decodeSource
 
     end Pipeline
 

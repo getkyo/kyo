@@ -51,9 +51,10 @@ final class YamlReader private (
                 } {
                     peek match
                         case e: MappingStart =>
+                            countSequenceElement()
                             checkDepth()
                             pos += 1
-                            stack = MappingFrame :: stack
+                            stack = MappingFrame() :: stack
                             if atNodeEnd then 0 else -1
                         case other => expected("mapping", other)
                 }
@@ -75,8 +76,8 @@ final class YamlReader private (
                 case _ =>
                     expectNodeEnd("mapping")
                     stack = stack match
-                        case (_: MappingFrame.type) :: rest => rest
-                        case _                              => error("Unexpected mapping end")
+                        case (_: MappingFrame) :: rest => rest
+                        case _                         => error("Unexpected mapping end")
                     decrementDepth()
             end match
         }
@@ -95,9 +96,10 @@ final class YamlReader private (
                 } {
                     peek match
                         case e: SequenceStart =>
+                            countSequenceElement()
                             checkDepth()
                             pos += 1
-                            stack = SequenceFrame :: stack
+                            stack = SequenceFrame() :: stack
                             if atNodeEnd then 0 else -1
                         case other => expected("sequence", other)
                 }
@@ -120,8 +122,8 @@ final class YamlReader private (
                 case _ =>
                     expectNodeEnd("sequence")
                     stack = stack match
-                        case (_: SequenceFrame.type) :: rest => rest
-                        case _                               => error("Unexpected sequence end")
+                        case (_: SequenceFrame) :: rest => rest
+                        case _                          => error("Unexpected sequence end")
                     decrementDepth()
             end match
         }
@@ -148,6 +150,7 @@ final class YamlReader private (
                 } {
                     peek match
                         case Scalar(value, _, _) =>
+                            countMappingField()
                             pos += 1
                             setLastFieldName(value)
                         case other => expected("field name", other)
@@ -302,6 +305,7 @@ final class YamlReader private (
                         currentAliasOr(_.isNil()) {
                             peek match
                                 case Scalar(value, meta, _) if resolveScalar(value, meta) == ScalarValue.Null =>
+                                    countSequenceElement()
                                     pos += 1
                                     true
                                 case _ => false
@@ -354,6 +358,7 @@ final class YamlReader private (
                     case _ =>
                         currentAliasOr(_.skip()) {
                             prepare()
+                            countSequenceElement()
                             pos = subtreeEnd(pos)
                         }
                 end match
@@ -449,6 +454,7 @@ final class YamlReader private (
                             prepare()
                             val start = pos
                             val stop  = subtreeEnd(pos)
+                            countSequenceElement()
                             pos = stop
                             child(start, stop)
                         }
@@ -546,6 +552,7 @@ final class YamlReader private (
                     currentAliasOr(_.scalarValue()) {
                         peek match
                             case Scalar(value, meta, _) =>
+                                countSequenceElement()
                                 pos += 1
                                 resolveScalarValue(value, meta)
                             case other => expected("scalar", other)
@@ -652,6 +659,22 @@ final class YamlReader private (
         end if
     end checkDecimalExponent
 
+    private def countMappingField(): Unit =
+        stack match
+            case (frame: MappingFrame) :: _ =>
+                frame.count += 1
+                checkCollectionSize(frame.count)
+            case _ => ()
+    end countMappingField
+
+    private def countSequenceElement(): Unit =
+        stack match
+            case (frame: SequenceFrame) :: _ =>
+                frame.count += 1
+                checkCollectionSize(frame.count)
+            case _ => ()
+    end countSequenceElement
+
     private def withDelegate[A](f: YamlReader => A)(body: => A): A =
         delegate match
             case Present(reader) =>
@@ -714,6 +737,7 @@ final class YamlReader private (
 
     private def startAlias(name: Yaml.Anchor, mark: Yaml.Mark): Unit =
         startAliasReader(name.value, mark) {
+            countSequenceElement()
             pos += 1
         }
     end startAlias
@@ -1929,8 +1953,8 @@ object YamlReader:
     end Expansion
 
     sealed private trait ContainerFrame
-    private case object MappingFrame  extends ContainerFrame
-    private case object SequenceFrame extends ContainerFrame
+    final private class MappingFrame(var count: Int = 0)  extends ContainerFrame
+    final private class SequenceFrame(var count: Int = 0) extends ContainerFrame
 
     sealed private trait SourceFrame:
         def indent: Int
