@@ -248,7 +248,7 @@ Yaml.decode[User](
 
 `Yaml.encode` writes YAML 1.2 by default. Use `Yaml.WriterConfig` profiles and `yamlVersion` when writing for systems that still use YAML 1.1 implicit scalar rules.
 
-For YAML-specific tooling, `Yaml.Events` exposes parser and writer events without requiring a YAML node tree. This is useful for checks and transforms that care about anchors, aliases, tags, document boundaries, scalar styles, or source marks. Ordinary schema decoding and encoding should still use `Yaml.decode` and `Yaml.encode`.
+For YAML-specific tooling, `Yaml.Events` exposes parser and writer events without requiring a YAML node tree. This is useful for checks and transforms that care about anchors, aliases, tags, document boundaries, scalar styles, or source marks. Ordinary schema decoding and encoding should still use `Yaml.decode` and `Yaml.encode`; use `Yaml.pipeline` when middleware needs to sit between YAML parsing and schema decoding.
 
 #### YAML events
 
@@ -268,7 +268,56 @@ val rewritten =
 assert(rewritten == Result.succeed("NAME: ALICE\n"))
 ```
 
-The same event protocol can be driven from schema output with `Yaml.Events.write`, so YAML-specific tooling can sit on either side of the schema layer. For richer examples, including an anchor audit that finds undeclared aliases and unused anchors plus a complete node-builder with a custom error hierarchy, see [YamlEventsTest.scala](shared/src/test/scala/kyo/YamlEventsTest.scala). When callers do want a tree, `Yaml.parse` builds one explicitly.
+The same event protocol can be driven from schema output with `Yaml.Events.write`, so YAML-specific tooling can sit on either side of the schema layer.
+
+#### YAML pipelines
+
+`Yaml.pipeline` composes event processors with schema operations. With no processors it delegates to the normal `Yaml.decode` and `Yaml.encode` fast paths. With processors, `decode` reads the transformed event stream directly into `Schema[A]`; it does not render YAML text first.
+
+```scala
+case class PublicUser(name: String, age: Int) derives Schema
+
+val legacyYaml =
+    """fullName: Alice
+      |age: 30
+      |""".stripMargin
+
+val renameFullName =
+    Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
+        val next =
+            if value == "fullName" then "name"
+            else value
+        Result.succeed((next, meta))
+    }
+
+val decoded =
+    Yaml.pipeline
+        .through(renameFullName)
+        .decode[PublicUser](legacyYaml)
+
+assert(decoded == Result.succeed(PublicUser("Alice", 30)))
+```
+
+Use `render` when the transformed YAML document itself is the desired output:
+
+```scala
+val renameFullName =
+    Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
+        val next =
+            if value == "fullName" then "name"
+            else value
+        Result.succeed((next, meta))
+    }
+
+val rendered =
+    Yaml.pipeline
+        .through(renameFullName)
+        .render("fullName: Alice\nage: 30\n")
+
+assert(rendered == Result.succeed("name: Alice\nage: 30\n"))
+```
+
+For richer examples, including an anchor audit that finds undeclared aliases and unused anchors, direct pipeline decode of case classes and ADTs, and a complete node-builder with a custom error hierarchy, see [YamlEventsTest.scala](shared/src/test/scala/kyo/YamlEventsTest.scala) and [YamlPipelineTest.scala](shared/src/test/scala/kyo/YamlPipelineTest.scala). When callers do want a tree, `Yaml.parse` builds one explicitly.
 
 ### Protobuf
 
