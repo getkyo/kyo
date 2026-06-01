@@ -387,4 +387,82 @@ private[kyo] object LspWireEnumSchemas:
                     case other =>
                         summon[Schema[T]].fromStructureValue(other).map(t => LspHandler.StringOr.Options(t))
 
+    // MARK: -- LspCapabilities.Name string schema (INV-052)
+
+    /** Schema[LspCapabilities.Name]: every case maps to its LSP 3.17 spec-canonical string. */
+    @publicInBinary val lspCapabilityNameSchema: Schema[LspCapabilities.Name] =
+        Schema.stringSchema.transform[LspCapabilities.Name](s =>
+            s match
+                case "completion"                       => LspCapabilities.Name.Completion
+                case "hover"                            => LspCapabilities.Name.Hover
+                case "signatureHelp"                    => LspCapabilities.Name.SignatureHelp
+                case "declaration"                      => LspCapabilities.Name.Declaration
+                case "definition"                       => LspCapabilities.Name.Definition
+                case "typeDefinition"                   => LspCapabilities.Name.TypeDefinition
+                case "implementation"                   => LspCapabilities.Name.Implementation
+                case "references"                       => LspCapabilities.Name.References
+                case "documentHighlight"                => LspCapabilities.Name.DocumentHighlight
+                case "documentSymbol"                   => LspCapabilities.Name.DocumentSymbol
+                case "codeAction"                       => LspCapabilities.Name.CodeAction
+                case "codeLens"                         => LspCapabilities.Name.CodeLens
+                case "documentLink"                     => LspCapabilities.Name.DocumentLink
+                case "colorProvider"                    => LspCapabilities.Name.DocumentColor
+                case "documentFormattingProvider"       => LspCapabilities.Name.Formatting
+                case "documentRangeFormattingProvider"  => LspCapabilities.Name.RangeFormatting
+                case "documentOnTypeFormattingProvider" => LspCapabilities.Name.OnTypeFormatting
+                case "rename"                           => LspCapabilities.Name.Rename
+                case "foldingRange"                     => LspCapabilities.Name.FoldingRange
+                case "selectionRange"                   => LspCapabilities.Name.SelectionRange
+                case "callHierarchy"                    => LspCapabilities.Name.CallHierarchy
+                case "typeHierarchy"                    => LspCapabilities.Name.TypeHierarchy
+                case "semanticTokens"                   => LspCapabilities.Name.SemanticTokens
+                case "moniker"                          => LspCapabilities.Name.Moniker
+                case "linkedEditingRange"               => LspCapabilities.Name.LinkedEditingRange
+                case "inlayHint"                        => LspCapabilities.Name.InlayHint
+                case "inlineValue"                      => LspCapabilities.Name.InlineValue
+                case "diagnostic"                       => LspCapabilities.Name.Diagnostic
+                case "notebookDocumentSync"             => LspCapabilities.Name.NotebookDocumentSync
+                case "executeCommand"                   => LspCapabilities.Name.ExecuteCommand
+                case "workspaceSymbol"                  => LspCapabilities.Name.WorkspaceSymbol
+                case "workspaceFolders"                 => LspCapabilities.Name.WorkspaceFolders
+                case "fileOperations"                   => LspCapabilities.Name.FileOperations
+                case _ =>
+                    throw TypeMismatchException(Seq.empty, "LSP capability name string", s)(using Frame.internal)
+        )(n =>
+            n match
+                case LspCapabilities.Name.Completion           => "completion"
+                case LspCapabilities.Name.Hover                => "hover"
+                case LspCapabilities.Name.SignatureHelp        => "signatureHelp"
+                case LspCapabilities.Name.Declaration          => "declaration"
+                case LspCapabilities.Name.Definition           => "definition"
+                case LspCapabilities.Name.TypeDefinition       => "typeDefinition"
+                case LspCapabilities.Name.Implementation       => "implementation"
+                case LspCapabilities.Name.References           => "references"
+                case LspCapabilities.Name.DocumentHighlight    => "documentHighlight"
+                case LspCapabilities.Name.DocumentSymbol       => "documentSymbol"
+                case LspCapabilities.Name.CodeAction           => "codeAction"
+                case LspCapabilities.Name.CodeLens             => "codeLens"
+                case LspCapabilities.Name.DocumentLink         => "documentLink"
+                case LspCapabilities.Name.DocumentColor        => "colorProvider"
+                case LspCapabilities.Name.Formatting           => "documentFormattingProvider"
+                case LspCapabilities.Name.RangeFormatting      => "documentRangeFormattingProvider"
+                case LspCapabilities.Name.OnTypeFormatting     => "documentOnTypeFormattingProvider"
+                case LspCapabilities.Name.Rename               => "rename"
+                case LspCapabilities.Name.FoldingRange         => "foldingRange"
+                case LspCapabilities.Name.SelectionRange       => "selectionRange"
+                case LspCapabilities.Name.CallHierarchy        => "callHierarchy"
+                case LspCapabilities.Name.TypeHierarchy        => "typeHierarchy"
+                case LspCapabilities.Name.SemanticTokens       => "semanticTokens"
+                case LspCapabilities.Name.Moniker              => "moniker"
+                case LspCapabilities.Name.LinkedEditingRange   => "linkedEditingRange"
+                case LspCapabilities.Name.InlayHint            => "inlayHint"
+                case LspCapabilities.Name.InlineValue          => "inlineValue"
+                case LspCapabilities.Name.Diagnostic           => "diagnostic"
+                case LspCapabilities.Name.NotebookDocumentSync => "notebookDocumentSync"
+                case LspCapabilities.Name.ExecuteCommand       => "executeCommand"
+                case LspCapabilities.Name.WorkspaceSymbol      => "workspaceSymbol"
+                case LspCapabilities.Name.WorkspaceFolders     => "workspaceFolders"
+                case LspCapabilities.Name.FileOperations       => "fileOperations"
+        )
+
 end LspWireEnumSchemas
