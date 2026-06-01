@@ -834,6 +834,27 @@ object TypeUnpickler:
                 discard(view.readNat())
                 readTypeNode(view, ctx)
 
+            case TastyFormat.SELECTtpt =>
+                // SELECTtpt (113): cat-4 (tag + NameRef + qual_Tree). Type-position member selection.
+                // Encodes e.g. `scala.Double` as SELECTtpt("Double", TERMREFpkg("scala")).
+                // Mirrors TreeUnpickler.decodeTptAsType case for SELECTtpt.
+                val nameRef = view.readNat()
+                val nm      = nameAt(ctx.names, nameRef).asString
+                val qual    = readTypeNode(view, ctx)
+                val qualFqn: String = qual match
+                    case Tasty.Type.Named(sid) if sid.value < -1 =>
+                        ctx.session match
+                            case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(sid.value, "")
+                            case _                => ""
+                    case _ => ""
+                val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
+                ctx.session match
+                    case s: DecodeSession =>
+                        Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
+                    case _ =>
+                        Tasty.Type.Named(sentinelUnresolved.id)
+                end match
+
             case TastyFormat.APPLIEDtpt =>
                 // APPLIEDtpt (162): cat-5 (tag + Length + tycon_Tree + arg_Tree*).
                 val end   = view.readEnd()

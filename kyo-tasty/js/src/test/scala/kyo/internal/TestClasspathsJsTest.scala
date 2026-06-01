@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Phase 14 test leaves: JS cross-platform fixture helper verification.
+/** Phase 14 test leaves: JS cross-platform fixture helper verification. Updated in Phase 15 to include Shape fixture.
   *
   * Pins: F-F-001 (JS parity). All leaves use the embedded TASTy fixture helper and do not require a real JVM classpath. The `run {}` harness
   * (BaseKyoCoreTest) handles `Abort[Any] & Async & Scope`, so test bodies call `TestClasspaths.withClasspath.map(cp => ...)` directly.
@@ -12,7 +12,7 @@ import kyo.*
   *   2. js-symbols-non-empty: cp.symbols.size > 0 (includes methods and vals).
   *   3. js-fidelity-suite-compiles: compile+run parity leaf (running proves compilation succeeded).
   *   4. js-no-classpath-errors: cp.errors.isEmpty on well-formed embedded fixtures.
-  *   5. js-enum-case-symbol-kind: at least one Symbol.EnumCase from colorTasty (pins Phase 13 on JS).
+  *   5. js-enum-case-symbol-kind: at least one Symbol.EnumCase from shapeTasty (pins Phase 13 + 15 on JS).
   *   6. js-cross-file-resolution: BaseClass and ChildClass both findable by FQN (pins cross-file work on JS).
   */
 class TestClasspathsJsTest extends Test:
@@ -66,20 +66,18 @@ class TestClasspathsJsTest extends Test:
     }
 
     // Leaf 5: js-enum-case-symbol-kind
-    // Given: the embedded colorTasty fixture (kyo.fixtures.Color enum with Red/Green/Blue cases).
+    // Given: the embedded shapeTasty fixture (kyo.fixtures.Shape parametric enum with Circle/Square/Rectangle cases).
     // When: loading via TestClasspaths.withClasspath.
-    // Then: at least one symbol carries the Case flag (the Color enum cases are simple-value cases, encoded as
-    //   VALDEF with Flag.Case; class-form EnumCase requires parametric cases like `case Foo(x: Int)`).
-    // Note: simple value enum cases like `case Red, Green, Blue` produce Symbol.Val with isCase=true, not Symbol.EnumCase.
-    //   Symbol.EnumCase is only produced for class-form enum cases. The Color fixture uses simple values.
-    //   This leaf verifies that the enum flag classification round-trips correctly on JS.
-    // Pins: F-E-007 on JS (enum case flag wiring from Phase 13, verified cross-platform).
-    "js-enum-case-symbol-kind: colorTasty produces symbols with Case flag" in run {
+    // Then: at least one symbol is an instance of Symbol.EnumCase (class-form enum case from Shape).
+    // Note: class-form enum cases like `case Circle(radius: Double)` produce Symbol.EnumCase, not Symbol.Val.
+    //   This leaf pins that Symbol.EnumCase is decoded and round-trips correctly on JS (Phase 13 + 15).
+    // Pins: F-E-007 on JS (Symbol.EnumCase class-form from Phase 13, tightened in Phase 15 with Shape fixture).
+    "js-enum-case-symbol-kind: shapeTasty produces Symbol.EnumCase instances" in run {
         TestClasspaths.withClasspath.map: cp =>
-            val caseFlagSymbols = cp.symbols.filter(_.isCase)
+            val enumCaseSymbols = cp.symbols.filter(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(
-                caseFlagSymbols.size > 0,
-                s"Expected at least one symbol with isCase=true from colorTasty but got ${caseFlagSymbols.size}"
+                enumCaseSymbols.size > 0,
+                s"Expected at least one Symbol.EnumCase from shapeTasty but got ${enumCaseSymbols.size}"
             )
             succeed
     }

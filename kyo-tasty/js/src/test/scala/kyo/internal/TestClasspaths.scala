@@ -13,8 +13,8 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
   * Design notes:
   *   - `withClasspath` takes no `roots` parameter (no JVM classpath on JS).
   *   - Concurrency is fixed at 1 (JS is single-threaded; higher values have no effect and would be misleading).
-  *   - All 10 embedded TASTy fixtures are included (PlainClass, SomeObject, SomeTrait, GenericBox, Outer, SomeCaseClass, Color,
-  *     FixtureClasses$package, BaseClass, ChildClass). This gives a multi-file classpath with cross-file reference coverage.
+  *   - All 11 embedded TASTy fixtures are included (PlainClass, SomeObject, SomeTrait, GenericBox, Outer, SomeCaseClass, Color,
+  *     FixtureClasses$package, BaseClass, ChildClass, Shape). Shape carries class-form enum cases (Phase 15 addition).
   *   - HARD RULE 7: the MemoryFileSource is internal to the loading call; it is not exposed to callers.
   *
   * Scaladoc: 8-35 lines.
@@ -38,6 +38,7 @@ private[kyo] object TestClasspaths:
         src.add("root/FixtureClasses$package.tasty", kyo.fixtures.Embedded.fixtureClassesPackageTasty)
         src.add("root/BaseClass.tasty", kyo.fixtures.Embedded.baseClassTasty)
         src.add("root/ChildClass.tasty", kyo.fixtures.Embedded.childClassTasty)
+        src.add("root/Shape.tasty", kyo.fixtures.Embedded.shapeTasty)
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end withClasspath
 

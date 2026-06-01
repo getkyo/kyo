@@ -438,9 +438,23 @@ object ClasspathOrchestrator:
                     i = 0
                     for partialSym <- allPartial do
                         val id = i
+                        // Post-process kind: class-form enum cases carry both Enum and Case flags but
+                        // may have been classified as Class by fromTypedefTemplateFlags when the modifier
+                        // scan ran before the flag bytes were available (e.g., Scala 3.8+ TASTy layout
+                        // where TEMPLATE ends at TYPEDEF end, leaving no gap for the modifier pass).
+                        // Reclassify Class + Enum + Case (no Module) to EnumCase here, where all flags
+                        // are finalized. Regular case classes do not carry the Enum flag, so this
+                        // reclassification does not affect them.
+                        val adjustedKind =
+                            if partialSym.kind == Tasty.SymbolKind.Class &&
+                                partialSym.flags.contains(Tasty.Flag.Enum) &&
+                                partialSym.flags.contains(Tasty.Flag.Case) &&
+                                !partialSym.flags.contains(Tasty.Flag.Module)
+                            then Tasty.SymbolKind.EnumCase
+                            else partialSym.kind
                         descs(i) = new SymbolDescriptor(
                             id = id,
-                            kind = partialSym.kind,
+                            kind = adjustedKind,
                             flags = partialSym.flags,
                             name = partialSym.name,
                             ownerId = id, // default: self-referential (root sentinel); overridden below
