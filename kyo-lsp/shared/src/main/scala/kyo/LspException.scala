@@ -108,20 +108,20 @@ object LspException:
             extends Dispatch(code = -32601, message = s"Method not found: $method")
 
         /** A required parameter field was invalid. JSON-RPC code -32602. */
-        final case class InvalidParams(method: String, field: String, reason: String)(using Frame)
-            extends Dispatch(code = -32602, message = s"Invalid params for '$method': field '$field': $reason")
+        final case class InvalidParams(method: String, reason: String, cause: Throwable | String = "")(using Frame)
+            extends Dispatch(code = -32602, message = s"Invalid params for '$method': $reason", cause = cause)
 
         /** The request itself was malformed. JSON-RPC code -32600. */
         final case class InvalidRequest(reason: String)(using Frame)
             extends Dispatch(code = -32600, message = s"Invalid request: $reason")
 
         /** A document URI referenced in the request is not open in the registry. JSON-RPC code -32602. */
-        final case class UnknownDocument(uri: String)(using Frame)
-            extends Dispatch(code = -32602, message = s"Unknown document: $uri")
+        final case class UnknownDocument(uri: LspHandler.LspDocument.Uri, attemptedMethod: String)(using Frame)
+            extends Dispatch(code = -32602, message = s"Unknown document '${uri.asString}' for method '$attemptedMethod'.")
 
         /** A handler was registered for a method that does not match its expected direction. JSON-RPC code -32603. */
-        final case class WrongDirection(kind: LspHandler.Kind, registeredOn: String)(using Frame)
-            extends Dispatch(code = -32603, message = s"Handler for '$kind' cannot be registered on $registeredOn.")
+        final case class WrongDirection(handlerKind: LspHandler.Kind, registeredOn: LspHandler.Direction)(using Frame)
+            extends Dispatch(code = -32603, message = s"Handler for '$handlerKind' cannot be registered on $registeredOn.")
 
         /** A handler attempted to register for an engine-reserved method. JSON-RPC code -32603. */
         final case class ReservedMethod(method: String)(using Frame)
@@ -145,16 +145,16 @@ object LspException:
     object Execution:
 
         /** A request was cancelled by the peer. JSON-RPC code -32800 (LSP §3.16). */
-        final case class RequestCancelled(requestId: Maybe[JsonRpcId])(using Frame)
+        final case class RequestCancelled(id: JsonRpcId)(using Frame)
             extends Execution(code = -32800, message = s"Request cancelled.")
 
         /** The document content changed while the request was in flight. JSON-RPC code -32801 (LSP §3.16). */
-        final case class ContentModified()(using Frame)
-            extends Execution(code = -32801, message = "Content modified; server state is inconsistent.")
+        final case class ContentModified(uri: LspHandler.LspDocument.Uri)(using Frame)
+            extends Execution(code = -32801, message = s"Content modified for '${uri.asString}'; server state is inconsistent.")
 
         /** The server cancelled a request it previously accepted. JSON-RPC code -32802 (LSP §3.16). */
-        final case class ServerCancelled(reason: Maybe[String] = Absent)(using Frame)
-            extends Execution(code = -32802, message = s"Server cancelled the request.")
+        final case class ServerCancelled(reason: String)(using Frame)
+            extends Execution(code = -32802, message = s"Server cancelled the request: $reason")
 
         /** An unhandled exception escaped a handler body. JSON-RPC code -32603. */
         final case class ExecutionPanic(method: String, cause: Throwable | Text = "")(using Frame)
@@ -165,12 +165,15 @@ object LspException:
             extends Execution(code = -32603, message = s"Progress token already in use.")
 
         /** The document sync kind requested is not supported. JSON-RPC code -32600. */
-        final case class UnsupportedDocumentSync(kind: LspHandler.TextDocumentSyncKind)(using Frame)
-            extends Execution(code = -32600, message = s"Unsupported document sync kind: $kind")
+        final case class UnsupportedDocumentSync(
+            received: LspHandler.TextDocumentSyncKind,
+            configured: LspHandler.TextDocumentSyncKind
+        )(using Frame)
+            extends Execution(code = -32600, message = s"Unsupported document sync: received $received but configured $configured.")
 
         /** A field in the wire payload could not be decoded to the expected type. JSON-RPC code -32602. */
-        final case class Decode(method: String, field: String, reason: String)(using Frame)
-            extends Execution(code = -32602, message = s"Decode error in '$method' field '$field': $reason")
+        final case class Decode(target: String, reason: String, cause: Throwable | String = "")(using Frame)
+            extends Execution(code = -32602, message = s"Decode error for '$target': $reason", cause = cause)
 
     end Execution
 

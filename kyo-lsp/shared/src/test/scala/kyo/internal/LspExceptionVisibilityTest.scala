@@ -11,7 +11,7 @@ class LspExceptionVisibilityTest extends Test:
         // This file is in package kyo, so construction succeeds.
         val e1 = LspException.Handshake.NotInitialized("test")
         val e2 = LspException.Dispatch.MethodNotFound("test")
-        val e3 = LspException.Execution.RequestCancelled(Absent)
+        val e3 = LspException.Execution.RequestCancelled(JsonRpcId(1L))
         assert(e1.isInstanceOf[LspException])
         assert(e2.isInstanceOf[LspException])
         assert(e3.isInstanceOf[LspException])
@@ -24,7 +24,7 @@ class LspExceptionVisibilityTest extends Test:
         // We verify the hierarchy via instanceof checks.
         val handshake = LspException.Handshake.NotInitialized("x")
         val dispatch  = LspException.Dispatch.MethodNotFound("x")
-        val execution = LspException.Execution.ContentModified()
+        val execution = LspException.Execution.ContentModified(LspHandler.LspDocument.Uri.parse("file:///Main.scala").get)
         assert(handshake.isInstanceOf[LspException.Handshake])
         assert(dispatch.isInstanceOf[LspException.Dispatch])
         assert(execution.isInstanceOf[LspException.Execution])

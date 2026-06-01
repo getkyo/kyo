@@ -169,7 +169,7 @@ object LspHandler:
         case Text, Read, Write
 
     object DocumentHighlightKind:
-        given Schema[DocumentHighlightKind] = ??? // Phase 02 fills
+        given Schema[DocumentHighlightKind] = internal.lsp.LspWireEnumSchemas.documentHighlightKindSchema
 
     // MARK: -- Document types (LspDocument + Uri opaque + identifier records + TextDocumentContentChangeEvent + TextDocumentSyncKind)
 
@@ -250,7 +250,7 @@ object LspHandler:
         case None, Incremental, Full
 
     object TextDocumentSyncKind:
-        given Schema[TextDocumentSyncKind] = ??? // Phase 02 fills
+        given Schema[TextDocumentSyncKind] = internal.lsp.LspWireEnumSchemas.textDocumentSyncKindSchema
 
     /** Options for text document synchronization. */
     final case class TextDocumentSyncOptions(
@@ -274,7 +274,7 @@ object LspHandler:
         /** An incremental document content change within a specific range. */
         final case class Incremental(range: Range, text: String) extends TextDocumentContentChangeEvent
 
-        given Schema[TextDocumentContentChangeEvent] = ??? // Phase 02 fills
+        given Schema[TextDocumentContentChangeEvent] = internal.lsp.LspContentSchemas.textDocumentContentChangeEventSchema
     end TextDocumentContentChangeEvent
 
     /** The reason why a text document is saved. */
@@ -282,7 +282,7 @@ object LspHandler:
         case Manual, AfterDelay, FocusOut
 
     object TextDocumentSaveReason:
-        given Schema[TextDocumentSaveReason] = ??? // Phase 02 fills
+        given Schema[TextDocumentSaveReason] = internal.lsp.LspWireEnumSchemas.textDocumentSaveReasonSchema
 
     /** The kind of position encoding. */
     opaque type PositionEncodingKind = String
@@ -309,7 +309,7 @@ object LspHandler:
     object ProgressToken:
         final case class IntToken(value: Int)       extends ProgressToken
         final case class StringToken(value: String) extends ProgressToken
-        given Schema[ProgressToken] = ??? // Phase 02 fills
+        given Schema[ProgressToken] = internal.lsp.LspContentSchemas.progressTokenSchema
     end ProgressToken
 
     /** The value of a work-done progress notification. */
@@ -331,7 +331,7 @@ object LspHandler:
 
         final case class End(message: Maybe[String] = Absent) extends WorkDoneProgressValue
 
-        given Schema[WorkDoneProgressValue] = ??? // Phase 02 fills
+        given Schema[WorkDoneProgressValue] = internal.lsp.LspContentSchemas.workDoneProgressValueSchema
     end WorkDoneProgressValue
 
     /** Options for work-done progress support. */
@@ -363,7 +363,7 @@ object LspHandler:
         case PlainText, Markdown
 
     object MarkupKind:
-        given Schema[MarkupKind] = ??? // Phase 02 fills
+        given Schema[MarkupKind] = internal.lsp.LspWireEnumSchemas.markupKindSchema
 
     /** A human-readable string that can be rendered as plain text or markdown. */
     final case class MarkupContent(kind: MarkupKind, value: String) derives Schema, CanEqual
@@ -374,7 +374,7 @@ object LspHandler:
     object MarkedString:
         final case class Plain(value: String)                  extends MarkedString
         final case class Code(language: String, value: String) extends MarkedString
-        given Schema[MarkedString] = ??? // Phase 02 fills
+        given Schema[MarkedString] = internal.lsp.LspContentSchemas.markedStringSchema
     end MarkedString
 
     /** The content of a hover response: either MarkupContent or one/more MarkedStrings. */
@@ -383,7 +383,7 @@ object LspHandler:
     object HoverContents:
         final case class Markup(value: MarkupContent)        extends HoverContents
         final case class Strings(value: Chunk[MarkedString]) extends HoverContents
-        given Schema[HoverContents] = ??? // Phase 02 fills
+        given Schema[HoverContents] = internal.lsp.LspContentSchemas.hoverContentsSchema
     end HoverContents
 
     // MARK: -- Diagnostic types
@@ -393,14 +393,14 @@ object LspHandler:
         case Error, Warning, Information, Hint
 
     object DiagnosticSeverity:
-        given Schema[DiagnosticSeverity] = ??? // Phase 02 fills
+        given Schema[DiagnosticSeverity] = internal.lsp.LspWireEnumSchemas.diagnosticSeveritySchema
 
     /** Diagnostic tags to flag special kinds of diagnostics. */
     enum DiagnosticTag derives CanEqual:
         case Unnecessary, Deprecated
 
     object DiagnosticTag:
-        given Schema[DiagnosticTag] = ??? // Phase 02 fills
+        given Schema[DiagnosticTag] = internal.lsp.LspWireEnumSchemas.diagnosticTagSchema
 
     /** Structure to capture a description for an error code. */
     final case class CodeDescription(href: String) derives Schema, CanEqual
@@ -434,7 +434,7 @@ object LspHandler:
         final case class Full(kind: String = "full", resultId: Maybe[String] = Absent, items: Chunk[Diagnostic])
             extends DocumentDiagnosticReport
         final case class Unchanged(kind: String = "unchanged", resultId: String) extends DocumentDiagnosticReport
-        given Schema[DocumentDiagnosticReport] = ??? // Phase 02 fills
+        given Schema[DocumentDiagnosticReport] = internal.lsp.LspContentSchemas.documentDiagnosticReportSchema
     end DocumentDiagnosticReport
 
     /** A workspace diagnostic report. */
@@ -450,7 +450,7 @@ object LspHandler:
         ) extends WorkspaceDocumentDiagnosticReport
         final case class Unchanged(uri: LspDocument.Uri, version: Maybe[Int] = Absent, kind: String = "unchanged", resultId: String)
             extends WorkspaceDocumentDiagnosticReport
-        given Schema[WorkspaceDocumentDiagnosticReport] = ??? // Phase 02 fills
+        given Schema[WorkspaceDocumentDiagnosticReport] = internal.lsp.LspContentSchemas.workspaceDocumentDiagnosticReportSchema
     end WorkspaceDocumentDiagnosticReport
 
     /** The result of a workspace diagnostic request. */
@@ -486,14 +486,14 @@ object LspHandler:
     end SymbolKind
 
     object SymbolKind:
-        given Schema[SymbolKind] = ??? // Phase 02 fills
+        given Schema[SymbolKind] = internal.lsp.LspWireEnumSchemas.symbolKindSchema
 
     /** A symbol tag. */
     enum SymbolTag derives CanEqual:
         case Deprecated
 
     object SymbolTag:
-        given Schema[SymbolTag] = ??? // Phase 02 fills
+        given Schema[SymbolTag] = internal.lsp.LspWireEnumSchemas.symbolTagSchema
 
     /** Represents programming constructs like variables, classes, interfaces etc. that appear in a document. */
     final case class DocumentSymbol(
@@ -523,7 +523,7 @@ object LspHandler:
     object DocumentSymbolResult:
         final case class Symbols(items: Chunk[DocumentSymbol])        extends DocumentSymbolResult
         final case class Information(items: Chunk[SymbolInformation]) extends DocumentSymbolResult
-        given Schema[DocumentSymbolResult] = ??? // Phase 02 fills
+        given Schema[DocumentSymbolResult] = internal.lsp.LspContentSchemas.documentSymbolResultSchema
     end DocumentSymbolResult
 
     /** A workspace symbol with typed data carrier. */
@@ -542,8 +542,8 @@ object LspHandler:
                 case Present(s) =>
                     Json.decode[X](s) match
                         case Result.Success(v) => Present(v)
-                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("workspace/symbol", "data", e.toString))
-                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("workspace/symbol", "data", e.getMessage))
+                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("workspace/symbol", e.toString, e))
+                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("workspace/symbol", e.getMessage, e))
     end WorkspaceSymbol
 
     object WorkspaceSymbol:
@@ -555,7 +555,7 @@ object LspHandler:
     object WorkspaceSymbolLocation:
         final case class WithRange(uri: LspDocument.Uri, range: Range) extends WorkspaceSymbolLocation
         final case class UriOnly(uri: LspDocument.Uri)                 extends WorkspaceSymbolLocation
-        given Schema[WorkspaceSymbolLocation] = ??? // Phase 02 fills
+        given Schema[WorkspaceSymbolLocation] = internal.lsp.LspContentSchemas.workspaceSymbolLocationSchema
     end WorkspaceSymbolLocation
 
     // MARK: -- Completion types
@@ -568,35 +568,35 @@ object LspHandler:
     end CompletionItemKind
 
     object CompletionItemKind:
-        given Schema[CompletionItemKind] = ??? // Phase 02 fills
+        given Schema[CompletionItemKind] = internal.lsp.LspWireEnumSchemas.completionItemKindSchema
 
     /** A tag for completion items. */
     enum CompletionItemTag derives CanEqual:
         case Deprecated
 
     object CompletionItemTag:
-        given Schema[CompletionItemTag] = ??? // Phase 02 fills
+        given Schema[CompletionItemTag] = internal.lsp.LspWireEnumSchemas.completionItemTagSchema
 
     /** How whitespace and indentation is handled during completion item insertion. */
     enum InsertTextFormat derives CanEqual:
         case PlainText, Snippet
 
     object InsertTextFormat:
-        given Schema[InsertTextFormat] = ??? // Phase 02 fills
+        given Schema[InsertTextFormat] = internal.lsp.LspWireEnumSchemas.insertTextFormatSchema
 
     /** How the insert text of a completion item is treated. */
     enum InsertTextMode derives CanEqual:
         case AsIs, AdjustIndentation
 
     object InsertTextMode:
-        given Schema[InsertTextMode] = ??? // Phase 02 fills
+        given Schema[InsertTextMode] = internal.lsp.LspWireEnumSchemas.insertTextModeSchema
 
     /** The trigger kind for a completion request. */
     enum CompletionTriggerKind derives CanEqual:
         case Invoked, TriggerCharacter, TriggerForIncompleteCompletions
 
     object CompletionTriggerKind:
-        given Schema[CompletionTriggerKind] = ??? // Phase 02 fills
+        given Schema[CompletionTriggerKind] = internal.lsp.LspWireEnumSchemas.completionTriggerKindSchema
 
     /** Contains additional information about the context in which a completion request is triggered. */
     final case class CompletionContext(
@@ -642,8 +642,8 @@ object LspHandler:
                 case Present(s) =>
                     Json.decode[X](s) match
                         case Result.Success(v) => Present(v)
-                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/completion", "data", e.toString))
-                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("textDocument/completion", "data", e.getMessage))
+                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/completion", e.toString, e))
+                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("textDocument/completion", e.getMessage, e))
     end CompletionItem
 
     object CompletionItem:
@@ -670,7 +670,7 @@ object LspHandler:
     object CompletionResult:
         final case class Items(items: Chunk[CompletionItem]) extends CompletionResult
         final case class List(list: CompletionList)          extends CompletionResult
-        given Schema[CompletionResult] = ??? // Phase 02 fills
+        given Schema[CompletionResult] = internal.lsp.LspContentSchemas.completionResultSchema
     end CompletionResult
 
     /** Options to register for completion. */
@@ -692,7 +692,7 @@ object LspHandler:
         case Invoked, TriggerCharacter, ContentChange
 
     object SignatureHelpTriggerKind:
-        given Schema[SignatureHelpTriggerKind] = ??? // Phase 02 fills
+        given Schema[SignatureHelpTriggerKind] = internal.lsp.LspWireEnumSchemas.signatureHelpTriggerKindSchema
 
     /** Additional information about the context in which a signature help request was triggered. */
     final case class SignatureHelpContext(
@@ -708,7 +708,7 @@ object LspHandler:
     object ParameterLabel:
         final case class StringLabel(value: String)       extends ParameterLabel
         final case class RangeLabel(start: Int, end: Int) extends ParameterLabel
-        given Schema[ParameterLabel] = ??? // Phase 02 fills
+        given Schema[ParameterLabel] = internal.lsp.LspContentSchemas.parameterLabelSchema
     end ParameterLabel
 
     /** Represents a parameter of a callable-signature. */
@@ -772,7 +772,7 @@ object LspHandler:
         case Invoked, Automatic
 
     object CodeActionTriggerKind:
-        given Schema[CodeActionTriggerKind] = ??? // Phase 02 fills
+        given Schema[CodeActionTriggerKind] = internal.lsp.LspWireEnumSchemas.codeActionTriggerKindSchema
 
     /** Contains additional diagnostic information about the context in which a code action is run. */
     final case class CodeActionContext(
@@ -802,8 +802,8 @@ object LspHandler:
                 case Present(s) =>
                     Json.decode[X](s) match
                         case Result.Success(v) => Present(v)
-                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/codeAction", "data", e.toString))
-                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("textDocument/codeAction", "data", e.getMessage))
+                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/codeAction", e.toString, e))
+                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("textDocument/codeAction", e.getMessage, e))
     end CodeAction
 
     object CodeAction:
@@ -815,7 +815,7 @@ object LspHandler:
     object CommandOrCodeAction:
         final case class Cmd(value: Command)       extends CommandOrCodeAction
         final case class Action(value: CodeAction) extends CommandOrCodeAction
-        given Schema[CommandOrCodeAction] = ??? // Phase 02 fills
+        given Schema[CommandOrCodeAction] = internal.lsp.LspContentSchemas.commandOrCodeActionSchema
     end CommandOrCodeAction
 
     /** Options for code action registration. */
@@ -840,8 +840,8 @@ object LspHandler:
                 case Present(s) =>
                     Json.decode[X](s) match
                         case Result.Success(v) => Present(v)
-                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/codeLens", "data", e.toString))
-                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("textDocument/codeLens", "data", e.getMessage))
+                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/codeLens", e.toString, e))
+                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("textDocument/codeLens", e.getMessage, e))
     end CodeLens
 
     object CodeLens:
@@ -867,8 +867,8 @@ object LspHandler:
                 case Present(s) =>
                     Json.decode[X](s) match
                         case Result.Success(v) => Present(v)
-                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/documentLink", "data", e.toString))
-                        case Result.Panic(e) => Abort.fail(LspException.Execution.Decode("textDocument/documentLink", "data", e.getMessage))
+                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/documentLink", e.toString, e))
+                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("textDocument/documentLink", e.getMessage, e))
     end DocumentLink
 
     object DocumentLink:
@@ -901,7 +901,7 @@ object LspHandler:
         case Create, Rename, Delete
 
     object ResourceOperationKind:
-        given Schema[ResourceOperationKind] = ??? // Phase 02 fills
+        given Schema[ResourceOperationKind] = internal.lsp.LspWireEnumSchemas.resourceOperationKindSchema
 
     /** Options for creating a file. */
     final case class CreateFileOptions(overwrite: Maybe[Boolean] = Absent, ignoreIfExists: Maybe[Boolean] = Absent) derives Schema, CanEqual
@@ -946,7 +946,7 @@ object LspHandler:
         final case class Create(value: CreateFile)     extends WorkspaceEditDocumentChange
         final case class Rename(value: RenameFile)     extends WorkspaceEditDocumentChange
         final case class Delete(value: DeleteFile)     extends WorkspaceEditDocumentChange
-        given Schema[WorkspaceEditDocumentChange] = ??? // Phase 02 fills
+        given Schema[WorkspaceEditDocumentChange] = internal.lsp.LspContentSchemas.workspaceEditDocumentChangeSchema
     end WorkspaceEditDocumentChange
 
     /** A workspace edit represents changes to many resources managed in the workspace. */
@@ -1013,7 +1013,7 @@ object LspHandler:
         final case class JustRange(range: Range)                                 extends PrepareRenameResult
         final case class RangeWithPlaceholder(range: Range, placeholder: String) extends PrepareRenameResult
         final case class DefaultBehavior(defaultBehavior: Boolean)               extends PrepareRenameResult
-        given Schema[PrepareRenameResult] = ??? // Phase 02 fills
+        given Schema[PrepareRenameResult] = internal.lsp.LspContentSchemas.prepareRenameResultSchema
     end PrepareRenameResult
 
     /** A definition result: one or more locations. */
@@ -1023,7 +1023,7 @@ object LspHandler:
         final case class One(location: Location)           extends DefinitionResult
         final case class Many(locations: Chunk[Location])  extends DefinitionResult
         final case class Links(links: Chunk[LocationLink]) extends DefinitionResult
-        given Schema[DefinitionResult] = ??? // Phase 02 fills
+        given Schema[DefinitionResult] = internal.lsp.LspContentSchemas.definitionResultSchema
     end DefinitionResult
 
     /** A declaration result: one or more locations. */
@@ -1033,7 +1033,7 @@ object LspHandler:
         final case class One(location: Location)           extends DeclarationResult
         final case class Many(locations: Chunk[Location])  extends DeclarationResult
         final case class Links(links: Chunk[LocationLink]) extends DeclarationResult
-        given Schema[DeclarationResult] = ??? // Phase 02 fills
+        given Schema[DeclarationResult] = internal.lsp.LspContentSchemas.declarationResultSchema
     end DeclarationResult
 
     /** A type definition result: one or more locations. */
@@ -1043,7 +1043,7 @@ object LspHandler:
         final case class One(location: Location)           extends TypeDefinitionResult
         final case class Many(locations: Chunk[Location])  extends TypeDefinitionResult
         final case class Links(links: Chunk[LocationLink]) extends TypeDefinitionResult
-        given Schema[TypeDefinitionResult] = ??? // Phase 02 fills
+        given Schema[TypeDefinitionResult] = internal.lsp.LspContentSchemas.typeDefinitionResultSchema
     end TypeDefinitionResult
 
     /** An implementation result: one or more locations. */
@@ -1053,7 +1053,7 @@ object LspHandler:
         final case class One(location: Location)           extends ImplementationResult
         final case class Many(locations: Chunk[Location])  extends ImplementationResult
         final case class Links(links: Chunk[LocationLink]) extends ImplementationResult
-        given Schema[ImplementationResult] = ??? // Phase 02 fills
+        given Schema[ImplementationResult] = internal.lsp.LspContentSchemas.implementationResultSchema
     end ImplementationResult
 
     /** Options for hover registration. */
@@ -1101,8 +1101,8 @@ object LspHandler:
                 case Present(s) =>
                     Json.decode[X](s) match
                         case Result.Success(v) => Present(v)
-                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("callHierarchy/prepare", "data", e.toString))
-                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("callHierarchy/prepare", "data", e.getMessage))
+                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("callHierarchy/prepare", e.toString, e))
+                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("callHierarchy/prepare", e.getMessage, e))
     end CallHierarchyItem
 
     object CallHierarchyItem:
@@ -1141,8 +1141,8 @@ object LspHandler:
                 case Present(s) =>
                     Json.decode[X](s) match
                         case Result.Success(v) => Present(v)
-                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("typeHierarchy/prepare", "data", e.toString))
-                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("typeHierarchy/prepare", "data", e.getMessage))
+                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("typeHierarchy/prepare", e.toString, e))
+                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("typeHierarchy/prepare", e.getMessage, e))
     end TypeHierarchyItem
 
     object TypeHierarchyItem:
@@ -1156,14 +1156,14 @@ object LspHandler:
         case Import, Export, Local
 
     object MonikerKind:
-        given Schema[MonikerKind] = ??? // Phase 02 fills
+        given Schema[MonikerKind] = internal.lsp.LspWireEnumSchemas.monikerKindSchema
 
     /** The degree of uniqueness for a moniker. */
     enum UniquenessLevel derives CanEqual:
         case Document, Project, Group, Scheme, Global
 
     object UniquenessLevel:
-        given Schema[UniquenessLevel] = ??? // Phase 02 fills
+        given Schema[UniquenessLevel] = internal.lsp.LspWireEnumSchemas.uniquenessLevelSchema
 
     /** A moniker is a language-agnostic name for a symbol. */
     final case class Moniker(
@@ -1301,7 +1301,7 @@ object LspHandler:
     object SemanticTokensResult:
         final case class Full(tokens: SemanticTokens)      extends SemanticTokensResult
         final case class Delta(delta: SemanticTokensDelta) extends SemanticTokensResult
-        given Schema[SemanticTokensResult] = ??? // Phase 02 fills
+        given Schema[SemanticTokensResult] = internal.lsp.LspContentSchemas.semanticTokensResultSchema
     end SemanticTokensResult
 
     /** Options for semantic tokens registration. */
@@ -1322,7 +1322,7 @@ object LspHandler:
         case Type, Parameter
 
     object InlayHintKind:
-        given Schema[InlayHintKind] = ??? // Phase 02 fills
+        given Schema[InlayHintKind] = internal.lsp.LspWireEnumSchemas.inlayHintKindSchema
 
     /** An inlay hint label part: either a plain string or a structured part. */
     sealed trait InlayHintLabelPart derives CanEqual
@@ -1335,7 +1335,7 @@ object LspHandler:
             location: Maybe[Location] = Absent,
             command: Maybe[Command] = Absent
         ) extends InlayHintLabelPart
-        given Schema[InlayHintLabelPart] = ??? // Phase 02 fills
+        given Schema[InlayHintLabelPart] = internal.lsp.LspContentSchemas.inlayHintLabelPartSchema
     end InlayHintLabelPart
 
     /** An inlay hint label: either a plain string or a list of parts. */
@@ -1344,7 +1344,7 @@ object LspHandler:
     object InlayHintLabel:
         final case class PlainString(value: String)              extends InlayHintLabel
         final case class Parts(value: Chunk[InlayHintLabelPart]) extends InlayHintLabel
-        given Schema[InlayHintLabel] = ??? // Phase 02 fills
+        given Schema[InlayHintLabel] = internal.lsp.LspContentSchemas.inlayHintLabelSchema
     end InlayHintLabel
 
     /** An inlay hint with typed data carrier. */
@@ -1365,8 +1365,8 @@ object LspHandler:
                 case Present(s) =>
                     Json.decode[X](s) match
                         case Result.Success(v) => Present(v)
-                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/inlayHint", "data", e.toString))
-                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("textDocument/inlayHint", "data", e.getMessage))
+                        case Result.Failure(e) => Abort.fail(LspException.Execution.Decode("textDocument/inlayHint", e.toString, e))
+                        case Result.Panic(e)   => Abort.fail(LspException.Execution.Decode("textDocument/inlayHint", e.getMessage, e))
     end InlayHint
 
     object InlayHint:
@@ -1387,7 +1387,7 @@ object LspHandler:
         final case class VariableLookup(range: Range, variableName: Maybe[String] = Absent, caseSensitiveLookup: Boolean)
             extends InlineValue
         final case class EvaluatableExpression(range: Range, expression: Maybe[String] = Absent) extends InlineValue
-        given Schema[InlineValue] = ??? // Phase 02 fills
+        given Schema[InlineValue] = internal.lsp.LspContentSchemas.inlineValueSchema
     end InlineValue
 
     /** Options for inline value registration. */
@@ -1400,7 +1400,7 @@ object LspHandler:
         case Markup, Code
 
     object NotebookCellKind:
-        given Schema[NotebookCellKind] = ??? // Phase 02 fills
+        given Schema[NotebookCellKind] = internal.lsp.LspWireEnumSchemas.notebookCellKindSchema
 
     /** An execution summary for a notebook cell. */
     final case class ExecutionSummary(executionOrder: Int, success: Maybe[Boolean] = Absent) derives Schema, CanEqual
@@ -1440,7 +1440,7 @@ object LspHandler:
             extends NotebookDocumentFilter
         final case class WithPattern(notebookType: Maybe[String] = Absent, scheme: Maybe[String] = Absent, pattern: String)
             extends NotebookDocumentFilter
-        given Schema[NotebookDocumentFilter] = ??? // Phase 02 fills
+        given Schema[NotebookDocumentFilter] = internal.lsp.LspContentSchemas.notebookDocumentFilterSchema
     end NotebookDocumentFilter
 
     /** A notebook cell text document filter. */
@@ -1515,7 +1515,7 @@ object LspHandler:
         case Error, Warning, Info, Log, Debug
 
     object MessageType:
-        given Schema[MessageType] = ??? // Phase 02 fills
+        given Schema[MessageType] = internal.lsp.LspWireEnumSchemas.messageTypeSchema
 
     /** An action item of a message. */
     final case class MessageActionItem(title: String) derives Schema, CanEqual
@@ -1595,7 +1595,7 @@ object LspHandler:
         case Created, Changed, Deleted
 
     object FileChangeType:
-        given Schema[FileChangeType] = ??? // Phase 02 fills
+        given Schema[FileChangeType] = internal.lsp.LspWireEnumSchemas.fileChangeTypeSchema
 
     /** Parameters for `workspace/didChangeWatchedFiles`. */
     final case class DidChangeWatchedFilesParams(changes: Chunk[FileEvent]) derives Schema, CanEqual
@@ -1628,7 +1628,7 @@ object LspHandler:
         case File, Folder
 
     object FileOperationPatternKind:
-        given Schema[FileOperationPatternKind] = ??? // Phase 02 fills
+        given Schema[FileOperationPatternKind] = internal.lsp.LspWireEnumSchemas.fileOperationPatternKindSchema
 
     /** A file operation pattern. */
     final case class FileOperationPattern(
@@ -1700,9 +1700,9 @@ object LspHandler:
                     Json.decode[X](s) match
                         case Result.Success(v) => Present(v)
                         case Result.Failure(e) =>
-                            Abort.fail(LspException.Execution.Decode("client/registerCapability", "registerOptions", e.toString))
+                            Abort.fail(LspException.Execution.Decode("client/registerCapability", e.toString, e))
                         case Result.Panic(e) =>
-                            Abort.fail(LspException.Execution.Decode("client/registerCapability", "registerOptions", e.getMessage))
+                            Abort.fail(LspException.Execution.Decode("client/registerCapability", e.getMessage, e))
     end Registration
 
     object Registration:
@@ -1710,7 +1710,7 @@ object LspHandler:
             new Registration(id, method, Present(Json.encode[X](options)))
         def apply(id: String, method: String): Registration =
             new Registration(id, method, Absent)
-        given Schema[Registration] = ??? // Phase 02 fills with hand-rolled codec
+        given Schema[Registration] = internal.lsp.LspContentSchemas.registrationSchema
     end Registration
 
     /** Represents an unregistration. */
@@ -2038,7 +2038,7 @@ object LspHandler:
     object BooleanOr:
         final case class Bool[+T](value: Boolean) extends BooleanOr[T]
         final case class Options[+T](value: T)    extends BooleanOr[T]
-        given [T: Schema]: Schema[BooleanOr[T]] = ??? // Phase 02 fills
+        given [T: Schema]: Schema[BooleanOr[T]] = internal.lsp.LspWireEnumSchemas.given_Schema_BooleanOr
     end BooleanOr
 
     /** A value that is either a string or a typed options record. */
@@ -2047,7 +2047,7 @@ object LspHandler:
     object StringOr:
         final case class Str[+T](value: String) extends StringOr[T]
         final case class Options[+T](value: T)  extends StringOr[T]
-        given [T: Schema]: Schema[StringOr[T]] = ??? // Phase 02 fills
+        given [T: Schema]: Schema[StringOr[T]] = internal.lsp.LspWireEnumSchemas.given_Schema_StringOr
     end StringOr
 
     // MARK: -- textDocument namespace factory object

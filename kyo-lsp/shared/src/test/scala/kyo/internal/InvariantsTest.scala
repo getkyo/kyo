@@ -79,19 +79,20 @@ class InvariantsTest extends Test:
 
     // INV-015: Exception code mapping.
     "INV-015: RequestCancelled code is -32800" in run {
-        val e = LspException.Execution.RequestCancelled(Absent)
+        val e = LspException.Execution.RequestCancelled(JsonRpcId(1L))
         assert(e.code == -32800)
         succeed
     }
 
     "INV-015: ContentModified code is -32801" in run {
-        val e = LspException.Execution.ContentModified()
+        val uri = LspHandler.LspDocument.Uri.parse("file:///Main.scala").get
+        val e   = LspException.Execution.ContentModified(uri)
         assert(e.code == -32801)
         succeed
     }
 
     "INV-015: ServerCancelled code is -32802" in run {
-        val e = LspException.Execution.ServerCancelled()
+        val e = LspException.Execution.ServerCancelled("timeout")
         assert(e.code == -32802)
         succeed
     }
