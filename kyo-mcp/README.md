@@ -181,7 +181,7 @@ val explainPrompt: McpHandler[Map[String, String], McpRoute.PromptGetResult, Mcp
         McpRoute.PromptGetResult(
             description = Present(s"Explain $topic"),
             messages = Chunk(McpRoute.PromptMessage(
-                role    = McpRole.User,
+                role    = McpContent.Role.User,
                 content = McpContent.text(s"Please explain $topic.")
             ))
         )
@@ -320,7 +320,7 @@ val askLLM: McpHandler[Weather, McpContent, McpException] =
     McpRoute.tool[Weather]("askLLM").handler { req =>
         val sampling = McpServer.SamplingRequest(
             messages         = Chunk(McpServer.SamplingRequest.Message(
-                role    = McpRole.User,
+                role    = McpContent.Role.User,
                 content = McpServer.SamplingContent.Text(s"What is the weather like in ${req.city}?")
             )),
             modelPreferences = Present(McpServer.SamplingRequest.ModelPreferences(

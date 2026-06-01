@@ -16,8 +16,7 @@ class InvariantsTest extends Test:
     // Types whose test coverage is provided by a differently-named file (enum-schema aggregates, etc.).
     // Rule 8c exceptions documented here.
     private val coveredByAlternateFile: Set[String] = Set(
-        // McpRole, McpStopReason are covered by McpEnumSchemaTest
-        "McpRole",
+        // McpStopReason is covered by McpEnumSchemaTest
         "McpStopReason",
         // McpCapabilities covered by McpCapabilityGateTest and McpCapabilityDerivationTest
         "McpCapabilities",

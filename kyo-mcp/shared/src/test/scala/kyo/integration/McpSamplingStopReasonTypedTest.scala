@@ -50,7 +50,7 @@ class McpSamplingStopReasonTypedTest extends Test:
 
     "SamplingResponse encodes stopReason field correctly" in {
         val resp = McpServer.SamplingResponse(
-            role = McpRole.Assistant,
+            role = McpContent.Role.Assistant,
             content = McpContent.text("hi"),
             model = "m",
             stopReason = Present(StopReason.EndTurn)
@@ -62,7 +62,7 @@ class McpSamplingStopReasonTypedTest extends Test:
 
     "SamplingResponse with Absent stopReason omits the field" in {
         val resp = McpServer.SamplingResponse(
-            role = McpRole.Assistant,
+            role = McpContent.Role.Assistant,
             content = McpContent.text("hi"),
             model = "m",
             stopReason = Absent
@@ -74,7 +74,7 @@ class McpSamplingStopReasonTypedTest extends Test:
     "SamplingResponse.stopReason is typed Maybe[StopReason] not Maybe[String]" in {
         // Compile-time check: stopReason field has the correct type.
         val resp = McpServer.SamplingResponse(
-            role = McpRole.Assistant,
+            role = McpContent.Role.Assistant,
             content = McpContent.text("hi"),
             model = "m",
             stopReason = Present(StopReason.MaxTokens)

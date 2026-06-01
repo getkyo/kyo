@@ -69,7 +69,7 @@ class McpContentTest extends Test:
     }
 
     "Text with annotations round-trips correctly" in {
-        val ann     = McpContent.Annotations(Present(Chunk(McpRole.User)), Absent)
+        val ann     = McpContent.Annotations(Present(Chunk(McpContent.Role.User)), Absent)
         val content = McpContent.Text("hello", ann)
         assert(roundtrip[McpContent](content) == content)
     }
@@ -117,7 +117,7 @@ class McpContentTest extends Test:
 
     "ResourceLink with annotations round-trips" in {
         val uri     = McpResourceUri("file:///e")
-        val ann     = McpContent.Annotations(Present(Chunk(McpRole.User)), Absent)
+        val ann     = McpContent.Annotations(Present(Chunk(McpContent.Role.User)), Absent)
         val content = McpContent.ResourceLink(uri, "e-file", Absent, Absent, ann)
         assert(roundtrip[McpContent](content) == content)
     }

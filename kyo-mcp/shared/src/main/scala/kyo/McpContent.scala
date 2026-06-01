@@ -17,6 +17,24 @@ sealed trait McpContent derives CanEqual
 
 object McpContent:
 
+    /** MCP conversation role.
+      *
+      * Wire strings diverge from Scala case names: `"user"` / `"assistant"` / `"system"` (lowercase).
+      * Do NOT add `Schema` to the `derives` clause.
+      */
+    enum Role derives CanEqual:
+        case User, Assistant, System
+
+    object Role:
+
+        // Wire strings: "user" | "assistant" | "system" (INV-010).
+        // capitalize maps lowercase wire string to Scala case name: "user" -> "User".
+        given Schema[Role] = Schema.stringSchema.transform(s => Role.valueOf(s.capitalize))(
+            _.toString.toLowerCase
+        )
+
+    end Role
+
     /** Plain-text content. */
     final case class Text(
         text: String,
@@ -60,7 +78,7 @@ object McpContent:
       * factory; the wire schema omits the `annotations` field when the value equals `.noop`.
       */
     final case class Annotations(
-        audience: Maybe[Chunk[McpRole]] = Absent,
+        audience: Maybe[Chunk[Role]] = Absent,
         priority: Maybe[Double] = Absent,
         lastModified: Maybe[String] = Absent
     ) derives Schema, CanEqual

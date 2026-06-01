@@ -2,7 +2,7 @@ package kyo
 
 /** Tests for spec-divergent enum Schemas using hand-rolled `Schema.stringSchema.transform` (Phase 3).
   *
-  * Pins INV-010: all four wire-divergent enums (`McpRole`, `McpServer.LogLevel`,
+  * Pins INV-010: all four wire-divergent enums (`McpContent.Role`, `McpServer.LogLevel`,
   * `McpServer.ElicitationResponse.Action`, `McpServer.SamplingRequest.IncludeContext`) use `transform`,
   * not `derives Schema`. The lint assertions (JVM-only) read each source file and verify
   * zero `derives Schema` lines on the enum declaration.
@@ -15,24 +15,24 @@ class McpEnumSchemaTest extends Test:
     private def decode[A: Schema](json: String): A  = Json.decode[A](json).getOrThrow
     private def roundtrip[A: Schema](value: A): A   = decode[A](encode[A](value))
 
-    // ---- McpRole ----
+    // ---- McpContent.Role ----
 
-    "McpRole.User encodes to \"user\"" in {
-        assert(encode[McpRole](McpRole.User) == "\"user\"")
+    "McpContent.Role.User encodes to \"user\"" in {
+        assert(encode[McpContent.Role](McpContent.Role.User) == "\"user\"")
     }
 
-    "McpRole.Assistant encodes to \"assistant\"" in {
-        assert(encode[McpRole](McpRole.Assistant) == "\"assistant\"")
+    "McpContent.Role.Assistant encodes to \"assistant\"" in {
+        assert(encode[McpContent.Role](McpContent.Role.Assistant) == "\"assistant\"")
     }
 
-    "McpRole.System encodes to \"system\"" in {
-        assert(encode[McpRole](McpRole.System) == "\"system\"")
+    "McpContent.Role.System encodes to \"system\"" in {
+        assert(encode[McpContent.Role](McpContent.Role.System) == "\"system\"")
     }
 
-    "McpRole round-trips" in {
-        assert(roundtrip[McpRole](McpRole.User) == McpRole.User)
-        assert(roundtrip[McpRole](McpRole.Assistant) == McpRole.Assistant)
-        assert(roundtrip[McpRole](McpRole.System) == McpRole.System)
+    "McpContent.Role round-trips" in {
+        assert(roundtrip[McpContent.Role](McpContent.Role.User) == McpContent.Role.User)
+        assert(roundtrip[McpContent.Role](McpContent.Role.Assistant) == McpContent.Role.Assistant)
+        assert(roundtrip[McpContent.Role](McpContent.Role.System) == McpContent.Role.System)
     }
 
     // ---- McpServer.LogLevel ----
@@ -139,8 +139,8 @@ class McpEnumSchemaTest extends Test:
 
     // ---- Lint: no `derives Schema` on any of the four enums (JVM-only) ----
 
-    "McpRole Schema uses transform (segments are empty, not a derived enum schema)" in {
-        val schema = summon[Schema[McpRole]]
+    "McpContent.Role Schema uses transform (segments are empty, not a derived enum schema)" in {
+        val schema = summon[Schema[McpContent.Role]]
         assert(schema.segments.isEmpty)
     }
 

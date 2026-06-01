@@ -149,7 +149,7 @@ object McpRoute:
       * the wire so the field is omitted.
       */
     final case class ResourceAnnotations(
-        audience: Maybe[Chunk[McpRole]] = Absent,
+        audience: Maybe[Chunk[McpContent.Role]] = Absent,
         priority: Maybe[Double] = Absent,
         lastModified: Maybe[String] = Absent
     ) derives Schema, CanEqual
@@ -187,7 +187,7 @@ object McpRoute:
     ) derives Schema, CanEqual
 
     /** A single message in a prompt result. */
-    final case class PromptMessage(role: McpRole, content: McpContent) derives Schema, CanEqual
+    final case class PromptMessage(role: McpContent.Role, content: McpContent) derives Schema, CanEqual
 
     /** Identifies the target of a completion request.
       * INV-022: `Resource.uri` is typed `McpResourceUri`.

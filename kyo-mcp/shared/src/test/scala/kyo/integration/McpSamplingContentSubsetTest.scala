@@ -57,7 +57,7 @@ class McpSamplingContentSubsetTest extends Test:
 
     "SamplingRequest with SamplingContent.Text message round-trips" in {
         val req = McpServer.SamplingRequest(
-            messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("q"))),
+            messages = Chunk(McpServer.SamplingRequest.Message(McpContent.Role.User, McpServer.SamplingContent.Text("q"))),
             maxTokens = 128
         )
         val decoded = decode[McpServer.SamplingRequest](encode[McpServer.SamplingRequest](req))

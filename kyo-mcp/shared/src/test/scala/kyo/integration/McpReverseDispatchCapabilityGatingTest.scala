@@ -20,7 +20,7 @@ class McpReverseDispatchCapabilityGatingTest extends Test:
                     srv.requestSampling(
                         McpServer.SamplingRequest(
                             messages = Chunk(McpServer.SamplingRequest.Message(
-                                McpRole.User,
+                                McpContent.Role.User,
                                 McpServer.SamplingContent.Text("q")
                             )),
                             maxTokens = 10
@@ -60,7 +60,7 @@ class McpReverseDispatchCapabilityGatingTest extends Test:
                     srv.requestSampling(
                         McpServer.SamplingRequest(
                             messages = Chunk(McpServer.SamplingRequest.Message(
-                                McpRole.User,
+                                McpContent.Role.User,
                                 McpServer.SamplingContent.Text("q")
                             )),
                             maxTokens = 10

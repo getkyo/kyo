@@ -51,7 +51,7 @@ object McpServer:
     object SamplingRequest:
 
         /** A single message in the sampling conversation. */
-        final case class Message(role: McpRole, content: SamplingContent) derives Schema, CanEqual
+        final case class Message(role: McpContent.Role, content: SamplingContent) derives Schema, CanEqual
 
         /** Hints for model selection. */
         final case class ModelPreferences(
@@ -134,7 +134,7 @@ object McpServer:
       * @param stopReason the reason generation stopped, if known; typed per §3.5
       */
     final case class SamplingResponse(
-        role: McpRole,
+        role: McpContent.Role,
         content: McpContent,
         model: String,
         stopReason: Maybe[SamplingResponse.StopReason] = Absent

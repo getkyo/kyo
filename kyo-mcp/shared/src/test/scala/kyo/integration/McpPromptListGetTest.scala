@@ -12,7 +12,7 @@ class McpPromptListGetTest extends Test:
     ).handler { args =>
         McpRoute.PromptGetResult(
             description = Absent,
-            messages = Chunk(McpRoute.PromptMessage(McpRole.User, McpContent.text(s"hello ${args("name")}")))
+            messages = Chunk(McpRoute.PromptMessage(McpContent.Role.User, McpContent.text(s"hello ${args("name")}")))
         )
     }
 
@@ -48,7 +48,7 @@ class McpPromptListGetTest extends Test:
                         _ <- client.closeNow
                     yield
                         assert(result.messages.size == 1)
-                        assert(result.messages.head.role == McpRole.User)
+                        assert(result.messages.head.role == McpContent.Role.User)
                         result.messages.head.content match
                             case McpContent.Text(text, _) => assert(text == "hello world")
                             case other                    => fail(s"unexpected content: $other")

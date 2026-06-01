@@ -10,7 +10,7 @@ class McpSamplingReverseTest extends Test:
     private val samplingRoute =
         McpRoute.custom[McpServer.SamplingRequest]("sampling/createMessage").handler { req =>
             McpServer.SamplingResponse(
-                role = McpRole.Assistant,
+                role = McpContent.Role.Assistant,
                 content = McpContent.text("reply"),
                 model = "model-x",
                 stopReason = Present(McpServer.SamplingResponse.StopReason.EndTurn)
@@ -27,7 +27,7 @@ class McpSamplingReverseTest extends Test:
             ).flatMap { (srv, client) =>
                 srv.requestSampling(
                     McpServer.SamplingRequest(
-                        messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("q"))),
+                        messages = Chunk(McpServer.SamplingRequest.Message(McpContent.Role.User, McpServer.SamplingContent.Text("q"))),
                         maxTokens = 256
                     )
                 ).flatMap { resp =>
@@ -35,7 +35,7 @@ class McpSamplingReverseTest extends Test:
                         _ <- srv.closeNow
                         _ <- client.closeNow
                     yield
-                        assert(resp.role == McpRole.Assistant)
+                        assert(resp.role == McpContent.Role.Assistant)
                         assert(resp.model == "model-x")
                         assert(resp.stopReason == Present(McpServer.SamplingResponse.StopReason.EndTurn))
                     end for
@@ -54,7 +54,7 @@ class McpSamplingReverseTest extends Test:
                 Abort.run[McpException](
                     srv.requestSampling(
                         McpServer.SamplingRequest(
-                            messages = Chunk(McpServer.SamplingRequest.Message(McpRole.User, McpServer.SamplingContent.Text("q"))),
+                            messages = Chunk(McpServer.SamplingRequest.Message(McpContent.Role.User, McpServer.SamplingContent.Text("q"))),
                             maxTokens = 10
                         )
                     )

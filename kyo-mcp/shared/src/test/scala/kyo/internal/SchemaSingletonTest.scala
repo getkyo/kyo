@@ -18,9 +18,9 @@ class SchemaSingletonTest extends Test:
         assert(s1 eq s2)
     }
 
-    "Schema[McpRole] is a singleton val (INV-013)" in {
-        val s1 = summon[Schema[McpRole]]
-        val s2 = summon[Schema[McpRole]]
+    "Schema[McpContent.Role] is a singleton val (INV-013)" in {
+        val s1 = summon[Schema[McpContent.Role]]
+        val s2 = summon[Schema[McpContent.Role]]
         assert(s1 eq s2)
     }
 
