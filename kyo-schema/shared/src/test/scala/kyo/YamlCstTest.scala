@@ -4,6 +4,30 @@ class YamlCstTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
+    private def collectEvents(yaml: String): Chunk[Yaml.Events.Event] =
+        val events = new Yaml.Events.EventHandler[Chunk[Yaml.Events.Event], DecodeException]:
+            override def event(
+                context: Chunk[Yaml.Events.Event],
+                event: Yaml.Events.Event
+            ): Result[DecodeException, Chunk[Yaml.Events.Event]] =
+                Result.succeed(context :+ event)
+        end events
+
+        Yaml.Events.visit(yaml, Chunk.empty[Yaml.Events.Event])(events).getOrThrow
+    end collectEvents
+
+    private def scalarSyntaxFromEvents(yaml: String): Yaml.Cst.ScalarSyntax =
+        Yaml.Cst.fromEvents(collectEvents(yaml)).getOrThrow.root match
+            case Present(Yaml.Cst.Node.Scalar(_, syntax, _, _, _)) => syntax
+            case other                                             => fail(s"Expected scalar root, found $other")
+    end scalarSyntaxFromEvents
+
+    private def parseFailure(result: Result[DecodeException, Yaml.Cst.Document]): String =
+        result match
+            case Result.Failure(e: ParseException) => e.getMessage
+            case other                             => fail(s"Expected ParseException failure, got $other")
+    end parseFailure
+
     "Yaml.Cst public model" - {
 
         "builds structural paths with mapping keys and sequence indexes" in {
@@ -50,18 +74,8 @@ class YamlCstTest extends Test:
                   |age: 30
                   |""".stripMargin
 
-            val events = new Yaml.Events.EventHandler[Chunk[Yaml.Events.Event], DecodeException]:
-                override def event(
-                    context: Chunk[Yaml.Events.Event],
-                    event: Yaml.Events.Event
-                ): Result[DecodeException, Chunk[Yaml.Events.Event]] =
-                    Result.succeed(context :+ event)
-            end events
-
-            val collected =
-                Yaml.Events.visit(yaml, Chunk.empty[Yaml.Events.Event])(events).getOrThrow
             val doc =
-                Yaml.Cst.fromEvents(collected).getOrThrow
+                Yaml.Cst.fromEvents(collectEvents(yaml)).getOrThrow
 
             assertResult(
                 (
@@ -179,6 +193,94 @@ class YamlCstTest extends Test:
             }
         }
 
+        "preserves scalar syntax from parser events" in {
+            assertResult(
+                Chunk(
+                    Yaml.Cst.ScalarSyntax.SingleQuoted,
+                    Yaml.Cst.ScalarSyntax.DoubleQuoted,
+                    Yaml.Cst.ScalarSyntax.Literal,
+                    Yaml.Cst.ScalarSyntax.Folded
+                )
+            ) {
+                Chunk(
+                    scalarSyntaxFromEvents("'Alice'\n"),
+                    scalarSyntaxFromEvents("\"Alice\"\n"),
+                    scalarSyntaxFromEvents("|\n  Alice\n"),
+                    scalarSyntaxFromEvents(">\n  Alice\n")
+                )
+            }
+        }
+
+        "builds canonical CST from schema scalar values" in {
+            val doc =
+                Yaml.Cst.from("Alice").getOrThrow
+
+            assertResult(
+                (
+                    documentSource = Absent,
+                    value = "Alice",
+                    syntax = Yaml.Cst.ScalarSyntax.Canonical,
+                    source = Absent,
+                    decoded = Result.succeed("Alice")
+                )
+            ) {
+                doc.root match
+                    case Present(Yaml.Cst.Node.Scalar(value, syntax, _, _, source)) =>
+                        (
+                            documentSource = doc.originalSource,
+                            value = value,
+                            syntax = syntax,
+                            source = source,
+                            decoded = Yaml.decode[String](doc.render(using Yaml.WriterConfig.Default))
+                        )
+                    case other =>
+                        fail(s"Expected scalar root, found $other")
+                end match
+            }
+        }
+
+        "fails to build CST from a second document in an event stream" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val events = Chunk(
+                Yaml.Events.Event.StreamStart(mark),
+                Yaml.Events.Event.DocumentStart(mark),
+                Yaml.Events.Event.Scalar("Alice", Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)),
+                Yaml.Events.Event.DocumentEnd(mark),
+                Yaml.Events.Event.DocumentStart(mark),
+                Yaml.Events.Event.DocumentEnd(mark),
+                Yaml.Events.Event.StreamEnd(mark)
+            )
+
+            assert(parseFailure(Yaml.Cst.fromEvents(events)).contains("Unexpected YAML document start"))
+        }
+
+        "fails to build CST when a document ends before a collection is closed" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val events = Chunk(
+                Yaml.Events.Event.StreamStart(mark),
+                Yaml.Events.Event.DocumentStart(mark),
+                Yaml.Events.Event.MappingStart(Yaml.Meta(Absent, Absent, mark)),
+                Yaml.Events.Event.DocumentEnd(mark),
+                Yaml.Events.Event.CollectionEnd(Yaml.Events.CollectionKind.Mapping, mark),
+                Yaml.Events.Event.StreamEnd(mark)
+            )
+
+            assert(parseFailure(Yaml.Cst.fromEvents(events)).contains("Unclosed YAML collection"))
+        }
+
+        "fails to build CST when a node appears after document end" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val events = Chunk(
+                Yaml.Events.Event.StreamStart(mark),
+                Yaml.Events.Event.DocumentStart(mark),
+                Yaml.Events.Event.DocumentEnd(mark),
+                Yaml.Events.Event.Scalar("Alice", Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)),
+                Yaml.Events.Event.StreamEnd(mark)
+            )
+
+            assert(parseFailure(Yaml.Cst.fromEvents(events)).contains("Unexpected YAML node after document end"))
+        }
+
         "builds canonical nested sequence and mapping CST from parser events" in {
             val yaml =
                 """- name: Alice
@@ -187,18 +289,8 @@ class YamlCstTest extends Test:
                   |  age: 25
                   |""".stripMargin
 
-            val events = new Yaml.Events.EventHandler[Chunk[Yaml.Events.Event], DecodeException]:
-                override def event(
-                    context: Chunk[Yaml.Events.Event],
-                    event: Yaml.Events.Event
-                ): Result[DecodeException, Chunk[Yaml.Events.Event]] =
-                    Result.succeed(context :+ event)
-            end events
-
-            val collected =
-                Yaml.Events.visit(yaml, Chunk.empty[Yaml.Events.Event])(events).getOrThrow
             val doc =
-                Yaml.Cst.fromEvents(collected).getOrThrow
+                Yaml.Cst.fromEvents(collectEvents(yaml)).getOrThrow
 
             doc.root match
                 case Present(Yaml.Cst.Node.Sequence(entries, Yaml.Cst.SequenceSyntax.Canonical, _, _, Absent)) =>

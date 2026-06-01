@@ -11,14 +11,14 @@ private[kyo] object YamlCstBuilder:
     import Yaml.Events.Event
 
     def fromEvents(events: Chunk[Event])(using Frame): Result[DecodeException, Cst.Document] =
-        val builder = new Builder()
+        val builder = new Builder(BuilderMode.PreserveSyntax)
         replay(events, 0, builder).flatMap(_ => builder.result)
     end fromEvents
 
     def fromValue[A](
         value: A
     )(using schema: Schema[A], writerConfig: Yaml.WriterConfig, frame: Frame): Result[DecodeException, Cst.Document] =
-        val builder = new Builder()
+        val builder = new Builder(BuilderMode.Canonical)
         Yaml.Events.write(value, ())(builder).flatMap(_ => builder.result)
     end fromValue
 
@@ -121,19 +121,31 @@ private[kyo] object YamlCstBuilder:
     sealed private trait FrameState
     final private class MappingState(
         val meta: Yaml.Meta,
-        var entries: Chunk[Cst.MappingEntry],
+        val entries: ArrayBuffer[Cst.MappingEntry],
         var pendingKey: Maybe[Cst.Node]
     ) extends FrameState
     final private class SequenceState(
         val meta: Yaml.Meta,
-        var entries: Chunk[Cst.SequenceEntry]
+        val entries: ArrayBuffer[Cst.SequenceEntry]
     ) extends FrameState
 
-    final private class Builder(using Frame) extends Yaml.Events.Handler[Unit, DecodeException]:
+    private enum BuilderMode derives CanEqual:
+        case PreserveSyntax
+        case Canonical
+    end BuilderMode
+
+    private enum DocumentState derives CanEqual:
+        case BeforeDocument
+        case InDocument
+        case AfterDocument
+    end DocumentState
+
+    final private class Builder(mode: BuilderMode)(using Frame) extends Yaml.Events.Handler[Unit, DecodeException]:
         private var root: Maybe[Cst.Node]           = Absent
         private var stack: List[FrameState]         = Nil
         private var documentStart: Maybe[Yaml.Mark] = Absent
         private var documentEnd: Maybe[Yaml.Mark]   = Absent
+        private var documentState: DocumentState    = DocumentState.BeforeDocument
         private var lastMark: Yaml.Mark             = Yaml.Mark(0, 1, 1)
 
         def result: Result[DecodeException, Cst.Document] =
@@ -163,15 +175,32 @@ private[kyo] object YamlCstBuilder:
         end streamStart
 
         override def documentStart(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit] =
-            documentStart = Maybe(mark)
             lastMark = mark
-            Result.unit
+            documentState match
+                case DocumentState.BeforeDocument =>
+                    documentStart = Maybe(mark)
+                    documentState = DocumentState.InDocument
+                    Result.unit
+                case DocumentState.InDocument | DocumentState.AfterDocument =>
+                    Result.fail(parseError("Unexpected YAML document start", mark))
+            end match
         end documentStart
 
         override def documentEnd(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit] =
-            documentEnd = Maybe(mark)
             lastMark = mark
-            Result.unit
+            stack match
+                case _ :: _ =>
+                    Result.fail(parseError("Unclosed YAML collection", mark))
+                case Nil =>
+                    documentState match
+                        case DocumentState.AfterDocument =>
+                            Result.fail(parseError("Unexpected YAML document end", mark))
+                        case DocumentState.BeforeDocument | DocumentState.InDocument =>
+                            documentEnd = Maybe(mark)
+                            documentState = DocumentState.AfterDocument
+                            Result.unit
+                    end match
+            end match
         end documentEnd
 
         override def streamEnd(context: Unit, mark: Yaml.Mark): Result[DecodeException, Unit] =
@@ -181,20 +210,22 @@ private[kyo] object YamlCstBuilder:
 
         override def mappingStart(context: Unit, meta: Yaml.Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
             lastMark = meta.mark
-            stack = MappingState(meta, Chunk.empty, Absent) :: stack
-            Result.unit
+            ensureNodeAllowed(meta.mark).map { _ =>
+                stack = MappingState(meta, ArrayBuffer.empty[Cst.MappingEntry], Absent) :: stack
+            }
         end mappingStart
 
         override def sequenceStart(context: Unit, meta: Yaml.Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
             lastMark = meta.mark
-            stack = SequenceState(meta, Chunk.empty) :: stack
-            Result.unit
+            ensureNodeAllowed(meta.mark).map { _ =>
+                stack = SequenceState(meta, ArrayBuffer.empty[Cst.SequenceEntry]) :: stack
+            }
         end sequenceStart
 
         override def scalar(context: Unit, value: String, meta: Yaml.ScalarMeta): Result[DecodeException, Unit] =
             lastMark = meta.mark
             val nodeSpan = Cst.SourceSpan(meta.mark, meta.mark)
-            addNode(Cst.Node.Scalar(value, Cst.ScalarSyntax.Canonical, meta, nodeSpan, Absent))
+            addNode(Cst.Node.Scalar(value, scalarSyntax(meta.style), meta, nodeSpan, Absent))
         end scalar
 
         override def alias(context: Unit, name: Yaml.Anchor, mark: Yaml.Mark): Result[DecodeException, Unit] =
@@ -217,7 +248,7 @@ private[kyo] object YamlCstBuilder:
                                 stack = rest
                                 val nodeSpan = Cst.SourceSpan(state.meta.mark, mark)
                                 addNode(Cst.Node.Mapping(
-                                    state.entries,
+                                    Chunk.from(state.entries),
                                     Cst.MappingSyntax.Canonical,
                                     state.meta,
                                     nodeSpan,
@@ -232,7 +263,7 @@ private[kyo] object YamlCstBuilder:
                         stack = rest
                         val nodeSpan = Cst.SourceSpan(state.meta.mark, mark)
                         addNode(Cst.Node.Sequence(
-                            state.entries,
+                            Chunk.from(state.entries),
                             Cst.SequenceSyntax.Canonical,
                             state.meta,
                             nodeSpan,
@@ -245,29 +276,57 @@ private[kyo] object YamlCstBuilder:
         end collectionEnd
 
         private def addNode(node: Cst.Node): Result[DecodeException, Unit] =
-            stack match
-                case (state: MappingState) :: _ =>
-                    state.pendingKey match
-                        case Present(key) =>
-                            state.entries = state.entries :+ Cst.MappingEntry(key, node, Cst.SourceSpan(span(key).start, span(node).end))
-                            state.pendingKey = Absent
-                        case Absent =>
-                            state.pendingKey = Maybe(node)
-                    end match
-                    Result.unit
-                case (state: SequenceState) :: _ =>
-                    state.entries = state.entries :+ Cst.SequenceEntry(node, span(node))
-                    Result.unit
-                case Nil =>
-                    root match
-                        case Absent =>
-                            root = Maybe(node)
-                            Result.unit
-                        case Present(_) =>
-                            Result.fail(parseError("Unexpected YAML node after document root", span(node).start))
-                    end match
-            end match
+            ensureNodeAllowed(span(node).start).flatMap { _ =>
+                stack match
+                    case (state: MappingState) :: _ =>
+                        state.pendingKey match
+                            case Present(key) =>
+                                state.entries += Cst.MappingEntry(key, node, Cst.SourceSpan(span(key).start, span(node).end))
+                                state.pendingKey = Absent
+                            case Absent =>
+                                state.pendingKey = Maybe(node)
+                        end match
+                        Result.unit
+                    case (state: SequenceState) :: _ =>
+                        state.entries += Cst.SequenceEntry(node, span(node))
+                        Result.unit
+                    case Nil =>
+                        root match
+                            case Absent =>
+                                root = Maybe(node)
+                                Result.unit
+                            case Present(_) =>
+                                Result.fail(parseError("Unexpected YAML node after document root", span(node).start))
+                        end match
+                end match
+            }
         end addNode
+
+        private def ensureNodeAllowed(mark: Yaml.Mark): Result[DecodeException, Unit] =
+            documentState match
+                case DocumentState.AfterDocument =>
+                    Result.fail(parseError("Unexpected YAML node after document end", mark))
+                case DocumentState.BeforeDocument =>
+                    documentState = DocumentState.InDocument
+                    Result.unit
+                case DocumentState.InDocument =>
+                    Result.unit
+            end match
+        end ensureNodeAllowed
+
+        private def scalarSyntax(style: Yaml.ScalarStyle): Cst.ScalarSyntax =
+            mode match
+                case BuilderMode.Canonical =>
+                    Cst.ScalarSyntax.Canonical
+                case BuilderMode.PreserveSyntax =>
+                    style match
+                        case Yaml.ScalarStyle.Plain        => Cst.ScalarSyntax.Plain
+                        case Yaml.ScalarStyle.SingleQuoted => Cst.ScalarSyntax.SingleQuoted
+                        case Yaml.ScalarStyle.DoubleQuoted => Cst.ScalarSyntax.DoubleQuoted
+                        case Yaml.ScalarStyle.Literal      => Cst.ScalarSyntax.Literal
+                        case Yaml.ScalarStyle.Folded       => Cst.ScalarSyntax.Folded
+            end match
+        end scalarSyntax
     end Builder
 
     private def span(node: Cst.Node): Cst.SourceSpan =
