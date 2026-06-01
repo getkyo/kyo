@@ -1118,7 +1118,9 @@ object Tasty:
 
         // SymbolKind retained for callers that use `sym.kind`
         def kind: SymbolKind = this match
-            case _: Symbol.Package      => SymbolKind.Package
+            case _: Symbol.Package => SymbolKind.Package
+            // EnumCase extends Class; check EnumCase before Class so the subtype takes priority.
+            case _: Symbol.EnumCase     => SymbolKind.EnumCase
             case _: Symbol.Class        => SymbolKind.Class
             case _: Symbol.Trait        => SymbolKind.Trait
             case _: Symbol.Object       => SymbolKind.Object

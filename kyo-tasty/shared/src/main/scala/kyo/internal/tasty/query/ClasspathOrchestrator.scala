@@ -543,18 +543,36 @@ object ClasspathOrchestrator:
                     i = 0
                     for partialSym <- allPartial do
                         val id = i
-                        // Post-process kind: class-form enum cases carry both Enum and Case flags but
-                        // may have been classified as Class by fromTypedefTemplateFlags when the modifier
-                        // scan ran before the flag bytes were available (e.g., Scala 3.8+ TASTy layout
-                        // where TEMPLATE ends at TYPEDEF end, leaving no gap for the modifier pass).
-                        // Reclassify Class + Enum + Case (no Module) to EnumCase here, where all flags
-                        // are finalized. Regular case classes do not carry the Enum flag, so this
-                        // reclassification does not affect them.
+                        // Post-process kind: reclassify all forms of Scala 3 enum cases and Java enum
+                        // constants to EnumCase. The initial classification from AstUnpickler/ClassfileUnpickler
+                        // does not always produce EnumCase directly:
+                        //
+                        // (1) Class + Enum + Case (no Module): class-form enum case, e.g. `case Circle(r: Double)`.
+                        //     fromTypedefTemplateFlags may have missed the Enum+Case flags if the modifier scan
+                        //     ran before the bytes were fully available (Scala 3.8+ TASTy layout).
+                        //
+                        // (2) Val + Enum + Case: simple value-form enum case, e.g. `case Red, Green, Blue`.
+                        //     Scala 3 compiles these to VALDEF nodes in the companion object with Enum+Case flags.
+                        //     fromValdefFlags only checks Mutable, so they arrive as Val.
+                        //
+                        // (3) Field + Enum + JavaDefined + Static: Java enum constant, e.g. RetentionPolicy.RUNTIME.
+                        //     ClassfileUnpickler maps ACC_STATIC -> Field. ACC_ENUM -> Flag.Enum (no Case flag).
+                        //
+                        // Note: Module + Enum + Case symbols are companion objects of class-form enum cases (or
+                        // singleton `case object` forms). These remain as Symbol.Object intentionally; Module takes
+                        // priority in fromTypedefTemplateFlags and the finalizeMerge reclassification does not
+                        // override it. A `case object Red` in an enum is the companion, not the case itself.
                         val adjustedKind =
-                            if partialSym.kind == Tasty.SymbolKind.Class &&
-                                partialSym.flags.contains(Tasty.Flag.Enum) &&
+                            if partialSym.flags.contains(Tasty.Flag.Enum) &&
                                 partialSym.flags.contains(Tasty.Flag.Case) &&
-                                !partialSym.flags.contains(Tasty.Flag.Module)
+                                (partialSym.kind == Tasty.SymbolKind.Class
+                                    && !partialSym.flags.contains(Tasty.Flag.Module)
+                                    || partialSym.kind == Tasty.SymbolKind.Val)
+                            then Tasty.SymbolKind.EnumCase
+                            else if partialSym.kind == Tasty.SymbolKind.Field &&
+                                partialSym.flags.contains(Tasty.Flag.Enum) &&
+                                partialSym.flags.contains(Tasty.Flag.JavaDefined) &&
+                                partialSym.flags.contains(Tasty.Flag.Static)
                             then Tasty.SymbolKind.EnumCase
                             else partialSym.kind
                         descs(i) = new SymbolDescriptor(
