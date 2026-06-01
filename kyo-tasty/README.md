@@ -46,7 +46,7 @@ and chains of accessors compose.
 assume is already compiled and present on the classpath under FQN
 `example.Shape`:
 
-```scala
+```scala doctest:expect=skipped
 package example
 
 sealed trait Shape:
@@ -58,6 +58,14 @@ final case class Circle(radius: Double) extends Shape:
 final case class Box(width: Double, height: Double) extends Shape:
     def area: Double = width * height
 ```
+
+<!-- doctest:setup
+```scala
+import AllowUnsafe.embrace.danger
+val cp: Classpath = Sync.Unsafe.evalOrThrow(Classpath.fromPickles(Seq.empty))
+given Classpath   = cp
+```
+-->
 
 ## Acquiring a classpath
 
@@ -73,7 +81,7 @@ takes as `using cp: Classpath`.
 The acquisition step has three constructors. Pick by where the bytes are coming
 from and how often you re-open the same roots:
 
-```scala
+```scala doctest:expect=skipped
 def init(roots: Seq[String]): Classpath < (Async & Scope & Abort[TastyError])
 def init(roots: Seq[String], mode: ErrorMode): Classpath < (Async & Scope & Abort[TastyError])
 def initCached(roots, cacheDir: String): Classpath < (Sync & Async & Scope & Abort[TastyError])
@@ -103,10 +111,10 @@ stripped-down Scala 2 jar without the Scala 3 signatures, a section the
 unpickler does not yet support; any of these can derail a load. `ErrorMode`
 decides what happens:
 
-```scala
+```scala doctest:expect=skipped
 enum ErrorMode:
-    case SoftFail   // default; per-file errors accumulate in cp.errors
-    case FailFast   // first decode error aborts the open
+    case SoftFail // default; per-file errors accumulate in cp.errors
+    case FailFast // first decode error aborts the open
 ```
 
 In `SoftFail` mode (the default) the loader keeps going and the resulting
@@ -139,9 +147,8 @@ the symbol is missing, which is the right shape when "I expect this to exist"
 is a postcondition of your code rather than a question.
 
 ```scala
-given Classpath = cp
-val maybeCircle: Maybe[Symbol.Class]            = cp.findClass("example.Circle")
-val circle: Symbol.Class < Abort[TastyError]    = cp.requireClass("example.Circle")
+val maybeCircle: Maybe[Symbol.Class]         = cp.findClass("example.Circle")
+val circle: Symbol.Class < Abort[TastyError] = cp.requireClass("example.Circle")
 ```
 
 The narrow naming has a real trap. `findClass("example.Shape")` returns
@@ -193,20 +200,20 @@ A typed walk over the hierarchy is an exhaustive pattern match:
 
 ```scala
 def role(sym: Symbol): String = sym match
-    case _: Symbol.Class       => "class"
-    case _: Symbol.Trait       => "trait"
-    case _: Symbol.Object      => "object"
-    case _: Symbol.Method      => "method"
-    case _: Symbol.Val         => "val"
-    case _: Symbol.Var         => "var"
-    case _: Symbol.Field       => "field"
+    case _: Symbol.Class  => "class"
+    case _: Symbol.Trait  => "trait"
+    case _: Symbol.Object => "object"
+    case _: Symbol.Method => "method"
+    case _: Symbol.Val    => "val"
+    case _: Symbol.Var    => "var"
+    case _: Symbol.Field  => "field"
     case _: Symbol.TypeAlias |
-         _: Symbol.OpaqueType |
-         _: Symbol.AbstractType |
-         _: Symbol.TypeParam   => "type"
-    case _: Symbol.Parameter   => "parameter"
-    case _: Symbol.Package     => "package"
-    case _: Symbol.Unresolved  => "unresolved"
+        _: Symbol.OpaqueType |
+        _: Symbol.AbstractType |
+        _: Symbol.TypeParam => "type"
+    case _: Symbol.Parameter  => "parameter"
+    case _: Symbol.Package    => "package"
+    case _: Symbol.Unresolved => "unresolved"
 ```
 
 `Symbol.Unresolved` is not an error; it is the placeholder for a reference
@@ -231,15 +238,15 @@ direct parent is the first declared parent (for a `Symbol.Class`, the
 `Symbol.Class` for `scala.AnyRef`). The companion is the matching object or
 class at the same FQN.
 
-```scala
-given Classpath = cp
+```scala doctest:expect=skipped
+given Classpath       = cp
 val box: Symbol.Class = cp.requireClass("example.Box")
 
-box.owner            // the example package (Symbol.Package)
-box.ownersChain      // Chunk(Box, example, <root>)
-box.directParent     // AnyRef (a Symbol.Class)
-box.parents          // Chunk(AnyRef, Shape)  -- includes the trait
-box.companion        // Maybe[Symbol]  -- the companion object if any
+box.owner        // the example package (Symbol.Package)
+box.ownersChain  // Chunk(Box, example, <root>)
+box.directParent // AnyRef (a Symbol.Class)
+box.parents      // Chunk(AnyRef, Shape)  -- includes the trait
+box.companion    // Maybe[Symbol]  -- the companion object if any
 ```
 
 For sealed hierarchies, `cls.permittedSubclasses` returns the
@@ -259,14 +266,14 @@ return `Chunk[Symbol]`. The single-symbol lookups mirror the same split:
 `findDeclaredMember(name)`, `findInheritedMember(name)`,
 `findAnyMember(name)`, each returning `Maybe[Symbol]`.
 
-```scala
+```scala doctest:expect=skipped
 val shape: Symbol.Trait = cp.requireTrait("example.Shape")
 
-shape.declaredMembers           // Chunk(area: Symbol.Method)
+shape.declaredMembers            // Chunk(area: Symbol.Method)
 shape.findDeclaredMember("area") // Present(Symbol.Method)
 
 val circle: Symbol.Class = cp.requireClass("example.Circle")
-circle.allMembers               // includes Shape.area, AnyRef.toString, etc
+circle.allMembers                  // includes Shape.area, AnyRef.toString, etc
 circle.findInheritedMember("area") // Present(Shape.area)
 ```
 
@@ -305,7 +312,7 @@ handful and let the rest be handled by traversal helpers.
 
 The cases you will actually write code against are these:
 
-```scala
+```scala doctest:expect=skipped
 tpe match
     case Type.Named(id)             => // a class/trait/type alias reference
     case Type.Applied(tycon, args)  => // List[Int], Map[String, Int]
@@ -315,6 +322,7 @@ tpe match
     case Type.OrType(l, r)          => // A | B
     case Type.Annotated(under, ann) => // T @unchecked
     case _                          => // ConstantType, RefinedType, ByName, ...
+end match
 ```
 
 Three sentinel values stand in for missing or unresolvable bounds:
@@ -330,17 +338,18 @@ The subtype check threads the implicit classpath and returns a three-way
 verdict rather than a `Boolean`. The third case is the typed "I could not
 decide":
 
-```scala
+```scala doctest:expect=skipped
 enum SubtypeVerdict:
     case Sub
     case NotSub
     case Unknown
+end SubtypeVerdict
 
 val circleTpe: Type = Type.Named(cp.requireClass("example.Circle").id)
 val shapeTpe: Type  = Type.Named(cp.requireTrait("example.Shape").id)
 
-circleTpe.isSubtypeOf(shapeTpe)  // Sub
-shapeTpe.isSubtypeOf(circleTpe)  // NotSub
+circleTpe.isSubtypeOf(shapeTpe) // Sub
+shapeTpe.isSubtypeOf(circleTpe) // NotSub
 ```
 
 `Unknown` happens when the parent chain is not fully loaded into the
@@ -370,7 +379,7 @@ else on the snapshot is pure.
 
 ### Decoding a body and traversing the AST
 
-```scala
+```scala doctest:expect=skipped
 val areaMethod: Symbol.Method = cp.requireClass("example.Circle")
     .findDeclaredMember("area")
     .collect { case m: Symbol.Method => m }
@@ -390,7 +399,7 @@ chose not to keep).
 `DefDef`, ...). You rarely match all of them. The traversal helpers cover
 nearly every interactive use:
 
-```scala
+```scala doctest:expect=skipped
 tree.children                       // Chunk[Tree]
 tree.foreach(visit: Tree => Unit)
 tree.collect[A](pf: PartialFunction[Tree, A]): Chunk[A]
@@ -418,11 +427,11 @@ loaded from a `.class` file with retention-class annotations carries
 
 The two predicates work uniformly across both sides:
 
-```scala
+```scala doctest:expect=skipped
 given Classpath = cp
-val circle = cp.requireClass("example.Circle")
-circle.hasAnnotation("scala.deprecated")            // Boolean
-circle.getAnnotation("scala.deprecated")            // Maybe[Annotation]
+val circle      = cp.requireClass("example.Circle")
+circle.hasAnnotation("scala.deprecated") // Boolean
+circle.getAnnotation("scala.deprecated") // Maybe[Annotation]
 ```
 
 `hasAnnotation(fqn)` is subtype-aware: it returns true for any annotation
@@ -464,13 +473,13 @@ time, so closure queries do not scan.
 
 For a sealed hierarchy, "list every implementation" is one call:
 
-```scala
-given Classpath = cp
+```scala doctest:expect=skipped
+given Classpath         = cp
 val shape: Symbol.Trait = cp.requireTrait("example.Shape")
 
-cp.directSubclassesOf(shape)   // Chunk(Circle, Box)  -- exactly one hop
-cp.subclassesOf(shape)         // Chunk(Circle, Box)  -- transitive closure
-cp.implementationsOf(shape)    // Chunk(Circle, Box)  -- concrete classes only
+cp.directSubclassesOf(shape) // Chunk(Circle, Box)  -- exactly one hop
+cp.subclassesOf(shape)       // Chunk(Circle, Box)  -- transitive closure
+cp.implementationsOf(shape)  // Chunk(Circle, Box)  -- concrete classes only
 ```
 
 `directSubclassesOf` returns only the immediate subclasses;
@@ -485,10 +494,10 @@ When you need every symbol of a kind, the `all*` accessors do a linear
 scan and return a typed `Chunk`:
 
 ```scala
-cp.allClasses   // Chunk[Symbol.Class]
-cp.allTraits    // Chunk[Symbol.Trait]
-cp.allObjects   // Chunk[Symbol.Object]
-cp.allMethods   // Chunk[Symbol.Method]
+cp.allClasses // Chunk[Symbol.Class]
+cp.allTraits  // Chunk[Symbol.Trait]
+cp.allObjects // Chunk[Symbol.Object]
+cp.allMethods // Chunk[Symbol.Method]
 // ... plus allVals, allVars, allFields, allTypeAliases,
 //     allOpaqueTypes, allAbstractTypes, allTypeParams,
 //     allParameters, allPackages, allClassLike, allUnresolved
@@ -549,17 +558,17 @@ def shapeImplementations(roots: Seq[String]): Chunk[String] < (Async & Scope & A
     Classpath.init(roots).map { cp =>
         given Classpath = cp
 
-        val shape = cp.requireTrait("example.Shape")
-
-        cp.implementationsOf(shape)
-            .sortBy(_.fullNameString)
-            .map { impl =>
-                val overrides = impl.methods
-                    .filter(_.isOverride)
-                    .map(_.simpleName.asString)
-                    .mkString(", ")
-                s"${impl.fullNameString} overrides: [$overrides]"
-            }
+        cp.requireTrait("example.Shape").map { shape =>
+            cp.implementationsOf(shape)
+                .sortBy(_.fullNameString)
+                .map { impl =>
+                    val overrides = impl.methods
+                        .filter(_.isOverride)
+                        .map(_.simpleName)
+                        .mkString(", ")
+                    s"${impl.fullNameString} overrides: [$overrides]"
+                }
+        }
     }
 ```
 

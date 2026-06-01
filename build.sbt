@@ -654,6 +654,7 @@ lazy val `kyo-tasty` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
+            doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*"),
             // Copy specific kyo-tasty source and doc files into the test-resource jar so that
             // the JVM TestResourceLoader.readText can serve them via the classloader.
             Test / resourceGenerators += Def.task {
