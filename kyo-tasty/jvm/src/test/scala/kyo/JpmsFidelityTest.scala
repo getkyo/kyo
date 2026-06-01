@@ -13,6 +13,9 @@ import kyo.internal.TestClasspaths
   */
 class JpmsFidelityTest extends Test:
 
+    // initWithPlatformModules loads 20,000+ JDK classfiles from jrt:/. Allow 10 minutes for the load.
+    override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(10))
+
     import AllowUnsafe.embrace.danger
 
     // F-D-001 / F-D-002 leaf 1 (Phase 10): jdk-module-discoverable

@@ -34,7 +34,20 @@ final case class ClassfileResult(
     symbols: Chunk[Tasty.Symbol],
     typeParams: Chunk[Tasty.Symbol],
     arena: TypeArena,
-    memberTypes: Map[Tasty.Symbol, Tasty.Type]
+    memberTypes: Map[Tasty.Symbol, Tasty.Type],
+    /** F-A3-001..004 fix: raw binary class names of parent types (e.g. "java/lang/Object", "java/io/Serializable").
+      *
+      * Parallel to `parents`: `parentBinaryNames(i)` is the binary name for `parents(i)`. Empty string entries indicate
+      * non-class parent slots (should not occur for JDK classes but preserved for safety). Populated by buildResult for
+      * use by ClasspathOrchestrator.finalizeMerge to resolve parent FQNs without re-parsing the classfile.
+      */
+    parentBinaryNames: Chunk[String] = Chunk.empty,
+    /** Dotted FQNs of permitted subclasses (from PermittedSubclasses attribute), e.g. "java.lang.Double".
+      *
+      * Non-empty only when the class has a PermittedSubclasses attribute (Java 17+ sealed classes).
+      * Used by ClasspathOrchestrator.finalizeMerge to resolve permittedSubclassIds for classfile symbols.
+      */
+    permittedSubclassFqns: Chunk[String] = Chunk.empty
 )
 
 /** Reads a JVM .class file from raw bytes and produces a ClassfileResult.
@@ -161,7 +174,7 @@ object ClassfileUnpickler:
         superIdx: Int
     )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         // Read parent types: super class + interfaces
-        resolveOptionalSuperType(pool, superIdx).map: superTypeOpt =>
+        resolveOptionalSuperTypePair(pool, superIdx).map: superPairOpt =>
             Sync.defer {
                 val ifCount = readU2(view)
                 val ifIdxs  = new Array[Int](ifCount)
@@ -171,10 +184,14 @@ object ClassfileUnpickler:
                     i += 1
                 ifIdxs
             }.map: ifIdxs =>
-                resolveInterfaceTypes(pool, path, ifIdxs, 0, Chunk.empty).map: ifTypes =>
-                    val parents = superTypeOpt match
-                        case Present(st) => ifTypes.prepended(st)
-                        case Absent      => ifTypes
+                resolveInterfaceTypePairs(pool, path, ifIdxs, 0, Chunk.empty).map: ifPairs =>
+                    val (superTypes, superNames) = superPairOpt match
+                        case Present((st, bn)) =>
+                            (ifPairs.map(_._1).prepended(st), ifPairs.map(_._2).prepended(bn))
+                        case Absent =>
+                            (ifPairs.map(_._1), ifPairs.map(_._2))
+                    val parents           = superTypes
+                    val parentBinaryNames = superNames
                     // Fields
                     readMemberInfos(view, pool, path, isMethods = false).map: fieldInfos =>
                         // Methods
@@ -189,6 +206,7 @@ object ClassfileUnpickler:
                                     accessFlags,
                                     thisBinaryName,
                                     parents,
+                                    parentBinaryNames,
                                     fieldInfos,
                                     methodInfos,
                                     classAttrs
@@ -212,6 +230,27 @@ object ClassfileUnpickler:
         else
             pool.classRef(idxs(i)).map: bn =>
                 resolveInterfaceTypes(pool, path, idxs, i + 1, acc.appended(unresolvedType(bn)))
+
+    /** Returns (Type, binaryName) pair so callers can recover the binary FQN for parent resolution. */
+    private def resolveOptionalSuperTypePair(
+        pool: ConstantPool,
+        superIdx: Int
+    )(using Frame, AllowUnsafe): Maybe[(Tasty.Type, String)] < (Sync & Abort[TastyError]) =
+        if superIdx == 0 then Absent
+        else pool.classRef(superIdx).map(bn => Present((unresolvedType(bn), bn)))
+
+    /** Returns (Type, binaryName) pairs so callers can recover binary FQNs for parent resolution. */
+    private def resolveInterfaceTypePairs(
+        pool: ConstantPool,
+        path: String,
+        idxs: Array[Int],
+        i: Int,
+        acc: Chunk[(Tasty.Type, String)]
+    )(using Frame, AllowUnsafe): Chunk[(Tasty.Type, String)] < (Sync & Abort[TastyError]) =
+        if i >= idxs.length then acc
+        else
+            pool.classRef(idxs(i)).map: bn =>
+                resolveInterfaceTypePairs(pool, path, idxs, i + 1, acc.appended((unresolvedType(bn), bn)))
 
     // -------------------------------------------------------------------------
     // Member info reading
@@ -999,6 +1038,7 @@ object ClassfileUnpickler:
         accessFlags: Int,
         thisBinaryName: String,
         parents: Chunk[Tasty.Type],
+        parentBinaryNames: Chunk[String],
         fieldInfos: Chunk[MemberInfo],
         methodInfos: Chunk[MemberInfo],
         classAttrs: ClassAttributes
@@ -1015,7 +1055,12 @@ object ClassfileUnpickler:
         val baseFlags   = FlagsHelper.fromJvmAccessFlags(accessFlags)
         val javaDefined = new Tasty.Flags(Tasty.Flag.JavaDefined.bit)
         val recordFlag  = if isRecord then new Tasty.Flags(Tasty.Flag.JavaRecord.bit) else Tasty.Flags.empty
-        val classFlags  = baseFlags | javaDefined | recordFlag
+        // F-A3-003 fix: set Sealed flag when the class has a PermittedSubclasses attribute (Java 17+ sealed
+        // classes). The JVM access flags do not include a SEALED bit; the sealed status is encoded only by
+        // the presence of the PermittedSubclasses classfile attribute (JVMS 4.7.31).
+        val sealedFlag = if classAttrs.permittedSubclassIdxs.nonEmpty then new Tasty.Flags(Tasty.Flag.Sealed.bit)
+        else Tasty.Flags.empty
+        val classFlags = baseFlags | javaDefined | recordFlag | sealedFlag
 
         // Build inner class table and FQN canonicalization.
         // Must be done before constructing the class symbol so we can set the correct owner.
@@ -1041,85 +1086,94 @@ object ClassfileUnpickler:
                                         resolveOptionalClassSymbol(pool, classAttrs.nestHostIdx).map: nestHostSym =>
                                             // Resolve NestMembers symbols
                                             resolveClassSymbolList(pool, classAttrs.nestMemberIdxs).map: nestMemberSyms =>
-                                                // Resolve PermittedSubclasses symbols
-                                                resolveClassSymbolList(pool, classAttrs.permittedSubclassIdxs).map: permittedSubSym =>
-                                                    val classMetadata = Tasty.JavaMetadata(
-                                                        throwsTypes = Chunk.empty,
-                                                        annotations = classAnnotations,
-                                                        enclosingMethod = enclosingMethodMaybe,
-                                                        accessFlags = accessFlags,
-                                                        recordComponents = recordComps,
-                                                        bootstrapMethods = classAttrs.bootstrapMethodsData,
-                                                        nestHost = nestHostSym,
-                                                        nestMembers = nestMemberSyms,
-                                                        paramNames = Chunk.empty,
-                                                        runtimeTypeAnnotations = allTypeAnns
-                                                    )
-                                                    // permittedSubclassIds uses SymbolId(-1) placeholders resolved by Pass C.
-                                                    val permSubIds: Maybe[Chunk[kyo.internal.tasty.symbol.SymbolId]] =
-                                                        if permittedSubSym.nonEmpty then
-                                                            Maybe(permittedSubSym.map(_ => kyo.internal.tasty.symbol.SymbolId(-1)))
-                                                        else Maybe.Absent
-                                                    val classDesc = new SymbolDescriptor(
-                                                        id = -1,
-                                                        kind = kind,
-                                                        flags = classFlags,
-                                                        name = Tasty.Name(symName),
-                                                        ownerId = -1,
-                                                        declaredType = Maybe.Absent,
-                                                        scaladoc = Maybe.Absent,
-                                                        sourcePosition = Maybe.Absent,
-                                                        javaMetadata = Maybe(classMetadata),
-                                                        parentTypes = Chunk.empty,
-                                                        typeParamIds = Chunk.empty,
-                                                        declarationIds = Chunk.empty,
-                                                        permittedSubclassIds = permSubIds.map(
-                                                            _.map(_.value)
-                                                        ),
-                                                        body = Maybe.Absent
-                                                    )
-                                                    val classSym = TypedSymbolFactory.from(classDesc)
-                                                    // Parse class-level Signature attribute to extract type parameters.
-                                                    parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map: classTypeParams =>
-                                                        // Build member symbols (returns pairs of (Symbol, DeclaredType))
-                                                        buildMemberSymbols(
-                                                            pool,
-                                                            interner,
-                                                            path,
-                                                            classSym,
-                                                            fieldInfos,
-                                                            isMethods = false
-                                                        ).map: fieldPairs =>
-                                                            buildMemberSymbols(
-                                                                pool,
-                                                                interner,
-                                                                path,
-                                                                classSym,
-                                                                methodInfos,
-                                                                isMethods = true
-                                                            ).map: methodPairs =>
-                                                                val allPairs   = fieldPairs ++ methodPairs
-                                                                val allSymbols = allPairs.map(_._1)
-                                                                val memberTypes =
-                                                                    allPairs.foldLeft(Map.empty[Tasty.Symbol, Tasty.Type]):
-                                                                        case (acc, (sym, tpe)) => acc + (sym -> tpe)
-                                                                val javaResult = ClassfileResult(
-                                                                    classSym,
-                                                                    parents,
-                                                                    innerTable,
-                                                                    allSymbols,
-                                                                    classTypeParams,
-                                                                    arena,
-                                                                    memberTypes
-                                                                )
-                                                                // Dispatch to Scala2PickleReader if a ScalaSig or Scala attribute is present.
-                                                                mergeScala2Pickle(
-                                                                    javaResult,
+                                                // Resolve PermittedSubclasses: symbols (for metadata) and FQNs (for finalizeMerge).
+                                                resolveClassSymbolsWithFqns(pool, classAttrs.permittedSubclassIdxs).map:
+                                                    (permittedSubSym, permittedSubFqns) =>
+                                                        val classMetadata = Tasty.JavaMetadata(
+                                                            throwsTypes = Chunk.empty,
+                                                            annotations = classAnnotations,
+                                                            enclosingMethod = enclosingMethodMaybe,
+                                                            accessFlags = accessFlags,
+                                                            recordComponents = recordComps,
+                                                            bootstrapMethods = classAttrs.bootstrapMethodsData,
+                                                            nestHost = nestHostSym,
+                                                            nestMembers = nestMemberSyms,
+                                                            paramNames = Chunk.empty,
+                                                            runtimeTypeAnnotations = allTypeAnns
+                                                        )
+                                                        // permittedSubclassIds uses SymbolId(-1) placeholders resolved by Pass C.
+                                                        val permSubIds: Maybe[Chunk[kyo.internal.tasty.symbol.SymbolId]] =
+                                                            if permittedSubSym.nonEmpty then
+                                                                Maybe(permittedSubSym.map(_ => kyo.internal.tasty.symbol.SymbolId(-1)))
+                                                            else Maybe.Absent
+                                                        val classDesc = new SymbolDescriptor(
+                                                            id = -1,
+                                                            kind = kind,
+                                                            flags = classFlags,
+                                                            name = Tasty.Name(symName),
+                                                            ownerId = -1,
+                                                            declaredType = Maybe.Absent,
+                                                            scaladoc = Maybe.Absent,
+                                                            sourcePosition = Maybe.Absent,
+                                                            javaMetadata = Maybe(classMetadata),
+                                                            parentTypes = Chunk.empty,
+                                                            typeParamIds = Chunk.empty,
+                                                            declarationIds = Chunk.empty,
+                                                            permittedSubclassIds = permSubIds.map(
+                                                                _.map(_.value)
+                                                            ),
+                                                            body = Maybe.Absent
+                                                        )
+                                                        val classSym = TypedSymbolFactory.from(classDesc)
+                                                        // Parse class-level Signature attribute to extract type parameters.
+                                                        parseClassTypeParams(pool, interner, classAttrs.signatureIdx).map:
+                                                            classTypeParams =>
+                                                                // Build member symbols (returns pairs of (Symbol, DeclaredType))
+                                                                buildMemberSymbols(
+                                                                    pool,
                                                                     interner,
-                                                                    arena,
-                                                                    classAttrs.scalaSigBytes,
-                                                                    classAttrs.scalaAttrBytes
-                                                                )
+                                                                    path,
+                                                                    classSym,
+                                                                    fieldInfos,
+                                                                    isMethods = false
+                                                                ).map: fieldPairs =>
+                                                                    buildMemberSymbols(
+                                                                        pool,
+                                                                        interner,
+                                                                        path,
+                                                                        classSym,
+                                                                        methodInfos,
+                                                                        isMethods = true
+                                                                    ).map: methodPairs =>
+                                                                        val allPairs   = fieldPairs ++ methodPairs
+                                                                        val allSymbols = allPairs.map(_._1)
+                                                                        val memberTypes =
+                                                                            allPairs.foldLeft(Map.empty[Tasty.Symbol, Tasty.Type]):
+                                                                                case (acc, (sym, tpe)) => acc + (sym -> tpe)
+                                                                        val javaResult = ClassfileResult(
+                                                                            classSym,
+                                                                            parents,
+                                                                            innerTable,
+                                                                            allSymbols,
+                                                                            classTypeParams,
+                                                                            arena,
+                                                                            memberTypes,
+                                                                            // F-A3-001..004 fix: carry raw binary names of
+                                                                            // parent classes/interfaces so finalizeMerge
+                                                                            // can resolve them via the fqnIndex.
+                                                                            parentBinaryNames,
+                                                                            // Carry permitted subclass FQNs for finalizeMerge
+                                                                            // to resolve permittedSubclassIds.
+                                                                            permittedSubFqns
+                                                                        )
+                                                                        // Dispatch to Scala2PickleReader if a ScalaSig or Scala attribute is present.
+                                                                        mergeScala2Pickle(
+                                                                            javaResult,
+                                                                            interner,
+                                                                            arena,
+                                                                            classAttrs.scalaSigBytes,
+                                                                            classAttrs.scalaAttrBytes
+                                                                        )
     end buildResult
 
     /** If Scala 2 pickle bytes are present, add Flag.Scala2 to the class symbol and merge the decoded symbols into the result.
@@ -1622,6 +1676,36 @@ object ClassfileUnpickler:
             case Present(i) =>
                 pool.classRef(i).map: binaryName =>
                     Present(makeUnresolvedSymbol(binaryName, 0))
+
+    /** Resolve a Chunk[Int] of class-pool indices to a (symbols, dotted-FQNs) pair.
+      *
+      * Returns both the unresolved Symbol stubs and the dotted FQNs (e.g. "java.lang.Double") in a
+      * single pass. Used for PermittedSubclasses so finalizeMerge can resolve permittedSubclassIds.
+      */
+    private def resolveClassSymbolsWithFqns(
+        pool: ConstantPool,
+        idxs: Chunk[Int]
+    )(using Frame, AllowUnsafe): (Chunk[Tasty.Symbol], Chunk[String]) < (Sync & Abort[TastyError]) =
+        resolveClassSymbolsWithFqnsRec(pool, idxs, 0, Chunk.empty, Chunk.empty)
+
+    private def resolveClassSymbolsWithFqnsRec(
+        pool: ConstantPool,
+        idxs: Chunk[Int],
+        i: Int,
+        accSyms: Chunk[Tasty.Symbol],
+        accFqns: Chunk[String]
+    )(using Frame, AllowUnsafe): (Chunk[Tasty.Symbol], Chunk[String]) < (Sync & Abort[TastyError]) =
+        if i >= idxs.length then (accSyms, accFqns)
+        else
+            pool.classRef(idxs(i)).map: binaryName =>
+                val fqn = binaryName.replace('/', '.')
+                resolveClassSymbolsWithFqnsRec(
+                    pool,
+                    idxs,
+                    i + 1,
+                    accSyms.appended(makeUnresolvedSymbol(binaryName, 0)),
+                    accFqns.appended(fqn)
+                )
 
     /** Resolve a Chunk[Int] of class-pool indices to a Chunk[Symbol], used for NestMembers and PermittedSubclasses. */
     private def resolveClassSymbolList(

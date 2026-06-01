@@ -130,16 +130,16 @@ class RealClasspathFidelity2Test extends Test:
     "F-A2-014 (Phase 2.08 PENDING): structural type decoded as Type.Refinement with non-empty members" in pending
     // F-A2-015: capture sets experimental (Phase 2.09 confirmation pin)
     "F-A2-015 (Phase 2.09 PENDING): capture-set annotation present on capture-typed symbols" in pending
-    // F-A3-001: JDK class symbols via jrt:/ (Phase 2.03)
-    "F-A3-001 (Phase 2.03 PENDING): cp.findClassLike('java.lang.String') returns Present after jrt:/ walk" in pending
-    // F-A3-002: Java enums (Phase 2.03)
-    "F-A3-002 (Phase 2.03 PENDING): java.lang.annotation.RetentionPolicy.isEnum is true" in pending
-    // F-A3-003: Java records (Phase 2.03)
-    "F-A3-003 (Phase 2.03 PENDING): java.lang.Runtime.Version.isRecord is true" in pending
-    // F-A3-004: synthetic static accessors (Phase 2.03)
-    "F-A3-004 (Phase 2.03 PENDING): JDK synthetic-static accessor resolves via findSymbol" in pending
-    // F-A3-005: JPMS module count confirmation (Phase 2.03)
-    "F-A3-005 (Phase 2.03 PENDING): cp.moduleIndex.size == 69 after jrt:/ walker addition" in pending
+    // F-A3-001: JDK class symbols via jrt:/ (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
+    "F-A3-001 (Phase 2.03): cp.findClassLike('java.lang.String') returns Present after jrt:/ walk -- see JpmsFidelity2Test" in pending
+    // F-A3-002: Java enums (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
+    "F-A3-002 (Phase 2.03): java.lang.annotation.RetentionPolicy.isEnum is true -- see JpmsFidelity2Test" in pending
+    // F-A3-003: Java sealed / records (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
+    "F-A3-003 (Phase 2.03): java.lang.constant.Constable permittedSubclasses populated -- see JpmsFidelity2Test" in pending
+    // F-A3-004: Java interface default methods (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
+    "F-A3-004 (Phase 2.03): JDK interface default methods detectable on java.util.Iterator -- see JpmsFidelity2Test" in pending
+    // F-A3-005: JPMS module count confirmation (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
+    "F-A3-005 (Phase 2.03): cp.moduleIndex.size >= 20 after jrt:/ walker addition -- see JpmsFidelity2Test" in pending
     // F-A4-001: finalizeMerge ghost fqnIndex entries (Phase 2.02 ACTIVE -- see SnapshotFidelity2Test)
     "F-A4-001 (Phase 2.02): cold.fqnIndex.size == warm.fqnIndex.size -- see SnapshotFidelity2Test INV-013" in pending
     // F-A4-002: cold-warm parentTypes discrepancy (Phase 2.02 ACTIVE -- see SnapshotFidelity2Test)
@@ -162,16 +162,16 @@ class RealClasspathFidelity2Test extends Test:
     "F-A5-005 (Phase 2.07 PENDING): truncated .tasty error reason is impl-agnostic string not raw exception message" in pending
     // F-A5-006: corrupted file cp.errors path field (Phase 2.07)
     "F-A5-006 (Phase 2.07 PENDING): bit-flipped magic .tasty cp.errors.head.path equals on-disk filename" in pending
-    // F-A1-005: cross-ref to F-A3-001 (JPMS JDK count) (Phase 2.03)
-    "F-A1-005 (Phase 2.03 PENDING): initWithPlatformModules includes JDK class symbols" in pending
+    // F-A1-005: cross-ref to F-A3-001 (JPMS JDK count) (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
+    "F-A1-005 (Phase 2.03): initWithPlatformModules includes JDK class symbols -- see JpmsFidelity2Test" in pending
     // F-A1-006: MalformedSection cross-ref (Phase 2.07)
     "F-A1-006 (Phase 2.07 PENDING): MalformedSection cross-ref with impl-agnostic reason" in pending
     // F-A1-007: CorruptedFile path cross-ref (Phase 2.07)
     "F-A1-007 (Phase 2.07 PENDING): CorruptedFile cp.errors path cross-ref" in pending
     // F-A1-008: FqnCollision diagnostic (Phase 2.07)
     "F-A1-008 (Phase 2.07 PENDING): same-FQN collision in two jars emits FqnCollision diagnostic" in pending
-    // F-A1-009: unresolvedTypeReferenceCount == 0 (Phase 2.03)
-    "F-A1-009 (Phase 2.03 PENDING): cp.unresolvedTypeReferenceCount == 0 on full classpath including JDK" in pending
+    // F-A1-009: unresolvedTypeReferenceCount == 0 (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
+    "F-A1-009 (Phase 2.03): cp.unresolvedTypeReferenceCount == 0 on full classpath including JDK -- see JpmsFidelity2Test" in pending
 
     // ─────────────────────────────────────────────────────────────────────────
     // Private helpers

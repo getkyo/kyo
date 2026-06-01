@@ -14,6 +14,11 @@ import kyo.internal.TestClasspaths2
   */
 class SnapshotFidelity2Test extends Test:
 
+    // F-A4-005 loads the standard classpath twice (two independent cold inits) to check logical equivalence.
+    // Two sequential loads at 20-30s each exceed the 60s default timeout on a loaded machine.
+    // Allow 3 minutes to give headroom.
+    override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
+
     import AllowUnsafe.embrace.danger
 
     // Leaf 4 (Phase 2.02): fqnindex-size-cold-equals-warm

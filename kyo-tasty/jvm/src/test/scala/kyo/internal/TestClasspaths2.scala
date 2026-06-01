@@ -2,7 +2,6 @@ package kyo.internal
 
 import java.io.File
 import java.nio.file.Paths
-import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import scala.collection.mutable
 
@@ -141,5 +140,73 @@ private[kyo] object TestClasspaths2:
                                     platSrc.read(pathB).map: bytesB =>
                                         (bytesA, bytesB)
     end twoColdInits
+
+    /** Singleton platform-modules classpath, pre-loaded eagerly at object initialization time.
+      *
+      * Scans only `java.base` (~7,000 classes) rather than all JDK modules (~27,000 classes). This keeps
+      * the cold-load time to roughly 10-30s, well under any reasonable test timeout. All classes checked
+      * by JpmsFidelity2Test (java.lang.String, java.util.HashMap, java.util.concurrent.ConcurrentHashMap,
+      * java.lang.annotation.RetentionPolicy, java.lang.constant.Constable, java.util.Iterator) live in
+      * java.base.
+      *
+      * The production `Tasty.Classpath.initWithPlatformModules(roots)` (empty filter) continues to load
+      * all JDK modules. Only this test fixture uses the module-scoped variant.
+      *
+      * Loading is started in a background thread at object initialization time so that the wall-clock work
+      * runs outside the test framework's per-test timeout. Each test call blocks (via Future.get) until
+      * the load finishes, then returns the cached result immediately.
+      *
+      * Resource note: Scope.run closes JVM file-handle resources after the load finishes. The decoded
+      * symbol data remains on the heap, valid for the lifetime of the test JVM process.
+      *
+      * HARD RULE 7: the resulting Classpath is immutable; caching it does not violate that rule.
+      */
+    private val platformCpFuture: java.util.concurrent.Future[Either[Throwable, Tasty.Classpath]] =
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val future = executor.submit(new java.util.concurrent.Callable[Either[Throwable, Tasty.Classpath]]:
+            def call(): Either[Throwable, Tasty.Classpath] =
+                try
+                    import AllowUnsafe.embrace.danger
+                    // KyoApp.Unsafe.runAndBlock handles Async & Scope & Abort[Any] and blocks until done.
+                    // Duration.Infinity: no additional timeout; the sbt process will kill the JVM if needed.
+                    // Frame.internal is required because this code is inside the kyo package and there is
+                    // no caller Frame to propagate (the call() method runs on a raw Java thread).
+                    given Frame = Frame.internal
+                    KyoApp.Unsafe.runAndBlock(Duration.Infinity):
+                        // Module filter: java.base only. Reduces 27,000 classes to ~7,000 for tests.
+                        // Production initWithPlatformModules (no filter) scans all modules unchanged.
+                        Tasty.Classpath.initWithPlatformModulesFiltered(standardRoots, Set("java.base"))
+                    match
+                        case Result.Success(cp) => Right(cp)
+                        case Result.Failure(t)  => Left(t)
+                        case Result.Panic(t)    => Left(t)
+                    end match
+                catch
+                    case t: Throwable => Left(t))
+        executor.shutdown()
+        future
+    end platformCpFuture
+
+    /** Load the standard classpath plus java.base JDK classfiles.
+      *
+      * Used by JpmsFidelity2Test to verify that JDK classes are reachable after Phase 2.03. The
+      * classpath includes the standard TASTy roots (kyo-tasty + kyo-data + scala-library) plus
+      * every JDK .class file enumerated from jrt:/modules/java.base (~7,000 classes).
+      *
+      * The load is started eagerly at object initialization time (in platformCpFuture) and cached.
+      * This method blocks (via Sync.defer + Future.get) until the load completes, then returns the
+      * cached immutable Classpath instance.
+      */
+    def standardWithPlatformModules(using Frame): Tasty.Classpath < (Async & Scope & Abort[TastyError]) =
+        Sync.defer(platformCpFuture.get()).flatMap: either =>
+            either match
+                case Right(cp) => cp
+                case Left(t) =>
+                    Abort.fail(TastyError.ClassfileFormatError(
+                        "<platform-modules-cache>",
+                        t.getMessage,
+                        0L
+                    ))
+    end standardWithPlatformModules
 
 end TestClasspaths2

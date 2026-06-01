@@ -2571,10 +2571,34 @@ object Tasty:
           * Effect row: identical to `init` (Async + Scope + Abort[TastyError]).
           */
         def initWithPlatformModules(roots: Seq[String])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
+            initWithPlatformModulesFiltered(roots, Set.empty)
+
+        /** Variant of `initWithPlatformModules` that walks only the specified JPMS modules from the `jrt:/` filesystem.
+          *
+          * When `moduleFilter` is non-empty, only the named modules (e.g. `Set("java.base")`) are scanned for classfiles. This reduces
+          * decode time from ~27,000 classfiles (all JDK modules) to ~7,000 (java.base only), making it suitable for test fixtures. The
+          * production `initWithPlatformModules` always passes an empty filter, which walks all modules.
+          *
+          * HARD RULE 7: the returned Classpath is immutable; this overload does not weaken that invariant.
+          */
+        private[kyo] def initWithPlatformModulesFiltered(
+            roots: Seq[String],
+            moduleFilter: Set[String]
+        )(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
+            // F-A3-001..004 fix: prepend every `.class` path under `jrt:/modules/<m>/...` to the user's
+            // roots so JDK class symbols decode alongside user TASTy. The shape of `roots` is preserved
+            // (a Seq[String] of file-system paths); the new entries use the `jrt:/` URI scheme that
+            // JvmFileSource already handles. PlatformModuleOps.listJdkClassFiles is JVM-only; JS/Native
+            // return Chunk.empty so this method degrades to the module-descriptor-only path.
+            val jdkClassFiles =
+                // Unsafe: AllowUnsafe.embrace.danger for the lazy jrtFileSystem access in PlatformModuleOps.
+                kyo.internal.tasty.query.PlatformModuleOps.listJdkClassFiles(moduleFilter)(using AllowUnsafe.embrace.danger)
             for
-                cp         <- init(roots, ErrorMode.SoftFail)
+                cp         <- init(jdkClassFiles.toSeq ++ roots, ErrorMode.SoftFail)
                 jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
             yield cp.copy(moduleIndex = cp.moduleIndex ++ jdkModules)
+            end for
+        end initWithPlatformModulesFiltered
 
         /** Init a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
           *

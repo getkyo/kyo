@@ -105,10 +105,21 @@ object ClasspathOrchestrator:
     /** Tagged union for results flowing through the result channel.
       *
       * `FileResultCase` carries a decoded TASTy file result. `ModuleInfoCase` carries a decoded module-info.class descriptor.
+      * `JavaClassfileCase` carries a decoded standalone JVM .class file (F-A3-001..004 fix).
       */
     sealed private trait DecodeResult
     final private case class FileResultCase(fr: FileResult)                           extends DecodeResult
     final private case class ModuleInfoCase(name: String, md: Tasty.ModuleDescriptor) extends DecodeResult
+
+    /** Carries a decoded standalone .class file result and its computed binary FQN.
+      *
+      * F-A3-001..004 fix: classfiles passed directly as roots (e.g., via `jrt:/` paths) decode here and inject class symbols into the
+      * global FQN index so `findClass("java.lang.String")` resolves.
+      */
+    final private case class JavaClassfileCase(
+        fqn: String,
+        cfResult: kyo.internal.tasty.classfile.ClassfileResult
+    ) extends DecodeResult
 
     /** Mutable accumulator for the single-threaded merger stage (Phase C).
       *
@@ -119,11 +130,16 @@ object ClasspathOrchestrator:
         val fqnIndex: mutable.HashMap[String, Tasty.Symbol]              = mutable.HashMap.empty
         val packageIndex: mutable.HashMap[String, Tasty.Symbol]          = mutable.HashMap.empty
         val allSyms: mutable.ArrayBuffer[Tasty.Symbol]                   = mutable.ArrayBuffer.empty
+        val allSymsSet: mutable.HashSet[Tasty.Symbol]                    = mutable.HashSet.empty
         val topLevelCls: mutable.ArrayBuffer[Tasty.Symbol]               = mutable.ArrayBuffer.empty
         val packages: mutable.ArrayBuffer[Tasty.Symbol]                  = mutable.ArrayBuffer.empty
         val accErrors: mutable.ArrayBuffer[TastyError]                   = mutable.ArrayBuffer.empty
         val fileResults: mutable.ArrayBuffer[FileResult]                 = mutable.ArrayBuffer.empty
         val moduleIndex: mutable.HashMap[String, Tasty.ModuleDescriptor] = mutable.HashMap.empty
+
+        /** F-A3-001..004 fix: decoded standalone .class files accumulated for finalizeMerge parent-type wiring. */
+        val javaClassfileResults: mutable.ArrayBuffer[(String, kyo.internal.tasty.classfile.ClassfileResult)] =
+            mutable.ArrayBuffer.empty
     end MergeState
 
     /** Init a new classpath from a set of root paths.
@@ -285,6 +301,11 @@ object ClasspathOrchestrator:
             val unsorted: Chunk[String] =
                 if listed.isEmpty then
                     if root.endsWith(".tasty") || root.endsWith("module-info.class") then Chunk(root)
+                    // F-A3-001..004 fix: a root that IS a standalone .class file (e.g. a jrt:/ path like
+                    // `jrt:///modules/java.base/java/lang/String.class`) is passed directly from
+                    // PlatformModuleOps.listJdkClassFiles. list() returns empty because it is a file, not
+                    // a directory. Emit it with kind ".class" so decodeOneEntry routes to ClassfileUnpickler.
+                    else if root.endsWith(".class") && !root.endsWith("module-info.class") then Chunk(root)
                     else Chunk.empty
                 else listed
             // F-A4-005 determinism: sort entries so file processing order is stable across filesystem
@@ -295,6 +316,11 @@ object ClasspathOrchestrator:
             Kyo.foreach(entries): entry =>
                 val kind =
                     if entry.endsWith("module-info.class") then "module-info.class"
+                    // F-A3-001..004 fix: individual .class entries from direct paths (jrt:/) get kind ".class".
+                    // Note: .class entries from directory listings are not emitted here (list only returns
+                    // .tasty and module-info.class); those companion .class files are handled by the
+                    // readAndDecodeTastyFile companion-decode path in decodeOneEntry.
+                    else if entry.endsWith(".class") then ".class"
                     else ".tasty"
                 // Discard Closed: if entryCh closed early, stop putting
                 Abort.run[Closed](entryCh.put((entry, kind))).unit
@@ -333,6 +359,38 @@ object ClasspathOrchestrator:
                     val err = TastyError.CorruptedFile(entryPath, 0L, t.getMessage)
                     if mode == Tasty.ErrorMode.FailFast then Abort.fail(err)
                     else FileResultCase(emptyFileResultWithError(entryPath, err))
+        else if kind == ".class" then
+            // F-A3-001..004 fix: decode a standalone JVM .class file via ClassfileUnpickler.
+            // The FQN is computed from the path by stripping the jrt:/ module prefix and
+            // converting slash-separated segments to a dotted name. This makes JDK classes
+            // (java.lang.String, java.util.HashMap, etc.) reachable via cp.findClass.
+            Abort.run[TastyError](
+                source.read(entryPath).flatMap: bytes =>
+                    Sync.Unsafe.defer:
+                        TastyPerfStats.entryReads.inc()
+                        TastyPerfStats.bytesRead.add(bytes.length.toLong)
+                    .andThen:
+                        given AllowUnsafe = AllowUnsafe.embrace.danger
+                        val arena         = kyo.internal.tasty.type_.TypeArena.canonical()
+                        ClassfileUnpickler.read(bytes, interner, arena)
+            ).flatMap:
+                case Result.Success(cfResult) =>
+                    val fqn = classfilePathToFqn(entryPath)
+                    if fqn.isEmpty then
+                        // Skip files whose FQN cannot be computed (anonymous, synthetic, etc.)
+                        FileResultCase(emptyFileResultWithError(
+                            entryPath,
+                            TastyError.ClassfileFormatError(entryPath, "FQN empty; skipping", 0)
+                        ))
+                    else JavaClassfileCase(fqn, cfResult)
+                    end if
+                case Result.Failure(err: TastyError) =>
+                    if mode == Tasty.ErrorMode.FailFast then Abort.fail(err)
+                    else FileResultCase(emptyFileResultWithError(entryPath, err))
+                case Result.Panic(t) =>
+                    val err = TastyError.CorruptedFile(entryPath, 0L, t.getMessage)
+                    if mode == Tasty.ErrorMode.FailFast then Abort.fail(err)
+                    else FileResultCase(emptyFileResultWithError(entryPath, err))
         else
             Scope.run:
                 readAndDecodeTastyFile(entryPath, interner, source, mode).map(FileResultCase.apply)
@@ -350,7 +408,9 @@ object ClasspathOrchestrator:
                 // order, which is deterministic given the same input bytes.
                 val seenSyms = new java.util.HashSet[Tasty.Symbol]()
                 for sym <- fr.symbolsInOrder do
-                    if seenSyms.add(sym) then state.allSyms += sym
+                    if seenSyms.add(sym) then
+                        state.allSyms += sym
+                        state.allSymsSet += sym
                 end for
 
                 for (fqn, sym) <- fr.fqns do
@@ -395,7 +455,9 @@ object ClasspathOrchestrator:
                             if storeSource then state.fqnIndex(sourceFqn) = sym
                         end if
                     end if
-                    if seenSyms.add(sym) then state.allSyms += sym
+                    if seenSyms.add(sym) then
+                        state.allSyms += sym
+                        state.allSymsSet += sym
                     sym.kind match
                         case Tasty.SymbolKind.Package =>
                             state.packages += sym
@@ -411,6 +473,36 @@ object ClasspathOrchestrator:
                 state.fileResults += fr
             case ModuleInfoCase(name, md) =>
                 state.moduleIndex(name) = md
+            case JavaClassfileCase(fqn, cfResult) =>
+                // F-A3-001..004 fix: register the classfile's primary symbol in the FQN index.
+                // The classSymbol carries flags (isEnum, isRecord, isSealed, etc.) decoded by ClassfileUnpickler.
+                // Member symbols (methods, fields) are added to allSyms for finalizeMerge so they receive
+                // final SymbolIds; the classSymbol itself is added as the primary top-level entry.
+                val classSym = cfResult.classSymbol
+                // Register primary binary FQN (e.g. "java.util.Map$Entry").
+                if !state.fqnIndex.contains(fqn) then
+                    state.fqnIndex(fqn) = classSym
+                // Register canonical source FQN (e.g. "java.util.Map.Entry") as secondary key.
+                if !kyo.internal.tasty.symbol.FqnNormalizer.isSyntheticName(fqn) then
+                    val sourceFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(fqn)
+                    if sourceFqn != fqn && sourceFqn.nonEmpty && !state.fqnIndex.contains(sourceFqn) then
+                        state.fqnIndex(sourceFqn) = classSym
+                end if
+                // Add classSymbol and all member symbols to allSyms for finalizeMerge.
+                // allSymsSet provides O(1) membership checks to avoid the O(N^2) indexOf scan
+                // over the growing global list (critical for JPMS paths with 27k+ classes).
+                if !state.allSymsSet.contains(classSym) then
+                    state.allSyms += classSym
+                    state.allSymsSet += classSym
+                    state.topLevelCls += classSym
+                end if
+                for memberSym <- cfResult.symbols do
+                    if !state.allSymsSet.contains(memberSym) then
+                        state.allSyms += memberSym
+                        state.allSymsSet += memberSym
+                end for
+                // Keep classfile result for parent-type wiring in finalizeMerge.
+                state.javaClassfileResults += ((fqn, cfResult))
 
     /** Phase C: SymbolDescriptor construction + single-shot Symbol materialization + index building.
       *
@@ -707,6 +799,90 @@ object ClasspathOrchestrator:
                             if idx >= 0 && idx < count && descs(idx).javaMetadata.isEmpty then
                                 descs(idx).javaMetadata = Maybe(meta)
                         end for
+                    end for
+
+                    // F-A3-001..004 fix: wire parent types and javaMetadata for standalone classfile symbols.
+                    //
+                    // ClassfileUnpickler stores parent binary names in cfResult.parentBinaryNames
+                    // (e.g. "java/lang/Object"). Here we convert each to a dotted FQN and look it up
+                    // in the merged fqnIndex to obtain the final SymbolId, producing resolved
+                    // parentTypes for the classfile symbol.
+                    //
+                    // javaMetadata is copied from the ClassfileResult's classSymbol so isEnum/isRecord/isSealed
+                    // flags (stored in JavaMetadata.accessFlags) survive into the final Symbol.
+                    for (fqn, cfResult) <- state.javaClassfileResults do
+                        val classSym = cfResult.classSymbol
+                        val classIdx = symbolIdMap.getOrDefault(classSym, -1)
+                        if classIdx >= 0 && classIdx < count then
+                            // Resolve parent types using cfResult.parentBinaryNames.
+                            // Binary names use '/' as separator (e.g. "java/lang/Object"); convert to dotted.
+                            val sentinelId = -1
+                            val wirableParents = cfResult.parentBinaryNames.map: bn =>
+                                val dottedFqn = bn.replace('/', '.')
+                                state.fqnIndex.get(dottedFqn) match
+                                    case Some(parentSym) =>
+                                        val parentIdx = symbolIdMap.getOrDefault(parentSym, sentinelId)
+                                        if parentIdx >= 0 then Tasty.Type.Named(SymbolId(parentIdx))
+                                        else Tasty.Type.Named(SymbolId(sentinelId))
+                                    case None =>
+                                        // Try canonical source FQN (handles "$" inner class separators).
+                                        val srcFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(dottedFqn)
+                                        state.fqnIndex.get(srcFqn) match
+                                            case Some(parentSym) =>
+                                                val parentIdx = symbolIdMap.getOrDefault(parentSym, sentinelId)
+                                                if parentIdx >= 0 then Tasty.Type.Named(SymbolId(parentIdx))
+                                                else Tasty.Type.Named(SymbolId(sentinelId))
+                                            case None => Tasty.Type.Named(SymbolId(sentinelId))
+                                        end match
+                                end match
+                            if descs(classIdx).parentTypes.isEmpty then
+                                descs(classIdx).parentTypes = wirableParents
+                            // Populate javaMetadata from the classSymbol so flags survive finalizeMerge.
+                            classSym match
+                                case c: Tasty.Symbol.ClassLike =>
+                                    c.javaMetadata match
+                                        case Maybe.Present(meta) =>
+                                            if descs(classIdx).javaMetadata.isEmpty then
+                                                descs(classIdx).javaMetadata = Maybe(meta)
+                                        case Maybe.Absent => ()
+                                case _ => ()
+                            end match
+                            // Wire member symbols' ownerId to classIdx and populate declarationIds.
+                            // declarationIds is required by the declarations(using cp) API so that
+                            // sym.declarations / sym.methods / sym.fields return the correct members.
+                            val memberIdxBuf = new scala.collection.mutable.ArrayBuffer[Int]()
+                            for memberSym <- cfResult.symbols do
+                                val memberIdx = symbolIdMap.getOrDefault(memberSym, -1)
+                                if memberIdx >= 0 && memberIdx < count then
+                                    descs(memberIdx).ownerId = classIdx
+                                    memberIdxBuf += memberIdx
+                            end for
+                            if descs(classIdx).declarationIds.isEmpty then
+                                descs(classIdx).declarationIds = Chunk.from(memberIdxBuf.toSeq)
+                            // Resolve permittedSubclassFqns to final SymbolIds.
+                            // These are dotted FQNs (e.g. "java.lang.Double") that may use "$" inner-class
+                            // separators; try canonical source FQN as fallback.
+                            if cfResult.permittedSubclassFqns.nonEmpty then
+                                val permBuf = new scala.collection.mutable.ArrayBuffer[Int]()
+                                for fqn <- cfResult.permittedSubclassFqns do
+                                    state.fqnIndex.get(fqn) match
+                                        case Some(permSym) =>
+                                            val permIdx = symbolIdMap.getOrDefault(permSym, -1)
+                                            if permIdx >= 0 then permBuf += permIdx
+                                        case None =>
+                                            val srcFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(fqn)
+                                            state.fqnIndex.get(srcFqn) match
+                                                case Some(permSym) =>
+                                                    val permIdx = symbolIdMap.getOrDefault(permSym, -1)
+                                                    if permIdx >= 0 then permBuf += permIdx
+                                                case None => ()
+                                            end match
+                                    end match
+                                end for
+                                if permBuf.nonEmpty then
+                                    descs(classIdx).permittedSubclassIds = Maybe(Chunk.from(permBuf.toSeq))
+                            end if
+                        end if
                     end for
 
                     // F-I-003 / INV-007 fix: populate permittedSubclassIds by mining @Child annotations.
@@ -1318,6 +1494,43 @@ object ClasspathOrchestrator:
             )
         end for
     end decodeTastyBytes
+
+    /** Compute a dotted binary FQN from a `.class` file path.
+      *
+      * F-A3-001..004 fix: handles `jrt:/` paths produced by `PlatformModuleOps.listJdkClassFiles`. Examples:
+      *   - `jrt:///modules/java.base/java/lang/String.class`      -> `java.lang.String`
+      *   - `jrt:///modules/java.base/java/util/Map$Entry.class`   -> `java.util.Map$Entry`
+      *   - `/path/to/classes/com/example/Foo.class`               -> `com.example.Foo`
+      *
+      * Returns an empty string for paths that cannot be mapped (e.g., anonymous classes identified by digits-only simple name).
+      */
+    private def classfilePathToFqn(path: String): String =
+        // Strip jrt:/ scheme and /modules/<moduleName>/ prefix.
+        val stripped =
+            if path.startsWith("jrt:/") then
+                val noScheme = path.stripPrefix("jrt:/").stripPrefix("/")
+                if noScheme.startsWith("modules/") then
+                    val afterModules = noScheme.stripPrefix("modules/")
+                    val slashIdx     = afterModules.indexOf('/')
+                    if slashIdx < 0 then "" else afterModules.substring(slashIdx + 1)
+                else noScheme
+                end if
+            else path
+        // Strip .class suffix and replace path separators with dots.
+        val noExt = if stripped.endsWith(".class") then stripped.dropRight(6) else stripped
+        // Replace file separators with dots.
+        val dotted = noExt.replace('/', '.').replace('\\', '.')
+        // Filter out anonymous class names (purely numeric simple name like Foo$1).
+        // These have no stable FQN and cannot be looked up meaningfully.
+        if dotted.isEmpty then return ""
+        val simpleName = dotted.substring(dotted.lastIndexOf('.') + 1)
+        // Anonymous inner classes: simple name is purely numeric after the last $.
+        val dollarIdx = simpleName.lastIndexOf('$')
+        if dollarIdx >= 0 then
+            val afterDollar = simpleName.substring(dollarIdx + 1)
+            if afterDollar.nonEmpty && afterDollar.forall(_.isDigit) then return ""
+        dotted
+    end classfilePathToFqn
 
     /** Compute the dotted FQN for `sym` by walking the ownerBySymbol chain.
       *
