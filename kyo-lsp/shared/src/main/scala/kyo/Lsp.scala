@@ -219,7 +219,7 @@ object Lsp:
         ctx("serverExperimentalCapabilities").flatMap(c => decodeRaw[X](c._rawServerExperimental, "serverExperimental"))
 
     /** Decodes the metadata of a notebook document. */
-    def notebookMetadataAs[X](nb: LspHandler.NotebookDocument)(using
+    def notebookMetadataAs[X](nb: LspHandler.Notebook)(using
         Frame,
         Schema[X]
     ): Maybe[X] < (Sync & Abort[LspException.Execution.Decode]) =

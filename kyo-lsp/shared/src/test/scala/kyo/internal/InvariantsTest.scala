@@ -191,4 +191,91 @@ class InvariantsTest extends Test:
         )).map(_ => succeed)
     }
 
+    // Phase 06 invariants
+
+    // INV-009: Scoped init returns < (Async & Scope).
+    "INV-009: LspServer.init returns a Scope-managed server" in run {
+        JsonRpcTransport.inMemory.flatMap { (ta, _) =>
+            Scope.run {
+                LspServer.init(ta).map { server =>
+                    assert(server.specVersion == "3.17")
+                }
+            }
+        }
+    }
+
+    // INV-028: Unsafe mirror surface.
+    "INV-028: LspServer.Unsafe has showMessage method" in run {
+        val methods = classOf[LspServer.Unsafe].getDeclaredMethods.map(_.getName).toSet
+        assert(methods.contains("showMessage"))
+    }
+
+    // INV-042: No mutation methods on LspServer.
+    "INV-042: LspServer has no addHandler/removeHandler/setHandler method" in run {
+        val pattern  = "(?i)(add|remove|set)(handler|route|catalog)".r
+        val methods  = classOf[LspServer.type].getMethods.map(_.getName).toSet
+        val badNames = methods.filter(n => pattern.findFirstIn(n).isDefined)
+        assert(badNames.isEmpty, s"Unexpected mutation methods: ${badNames.mkString(", ")}")
+    }
+
+    // INV-062: Reverse-direction methods cover ClientHandled set.
+    "INV-062: LspServer has showMessage extension method" in run {
+        JsonRpcTransport.inMemory.map { (ta, _) =>
+            LspServer.initUnscoped(ta).flatMap { server =>
+                val params                            = LspHandler.ShowMessageParams(LspHandler.MessageType.Info, "test")
+                val _: Unit < (Async & Abort[Closed]) = server.showMessage(params)
+                server.closeNow.andThen(succeed)
+            }
+        }
+    }
+
+    "INV-062: LspServer has applyEdit extension method" in run {
+        JsonRpcTransport.inMemory.map { (ta, _) =>
+            LspServer.initUnscoped(ta).flatMap { server =>
+                val params = LspHandler.ApplyWorkspaceEditParams(edit = LspHandler.WorkspaceEdit())
+                val _: LspHandler.ApplyWorkspaceEditResult < (Async & Abort[LspException | Closed]) = server.applyEdit(params)
+                server.closeNow.andThen(succeed)
+            }
+        }
+    }
+
+    // INV-068: close defaults to 30s; closeNow = Duration.Zero.
+    "INV-068: close(using Frame) completes without error (30s default)" in run {
+        JsonRpcTransport.inMemory.map { (ta, _) =>
+            LspServer.initUnscoped(ta).flatMap { server =>
+                server.close.andThen(succeed)
+            }
+        }
+    }
+
+    "INV-068: closeNow completes without error (Duration.Zero)" in run {
+        JsonRpcTransport.inMemory.map { (ta, _) =>
+            LspServer.initUnscoped(ta).flatMap { server =>
+                server.closeNow.andThen(succeed)
+            }
+        }
+    }
+
+    // INV-095: Exactly 10 init-family methods.
+    "INV-095: LspServer has exactly 10 init-family methods" in run {
+        val methods           = classOf[LspServer.type].getMethods.toSeq
+        val initMethods       = methods.filter(_.getName.startsWith("init"))
+        val initCount         = initMethods.count(_.getName == "init")
+        val initWithCount     = initMethods.count(_.getName == "initWith")
+        val unscopedCount     = initMethods.count(_.getName == "initUnscoped")
+        val unscopedWithCount = initMethods.count(_.getName == "initUnscopedWith")
+        assert(initCount == 3, s"Expected 3 init, got $initCount")
+        assert(initWithCount == 2, s"Expected 2 initWith, got $initWithCount")
+        assert(unscopedCount == 3, s"Expected 3 initUnscoped, got $unscopedCount")
+        assert(unscopedWithCount == 2, s"Expected 2 initUnscopedWith, got $unscopedWithCount")
+    }
+
+    // INV-096: LspConfig.require fires before transport.
+    "INV-096: LspConfig.require rejects empty positionEncodings" in run {
+        val badConfig = LspConfig.default.withPositionEncodings(Chunk.empty)
+        val result    = scala.util.Try(LspConfig.require(badConfig))
+        assert(result.isFailure)
+        assert(result.failed.get.getMessage.contains("positionEncodings"))
+    }
+
 end InvariantsTest

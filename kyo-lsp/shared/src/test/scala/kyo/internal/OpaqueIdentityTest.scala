@@ -50,4 +50,18 @@ class OpaqueIdentityTest extends Test:
         assert(v.asString == "off")
     }
 
+    // Phase 06: LspServer opaque identity (INV-012).
+    "LspServer round-trips through safe/unsafe bridge (INV-012)" in run {
+        JsonRpcTransport.inMemory.map { (ta, _) =>
+            LspServer.initUnscoped(ta).flatMap { server =>
+                val back = server.unsafe.safe
+                server.closeNow.andThen {
+                    // The opaque alias `LspServer = LspServer.Unsafe`; safe returns `this`.
+                    // Both values are the same underlying object; verify via a stable property.
+                    assert(back.specVersion == "3.17")
+                }
+            }
+        }
+    }
+
 end OpaqueIdentityTest

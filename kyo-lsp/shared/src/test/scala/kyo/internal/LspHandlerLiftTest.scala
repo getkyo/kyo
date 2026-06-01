@@ -9,7 +9,7 @@ class LspHandlerLiftTest extends Test:
 
         "error mappings are applied to the lifted route" in {
             case class MyError(msg: String) derives Schema
-            val handler = LspHandler.textDocument.completion { _ =>
+            val handler = LspHandler.TextDocument.completion { _ =>
                 Abort.fail(LspException.Dispatch.MethodNotFound("test"))
             }.error[MyError](-32099, "my error")
 
@@ -19,7 +19,7 @@ class LspHandlerLiftTest extends Test:
         }
 
         "RequestHandler carries inSchema and outSchema" in {
-            val h = LspHandler.textDocument.completion { _ =>
+            val h = LspHandler.TextDocument.completion { _ =>
                 LspHandler.CompletionResult.Items(Chunk.empty)
             }
             h match
@@ -32,7 +32,7 @@ class LspHandlerLiftTest extends Test:
         }
 
         "NotificationHandler carries inSchema" in {
-            val h = LspHandler.textDocument.didOpen { _ => () }
+            val h = LspHandler.TextDocument.didOpen { _ => () }
             h match
                 case nh: LspHandler.NotificationHandler[?, ?] =>
                     assert(nh.inSchema != null)

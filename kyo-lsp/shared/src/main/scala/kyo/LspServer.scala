@@ -25,50 +25,66 @@ object LspServer:
     // =========================================================================
 
     /** Initializes an LSP server over the given transport using default configuration. */
-    def init(transport: JsonRpcTransport, handlers: LspHandler[?, ?, ?]*)(using Frame): LspServer < (Async & Scope) = ???
+    def init(transport: JsonRpcTransport, handlers: LspHandler[?, ?, ?]*)(using Frame): LspServer < (Async & Scope) =
+        init(transport, handlers, LspConfig.default)
 
     /** Initializes an LSP server with the given configuration. */
-    def init(transport: JsonRpcTransport, config: LspConfig)(handlers: LspHandler[?, ?, ?]*)(using Frame): LspServer < (Async & Scope) = ???
+    def init(transport: JsonRpcTransport, config: LspConfig)(handlers: LspHandler[?, ?, ?]*)(using Frame): LspServer < (Async & Scope) =
+        init(transport, handlers, config)
 
     /** Initializes an LSP server with explicit handler list and optional config. */
     def init(transport: JsonRpcTransport, handlers: Seq[LspHandler[?, ?, ?]], config: LspConfig = LspConfig.default)(using
         Frame
-    ): LspServer < (Async & Scope) = ???
+    ): LspServer < (Async & Scope) =
+        LspConfig.require(config)
+        Scope.acquireRelease(
+            internal.lsp.LspEngine.initServer(transport, handlers, config).map(_.safe)
+        )(_.closeNow)
+    end init
 
     /** Initializes and passes the server handle to the given function in a Scope context. */
     def initWith[A, S](transport: JsonRpcTransport, handlers: LspHandler[?, ?, ?]*)(f: LspServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope) = ???
+    ): A < (S & Async & Scope) =
+        init(transport, handlers*).map(f)
 
     /** Initializes with config and passes the server handle to the given function. */
     def initWith[A, S](transport: JsonRpcTransport, config: LspConfig)(handlers: LspHandler[?, ?, ?]*)(f: LspServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope) = ???
+    ): A < (S & Async & Scope) =
+        init(transport, config)(handlers*).map(f)
 
     // =========================================================================
     // Unscoped init quartet
     // =========================================================================
 
     /** Initializes an LSP server without automatic resource cleanup. */
-    def initUnscoped(transport: JsonRpcTransport, handlers: LspHandler[?, ?, ?]*)(using Frame): LspServer < Async = ???
+    def initUnscoped(transport: JsonRpcTransport, handlers: LspHandler[?, ?, ?]*)(using Frame): LspServer < Async =
+        initUnscoped(transport, handlers, LspConfig.default)
 
     /** Initializes an LSP server with config, without automatic resource cleanup. */
-    def initUnscoped(transport: JsonRpcTransport, config: LspConfig)(handlers: LspHandler[?, ?, ?]*)(using Frame): LspServer < Async = ???
+    def initUnscoped(transport: JsonRpcTransport, config: LspConfig)(handlers: LspHandler[?, ?, ?]*)(using Frame): LspServer < Async =
+        initUnscoped(transport, handlers, config)
 
     /** Initializes an LSP server with explicit handler list, without automatic resource cleanup. */
     def initUnscoped(transport: JsonRpcTransport, handlers: Seq[LspHandler[?, ?, ?]], config: LspConfig = LspConfig.default)(using
         Frame
-    ): LspServer < Async = ???
+    ): LspServer < Async =
+        LspConfig.require(config)
+        internal.lsp.LspEngine.initServer(transport, handlers, config).map(_.safe)
+    end initUnscoped
 
     /** Initializes unscoped and passes the server handle to the given function. */
     def initUnscopedWith[A, S](transport: JsonRpcTransport, handlers: LspHandler[?, ?, ?]*)(f: LspServer => A < S)(using
         Frame
-    ): A < (S & Async) = ???
+    ): A < (S & Async) =
+        initUnscoped(transport, handlers*).map(f)
 
     /** Initializes unscoped with config and passes the server handle to the given function. */
     def initUnscopedWith[A, S](transport: JsonRpcTransport, config: LspConfig)(handlers: LspHandler[?, ?, ?]*)(f: LspServer => A < S)(using
         Frame
-    ): A < (S & Async) = ???
+    ): A < (S & Async) =
+        initUnscoped(transport, config)(handlers*).map(f)
 
     // =========================================================================
     // Extension methods (safe-tier bridge over Unsafe)
@@ -188,16 +204,16 @@ object LspServer:
         def underlying: JsonRpcHandler = self.underlying
 
         /** Waits for all in-flight requests to complete. */
-        def awaitDrain(using Frame): Unit < Async = ???
+        def awaitDrain(using Frame): Unit < Async = Sync.Unsafe.defer(self.awaitDrain.safe.get)
 
-        /** Closes the server gracefully with the default grace period. */
-        def close(using Frame): Unit < Async = ???
+        /** Closes the server gracefully with the default 30-second grace period. INV-068. */
+        def close(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(30.seconds).safe.get)
 
         /** Closes the server gracefully with the specified grace period. */
-        def close(gracePeriod: Duration)(using Frame): Unit < Async = ???
+        def close(gracePeriod: Duration)(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(gracePeriod).safe.get)
 
-        /** Closes the server immediately. */
-        def closeNow(using Frame): Unit < Async = ???
+        /** Closes the server immediately (Duration.Zero grace period). INV-068. */
+        def closeNow(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(Duration.Zero).safe.get)
 
         /** The raw unsafe handle. */
         def unsafe: Unsafe = self

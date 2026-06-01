@@ -1446,7 +1446,7 @@ object LspHandler:
         given Schema[NotebookCell] = Schema.derived
 
     /** A notebook document with optional metadata wire slot. */
-    final case class NotebookDocument(
+    final case class Notebook(
         uri: String,
         notebookType: String,
         version: Int,
@@ -1454,8 +1454,8 @@ object LspHandler:
         private[kyo] _rawMetadata: Maybe[String] = Absent
     ) derives CanEqual
 
-    object NotebookDocument:
-        given Schema[NotebookDocument] = Schema.derived
+    object Notebook:
+        given Schema[Notebook] = Schema.derived
 
     /** A notebook document filter. */
     sealed trait NotebookDocumentFilter derives CanEqual
@@ -1491,7 +1491,7 @@ object LspHandler:
 
     /** A change event for a notebook document. */
     final case class NotebookDocumentChangeEvent(
-        metadata: Maybe[NotebookDocument] = Absent,
+        metadata: Maybe[Notebook] = Absent,
         cells: Maybe[NotebookDocumentChangeEvent.CellChanges] = Absent
     ) derives Schema, CanEqual
 
@@ -1510,7 +1510,7 @@ object LspHandler:
 
     /** Parameters for `notebookDocument/didOpen`. */
     final case class DidOpenNotebookDocumentParams(
-        notebookDocument: NotebookDocument,
+        notebookDocument: Notebook,
         cellTextDocuments: Chunk[TextDocumentItem]
     ) derives Schema, CanEqual
 
@@ -2108,10 +2108,10 @@ object LspHandler:
         )
     end TextDocumentSyncValue
 
-    // MARK: -- textDocument namespace factory object
+    // MARK: -- TextDocument namespace factory object
 
     /** Namespaced factories for `textDocument/X` server-handled LSP endpoints. */
-    object textDocument:
+    object TextDocument:
 
         def completion(
             handler: CompletionParams => CompletionResult < (Async & Abort[LspException | JsonRpcResponse.Halt])
@@ -2352,12 +2352,12 @@ object LspHandler:
         )(using Frame): LspHandler[WillSaveTextDocumentParams, Unit, LspException] =
             mkNotif("textDocument/willSave", Kind.TextDocumentWillSave, handler)
 
-    end textDocument
+    end TextDocument
 
-    // MARK: -- workspace namespace factory object
+    // MARK: -- Workspace namespace factory object
 
     /** Namespaced factories for `workspace/X` LSP endpoints. */
-    object workspace:
+    object Workspace:
 
         def symbol(
             handler: WorkspaceSymbolParams => Chunk[WorkspaceSymbol] < (Async & Abort[LspException | JsonRpcResponse.Halt])
@@ -2456,12 +2456,12 @@ object LspHandler:
         def refreshCodeLens(using Frame): LspHandler[Unit, Unit, LspException] =
             mkNotif[Unit]("workspace/codeLens/refresh", Kind.RefreshCodeLens, _ => ())
 
-    end workspace
+    end Workspace
 
-    // MARK: -- notebookDocument namespace factory object
+    // MARK: -- NotebookDocument namespace factory object
 
     /** Namespaced factories for `notebookDocument/X` LSP endpoints. */
-    object notebookDocument:
+    object NotebookDocument:
 
         def didOpen(
             handler: DidOpenNotebookDocumentParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
@@ -2483,12 +2483,12 @@ object LspHandler:
         )(using Frame): LspHandler[DidCloseNotebookDocumentParams, Unit, LspException] =
             mkNotif("notebookDocument/didClose", Kind.NotebookDidClose, handler)
 
-    end notebookDocument
+    end NotebookDocument
 
-    // MARK: -- window namespace factory object
+    // MARK: -- Window namespace factory object
 
     /** Namespaced factories for `window/X` client-handled reverse-direction LSP endpoints. */
-    object window:
+    object Window:
 
         def showMessage(
             handler: ShowMessageParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
@@ -2525,12 +2525,12 @@ object LspHandler:
         )(using outSchema: Schema[T], frame: Frame): LspHandler[T, Unit, LspException] =
             mkNotif("telemetry/event", Kind.Telemetry, handler)
 
-    end window
+    end Window
 
-    // MARK: -- client namespace factory object
+    // MARK: -- Client namespace factory object
 
     /** Namespaced factories for `client/X` reverse-direction LSP endpoints. */
-    object client:
+    object Client:
 
         def registerCapability(
             handler: RegistrationParams => Unit < (Async & Abort[LspException | JsonRpcResponse.Halt])
@@ -2542,9 +2542,9 @@ object LspHandler:
         )(using Frame): LspHandler[UnregistrationParams, Unit, LspException] =
             mkReq("client/unregisterCapability", Kind.UnregisterCapability, handler)
 
-    end client
+    end Client
 
-    // MARK: -- general namespace factory object
+    // MARK: -- General namespace factory object
 
     /** Namespaced factories for `$/X` bidirectional general LSP endpoints.
       *
@@ -2556,7 +2556,7 @@ object LspHandler:
       * Engine-reserved methods (`initialize`, `shutdown`, `exit`, `initialized`) are NOT in this
       * namespace; they are engine-owned and never user-registerable.
       */
-    object general:
+    object General:
 
         /** Observer for inbound `$/cancelRequest`. The engine has already completed the matching
           * `JsonRpcRoute.Context.cancelled` promise; this hook lets user code log or instrument
@@ -2583,7 +2583,7 @@ object LspHandler:
         def logTrace(handler: LogTraceParams => Unit < LE)(using Frame): LspHandler[LogTraceParams, Unit, LspException] =
             mkNotif("$/logTrace", Kind.LogTrace, handler)
 
-    end general
+    end General
 
     // MARK: -- custom / customClient escape hatches
 
