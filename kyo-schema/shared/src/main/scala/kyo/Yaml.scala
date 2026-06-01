@@ -1167,7 +1167,7 @@ object Yaml:
     def cst(input: String)(using Frame): Result[DecodeException, Cst.Document] =
         internal.yaml.YamlCstParser.document(input)
 
-    /** Parses a YAML document stream into source-backed CST documents. */
+    /** Parses a YAML document stream into a source-backed CST stream. */
     def cstAll(input: String)(using Frame): Result[DecodeException, Cst.Stream] =
         internal.yaml.YamlCstParser.stream(input)
 
