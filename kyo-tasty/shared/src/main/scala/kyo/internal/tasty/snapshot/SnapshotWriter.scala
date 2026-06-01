@@ -3,6 +3,7 @@ package kyo.internal.tasty.snapshot
 import java.io.ByteArrayOutputStream
 import kyo.*
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.symbol.FqnNormalizer
 import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable
 
@@ -59,14 +60,19 @@ object SnapshotWriter:
     private def serialize(cp: Tasty.Classpath, digest: Array[Byte]): Array[Byte] =
         // Direct field reads from the immutable case class; no AllowUnsafe needed.
         val allSymbols = cp.symbols
-        // Build a reverse map SymbolId->fqn from the classpath's fqnIndex so snapshot FQNs are
+        // Build a reverse map Symbol->fqn from the classpath's fqnIndex so snapshot FQNs are
         // the real registered FQNs (e.g. "test.Foo"), not just simple names ("Foo").
         // Symbols without an fqnIndex entry get an empty FQN (they will not be findClass-lookup-able).
+        // HARD RULE 10: store only the canonical source FQN per symbol. The fqnIndex contains dual-index
+        // entries (e.g. both "scala.Predef$" and "scala.Predef"), so we apply canonicalSourceFqn before
+        // storing. Multiple binary FQNs that canonicalize to the same source form produce the same put,
+        // which is deterministic and correct (the canonical source FQN is the user-facing name).
         val fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String] =
             val rev = new java.util.IdentityHashMap[Tasty.Symbol, String]()
             cp.fqnIndex.foreach { case (fqn, id) =>
-                val sym = cp.symbol(id)
-                rev.put(sym, fqn)
+                val sym       = cp.symbol(id)
+                val canonical = FqnNormalizer.canonicalSourceFqn(fqn)
+                rev.put(sym, canonical)
             }
             rev
         end fqnBySymbol
