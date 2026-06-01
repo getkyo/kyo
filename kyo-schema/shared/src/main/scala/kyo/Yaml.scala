@@ -742,8 +742,17 @@ object Yaml:
             input: String
         )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
             processor match
-                case Absent     => Yaml.decode[A](input, readerConfig)
-                case Present(_) => processorDecodeUnsupported(input)
+                case Absent => Yaml.decode[A](input, readerConfig)
+                case Present(current) =>
+                    selectedSource(input).flatMap { source =>
+                        internal.YamlEventScanner.collect(source, current).flatMap { events =>
+                            Result.catching[DecodeException] {
+                                val reader = internal.YamlEventReader(events, readerConfig.yamlVersion)
+                                reader.resetLimits(readerConfig.maxDepth, readerConfig.maxCollectionSize)
+                                schema.readFrom(reader)
+                            }
+                        }
+                    }
             end match
         end decode
 
@@ -815,15 +824,6 @@ object Yaml:
                 case Absent         => Result.succeed(input)
         end selectedSource
 
-        private def processorDecodeUnsupported[A](input: String)(using Frame): Result[Err | DecodeException, A] =
-            Result.fail(ParseException(
-                Yaml(),
-                input,
-                "YAML pipeline decode with processors requires the direct YAML event reader",
-                Nil,
-                0
-            ))
-        end processorDecodeUnsupported
     end Pipeline
 
     /** Default YAML pipeline using [[ReaderConfig.Default]] and [[WriterConfig.Default]]. */
