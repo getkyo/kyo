@@ -260,6 +260,37 @@ age: 30
             assert(Yaml.decodeAll[MTPerson](rendered) == Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Alice", 25))))
         }
 
+        "builds a processor CST stream with the same document count as the source-backed stream" in {
+            val yaml =
+                """# first
+                  |---
+                  |name: Alice
+                  |---
+                  |name: Bob
+                  |""".stripMargin
+
+            val processed    = Yaml.pipeline.through(scalarRewrite("Alice", "Alicia")).cstAll(yaml).getOrThrow
+            val sourceBacked = Yaml.pipeline.cstAll(yaml).getOrThrow
+
+            assert(processed.documents.size == sourceBacked.documents.size)
+            assert(processed.render(using Yaml.WriterConfig.Default).contains("Alicia"))
+        }
+
+        "returns every document from cstAll ignoring the reader document index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |---
+                  |name: Bob
+                  |""".stripMargin
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            assert(Yaml.pipeline.reader(config).through(scalarRewrite("Alice", "Alicia")).cstAll(yaml).map(_.documents.size) ==
+                Result.succeed(2))
+            assert(Yaml.pipeline.reader(config).cstAll(yaml).map(_.documents.size) == Result.succeed(2))
+        }
+
         "builds CST from UTF-8 bytes after source selection" in {
             val yaml =
                 """---

@@ -49,6 +49,14 @@ private[kyo] object YamlCstParser:
         }
     end stream
 
+    /** Returns the document bodies of a YAML stream, dropping a leading marker-only segment so callers see the same documents the
+      * source-backed stream parser produces.
+      */
+    def documentBodies(input: String): Chunk[String] =
+        val docs = YamlDocuments.split(input)
+        docs.drop(firstDocumentIndex(input, docs))
+    end documentBodies
+
     private def firstDocumentIndex(input: String, docs: Chunk[String]): Int =
         if docs.nonEmpty && docs(0).nonEmpty && !hasDocumentContent(docs(0)) && hasLeadingDocumentMarker(input) then 1
         else 0

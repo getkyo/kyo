@@ -805,31 +805,24 @@ object Yaml:
         /** Parses a YAML stream into a CST stream after routing events through this pipeline's processors.
           *
           * Pipelines with no processors delegate to [[Yaml.cstAll]], so rendering can return the original stream unchanged until an edit is
-          * applied. Processor-backed streams process each split document and return canonical CST documents with no original stream source.
+          * applied. Processor-backed streams process each document and return canonical CST documents with no original stream source. Both
+          * paths return every document in the stream; `cstAll` ignores [[ReaderConfig.documentIndex]] because document selection produces a
+          * single document, which [[cst]] handles.
           */
         def cstAll(input: String)(using Frame): Result[Err | DecodeException, Cst.Stream] =
             processor match
                 case Absent =>
                     Yaml.cstAll(input)
                 case Present(current) =>
-                    val docs = splitDocuments(input)
+                    val docs = internal.yaml.YamlCstParser.documentBodies(input)
 
                     @tailrec def loop(index: Int, acc: Chunk[Cst.Document]): Result[Err | DecodeException, Chunk[Cst.Document]] =
                         if index >= docs.size then Result.succeed(acc)
                         else
-                            val result =
-                                internal.yaml.YamlEventScanner.collect(docs(index), current).flatMap(Yaml.Cst.fromEvents)
-                            result.value match
-                                case Present(doc) =>
-                                    loop(index + 1, acc :+ doc)
-                                case Absent =>
-                                    result.panic match
-                                        case Present(error) => Result.panic(error)
-                                        case Absent =>
-                                            result.failure.fold(Result.panic(IllegalStateException("Unexpected empty YAML CST result")))(
-                                                error => Result.fail(error)
-                                            )
-                                    end match
+                            internal.yaml.YamlEventScanner.collect(docs(index), current).flatMap(Yaml.Cst.fromEvents) match
+                                case Result.Success(doc) => loop(index + 1, acc :+ doc)
+                                case Result.Failure(e)   => Result.fail(e)
+                                case Result.Panic(e)     => Result.panic(e)
                             end match
                     end loop
 
