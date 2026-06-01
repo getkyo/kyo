@@ -554,9 +554,17 @@ class YamlCstTest extends Test:
             val edited =
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "services" / "api" / "image", replacement).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
+            val expected = """# app
+                             |services:
+                             |  api:
+                             |    # image comment
+                             |    image: app:v2
+                             |    ports:
+                             |      - 8080
+                             |""".stripMargin
 
             assert(edited.source.isEmpty)
-            assert(rendered.contains("# image comment"))
+            assert(rendered == expected)
             Yaml.parse(rendered) match
                 case Result.Success(Yaml.Node.Mapping(servicesRoot, _)) =>
                     servicesRoot(0) match
@@ -582,7 +590,26 @@ class YamlCstTest extends Test:
                 case other =>
                     fail(s"Expected rendered YAML to parse, got $other")
             end match
-            assert(rendered.contains("image: app:v2"))
+        }
+
+        "replaces sequence element while preserving leading item comment" in {
+            val yaml = """items:
+                         |  # keep
+                         |  - old
+                         |  - next
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "items" / 0, scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+            val expected = """items:
+                             |  # keep
+                             |  - new
+                             |  - next
+                             |""".stripMargin
+
+            assert(edited.source.isEmpty)
+            assert(rendered == expected)
+            assert(Yaml.decode[Map[String, List[String]]](rendered) == Result.succeed(Map("items" -> List("new", "next"))))
         }
 
         "inserts, removes, and renames mapping entries at root" in {

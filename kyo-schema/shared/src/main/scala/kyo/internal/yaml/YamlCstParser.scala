@@ -139,7 +139,12 @@ private[kyo] object YamlCstParser:
             case Yaml.Node.Sequence(elements, meta) =>
                 val cstEntries = elements.map { value =>
                     val cstValue = toCst(value, trivia)
-                    Cst.SequenceEntry(cstValue, span(cstValue))
+                    Cst.SequenceEntry(
+                        cstValue,
+                        span(cstValue),
+                        trivia.leadingFor(start(cstValue)),
+                        trivia.trailingFor(start(cstValue))
+                    )
                 }
                 Cst.Node.Sequence(
                     cstEntries,
