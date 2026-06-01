@@ -1,7 +1,8 @@
-package kyo.internal
+package kyo.internal.yaml
 
 import java.nio.charset.StandardCharsets
 import kyo.*
+import kyo.internal.Ryu
 import scala.annotation.tailrec
 
 private[kyo] object YamlEvents:

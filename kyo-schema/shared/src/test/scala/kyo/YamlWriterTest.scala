@@ -1,7 +1,7 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
-import kyo.internal.YamlWriter
+import kyo.internal.yaml.YamlWriter
 
 final case class YamlWriterStrings(
     plain: String,

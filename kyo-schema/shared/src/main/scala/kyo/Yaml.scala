@@ -15,11 +15,11 @@ import scala.annotation.targetName
   */
 final class Yaml(writerConfig: Yaml.WriterConfig = Yaml.WriterConfig.Default) extends Codec:
     /** Creates a YAML writer using this codec instance's writer configuration. */
-    def newWriter(): Codec.Writer = kyo.internal.YamlWriter(writerConfig)
+    def newWriter(): Codec.Writer = kyo.internal.yaml.YamlWriter(writerConfig)
 
     /** Creates a direct YAML reader over UTF-8 input bytes. */
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
-        kyo.internal.YamlReader(input)
+        kyo.internal.yaml.YamlReader(input)
 end Yaml
 
 /** Primary entry point for YAML 1.2 serialization, parsing, and visiting.
@@ -625,7 +625,7 @@ object Yaml:
           * decisions. Create a fresh renderer for each output, pass it as the terminal handler, then read [[resultString]] after event
           * processing completes.
           */
-        final class Renderer private (private val inner: internal.YamlEvents.Renderer) extends Handler[Unit, DecodeException]:
+        final class Renderer private (private val inner: internal.yaml.YamlEvents.Renderer) extends Handler[Unit, DecodeException]:
 
             /** Handles the start of a YAML mapping. */
             override def mappingStart(context: Unit, meta: Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
@@ -661,7 +661,7 @@ object Yaml:
             /** Creates a YAML event renderer using the provided writer configuration. */
             @targetName("applyWithConfig")
             def apply(config: WriterConfig): Renderer =
-                new Renderer(internal.YamlEvents.Renderer(config))
+                new Renderer(internal.yaml.YamlEvents.Renderer(config))
         end Renderer
 
         /** Visits a YAML stream as events without constructing a YAML DOM. */
@@ -669,7 +669,7 @@ object Yaml:
             input: String,
             context: Ctx
         )(handler: Handler[Ctx, Err])(using Frame): Result[Err | DecodeException, Ctx] =
-            internal.YamlParser(input).visitEvents(context)(handler)
+            internal.yaml.YamlParser(input).visitEvents(context)(handler)
         end visit
 
         /** Visits one document from a YAML stream as events without constructing a YAML DOM. */
@@ -691,7 +691,7 @@ object Yaml:
             value: A,
             context: Ctx
         )(handler: Handler[Ctx, Err])(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): Result[Err, Ctx] =
-            val writer = internal.YamlEvents.EventWriter(context, handler, writerConfig)
+            val writer = internal.yaml.YamlEvents.EventWriter(context, handler, writerConfig)
             schema.writeTo(value, writer)
             writer.resultContext
         end write
@@ -745,9 +745,9 @@ object Yaml:
                 case Absent => Yaml.decode[A](input, readerConfig)
                 case Present(current) =>
                     decodeSource(input).flatMap { source =>
-                        internal.YamlEventScanner.collect(source, current).flatMap { events =>
+                        internal.yaml.YamlEventScanner.collect(source, current).flatMap { events =>
                             Result.catching[DecodeException] {
-                                val reader = internal.YamlEventReader(events, readerConfig.yamlVersion)
+                                val reader = internal.yaml.YamlEventReader(events, readerConfig.yamlVersion)
                                 reader.resetLimits(readerConfig.maxDepth, readerConfig.maxCollectionSize)
                                 schema.readFrom(reader)
                             }
@@ -828,13 +828,13 @@ object Yaml:
             readerConfig.documentIndex match
                 case Present(index) =>
                     selectDocument(input, index)
-                case Absent if !internal.YamlDocuments.requiresSplit(input) =>
+                case Absent if !internal.yaml.YamlDocuments.requiresSplit(input) =>
                     Result.succeed(input)
                 case Absent =>
                     val docs = splitDocuments(input)
                     readerConfig.documentMode match
                         case ReaderConfig.DocumentMode.MergeTopLevelMappings =>
-                            Result.succeed(internal.YamlDocuments.mergeTopLevelMappings(docs))
+                            Result.succeed(internal.yaml.YamlDocuments.mergeTopLevelMappings(docs))
                         case ReaderConfig.DocumentMode.SingleDocument =>
                             if docs.size == 1 then Result.succeed(docs(0))
                             else if docs.isEmpty && input.trim.isEmpty then Result.succeed(input)
@@ -886,7 +886,7 @@ object Yaml:
     /** Parses a single YAML document into an optional DOM node tree. */
     def parse(input: String)(using Frame): Result[DecodeException, Node] =
         val builder = NodeBuilder()
-        internal.YamlParser(input).visitEvents(())(builder).flatMap(_ => builder.result)
+        internal.yaml.YamlParser(input).visitEvents(())(builder).flatMap(_ => builder.result)
     end parse
 
     /** Parses one document from a YAML stream into an optional DOM node tree. */
@@ -951,7 +951,7 @@ object Yaml:
             case Present(index) =>
                 selectDocument(input, index).flatMap(doc => decode[A](doc, config.copy(documentIndex = Absent)))
             case Absent =>
-                if !internal.YamlDocuments.requiresSplit(input) then
+                if !internal.yaml.YamlDocuments.requiresSplit(input) then
                     decodePreparedString(
                         input,
                         config.maxDepth,
@@ -963,7 +963,7 @@ object Yaml:
                     config.documentMode match
                         case ReaderConfig.DocumentMode.MergeTopLevelMappings =>
                             decodePreparedString(
-                                internal.YamlDocuments.mergeTopLevelMappings(docs),
+                                internal.yaml.YamlDocuments.mergeTopLevelMappings(docs),
                                 config.maxDepth,
                                 config.maxCollectionSize,
                                 config.yamlVersion
@@ -1018,7 +1018,7 @@ object Yaml:
         yamlVersion: SpecVersion
     )(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         Result.catching[DecodeException] {
-            val reader = internal.YamlReader(input, yamlVersion)
+            val reader = internal.yaml.YamlReader(input, yamlVersion)
             reader.resetLimits(maxDepth, maxCollectionSize)
             schema.readFrom(reader)
         }
@@ -1118,7 +1118,7 @@ object Yaml:
     end selectDocument
 
     private def splitDocuments(input: String): Chunk[String] =
-        internal.YamlDocuments.split(input)
+        internal.yaml.YamlDocuments.split(input)
     end splitDocuments
 
     sealed private trait NodeFrame

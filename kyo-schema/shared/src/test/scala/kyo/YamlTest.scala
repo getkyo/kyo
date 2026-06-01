@@ -1,5 +1,7 @@
 package kyo
 
+import java.nio.charset.StandardCharsets
+
 object YamlOpaqueUserId:
     opaque type Type = String
 
@@ -21,6 +23,9 @@ final case class YamlCountOnly(count: Int) derives CanEqual
 final case class YamlAnchoredCount(value: YamlCountOnly) derives CanEqual
 final case class YamlScalarAlias(first: String, second: String) derives CanEqual
 final case class YamlSequenceAlias(name: String, items: List[String]) derives CanEqual
+final case class YamlStringItems(items: List[String]) derives CanEqual
+final case class YamlAnchoredStringItems(first: YamlStringItems, second: YamlStringItems) derives CanEqual
+final case class YamlPeopleAlias(items: List[MTPerson], duplicate: List[MTPerson]) derives CanEqual
 final case class YamlUnicodeField(café: Int) derives CanEqual
 final case class YamlMultiDocumentConfig(
     primary: MTPerson,
@@ -82,6 +87,15 @@ class YamlTest extends kyo.test.Test[Any]:
             assert(Yaml.decode[List[Int]]("[1, 2, 3]") == Result.succeed(List(1, 2, 3)))
         }
 
+        "decodes flow mapping fields with YAML colon edge cases" in {
+            val yaml = """{a:1, https://example.com, b: 2, "c":3}"""
+
+            assert(
+                Yaml.decode[Map[String, Option[Int]]](yaml) ==
+                    Result.succeed(Map("a:1" -> None, "https://example.com" -> None, "b" -> Some(2), "c" -> Some(3)))
+            )
+        }
+
         "keeps comment markers inside quoted scalars" in {
             val yaml =
                 """name: "Alice #1"
@@ -89,6 +103,92 @@ class YamlTest extends kyo.test.Test[Any]:
                   |""".stripMargin
 
             assert(Yaml.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alice #1", 30)))
+        }
+
+        "decodes YAML double-quoted escapes through schema decode" in {
+            val yaml =
+                """nul: "\0"
+                  |alarm: "\a"
+                  |backspace: "\b"
+                  |tab: "\t"
+                  |lineFeed: "\n"
+                  |verticalTab: "\v"
+                  |formFeed: "\f"
+                  |carriageReturn: "\r"
+                  |escape: "\e"
+                  |space: "\ "
+                  |quote: "\""
+                  |slash: "\/"
+                  |backslash: "\\"
+                  |nextLine: "\N"
+                  |nonBreakingSpace: "\_"
+                  |lineSeparator: "\L"
+                  |paragraphSeparator: "\P"
+                  |hex8: "\x41"
+                  |hex16: "\u263A"
+                  |hex32: "\U0001D11E"
+                  |""".stripMargin +
+                    "escapedTab: \"\\" + "\t" + "\"\n"
+
+            assert(
+                Yaml.decode[Map[String, String]](yaml) ==
+                    Result.succeed(Map(
+                        "nul"                -> "\u0000",
+                        "alarm"              -> "\u0007",
+                        "backspace"          -> "\b",
+                        "tab"                -> "\t",
+                        "lineFeed"           -> "\n",
+                        "verticalTab"        -> "\u000b",
+                        "formFeed"           -> "\f",
+                        "carriageReturn"     -> "\r",
+                        "escape"             -> "\u001b",
+                        "space"              -> " ",
+                        "quote"              -> "\"",
+                        "slash"              -> "/",
+                        "backslash"          -> "\\",
+                        "nextLine"           -> "\u0085",
+                        "nonBreakingSpace"   -> "\u00a0",
+                        "lineSeparator"      -> "\u2028",
+                        "paragraphSeparator" -> "\u2029",
+                        "hex8"               -> "A",
+                        "hex16"              -> "\u263a",
+                        "hex32"              -> new String(Character.toChars(0x1d11e)),
+                        "escapedTab"         -> "\t"
+                    ))
+            )
+        }
+
+        "reports source double-quoted escape errors with line and column context" in {
+            import scala.NamedTuple.*
+
+            def message(input: String): String =
+                Yaml.decode[String](input) match
+                    case Result.Failure(e: ParseException) => e.getMessage
+                    case other                             => fail(s"Expected ParseException failure, got $other")
+
+            val observed = (
+                unknown = message("\"\\q\"\n"),
+                shortHex = message("\"\\xF\"\n"),
+                badHex = message("\"\\u12xz\"\n"),
+                invalidCodePoint = message("\"\\UFFFFFFFF\"\n"),
+                trailingSlash = message("\"abc\\\"\n")
+            )
+
+            assertResult((
+                unknown = true,
+                shortHex = true,
+                badHex = true,
+                invalidCodePoint = true,
+                trailingSlash = true
+            ).toSeqMap)((
+                unknown = observed.unknown.contains("Invalid escape sequence \\q") && observed.unknown.contains("line 1"),
+                shortHex = observed.shortHex.contains("Invalid escape sequence \\xF") && observed.shortHex.contains("line 1"),
+                badHex = observed.badHex.contains("Invalid escape sequence \\u12xz") && observed.badHex.contains("line 1"),
+                invalidCodePoint = observed.invalidCodePoint.contains("Invalid escape sequence \\UFFFFFFFF") &&
+                    observed.invalidCodePoint.contains("line 1"),
+                trailingSlash = observed.trailingSlash.contains("Unterminated double quoted scalar") &&
+                    observed.trailingSlash.contains("line")
+            ).toSeqMap)
         }
 
         "rejects multi-document streams for single-document decode" in {
@@ -557,20 +657,23 @@ class YamlTest extends kyo.test.Test[Any]:
             )
         }
 
+        // Direct YamlReader tests below exercise Codec.Reader cursor semantics. Some inputs
+        // intentionally contain a valid YAML node prefix followed by unrelated or malformed text;
+        // those cases are not assertions that the entire source is a valid YAML document.
         "captures deferred values as YAML readers" in {
-            val reader = kyo.internal.YamlReader("value: 42\n")
+            val reader = kyo.internal.yaml.YamlReader("value: 42\n")
 
             discard(reader.objectStart())
             reader.fieldParse()
             val captured = reader.captureValue()
 
-            assert(captured.isInstanceOf[kyo.internal.YamlReader])
+            assert(captured.isInstanceOf[kyo.internal.yaml.YamlReader])
             assert(captured.int() == 42)
         }
 
         "reader can pull a requested prefix without parsing later malformed content" in {
             val reader =
-                kyo.internal.YamlReader(
+                kyo.internal.yaml.YamlReader(
                     """value: 42
                       |later: [unterminated
                       |""".stripMargin
@@ -585,7 +688,7 @@ class YamlTest extends kyo.test.Test[Any]:
 
         "reader folds a requested plain scalar prefix without parsing later malformed content" in {
             val reader =
-                kyo.internal.YamlReader(
+                kyo.internal.yaml.YamlReader(
                     """value: hello
                       |  world
                       |later: [unterminated
@@ -601,7 +704,7 @@ class YamlTest extends kyo.test.Test[Any]:
 
         "captureValue buffers only the requested subtree" in {
             val reader =
-                kyo.internal.YamlReader(
+                kyo.internal.yaml.YamlReader(
                     """value:
                       |  count: 7
                       |later: [unterminated
@@ -621,7 +724,7 @@ class YamlTest extends kyo.test.Test[Any]:
 
         "captureValue pulls the current sequence element without parsing later malformed content" in {
             val reader =
-                kyo.internal.YamlReader(
+                kyo.internal.yaml.YamlReader(
                     """- count: 7
                       |- [unterminated
                       |""".stripMargin
@@ -638,7 +741,7 @@ class YamlTest extends kyo.test.Test[Any]:
         }
 
         "captureValue buffers a root source value without parsing later malformed content" in {
-            val reader = kyo.internal.YamlReader("[1, [unterminated")
+            val reader = kyo.internal.yaml.YamlReader("[1, [unterminated")
 
             val captured = reader.captureValue()
 
@@ -648,7 +751,7 @@ class YamlTest extends kyo.test.Test[Any]:
         }
 
         "captureValue advances root source by one scalar node" in {
-            val reader = kyo.internal.YamlReader("Alice\nBob\n")
+            val reader = kyo.internal.yaml.YamlReader("Alice\nBob\n")
 
             val first = reader.captureValue()
             assert(first.string() == "Alice")
@@ -658,7 +761,7 @@ class YamlTest extends kyo.test.Test[Any]:
         }
 
         "captureValue advances root source by one flow collection" in {
-            val reader = kyo.internal.YamlReader("[1]\n[2]\n")
+            val reader = kyo.internal.yaml.YamlReader("[1]\n[2]\n")
 
             val first = reader.captureValue()
             discard(first.arrayStart())
@@ -676,7 +779,7 @@ class YamlTest extends kyo.test.Test[Any]:
 
         "captureValue advances root source by one block collection" in {
             val reader =
-                kyo.internal.YamlReader(
+                kyo.internal.yaml.YamlReader(
                     """name: Alice
                       |[2]
                       |""".stripMargin
@@ -698,7 +801,7 @@ class YamlTest extends kyo.test.Test[Any]:
         }
 
         "reader can pull a flow sequence prefix without parsing later malformed content" in {
-            val reader = kyo.internal.YamlReader("[1, [unterminated")
+            val reader = kyo.internal.yaml.YamlReader("[1, [unterminated")
 
             val size = reader.arrayStart()
 
@@ -708,7 +811,7 @@ class YamlTest extends kyo.test.Test[Any]:
         }
 
         "reader can pull a flow mapping prefix without parsing later malformed content" in {
-            val reader = kyo.internal.YamlReader("{name: Alice, later: [unterminated")
+            val reader = kyo.internal.yaml.YamlReader("{name: Alice, later: [unterminated")
 
             val size = reader.objectStart()
 
@@ -736,6 +839,59 @@ class YamlTest extends kyo.test.Test[Any]:
                   |""".stripMargin
 
             assert(Yaml.decode[YamlScalarAlias](yaml) == Result.succeed(YamlScalarAlias("Alice", "Alice")))
+        }
+
+        "reader replays anchored block mappings that contain flow collections" in {
+            val yaml =
+                """first: &thing
+                  |  items: ["a, b", "c: d", plain]
+                  |second: *thing
+                  |""".stripMargin
+
+            assert(
+                Yaml.decode[YamlAnchoredStringItems](yaml) ==
+                    Result.succeed(
+                        YamlAnchoredStringItems(
+                            YamlStringItems(List("a, b", "c: d", "plain")),
+                            YamlStringItems(List("a, b", "c: d", "plain"))
+                        )
+                    )
+            )
+        }
+
+        "reader applies source anchor expansion limits" in {
+            val yaml =
+                """first: &thing
+                  |  items: ["a, b", "c: d", plain]
+                  |second: *thing
+                  |""".stripMargin
+
+            Yaml.decode[YamlAnchoredStringItems](yaml, Yaml.ReaderConfig(maxCollectionSize = 3)) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.getMessage.contains("Collection size"))
+                case other => fail(s"Expected LimitExceededException failure, got $other")
+            end match
+        }
+
+        "reader replays anchored block sequences with compact mapping entries" in {
+            val yaml =
+                """items: &people
+                  |  - name: Alice
+                  |    age: 30
+                  |  - name: Bob
+                  |    age: 25
+                  |duplicate: *people
+                  |""".stripMargin
+
+            assert(
+                Yaml.decode[YamlPeopleAlias](yaml) ==
+                    Result.succeed(
+                        YamlPeopleAlias(
+                            List(MTPerson("Alice", 30), MTPerson("Bob", 25)),
+                            List(MTPerson("Alice", 30), MTPerson("Bob", 25))
+                        )
+                    )
+            )
         }
 
         "reader resolves source aliases before unrelated malformed fields" in {
@@ -768,27 +924,171 @@ class YamlTest extends kyo.test.Test[Any]:
             end match
         }
 
+        "reader reports malformed source aliases with context" in {
+            import scala.NamedTuple.*
+
+            def message(input: String): String =
+                Yaml.decode[String](input) match
+                    case Result.Failure(e: ParseException) => e.getMessage
+                    case other                             => fail(s"Expected ParseException failure, got $other")
+
+            val observed = (
+                missingName = message("*\n"),
+                trailingContent = message("*name trailing\n")
+            )
+
+            assertResult((
+                missingName = true,
+                trailingContent = true
+            ).toSeqMap)((
+                missingName = observed.missingName.contains("Expected YAML alias name") && observed.missingName.contains("line 1"),
+                trailingContent = observed.trailingContent.contains("Unexpected content after YAML alias") &&
+                    observed.trailingContent.contains("line 1")
+            ).toSeqMap)
+        }
+
         "isNil reads root source nulls without parsing later malformed content" in {
             List("null", "~", "!!null ignored").foreach { value =>
-                val reader = kyo.internal.YamlReader(s"$value\nlater: [unterminated")
+                val reader = kyo.internal.yaml.YamlReader(s"$value\nlater: [unterminated")
 
                 assert(reader.isNil())
             }
 
-            val empty = kyo.internal.YamlReader("\n")
+            val empty = kyo.internal.yaml.YamlReader("\n")
             assert(empty.isNil())
         }
 
         "isNil preserves non-null source scalars for later reads" in {
-            val reader = kyo.internal.YamlReader("Alice\nlater: [unterminated")
+            val reader = kyo.internal.yaml.YamlReader("Alice\nlater: [unterminated")
 
             assert(!reader.isNil())
             assert(reader.string() == "Alice")
         }
 
+        "captureValue advances root source by one block sequence" in {
+            import scala.NamedTuple.*
+
+            val reader =
+                kyo.internal.yaml.YamlReader(
+                    """- name: Alice
+                      |  age: 30
+                      |- name: Bob
+                      |  age: 25
+                      |next: done
+                      |""".stripMargin
+                )
+
+            val captured = reader.captureValue()
+            val decoded = Result.catching[DecodeException] {
+                summon[Schema[List[MTPerson]]].readFrom(captured)
+            }
+            val next = reader.captureValue()
+            discard(next.objectStart())
+            next.fieldParse()
+            val observed = (
+                decoded = decoded,
+                nextField = next.lastFieldName(),
+                nextValue = next.string()
+            )
+            next.objectEnd()
+
+            assertResult((
+                decoded = Result.succeed(List(MTPerson("Alice", 30), MTPerson("Bob", 25))),
+                nextField = "next",
+                nextValue = "done"
+            ).toSeqMap)(observed.toSeqMap)
+        }
+
+        "captureValue advances root source by one flow mapping" in {
+            import scala.NamedTuple.*
+
+            val reader = kyo.internal.yaml.YamlReader("{name: Alice, text: 'brace } inside'}\n[1]\n")
+
+            val captured = reader.captureValue()
+            val decoded = Result.catching[DecodeException] {
+                summon[Schema[scala.collection.immutable.Map[String, String]]].readFrom(captured)
+            }
+            val next = reader.captureValue()
+            discard(next.arrayStart())
+            val hasNext = next.hasNextElement()
+            val value   = next.int()
+            val hasMore = next.hasNextElement()
+            next.arrayEnd()
+
+            assertResult((
+                decoded = Result.succeed(scala.collection.immutable.Map("name" -> "Alice", "text" -> "brace } inside")),
+                hasNext = true,
+                value = 1,
+                hasMore = false
+            ).toSeqMap)((
+                decoded = decoded,
+                hasNext = hasNext,
+                value = value,
+                hasMore = hasMore
+            ).toSeqMap)
+        }
+
+        "captureValue preserves quoted delimiters inside a root flow collection" in {
+            import scala.NamedTuple.*
+
+            val reader =
+                kyo.internal.yaml.YamlReader(
+                    """["a ] # not close", [1, 2]]
+                      |name: next
+                      |""".stripMargin
+                )
+
+            val captured = reader.captureValue()
+            discard(captured.arrayStart())
+            val hasText   = captured.hasNextElement()
+            val text      = captured.string()
+            val hasValues = captured.hasNextElement()
+            discard(captured.arrayStart())
+            val hasFirstValue  = captured.hasNextElement()
+            val firstValue     = captured.int()
+            val hasSecondValue = captured.hasNextElement()
+            val secondValue    = captured.int()
+            val hasMoreValues  = captured.hasNextElement()
+            captured.arrayEnd()
+            val hasMoreElements = captured.hasNextElement()
+            captured.arrayEnd()
+
+            val next = reader.captureValue()
+            discard(next.objectStart())
+            next.fieldParse()
+            val observed = (
+                hasText = hasText,
+                text = text,
+                hasValues = hasValues,
+                hasFirstValue = hasFirstValue,
+                firstValue = firstValue,
+                hasSecondValue = hasSecondValue,
+                secondValue = secondValue,
+                hasMoreValues = hasMoreValues,
+                hasMoreElements = hasMoreElements,
+                nextField = next.lastFieldName(),
+                nextValue = next.string()
+            )
+            next.objectEnd()
+
+            assertResult((
+                hasText = true,
+                text = "a ] # not close",
+                hasValues = true,
+                hasFirstValue = true,
+                firstValue = 1,
+                hasSecondValue = true,
+                secondValue = 2,
+                hasMoreValues = false,
+                hasMoreElements = false,
+                nextField = "name",
+                nextValue = "next"
+            ).toSeqMap)(observed.toSeqMap)
+        }
+
         "skip advances the current sequence element without parsing later malformed content" in {
             val reader =
-                kyo.internal.YamlReader(
+                kyo.internal.yaml.YamlReader(
                     """- ignored:
                       |    count: 7
                       |- [unterminated
@@ -802,6 +1102,13 @@ class YamlTest extends kyo.test.Test[Any]:
 
         "matches UTF-8 field names without lossy byte comparisons" in {
             assert(Yaml.decode[YamlUnicodeField]("café: 7\n") == Result.succeed(YamlUnicodeField(7)))
+        }
+
+        "reader accepts UTF-8 byte input directly" in {
+            val bytes  = Span.from("café\n".getBytes(StandardCharsets.UTF_8))
+            val reader = kyo.internal.yaml.YamlReader(bytes)
+
+            assert(reader.string() == "café")
         }
 
     }

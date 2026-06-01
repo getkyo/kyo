@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.internal.yaml
 
 import kyo.*
 
@@ -81,6 +81,249 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                     "streamEnd"
                 ))
             )
+        }
+
+        "emits folded multiline quoted scalar values as parser events" in {
+            val yaml =
+                """single: 'line one
+                  |  line two
+                  |
+                  |  line three'
+                  |double: "line one
+                  |  line two\nline three"
+                  |""".stripMargin
+
+            assertResult(
+                Result.succeed(Chunk(
+                    ("single", Yaml.ScalarStyle.Plain),
+                    ("line one line two\nline three", Yaml.ScalarStyle.SingleQuoted),
+                    ("double", Yaml.ScalarStyle.Plain),
+                    ("line one line two\nline three", Yaml.ScalarStyle.DoubleQuoted)
+                ))
+            )(collectScalarEvents(yaml))
+        }
+
+        "emits inferred and explicit block scalar values as parser events" in {
+            val yaml =
+                """literal: |-
+                  |    first
+                  |      deeper
+                  |folded: >2
+                  |  one
+                  |  two
+                  |
+                  |  three
+                  |""".stripMargin
+
+            assertResult(
+                Result.succeed(Chunk(
+                    ("literal", Yaml.ScalarStyle.Plain),
+                    ("first\n  deeper", Yaml.ScalarStyle.Literal),
+                    ("folded", Yaml.ScalarStyle.Plain),
+                    ("one two\nthree\n", Yaml.ScalarStyle.Folded)
+                ))
+            )(collectScalarEvents(yaml))
+        }
+
+        "emits compact sequence mappings with continuation fields as nested parser events" in {
+            val yaml =
+                """steps:
+                  |  - name: Build
+                  |    run: sbt test
+                  |  - name: Deploy
+                  |    env:
+                  |      REGION: us
+                  |""".stripMargin
+
+            assertResult(
+                Result.succeed(Chunk(
+                    "streamStart",
+                    "documentStart",
+                    "mappingStart::",
+                    "scalar:steps:Plain",
+                    "sequenceStart::",
+                    "mappingStart::",
+                    "scalar:name:Plain",
+                    "scalar:Build:Plain",
+                    "scalar:run:Plain",
+                    "scalar:sbt test:Plain",
+                    "collectionEnd:Mapping",
+                    "mappingStart::",
+                    "scalar:name:Plain",
+                    "scalar:Deploy:Plain",
+                    "scalar:env:Plain",
+                    "mappingStart::",
+                    "scalar:REGION:Plain",
+                    "scalar:us:Plain",
+                    "collectionEnd:Mapping",
+                    "collectionEnd:Mapping",
+                    "collectionEnd:Sequence",
+                    "collectionEnd:Mapping",
+                    "documentEnd",
+                    "streamEnd"
+                ))
+            )(collectEventLabels(yaml))
+        }
+
+        "emits directives explicit document starts and empty documents as parser events" in {
+            val yaml =
+                """%YAML 1.2
+                  |--- # explicit empty document
+                  |""".stripMargin
+
+            assertResult(
+                Result.succeed(Chunk(
+                    "streamStart",
+                    "documentStart",
+                    "scalar::Plain",
+                    "documentEnd",
+                    "streamEnd"
+                ))
+            )(collectEventLabels(yaml))
+        }
+
+        "emits anchors and tags on inline collection parser events" in {
+            val yaml =
+                """items: !!seq &items [one, two]
+                  |settings: &settings !!map { mode: "fast", retries: 3 }
+                  |copy: *items
+                  |""".stripMargin
+
+            assertResult(
+                Result.succeed(Chunk(
+                    "streamStart",
+                    "documentStart",
+                    "mappingStart::",
+                    "scalar:items:Plain",
+                    "sequenceStart:items:!!seq",
+                    "scalar:one:Plain",
+                    "scalar:two:Plain",
+                    "collectionEnd:Sequence",
+                    "scalar:settings:Plain",
+                    "mappingStart:settings:!!map",
+                    "scalar:mode:Plain",
+                    "scalar:fast:DoubleQuoted",
+                    "scalar:retries:Plain",
+                    "scalar:3:Plain",
+                    "collectionEnd:Mapping",
+                    "scalar:copy:Plain",
+                    "alias:items",
+                    "collectionEnd:Mapping",
+                    "documentEnd",
+                    "streamEnd"
+                ))
+            )(collectEventLabels(yaml))
+        }
+
+        "emits empty mapping values and indentless sequence values as parser events" in {
+            val yaml =
+                """empty:
+                  |items:
+                  |- one
+                  |- two
+                  |""".stripMargin
+
+            assertResult(
+                Result.succeed(Chunk(
+                    "streamStart",
+                    "documentStart",
+                    "mappingStart::",
+                    "scalar:empty:Plain",
+                    "scalar::Plain",
+                    "scalar:items:Plain",
+                    "sequenceStart::",
+                    "scalar:one:Plain",
+                    "scalar:two:Plain",
+                    "collectionEnd:Sequence",
+                    "collectionEnd:Mapping",
+                    "documentEnd",
+                    "streamEnd"
+                ))
+            )(collectEventLabels(yaml))
+        }
+
+        "emits block scalar sequence entries with scalar metadata" in {
+            val yaml =
+                """notes:
+                  |  - &intro |-
+                  |    hello
+                  |      code
+                  |  - !summary >+
+                  |    folded
+                  |    text
+                  |
+                  |""".stripMargin
+
+            assertResult(
+                Result.succeed(Chunk(
+                    ("notes", Yaml.ScalarStyle.Plain, "", ""),
+                    ("hello\n  code", Yaml.ScalarStyle.Literal, "intro", ""),
+                    ("folded text\n\n", Yaml.ScalarStyle.Folded, "", "!summary")
+                ))
+            )(collectScalarDetails(yaml))
+        }
+
+        "emits flow mapping entries with URL-like keys empty values and quoted JSON-style keys" in {
+            val yaml =
+                """flow: {
+                  |  url: https://example.com/a:b,
+                  |  literal: "not } done, still quoted",
+                  |  "json":1,
+                  |  https://example.com,
+                  |  present:
+                  |}
+                  |""".stripMargin
+
+            assertResult(
+                Result.succeed(Chunk(
+                    "streamStart",
+                    "documentStart",
+                    "mappingStart::",
+                    "scalar:flow:Plain",
+                    "mappingStart::",
+                    "scalar:url:Plain",
+                    "scalar:https://example.com/a:b:Plain",
+                    "scalar:literal:Plain",
+                    "scalar:not } done, still quoted:DoubleQuoted",
+                    "scalar:json:Plain",
+                    "scalar:1:Plain",
+                    "scalar:https://example.com:Plain",
+                    "scalar::Plain",
+                    "scalar:present:Plain",
+                    "scalar::Plain",
+                    "collectionEnd:Mapping",
+                    "collectionEnd:Mapping",
+                    "documentEnd",
+                    "streamEnd"
+                ))
+            )(collectEventLabels(yaml))
+        }
+
+        "decodes YAML double quoted escape repertoire through parser events" in {
+            val yaml =
+                """escaped: "\0\a\b\t\n\v\f\r\e \"\/\\\N\_\L\P\x41\u263A\U0001F600"
+                  |""".stripMargin
+
+            assertResult(
+                Result.succeed(Chunk(
+                    ("escaped", Yaml.ScalarStyle.Plain),
+                    ("\u0000\u0007\b\t\n\u000b\f\r\u001b \"/\\\u0085\u00a0\u2028\u2029A\u263a\uD83D\uDE00", Yaml.ScalarStyle.DoubleQuoted)
+                ))
+            )(collectScalarEvents(yaml))
+        }
+
+        "reports invalid double quoted parser escapes with source context" in {
+            val yaml =
+                """bad: "\q"
+                  |""".stripMargin
+
+            val observed = collectEventLabels(yaml) match
+                case Result.Failure(e: ParseException) =>
+                    (invalidEscape = e.getMessage.contains("Invalid escape sequence \\q"), hasLocation = e.getMessage.contains("line 1"))
+                case other =>
+                    fail(s"Expected ParseException failure, got $other")
+
+            assertResult((invalidEscape = true, hasLocation = true))(observed)
         }
 
         "lets parser events render empty collections without a node tree" in {
@@ -409,6 +652,38 @@ private object YamlEventsTest:
         write(writer)
         writer.resultString
     end direct
+
+    def collectEventLabels(yaml: String): Result[DecodeException, Chunk[String]] =
+        val collector = new Yaml.Events.EventHandler[Chunk[String], Nothing]:
+            override def event(context: Chunk[String], event: Yaml.Events.Event): Result[Nothing, Chunk[String]] =
+                Result.succeed(context :+ label(event))
+        end collector
+        YamlParser(yaml).visitEvents(Chunk.empty)(collector)
+    end collectEventLabels
+
+    def collectScalarEvents(yaml: String): Result[DecodeException, Chunk[(String, Yaml.ScalarStyle)]] =
+        val collector = new Yaml.Events.Handler[Chunk[(String, Yaml.ScalarStyle)], Nothing]:
+            override def scalar(
+                context: Chunk[(String, Yaml.ScalarStyle)],
+                value: String,
+                meta: Yaml.ScalarMeta
+            ): Result[Nothing, Chunk[(String, Yaml.ScalarStyle)]] =
+                Result.succeed(context :+ ((value, meta.style)))
+        end collector
+        YamlParser(yaml).visitEvents(Chunk.empty)(collector)
+    end collectScalarEvents
+
+    def collectScalarDetails(yaml: String): Result[DecodeException, Chunk[(String, Yaml.ScalarStyle, String, String)]] =
+        val collector = new Yaml.Events.Handler[Chunk[(String, Yaml.ScalarStyle, String, String)], Nothing]:
+            override def scalar(
+                context: Chunk[(String, Yaml.ScalarStyle, String, String)],
+                value: String,
+                meta: Yaml.ScalarMeta
+            ): Result[Nothing, Chunk[(String, Yaml.ScalarStyle, String, String)]] =
+                Result.succeed(context :+ ((value, meta.style, anchorValue(meta.anchor), tagValue(meta.tag))))
+        end collector
+        YamlParser(yaml).visitEvents(Chunk.empty)(collector)
+    end collectScalarDetails
 
     def label(event: Yaml.Events.Event): String =
         event match
