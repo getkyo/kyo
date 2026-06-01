@@ -6,6 +6,12 @@ class YamlCstParserTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
+    private def parseFailure(result: Result[DecodeException, Yaml.Cst.Document]): String =
+        result match
+            case Result.Failure(e: ParseException) => e.getMessage
+            case other                             => fail(s"Expected ParseException failure, got $other")
+    end parseFailure
+
     "YamlCstParser" - {
 
         "preserves source exactly for an unchanged document" in {
@@ -55,6 +61,53 @@ class YamlCstParserTest extends Test:
 
             assertResult((count = 2, rendered = yaml)) {
                 (count = stream.documents.size, rendered = stream.render(using Yaml.WriterConfig.Default))
+            }
+        }
+
+        "rejects an explicit empty document followed by another document as a single document" in {
+            val yaml =
+                """---
+                  |---
+                  |Alice
+                  |""".stripMargin
+
+            assert(parseFailure(YamlCstParser.document(yaml)).contains("Unexpected content after YAML document end"))
+        }
+
+        "preserves an explicit empty document at the start of a stream" in {
+            val yaml =
+                """---
+                  |---
+                  |Alice
+                  |""".stripMargin
+
+            val stream = YamlCstParser.stream(yaml).getOrThrow
+
+            assertResult((count = 2, firstEmpty = true, rendered = yaml)) {
+                (
+                    count = stream.documents.size,
+                    firstEmpty = stream.documents(0).node.isEmpty,
+                    rendered = stream.render(using Yaml.WriterConfig.Default)
+                )
+            }
+        }
+
+        "preserves an explicit empty document before a mapping document" in {
+            val yaml =
+                """---
+                  |---
+                  |name: Alice
+                  |""".stripMargin
+
+            val stream = YamlCstParser.stream(yaml).getOrThrow
+
+            assertResult((count = 2, firstEmpty = true, secondRoot = true, rendered = yaml)) {
+                (
+                    count = stream.documents.size,
+                    firstEmpty = stream.documents(0).node.isEmpty,
+                    secondRoot = stream.documents(1).node.isDefined,
+                    rendered = stream.render(using Yaml.WriterConfig.Default)
+                )
             }
         }
     }

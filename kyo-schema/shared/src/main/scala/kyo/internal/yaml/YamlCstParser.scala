@@ -48,7 +48,7 @@ private[kyo] object YamlCstParser:
     end stream
 
     private def firstDocumentIndex(input: String, docs: Chunk[String]): Int =
-        if docs.nonEmpty && !hasDocumentContent(docs(0)) && hasLeadingDocumentMarker(input) then 1
+        if docs.nonEmpty && docs(0).nonEmpty && !hasDocumentContent(docs(0)) && hasLeadingDocumentMarker(input) then 1
         else 0
     end firstDocumentIndex
 
