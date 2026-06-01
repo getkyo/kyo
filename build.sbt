@@ -165,7 +165,7 @@ lazy val kyoJVM: Project = project
             inAggregates(kyoJVM) -- inProjects(
                 `kyo-bench`.jvm,
                 `kyo-examples`.jvm,
-                `kyo-compat`
+                `kyo-compat-plugin`
             ),
         ScalaUnidoc / unidoc / scalacOptions ++= Seq(
             "-project",
@@ -244,9 +244,9 @@ lazy val kyoJVM: Project = project
         `kyo-compat-ce`.jvm,
         `kyo-compat-ox`.jvm,
         `kyo-compat-twitter-future`.jvm,
-        `kyo-compat`,
+        `kyo-compat-plugin`,
         `kyo-doctest`.jvm,
-        `sbt-kyo-doctest`,
+        `kyo-doctest-plugin`,
         `root-readme`
     )
 
@@ -1427,15 +1427,16 @@ def mimaCheck(failOnProblem: Boolean) =
         mimaFailOnProblem := failOnProblem
     )
 
-// --- sbt-kyo-doctest (sbt plugin; pairs with kyo-doctest library)
+// --- kyo-doctest-plugin (sbt plugin; pairs with kyo-doctest library)
 //
 // Scala 2.12 sbt plugin that forks the kyo-doctest library CLI to validate Markdown fences.
-// Aggregated into kyoJVM only. Behavioral tests run via `sbt-kyo-doctest/scripted`.
-lazy val `sbt-kyo-doctest` = (project in file("sbt-kyo-doctest"))
+// In-tree at kyo-doctest/plugin (same layout as kyo-compat/plugin). Aggregated into kyoJVM only.
+// Behavioral tests run via `kyo-doctest-plugin/scripted`.
+lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
     .enablePlugins(SbtPlugin)
     .disablePlugins(KyoDoctestPlugin)
     .settings(
-        name               := "sbt-kyo-doctest",
+        moduleName         := "kyo-doctest-plugin",
         scalaVersion       := "2.12.20",
         crossScalaVersions := Seq("2.12.20"),
         sbtPlugin          := true,
@@ -1444,22 +1445,40 @@ lazy val `sbt-kyo-doctest` = (project in file("sbt-kyo-doctest"))
         libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.9.6",
         scriptedLaunchOpts := Seq(
             "-Xmx1024M",
-            "-Dplugin.version=" + version.value
+            "-Dplugin.version=" + version.value,
+            // Path to the runner-classpath file written by scriptedDependencies below.
+            "-Dkyo.doctest.runnerCpFile=" + (target.value / "doctest-runner-cp.txt").getAbsolutePath
         ),
-        scriptedBufferLog := false
+        scriptedBufferLog := false,
+        // Provide the kyo-doctest runner's built classpath to the scripted forks without ivy
+        // resolution (mirrors how kyo-settings injects it into the main build's doctest fork). The
+        // path is handed to each scripted sub-build, which reads it into doctestExtraClasspath.
+        scriptedDependencies := {
+            val compiled  = (Test / compile).value
+            val published = publishLocal.value
+            val cp        = (`kyo-doctest`.jvm / Compile / fullClasspath).value.files.map(_.getAbsolutePath)
+            val cpFile    = target.value / "doctest-runner-cp.txt"
+            IO.write(cpFile, cp.mkString(System.lineSeparator))
+            (compiled, published)
+            ()
+        },
+        // Run the scripted suite as part of the plugin's regular test task so CI gates it via
+        // `kyo-doctest-plugin/test` rather than a bespoke scripted invocation.
+        Test / test := (Test / test).dependsOn(scripted.toTask("")).value
     )
 
-// --- kyo-compat (in-tree sbt plugin; published as artifact `kyo-compat`)
+// --- kyo-compat-plugin (in-tree sbt plugin; published as artifact `kyo-compat-plugin`)
 //
 // First SbtPlugin module in kyo. Scala 2.12 only (sbt 1.x runtime).
 // Aggregated into kyoJVM only (not kyoJS/kyoNative, since an sbt plugin
 // is a single JVM artifact) so the JVM `ci-release` pass publishes it.
-// Its behavioral tests are scripted tests, run in CI via `kyo-compat/scripted`.
-lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
+// Its behavioral tests are scripted tests, bound into `test` (below) so the
+// regular testKyo 2.12 pass runs them, no bespoke CI step needed.
+lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
     .enablePlugins(SbtPlugin)
     .disablePlugins(KyoDoctestPlugin)
     .settings(
-        moduleName         := "kyo-compat",
+        moduleName         := "kyo-compat-plugin",
         scalaVersion       := "2.12.20",
         crossScalaVersions := Seq("2.12.20"),
         sbtPlugin          := true,
@@ -1476,5 +1495,8 @@ lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
             "-Xmx1024M",
             "-Dplugin.version=" + version.value
         ),
-        scriptedBufferLog := false
+        scriptedBufferLog := false,
+        // Run the scripted suite as part of the plugin's regular test task (matches
+        // kyo-doctest-plugin) so the testKyo 2.12 pass gates it; no bespoke CI step.
+        Test / test := (Test / test).dependsOn(scripted.toTask("")).value
     )

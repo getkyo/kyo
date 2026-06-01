@@ -1,0 +1,5 @@
+# Cache: first run compiles, second run reports cache hits (cacheHits=1).
+> doctest
+> doctest
+$ exists target/doctest-cache/last-summary.txt
+$ exec grep -q cacheHits=1 target/doctest-cache/last-summary.txt

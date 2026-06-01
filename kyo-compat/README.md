@@ -520,13 +520,13 @@ Write your library against `CIO`, `CFiber`, `CPromise`, and the rest of the `kyo
 
 ### Cross-publishing with the sbt plugin
 
-The bundled `kyo-compat` sbt plugin extends `sbt-projectmatrix`'s `ProjectMatrix` builder with a terminal `.compatLibrary(extras*)(platforms*)(scalaVersions)` method. Each call adds one row per `(backend × supported-platform × scala-version)` to the matrix, generating the per-backend cells your library needs to ship to every runtime from a single source tree.
+The bundled `kyo-compat-plugin` sbt plugin extends `sbt-projectmatrix`'s `ProjectMatrix` builder with a terminal `.compatLibrary(extras*)(platforms*)(scalaVersions)` method. Each call adds one row per `(backend × supported-platform × scala-version)` to the matrix, generating the per-backend cells your library needs to ship to every runtime from a single source tree.
 
 #### Setup
 
 ```scala doctest:expect=skipped
 // project/plugins.sbt
-addSbtPlugin("io.getkyo"          % "kyo-compat"                    % "<latest version>")
+addSbtPlugin("io.getkyo"          % "kyo-compat-plugin"              % "<latest version>")
 addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.10.1")
 addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2")
 addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.20.2")
