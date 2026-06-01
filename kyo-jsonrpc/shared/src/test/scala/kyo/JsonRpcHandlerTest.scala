@@ -230,11 +230,17 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             (req, _) => Async.sleep(30.millis).andThen(AddResp(req.a + req.b))
         }
         mkEndpoints(Seq.empty, Seq(addOnB)).map { (a, _) =>
+            val impl = a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl]
             Fiber.initUnscoped(a.call[AddReq, AddResp]("add", AddReq(1, 1))).andThen {
                 Fiber.initUnscoped(a.call[AddReq, AddResp]("add", AddReq(2, 2))).andThen {
-                    a.awaitDrain.andThen {
-                        Sync.Unsafe.defer {
-                            assert(a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].inFlight.unsafe.get() <= 0)
+                    // Wait until both call fibers have incremented inFlight before invoking awaitDrain.
+                    // Without this, the call fibers may not have started executing by the time awaitDrain
+                    // reads inFlight, causing awaitDrain to observe 0 and return immediately.
+                    untilTrue(Sync.Unsafe.defer(impl.inFlight.unsafe.get() >= 2)).andThen {
+                        a.awaitDrain.andThen {
+                            Sync.Unsafe.defer {
+                                assert(impl.inFlight.unsafe.get() <= 0)
+                            }
                         }
                     }
                 }

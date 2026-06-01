@@ -19,7 +19,7 @@ class McpCapabilityAdvertisementTest extends Test:
                 McpServer.initUnscoped(ts, cfg)(toolRoute),
                 McpClient.initUnscoped(tc, McpInfo("test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
-                Abort.run[McpException](client.unsafe.callToolUnsafe[AddIn]("add", AddIn(1, 1))).flatMap { result =>
+                Abort.run[McpException](client.callTool[AddIn]("add", AddIn(1, 1))).flatMap { result =>
                     for
                         _ <- srv.closeNow
                         _ <- client.closeNow

@@ -34,7 +34,7 @@ class McpProgressMonotonicityTest extends Test:
                 McpServer.initUnscoped(ts, workerRoute),
                 McpClient.initUnscoped(tc, McpInfo("pg"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
-                client.unsafe.callToolUnsafe[WorkReq]("work", WorkReq(1)).flatMap { result =>
+                client.callTool[WorkReq]("work", WorkReq(1)).flatMap { result =>
                     for
                         _ <- srv.closeNow
                         _ <- client.closeNow

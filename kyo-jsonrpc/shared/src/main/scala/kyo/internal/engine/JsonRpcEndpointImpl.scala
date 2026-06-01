@@ -66,7 +66,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     private[kyo] val tokenToDeadline: ConcurrentHashMap[Structure.Value, java.util.concurrent.atomic.AtomicLong]
 ) extends JsonRpcHandler.Unsafe:
 
-    def callUnsafe[In: Schema, Out: Schema](
+    private def callEffect[In: Schema, Out: Schema](
         method: String,
         params: In,
         extras: JsonRpcExtrasEncoder
@@ -341,7 +341,7 @@ final class JsonRpcEndpointImpl private[kyo] (
         (idPromise, callEffect)
     end callEncoded
 
-    def notifyUnsafe[In: Schema](
+    private def notifyEffect[In: Schema](
         method: String,
         params: In,
         extras: JsonRpcExtrasEncoder
@@ -352,9 +352,9 @@ final class JsonRpcEndpointImpl private[kyo] (
             val env = JsonRpcNotification(method, encodedParams, extrasVal)
             writerChannel.put(WriterMsg.SendEnvelope(env))
         }
-    end notifyUnsafe
+    end notifyEffect
 
-    def sendUnmatchedUnsafe[In: Schema](
+    private def sendUnmatchedEffect[In: Schema](
         method: String,
         params: In,
         id: JsonRpcId,
@@ -366,9 +366,9 @@ final class JsonRpcEndpointImpl private[kyo] (
                 writerChannel.put(WriterMsg.SendEnvelope(env))
             }
         }
-    end sendUnmatchedUnsafe
+    end sendUnmatchedEffect
 
-    def callWithProgressUnsafe[In: Schema, Out: Schema](
+    private def callWithProgressEffect[In: Schema, Out: Schema](
         method: String,
         params: In,
         extras: JsonRpcExtrasEncoder
@@ -438,7 +438,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                                                     id = id,
                                                     result = fiber.get,
                                                     progress = progChan.streamUntilClosed(),
-                                                    cancel = cancelUnsafe(id, Absent)
+                                                    cancel = cancelEffect(id, Absent)
                                                 )
                                             }
                                         }
@@ -449,7 +449,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                     }
                 }
 
-    def callPartialResultsUnsafe[In: Schema, T: Schema: Tag](
+    private def callPartialResultsEffect[In: Schema, T: Schema: Tag](
         method: String,
         params: In,
         extras: JsonRpcExtrasEncoder
@@ -556,7 +556,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                     } // end maxInFlightGuard
                 }
 
-    def subscribeProgressUnsafe(token: Structure.Value)(using frame: Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync =
+    private def subscribeProgressEffect(token: Structure.Value)(using frame: Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync =
         progressPolicy match
             case Absent =>
                 Stream(Abort.fail[Closed](Closed("progress not configured", initFrame)))
@@ -576,7 +576,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                     case Absent      => Stream[Structure.Value, Async](Kyo.unit)
                 }
 
-    def unsubscribeProgressUnsafe(token: Structure.Value)(using frame: Frame): Unit < Async =
+    private def unsubscribeProgressEffect(token: Structure.Value)(using frame: Frame): Unit < Async =
         // Unsafe: remove from progressStreams and close channel from outside consumer fiber
         // unsafe deferred block bridges unsafe ops (AtomicX, Promise, Channel, Fiber) from Sync-only context
         Sync.Unsafe.defer {
@@ -589,7 +589,7 @@ final class JsonRpcEndpointImpl private[kyo] (
                     discard(ch.unsafe.closeAwaitEmpty()(using frame, AllowUnsafe.embrace.danger))
         }
 
-    def cancelUnsafe(id: JsonRpcId, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed]) =
+    private def cancelEffect(id: JsonRpcId, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer(Maybe(callerRegistry.get(id))).map {
             case Absent =>
                 Log.warn(s"kyo-jsonrpc: cancel for unknown or already-completed id $id, no-op")
@@ -652,14 +652,67 @@ final class JsonRpcEndpointImpl private[kyo] (
                             end if
         }
 
-    def awaitDrainUnsafe(using Frame): Unit < Async =
+    private def awaitDrainEffect(using Frame): Unit < Async =
         inFlight.get.map { n =>
             if n <= 0 then Kyo.unit
             else drainSignal.get.map(_.get.unit)
         }
 
-    def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async =
+    private def closeEffect(gracePeriod: Duration)(using Frame): Unit < Async =
         closeImpl(gracePeriod)
+
+    // --- Public Unsafe interface: every method returns Fiber.Unsafe wrapping the effect ---
+
+    def call[In: Schema, Out: Schema](
+        method: String,
+        params: In,
+        extras: JsonRpcExtrasEncoder
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Out, Abort[JsonRpcError | Closed]] =
+        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(callEffect[In, Out](method, params, extras))).unsafe
+
+    def notify[In: Schema](
+        method: String,
+        params: In,
+        extras: JsonRpcExtrasEncoder
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(notifyEffect[In](method, params, extras))).unsafe
+
+    def sendUnmatched[In: Schema](
+        method: String,
+        params: In,
+        id: JsonRpcId,
+        extras: JsonRpcExtrasEncoder
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(sendUnmatchedEffect[In](method, params, id, extras))).unsafe
+
+    def callWithProgress[In: Schema, Out: Schema](
+        method: String,
+        params: In,
+        extras: JsonRpcExtrasEncoder
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[JsonRpcHandler.Pending[Out], Abort[JsonRpcError | Closed]] =
+        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(callWithProgressEffect[In, Out](method, params, extras))).unsafe
+
+    def callPartialResults[In: Schema, T: Schema: Tag](
+        method: String,
+        params: In,
+        extras: JsonRpcExtrasEncoder
+    )(using AllowUnsafe, Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
+        callPartialResultsEffect[In, T](method, params, extras)
+
+    def subscribeProgress(token: Structure.Value)(using AllowUnsafe, Frame): Stream[Structure.Value, Async & Abort[Closed]] =
+        Sync.Unsafe.evalOrThrow(subscribeProgressEffect(token))
+
+    def unsubscribeProgress(token: Structure.Value)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(unsubscribeProgressEffect(token))).unsafe
+
+    def cancel(id: JsonRpcId, reason: Maybe[String])(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(cancelEffect(id, reason))).unsafe
+
+    def awaitDrain(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(awaitDrainEffect)).unsafe
+
+    def close(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(closeEffect(gracePeriod))).unsafe
 
     def dispatch(
         name: String,
@@ -678,7 +731,7 @@ final class JsonRpcEndpointImpl private[kyo] (
     private def closeImpl(gracePeriod: Duration)(using Frame): Unit < Async =
         if gracePeriod == Duration.Zero then finalizer
         else
-            Abort.run[Timeout](Async.timeout(gracePeriod)(awaitDrainUnsafe)).map { _ =>
+            Abort.run[Timeout](Async.timeout(gracePeriod)(awaitDrainEffect)).map { _ =>
                 finalizer
             }
 
@@ -981,7 +1034,7 @@ object JsonRpcEndpointImpl:
                                                                                                 ) match
                                                                                                     case Present(i) =>
                                                                                                         Fiber.initUnscoped(
-                                                                                                            i.closeUnsafe(Duration.Zero)(
+                                                                                                            i.closeEffect(Duration.Zero)(
                                                                                                                 using frame
                                                                                                             )
                                                                                                         )
@@ -1163,7 +1216,7 @@ object JsonRpcEndpointImpl:
                                                                             // embrace-danger token passed to a kyo Unsafe API at a structural bridging site; no safe equivalent
                                                                             implRefUnsafe.get()(using AllowUnsafe.embrace.danger) match
                                                                                 case Present(i) =>
-                                                                                    Fiber.initUnscoped(i.closeUnsafe(Duration.Zero)(using
+                                                                                    Fiber.initUnscoped(i.closeEffect(Duration.Zero)(using
                                                                                         frame
                                                                                     ))
                                                                                 case Absent => ()

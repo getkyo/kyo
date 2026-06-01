@@ -28,7 +28,7 @@ class McpCancellationFireAndForgetTest extends Test:
                 McpClient.initUnscoped(tc, McpInfo("c"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
                 Fiber.initUnscoped(
-                    Abort.run[McpException | Closed](client.unsafe.callToolUnsafe[SlowReq]("slow", SlowReq(1)))
+                    Abort.run[McpException | Closed](client.callTool[SlowReq]("slow", SlowReq(1)))
                 ).flatMap { reqFiber =>
                     // Poll until the handler has set the flag, then interrupt.
                     untilTrue(Sync.defer(handlerReady.get()(using AllowUnsafe.embrace.danger)))

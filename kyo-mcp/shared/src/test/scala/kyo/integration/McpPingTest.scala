@@ -47,13 +47,13 @@ class McpPingTest extends Test:
         }
     }
 
-    "client.unsafe.pingUnsafe returns Unit without error" in run {
+    "client.unsafe.ping returns Unit without error" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
                 McpClient.initUnscoped(tc, McpInfo("ping-unsafe-test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
-                client.unsafe.pingUnsafe.flatMap { _ =>
+                Sync.Unsafe.defer(client.unsafe.ping.safe.get).flatMap { _ =>
                     for
                         _ <- srv.closeNow
                         _ <- client.closeNow

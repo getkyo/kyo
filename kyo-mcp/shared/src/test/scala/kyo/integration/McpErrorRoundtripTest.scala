@@ -25,7 +25,7 @@ class McpErrorRoundtripTest extends Test:
                 McpServer.initUnscoped(ts, errRoute),
                 McpClient.initUnscoped(tc, McpInfo("e"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
-                Abort.run[McpException](client.unsafe.callToolUnsafe[FailReq]("fail", FailReq("x"))).flatMap { result =>
+                Abort.run[McpException](client.callTool[FailReq]("fail", FailReq("x"))).flatMap { result =>
                     for
                         _ <- srv.closeNow
                         _ <- client.closeNow
@@ -74,7 +74,7 @@ class McpErrorRoundtripTest extends Test:
                 McpServer.initUnscoped(ts),
                 McpClient.initUnscoped(tc, McpInfo("e"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
-                Abort.run[McpException](client.unsafe.callToolUnsafe[FailReq]("nonexistent", FailReq("x"))).flatMap { result =>
+                Abort.run[McpException](client.callTool[FailReq]("nonexistent", FailReq("x"))).flatMap { result =>
                     for
                         _ <- srv.closeNow
                         _ <- client.closeNow

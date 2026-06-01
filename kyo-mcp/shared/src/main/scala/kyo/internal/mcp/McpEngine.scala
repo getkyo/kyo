@@ -108,7 +108,7 @@ private[kyo] object McpEngine:
         JsonRpcHandler.initUnscoped(transport, allRoutes, jsonRpcConfig).map { handler =>
             val unsafe: McpServer.Unsafe = new McpServer.Unsafe:
 
-                def requestSamplingUnsafe(req: McpServer.SamplingRequest)(using
+                private def requestSamplingEffect(req: McpServer.SamplingRequest)(using
                     Frame
                 ): McpServer.SamplingResponse < (Async & Abort[McpException | Closed]) =
                     handler.call[McpServer.SamplingRequest, McpServer.SamplingResponse]("sampling/createMessage", req)
@@ -116,14 +116,14 @@ private[kyo] object McpEngine:
                             Abort.fail(McpSamplingRejectedException(e.message))
                         })
 
-                def requestRootsUnsafe(using Frame): Chunk[McpServer.Root] < (Async & Abort[McpException | Closed]) =
+                private def requestRootsEffect(using Frame): Chunk[McpServer.Root] < (Async & Abort[McpException | Closed]) =
                     handler.call[NotifyEmptyParams, McpRootsListResponse]("roots/list", NotifyEmptyParams())
                         .map(_.roots)
                         .handle(Abort.recover[JsonRpcError] { e =>
                             Abort.fail(McpInvalidArgumentException("roots/list", "response", e.message))
                         })
 
-                def requestElicitationUnsafe(req: McpServer.ElicitationRequest)(using
+                private def requestElicitationEffect(req: McpServer.ElicitationRequest)(using
                     Frame
                 ): McpServer.ElicitationResponse < (Async & Abort[McpException | Closed]) =
                     handler.call[McpServer.ElicitationRequest, McpServer.ElicitationResponse]("elicitation/create", req)
@@ -131,21 +131,21 @@ private[kyo] object McpEngine:
                             Abort.fail(McpElicitationDeclinedException(e.message))
                         })
 
-                def notifyToolsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
+                private def notifyToolsListChangedEffect(using Frame): Unit < (Async & Abort[Closed]) =
                     serverCaps.tools match
                         case Present(tc) if tc.listChanged =>
                             handler.notify[NotifyEmptyParams]("notifications/tools/list_changed", NotifyEmptyParams())
                         case _ =>
                             Sync.defer(())
 
-                def notifyResourcesListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
+                private def notifyResourcesListChangedEffect(using Frame): Unit < (Async & Abort[Closed]) =
                     serverCaps.resources match
                         case Present(rc) if rc.listChanged =>
                             handler.notify[NotifyEmptyParams]("notifications/resources/list_changed", NotifyEmptyParams())
                         case _ =>
                             Sync.defer(())
 
-                def notifyResourceUpdatedUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed]) =
+                private def notifyResourceUpdatedEffect(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed]) =
                     serverCaps.resources match
                         case Present(rc) if rc.subscribe =>
                             subscriptionsRef.get.flatMap { subs =>
@@ -161,14 +161,14 @@ private[kyo] object McpEngine:
                         case Absent =>
                             Sync.defer(())
 
-                def notifyPromptsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
+                private def notifyPromptsListChangedEffect(using Frame): Unit < (Async & Abort[Closed]) =
                     serverCaps.prompts match
                         case Present(pc) if pc.listChanged =>
                             handler.notify[NotifyEmptyParams]("notifications/prompts/list_changed", NotifyEmptyParams())
                         case _ =>
                             Sync.defer(())
 
-                def notifyLogUnsafe[T](level: McpServer.LogLevel, data: T, logger: Maybe[String])(using
+                private def notifyLogEffect[T](level: McpServer.LogLevel, data: T, logger: Maybe[String])(using
                     Frame,
                     Schema[T]
                 ): Unit < (Async & Abort[Closed]) =
@@ -185,26 +185,60 @@ private[kyo] object McpEngine:
                             )
                         else Sync.defer(())
                     }
-                end notifyLogUnsafe
+                end notifyLogEffect
 
-                def protocolVersionUnsafe: Maybe[McpProtocolVersion] =
-                    // AllowUnsafe: synchronous read of post-handshake state (Decision from prep.md §anti-flakiness 3).
+                // --- Public Unsafe interface ---
+
+                def requestSampling(req: McpServer.SamplingRequest)(using
+                    AllowUnsafe,
+                    Frame
+                ): Fiber.Unsafe[McpServer.SamplingResponse, Abort[McpException | Closed]] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(requestSamplingEffect(req))).unsafe
+
+                def requestRoots(using AllowUnsafe, Frame): Fiber.Unsafe[Chunk[McpServer.Root], Abort[McpException | Closed]] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(requestRootsEffect)).unsafe
+
+                def requestElicitation(req: McpServer.ElicitationRequest)(using
+                    AllowUnsafe,
+                    Frame
+                ): Fiber.Unsafe[McpServer.ElicitationResponse, Abort[McpException | Closed]] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(requestElicitationEffect(req))).unsafe
+
+                def notifyToolsListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(notifyToolsListChangedEffect)).unsafe
+
+                def notifyResourcesListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(notifyResourcesListChangedEffect)).unsafe
+
+                def notifyResourceUpdated(uri: McpResourceUri)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(notifyResourceUpdatedEffect(uri))).unsafe
+
+                def notifyPromptsListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(notifyPromptsListChangedEffect)).unsafe
+
+                def notifyLog[T](level: McpServer.LogLevel, data: T, logger: Maybe[String])(using
+                    AllowUnsafe,
+                    Frame,
+                    Schema[T]
+                ): Fiber.Unsafe[Unit, Abort[Closed]] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(notifyLogEffect[T](level, data, logger))).unsafe
+
+                def protocolVersion: Maybe[McpProtocolVersion] =
                     negotiatedVersionRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
-                def clientCapabilitiesUnsafe: Maybe[McpCapabilities.Client] =
-                    // AllowUnsafe: synchronous read of post-handshake state.
+                def clientCapabilities: Maybe[McpCapabilities.Client] =
                     clientCapabilitiesRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
-                def clientInfoUnsafe: Maybe[McpInfo] =
-                    // AllowUnsafe: synchronous read of post-handshake state.
+                def clientInfo: Maybe[McpInfo] =
                     clientInfoRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
-                def underlyingUnsafe: JsonRpcHandler = handler
+                def underlying: JsonRpcHandler = handler
 
-                def awaitDrainUnsafe(using Frame): Unit < Async = handler.awaitDrain
+                def awaitDrain(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(handler.awaitDrain)).unsafe
 
-                def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async =
-                    handler.close(gracePeriod)
+                def close(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(handler.close(gracePeriod))).unsafe
 
             end unsafe
 

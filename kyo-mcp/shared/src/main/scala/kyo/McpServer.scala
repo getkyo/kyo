@@ -249,33 +249,33 @@ object McpServer:
 
         /** Sends `sampling/createMessage` to the connected client. */
         def requestSampling(req: SamplingRequest)(using Frame): SamplingResponse < (Async & Abort[McpException | Closed]) =
-            self.requestSamplingUnsafe(req)
+            Sync.Unsafe.defer(self.requestSampling(req).safe.get)
 
         /** Sends `roots/list` to the connected client. */
         def requestRoots(using Frame): Chunk[Root] < (Async & Abort[McpException | Closed]) =
-            self.requestRootsUnsafe
+            Sync.Unsafe.defer(self.requestRoots.safe.get)
 
         /** Sends `elicitation/create` to the connected client. */
         def requestElicitation(req: ElicitationRequest)(using Frame): ElicitationResponse < (Async & Abort[McpException | Closed]) =
-            self.requestElicitationUnsafe(req)
+            Sync.Unsafe.defer(self.requestElicitation(req).safe.get)
 
         /** Sends `notifications/tools/list_changed`. */
         def notifyToolsListChanged(using Frame): Unit < (Async & Abort[Closed]) =
-            self.notifyToolsListChangedUnsafe
+            Sync.Unsafe.defer(self.notifyToolsListChanged.safe.get)
 
         /** Sends `notifications/resources/list_changed`. */
         def notifyResourcesListChanged(using Frame): Unit < (Async & Abort[Closed]) =
-            self.notifyResourcesListChangedUnsafe
+            Sync.Unsafe.defer(self.notifyResourcesListChanged.safe.get)
 
         /** Sends `notifications/resources/updated` for one URI.
           * Audit-A2: `uri` is typed `McpResourceUri`, not raw `String`.
           */
         def notifyResourceUpdated(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed]) =
-            self.notifyResourceUpdatedUnsafe(uri)
+            Sync.Unsafe.defer(self.notifyResourceUpdated(uri).safe.get)
 
         /** Sends `notifications/prompts/list_changed`. */
         def notifyPromptsListChanged(using Frame): Unit < (Async & Abort[Closed]) =
-            self.notifyPromptsListChangedUnsafe
+            Sync.Unsafe.defer(self.notifyPromptsListChanged.safe.get)
 
         /** Sends `notifications/message` (server-to-client structured log).
           * Audit-C1: `using` clause order is `(Frame, Schema[T])` per CONTRIBUTING.md:349-351.
@@ -284,33 +284,33 @@ object McpServer:
             Frame,
             Schema[T]
         ): Unit < (Async & Abort[Closed]) =
-            self.notifyLogUnsafe(level, data, logger)
+            Sync.Unsafe.defer(self.notifyLog(level, data, logger).safe.get)
 
         /** Returns the negotiated protocol version (Absent before handshake completes). */
-        def protocolVersion: Maybe[McpProtocolVersion] = self.protocolVersionUnsafe
+        def protocolVersion: Maybe[McpProtocolVersion] = self.protocolVersion
 
         /** Returns the client's advertised capabilities (Absent before handshake completes). */
-        def clientCapabilities: Maybe[McpCapabilities.Client] = self.clientCapabilitiesUnsafe
+        def clientCapabilities: Maybe[McpCapabilities.Client] = self.clientCapabilities
 
         /** Returns the client info (Absent before handshake completes). */
-        def clientInfo: Maybe[McpInfo] = self.clientInfoUnsafe
+        def clientInfo: Maybe[McpInfo] = self.clientInfo
 
         /** Underlying JsonRpcHandler (escape hatch for advanced consumers). */
-        def underlying: JsonRpcHandler = self.underlyingUnsafe
+        def underlying: JsonRpcHandler = self.underlying
 
         /** Awaits until all in-flight requests have drained. */
-        def awaitDrain(using Frame): Unit < Async = self.awaitDrainUnsafe
+        def awaitDrain(using Frame): Unit < Async = Sync.Unsafe.defer(self.awaitDrain.safe.get)
 
         /** Closes the server with a default 30-second grace period.
           * Audit-B1: matches `HttpServer.close(using Frame)` at kyo-http/.../HttpServer.scala:56.
           */
-        def close(using Frame): Unit < Async = self.closeUnsafe(30.seconds)
+        def close(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(30.seconds).safe.get)
 
         /** Closes the server with an explicit grace period. */
-        def close(gracePeriod: Duration)(using Frame): Unit < Async = self.closeUnsafe(gracePeriod)
+        def close(gracePeriod: Duration)(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(gracePeriod).safe.get)
 
         /** Closes the server immediately without waiting for in-flight requests. */
-        def closeNow(using Frame): Unit < Async = self.closeUnsafe(Duration.Zero)
+        def closeNow(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(Duration.Zero).safe.get)
 
         /** Returns the underlying Unsafe handle. */
         def unsafe: Unsafe = self
@@ -318,20 +318,30 @@ object McpServer:
     end extension
 
     abstract class Unsafe:
-        def requestSamplingUnsafe(req: SamplingRequest)(using Frame): SamplingResponse < (Async & Abort[McpException | Closed])
-        def requestRootsUnsafe(using Frame): Chunk[Root] < (Async & Abort[McpException | Closed])
-        def requestElicitationUnsafe(req: ElicitationRequest)(using Frame): ElicitationResponse < (Async & Abort[McpException | Closed])
-        def notifyToolsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
-        def notifyResourcesListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
-        def notifyResourceUpdatedUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed])
-        def notifyPromptsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed])
-        def notifyLogUnsafe[T](level: LogLevel, data: T, logger: Maybe[String])(using Frame, Schema[T]): Unit < (Async & Abort[Closed])
-        def protocolVersionUnsafe: Maybe[McpProtocolVersion]
-        def clientCapabilitiesUnsafe: Maybe[McpCapabilities.Client]
-        def clientInfoUnsafe: Maybe[McpInfo]
-        def underlyingUnsafe: JsonRpcHandler
-        def awaitDrainUnsafe(using Frame): Unit < Async
-        def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async
+        def requestSampling(req: SamplingRequest)(using
+            AllowUnsafe,
+            Frame
+        ): Fiber.Unsafe[SamplingResponse, Abort[McpException | Closed]]
+        def requestRoots(using AllowUnsafe, Frame): Fiber.Unsafe[Chunk[Root], Abort[McpException | Closed]]
+        def requestElicitation(req: ElicitationRequest)(using
+            AllowUnsafe,
+            Frame
+        ): Fiber.Unsafe[ElicitationResponse, Abort[McpException | Closed]]
+        def notifyToolsListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
+        def notifyResourcesListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
+        def notifyResourceUpdated(uri: McpResourceUri)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
+        def notifyPromptsListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
+        def notifyLog[T](level: LogLevel, data: T, logger: Maybe[String])(using
+            AllowUnsafe,
+            Frame,
+            Schema[T]
+        ): Fiber.Unsafe[Unit, Abort[Closed]]
+        def protocolVersion: Maybe[McpProtocolVersion]
+        def clientCapabilities: Maybe[McpCapabilities.Client]
+        def clientInfo: Maybe[McpInfo]
+        def underlying: JsonRpcHandler
+        def awaitDrain(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
+        def close(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
         final def safe: McpServer = this
     end Unsafe
 

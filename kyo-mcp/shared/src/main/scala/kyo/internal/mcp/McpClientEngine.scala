@@ -128,49 +128,50 @@ private[kyo] object McpClientEngine:
             private def reject[A](method: String)(using Frame): A < (Async & Abort[McpException | Closed]) =
                 Abort.fail(McpSamplingRejectedException(s"ctx.server.$method is not available in client-side route handlers"))
 
-            def requestSamplingUnsafe(req: McpServer.SamplingRequest)(using
+            def requestSampling(req: McpServer.SamplingRequest)(using
+                AllowUnsafe,
                 Frame
-            ): McpServer.SamplingResponse < (Async & Abort[McpException | Closed]) =
-                reject("requestSampling")
+            ): Fiber.Unsafe[McpServer.SamplingResponse, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(reject[McpServer.SamplingResponse]("requestSampling"))).unsafe
 
-            def requestRootsUnsafe(using Frame): Chunk[McpServer.Root] < (Async & Abort[McpException | Closed]) =
-                reject("requestRoots")
+            def requestRoots(using AllowUnsafe, Frame): Fiber.Unsafe[Chunk[McpServer.Root], Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(reject[Chunk[McpServer.Root]]("requestRoots"))).unsafe
 
-            def requestElicitationUnsafe(req: McpServer.ElicitationRequest)(using
+            def requestElicitation(req: McpServer.ElicitationRequest)(using
+                AllowUnsafe,
                 Frame
-            ): McpServer.ElicitationResponse < (Async & Abort[McpException | Closed]) =
-                reject("requestElicitation")
+            ): Fiber.Unsafe[McpServer.ElicitationResponse, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(reject[McpServer.ElicitationResponse]("requestElicitation"))).unsafe
 
-            def notifyToolsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
-                Sync.defer(())
+            def notifyToolsListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Sync.defer[Unit, Abort[Closed]](()))).unsafe
 
-            def notifyResourcesListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
-                Sync.defer(())
+            def notifyResourcesListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Sync.defer[Unit, Abort[Closed]](()))).unsafe
 
-            def notifyResourceUpdatedUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed]) =
-                Sync.defer(())
+            def notifyResourceUpdated(uri: McpResourceUri)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Sync.defer[Unit, Abort[Closed]](()))).unsafe
 
-            def notifyPromptsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
-                Sync.defer(())
+            def notifyPromptsListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Sync.defer[Unit, Abort[Closed]](()))).unsafe
 
-            def notifyLogUnsafe[T](level: McpServer.LogLevel, data: T, logger: Maybe[String])(using
+            def notifyLog[T](level: McpServer.LogLevel, data: T, logger: Maybe[String])(using
+                AllowUnsafe,
                 Frame,
                 Schema[T]
-            ): Unit < (Async & Abort[Closed]) =
-                Sync.defer(())
+            ): Fiber.Unsafe[Unit, Abort[Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Sync.defer[Unit, Abort[Closed]](()))).unsafe
 
-            def protocolVersionUnsafe: Maybe[McpProtocolVersion]        = Absent
-            def clientCapabilitiesUnsafe: Maybe[McpCapabilities.Client] = Absent
-            def clientInfoUnsafe: Maybe[McpInfo]                        = Absent
-            def underlyingUnsafe: JsonRpcHandler                        = handler
-            def awaitDrainUnsafe(using Frame): Unit < Async             = Sync.defer(())
+            def protocolVersion: Maybe[McpProtocolVersion]        = Absent
+            def clientCapabilities: Maybe[McpCapabilities.Client] = Absent
+            def clientInfo: Maybe[McpInfo]                        = Absent
+            def underlying: JsonRpcHandler                        = handler
 
-            // The sentinel server has no real ping target; return immediately.
-            def pingUnsafe(using Frame): Unit < (Async & Abort[McpException | Closed]) =
-                Sync.defer(())
+            def awaitDrain(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Sync.defer(()))).unsafe
 
-            def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async =
-                Sync.defer(())
+            def close(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Sync.defer(()))).unsafe
         end new
     end buildClientSentinelServer
 
@@ -189,7 +190,7 @@ private[kyo] object McpClientEngine:
     ): McpClient.Unsafe =
         new McpClient.Unsafe:
 
-            def listToolsUnsafe(cursor: Maybe[String])(using
+            private def listToolsEffect(cursor: Maybe[String])(using
                 Frame
             ): McpClient.Page[McpRoute.ToolMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, ToolsListResponse]("tools/list", ListRequest(cursor))
@@ -198,7 +199,7 @@ private[kyo] object McpClientEngine:
                         Abort.fail(McpInvalidArgumentException("tools/list", "response", e.message))
                     })
 
-            def callToolUnsafe[In](name: String, arguments: In)(using
+            private def callToolEffect[In](name: String, arguments: In)(using
                 Frame,
                 Schema[In]
             ): McpRoute.ToolCallResult < (Async & Abort[McpException | Closed]) =
@@ -207,14 +208,14 @@ private[kyo] object McpClientEngine:
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("tools/call", "response", e.message))
                     })
-            end callToolUnsafe
+            end callToolEffect
 
-            def callToolTypedUnsafe[In, Out](name: String, arguments: In)(using
+            private def callToolTypedEffect[In, Out](name: String, arguments: In)(using
                 Frame,
                 Schema[In],
                 Schema[Out]
             ): Out < (Async & Abort[McpException | Closed]) =
-                callToolUnsafe[In](name, arguments).flatMap { result =>
+                callToolEffect[In](name, arguments).flatMap { result =>
                     result.structuredContent match
                         case Present(sv) =>
                             Structure.decode[Out](sv) match
@@ -225,7 +226,7 @@ private[kyo] object McpClientEngine:
                             Abort.fail(McpToolStructuredMissingException(name))
                 }
 
-            def listResourcesUnsafe(cursor: Maybe[String])(using
+            private def listResourcesEffect(cursor: Maybe[String])(using
                 Frame
             ): McpClient.Page[McpRoute.ResourceMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, ResourcesListResponse]("resources/list", ListRequest(cursor))
@@ -234,7 +235,7 @@ private[kyo] object McpClientEngine:
                         Abort.fail(McpInvalidArgumentException("resources/list", "response", e.message))
                     })
 
-            def listResourceTemplatesUnsafe(cursor: Maybe[String])(using
+            private def listResourceTemplatesEffect(cursor: Maybe[String])(using
                 Frame
             ): McpClient.Page[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, ResourceTemplatesListResponse]("resources/templates/list", ListRequest(cursor))
@@ -243,14 +244,16 @@ private[kyo] object McpClientEngine:
                         Abort.fail(McpInvalidArgumentException("resources/templates/list", "response", e.message))
                     })
 
-            def readResourceUnsafe(uri: McpResourceUri)(using Frame): Chunk[McpResourceContents] < (Async & Abort[McpException | Closed]) =
+            private def readResourceEffect(uri: McpResourceUri)(using
+                Frame
+            ): Chunk[McpResourceContents] < (Async & Abort[McpException | Closed]) =
                 handler.call[ReadResourceRequest, ReadResourceResponse]("resources/read", ReadResourceRequest(uri.asString))
                     .map(_.contents)
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("resources/read", "response", e.message))
                     })
 
-            def listPromptsUnsafe(cursor: Maybe[String])(using
+            private def listPromptsEffect(cursor: Maybe[String])(using
                 Frame
             ): McpClient.Page[McpRoute.PromptMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, PromptsListResponse]("prompts/list", ListRequest(cursor))
@@ -259,7 +262,7 @@ private[kyo] object McpClientEngine:
                         Abort.fail(McpInvalidArgumentException("prompts/list", "response", e.message))
                     })
 
-            def getPromptUnsafe(name: String, arguments: Map[String, String])(using
+            private def getPromptEffect(name: String, arguments: Map[String, String])(using
                 Frame
             ): McpRoute.PromptGetResult < (Async & Abort[McpException | Closed]) =
                 handler.call[GetPromptRequest, McpRoute.PromptGetResult]("prompts/get", GetPromptRequest(name, arguments))
@@ -267,14 +270,14 @@ private[kyo] object McpClientEngine:
                         Abort.fail(McpInvalidArgumentException("prompts/get", "response", e.message))
                     })
 
-            def setLogLevelUnsafe(level: McpServer.LogLevel)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
+            private def setLogLevelEffect(level: McpServer.LogLevel)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
                 handler.call[SetLogLevelRequest, SetLogLevelResponse]("logging/setLevel", SetLogLevelRequest(level.toString.toLowerCase))
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("logging/setLevel", "response", e.message))
                     })
 
-            def completeUnsafe(
+            private def completeEffect(
                 ref: McpRoute.CompletionRef,
                 arg: McpRoute.CompletionArg,
                 context: Maybe[McpRoute.CompletionArg.Context]
@@ -290,46 +293,118 @@ private[kyo] object McpClientEngine:
                         Abort.fail(McpInvalidArgumentException("completion/complete", "response", e.message))
                     })
 
-            def notifyRootsListChangedUnsafe(using Frame): Unit < (Async & Abort[Closed]) =
+            private def notifyRootsListChangedEffect(using Frame): Unit < (Async & Abort[Closed]) =
                 handler.notify[NotifyEmptyParams]("notifications/roots/list_changed", NotifyEmptyParams())
 
-            def pingUnsafe(using Frame): Unit < (Async & Abort[McpException | Closed]) =
+            private def pingEffect(using Frame): Unit < (Async & Abort[McpException | Closed]) =
                 handler.call[NotifyEmptyParams, NotifyEmptyParams]("ping", NotifyEmptyParams())
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("ping", "response", e.message))
                     })
 
-            def subscribeResourceUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
+            private def subscribeResourceEffect(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
                 handler.call[SubscribeRequest, SubscribeResponse]("resources/subscribe", SubscribeRequest(uri.asString))
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("resources/subscribe", "response", e.message))
                     })
 
-            def unsubscribeResourceUnsafe(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
+            private def unsubscribeResourceEffect(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
                 handler.call[SubscribeRequest, SubscribeResponse]("resources/unsubscribe", SubscribeRequest(uri.asString))
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("resources/unsubscribe", "response", e.message))
                     })
 
-            def serverCapabilitiesUnsafe: Maybe[McpCapabilities.Server] =
-                // AllowUnsafe: synchronous read of post-handshake negotiated state; populated before instance is returned.
+            // --- Public Unsafe interface ---
+
+            def listTools(cursor: Maybe[String])(using
+                AllowUnsafe,
+                Frame
+            ): Fiber.Unsafe[McpClient.Page[McpRoute.ToolMeta], Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(listToolsEffect(cursor))).unsafe
+
+            def callTool[In](name: String, arguments: In)(using
+                AllowUnsafe,
+                Frame,
+                Schema[In]
+            ): Fiber.Unsafe[McpRoute.ToolCallResult, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(callToolEffect[In](name, arguments))).unsafe
+
+            def callToolTyped[In, Out](name: String, arguments: In)(using
+                AllowUnsafe,
+                Frame,
+                Schema[In],
+                Schema[Out]
+            ): Fiber.Unsafe[Out, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(callToolTypedEffect[In, Out](name, arguments))).unsafe
+
+            def listResources(cursor: Maybe[String])(using
+                AllowUnsafe,
+                Frame
+            ): Fiber.Unsafe[McpClient.Page[McpRoute.ResourceMeta], Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(listResourcesEffect(cursor))).unsafe
+
+            def listResourceTemplates(cursor: Maybe[String])(using
+                AllowUnsafe,
+                Frame
+            ): Fiber.Unsafe[McpClient.Page[McpRoute.ResourceTemplateMeta], Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(listResourceTemplatesEffect(cursor))).unsafe
+
+            def readResource(uri: McpResourceUri)(using
+                AllowUnsafe,
+                Frame
+            ): Fiber.Unsafe[Chunk[McpResourceContents], Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(readResourceEffect(uri))).unsafe
+
+            def listPrompts(cursor: Maybe[String])(using
+                AllowUnsafe,
+                Frame
+            ): Fiber.Unsafe[McpClient.Page[McpRoute.PromptMeta], Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(listPromptsEffect(cursor))).unsafe
+
+            def getPrompt(name: String, arguments: Map[String, String])(using
+                AllowUnsafe,
+                Frame
+            ): Fiber.Unsafe[McpRoute.PromptGetResult, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(getPromptEffect(name, arguments))).unsafe
+
+            def setLogLevel(level: McpServer.LogLevel)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(setLogLevelEffect(level))).unsafe
+
+            def complete(
+                ref: McpRoute.CompletionRef,
+                arg: McpRoute.CompletionArg,
+                context: Maybe[McpRoute.CompletionArg.Context]
+            )(using AllowUnsafe, Frame): Fiber.Unsafe[McpRoute.CompletionResult, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(completeEffect(ref, arg, context))).unsafe
+
+            def notifyRootsListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(notifyRootsListChangedEffect)).unsafe
+
+            def ping(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(pingEffect)).unsafe
+
+            def subscribeResource(uri: McpResourceUri)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(subscribeResourceEffect(uri))).unsafe
+
+            def unsubscribeResource(uri: McpResourceUri)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[McpException | Closed]] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(unsubscribeResourceEffect(uri))).unsafe
+
+            def serverCapabilities: Maybe[McpCapabilities.Server] =
                 serverCapabilitiesRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
-            def serverInfoUnsafe: Maybe[McpInfo] =
-                // AllowUnsafe: synchronous read of post-handshake negotiated state; populated before instance is returned.
+            def serverInfo: Maybe[McpInfo] =
                 serverInfoRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
-            def protocolVersionUnsafe: Maybe[McpProtocolVersion] =
-                // AllowUnsafe: synchronous read of post-handshake negotiated state; populated before instance is returned.
+            def protocolVersion: Maybe[McpProtocolVersion] =
                 negotiatedVersionRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
-            def underlyingUnsafe: JsonRpcHandler = handler
+            def underlying: JsonRpcHandler = handler
 
-            def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async =
-                handler.close(gracePeriod)
+            def close(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(handler.close(gracePeriod))).unsafe
 
         end new
     end buildUnsafe

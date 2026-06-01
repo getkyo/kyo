@@ -37,14 +37,14 @@ object JsonRpcHandler:
             params: In,
             extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
-            self.callUnsafe[In, Out](method, params, extras)
+            Sync.Unsafe.defer(self.call[In, Out](method, params, extras).safe.get)
 
         def notify[In: Schema](
             method: String,
             params: In,
             extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): Unit < (Async & Abort[Closed]) =
-            self.notifyUnsafe[In](method, params, extras)
+            Sync.Unsafe.defer(self.notify[In](method, params, extras).safe.get)
 
         def sendUnmatched[In: Schema](
             method: String,
@@ -52,45 +52,47 @@ object JsonRpcHandler:
             id: JsonRpcId,
             extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): Unit < (Async & Abort[Closed]) =
-            self.sendUnmatchedUnsafe[In](method, params, id, extras)
+            Sync.Unsafe.defer(self.sendUnmatched[In](method, params, id, extras).safe.get)
 
         def callWithProgress[In: Schema, Out: Schema](
             method: String,
             params: In,
             extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
-            self.callWithProgressUnsafe[In, Out](method, params, extras)
+            Sync.Unsafe.defer(self.callWithProgress[In, Out](method, params, extras).safe.get)
 
         def callPartialResults[In: Schema, T: Schema: Tag](
             method: String,
             params: In,
             extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]] =
-            self.callPartialResultsUnsafe[In, T](method, params, extras)
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            self.callPartialResults[In, T](method, params, extras)
+        end callPartialResults
 
         def subscribeProgress(token: Structure.Value)(using Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync =
-            self.subscribeProgressUnsafe(token)
+            Sync.Unsafe.defer(self.subscribeProgress(token))
 
         def unsubscribeProgress(token: Structure.Value)(using Frame): Unit < Async =
-            self.unsubscribeProgressUnsafe(token)
+            Sync.Unsafe.defer(self.unsubscribeProgress(token).safe.get)
 
         def cancel(id: JsonRpcId, reason: Maybe[String] = Absent)(using Frame): Unit < (Async & Abort[Closed]) =
-            self.cancelUnsafe(id, reason)
+            Sync.Unsafe.defer(self.cancel(id, reason).safe.get)
 
         def awaitDrain(using Frame): Unit < Async =
-            self.awaitDrainUnsafe
+            Sync.Unsafe.defer(self.awaitDrain.safe.get)
 
         /** Closes the handler immediately without draining in-flight requests. */
         def close(using Frame): Unit < Async =
-            self.closeUnsafe(Duration.Zero)
+            Sync.Unsafe.defer(self.close(Duration.Zero).safe.get)
 
         /** Closes the handler, waiting up to `gracePeriod` for in-flight requests to drain before forcing. */
         def close(gracePeriod: Duration)(using Frame): Unit < Async =
-            self.closeUnsafe(gracePeriod)
+            Sync.Unsafe.defer(self.close(gracePeriod).safe.get)
 
         /** Closes the handler immediately without draining in-flight requests. Identical to `close(Duration.Zero)`. */
         def closeNow(using Frame): Unit < Async =
-            self.closeUnsafe(Duration.Zero)
+            Sync.Unsafe.defer(self.close(Duration.Zero).safe.get)
 
         /** Returns the underlying unsafe handler instance. */
         def unsafe: Unsafe = self
@@ -99,47 +101,47 @@ object JsonRpcHandler:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
 
-        def callUnsafe[In: Schema, Out: Schema](
+        def call[In: Schema, Out: Schema](
             method: String,
             params: In,
             extras: JsonRpcExtrasEncoder
-        )(using Frame): Out < (Async & Abort[JsonRpcError | Closed])
+        )(using AllowUnsafe, Frame): Fiber.Unsafe[Out, Abort[JsonRpcError | Closed]]
 
-        def notifyUnsafe[In: Schema](
+        def notify[In: Schema](
             method: String,
             params: In,
             extras: JsonRpcExtrasEncoder
-        )(using Frame): Unit < (Async & Abort[Closed])
+        )(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
 
-        def sendUnmatchedUnsafe[In: Schema](
+        def sendUnmatched[In: Schema](
             method: String,
             params: In,
             id: JsonRpcId,
             extras: JsonRpcExtrasEncoder
-        )(using Frame): Unit < (Async & Abort[Closed])
+        )(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
 
-        def callWithProgressUnsafe[In: Schema, Out: Schema](
+        def callWithProgress[In: Schema, Out: Schema](
             method: String,
             params: In,
             extras: JsonRpcExtrasEncoder
-        )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed])
+        )(using AllowUnsafe, Frame): Fiber.Unsafe[JsonRpcHandler.Pending[Out], Abort[JsonRpcError | Closed]]
 
-        def callPartialResultsUnsafe[In: Schema, T: Schema: Tag](
+        def callPartialResults[In: Schema, T: Schema: Tag](
             method: String,
             params: In,
             extras: JsonRpcExtrasEncoder
-        )(using Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]]
+        )(using AllowUnsafe, Frame, Tag[Emit[Chunk[T]]]): Stream[T, Async & Abort[JsonRpcError | Closed]]
 
-        def subscribeProgressUnsafe(token: Structure.Value)(using Frame): Stream[Structure.Value, Async & Abort[Closed]] < Sync
+        def subscribeProgress(token: Structure.Value)(using AllowUnsafe, Frame): Stream[Structure.Value, Async & Abort[Closed]]
 
-        def unsubscribeProgressUnsafe(token: Structure.Value)(using Frame): Unit < Async
+        def unsubscribeProgress(token: Structure.Value)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
 
-        def cancelUnsafe(id: JsonRpcId, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed])
+        def cancel(id: JsonRpcId, reason: Maybe[String])(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
 
-        def awaitDrainUnsafe(using Frame): Unit < Async
+        def awaitDrain(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
 
         /** Closes the handler, waiting up to `gracePeriod` for in-flight requests to drain before forcing. */
-        def closeUnsafe(gracePeriod: Duration)(using Frame): Unit < Async
+        def close(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
 
         /** Dispatches `params` to the named route held by this handler. Returns Absent for unknown names.
           * Mirrors `JsonRpcRoute.dispatch` but operates on the handler's registered method map directly.
