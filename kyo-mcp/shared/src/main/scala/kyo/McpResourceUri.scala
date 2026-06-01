@@ -29,4 +29,35 @@ object McpResourceUri:
 
     given CanEqual[McpResourceUri, McpResourceUri] = CanEqual.derived
 
+    /** Opaque type wrapping an RFC 6570 URI template string.
+      *
+      * `parse` enforces two minimal constraints: the string must be non-empty and must contain
+      * at least one `{` character (the RFC 6570 template expression open-brace). Use `apply`
+      * at trusted call sites.
+      * INV-022: all public surface carrying URI templates uses this type, never raw `String`.
+      *
+      * @see [[McpResourceUri.Template.parse]]
+      */
+    opaque type Template = String
+
+    object Template:
+
+        /** Returns `Present(t)` if `s` is non-empty and contains `{`; `Absent` otherwise. */
+        def parse(s: String): Maybe[Template] =
+            if s.nonEmpty && s.contains('{') then Present(s) else Absent
+
+        /** Trusted call-site constructor; not gated by validation. */
+        def apply(s: String): Template = s
+
+        extension (t: Template)
+            /** Returns the underlying string value. */
+            def asString: String = t
+
+        // Uses `apply` (total constructor) so the codec accepts any wire-received string (INV-022).
+        given Schema[Template] = Schema.stringSchema.transform[Template](apply)(_.asString)
+
+        given CanEqual[Template, Template] = CanEqual.derived
+
+    end Template
+
 end McpResourceUri

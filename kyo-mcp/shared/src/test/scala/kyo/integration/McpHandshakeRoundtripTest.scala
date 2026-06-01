@@ -28,7 +28,7 @@ class McpHandshakeRoundtripTest extends Test:
                     _ <- srv.closeNow
                     _ <- client.closeNow
                 yield
-                    assert(negotiatedVersion == Present(McpProtocolVersion.current))
+                    assert(negotiatedVersion == Present(McpConfig.ProtocolVersion.current))
                     assert(negotiatedClient == Present(clientInfo))
                 end for
             }
@@ -49,7 +49,7 @@ class McpHandshakeRoundtripTest extends Test:
                 yield
                     assert(serverInfoVal.isDefined)
                     assert(serverInfoVal.get.name == "kyo-mcp")
-                    assert(protocolVersion == Present(McpProtocolVersion.current))
+                    assert(protocolVersion == Present(McpConfig.ProtocolVersion.current))
                 end for
             }
         }

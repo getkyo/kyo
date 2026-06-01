@@ -60,14 +60,14 @@ object McpHandler:
 
     private[kyo] def makeResource(
         route: McpRoute.ResourceRoute,
-        handler: McpResourceUri => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
-    )(using Frame): McpHandler[McpResourceUri, Chunk[McpResourceContents], McpException] =
+        handler: McpResourceUri => Chunk[McpRoute.ResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
+    )(using Frame): McpHandler[McpResourceUri, Chunk[McpRoute.ResourceContents], McpException] =
         new ResourceHandler[McpException](route, handler, Chunk.empty)
 
     private[kyo] def makeResourceTemplate(
         route: McpRoute.ResourceTemplateRoute,
-        handler: McpResourceUri => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
-    )(using Frame): McpHandler[McpResourceUri, Chunk[McpResourceContents], McpException] =
+        handler: McpResourceUri => Chunk[McpRoute.ResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
+    )(using Frame): McpHandler[McpResourceUri, Chunk[McpRoute.ResourceContents], McpException] =
         new ResourceTemplateHandler[McpException](route, handler, Chunk.empty)
 
     private[kyo] def makePrompt(
@@ -131,9 +131,9 @@ object McpHandler:
 
     final private[kyo] class ResourceHandler[+E] private[kyo] (
         val resourceRoute: McpRoute.ResourceRoute,
-        val resourceHandler: McpResourceUri => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]),
+        val resourceHandler: McpResourceUri => Chunk[McpRoute.ResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]),
         val errorMappings: Chunk[ErrorMapping[?]]
-    ) extends McpHandler[McpResourceUri, Chunk[McpResourceContents], E]:
+    ) extends McpHandler[McpResourceUri, Chunk[McpRoute.ResourceContents], E]:
         def resourceMeta: McpRoute.ResourceMeta = resourceRoute.resourceMeta
         def subscribable: Boolean               = resourceRoute.subscribable
         def route: McpRoute[McpResourceUri]     = resourceRoute
@@ -141,22 +141,24 @@ object McpHandler:
         def error[E2](using
             schema: Schema[E2],
             tag: ConcreteTag[E2]
-        )(code: Int, message: String): McpHandler[McpResourceUri, Chunk[McpResourceContents], E | E2] =
+        )(code: Int, message: String): McpHandler[McpResourceUri, Chunk[McpRoute.ResourceContents], E | E2] =
             new ResourceHandler[E | E2](resourceRoute, resourceHandler, errorMappings.append(new ErrorMapping[E2](code, message)))
     end ResourceHandler
 
     final private[kyo] class ResourceTemplateHandler[+E] private[kyo] (
         val resourceTemplateRoute: McpRoute.ResourceTemplateRoute,
-        val resourceTemplateHandler: McpResourceUri => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt]),
+        val resourceTemplateHandler: McpResourceUri => Chunk[
+            McpRoute.ResourceContents
+        ] < (Async & Abort[McpException | JsonRpcResponse.Halt]),
         val errorMappings: Chunk[ErrorMapping[?]]
-    ) extends McpHandler[McpResourceUri, Chunk[McpResourceContents], E]:
+    ) extends McpHandler[McpResourceUri, Chunk[McpRoute.ResourceContents], E]:
         def resourceTemplateMeta: McpRoute.ResourceTemplateMeta = resourceTemplateRoute.resourceTemplateMeta
         def route: McpRoute[McpResourceUri]                     = resourceTemplateRoute
 
         def error[E2](using
             schema: Schema[E2],
             tag: ConcreteTag[E2]
-        )(code: Int, message: String): McpHandler[McpResourceUri, Chunk[McpResourceContents], E | E2] =
+        )(code: Int, message: String): McpHandler[McpResourceUri, Chunk[McpRoute.ResourceContents], E | E2] =
             new ResourceTemplateHandler[E | E2](
                 resourceTemplateRoute,
                 resourceTemplateHandler,

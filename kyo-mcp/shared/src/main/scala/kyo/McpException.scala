@@ -113,8 +113,8 @@ case class McpHandshakeAlreadyInitializedException(attemptedMethod: String)(usin
   * @param supported       the protocol versions this server accepts
   */
 case class McpProtocolVersionMismatchException(
-    clientRequested: McpProtocolVersion,
-    supported: Chunk[McpProtocolVersion]
+    clientRequested: McpConfig.ProtocolVersion,
+    supported: Chunk[McpConfig.ProtocolVersion]
 )(using Frame)
     extends McpHandshakeException(
         code = -32602,

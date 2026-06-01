@@ -7,7 +7,7 @@ import kyo.*
   * Used internally by the handshake route; not part of the user-facing API surface.
   */
 final private[kyo] case class McpInitializeResult(
-    protocolVersion: McpProtocolVersion,
+    protocolVersion: McpConfig.ProtocolVersion,
     serverInfo: McpInfo,
     capabilities: McpCapabilities.Server,
     instructions: Maybe[String] = Absent

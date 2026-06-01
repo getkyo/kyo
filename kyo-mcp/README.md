@@ -138,27 +138,27 @@ The `ToolAnnotations` record captures the spec's display and behavioural hints; 
 
 ### Resource routes
 
-`McpRoute.resource(uri, name, ...)` registers a fixed-URI resource; `McpRoute.resourceTemplate(uriTemplate, name, ...)` registers an RFC 6570 URI-template resource matching every URI that fits the pattern. Both handlers return `Chunk[McpResourceContents]`; both URI inputs are typed opaque values (`McpResourceUri` for full URIs, `McpResourceUriTemplate` for templates), never raw `String` (INV-022).
+`McpRoute.resource(uri, name, ...)` registers a fixed-URI resource; `McpRoute.resourceTemplate(uriTemplate, name, ...)` registers an RFC 6570 URI-template resource matching every URI that fits the pattern. Both handlers return `Chunk[McpRoute.ResourceContents]`; both URI inputs are typed opaque values (`McpResourceUri` for full URIs, `McpResourceUri.Template` for templates), never raw `String` (INV-022).
 
 ```scala
-val readme: McpHandler[McpResourceUri, Chunk[McpResourceContents], McpException] =
+val readme: McpHandler[McpResourceUri, Chunk[McpRoute.ResourceContents], McpException] =
     McpRoute.resource(
         uri         = McpResourceUri("file:///README.md"),
         name        = "readme",
         description = "Project README",
         mimeType    = Present(McpMimeType("text/markdown"))
     ).handler { uri =>
-        Chunk(McpResourceContents.text(uri, "Hello, world!", Present(McpMimeType("text/markdown"))))
+        Chunk(McpRoute.ResourceContents.text(uri, "Hello, world!", Present(McpMimeType("text/markdown"))))
     }
 ```
 
-`McpResourceContents.text(uri, text, mimeType)` and `McpResourceContents.blob(uri, blob, mimeType)` are the two factories for resource read results; pick `text` for UTF-8 payloads and `blob` for base64-encoded binary.
+`McpRoute.ResourceContents.text(uri, text, mimeType)` and `McpRoute.ResourceContents.blob(uri, blob, mimeType)` are the two factories for resource read results; pick `text` for UTF-8 payloads and `blob` for base64-encoded binary.
 
 `McpContent` has five cases (`Text`, `Image`, `Audio`, `EmbeddedResource`, `ResourceLink`); `ResourceLink(uri, name, ...)` is the typed link variant for search-style tools that point into the resource catalogue rather than embedding payload inline.
 
 `McpResourceUri.parse(s)` is the validated user-facing constructor: it returns `Absent` when `s` is empty or whitespace. `McpResourceUri.apply(s)` is the trusted call-site constructor used at the library boundary and inside this README's doctest blocks. Use `parse` for any URI that comes from outside your code; use `apply` only when you have already validated the string.
 
-The same parse-vs-apply pattern (and a final `.asString` accessor for wire conversion) applies to `McpResourceUriTemplate`, `McpMimeType`, and `McpProtocolVersion`; all four opaque newtypes share the same shape.
+The same parse-vs-apply pattern (and a final `.asString` accessor for wire conversion) applies to `McpResourceUri.Template`, `McpMimeType`, and `McpConfig.ProtocolVersion`; all four opaque newtypes share the same shape.
 
 `McpRoute.resource(..., subscribe = false)` is the default; passing `subscribe = true` on a per-resource basis is what causes the server to advertise `resources.subscribe = true` and accept `subscribeResource` calls from the client. A client `subscribeResource` against a server with no opted-in route is rejected by the capability gate.
 
@@ -392,7 +392,7 @@ The fluent setters (`serverInfo`, `instructions`, `supportedProtocolVersions`, `
 
 `McpConfig.require(c)` validates the config (non-empty `supportedProtocolVersions`, positive `handshakeTimeout`, and delegates to `JsonRpcHandler.Config.require` for the embedded JSON-RPC slot). Every `init` variant calls it; an invalid config throws `IllegalArgumentException` at init time, not lazily.
 
-`supportedProtocolVersions: Chunk[McpProtocolVersion]` accepts the typed protocol-version newtype; use `McpProtocolVersion.parse(wireString)` to construct from external input and `.asString` to recover the wire form.
+`supportedProtocolVersions: Chunk[McpConfig.ProtocolVersion]` accepts the typed protocol-version newtype; use `McpConfig.ProtocolVersion.parse(wireString)` to construct from external input and `.asString` to recover the wire form.
 
 ### Handshake order and capability gate
 
@@ -411,7 +411,7 @@ The shared API compiles and runs on JVM, JavaScript, and Scala Native. The cross
 | Surface | JVM | JS | Native |
 |---------|-----|----|----|
 | `McpServer`, `McpClient`, all routes | yes | yes | yes |
-| `McpRoute` factories, `McpContent`, `McpResourceContents` | yes | yes | yes |
+| `McpRoute` factories, `McpContent`, `McpRoute.ResourceContents` | yes | yes | yes |
 | `McpException` hierarchy and `Schema` derivations | yes | yes | yes |
 | `JsonRpcTransport.stdio` | yes | yes | yes |
 | `JsonRpcTransport.inMemory` | yes | yes | yes |

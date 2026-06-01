@@ -106,8 +106,8 @@ class McpConfigPresetTest extends Test:
         assert(McpConfig.default.serverInfo.name == "kyo-mcp")
     }
 
-    "serverInfo default version is McpProtocolVersion.kyoMcpVersion (INV-016)" in {
-        assert(McpConfig.default.serverInfo.version == McpProtocolVersion.kyoMcpVersion)
+    "serverInfo default version is McpConfig.ProtocolVersion.kyoMcpVersion (INV-016)" in {
+        assert(McpConfig.default.serverInfo.version == McpConfig.ProtocolVersion.kyoMcpVersion)
     }
 
     // -------------------------------------------------------------------------

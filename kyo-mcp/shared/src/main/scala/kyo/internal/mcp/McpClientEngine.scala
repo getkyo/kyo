@@ -30,7 +30,7 @@ private[kyo] object McpClientEngine:
 
     // Wire types for resources/read request (Decision 8).
     final private case class ReadResourceRequest(uri: String) derives Schema
-    final private case class ReadResourceResponse(contents: Chunk[McpResourceContents]) derives Schema
+    final private case class ReadResourceResponse(contents: Chunk[McpRoute.ResourceContents]) derives Schema
 
     // Wire types for prompts/get request (Decision 9).
     final private case class GetPromptRequest(name: String, arguments: Map[String, String] = Map.empty) derives Schema
@@ -85,7 +85,7 @@ private[kyo] object McpClientEngine:
         // Pattern mirrors McpEngine.scala AtomicRef usage (Phase 5 precedent).
         val serverCapabilitiesRef = AtomicRef.Unsafe.init[Maybe[McpCapabilities.Server]](Absent)(using AllowUnsafe.embrace.danger).safe
         val serverInfoRef         = AtomicRef.Unsafe.init[Maybe[McpInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
-        val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe
+        val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpConfig.ProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe
         // AllowUnsafe: forward reference holding the sentinel "server" used to bind into Mcp.local
         // during client-side reverse-direction dispatch.
         val serverRef = AtomicRef.Unsafe.init[Maybe[McpServer.Unsafe]](Absent)(using AllowUnsafe.embrace.danger).safe
@@ -96,7 +96,7 @@ private[kyo] object McpClientEngine:
             handler <- JsonRpcHandler.initUnscoped(transport, reverseRoutes, config.jsonRpc)
             initResult <- handler.call[McpInitializeRequest, McpInitializeResult](
                 "initialize",
-                McpInitializeRequest(McpProtocolVersion.current, clientInfo, capabilities)
+                McpInitializeRequest(McpConfig.ProtocolVersion.current, clientInfo, capabilities)
             ).handle(Abort.recover[JsonRpcError] { e =>
                 Abort.fail(McpHandshakeNotInitializedException(e.message))
             })
@@ -162,7 +162,7 @@ private[kyo] object McpClientEngine:
             ): Fiber.Unsafe[Unit, Abort[Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Sync.defer[Unit, Abort[Closed]](()))).unsafe
 
-            def protocolVersion: Maybe[McpProtocolVersion]        = Absent
+            def protocolVersion: Maybe[McpConfig.ProtocolVersion] = Absent
             def clientCapabilities: Maybe[McpCapabilities.Client] = Absent
             def clientInfo: Maybe[McpInfo]                        = Absent
             def underlying: JsonRpcHandler                        = handler
@@ -186,7 +186,7 @@ private[kyo] object McpClientEngine:
         handler: JsonRpcHandler,
         serverCapabilitiesRef: AtomicRef[Maybe[McpCapabilities.Server]],
         serverInfoRef: AtomicRef[Maybe[McpInfo]],
-        negotiatedVersionRef: AtomicRef[Maybe[McpProtocolVersion]]
+        negotiatedVersionRef: AtomicRef[Maybe[McpConfig.ProtocolVersion]]
     ): McpClient.Unsafe =
         new McpClient.Unsafe:
 
@@ -246,7 +246,7 @@ private[kyo] object McpClientEngine:
 
             private def readResourceEffect(uri: McpResourceUri)(using
                 Frame
-            ): Chunk[McpResourceContents] < (Async & Abort[McpException | Closed]) =
+            ): Chunk[McpRoute.ResourceContents] < (Async & Abort[McpException | Closed]) =
                 handler.call[ReadResourceRequest, ReadResourceResponse]("resources/read", ReadResourceRequest(uri.asString))
                     .map(_.contents)
                     .handle(Abort.recover[JsonRpcError] { e =>
@@ -355,7 +355,7 @@ private[kyo] object McpClientEngine:
             def readResource(uri: McpResourceUri)(using
                 AllowUnsafe,
                 Frame
-            ): Fiber.Unsafe[Chunk[McpResourceContents], Abort[McpException | Closed]] =
+            ): Fiber.Unsafe[Chunk[McpRoute.ResourceContents], Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(readResourceEffect(uri))).unsafe
 
             def listPrompts(cursor: Maybe[String])(using
@@ -398,7 +398,7 @@ private[kyo] object McpClientEngine:
             def serverInfo: Maybe[McpInfo] =
                 serverInfoRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
-            def protocolVersion: Maybe[McpProtocolVersion] =
+            def protocolVersion: Maybe[McpConfig.ProtocolVersion] =
                 negotiatedVersionRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
             def underlying: JsonRpcHandler = handler

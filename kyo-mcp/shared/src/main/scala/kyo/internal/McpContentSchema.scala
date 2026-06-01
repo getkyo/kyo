@@ -4,7 +4,7 @@ import kyo.*
 import scala.annotation.nowarn
 import scala.annotation.publicInBinary
 
-/** Hand-rolled discriminator-key Schemas for `McpContent` and `McpResourceContents`.
+/** Hand-rolled discriminator-key Schemas for `McpContent` and `McpRoute.ResourceContents`.
   *
   * Both schemas use the `"type"` field as the discriminator key. The `contentSchema` and
   * `resourceContentsSchema` vals are singletons (INV-013): every `summon[Schema[McpContent]]`
@@ -70,7 +70,7 @@ private[kyo] object McpContentSchema:
                     w.field("type", 1)
                     w.string("resource")
                     w.field("resource", 2)
-                    summon[Schema[McpResourceContents]].serializeWrite(resource, w)
+                    summon[Schema[McpRoute.ResourceContents]].serializeWrite(resource, w)
                     if emitAnn then
                         w.field("annotations", 3)
                         summon[Schema[McpContent.Annotations]].serializeWrite(annotations, w)
@@ -109,7 +109,7 @@ private[kyo] object McpContentSchema:
             var text: String                             = ""
             var data: String                             = ""
             var mimeType: McpMimeType                    = McpMimeType.fromWire("")
-            var resource: McpResourceContents            = null
+            var resource: McpRoute.ResourceContents      = null
             var annotations: McpContent.Annotations      = McpContent.Annotations.noop
             var uri: McpResourceUri                      = McpResourceUri("")
             var name: String                             = ""
@@ -130,7 +130,7 @@ private[kyo] object McpContentSchema:
                     mimeType = mt
                     resourceLinkMimeType = Present(mt)
                 else if reader.matchField("resource".getBytes("UTF-8")) then
-                    resource = summon[Schema[McpResourceContents]].serializeRead(reader)
+                    resource = summon[Schema[McpRoute.ResourceContents]].serializeRead(reader)
                 else if reader.matchField("annotations".getBytes("UTF-8")) then
                     annotations = summon[Schema[McpContent.Annotations]].serializeRead(reader)
                 else if reader.matchField("uri".getBytes("UTF-8")) then
@@ -202,11 +202,11 @@ private[kyo] object McpContentSchema:
                         case Some(Structure.Value.Str("resource")) =>
                             m.get("resource") match
                                 case Some(resSv) =>
-                                    summon[Schema[McpResourceContents]].fromStructureValue(resSv).flatMap { res =>
+                                    summon[Schema[McpRoute.ResourceContents]].fromStructureValue(resSv).flatMap { res =>
                                         annotationsResult.map(anns => McpContent.EmbeddedResource(res, anns))
                                     }
                                 case scala.None =>
-                                    Result.Failure(TypeMismatchException(Seq("resource"), "McpResourceContents", "absent"))
+                                    Result.Failure(TypeMismatchException(Seq("resource"), "McpRoute.ResourceContents", "absent"))
                         case Some(Structure.Value.Str("resource_link")) =>
                             val uriResult = m.get("uri") match
                                 case Some(uriSv) => summon[Schema[McpResourceUri]].fromStructureValue(uriSv)
@@ -248,13 +248,13 @@ private[kyo] object McpContentSchema:
     end contentSchema
 
     @nowarn("msg=anonymous")
-    val resourceContentsSchema: Schema[McpResourceContents] = new Schema[McpResourceContents](Seq.empty):
+    val resourceContentsSchema: Schema[McpRoute.ResourceContents] = new Schema[McpRoute.ResourceContents](Seq.empty):
 
-        @publicInBinary private[kyo] def serializeWrite(rc: McpResourceContents, w: Codec.Writer): Unit =
+        @publicInBinary private[kyo] def serializeWrite(rc: McpRoute.ResourceContents, w: Codec.Writer): Unit =
             rc match
-                case McpResourceContents.Text(uri, mimeType, text) =>
+                case McpRoute.ResourceContents.Text(uri, mimeType, text) =>
                     val fieldCount = if mimeType.isDefined then 4 else 3
-                    w.objectStart("McpResourceContents.Text", fieldCount)
+                    w.objectStart("McpRoute.ResourceContents.Text", fieldCount)
                     w.field("type", 1)
                     w.string("text")
                     w.field("uri", 2)
@@ -266,9 +266,9 @@ private[kyo] object McpContentSchema:
                     w.field("text", if mimeType.isDefined then 4 else 3)
                     w.string(text)
                     w.objectEnd()
-                case McpResourceContents.Blob(uri, mimeType, blob) =>
+                case McpRoute.ResourceContents.Blob(uri, mimeType, blob) =>
                     val fieldCount = if mimeType.isDefined then 4 else 3
-                    w.objectStart("McpResourceContents.Blob", fieldCount)
+                    w.objectStart("McpRoute.ResourceContents.Blob", fieldCount)
                     w.field("type", 1)
                     w.string("blob")
                     w.field("uri", 2)
@@ -282,7 +282,7 @@ private[kyo] object McpContentSchema:
                     w.objectEnd()
         end serializeWrite
 
-        @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): McpResourceContents =
+        @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): McpRoute.ResourceContents =
             var typeTag: String              = ""
             var uri: McpResourceUri          = McpResourceUri("")
             var mimeType: Maybe[McpMimeType] = Absent
@@ -309,23 +309,23 @@ private[kyo] object McpContentSchema:
             end while
             reader.objectEnd()
             typeTag match
-                case "text" => McpResourceContents.Text(uri, mimeType, text)
-                case "blob" => McpResourceContents.Blob(uri, mimeType, blob)
+                case "text" => McpRoute.ResourceContents.Text(uri, mimeType, text)
+                case "blob" => McpRoute.ResourceContents.Blob(uri, mimeType, blob)
                 case other =>
                     throw TypeMismatchException(Seq.empty, "text|blob", other)(using Frame.internal)
             end match
         end serializeRead
 
-        @publicInBinary private[kyo] def getter(value: McpResourceContents): Maybe[Any] = Maybe(value)
-        @publicInBinary private[kyo] def setter(value: McpResourceContents, next: Any): McpResourceContents =
+        @publicInBinary private[kyo] def getter(value: McpRoute.ResourceContents): Maybe[Any] = Maybe(value)
+        @publicInBinary private[kyo] def setter(value: McpRoute.ResourceContents, next: Any): McpRoute.ResourceContents =
             next match
-                case rc: McpResourceContents => rc
-                case _                       => value
+                case rc: McpRoute.ResourceContents => rc
+                case _                             => value
 
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using
             Frame
         )
-            : Result[DecodeException, McpResourceContents] =
+            : Result[DecodeException, McpRoute.ResourceContents] =
             sv match
                 case Structure.Value.Record(fields) =>
                     val m = fields.iterator.toMap
@@ -345,7 +345,7 @@ private[kyo] object McpContentSchema:
                                     for
                                         u  <- uriResult
                                         mt <- mimeTypeResult
-                                    yield McpResourceContents.Text(u, mt, t)
+                                    yield McpRoute.ResourceContents.Text(u, mt, t)
                                 case _ =>
                                     Result.Failure(TypeMismatchException(Seq("text"), "String", m.get("text").fold("absent")(_.toString)))
                         case Some(Structure.Value.Str("blob")) =>
@@ -354,7 +354,7 @@ private[kyo] object McpContentSchema:
                                     for
                                         u  <- uriResult
                                         mt <- mimeTypeResult
-                                    yield McpResourceContents.Blob(u, mt, b)
+                                    yield McpRoute.ResourceContents.Blob(u, mt, b)
                                 case _ =>
                                     Result.Failure(TypeMismatchException(Seq("blob"), "String", m.get("blob").fold("absent")(_.toString)))
                         case other =>

@@ -8,7 +8,7 @@ package kyo
   * tolerates non-conforming peer payloads; client-side validation is at the user `parse` callsite.
   *
   * Replaces every public-surface `String` / `Maybe[String]` `mimeType` field across the module
-  * (`McpContent.Image`, `McpContent.Audio`, `McpResourceContents.*`, `McpRoute.ResourceMeta`,
+  * (`McpContent.Image`, `McpContent.Audio`, `McpRoute.ResourceContents.*`, `McpRoute.ResourceMeta`,
   * `McpRoute.ResourceTemplateMeta`, factory parameters).
   *
   * @see [[McpMimeType.parse]]

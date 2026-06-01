@@ -22,9 +22,9 @@ package kyo
   * @param jsonRpc                    underlying JSON-RPC handler configuration
   */
 final case class McpConfig(
-    serverInfo: McpInfo = McpInfo(name = "kyo-mcp", version = McpProtocolVersion.kyoMcpVersion),
+    serverInfo: McpInfo = McpInfo(name = "kyo-mcp", version = McpConfig.ProtocolVersion.kyoMcpVersion),
     instructions: Maybe[String] = Absent,
-    supportedProtocolVersions: Set[McpProtocolVersion] = McpProtocolVersion.supported,
+    supportedProtocolVersions: Set[McpConfig.ProtocolVersion] = McpConfig.ProtocolVersion.supported,
     declaredCapabilities: Maybe[McpCapabilities.Server] = Absent,
     handshakeTimeout: Duration = 30.seconds,
     handshakeOrder: McpConfig.HandshakeOrder = McpConfig.HandshakeOrder.RequireInitializedNotification,
@@ -32,15 +32,15 @@ final case class McpConfig(
     autoNotifyListChanged: Boolean = true,
     jsonRpc: JsonRpcHandler.Config = McpConfig.defaultJsonRpcConfig
 ) derives CanEqual:
-    def serverInfo(i: McpInfo): McpConfig                                 = copy(serverInfo = i)
-    def instructions(s: String): McpConfig                                = copy(instructions = Present(s))
-    def supportedProtocolVersions(vs: Set[McpProtocolVersion]): McpConfig = copy(supportedProtocolVersions = vs)
-    def declaredCapabilities(c: McpCapabilities.Server): McpConfig        = copy(declaredCapabilities = Present(c))
-    def handshakeTimeout(d: Duration): McpConfig                          = copy(handshakeTimeout = d)
-    def handshakeOrder(o: McpConfig.HandshakeOrder): McpConfig            = copy(handshakeOrder = o)
-    def capabilityGate(m: McpConfig.CapabilityGateMode): McpConfig        = copy(capabilityGate = m)
-    def autoNotifyListChanged(b: Boolean): McpConfig                      = copy(autoNotifyListChanged = b)
-    def jsonRpc(c: JsonRpcHandler.Config): McpConfig                      = copy(jsonRpc = c)
+    def serverInfo(i: McpInfo): McpConfig                                        = copy(serverInfo = i)
+    def instructions(s: String): McpConfig                                       = copy(instructions = Present(s))
+    def supportedProtocolVersions(vs: Set[McpConfig.ProtocolVersion]): McpConfig = copy(supportedProtocolVersions = vs)
+    def declaredCapabilities(c: McpCapabilities.Server): McpConfig               = copy(declaredCapabilities = Present(c))
+    def handshakeTimeout(d: Duration): McpConfig                                 = copy(handshakeTimeout = d)
+    def handshakeOrder(o: McpConfig.HandshakeOrder): McpConfig                   = copy(handshakeOrder = o)
+    def capabilityGate(m: McpConfig.CapabilityGateMode): McpConfig               = copy(capabilityGate = m)
+    def autoNotifyListChanged(b: Boolean): McpConfig                             = copy(autoNotifyListChanged = b)
+    def jsonRpc(c: JsonRpcHandler.Config): McpConfig                             = copy(jsonRpc = c)
 end McpConfig
 
 object McpConfig:
@@ -58,6 +58,48 @@ object McpConfig:
         case LogOnly
         case Off
     end CapabilityGateMode
+
+    /** Opaque type wrapping the MCP protocol version string.
+      *
+      * Users construct values via `parse`, which validates the version against the supported set.
+      * The engine uses `fromWire` (private[kyo]) to decode versions without validation during
+      * the handshake response path. No public `apply` exists per INV-025 / Audit-A5.
+      *
+      * @see [[McpConfig.ProtocolVersion.parse]]
+      * @see [[McpConfig.ProtocolVersion.supported]]
+      */
+    opaque type ProtocolVersion = String
+
+    object ProtocolVersion:
+
+        /** The current MCP protocol version shipped by this library. */
+        val current: ProtocolVersion = "2025-06-18"
+
+        /** The kyo-mcp library version string. */
+        val kyoMcpVersion: String = "0.1.0"
+
+        /** The set of MCP protocol versions this library accepts during handshake. */
+        val supported: Set[ProtocolVersion] = Set("2025-06-18")
+
+        /** Returns `Present(v)` when `s` is a supported version string; `Absent` otherwise. */
+        def parse(s: String): Maybe[ProtocolVersion] =
+            if supported.contains(s) then Present(s) else Absent
+
+        /** Wire decoder: used by the engine to decode a protocol version without client-side validation. */
+        private[kyo] def fromWire(s: String): ProtocolVersion = s
+
+        extension (v: ProtocolVersion)
+            /** Returns the underlying string value. */
+            def asString: String = v
+
+        // Uses `fromWire` (private[kyo] total constructor) so the codec accepts any wire-received string.
+        // Client-side validation (supported set check) happens at the handshake gate, not at the codec.
+        // Note: design/02-design.md:993 used `imap` which does not exist on Schema; `transform` is correct.
+        given Schema[ProtocolVersion] = Schema.stringSchema.transform[ProtocolVersion](fromWire)(_.asString)
+
+        given CanEqual[ProtocolVersion, ProtocolVersion] = CanEqual.derived
+
+    end ProtocolVersion
 
     /** JSON-RPC handler config used by `default`.
       *

@@ -83,7 +83,7 @@ private[kyo] object McpHandlerLift:
         h: McpHandler.ResourceHandler[E],
         serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[McpResourceUri, Chunk[McpResourceContents]](h.resourceMeta.uri.asString) { (uri, jrCtx) =>
+        JsonRpcRoute.request[McpResourceUri, Chunk[McpRoute.ResourceContents]](h.resourceMeta.uri.asString) { (uri, jrCtx) =>
             withCtx(jrCtx, serverRef)(h.resourceHandler(uri))
         }
 
@@ -91,8 +91,9 @@ private[kyo] object McpHandlerLift:
         h: McpHandler.ResourceTemplateHandler[E],
         serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[McpResourceUri, Chunk[McpResourceContents]](h.resourceTemplateMeta.uriTemplate.asString) { (uri, jrCtx) =>
-            withCtx(jrCtx, serverRef)(h.resourceTemplateHandler(uri))
+        JsonRpcRoute.request[McpResourceUri, Chunk[McpRoute.ResourceContents]](h.resourceTemplateMeta.uriTemplate.asString) {
+            (uri, jrCtx) =>
+                withCtx(jrCtx, serverRef)(h.resourceTemplateHandler(uri))
         }
 
     private def liftPrompt[E](

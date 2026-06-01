@@ -28,8 +28,6 @@ class InvariantsTest extends Test:
         "McpInfo",
         // McpRoot covered by McpSamplingReverseTest (requestRoots path)
         "McpRoot",
-        // McpResourceUriTemplate covered by McpResourceListReadTest
-        "McpResourceUriTemplate",
         // McpSamplingRequest / McpSamplingResponse covered by McpSamplingReverseTest
         "McpSamplingRequest",
         "McpSamplingResponse",
@@ -96,15 +94,17 @@ class InvariantsTest extends Test:
         end if
     }
 
-    "INV-025: McpProtocolVersion.scala has no file-public def apply" in run {
+    "INV-025: McpConfig.ProtocolVersion has no file-public def apply" in run {
         if Platform.isJVM then
-            val path = Paths.get(s"$moduleRoot/McpProtocolVersion.scala")
+            val path = Paths.get(s"$moduleRoot/McpConfig.scala")
             if Files.exists(path) then
                 val src = Files.readString(path)
-                val hits = src.linesIterator.zipWithIndex.collect {
+                // Only check inside the ProtocolVersion object block for a public def apply.
+                val inBlock = src.linesIterator.dropWhile(!_.contains("object ProtocolVersion")).take(60).toList
+                val hits = inBlock.zipWithIndex.collect {
                     case (line, idx) if line.contains("def apply") && !line.contains("private") => s"line ${idx + 1}: $line"
                 }.toList
-                assert(hits.isEmpty, s"Public def apply found in McpProtocolVersion.scala: ${hits.mkString("; ")}")
+                assert(hits.isEmpty, s"Public def apply found in McpConfig.ProtocolVersion: ${hits.mkString("; ")}")
             else
                 succeed
             end if

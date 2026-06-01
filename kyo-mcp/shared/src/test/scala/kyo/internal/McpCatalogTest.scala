@@ -7,7 +7,7 @@ import kyo.internal.mcp.McpCatalog
 class McpCatalogTest extends Test:
 
     private val testUri = McpResourceUri.parse("file:///test").get
-    private val testTpl = McpResourceUriTemplate.parse("file:///test/{id}").get
+    private val testTpl = McpResourceUri.Template.parse("file:///test/{id}").get
 
     "empty catalog has no routes in any partition" in run {
         val catalog = McpCatalog(Seq.empty)

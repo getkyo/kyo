@@ -23,15 +23,15 @@ class CompileSpineTest extends Test:
         assert(witness != null)
     }
 
-    "opaque type identity: McpProtocolVersion (parse/asString round-trip)" in {
-        val v = McpProtocolVersion.parse("2025-06-18").get
+    "opaque type identity: McpConfig.ProtocolVersion (parse/asString round-trip)" in {
+        val v = McpConfig.ProtocolVersion.parse("2025-06-18").get
         assert(v.asString == "2025-06-18")
     }
 
-    "McpProtocolVersion has no public apply (INV-025)" in {
-        val r = McpProtocolVersion.parse("2025-06-18")
+    "McpConfig.ProtocolVersion has no public apply (INV-025)" in {
+        val r = McpConfig.ProtocolVersion.parse("2025-06-18")
         assert(r.isDefined)
-        val r2 = McpProtocolVersion.parse("9999-99-99")
+        val r2 = McpConfig.ProtocolVersion.parse("9999-99-99")
         assert(r2.isEmpty)
     }
 
@@ -47,9 +47,9 @@ class CompileSpineTest extends Test:
         assert(McpResourceUri.parse("file:///x").isDefined)
     }
 
-    "McpResourceUriTemplate.parse rejects non-template strings" in {
-        assert(McpResourceUriTemplate.parse("").isEmpty)
-        assert(McpResourceUriTemplate.parse("file:///x/{path}").isDefined)
+    "McpResourceUri.Template.parse rejects non-template strings" in {
+        assert(McpResourceUri.Template.parse("").isEmpty)
+        assert(McpResourceUri.Template.parse("file:///x/{path}").isDefined)
     }
 
     "McpCapabilities.Server and Client are constructable" in {
@@ -76,9 +76,9 @@ class CompileSpineTest extends Test:
         assert(i.isInstanceOf[McpContent.Image])
     }
 
-    "McpResourceContents uri field is McpResourceUri not String (INV-022)" in {
-        val uri                     = McpResourceUri.parse("file:///x").get
-        val rc: McpResourceContents = McpResourceContents.text(uri, "hello")
+    "McpRoute.ResourceContents uri field is McpResourceUri not String (INV-022)" in {
+        val uri                           = McpResourceUri.parse("file:///x").get
+        val rc: McpRoute.ResourceContents = McpRoute.ResourceContents.text(uri, "hello")
         assert(rc.uri == uri)
     }
 

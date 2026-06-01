@@ -30,6 +30,49 @@ object McpRoute:
     enum Kind derives CanEqual:
         case Tool, Resource, ResourceTemplate, Prompt, Notification, Custom
 
+    /** Sealed union of MCP resource content types returned from `resources/read`.
+      *
+      * Both leaves carry a typed `uri: McpResourceUri` field per INV-022 / Audit-A2.
+      * `mimeType` is the opaque `McpMimeType` so all media-type-carrying surface stays typed.
+      * Use the companion factory methods `text` and `blob` to construct values.
+      *
+      * The `given Schema[ResourceContents]` hand-rolls a tagged-union schema discriminating on
+      * `"type"` in `kyo/internal/McpContentSchema.scala`.
+      */
+    sealed trait ResourceContents derives CanEqual:
+        def uri: McpResourceUri
+        def mimeType: Maybe[McpMimeType]
+
+    object ResourceContents:
+
+        /** Text resource content. */
+        final case class Text(
+            uri: McpResourceUri,
+            mimeType: Maybe[McpMimeType],
+            text: String
+        ) extends ResourceContents
+
+        /** Binary blob resource content encoded as base-64. */
+        final case class Blob(
+            uri: McpResourceUri,
+            mimeType: Maybe[McpMimeType],
+            blob: String
+        ) extends ResourceContents
+
+        /** Constructs a text resource content value. */
+        def text(uri: McpResourceUri, text: String, mimeType: Maybe[McpMimeType] = Absent): ResourceContents =
+            Text(uri, mimeType, text)
+
+        /** Constructs a blob resource content value. */
+        def blob(uri: McpResourceUri, blob: String, mimeType: Maybe[McpMimeType] = Absent): ResourceContents =
+            Blob(uri, mimeType, blob)
+
+        // Hand-rolled tagged-union schema. Implementation in kyo/internal/McpContentSchema.scala.
+        // Wire discriminator key: "type"; tags: "text" | "blob" (INV-006).
+        given Schema[ResourceContents] = internal.McpContentSchema.resourceContentsSchema
+
+    end ResourceContents
+
     /** Metadata returned by `McpClient.listTools`. */
     final case class ToolMeta(
         name: String,
@@ -88,10 +131,10 @@ object McpRoute:
     ) derives Schema, CanEqual
 
     /** Metadata returned by `McpClient.listResourceTemplates`.
-      * INV-022: `uriTemplate` is typed `McpResourceUriTemplate`, not raw `String`.
+      * INV-022: `uriTemplate` is typed `McpResourceUri.Template`, not raw `String`.
       */
     final case class ResourceTemplateMeta(
-        uriTemplate: McpResourceUriTemplate,
+        uriTemplate: McpResourceUri.Template,
         name: String,
         description: Maybe[String],
         mimeType: Maybe[McpMimeType],
@@ -254,7 +297,7 @@ object McpRoute:
       * Call `.handler(f)` on the returned value to bind a handler closure.
       */
     def resourceTemplate(
-        uriTemplate: McpResourceUriTemplate,
+        uriTemplate: McpResourceUri.Template,
         name: String,
         description: String = "",
         mimeType: Maybe[McpMimeType] = Absent,
@@ -346,8 +389,8 @@ object McpRoute:
 
         /** Binds a handler closure that takes the resolved URI and returns the resource contents. */
         inline def handler(
-            f: McpResourceUri => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
-        )(using frame: Frame): McpHandler[McpResourceUri, Chunk[McpResourceContents], McpException] =
+            f: McpResourceUri => Chunk[ResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using frame: Frame): McpHandler[McpResourceUri, Chunk[ResourceContents], McpException] =
             McpHandler.makeResource(this, f)
     end ResourceRoute
 
@@ -359,8 +402,8 @@ object McpRoute:
         val kind: Kind   = Kind.ResourceTemplate
 
         inline def handler(
-            f: McpResourceUri => Chunk[McpResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
-        )(using frame: Frame): McpHandler[McpResourceUri, Chunk[McpResourceContents], McpException] =
+            f: McpResourceUri => Chunk[ResourceContents] < (Async & Abort[McpException | JsonRpcResponse.Halt])
+        )(using frame: Frame): McpHandler[McpResourceUri, Chunk[ResourceContents], McpException] =
             McpHandler.makeResourceTemplate(this, f)
     end ResourceTemplateRoute
 

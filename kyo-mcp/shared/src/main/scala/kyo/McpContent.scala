@@ -39,7 +39,7 @@ object McpContent:
 
     /** An embedded resource included inline in content. */
     final case class EmbeddedResource(
-        resource: McpResourceContents,
+        resource: McpRoute.ResourceContents,
         annotations: Annotations = Annotations.noop
     ) extends McpContent
 
@@ -82,7 +82,7 @@ object McpContent:
         Audio(data, mimeType, annotations)
 
     /** Constructs an embedded resource content value. */
-    def resource(resource: McpResourceContents, annotations: Annotations = Annotations.noop): McpContent =
+    def resource(resource: McpRoute.ResourceContents, annotations: Annotations = Annotations.noop): McpContent =
         EmbeddedResource(resource, annotations)
 
     // Hand-rolled discriminator ("type") schema. Implementation in kyo/internal/McpContentSchema.scala.

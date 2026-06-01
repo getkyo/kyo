@@ -28,7 +28,7 @@ class McpResourceSubscribeTest extends Test:
         }
 
         val resourceRoute =
-            McpRoute.resource(uri1, "res1", subscribe = true).handler((_) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
+            McpRoute.resource(uri1, "res1", subscribe = true).handler((_) => Chunk(McpRoute.ResourceContents.Text(uri1, Absent, "content")))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
@@ -61,7 +61,7 @@ class McpResourceSubscribeTest extends Test:
         }
 
         val resourceRoute =
-            McpRoute.resource(uri1, "res1", subscribe = true).handler((_) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
+            McpRoute.resource(uri1, "res1", subscribe = true).handler((_) => Chunk(McpRoute.ResourceContents.Text(uri1, Absent, "content")))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
@@ -95,7 +95,7 @@ class McpResourceSubscribeTest extends Test:
         }
 
         // Resource without subscribe=true; server capability has subscribe=false.
-        val resourceRoute = McpRoute.resource(uri1, "res1").handler((_) => Chunk(McpResourceContents.Text(uri1, Absent, "content")))
+        val resourceRoute = McpRoute.resource(uri1, "res1").handler((_) => Chunk(McpRoute.ResourceContents.Text(uri1, Absent, "content")))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](

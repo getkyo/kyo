@@ -72,8 +72,8 @@ class McpExceptionTest extends Test:
     }
 
     "McpProtocolVersionMismatchException" in run {
-        val clientVer  = McpProtocolVersion.fromWire("2024-01-01")
-        val supportedV = McpProtocolVersion.fromWire("2025-06-18")
+        val clientVer  = McpConfig.ProtocolVersion.fromWire("2024-01-01")
+        val supportedV = McpConfig.ProtocolVersion.fromWire("2025-06-18")
         val e          = McpProtocolVersionMismatchException(clientVer, Chunk(supportedV))
         assert(e.code == -32602)
         assert(e.message.contains("2024-01-01"))
@@ -89,9 +89,9 @@ class McpExceptionTest extends Test:
 
     "McpProtocolVersionMismatchException sorted supported list" in run {
         // Two supported versions: ensure message contains them in sorted order
-        val clientVer = McpProtocolVersion.fromWire("2024-01-01")
-        val v1        = McpProtocolVersion.fromWire("2025-06-18")
-        val v2        = McpProtocolVersion.fromWire("2025-03-26")
+        val clientVer = McpConfig.ProtocolVersion.fromWire("2024-01-01")
+        val v1        = McpConfig.ProtocolVersion.fromWire("2025-06-18")
+        val v2        = McpConfig.ProtocolVersion.fromWire("2025-03-26")
         val e         = McpProtocolVersionMismatchException(clientVer, Chunk(v1, v2))
         // sorted alphabetically: "2025-03-26" < "2025-06-18"
         val msg  = e.message

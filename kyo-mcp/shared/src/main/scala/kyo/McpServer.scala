@@ -287,7 +287,7 @@ object McpServer:
             Sync.Unsafe.defer(self.notifyLog(level, data, logger).safe.get)
 
         /** Returns the negotiated protocol version (Absent before handshake completes). */
-        def protocolVersion: Maybe[McpProtocolVersion] = self.protocolVersion
+        def protocolVersion: Maybe[McpConfig.ProtocolVersion] = self.protocolVersion
 
         /** Returns the client's advertised capabilities (Absent before handshake completes). */
         def clientCapabilities: Maybe[McpCapabilities.Client] = self.clientCapabilities
@@ -336,7 +336,7 @@ object McpServer:
             Frame,
             Schema[T]
         ): Fiber.Unsafe[Unit, Abort[Closed]]
-        def protocolVersion: Maybe[McpProtocolVersion]
+        def protocolVersion: Maybe[McpConfig.ProtocolVersion]
         def clientCapabilities: Maybe[McpCapabilities.Client]
         def clientInfo: Maybe[McpInfo]
         def underlying: JsonRpcHandler

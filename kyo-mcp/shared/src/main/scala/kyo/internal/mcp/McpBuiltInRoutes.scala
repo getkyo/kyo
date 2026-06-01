@@ -55,7 +55,7 @@ private[kyo] object McpBuiltInRoutes:
 
     // Wire shapes for resources/read dispatcher.
     final private case class ResourceReadParams(uri: String) derives Schema
-    final private case class ResourceReadResponse(contents: Chunk[McpResourceContents]) derives Schema
+    final private case class ResourceReadResponse(contents: Chunk[McpRoute.ResourceContents]) derives Schema
 
     // Wire shapes for prompts/get dispatcher.
     final private case class PromptGetParams(name: String, arguments: Map[String, String] = Map.empty) derives Schema

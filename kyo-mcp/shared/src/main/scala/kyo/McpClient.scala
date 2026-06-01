@@ -84,7 +84,7 @@ object McpClient:
         /** Reads a resource by URI.
           * INV-022: `uri` is typed `McpResourceUri`, not raw `String`.
           */
-        def readResource(uri: McpResourceUri)(using Frame): Chunk[McpResourceContents] < (Async & Abort[McpException | Closed]) =
+        def readResource(uri: McpResourceUri)(using Frame): Chunk[McpRoute.ResourceContents] < (Async & Abort[McpException | Closed]) =
             Sync.Unsafe.defer(self.readResource(uri).safe.get)
 
         /** Lists the server's prompts. Returns a named `Page` record (Audit-A3). */
@@ -128,7 +128,7 @@ object McpClient:
         def serverInfo: Maybe[McpInfo] = self.serverInfo
 
         /** Returns the negotiated protocol version (Absent before handshake completes). */
-        def protocolVersion: Maybe[McpProtocolVersion] = self.protocolVersion
+        def protocolVersion: Maybe[McpConfig.ProtocolVersion] = self.protocolVersion
 
         /** Underlying JsonRpcHandler (escape hatch for advanced consumers). */
         def underlying: JsonRpcHandler = self.underlying
@@ -178,7 +178,7 @@ object McpClient:
         def readResource(uri: McpResourceUri)(using
             AllowUnsafe,
             Frame
-        ): Fiber.Unsafe[Chunk[McpResourceContents], Abort[McpException | Closed]]
+        ): Fiber.Unsafe[Chunk[McpRoute.ResourceContents], Abort[McpException | Closed]]
         def listPrompts(cursor: Maybe[String])(using
             AllowUnsafe,
             Frame
@@ -198,7 +198,7 @@ object McpClient:
         def unsubscribeResource(uri: McpResourceUri)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[McpException | Closed]]
         def serverCapabilities: Maybe[McpCapabilities.Server]
         def serverInfo: Maybe[McpInfo]
-        def protocolVersion: Maybe[McpProtocolVersion]
+        def protocolVersion: Maybe[McpConfig.ProtocolVersion]
         def underlying: JsonRpcHandler
         def close(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
         final def safe: McpClient = this

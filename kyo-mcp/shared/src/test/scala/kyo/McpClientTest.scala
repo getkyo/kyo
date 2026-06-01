@@ -174,7 +174,7 @@ class McpClientTest extends Test:
             McpServer.init(ta).flatMap { server =>
                 McpClient.init(tb, clientInfo, clientCaps).flatMap { client =>
                     val ver = client.protocolVersion
-                    assert(ver == Present(McpProtocolVersion.current))
+                    assert(ver == Present(McpConfig.ProtocolVersion.current))
                 }
             }
         }

@@ -126,7 +126,7 @@ class McpRouteTest extends Test:
     }
 
     "ResourceTemplateMeta title Present encodes and round-trips" in {
-        val tpl  = McpResourceUriTemplate.parse("file:///{path}").get
+        val tpl  = McpResourceUri.Template.parse("file:///{path}").get
         val meta = McpRoute.ResourceTemplateMeta(tpl, "t", Absent, Absent, Absent, title = Present("Tmpl"))
         val json = encode(meta)
         assert(json.contains("\"title\":\"Tmpl\""))

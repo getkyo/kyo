@@ -29,7 +29,7 @@ private[kyo] object McpEngine:
     )(using Frame): McpServer.Unsafe < Async =
         // AllowUnsafe: AtomicRef for post-handshake state shared across handler fibers.
         // Pattern mirrors JsonRpcMessageGate.server.requireHandshake:77 and McpHandshakeGate.
-        val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe
+        val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpConfig.ProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe
         val clientCapabilitiesRef = AtomicRef.Unsafe.init[Maybe[McpCapabilities.Client]](Absent)(using AllowUnsafe.embrace.danger).safe
         val clientInfoRef         = AtomicRef.Unsafe.init[Maybe[McpInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
         // AllowUnsafe: AtomicRef for log level threshold; initialized to Info per §3.9.
@@ -223,7 +223,7 @@ private[kyo] object McpEngine:
                 ): Fiber.Unsafe[Unit, Abort[Closed]] =
                     Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(notifyLogEffect[T](level, data, logger))).unsafe
 
-                def protocolVersion: Maybe[McpProtocolVersion] =
+                def protocolVersion: Maybe[McpConfig.ProtocolVersion] =
                     negotiatedVersionRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
                 def clientCapabilities: Maybe[McpCapabilities.Client] =

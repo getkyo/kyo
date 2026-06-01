@@ -11,10 +11,10 @@ class McpProtocolVersionFallbackTest extends Test:
 
     "server returns highest supported version when client version is not in supported set" in run {
         // Configure a server that supports a version the client does not send.
-        // The client always sends McpProtocolVersion.current ("2025-06-18").
+        // The client always sends McpConfig.ProtocolVersion.current ("2025-06-18").
         // Using a lexicographically later version string to guarantee a mismatch.
         // fromWire is private[kyo] and accessible from kyo.integration (a sub-package of kyo).
-        val futureVersion = McpProtocolVersion.fromWire("9999-01-01")
+        val futureVersion = McpConfig.ProtocolVersion.fromWire("9999-01-01")
         val serverConfig  = McpConfig.default.supportedProtocolVersions(Set(futureVersion))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
@@ -35,8 +35,8 @@ class McpProtocolVersionFallbackTest extends Test:
     }
 
     "server returns current version when client version matches" in run {
-        // Server supports only McpProtocolVersion.current. Client sends current. They match.
-        val serverConfig = McpConfig.default.supportedProtocolVersions(Set(McpProtocolVersion.current))
+        // Server supports only McpConfig.ProtocolVersion.current. Client sends current. They match.
+        val serverConfig = McpConfig.default.supportedProtocolVersions(Set(McpConfig.ProtocolVersion.current))
 
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
@@ -47,7 +47,7 @@ class McpProtocolVersionFallbackTest extends Test:
                 for
                     _ <- srv.closeNow
                     _ <- client.closeNow
-                yield assert(negotiated == Present(McpProtocolVersion.current))
+                yield assert(negotiated == Present(McpConfig.ProtocolVersion.current))
                 end for
             }
         }

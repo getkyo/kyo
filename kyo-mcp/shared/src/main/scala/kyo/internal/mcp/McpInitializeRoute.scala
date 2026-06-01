@@ -18,7 +18,7 @@ private[kyo] object McpInitializeRoute:
     def build(
         config: McpConfig,
         serverCaps: McpCapabilities.Server,
-        negotiatedVersionRef: AtomicRef[Maybe[McpProtocolVersion]],
+        negotiatedVersionRef: AtomicRef[Maybe[McpConfig.ProtocolVersion]],
         clientCapabilitiesRef: AtomicRef[Maybe[McpCapabilities.Client]],
         clientInfoRef: AtomicRef[Maybe[McpInfo]]
     )(using Frame): JsonRpcRoute[?, ?, ?] =

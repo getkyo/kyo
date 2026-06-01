@@ -42,9 +42,9 @@ class SchemaSingletonTest extends Test:
         assert(s1 eq s2)
     }
 
-    "Schema[McpProtocolVersion] is a singleton val (INV-013)" in {
-        val s1 = summon[Schema[McpProtocolVersion]]
-        val s2 = summon[Schema[McpProtocolVersion]]
+    "Schema[McpConfig.ProtocolVersion] is a singleton val (INV-013)" in {
+        val s1 = summon[Schema[McpConfig.ProtocolVersion]]
+        val s2 = summon[Schema[McpConfig.ProtocolVersion]]
         assert(s1 eq s2)
     }
 
