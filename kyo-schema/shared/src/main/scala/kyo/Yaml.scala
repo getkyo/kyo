@@ -1088,6 +1088,14 @@ object Yaml:
             span: SourceSpan,
             originalSource: Maybe[String]
         ) derives CanEqual:
+            /** Returns this document's optional root node. */
+            def node: Maybe[Node] =
+                root
+
+            /** Returns the original source used for source-preserving rendering. */
+            def source: Maybe[String] =
+                originalSource
+
             /** Renders this document to YAML. */
             def render(using config: WriterConfig): String =
                 internal.yaml.YamlCstRenderer.document(this)
@@ -1150,6 +1158,14 @@ object Yaml:
     /** Parses an explicit YAML document stream into node trees. */
     def parseAll(input: String)(using Frame): Result[DecodeException, Chunk[Node]] =
         parseEach(input)(parse)
+
+    /** Parses a single YAML document into a source-backed CST. */
+    def cst(input: String)(using Frame): Result[DecodeException, Cst.Document] =
+        internal.yaml.YamlCstParser.document(input)
+
+    /** Parses a YAML document stream into source-backed CST documents. */
+    def cstAll(input: String)(using Frame): Result[DecodeException, Cst.Stream] =
+        internal.yaml.YamlCstParser.stream(input)
 
     /** Encodes a value of type A as YAML. */
     inline def encode[A](value: A)(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): String =

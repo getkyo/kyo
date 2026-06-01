@@ -123,6 +123,15 @@ class YamlCstTest extends Test:
             }
         }
 
+        "parses CST through the public helper" in {
+            val yaml =
+                """name: Alice
+                  |age: 30
+                  |""".stripMargin
+
+            assert(Yaml.cst(yaml).map(_.render(using Yaml.WriterConfig.Default)) == Result.succeed(yaml))
+        }
+
         "builds canonical CST from schema values" in {
             val doc =
                 Yaml.Cst.from(MTPerson("Alice", 30)).getOrThrow
