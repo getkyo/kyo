@@ -1294,9 +1294,13 @@ class YamlCstTest extends Test:
             val doc      = Yaml.Cst.Document(Maybe(root), Chunk.empty, Chunk.empty, span, Absent)
             val rendered = doc.render(using Yaml.WriterConfig.Default)
 
-            assert(!rendered.contains("Sequence("))
-            assert(rendered.contains("[a, b]: value"))
-            assert(Yaml.cst(rendered).isSuccess)
+            assertResult((noToString = true, flowKey = true, roundTrips = true)) {
+                (
+                    noToString = !rendered.contains("Sequence("),
+                    flowKey = rendered.contains("[a, b]: value"),
+                    roundTrips = Yaml.cst(rendered).isSuccess
+                )
+            }
         }
 
         "fails editing through an ambiguous duplicate mapping key" in {
@@ -1313,8 +1317,9 @@ class YamlCstTest extends Test:
 
             duplicate.replace(Yaml.Cst.Path.root / "name", scalar("c")) match
                 case Result.Failure(e: Yaml.Cst.EditException) =>
-                    assert(e.getMessage.contains("Ambiguous mapping key 'name'"))
-                    assert(e.path.show == "name")
+                    assertResult((message = true, path = "name")) {
+                        (message = e.getMessage.contains("Ambiguous mapping key 'name'"), path = e.path.show)
+                    }
                 case other =>
                     fail(s"Expected ambiguity failure, got $other")
             end match
@@ -1323,8 +1328,9 @@ class YamlCstTest extends Test:
         "fails inserting a mapping key that already exists" in {
             Yaml.cst("name: Alice\n").getOrThrow.insert(Yaml.Cst.Path.root / "name", scalar("Bob")) match
                 case Result.Failure(e: Yaml.Cst.EditException) =>
-                    assert(e.getMessage.contains("already exists"))
-                    assert(e.path.show == "name")
+                    assertResult((message = true, path = "name")) {
+                        (message = e.getMessage.contains("already exists"), path = e.path.show)
+                    }
                 case other =>
                     fail(s"Expected collision failure, got $other")
             end match
@@ -1364,12 +1370,23 @@ class YamlCstTest extends Test:
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "name", scalar("app2")).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(edited.source.isEmpty)
-            assert(rendered.contains("# config"))
-            assert(rendered.contains("message: |-"))
-            assert(rendered.contains("\n  hello\n  world"))
-            assert(Yaml.decode[Map[String, String]](rendered) ==
-                Result.succeed(Map("name" -> "app2", "message" -> "hello\nworld")))
+            assertResult(
+                (
+                    sourceCleared = true,
+                    comment = true,
+                    blockHeader = true,
+                    content = true,
+                    decoded = Result.succeed(Map("name" -> "app2", "message" -> "hello\nworld"))
+                )
+            ) {
+                (
+                    sourceCleared = edited.source.isEmpty,
+                    comment = rendered.contains("# config"),
+                    blockHeader = rendered.contains("message: |-"),
+                    content = rendered.contains("\n  hello\n  world"),
+                    decoded = Yaml.decode[Map[String, String]](rendered)
+                )
+            }
         }
 
         "preserves folded block scalars when rendering changed documents with comments" in {
@@ -1383,10 +1400,19 @@ class YamlCstTest extends Test:
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "name", scalar("app2")).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
-            assert(edited.source.isEmpty)
-            assert(rendered.contains("message: >-"))
-            assert(Yaml.decode[Map[String, String]](rendered) ==
-                Result.succeed(Map("name" -> "app2", "message" -> "hello world")))
+            assertResult(
+                (
+                    sourceCleared = true,
+                    blockHeader = true,
+                    decoded = Result.succeed(Map("name" -> "app2", "message" -> "hello world"))
+                )
+            ) {
+                (
+                    sourceCleared = edited.source.isEmpty,
+                    blockHeader = rendered.contains("message: >-"),
+                    decoded = Yaml.decode[Map[String, String]](rendered)
+                )
+            }
         }
     }
 end YamlCstTest

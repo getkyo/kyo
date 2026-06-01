@@ -272,8 +272,12 @@ age: 30
             val processed    = Yaml.pipeline.through(scalarRewrite("Alice", "Alicia")).cstAll(yaml).getOrThrow
             val sourceBacked = Yaml.pipeline.cstAll(yaml).getOrThrow
 
-            assert(processed.documents.size == sourceBacked.documents.size)
-            assert(processed.render(using Yaml.WriterConfig.Default).contains("Alicia"))
+            assertResult((sameCount = true, rewritten = true)) {
+                (
+                    sameCount = processed.documents.size == sourceBacked.documents.size,
+                    rewritten = processed.render(using Yaml.WriterConfig.Default).contains("Alicia")
+                )
+            }
         }
 
         "returns every document from cstAll ignoring the reader document index" in {
@@ -286,9 +290,12 @@ age: 30
             val config =
                 Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
 
-            assert(Yaml.pipeline.reader(config).through(scalarRewrite("Alice", "Alicia")).cstAll(yaml).map(_.documents.size) ==
-                Result.succeed(2))
-            assert(Yaml.pipeline.reader(config).cstAll(yaml).map(_.documents.size) == Result.succeed(2))
+            assertResult((processed = Result.succeed(2), sourceBacked = Result.succeed(2))) {
+                (
+                    processed = Yaml.pipeline.reader(config).through(scalarRewrite("Alice", "Alicia")).cstAll(yaml).map(_.documents.size),
+                    sourceBacked = Yaml.pipeline.reader(config).cstAll(yaml).map(_.documents.size)
+                )
+            }
         }
 
         "builds CST from UTF-8 bytes after source selection" in {
