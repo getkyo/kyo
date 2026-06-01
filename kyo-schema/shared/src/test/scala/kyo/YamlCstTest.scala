@@ -1295,5 +1295,41 @@ class YamlCstTest extends Test:
             assert(rendered == "name: Bob\n")
             assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("name" -> "Bob")))
         }
+
+        "preserves literal block scalars when rendering changed documents with comments" in {
+            val yaml = """# config
+                         |name: app
+                         |message: |-
+                         |  hello
+                         |  world
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "name", scalar("app2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty)
+            assert(rendered.contains("# config"))
+            assert(rendered.contains("message: |-"))
+            assert(rendered.contains("\n  hello\n  world"))
+            assert(Yaml.decode[Map[String, String]](rendered) ==
+                Result.succeed(Map("name" -> "app2", "message" -> "hello\nworld")))
+        }
+
+        "preserves folded block scalars when rendering changed documents with comments" in {
+            val yaml = """# config
+                         |name: app
+                         |message: >-
+                         |  hello
+                         |  world
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "name", scalar("app2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty)
+            assert(rendered.contains("message: >-"))
+            assert(Yaml.decode[Map[String, String]](rendered) ==
+                Result.succeed(Map("name" -> "app2", "message" -> "hello world")))
+        }
     }
 end YamlCstTest

@@ -131,8 +131,11 @@ private[kyo] object YamlCstRenderer:
                     renderSequence(entries, indent)
                 case Yaml.Cst.Node.Scalar(value, _, meta, _, _) =>
                     appendIndent(indent)
-                    appendScalar(value, meta)
-                    appendLine()
+                    if isBlockStyle(meta) then appendBlockScalar(value, meta, indent + indentSize, "")
+                    else
+                        appendScalar(value, meta)
+                        appendLine()
+                    end if
                 case Yaml.Cst.Node.Alias(name, _, _, _) =>
                     appendIndent(indent)
                     val _ = out.append('*').append(name.value)
@@ -163,9 +166,13 @@ private[kyo] object YamlCstRenderer:
                         case Yaml.Cst.Node.Scalar(value, _, meta, _, _) =>
                             appendIndent(indent)
                             val _ = out.append(renderKey(entry.key)).append(": ")
-                            appendScalar(value, meta)
-                            appendTrailingTrivia(entry.trailingTrivia)
-                            appendLine()
+                            if isBlockStyle(meta) then
+                                appendBlockScalar(value, meta, indent + indentSize, trailingTriviaSuffix(entry.trailingTrivia))
+                            else
+                                appendScalar(value, meta)
+                                appendTrailingTrivia(entry.trailingTrivia)
+                                appendLine()
+                            end if
                         case Yaml.Cst.Node.Alias(name, _, _, _) =>
                             appendIndent(indent)
                             val _ = out.append(renderKey(entry.key)).append(": *").append(name.value)
@@ -195,9 +202,13 @@ private[kyo] object YamlCstRenderer:
                         case Yaml.Cst.Node.Scalar(value, _, meta, _, _) =>
                             appendIndent(indent)
                             out.append("- ")
-                            appendScalar(value, meta)
-                            appendTrailingTrivia(entry.trailingTrivia)
-                            appendLine()
+                            if isBlockStyle(meta) then
+                                appendBlockScalar(value, meta, indent + indentSize, trailingTriviaSuffix(entry.trailingTrivia))
+                            else
+                                appendScalar(value, meta)
+                                appendTrailingTrivia(entry.trailingTrivia)
+                                appendLine()
+                            end if
                         case Yaml.Cst.Node.Alias(name, _, _, _) =>
                             appendIndent(indent)
                             val _ = out.append("- *").append(name.value)
@@ -284,6 +295,28 @@ private[kyo] object YamlCstRenderer:
                     out.append(doubleQuoted(value))
             end match
         end appendScalar
+
+        private def isBlockStyle(meta: Yaml.ScalarMeta): Boolean =
+            meta.style == Yaml.ScalarStyle.Literal || meta.style == Yaml.ScalarStyle.Folded
+        end isBlockStyle
+
+        private def appendBlockScalar(value: String, meta: Yaml.ScalarMeta, contentIndent: Int, headerSuffix: String): Unit =
+            val prefix = properties(meta.anchor, meta.tag)
+            if prefix.nonEmpty then
+                out.append(prefix)
+                out.append(' ')
+            end if
+            YamlEvents.Scalar.appendBlock(out, value, config, contentIndent, meta.style == Yaml.ScalarStyle.Folded, headerSuffix)
+        end appendBlockScalar
+
+        private def trailingTriviaSuffix(trivia: Chunk[Yaml.Cst.Trivia]): String =
+            val builder = StringBuilder()
+            trivia.foreach { value =>
+                builder.append(' ')
+                builder.append(value.text.trim)
+            }
+            builder.toString
+        end trailingTriviaSuffix
 
         private def plainKey(value: String): Boolean =
             value.nonEmpty && value.forall(ch => ch.isLetterOrDigit || ch == '_' || ch == '-')

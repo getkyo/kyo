@@ -689,7 +689,7 @@ private[kyo] object YamlEvents:
             new Writer(config)
     end Writer
 
-    private object Scalar:
+    private[yaml] object Scalar:
 
         def stringStyle(value: String, config: Yaml.WriterConfig, flowContext: Boolean): Yaml.ScalarStyle =
             import Yaml.ScalarStyle.*
@@ -814,10 +814,12 @@ private[kyo] object YamlEvents:
             value: String,
             config: Yaml.WriterConfig,
             contentIndent: Int,
-            folded: Boolean
+            folded: Boolean,
+            headerSuffix: String = ""
         ): Unit =
             out.append(if folded then ">" else "|")
             out.append(chompingIndicator(value, config))
+            out.append(headerSuffix)
             out.append('\n')
             val end =
                 if value.endsWith("\n") then value.length - 1
