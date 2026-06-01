@@ -6,7 +6,7 @@ import kyo.Codec.Reader
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
-final class YamlReader private (
+final private[kyo] class YamlReader private (
     private var source: String,
     private val sourceLineOffset: Int,
     private val yamlVersion: Yaml.SpecVersion,
@@ -614,7 +614,7 @@ final class YamlReader private (
             case _                                        => error(s"Invalid YAML float value: '$value'")
     end taggedFloat
 
-    private def normalizeTag(tag: Maybe[Yaml.Tag]): Maybe[String] =
+    private def normalizeTag(tag: Maybe[Yaml.YamlTag]): Maybe[String] =
         tag.map(_.value match
             case "!!str"   => "tag:yaml.org,2002:str"
             case "!!int"   => "tag:yaml.org,2002:int"
@@ -675,7 +675,7 @@ final class YamlReader private (
             case _ => ()
     end countSequenceElement
 
-    private def withDelegate[A](f: YamlReader => A)(body: => A): A =
+    private inline def withDelegate[A](inline f: YamlReader => A)(inline body: A): A =
         delegate match
             case Present(reader) =>
                 val out = f(reader)
@@ -684,7 +684,7 @@ final class YamlReader private (
             case Absent => body
     end withDelegate
 
-    private def withDelegateCollection[A](f: YamlReader => A, depth: Int => Int)(body: => A): A =
+    private inline def withDelegateCollection[A](inline f: YamlReader => A, inline depth: Int => Int)(inline body: A): A =
         delegate match
             case Present(reader) =>
                 val out = f(reader)
@@ -693,7 +693,7 @@ final class YamlReader private (
             case Absent => body
     end withDelegateCollection
 
-    private def withDelegateEnd(f: YamlReader => Unit)(body: => Unit): Unit =
+    private inline def withDelegateEnd(inline f: YamlReader => Unit)(inline body: Unit): Unit =
         delegate match
             case Present(reader) =>
                 f(reader)
@@ -710,7 +710,7 @@ final class YamlReader private (
                 case _ => ()
     end clearFinishedDelegate
 
-    private def currentAliasOr[A](onAlias: YamlReader => A)(body: => A): A =
+    private inline def currentAliasOr[A](inline onAlias: YamlReader => A)(inline body: A): A =
         if trySourceAlias() then
             delegate match
                 case Present(reader) =>
@@ -1626,9 +1626,9 @@ final class YamlReader private (
         YamlSource.quotedScalar(source, start, stop)
     end sourceQuotedScalar
 
-    private def sourceProperties(text: String): (Maybe[Yaml.Anchor], Maybe[Yaml.Tag], String) =
+    private def sourceProperties(text: String): (Maybe[Yaml.Anchor], Maybe[Yaml.YamlTag], String) =
         var anchor: Maybe[Yaml.Anchor] = Absent
-        var tag: Maybe[Yaml.Tag]       = Absent
+        var tag: Maybe[Yaml.YamlTag]   = Absent
         var rest                       = text.trim
         var changed                    = true
         while changed do
@@ -1640,7 +1640,7 @@ final class YamlReader private (
                 changed = true
             else if rest.startsWith("!") then
                 val (token, next) = sourcePropertyToken(rest)
-                tag = Maybe(Yaml.Tag(token))
+                tag = Maybe(Yaml.YamlTag(token))
                 rest = next
                 changed = true
             end if

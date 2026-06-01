@@ -5,7 +5,7 @@ import kyo.*
 import kyo.Codec.Writer
 import scala.annotation.tailrec
 
-final class YamlWriter private (private var config: Yaml.WriterConfig) extends Writer:
+final private[kyo] class YamlWriter private (private var config: Yaml.WriterConfig) extends Writer:
     import Yaml.WriterConfig.*
 
     sealed private trait Frame

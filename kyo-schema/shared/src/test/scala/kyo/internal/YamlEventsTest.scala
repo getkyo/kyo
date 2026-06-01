@@ -160,7 +160,10 @@ class YamlEventsTest extends Test:
                 Yaml.Events.Event.DocumentStart(mark),
                 Yaml.Events.Event.MappingStart(Yaml.Meta(Absent, Absent, mark)),
                 Yaml.Events.Event.Scalar("items", scalarMeta),
-                Yaml.Events.Event.SequenceStart(Yaml.Meta(Maybe(Yaml.Anchor("items")), Maybe(Yaml.Tag("!!seq")), mark), size = Maybe(0)),
+                Yaml.Events.Event.SequenceStart(
+                    Yaml.Meta(Maybe(Yaml.Anchor("items")), Maybe(Yaml.YamlTag("!!seq")), mark),
+                    size = Maybe(0)
+                ),
                 Yaml.Events.Event.CollectionEnd(Yaml.Events.CollectionKind.Sequence, mark),
                 Yaml.Events.Event.CollectionEnd(Yaml.Events.CollectionKind.Mapping, mark),
                 Yaml.Events.Event.DocumentEnd(mark),
@@ -179,7 +182,7 @@ class YamlEventsTest extends Test:
                 Yaml.Events.Event.DocumentStart(mark),
                 Yaml.Events.Event.MappingStart(Yaml.Meta(Absent, Absent, mark)),
                 Yaml.Events.Event.Scalar("items", scalarMeta),
-                Yaml.Events.Event.SequenceStart(Yaml.Meta(Maybe(Yaml.Anchor("items")), Maybe(Yaml.Tag("!!seq")), mark)),
+                Yaml.Events.Event.SequenceStart(Yaml.Meta(Maybe(Yaml.Anchor("items")), Maybe(Yaml.YamlTag("!!seq")), mark)),
                 Yaml.Events.Event.Scalar("one", scalarMeta),
                 Yaml.Events.Event.CollectionEnd(Yaml.Events.CollectionKind.Sequence, mark),
                 Yaml.Events.Event.CollectionEnd(Yaml.Events.CollectionKind.Mapping, mark),
@@ -423,6 +426,6 @@ private object YamlEventsTest:
     def anchorValue(anchor: Maybe[Yaml.Anchor]): String =
         anchor.map(_.value).getOrElse("")
 
-    def tagValue(tag: Maybe[Yaml.Tag]): String =
+    def tagValue(tag: Maybe[Yaml.YamlTag]): String =
         tag.map(_.value).getOrElse("")
 end YamlEventsTest

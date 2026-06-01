@@ -108,25 +108,25 @@ object Yaml:
 
     /** YAML tag handle.
       *
-      * Tags annotate a YAML node with application-specific or standard YAML type information. `Tag` is an opaque string type to keep tag
-      * metadata distinct from ordinary strings while remaining allocation-free.
+      * Tags annotate a YAML node with application-specific or standard YAML type information. `YamlTag` is an opaque string type to keep
+      * YAML tag metadata distinct from ordinary strings and from [[kyo.Tag]] while remaining allocation-free.
       */
-    opaque type Tag = String
+    opaque type YamlTag = String
 
-    /** Constructors and extractors for [[Tag]] values. */
-    object Tag:
+    /** Constructors and extractors for [[YamlTag]] values. */
+    object YamlTag:
         /** Creates a tag from its YAML source spelling, such as `!local`, `!!str`, or `tag:yaml.org,2002:str`. */
-        def apply(value: String): Tag = value
+        def apply(value: String): YamlTag = value
 
         /** Extracts the raw YAML tag spelling. */
-        def unapply(tag: Tag): Some[String] = Some(tag)
+        def unapply(tag: YamlTag): Some[String] = Some(tag)
 
-        given CanEqual[Tag, Tag] = CanEqual.derived
-    end Tag
+        given CanEqual[YamlTag, YamlTag] = CanEqual.derived
+    end YamlTag
 
-    extension (tag: Tag)
+    extension (tag: YamlTag)
         /** Returns the raw YAML tag spelling. */
-        @targetName("tagValue")
+        @targetName("yamlTagValue")
         def value: String = tag
     end extension
 
@@ -375,7 +375,7 @@ object Yaml:
       * YAML anchors and tags are exposed as metadata instead of being interpreted by the event parser. Schema decoding honors the standard
       * scalar tags it understands, while unknown and local tags remain available to event handlers and DOM-style parsing as metadata.
       */
-    case class Meta(anchor: Maybe[Anchor], tag: Maybe[Tag], mark: Mark) derives CanEqual
+    case class Meta(anchor: Maybe[Anchor], tag: Maybe[YamlTag], mark: Mark) derives CanEqual
 
     /** Scalar style as written in the YAML stream.
       *
@@ -404,7 +404,7 @@ object Yaml:
       * Scalar metadata includes the same anchor, tag, and mark information as collection metadata, plus the scalar's source style. Callers
       * can use the tag and style to implement custom scalar handling without forcing the parser to build a node tree.
       */
-    case class ScalarMeta(anchor: Maybe[Anchor], tag: Maybe[Tag], style: ScalarStyle, mark: Mark) derives CanEqual
+    case class ScalarMeta(anchor: Maybe[Anchor], tag: Maybe[YamlTag], style: ScalarStyle, mark: Mark) derives CanEqual
 
     /** YAML event protocol for parser, renderer, and tooling pipelines.
       *
@@ -900,28 +900,28 @@ object Yaml:
 
     /** Encodes a value of type A as YAML. */
     inline def encode[A](value: A)(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): String =
-        val w = internal.YamlWriter(writerConfig)
+        val w = Yaml(writerConfig).newWriter()
         schema.writeTo(value, w)
         w.resultString
     end encode
 
     /** Encodes a value of type A as YAML using explicit writer configuration. */
     inline def encode[A](value: A, writerConfig: WriterConfig)(using schema: Schema[A], frame: Frame): String =
-        val w = internal.YamlWriter(writerConfig)
+        val w = Yaml(writerConfig).newWriter()
         schema.writeTo(value, w)
         w.resultString
     end encode
 
     /** Encodes a value of type A as UTF-8 YAML bytes. */
     inline def encodeBytes[A](value: A)(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): Span[Byte] =
-        val w = internal.YamlWriter(writerConfig)
+        val w = Yaml(writerConfig).newWriter()
         schema.writeTo(value, w)
         w.result()
     end encodeBytes
 
     /** Encodes a value of type A as UTF-8 YAML bytes using explicit writer configuration. */
     inline def encodeBytes[A](value: A, writerConfig: WriterConfig)(using schema: Schema[A], frame: Frame): Span[Byte] =
-        val w = internal.YamlWriter(writerConfig)
+        val w = Yaml(writerConfig).newWriter()
         schema.writeTo(value, w)
         w.result()
     end encodeBytes

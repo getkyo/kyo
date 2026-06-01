@@ -345,7 +345,7 @@ private[kyo] object YamlEvents:
                 out.append(' ')
         end appendPropertyPrefix
 
-        private def properties(anchor: Maybe[Yaml.Anchor], tag: Maybe[Yaml.Tag]): String =
+        private def properties(anchor: Maybe[Yaml.Anchor], tag: Maybe[Yaml.YamlTag]): String =
             if anchor.isEmpty && tag.isEmpty then ""
             else
                 val out = new StringBuilder
@@ -513,7 +513,7 @@ private[kyo] object YamlEvents:
             ensureStarted()
             val meta =
                 config.specialFloatStyle match
-                    case SpecialFloatStyle.TaggedYamlCore => scalarMeta(Yaml.ScalarStyle.DoubleQuoted, Maybe(Yaml.Tag("!!float")))
+                    case SpecialFloatStyle.TaggedYamlCore => scalarMeta(Yaml.ScalarStyle.DoubleQuoted, Maybe(Yaml.YamlTag("!!float")))
                     case SpecialFloatStyle.YamlCore       => scalarMeta(Yaml.ScalarStyle.Plain)
             emitScalar(value, meta)
         end specialFloat
@@ -561,7 +561,7 @@ private[kyo] object YamlEvents:
             flowDepth = 0
         end resetEvents
 
-        private def scalarMeta(style: Yaml.ScalarStyle, tag: Maybe[Yaml.Tag] = Absent): Yaml.ScalarMeta =
+        private def scalarMeta(style: Yaml.ScalarStyle, tag: Maybe[Yaml.YamlTag] = Absent): Yaml.ScalarMeta =
             Yaml.ScalarMeta(Absent, tag, style, mark)
 
         private def knownSize(size: Int): Maybe[Int] =

@@ -3,14 +3,14 @@ package kyo.internal
 import kyo.*
 import scala.annotation.tailrec
 
-final class YamlParser private (private val input: String)(using frame: Frame):
+final private[kyo] class YamlParser private (private val input: String)(using frame: Frame):
     import Yaml.*
 
     private var pos: Int                     = 0
     private var line: Int                    = 1
     private var column: Int                  = 1
     private var pendingAnchor: Maybe[Anchor] = Absent
-    private var pendingTag: Maybe[Tag]       = Absent
+    private var pendingTag: Maybe[YamlTag]   = Absent
 
     def visitEvents[Ctx, Err](context: Ctx)(handler: Yaml.Events.Handler[Ctx, Err]): Result[Err | DecodeException, Ctx] =
         run(context, handler.streamStart(_, mark())) { c1 =>
@@ -278,35 +278,39 @@ final class YamlParser private (private val input: String)(using frame: Frame):
 
             def scan(part: String): Unit =
                 val _ = out.append(part)
-                var i = 0
-                while i < part.length && !complete do
-                    val ch = part.charAt(i)
-                    if escape then escape = false
-                    else if double && ch == '\\' then escape = true
-                    else if !double && ch == '\'' then single = !single
-                    else if !single && ch == '"' then double = !double
-                    else if !single && !double then
-                        ch match
-                            case '[' | '{' =>
-                                depth += 1
-                                started = true
-                            case ']' | '}' =>
-                                depth -= 1
-                                if started && depth == 0 then complete = true
-                            case _ => ()
-                    end if
-                    i += 1
-                end while
+                @tailrec def loop(i: Int): Unit =
+                    if i < part.length && !complete then
+                        val ch = part.charAt(i)
+                        if escape then escape = false
+                        else if double && ch == '\\' then escape = true
+                        else if !double && ch == '\'' then single = !single
+                        else if !single && ch == '"' then double = !double
+                        else if !single && !double then
+                            ch match
+                                case '[' | '{' =>
+                                    depth += 1
+                                    started = true
+                                case ']' | '}' =>
+                                    depth -= 1
+                                    if started && depth == 0 then complete = true
+                                case _ => ()
+                        end if
+                        loop(i + 1)
+                end loop
+                loop(0)
             end scan
 
             scan(text)
-            while !complete && pos < input.length do
-                val next = stripComment(readRestOfLine()).trim
-                val _    = out.append('\n')
-                scan(next)
-            end while
-            if complete then Result.succeed(out.toString)
-            else Result.fail(errorAt(valueMark, "Unterminated flow collection"))
+            @tailrec def collect(): Result[DecodeException, String] =
+                if complete then Result.succeed(out.toString)
+                else if pos < input.length then
+                    val next = stripComment(readRestOfLine()).trim
+                    val _    = out.append('\n')
+                    scan(next)
+                    collect()
+                else Result.fail(errorAt(valueMark, "Unterminated flow collection"))
+            end collect
+            collect()
         end if
     end readFlowText
 
@@ -319,75 +323,85 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end foldFlowScalarText
 
     private def closedSingleQuoted(valueText: String): Boolean =
-        var i = 1
-        while i < valueText.length do
-            if valueText.charAt(i) == '\'' then
-                if i + 1 < valueText.length && valueText.charAt(i + 1) == '\'' then i += 2
-                else return true
-            else i += 1
-        end while
-        false
+        @tailrec def loop(i: Int): Boolean =
+            if i >= valueText.length then false
+            else
+                if valueText.charAt(i) == '\'' then
+                    if i + 1 < valueText.length && valueText.charAt(i + 1) == '\'' then loop(i + 2)
+                    else true
+                else loop(i + 1)
+                end if
+        end loop
+        loop(1)
     end closedSingleQuoted
 
     private def closedDoubleQuoted(valueText: String): Boolean =
-        var i      = 1
-        var escape = false
-        while i < valueText.length do
-            val ch = valueText.charAt(i)
-            if escape then escape = false
-            else if ch == '\\' then escape = true
-            else if ch == '"' then return true
-            i += 1
-        end while
-        false
+        @tailrec def loop(i: Int, escape: Boolean): Boolean =
+            if i >= valueText.length then false
+            else
+                val ch = valueText.charAt(i)
+                if escape then loop(i + 1, escape = false)
+                else if ch == '\\' then loop(i + 1, escape = true)
+                else if ch == '"' then true
+                else loop(i + 1, escape = false)
+                end if
+        end loop
+        loop(1, escape = false)
     end closedDoubleQuoted
 
     private def collectQuotedMultiline(valueText: String, indent: Int, quote: Char, valueMark: Mark): Result[DecodeException, String] =
         val lines = scala.collection.mutable.ListBuffer.empty[BlockScalarLine]
         lines += BlockScalarLine(valueText.drop(1), false)
-        var done = false
-        while !done && pos < input.length do
-            if currentLineText().trim.isEmpty then
+
+        @tailrec def loop(): Result[DecodeException, String] =
+            if pos >= input.length then
+                Result.fail(errorAt(valueMark, s"Unterminated ${if quote == '\'' then "single" else "double"} quoted scalar"))
+            else if currentLineText().trim.isEmpty then
                 val _ = readRestOfLine()
                 lines += BlockScalarLine("", false)
+                loop()
             else if currentIndent() <= indent then
-                return Result.fail(errorAt(valueMark, s"Unterminated ${if quote == '\'' then "single" else "double"} quoted scalar"))
+                Result.fail(errorAt(valueMark, s"Unterminated ${if quote == '\'' then "single" else "double"} quoted scalar"))
             else
                 val lineText = readContinuationText(indent + 2)
                 closingQuoteIndex(lineText, quote) match
                     case Present(idx) =>
                         lines += BlockScalarLine(lineText.substring(0, idx), false)
-                        done = true
+                        Result.succeed(foldBlockScalarLines(lines.toList))
                     case Absent =>
                         lines += BlockScalarLine(lineText, false)
+                        loop()
                 end match
             end if
-        end while
-        if done then Result.succeed(foldBlockScalarLines(lines.toList))
-        else Result.fail(errorAt(valueMark, s"Unterminated ${if quote == '\'' then "single" else "double"} quoted scalar"))
+        end loop
+
+        loop()
     end collectQuotedMultiline
 
     private def closingQuoteIndex(text: String, quote: Char): Maybe[Int] =
         if quote == '\'' then
-            var i = 0
-            while i < text.length do
-                if text.charAt(i) == '\'' then
-                    if i + 1 < text.length && text.charAt(i + 1) == '\'' then i += 2
-                    else return Maybe(i)
-                else i += 1
-            end while
-            Absent
+            @tailrec def loop(i: Int): Maybe[Int] =
+                if i >= text.length then Absent
+                else
+                    if text.charAt(i) == '\'' then
+                        if i + 1 < text.length && text.charAt(i + 1) == '\'' then loop(i + 2)
+                        else Maybe(i)
+                    else loop(i + 1)
+                    end if
+            end loop
+            loop(0)
         else
-            var i      = 0
-            var escape = false
-            while i < text.length do
-                val ch = text.charAt(i)
-                if escape then escape = false
-                else if ch == '\\' then escape = true
-                else if ch == '"' then return Maybe(i)
-                i += 1
-            end while
-            Absent
+            @tailrec def loop(i: Int, escape: Boolean): Maybe[Int] =
+                if i >= text.length then Absent
+                else
+                    val ch = text.charAt(i)
+                    if escape then loop(i + 1, escape = false)
+                    else if ch == '\\' then loop(i + 1, escape = true)
+                    else if ch == '"' then Maybe(i)
+                    else loop(i + 1, escape = false)
+                    end if
+            end loop
+            loop(0, escape = false)
         end if
     end closingQuoteIndex
 
@@ -401,12 +415,16 @@ final class YamlParser private (private val input: String)(using frame: Frame):
 
     private def collectPlainContinuation(valueText: String, indent: Int): List[BlockScalarLine] =
         val lines = scala.collection.mutable.ListBuffer(BlockScalarLine(valueText, false))
-        while shouldCollectPlainContinuation(indent) do
-            if currentLineText().trim.isEmpty then
-                val _ = readRestOfLine()
-                lines += BlockScalarLine("", false)
-            else lines += BlockScalarLine(readContinuationText(indent + 2), false)
-        end while
+        @tailrec def loop(): Unit =
+            if shouldCollectPlainContinuation(indent) then
+                if currentLineText().trim.isEmpty then
+                    val _ = readRestOfLine()
+                    lines += BlockScalarLine("", false)
+                else lines += BlockScalarLine(readContinuationText(indent + 2), false)
+                end if
+                loop()
+        end loop
+        loop()
         lines.toList.reverse.dropWhile(_.isBlank).reverse
     end collectPlainContinuation
 
@@ -537,55 +555,76 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         style: ScalarStyle,
         chomp: Char,
         anchor: Maybe[Anchor],
-        tag: Maybe[Tag],
+        tag: Maybe[YamlTag],
         visitor: Yaml.Events.Handler[Ctx, Err]
     ): Result[Err | DecodeException, Ctx] =
         val indent = explicitIndent match
             case Present(n) => parentIndent + n
             case Absent     => inferredBlockScalarIndent(parentIndent)
         val lines = scala.collection.mutable.ListBuffer.empty[BlockScalarLine]
-        var done  = false
-        while !done && pos < input.length do
-            val n    = currentIndent()
-            val text = currentLineText()
-            if text.trim.isEmpty then
-                val _ = readRestOfLine()
-                lines += BlockScalarLine("", false)
-            else if n >= indent then
-                consumeIndent(indent)
-                lines += BlockScalarLine(readRestOfLine(), n > indent)
-            else if n > parentIndent then
-                return Result.fail(error(s"Expected block scalar indentation of at least $indent spaces"))
-            else done = true
-            end if
-        end while
-        val contentLines =
-            if chomp == '+' then lines.toList
-            else lines.toList.reverse.dropWhile(_.isBlank).reverse
-        val base =
-            if style == ScalarStyle.Literal then contentLines.map(_.text).mkString("\n")
-            else foldBlockScalarLines(contentLines)
-        val value =
-            if chomp == '-' || base.isEmpty then base
-            else base + "\n"
-        visitor.scalar(context, value, ScalarMeta(anchor, tag, style, mark()))
+
+        @tailrec def loop(): Result[DecodeException, Unit] =
+            if pos >= input.length then Result.unit
+            else
+                val n    = currentIndent()
+                val text = currentLineText()
+                if text.trim.isEmpty then
+                    val _ = readRestOfLine()
+                    lines += BlockScalarLine("", false)
+                    loop()
+                else if n >= indent then
+                    consumeIndent(indent)
+                    lines += BlockScalarLine(readRestOfLine(), n > indent)
+                    loop()
+                else if n > parentIndent then
+                    Result.fail(error(s"Expected block scalar indentation of at least $indent spaces"))
+                else Result.unit
+                end if
+        end loop
+
+        loop().flatMap { _ =>
+            val contentLines =
+                if chomp == '+' then lines.toList
+                else lines.toList.reverse.dropWhile(_.isBlank).reverse
+            val base =
+                if style == ScalarStyle.Literal then contentLines.map(_.text).mkString("\n")
+                else foldBlockScalarLines(contentLines)
+            val value =
+                if chomp == '-' || base.isEmpty then base
+                else base + "\n"
+            visitor.scalar(context, value, ScalarMeta(anchor, tag, style, mark()))
+        }
     end parseBlockScalar
 
     private def inferredBlockScalarIndent(parentIndent: Int): Int =
-        var i = pos
-        while i < input.length do
-            var indent = 0
-            while i < input.length && input.charAt(i) == ' ' do
-                indent += 1
-                i += 1
-            end while
-            val lineStart = i
-            while i < input.length && input.charAt(i) != '\n' do i += 1
-            val line = input.substring(lineStart, i)
-            if line.trim.nonEmpty then return indent
-            if i < input.length && input.charAt(i) == '\n' then i += 1
-        end while
-        parentIndent + 1
+        @tailrec def skipSpaces(i: Int, indent: Int): (Int, Int) =
+            if i < input.length && input.charAt(i) == ' ' then skipSpaces(i + 1, indent + 1)
+            else (i, indent)
+        end skipSpaces
+
+        @tailrec def lineEnd(i: Int): Int =
+            if i < input.length && input.charAt(i) != '\n' then lineEnd(i + 1)
+            else i
+        end lineEnd
+
+        @tailrec def lineHasText(i: Int, stop: Int): Boolean =
+            if i >= stop then false
+            else if input.charAt(i).isWhitespace then lineHasText(i + 1, stop)
+            else true
+        end lineHasText
+
+        @tailrec def loop(i: Int): Int =
+            if i >= input.length then parentIndent + 1
+            else
+                val (lineStart, indent) = skipSpaces(i, 0)
+                val stop                = lineEnd(lineStart)
+                if lineHasText(lineStart, stop) then indent
+                else loop(if stop < input.length then stop + 1 else input.length)
+                end if
+            end if
+        end loop
+
+        loop(pos)
     end inferredBlockScalarIndent
 
     private case class BlockScalarLine(text: String, moreIndented: Boolean):
@@ -617,7 +656,7 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         out.toString
     end foldBlockScalarLines
 
-    private def withPending[A](anchor: Maybe[Anchor], tag: Maybe[Tag])(body: => A): A =
+    private def withPending[A](anchor: Maybe[Anchor], tag: Maybe[YamlTag])(body: => A): A =
         val prevAnchor = pendingAnchor
         val prevTag    = pendingTag
         pendingAnchor = anchor
@@ -629,33 +668,25 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         end try
     end withPending
 
-    private def takeProperties(): (Maybe[Anchor], Maybe[Tag]) =
+    private def takeProperties(): (Maybe[Anchor], Maybe[YamlTag]) =
         val out = (pendingAnchor, pendingTag)
         pendingAnchor = Absent
         pendingTag = Absent
         out
     end takeProperties
 
-    private def readProperties(text: String): (Maybe[Anchor], Maybe[Tag], String) =
-        var anchor: Maybe[Anchor] = Absent
-        var tag: Maybe[Tag]       = Absent
-        var rest                  = text.trim
-        var changed               = true
-        while changed do
-            changed = false
+    private def readProperties(text: String): (Maybe[Anchor], Maybe[YamlTag], String) =
+        @tailrec def loop(anchor: Maybe[Anchor], tag: Maybe[YamlTag], rest: String): (Maybe[Anchor], Maybe[YamlTag], String) =
             if rest.startsWith("&") then
                 val (token, next) = readPropertyToken(rest)
-                anchor = Maybe(Anchor(token.drop(1)))
-                rest = next
-                changed = true
+                loop(Maybe(Anchor(token.drop(1))), tag, next)
             else if rest.startsWith("!") then
                 val (token, next) = readPropertyToken(rest)
-                tag = Maybe(Tag(token))
-                rest = next
-                changed = true
+                loop(anchor, Maybe(YamlTag(token)), next)
+            else (anchor, tag, rest)
             end if
-        end while
-        (anchor, tag, rest)
+        end loop
+        loop(Absent, Absent, text.trim)
     end readProperties
 
     private def readPropertyToken(text: String): (String, String) =
@@ -694,10 +725,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end currentIndent
 
     private def consumeIndent(n: Int): Unit =
-        var i = 0
-        while i < n && peekChar(' ') do
-            advance(1)
-            i += 1
+        @tailrec def loop(i: Int): Unit =
+            if i < n && peekChar(' ') then
+                advance(1)
+                loop(i + 1)
+        end loop
+        loop(0)
     end consumeIndent
 
     private def currentLineText(): String =
@@ -725,7 +758,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         val keyEnd   = if colon < 0 then line.length else colon
         val start    = pos
         val keyStart = pos
-        while pos < keyStart + keyEnd do advance(1)
+        @tailrec def loop(): Unit =
+            if pos < keyStart + keyEnd then
+                advance(1)
+                loop()
+        end loop
+        loop()
         val out = input.substring(start, pos)
         if peekChar(':') then advance(1)
         out
@@ -733,7 +771,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
 
     private def readRestOfLine(): String =
         val start = pos
-        while pos < input.length && input.charAt(pos) != '\n' do advance(1)
+        @tailrec def loop(): Unit =
+            if pos < input.length && input.charAt(pos) != '\n' then
+                advance(1)
+                loop()
+        end loop
+        loop()
         val out = input.substring(start, pos)
         if peekChar('\n') then advance(1)
         out
@@ -767,62 +810,61 @@ final class YamlParser private (private val input: String)(using frame: Frame):
         delimiter: Char,
         context: Ctx
     )(parse: (String, Ctx) => Result[Err | DecodeException, Ctx]): Result[Err | DecodeException, Ctx] =
-        var current = context
-        var start   = 0
-        var i       = 0
-        var depth   = 0
-        var single  = false
-        var double  = false
-        var escape  = false
-        def emit(end: Int): Result[Err | DecodeException, Unit] =
+        def emit(start: Int, end: Int, current: Ctx): Result[Err | DecodeException, Ctx] =
             val (from, to) = trimmedRange(s, start, end)
-            if from < to then
-                parse(s.substring(from, to), current) match
-                    case Result.Success(next) =>
-                        current = next
-                        Result.unit
-                    case Result.Failure(e) => Result.fail(e)
-                    case Result.Panic(e)   => Result.panic(e)
-            else Result.unit
+            if from < to then parse(s.substring(from, to), current)
+            else Result.succeed(current)
             end if
         end emit
-        while i < s.length do
-            val ch = s.charAt(i)
-            if escape then escape = false
-            else if double && ch == '\\' then escape = true
-            else if !double && ch == '\'' then single = !single
-            else if !single && ch == '"' then double = !double
-            else if !single && !double then
-                ch match
-                    case '[' | '{' => depth += 1
-                    case ']' | '}' => depth -= 1
-                    case c if c == delimiter && depth == 0 =>
-                        emit(i) match
-                            case Result.Success(_) => ()
-                            case Result.Failure(e) => return Result.fail(e)
-                            case Result.Panic(e)   => return Result.panic(e)
-                        end match
-                        start = i + 1
-                    case _ => ()
+
+        @tailrec def loop(
+            i: Int,
+            start: Int,
+            depth: Int,
+            single: Boolean,
+            double: Boolean,
+            escape: Boolean,
+            current: Ctx
+        ): Result[Err | DecodeException, Ctx] =
+            if i >= s.length then emit(start, s.length, current)
+            else
+                val ch = s.charAt(i)
+                if escape then loop(i + 1, start, depth, single, double, escape = false, current)
+                else if double && ch == '\\' then loop(i + 1, start, depth, single, double, escape = true, current)
+                else if !double && ch == '\'' then loop(i + 1, start, depth, !single, double, escape = false, current)
+                else if !single && ch == '"' then loop(i + 1, start, depth, single, !double, escape = false, current)
+                else if !single && !double then
+                    ch match
+                        case '[' | '{' =>
+                            loop(i + 1, start, depth + 1, single, double, escape = false, current)
+                        case ']' | '}' =>
+                            loop(i + 1, start, depth - 1, single, double, escape = false, current)
+                        case c if c == delimiter && depth == 0 =>
+                            emit(start, i, current) match
+                                case Result.Success(next) => loop(i + 1, i + 1, depth, single, double, escape = false, next)
+                                case Result.Failure(e)    => Result.fail(e)
+                                case Result.Panic(e)      => Result.panic(e)
+                            end match
+                        case _ =>
+                            loop(i + 1, start, depth, single, double, escape = false, current)
+                    end match
+                else loop(i + 1, start, depth, single, double, escape = false, current)
+                end if
             end if
-            i += 1
-        end while
-        emit(s.length) match
-            case Result.Success(_) => Result.succeed(current)
-            case Result.Failure(e) => Result.fail(e)
-            case Result.Panic(e)   => Result.panic(e)
-        end match
+        end loop
+
+        loop(0, 0, 0, single = false, double = false, escape = false, context)
     end foldTopLevel
 
     private def skipIgnorable(): Unit =
-        var done = false
-        while !done do
+        @tailrec def loop(): Unit =
             skipBlankAndCommentLines()
             val lineText = if pos < input.length then currentLineText() else ""
             if pos < input.length && lineText.trim.startsWith("%") then
                 val _ = readRestOfLine()
-            else done = true
-        end while
+                loop()
+        end loop
+        loop()
     end skipIgnorable
 
     private def skipBlankAndCommentLines(): Unit =
@@ -831,7 +873,12 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end skipBlankAndCommentLines
 
     private def skipToNextLine(): Unit =
-        while pos < input.length && input.charAt(pos) != '\n' do advance(1)
+        @tailrec def loop(): Unit =
+            if pos < input.length && input.charAt(pos) != '\n' then
+                advance(1)
+                loop()
+        end loop
+        loop()
         if peekChar('\n') then advance(1)
     end skipToNextLine
 
@@ -843,91 +890,135 @@ final class YamlParser private (private val input: String)(using frame: Frame):
     end isDocumentMarker
 
     private def advance(n: Int): Unit =
-        var i = 0
-        while i < n do
-            if pos < input.length then
-                val ch = input.charAt(pos)
-                pos += 1
-                if ch == '\n' then
-                    line += 1
-                    column = 1
-                else column += 1
+        @tailrec def loop(i: Int): Unit =
+            if i < n then
+                if pos < input.length then
+                    val ch = input.charAt(pos)
+                    pos += 1
+                    if ch == '\n' then
+                        line += 1
+                        column = 1
+                    else column += 1
+                    end if
                 end if
-            end if
-            i += 1
-        end while
+                loop(i + 1)
+        end loop
+        loop(0)
     end advance
 
     private def unescapeDoubleQuoted(s: String, valueMark: Mark): Result[DecodeException, String] =
         val b = new StringBuilder
-        var i = 0
-        while i < s.length do
-            val ch = s.charAt(i)
-            if ch == '\\' && i + 1 < s.length then
-                i += 1
-                s.charAt(i) match
-                    case '0'  => b.append('\u0000')
-                    case 'a'  => b.append('\u0007')
-                    case 'b'  => b.append('\b')
-                    case 't'  => b.append('\t')
-                    case '\t' => b.append('\t')
-                    case 'n'  => b.append('\n')
-                    case 'v'  => b.append('\u000b')
-                    case 'f'  => b.append('\f')
-                    case 'r'  => b.append('\r')
-                    case 'e'  => b.append('\u001b')
-                    case ' '  => b.append(' ')
-                    case '"'  => b.append('"')
-                    case '/'  => b.append('/')
-                    case '\\' => b.append('\\')
-                    case 'N'  => b.append('\u0085')
-                    case '_'  => b.append('\u00a0')
-                    case 'L'  => b.append('\u2028')
-                    case 'P'  => b.append('\u2029')
-                    case 'x' =>
-                        readHexEscape(s, i, 2, valueMark) match
-                            case Result.Success(value) =>
-                                b.append(value.toChar)
-                                i += 2
-                            case Result.Failure(e) => return Result.fail(e)
-                            case Result.Panic(e)   => return Result.panic(e)
-                    case 'u' =>
-                        readHexEscape(s, i, 4, valueMark) match
-                            case Result.Success(value) =>
-                                b.append(value.toChar)
-                                i += 4
-                            case Result.Failure(e) => return Result.fail(e)
-                            case Result.Panic(e)   => return Result.panic(e)
-                    case 'U' =>
-                        readHexEscape(s, i, 8, valueMark) match
-                            case Result.Success(value) =>
-                                try b.appendAll(Character.toChars(value))
-                                catch
-                                    case _: IllegalArgumentException =>
-                                        return Result.fail(errorAt(
-                                            valueMark.copy(index = valueMark.index + i - 1, column = valueMark.column + i - 1),
-                                            s"Invalid escape sequence \\${s.charAt(i)}${s.substring(i + 1, math.min(s.length, i + 9))}"
+
+        def invalidEscape(escapeIndex: Int, text: String): Result[DecodeException, String] =
+            Result.fail(errorAt(
+                valueMark.copy(index = valueMark.index + escapeIndex - 1, column = valueMark.column + escapeIndex - 1),
+                text
+            ))
+        end invalidEscape
+
+        @tailrec def loop(i: Int): Result[DecodeException, String] =
+            if i >= s.length then Result.succeed(b.toString)
+            else
+                val ch = s.charAt(i)
+                if ch == '\\' && i + 1 < s.length then
+                    val escapeIndex = i + 1
+                    s.charAt(escapeIndex) match
+                        case '0' =>
+                            b.append('\u0000')
+                            loop(i + 2)
+                        case 'a' =>
+                            b.append('\u0007')
+                            loop(i + 2)
+                        case 'b' =>
+                            b.append('\b')
+                            loop(i + 2)
+                        case 't' | '\t' =>
+                            b.append('\t')
+                            loop(i + 2)
+                        case 'n' =>
+                            b.append('\n')
+                            loop(i + 2)
+                        case 'v' =>
+                            b.append('\u000b')
+                            loop(i + 2)
+                        case 'f' =>
+                            b.append('\f')
+                            loop(i + 2)
+                        case 'r' =>
+                            b.append('\r')
+                            loop(i + 2)
+                        case 'e' =>
+                            b.append('\u001b')
+                            loop(i + 2)
+                        case ' ' =>
+                            b.append(' ')
+                            loop(i + 2)
+                        case '"' =>
+                            b.append('"')
+                            loop(i + 2)
+                        case '/' =>
+                            b.append('/')
+                            loop(i + 2)
+                        case '\\' =>
+                            b.append('\\')
+                            loop(i + 2)
+                        case 'N' =>
+                            b.append('\u0085')
+                            loop(i + 2)
+                        case '_' =>
+                            b.append('\u00a0')
+                            loop(i + 2)
+                        case 'L' =>
+                            b.append('\u2028')
+                            loop(i + 2)
+                        case 'P' =>
+                            b.append('\u2029')
+                            loop(i + 2)
+                        case 'x' =>
+                            readHexEscape(s, escapeIndex, 2, valueMark) match
+                                case Result.Success(value) =>
+                                    b.append(value.toChar)
+                                    loop(i + 4)
+                                case Result.Failure(e) => Result.fail(e)
+                                case Result.Panic(e)   => Result.panic(e)
+                        case 'u' =>
+                            readHexEscape(s, escapeIndex, 4, valueMark) match
+                                case Result.Success(value) =>
+                                    b.append(value.toChar)
+                                    loop(i + 6)
+                                case Result.Failure(e) => Result.fail(e)
+                                case Result.Panic(e)   => Result.panic(e)
+                        case 'U' =>
+                            readHexEscape(s, escapeIndex, 8, valueMark) match
+                                case Result.Success(value) =>
+                                    if Character.isValidCodePoint(value) then
+                                        b.appendAll(Character.toChars(value))
+                                        loop(i + 10)
+                                    else
+                                        Result.fail(errorAt(
+                                            valueMark.copy(
+                                                index = valueMark.index + escapeIndex - 1,
+                                                column = valueMark.column + escapeIndex - 1
+                                            ),
+                                            s"Invalid escape sequence \\${s.charAt(escapeIndex)}${s.substring(escapeIndex + 1, math.min(s.length, escapeIndex + 9))}"
                                         ))
-                                end try
-                                i += 8
-                            case Result.Failure(e) => return Result.fail(e)
-                            case Result.Panic(e)   => return Result.panic(e)
-                    case other =>
-                        return Result.fail(errorAt(
-                            valueMark.copy(index = valueMark.index + i - 1, column = valueMark.column + i - 1),
-                            s"Invalid escape sequence \\$other"
-                        ))
-                end match
-            else if ch == '\\' then
-                return Result.fail(errorAt(
-                    valueMark.copy(index = valueMark.index + i, column = valueMark.column + i),
-                    "Invalid escape sequence \\"
-                ))
-            else b.append(ch)
-            end if
-            i += 1
-        end while
-        Result.succeed(b.toString)
+                                case Result.Failure(e) => Result.fail(e)
+                                case Result.Panic(e)   => Result.panic(e)
+                        case other =>
+                            invalidEscape(escapeIndex, s"Invalid escape sequence \\$other")
+                    end match
+                else if ch == '\\' then
+                    Result.fail(errorAt(
+                        valueMark.copy(index = valueMark.index + i, column = valueMark.column + i),
+                        "Invalid escape sequence \\"
+                    ))
+                else
+                    b.append(ch)
+                    loop(i + 1)
+                end if
+        end loop
+
+        loop(0)
     end unescapeDoubleQuoted
 
     private def readHexEscape(s: String, escapeIndex: Int, digits: Int, valueMark: Mark): Result[DecodeException, Int] =

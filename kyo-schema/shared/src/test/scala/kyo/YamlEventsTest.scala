@@ -170,13 +170,13 @@ class YamlEventsTest extends Test:
         }
 
         "audits anchors and aliases with typed YAML metadata" in {
-            val tag      = Yaml.Tag("!custom")
+            val tag      = Yaml.YamlTag("!custom")
             val defaults = Yaml.Anchor("defaults")
 
             assert(tag.value == "!custom")
             assert(defaults.value == "defaults")
             assert((tag match
-                case Yaml.Tag(value) => value
+                case Yaml.YamlTag(value) => value
             ) == "!custom")
             assert((defaults match
                 case Yaml.Anchor(value) => value
