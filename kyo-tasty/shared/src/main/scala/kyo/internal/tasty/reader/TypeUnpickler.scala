@@ -349,7 +349,11 @@ object TypeUnpickler:
                             ctx.addrCache(absRef) = t
                             t
                         else
-                            throw new ArrayIndexOutOfBoundsException(s"SHAREDtype ref $astRef not in addrCache")
+                            // Pass 1 context: sectionBytes is null. A SHAREDtype cache miss means
+                            // the referenced type was in a position not decoded during Pass 1.
+                            // Return an unresolved placeholder rather than throwing, so that callers
+                            // (e.g. decodeTemplateParents) can continue scanning.
+                            Tasty.Type.Named(makeUnresolvedSym(s"sharedref@$astRef").id)
                         end if
                     }
                 )
@@ -582,14 +586,6 @@ object TypeUnpickler:
                 val cases = readTypesUntil(view, end, ctx)
                 Tasty.Type.MatchType(bound, scrut, Chunk.from(cases))
 
-            case TastyFormat.MATCHCASEtype =>
-                val end = view.readEnd()
-                val pat = readTypeNode(view, ctx)
-                val rhs = readTypeNode(view, ctx)
-                view.goto(end)
-                // Represent as Applied(Named(MatchCaseSentinel.id), Chunk(pat, rhs))
-                Tasty.Type.Applied(Tasty.Type.Named(MatchCaseSentinel.id), Chunk(pat, rhs))
-
             case TastyFormat.FLEXIBLEtype =>
                 val end        = view.readEnd()
                 val underlying = readTypeNode(view, ctx)
@@ -694,9 +690,122 @@ object TypeUnpickler:
                 view.goto(end)
                 Tasty.Type.Repeated(elem)
 
+            // ── TPT (type-position tree) tags ──────────────────────────────────────
+            // These are wire-level tree nodes that appear in type-syntactic positions
+            // (DEFDEF return type, VALDEF declared type, type bounds, etc.). They carry
+            // a Type and must be decoded here when encountered in type-arg or recursive
+            // type positions within TypeUnpickler. The top-level routing from
+            // AstUnpickler.decodeOneTypeIfPresent goes to TreeUnpickler.decodeTptAsType;
+            // this second set of handlers handles nested TPT tags reached via readTypeNode.
+            // F-I-004 fix (nested TPT): decodeTag now handles all 9 TPT tags directly.
+
+            case TastyFormat.IDENTtpt =>
+                // IDENTtpt (111): cat-4 (tag + Nat + AST). Nat is a name-ref; AST is the resolved Type.
+                discard(view.readNat())
+                readTypeNode(view, ctx)
+
+            case TastyFormat.APPLIEDtpt =>
+                // APPLIEDtpt (162): cat-5 (tag + Length + tycon_Tree + arg_Tree*).
+                val end   = view.readEnd()
+                val tycon = readTypeNode(view, ctx)
+                val args  = readTypesUntil(view, end, ctx)
+                view.goto(end)
+                Tasty.Type.Applied(tycon, Chunk.from(args))
+
+            case TastyFormat.TYPEBOUNDStpt =>
+                // TYPEBOUNDStpt (164): cat-5 (tag + Length + lo_Tree + hi_Tree).
+                // Phase 13 will add Type.Bounds; until then materialize as Type.Wildcard.
+                val end = view.readEnd()
+                val lo  = readTypeNode(view, ctx)
+                val hi  = if view.position < end then readTypeNode(view, ctx) else lo
+                view.goto(end)
+                Tasty.Type.Wildcard(lo, hi)
+
+            case TastyFormat.ANNOTATEDtpt =>
+                // ANNOTATEDtpt (154): cat-5 (tag + Length + tpe_Tree + annot_Tree).
+                // Phase 05 wires the annotation term; Phase 03 extracts the underlying type only.
+                val end        = view.readEnd()
+                val underlying = readTypeNode(view, ctx)
+                view.goto(end)
+                underlying
+
+            case TastyFormat.SELECTin =>
+                // SELECTin (176): cat-5 (tag + Length + nameRef + qual_Tree + owner_Tree).
+                val end     = view.readEnd()
+                val nameRef = view.readNat()
+                val nm      = nameAt(ctx.names, nameRef).asString
+                val qual    = readTypeNode(view, ctx)
+                discard(readTypeNode(view, ctx)) // owner (namespace); used by Phase C for FQN resolution
+                view.goto(end)
+                // Build tracked qualified FQN for Phase C lookup.
+                val qualFqn: String = qual match
+                    case Tasty.Type.Named(sid) if sid.value < -1 =>
+                        ctx.session match
+                            case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(sid.value, "")
+                            case _                => ""
+                    case _ => ""
+                val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
+                ctx.session match
+                    case s: DecodeSession =>
+                        Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
+                    case _ =>
+                        Tasty.Type.Named(makeUnresolvedSym(fullFqn).id)
+                end match
+
+            case TastyFormat.REFINEDtpt =>
+                // REFINEDtpt (160): cat-5 (tag + Length + parent_Tree + decl_Tree*).
+                // Phase 03 extracts the parent type only; refinement decls are deferred to Phase 05.
+                val end    = view.readEnd()
+                val parent = readTypeNode(view, ctx)
+                view.goto(end)
+                parent
+
+            case TastyFormat.LAMBDAtpt =>
+                // LAMBDAtpt (171): cat-5 (tag + Length + tparam_Tree* + body_Tree).
+                val end       = view.readEnd()
+                val tparamIds = new scala.collection.mutable.ArrayBuffer[Tasty.SymbolId]()
+                while view.position < end && (view.peekByte(view.position) & 0xff) == TastyFormat.TYPEPARAM do
+                    discard(view.readByte()) // consume TYPEPARAM tag
+                    val tpEnd   = view.readEnd()
+                    val nameRef = view.readNat()
+                    val symName = nameAt(ctx.names, nameRef)
+                    val sym = InternalSymbol.makeSymbol(
+                        Tasty.SymbolKind.TypeParam,
+                        Tasty.Flags.empty,
+                        symName
+                    )
+                    tparamIds += sym.id
+                    view.goto(tpEnd)
+                end while
+                val body = readTypeNode(view, ctx)
+                view.goto(end)
+                Tasty.Type.TypeLambda(Chunk.from(tparamIds.toSeq), body)
+
+            case TastyFormat.MATCHtpt =>
+                // MATCHtpt (191): cat-5 (tag + Length + scrutinee_Tree + bound_Tree + case_Tree*).
+                val end       = view.readEnd()
+                val scrutinee = readTypeNode(view, ctx)
+                val bound     = readTypeNode(view, ctx)
+                val cases     = readTypesUntil(view, end, ctx)
+                Tasty.Type.MatchType(bound, scrutinee, Chunk.from(cases))
+
+            case TastyFormat.MATCHCASEtype =>
+                // MATCHCASEtype (192): cat-5 (tag + Length + pat_Tree + rhs_Tree).
+                // Phase 05 adds Type.MatchCase as a first-class ADT case and replaces this shape.
+                // Until then, encode as Applied(Named(MatchCaseSentinel), Chunk(pat, rhs)).
+                // Previously classified as a TPT tag in AstUnpickler routing; handled here for
+                // the nested-decode path (when encountered inside type-arg positions).
+                val end = view.readEnd()
+                val pat = readTypeNode(view, ctx)
+                val rhs = readTypeNode(view, ctx)
+                view.goto(end)
+                Tasty.Type.Applied(Tasty.Type.Named(MatchCaseSentinel.id), Chunk(pat, rhs))
+
             case other if other >= TastyFormat.firstLengthTreeTag =>
                 // Unknown category 5 node: log a warning, skip and return a placeholder.
-                // AllowUnsafe is already in scope; evalOrThrow executes the Sync computation synchronously.
+                // All 9 TPT tags are now explicitly handled above (F-I-004 fix). Tags that
+                // reach here are genuinely unknown (new TASTy tags or term-position nodes
+                // encountered in a type-decode context). Warn but continue loading.
                 given Frame = ctx.frame
                 Sync.Unsafe.evalOrThrow(Log.warn(
                     s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt}"
@@ -707,7 +816,8 @@ object TypeUnpickler:
 
             case other =>
                 // Unknown category 1-4 node: log a warning, skip body and return placeholder.
-                // AllowUnsafe is already in scope; evalOrThrow executes the Sync computation synchronously.
+                // Term-position tags (SELECT=112, APPLY=136, etc.) can appear in type-decode
+                // paths (e.g. parent expressions in TEMPLATE). Skip gracefully.
                 given Frame = ctx.frame
                 Sync.Unsafe.evalOrThrow(Log.warn(
                     s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt}"

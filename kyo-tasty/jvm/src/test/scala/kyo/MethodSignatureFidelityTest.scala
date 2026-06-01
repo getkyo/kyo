@@ -94,6 +94,35 @@ class MethodSignatureFidelityTest extends Test:
     //       before fix the decoded Type is the placeholder Named(SymbolId(-1)) because
     //       APPLIEDtpt (tag 162) short-circuited into the unknown-tag fallback in TypeUnpickler
     // Pins: F-I-004 plus F-A-001 partial
-    "F-I-004 / F-A-001 (Phase 03): APPLIEDtpt-encoded return type decodes to Type.Applied" in pending
+    "F-I-004 / F-A-001 (Phase 03): APPLIEDtpt-encoded return type decodes to Type.Applied" in run {
+        val cp = TestClasspaths.withClasspath()
+        cp.map: classpath =>
+            // Collect all declared types from the loaded classpath.
+            val allDeclaredTypes = classpath.symbols.flatMap: sym =>
+                sym match
+                    case s: Tasty.Symbol.Method => s.declaredType.toList
+                    case s: Tasty.Symbol.Val    => s.declaredType.toList
+                    case s: Tasty.Symbol.Var    => s.declaredType.toList
+                    case s: Tasty.Symbol.Field  => s.declaredType.toList
+                    case _                      => Nil
+            // Post-fix: APPLIEDtpt tags now decode to Type.Applied, so there should be
+            // many Type.Applied instances across method return types and field types.
+            val appliedTypes = allDeclaredTypes.collect:
+                case t: Tasty.Type.Applied => t
+            assert(
+                appliedTypes.size > 0,
+                s"Expected Type.Applied instances from APPLIEDtpt decoding, but found 0. " +
+                    s"This means APPLIEDtpt still routes to the unknown-tag fallback."
+            )
+            // Verify at least one has a non-sentinel base type.
+            val validApplied = appliedTypes.filter:
+                case Tasty.Type.Applied(Tasty.Type.Named(id), _) => id.value != -1
+                case _                                           => true
+            assert(
+                validApplied.size > 0,
+                "Every Type.Applied still has a Named(-1) base; APPLIEDtpt tycon decode failed"
+            )
+            succeed
+    }
 
 end MethodSignatureFidelityTest

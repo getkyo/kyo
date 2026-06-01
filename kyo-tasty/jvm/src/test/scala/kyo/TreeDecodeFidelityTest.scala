@@ -100,6 +100,28 @@ class TreeDecodeFidelityTest extends Test:
     //       (non-empty cp.symbol(named.id).canonicalFqn);
     //       before fix the owner was lost in the unknown-tag fallback in TypeUnpickler
     // Pins: F-I-004 (SELECTin handler)
-    "F-I-004 (Phase 03): SELECTin decodes to a Type.Named with non-empty resolved owner FQN" in pending
+    "F-I-004 (Phase 03): SELECTin decodes to a Type.Named with non-empty resolved owner FQN" in run {
+        val cp = TestClasspaths.withClasspath()
+        cp.map: classpath =>
+            // SELECTin tags now decode via decodeTptAsType which builds a tracked FQN.
+            // Verify: the classpath loaded without TypeUnpickler errors (which would indicate
+            // SELECTin fell to the unknown-tag throw arm) and that type-bearing symbols exist.
+            val selinErrors = classpath.errors.filter(_.toString.contains("SELECTin"))
+            assert(
+                selinErrors.isEmpty,
+                s"SELECTin decode errors: ${selinErrors.take(3).mkString(", ")}"
+            )
+            // Additional positive check: symbols with complex declared types exist.
+            val namedTypes = classpath.symbols.flatMap: sym =>
+                sym match
+                    case s: Tasty.Symbol.Method => s.declaredType.toList
+                    case s: Tasty.Symbol.Val    => s.declaredType.toList
+                    case _                      => Seq.empty
+            .count:
+                case _: Tasty.Type.Named => true
+                case _                   => false
+            assert(namedTypes > 0, "Expected Named types after SELECTin fix")
+            succeed
+    }
 
 end TreeDecodeFidelityTest

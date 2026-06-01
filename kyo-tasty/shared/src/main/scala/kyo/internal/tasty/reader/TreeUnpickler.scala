@@ -1209,4 +1209,144 @@ object TreeUnpickler:
             case None      => makeUnresolvedSym(fallbackName)
     end resolveSymbolById
 
+    /** Decode a TPT-tag (type-position tree) node and return the underlying Type it wraps.
+      *
+      * TPT tags are wire-level tree nodes that exist at type-syntactic positions in DEFDEF, VALDEF, and type parameters. The caller (e.g.
+      * AstUnpickler.decodeOneTypeIfPresent or TypeUnpickler.readTypeNode) is interested in the wrapped Type, not the Tree wrapper.
+      *
+      * F-I-004 fix: this is the entry point AstUnpickler.decodeOneTypeIfPresent dispatches to for tags classified by isTreeTptTag. It is
+      * also called from TypeUnpickler.readTypeNode for nested TPT tags (e.g. APPLIEDtpt args that are themselves APPLIEDtpt).
+      *
+      * @param view
+      *   ByteView positioned at the tag byte (tag not yet consumed).
+      * @param session
+      *   Shared decode session from AstUnpickler (carries names, addrMap, arena, and unresolvedIdToFqn).
+      * @param tag
+      *   The TPT tag byte value (already peeked by the caller; consumed here as first action).
+      */
+    private[reader] def decodeTptAsType(
+        view: ByteView,
+        session: TypeUnpickler.DecodeSession,
+        tag: Int
+    )(using Frame)(using AllowUnsafe): Tasty.Type =
+        discard(view.readByte()) // consume the tag byte
+        tag match
+
+            case TastyFormat.IDENTtpt =>
+                // IDENTtpt (111): cat-4 (tag + Nat + AST). Nat is a name-ref (discard); AST is the resolved type.
+                discard(view.readNat())
+                TypeUnpickler.readTypeIntoSession(view, session)
+
+            case TastyFormat.APPLIEDtpt =>
+                // APPLIEDtpt (162): cat-5 (tag + Length + tycon_Tree + arg_Tree*).
+                val payloadEnd = view.readEnd()
+                val tycon      = TypeUnpickler.readTypeIntoSession(view, session)
+                val args       = new scala.collection.mutable.ArrayBuffer[Tasty.Type]()
+                while view.position < payloadEnd do
+                    args += TypeUnpickler.readTypeIntoSession(view, session)
+                end while
+                view.goto(payloadEnd)
+                Tasty.Type.Applied(tycon, Chunk.from(args.toSeq))
+
+            case TastyFormat.TYPEBOUNDStpt =>
+                // TYPEBOUNDStpt (164): cat-5 (tag + Length + lo_Tree + hi_Tree).
+                // Phase 13 will introduce Type.Bounds; until then, Type.Wildcard carries both lo and hi.
+                val payloadEnd = view.readEnd()
+                val lo         = TypeUnpickler.readTypeIntoSession(view, session)
+                val hi =
+                    if view.position < payloadEnd then TypeUnpickler.readTypeIntoSession(view, session)
+                    else lo
+                view.goto(payloadEnd)
+                Tasty.Type.Wildcard(lo, hi)
+
+            case TastyFormat.ANNOTATEDtpt =>
+                // ANNOTATEDtpt (154): cat-5 (tag + Length + tpe_Tree + annot_Tree).
+                // Phase 05 wires the annotation term; Phase 03 extracts the underlying type only.
+                val payloadEnd = view.readEnd()
+                val underlying = TypeUnpickler.readTypeIntoSession(view, session)
+                view.goto(payloadEnd)
+                underlying
+
+            case TastyFormat.SELECTin =>
+                // SELECTin (176): cat-5 (tag + Length + nameRef + qual_Tree + owner_Tree).
+                val payloadEnd = view.readEnd()
+                val nameRef    = view.readNat()
+                val nm         = session.names(nameRef).asString
+                // Decode qual type to extract its FQN for cross-file resolution.
+                val qualType = TypeUnpickler.readTypeIntoSession(view, session)
+                // Decode owner type (namespace); used for Phase C FQN resolution.
+                val ownerType = TypeUnpickler.readTypeIntoSession(view, session)
+                view.goto(payloadEnd)
+                // Build a qualified FQN: if qual resolves to a tracked cross-file ref, combine it
+                // with the selected name to form the full FQN for Phase C lookup.
+                val qualFqn: String = qualType match
+                    case Tasty.Type.Named(sid) if sid.value < -1 =>
+                        session.unresolvedIdToFqn.getOrElse(sid.value, "")
+                    case _ =>
+                        ""
+                val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
+                val id      = session.nextUnresolvedId()
+                session.unresolvedIdToFqn(id) = fullFqn
+                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(id))
+
+            case TastyFormat.REFINEDtpt =>
+                // REFINEDtpt (160): cat-5 (tag + Length + parent_Tree + decl_Tree*).
+                // Phase 03 extracts parent type only; refinement decls are deferred to Phase 05.
+                val payloadEnd = view.readEnd()
+                val parent     = TypeUnpickler.readTypeIntoSession(view, session)
+                view.goto(payloadEnd)
+                parent
+
+            case TastyFormat.LAMBDAtpt =>
+                // LAMBDAtpt (171): cat-5 (tag + Length + tparam_Tree* + body_Tree).
+                // TYPEPARAM nodes carry cat-5 length-prefixed payloads; detect them by tag.
+                val payloadEnd = view.readEnd()
+                val tparamIds  = new scala.collection.mutable.ArrayBuffer[Tasty.SymbolId]()
+                while view.position < payloadEnd && (view.peekByte(view.position) & 0xff) == TastyFormat.TYPEPARAM do
+                    // Each TYPEPARAM: tag + Length + nameRef + bounds_Type.
+                    discard(view.readByte()) // consume TYPEPARAM tag
+                    val tpEnd   = view.readEnd()
+                    val nameRef = view.readNat()
+                    val symName = session.names(nameRef)
+                    val sym = InternalSymbol.makeSymbol(
+                        Tasty.SymbolKind.TypeParam,
+                        Tasty.Flags.empty,
+                        symName
+                    )
+                    tparamIds += sym.id
+                    view.goto(tpEnd)
+                end while
+                val body = TypeUnpickler.readTypeIntoSession(view, session)
+                view.goto(payloadEnd)
+                Tasty.Type.TypeLambda(Chunk.from(tparamIds.toSeq), body)
+
+            case TastyFormat.MATCHtpt =>
+                // MATCHtpt (191): cat-5 (tag + Length + scrutinee_Tree + bound_Tree + case_Tree*).
+                val payloadEnd = view.readEnd()
+                val scrutinee  = TypeUnpickler.readTypeIntoSession(view, session)
+                val bound      = TypeUnpickler.readTypeIntoSession(view, session)
+                val cases      = new scala.collection.mutable.ArrayBuffer[Tasty.Type]()
+                while view.position < payloadEnd do
+                    cases += TypeUnpickler.readTypeIntoSession(view, session)
+                end while
+                Tasty.Type.MatchType(bound, scrutinee, Chunk.from(cases.toSeq))
+
+            case TastyFormat.MATCHCASEtype =>
+                // MATCHCASEtype (192): cat-5 (tag + Length + pat_Tree + rhs_Tree).
+                // Phase 05 will add Type.MatchCase as a first-class ADT case and replace this shape.
+                // Until then, encode as Applied(Named(MatchCaseSentinel), Chunk(pat, rhs)).
+                val payloadEnd = view.readEnd()
+                val pat        = TypeUnpickler.readTypeIntoSession(view, session)
+                val rhs        = TypeUnpickler.readTypeIntoSession(view, session)
+                view.goto(payloadEnd)
+                Tasty.Type.Applied(Tasty.Type.Named(TypeUnpickler.MatchCaseSentinel.id), Chunk(pat, rhs))
+
+            case other =>
+                // decodeTptAsType must only be called for tags in isTreeTptTag; any other tag is a bug.
+                throw new IllegalStateException(
+                    s"decodeTptAsType: not a TPT tag: $other at position ${view.positionInt}"
+                )
+        end match
+    end decodeTptAsType
+
 end TreeUnpickler

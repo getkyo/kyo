@@ -468,11 +468,15 @@ object AstUnpickler:
 
     /** Decode one type node from `view` into `typeSession`, if a type node is present before `end`.
       *
-      * Checks if the next byte is a type-tag (not a modifier tag). If so, calls TypeUnpickler.readTypeIntoSession to decode it, collecting
-      * any cross-file type references (as synthetic unresolved symbols). If decoding fails (malformed type tree), skips to `end` silently
-      * to avoid corrupting the outer walk.
+      * Checks if the next byte is a type-tag (not a modifier tag). For TPT tags (type-position tree tags), dispatches to
+      * TreeUnpickler.decodeTptAsType. For regular type tags, calls TypeUnpickler.readTypeIntoSession. If decoding fails (malformed type
+      * tree), skips to `end` silently to avoid corrupting the outer walk.
       *
       * Returns the decoded type if present and successful, Absent otherwise.
+      *
+      * F-I-004 fix: TPT tags (IDENTtpt, APPLIEDtpt, TYPEBOUNDStpt, ANNOTATEDtpt, SELECTin, REFINEDtpt, LAMBDAtpt, MATCHtpt,
+      * MATCHCASEtype) are wire-level tree nodes that carry a Type. Routing them to TypeUnpickler caused 47,996 unknown-tag warnings per load
+      * because TypeUnpickler has no handlers for these tags. They must go to TreeUnpickler.decodeTptAsType.
       */
     private def decodeOneTypeIfPresent(view: ByteView, end: Long, typeSession: TypeUnpickler.DecodeSession)(using
         Frame,
@@ -480,17 +484,40 @@ object AstUnpickler:
     ): Maybe[Tasty.Type] =
         if view.position < end then
             val nextTag = view.peekByte(view.position) & 0xff
-            if !isModifierTag(nextTag) then
-                try
-                    Present(TypeUnpickler.readTypeIntoSession(view, typeSession))
+            if isModifierTag(nextTag) then Absent
+            else if isTreeTptTag(nextTag) then
+                // F-I-004 fix: TPT tags route to TreeUnpickler.decodeTptAsType.
+                try Present(TreeUnpickler.decodeTptAsType(view, typeSession, nextTag))
                 catch
                     case _: Exception =>
                         view.goto(end)
                         Absent
-            else Absent
+            else
+                try Present(TypeUnpickler.readTypeIntoSession(view, typeSession))
+                catch
+                    case _: Exception =>
+                        view.goto(end)
+                        Absent
             end if
         else Absent
     end decodeOneTypeIfPresent
+
+    /** TASTy tags whose payload is a TREE (typed-tree position) that wraps a Type.
+      *
+      * These must route to TreeUnpickler.decodeTptAsType, not TypeUnpickler. Sourced from TastyFormat: IDENTtpt (111), APPLIEDtpt (162),
+      * TYPEBOUNDStpt (164), ANNOTATEDtpt (154), SELECTin (176), REFINEDtpt (160), LAMBDAtpt (171), MATCHtpt (191), MATCHCASEtype (192).
+      */
+    private[reader] def isTreeTptTag(tag: Int): Boolean =
+        tag == TastyFormat.IDENTtpt ||
+            tag == TastyFormat.APPLIEDtpt ||
+            tag == TastyFormat.TYPEBOUNDStpt ||
+            tag == TastyFormat.ANNOTATEDtpt ||
+            tag == TastyFormat.SELECTin ||
+            tag == TastyFormat.REFINEDtpt ||
+            tag == TastyFormat.LAMBDAtpt ||
+            tag == TastyFormat.MATCHtpt ||
+            tag == TastyFormat.MATCHCASEtype
+    end isTreeTptTag
 
     /** Scan a DEFDEF payload sub-view to read the return type.
       *
