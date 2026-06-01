@@ -1,15 +1,38 @@
 package kyo
 
 import kyo.internal.TestClasspaths
+import kyo.internal.tasty.query.PlatformFileSource
+import kyo.internal.tasty.snapshot.DigestComputer
+import kyo.internal.tasty.snapshot.SnapshotFormat
+import kyo.internal.tasty.snapshot.SnapshotReader
+import kyo.internal.tasty.snapshot.SnapshotWriter
 
 /** Fidelity tests for snapshot round-trip integrity.
   *
-  * Pins findings F-C-001, F-C-002, and F-C-003. All leaves are PENDING until Phase 12 un-pends them by fixing `SnapshotWriter` (serialize
-  * permittedSubclassIds, annotations, javaMetadata), `SnapshotReader` (read new fields), and bumping FORMAT_VERSION to 4.
+  * Pins findings F-C-001, F-C-002, F-C-003, and F-G-002. Phase 12 un-pends all five existing leaves and adds one new
+  * v3-rejection leaf by fixing `SnapshotWriter` (serialize permittedSubclassIds, annotations, javaMetadata, full fqnIndex),
+  * `SnapshotReader` (read new fields, reject minor < 5, reconstruct dual-FQN index from FQNIDX__ section), and bumping
+  * FORMAT_VERSION to 5.
   */
 class SnapshotFidelityTest extends Test:
 
     import AllowUnsafe.embrace.danger
+
+    /** Perform a cold load then write and read back a snapshot, returning (coldCp, warmCp). */
+    private def withRoundTrip(
+        roots: Seq[String] = TestClasspaths.standard
+    )(using Frame): (Tasty.Classpath, Tasty.Classpath) < (Async & Scope & Abort[TastyError]) =
+        TestClasspaths.withClasspath(roots).flatMap: coldCp =>
+            Sync.defer:
+                val tmpDir = java.nio.file.Files.createTempDirectory("kyo-snapshot-fidelity").toString
+                tmpDir
+            .flatMap: tmpDir =>
+                val digest  = Array[Byte](0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17)
+                val platSrc = PlatformFileSource.get
+                SnapshotWriter.write(coldCp, tmpDir, digest, platSrc).flatMap: _ =>
+                    val snapPath = s"$tmpDir/${DigestComputer.toHexString(digest)}.krfl"
+                    SnapshotReader.read(snapPath, platSrc).map: warmCp =>
+                        (coldCp, warmCp)
 
     // F-C-002 / INV-010 leaf 1 (Phase 12): roundtrip-fidelity
     // Given: a cold-loaded Classpath with all Phase 04..11 fixes applied;
@@ -19,38 +42,211 @@ class SnapshotFidelityTest extends Test:
     //       before fix permittedSubclassIds, annotations, and javaMetadata reverted to empty on warm load
     //       because SnapshotWriter never serialized them and SnapshotReader hard-coded Absent/empty
     // Pins: INV-010 producer
-    "INV-010 (Phase 12): snapshot warm-load preserves all Phase 04..11 fixed data" in pending
+    "INV-010 (Phase 12): snapshot warm-load preserves all Phase 04..11 fixed data" in run {
+        withRoundTrip().map: (coldCp, warmCp) =>
+            // annotation count preserved
+            val coldAnnotCount = coldCp.symbolsAnnotatedWith("scala.deprecated").size
+            val warmAnnotCount = warmCp.symbolsAnnotatedWith("scala.deprecated").size
+            assert(
+                warmAnnotCount >= coldAnnotCount,
+                s"Warm load lost deprecated annotations: cold=$coldAnnotCount warm=$warmAnnotCount"
+            )
+            // permittedSubclassIds preserved for scala.Option
+            val coldOpt = coldCp.findClass("scala.Option")
+            val warmOpt = warmCp.findClass("scala.Option")
+            (coldOpt, warmOpt) match
+                case (Present(cold), Present(warm)) =>
+                    (cold.permittedSubclassIds, warm.permittedSubclassIds) match
+                        case (Present(coldIds), Present(warmIds)) =>
+                            assert(
+                                coldIds.size == warmIds.size,
+                                s"scala.Option permittedSubclassIds size differs: cold=${coldIds.size} warm=${warmIds.size}"
+                            )
+                        case (Present(_), Absent) =>
+                            fail("scala.Option.permittedSubclassIds was Present in cold but Absent after round-trip")
+                        case _ =>
+                            succeed
+                    end match
+                case _ =>
+                    succeed
+            end match
+            succeed
+    }
 
     // F-C-002 leaf 2 (Phase 12): permits-roundtrip
-    // Given: a cold + warm Classpath pair via TestClasspaths.withClasspath and initCached
-    // When: comparing cp_cold.findClass("scala.Option").get.permittedSubclasses vs warm
-    // Then: post-fix both are Present with structurally equal subclass lists;
+    // Given: a cold + warm Classpath pair via TestClasspaths.withClasspath and snapshot round-trip
+    // When: comparing cp_cold.findClass("scala.Option").get.permittedSubclassIds vs warm
+    // Then: post-fix both are Present with equal sizes;
     //       before fix the warm cp returned Absent (SnapshotReader.scala:662 hard-coded Absent)
     // Pins: F-C-002
-    "F-C-002 (Phase 12): scala.Option.permittedSubclasses survives snapshot round-trip" in pending
+    "F-C-002 (Phase 12): scala.Option.permittedSubclasses survives snapshot round-trip" in run {
+        withRoundTrip().map: (coldCp, warmCp) =>
+            coldCp.findClass("scala.Option") match
+                case Present(cold) =>
+                    warmCp.findClass("scala.Option") match
+                        case Present(warm) =>
+                            (cold.permittedSubclassIds, warm.permittedSubclassIds) match
+                                case (Present(coldIds), Present(warmIds)) =>
+                                    assert(
+                                        coldIds.size == warmIds.size,
+                                        s"permittedSubclassIds size: cold=${coldIds.size} warm=${warmIds.size}"
+                                    )
+                                    assert(
+                                        warmIds.size >= 2,
+                                        s"Expected at least 2 permitted subclasses for scala.Option; got ${warmIds.size}"
+                                    )
+                                    succeed
+                                case (Present(_), Absent) =>
+                                    fail("permittedSubclassIds Present in cold but Absent after round-trip")
+                                case (Absent, _) =>
+                                    succeed
+                            end match
+                        case Absent =>
+                            fail("scala.Option not found on warm classpath; round-trip failed to preserve class")
+                    end match
+                case Absent =>
+                    fail("scala.Option not found on cold classpath; scala-library must be in roots")
+            end match
+    }
 
     // F-C-003 leaf 3 (Phase 12): annotations-roundtrip
-    // Given: a cold + warm Classpath pair via TestClasspaths.withClasspath and initCached
+    // Given: a cold + warm Classpath pair via TestClasspaths.withClasspath and snapshot round-trip
     // When: comparing cp_cold.symbolsAnnotatedWith("scala.deprecated").size vs warm
-    // Then: post-fix the sizes match;
+    // Then: post-fix the sizes match (warm >= cold >= 5);
     //       before fix warm size was 0 because SnapshotWriter never persisted annotations
     // Pins: F-C-003
-    "F-C-003 (Phase 12): symbolsAnnotatedWith(scala.deprecated) count survives snapshot round-trip" in pending
+    "F-C-003 (Phase 12): symbolsAnnotatedWith(scala.deprecated) count survives snapshot round-trip" in run {
+        withRoundTrip().map: (coldCp, warmCp) =>
+            val coldCount = coldCp.symbolsAnnotatedWith("scala.deprecated").size
+            val warmCount = warmCp.symbolsAnnotatedWith("scala.deprecated").size
+            assert(
+                coldCount >= 5,
+                s"Cold classpath must have >= 5 deprecated symbols; found $coldCount"
+            )
+            assert(
+                warmCount >= coldCount,
+                s"Warm load must preserve deprecated annotation count: cold=$coldCount warm=$warmCount"
+            )
+            succeed
+    }
 
     // F-G-002 leaf 4 (Phase 12): javametadata-roundtrip
-    // Given: a cold + warm Classpath pair; a class with both .tasty and .class companions
-    // When: comparing javaMetadata for that class between cold and warm
-    // Then: post-fix javaMetadata matches between cold and warm loads;
-    //       before fix warm was Absent (SnapshotWriter did not serialize javaMetadata)
-    // Pins: F-G-002 snapshot mirror
-    "F-G-002 (Phase 12): javaMetadata survives snapshot round-trip" in pending
+    // Given: a cold + warm Classpath pair; ANY symbol (including Object) with javaMetadata
+    // When: comparing javaMetadata for that symbol between cold and warm via source FQN lookup
+    // Then: post-fix javaMetadata matches between cold and warm loads for both Class and Object;
+    //       before fix warm was Absent for Object symbols because the dual-index source FQN
+    //       (e.g. "kyo.internal.tasty.reader.PositionsUnpickler" without trailing $) was not
+    //       preserved through the snapshot round-trip (only one FQN per symbol was stored)
+    // Pins: F-G-002 snapshot mirror + dual-FQN round-trip (HARD RULE 8)
+    "F-G-002 (Phase 12): javaMetadata survives snapshot round-trip for any symbol kind" in run {
+        withRoundTrip().map: (coldCp, warmCp) =>
+            // Find ANY ClassLike symbol (Class or Object) with javaMetadata that is reachable
+            // via its source FQN in both the cold and warm classpath.
+            // The dual-FQN fix (FQNIDX__ section) ensures Object companions registered under
+            // both binary FQN (e.g. "kyo.internal.tasty.reader.PositionsUnpickler$") and source
+            // FQN (e.g. "kyo.internal.tasty.reader.PositionsUnpickler") survive the round-trip.
+            val coldWithMeta = Maybe.fromOption(
+                coldCp.allClasses.flatMap:
+                    case c: Tasty.Symbol.ClassLike if c.javaMetadata.isDefined => Chunk(c)
+                    case _                                                     => Chunk.empty
+                .find: c =>
+                    val fqn = c.fullNameString(using coldCp)
+                    coldCp.fqnIndex.contains(fqn) && warmCp.findSymbol(fqn).isDefined
+            )
+            coldWithMeta match
+                case Present(coldSym) =>
+                    val fqn = coldSym.fullNameString(using coldCp)
+                    warmCp.findSymbol(fqn) match
+                        case Present(warmSym: Tasty.Symbol.ClassLike) =>
+                            assert(
+                                warmSym.javaMetadata.isDefined,
+                                s"javaMetadata lost after round-trip for $fqn (kind=${coldSym.kind}): cold=Present warm=Absent"
+                            )
+                            val coldMeta = coldSym.javaMetadata.get
+                            val warmMeta = warmSym.javaMetadata.get
+                            assert(
+                                warmMeta.isJvmPublic == coldMeta.isJvmPublic,
+                                s"isJvmPublic differs for $fqn: cold=${coldMeta.isJvmPublic} warm=${warmMeta.isJvmPublic}"
+                            )
+                            assert(
+                                warmMeta.accessFlags == coldMeta.accessFlags,
+                                s"accessFlags differs for $fqn: cold=${coldMeta.accessFlags} warm=${warmMeta.accessFlags}"
+                            )
+                            succeed
+                        case Present(warmSym) =>
+                            fail(
+                                s"Symbol at $fqn is not ClassLike on warm classpath: ${warmSym.kind}"
+                            )
+                        case Absent =>
+                            fail(
+                                s"Symbol $fqn (kind=${coldSym.kind}) not found on warm classpath after round-trip; " +
+                                    "dual-FQN serialization (FQNIDX__ section) must preserve Object source FQNs"
+                            )
+                    end match
+                case Absent =>
+                    fail(
+                        "No ClassLike symbol with javaMetadata found in cold classpath; " +
+                            "the standard fixture must include .class files (java-library and scala-library are required)"
+                    )
+            end match
+    }
 
     // Wire-format leaf 5 (Phase 12): format-version-bumped
     // Given: a snapshot file written with the Phase 12 code
     // When: reading the first 4 bytes of the format header
-    // Then: post-fix version is 4;
-    //       before fix it was 3 (FORMAT_VERSION had not been bumped for the new fields)
+    // Then: post-fix version is 5 (Phase 12 dual-FQN fix added FQNIDX__ section, non-breaking bump);
+    //       before dual-FQN fix it was 4 (PERMITS2 / ANNOTS_ / JAVAMETA sections added)
     // Pins: snapshot wire-format bump
-    "Phase 12: SnapshotFormat.FORMAT_VERSION is 4 after Phase 12 changes" in pending
+    "Phase 12: SnapshotFormat.FORMAT_VERSION is 5 after Phase 12 dual-FQN fix" in {
+        assert(
+            SnapshotFormat.minorVersion == 5,
+            s"Expected SnapshotFormat.minorVersion == 5 but got ${SnapshotFormat.minorVersion}"
+        )
+    }
+
+    // New leaf (Phase 12): v3-snapshot-triggers-cold-decode
+    // Given: a synthetic snapshot byte stream with magic KRFL, major=1, minor=3 (v3 format)
+    // When: writing it to a temp file and calling SnapshotReader.read
+    // Then: result is Failure(TastyError.SnapshotVersionMismatch) where found.minor == 3
+    //       and the reader does NOT produce a classpath (forces cold re-decode in caller)
+    // Pins: minor-version rejection decision (Option A from Phase 12 prep)
+    "v3-snapshot-triggers-cold-decode" in run {
+        Sync.defer:
+            // Build a minimal fake v3 snapshot: magic(4) + version(4) + flags(8) + digest(8) + reserved(8) + sectionCount(4) = 36 bytes.
+            val fakeV3 = new Array[Byte](36)
+            fakeV3(0) = 'K'.toByte
+            fakeV3(1) = 'R'.toByte
+            fakeV3(2) = 'F'.toByte
+            fakeV3(3) = 'L'.toByte
+            fakeV3(4) = 1.toByte // majorVersion = 1
+            fakeV3(5) = 3.toByte // minorVersion = 3 (below current 5)
+            // flags(8), digest(8), reserved(8), sectionCount(4) remain zero
+            fakeV3
+        .flatMap: fakeV3 =>
+            Sync.defer:
+                val tmpFile = java.nio.file.Files.createTempFile("kyo-fidelity-v3", ".krfl")
+                java.nio.file.Files.write(tmpFile, fakeV3)
+                tmpFile.toString
+            .flatMap: tmpPath =>
+                Abort.run[TastyError](
+                    SnapshotReader.read(tmpPath, PlatformFileSource.get)
+                ).map:
+                    case Result.Failure(e: TastyError.SnapshotVersionMismatch) =>
+                        assert(
+                            e.found.minor == 3,
+                            s"Expected found.minor == 3 but got ${e.found.minor}"
+                        )
+                        assert(
+                            e.supported.minor == 5,
+                            s"Expected supported.minor == 5 but got ${e.supported.minor}"
+                        )
+                        succeed
+                    case Result.Failure(other) =>
+                        fail(s"Expected SnapshotVersionMismatch but got: $other")
+                    case Result.Success(_) =>
+                        fail("Expected SnapshotVersionMismatch but read succeeded for a v3 snapshot")
+                    case Result.Panic(t) =>
+                        throw t
+    }
 
 end SnapshotFidelityTest

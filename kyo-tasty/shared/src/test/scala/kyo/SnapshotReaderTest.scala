@@ -4,10 +4,10 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import scala.collection.mutable
 
-/** Tests for Phase 19b: SnapshotReader backward-compat with old (minor=2) snapshots.
+/** Tests for SnapshotReader version handling with old (minor=2) snapshots.
   *
-  * INV-023 forward-compat: a snapshot at minorVersion=2 (no PARENTS/MEMBERS/TPARAMS_ sections) loads without SnapshotVersionMismatch and
-  * returns Chunk.empty for parents/typeParams/declarations.
+  * Phase 12 breaking change: minor=4 is a breaking bump (PERMITS2/ANNOTS_/JAVAMETA sections added).
+  * Snapshots with minor < 4 are rejected with SnapshotVersionMismatch to force cold re-decode.
   */
 class SnapshotReaderTest extends Test:
 
@@ -46,10 +46,10 @@ class SnapshotReaderTest extends Test:
             Abort.fail(TastyError.FileNotFound(path))
     end MemoryFileSource
 
-    // Test 3 (INV-023 forward-compat): a snapshot with minorVersion=2 (current major, but old minor
-    // without PARENTS/MEMBERS/TPARAMS_ sections) loads successfully with no SnapshotVersionMismatch
-    // and populates symbols with Chunk.empty parents/typeParams/declarations.
-    "minor=2 snapshot (no PARENTS/MEMBERS/TPARAMS_ sections) loads with empty relationships and no version mismatch" in run {
+    // Test 3 (Phase 12 version rejection): a snapshot with minorVersion=2 (below Phase 12 minimum of 5)
+    // must be rejected with SnapshotVersionMismatch to force cold re-decode. Before Phase 12 this
+    // snapshot loaded successfully; the bump to minor=4 is a breaking change.
+    "minor=2 snapshot (no PARENTS/MEMBERS/TPARAMS_ sections) is rejected with SnapshotVersionMismatch" in run {
         // Build a minimal valid KRFL snapshot at minorVersion=2 (same majorVersion=1 as current).
         // The snapshot contains only NAMES and SYMBOLS sections (no PARENTS/MEMBERS/TPARAMS_).
         // NAMES section: 0 names.
@@ -113,18 +113,17 @@ class SnapshotReaderTest extends Test:
         src.add("cache/minor2.krfl", buf)
 
         Abort.run[TastyError]:
-            SnapshotReader.read("cache/minor2.krfl", src).map: loadedCp =>
-                // After load: all symbols should have empty parent/typeParam/declaration chunks.
-                // Since there are 0 symbols, just verify the load succeeded with no error.
-                assert(loadedCp.symbols.isEmpty, s"Expected no symbols from empty snapshot, got ${loadedCp.symbols.length}")
-                succeed
+            SnapshotReader.read("cache/minor2.krfl", src)
         .map:
-            case Result.Success(r) =>
-                r
             case Result.Failure(e: TastyError.SnapshotVersionMismatch) =>
-                fail(s"SnapshotVersionMismatch must not be thrown for same major / older minor: $e")
+                // Phase 12: minor < 5 snapshots are rejected to force cold re-decode.
+                assert(e.found.minor == 2, s"Expected found.minor == 2, got ${e.found.minor}")
+                assert(e.supported.minor == 5, s"Expected supported.minor == 5, got ${e.supported.minor}")
+                succeed
+            case Result.Success(_) =>
+                fail("Expected SnapshotVersionMismatch for minor=2 snapshot (below Phase 12 minimum of 5)")
             case Result.Failure(e) =>
-                fail(s"Unexpected failure loading minor=2 snapshot: $e")
+                fail(s"Expected SnapshotVersionMismatch but got unexpected failure: $e")
             case Result.Panic(t) =>
                 throw t
     }

@@ -737,9 +737,10 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Leaf 3 (Phase 11, INV-011): section-index byte-level walk.
-    // Parses the raw bytes of a new-writer snapshot; asserts all 10 expected section names are
-    // present and that section offsets are monotone increasing.
-    "new snapshot section-index: all 10 sections present and offsets monotone increasing" in run {
+    // Parses the raw bytes of a new-writer snapshot; asserts all 14 expected section names are
+    // present (10 pre-Phase-12 + 3 Phase-12 additions: PERMITS2, ANNOTS_, JAVAMETA + 1 dual-FQN: FQNIDX__) and that
+    // section offsets are monotone increasing.
+    "new snapshot section-index: all 14 sections present and offsets monotone increasing" in run {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xc0.toByte, 0xc1.toByte, 0xc2.toByte, 0xc3.toByte, 0xc4.toByte, 0xc5.toByte, 0xc6.toByte, 0xc7.toByte)
         Scope.run:
@@ -752,7 +753,7 @@ class SnapshotRoundTripTest extends Test:
             ).map:
                 case Result.Success(Some(bytes)) =>
                     val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
-                    assert(sectionCount == 10, s"Expected 10 sections in new-writer snapshot, got $sectionCount")
+                    assert(sectionCount == 14, s"Expected 14 sections in new-writer snapshot, got $sectionCount")
 
                     val expectedNames = Set(
                         SnapshotFormat.sectionNAMES,
@@ -764,7 +765,11 @@ class SnapshotRoundTripTest extends Test:
                         SnapshotFormat.sectionTPARAMS,
                         SnapshotFormat.sectionFILES,
                         SnapshotFormat.sectionBODYBYTES,
-                        SnapshotFormat.sectionERRORS
+                        SnapshotFormat.sectionERRORS,
+                        SnapshotFormat.sectionPERMITS2,
+                        SnapshotFormat.sectionANNOTS,
+                        SnapshotFormat.sectionJAVAMETA,
+                        SnapshotFormat.sectionFQNIDX
                     )
 
                     val foundNames = scala.collection.mutable.Set.empty[String]

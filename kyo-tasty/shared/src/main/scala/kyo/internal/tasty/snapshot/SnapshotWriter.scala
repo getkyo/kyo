@@ -193,6 +193,49 @@ object SnapshotWriter:
                 ).map(id => id.value)
         )
 
+        // PERMITS2 section: permittedSubclassIds per Class/Trait symbol.
+        // Uses the same serializeSymbolRelLists format as PARENTS/MEMBERS.
+        val permits2Bytes = serializeSymbolRelLists(
+            symbolList,
+            symbolId,
+            sym =>
+                import kyo.internal.tasty.symbol.SymbolId
+                (sym match
+                    case c: Tasty.Symbol.Class =>
+                        c.permittedSubclassIds match
+                            case kyo.Maybe.Present(ids) => ids
+                            case kyo.Maybe.Absent       => Chunk.empty[SymbolId]
+                    case t: Tasty.Symbol.Trait =>
+                        t.permittedSubclassIds match
+                            case kyo.Maybe.Present(ids) => ids
+                            case kyo.Maybe.Absent       => Chunk.empty[SymbolId]
+                    case _ => Chunk.empty[SymbolId]
+                ).map(id => id.value)
+        )
+
+        // Build a symbolById map: original SymbolId.value -> symbol, for annotation tycon lookup.
+        val symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol] =
+            val m = scala.collection.mutable.HashMap.empty[Int, Tasty.Symbol]
+            for sym <- symbolList do
+                m(sym.id.value) = sym
+            m
+        end symbolById
+
+        // ANNOTS_ section: annotation tycon FQN name-pool IDs per symbol.
+        // Layout: [4-byte count] then entries [4-byte symIdx][4-byte annCount][annCount x 4-byte tyconFqnNameId].
+        // Non-Named annotation tycons are omitted (skipped during collection).
+        val annotsBytes = serializeAnnotations(symbolList, symbolId, internName, symbolById, fqnBySymbol)
+
+        // JAVAMETA section: accessFlags per symbol with javaMetadata present.
+        // Layout: [4-byte count] then entries [4-byte symIdx][4-byte accessFlags].
+        val javaMetaBytes = serializeJavaMetadata(symbolList, symbolId)
+
+        // FQNIDX__ section: full fqnIndex serialization (all key->symIdx pairs, including
+        // dual-index source-FQN aliases for Object companions and opaque types).
+        // Warm-load reconstruction uses this section verbatim instead of rebuilding from
+        // per-symbol fqnId, which only stored ONE FQN per symbol.
+        val fqnIdxBytes = serializeFqnIndex(cp.fqnIndex, symbolList, symbolId, internName)
+
         val sections = Seq(
             (SnapshotFormat.sectionNAMES, namesBytes),
             (SnapshotFormat.sectionSYMBOLS, symbolsBytes),
@@ -203,7 +246,11 @@ object SnapshotWriter:
             (SnapshotFormat.sectionTPARAMS, tparamsBytes),
             (SnapshotFormat.sectionFILES, filesBytes),
             (SnapshotFormat.sectionBODYBYTES, bodyBytes),
-            (SnapshotFormat.sectionERRORS, errorsBytes)
+            (SnapshotFormat.sectionERRORS, errorsBytes),
+            (SnapshotFormat.sectionPERMITS2, permits2Bytes),
+            (SnapshotFormat.sectionANNOTS, annotsBytes),
+            (SnapshotFormat.sectionJAVAMETA, javaMetaBytes),
+            (SnapshotFormat.sectionFQNIDX, fqnIdxBytes)
         )
 
         assembleSections(sections, digest)
@@ -383,10 +430,170 @@ object SnapshotWriter:
         baos.toByteArray
     end serializeSymbolRelLists
 
+    /** Serialize per-symbol annotation tycon FQN ids into a flat byte block.
+      *
+      * Layout: [4-byte count] then entries [4-byte symIdx][4-byte annCount][annCount x 4-byte tyconFqnNameId].
+      * Named, TermRef, and Applied (unwrapped to base) annotation tycons are handled via tyconFqn.
+      * Annotations with unrecognised tycon forms produce empty FQN and are omitted.
+      * Symbols with no serializable annotations are omitted.
+      * `internFqn` is the name-pool intern function from `serialize`; must be the same instance so IDs are
+      * consistent with the NAMES section.
+      */
+    private def serializeAnnotations(
+        symbols: Seq[Tasty.Symbol],
+        symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
+        internFqn: String => Int,
+        symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
+        fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String]
+    ): Array[Byte] =
+        import Tasty.Name.asString
+        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
+        val tmp  = new Array[Byte](4)
+
+        // Collect valid entries: (symIdx, tyconIds) where tyconIds is non-empty.
+        val entries = symbols.zipWithIndex.flatMap: (sym, idx) =>
+            val annotations: Chunk[Tasty.Annotation] = sym match
+                case c: Tasty.Symbol.ClassLike     => c.annotations
+                case m: Tasty.Symbol.Method        => m.annotations
+                case v: Tasty.Symbol.Val           => v.annotations
+                case w: Tasty.Symbol.Var           => w.annotations
+                case ta: Tasty.Symbol.TypeAlias    => ta.annotations
+                case ot: Tasty.Symbol.OpaqueType   => ot.annotations
+                case at: Tasty.Symbol.AbstractType => at.annotations
+                case p: Tasty.Symbol.Parameter     => p.annotations
+                case _                             => Chunk.empty[Tasty.Annotation]
+            // Extract the tycon FQN name-pool ID for Named and TermRef types.
+            // F-G-001: @deprecated and most Scala annotations arrive as TermRef tycons; Named is
+            // less common but handled for completeness. Applied tycons are unwrapped to their base.
+            // Unknown tycon forms produce an empty FQN and are omitted.
+            val tyconIds: Seq[Int] = annotations.toSeq.flatMap: ann =>
+                val fqn = tyconFqn(ann.annotationType, symbolById, fqnBySymbol)
+                if fqn.nonEmpty then Some(internFqn(fqn)) else None
+            if tyconIds.isEmpty then None else Some((idx, tyconIds))
+
+        SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
+        baos.write(tmp)
+        for (symIdx, tyconIds) <- entries do
+            SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
+            baos.write(tmp)
+            SnapshotFormat.writeInt32LE(tmp, 0, tyconIds.size)
+            baos.write(tmp)
+            for tid <- tyconIds do
+                SnapshotFormat.writeInt32LE(tmp, 0, tid)
+                baos.write(tmp)
+            end for
+        end for
+        baos.toByteArray
+    end serializeAnnotations
+
+    /** Serialize per-symbol javaMetadata accessFlags.
+      *
+      * Layout: [4-byte count] then entries [4-byte symIdx][4-byte accessFlags].
+      * Only symbols that have javaMetadata present are included.
+      */
+    private def serializeJavaMetadata(
+        symbols: Seq[Tasty.Symbol],
+        symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int]
+    ): Array[Byte] =
+        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
+        val tmp  = new Array[Byte](4)
+
+        val entries = symbols.zipWithIndex.flatMap: (sym, idx) =>
+            val metaOpt: kyo.Maybe[Tasty.JavaMetadata] = sym match
+                case c: Tasty.Symbol.ClassLike => c.javaMetadata
+                case f: Tasty.Symbol.Field     => f.javaMetadata
+                case m: Tasty.Symbol.Method    => m.javaMetadata
+                case _                         => kyo.Maybe.Absent
+            metaOpt match
+                case kyo.Maybe.Present(meta) => Some((idx, meta.accessFlags))
+                case kyo.Maybe.Absent        => None
+
+        SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
+        baos.write(tmp)
+        for (symIdx, accessFlags) <- entries do
+            SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
+            baos.write(tmp)
+            SnapshotFormat.writeInt32LE(tmp, 0, accessFlags)
+            baos.write(tmp)
+        end for
+        baos.toByteArray
+    end serializeJavaMetadata
+
+    /** Serialize the full fqnIndex (all key->symIdx pairs) into a flat byte block.
+      *
+      * Layout: [4-byte count LE] then count entries each [4-byte namePoolId LE][4-byte symIdx LE].
+      * Each entry stores a name-pool index for the FQN string and a symbol index (position in symbolList).
+      * All FQN keys are interned into the shared name pool via `internName`; FQN keys not present in
+      * `symbolId` are skipped (should never happen for a well-formed Classpath).
+      *
+      * This section stores the FULL fqnIndex including dual-index source-FQN aliases added by the
+      * ClasspathOrchestrator (e.g. both "scala.Predef$" and "scala.Predef" for an Object companion,
+      * both the binary and source FQN for opaque types). The reader reconstructs fqnIndex verbatim
+      * from this section, bypassing the single-FQN-per-symbol limitation of the SYMBOLS section.
+      */
+    private def serializeFqnIndex(
+        fqnIndex: Map[String, kyo.internal.tasty.symbol.SymbolId],
+        symbolList: Seq[Tasty.Symbol],
+        symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
+        internName: String => Int
+    ): Array[Byte] =
+        val baos = new java.io.ByteArrayOutputStream(64 * 1024)
+        val tmp  = new Array[Byte](4)
+        // Build SymbolId.value -> snapshot index mapping (snapshot index = position in symbolList).
+        val symIdToIdx = new scala.collection.mutable.HashMap[Int, Int]()
+        for (sym, idx) <- symbolList.zipWithIndex do
+            symIdToIdx(sym.id.value) = idx
+        end for
+        // Collect valid entries: (namePoolId, snapshotIdx).
+        val entries = fqnIndex.toSeq.flatMap: (fqn, id) =>
+            symIdToIdx.get(id.value) match
+                case Some(idx) => Some((internName(fqn), idx))
+                case None      => None
+        SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
+        baos.write(tmp)
+        for (nameId, idx) <- entries do
+            SnapshotFormat.writeInt32LE(tmp, 0, nameId)
+            baos.write(tmp)
+            SnapshotFormat.writeInt32LE(tmp, 0, idx)
+            baos.write(tmp)
+        end for
+        baos.toByteArray
+    end serializeFqnIndex
+
     /** Convert a Name (opaque Interner.Entry) to a String. */
     private def nameToStr(n: Tasty.Name): String =
         import Tasty.Name.asString
         n.asString
     end nameToStr
+
+    /** Extract a dotted FQN string from an annotation tycon type without needing a Classpath.
+      *
+      * Handles Type.Named (looks up FQN via fqnBySymbol), Type.TermRef (recursively builds prefix.name),
+      * and Type.Applied (delegates to the unapplied base). Returns empty string for unrecognised types.
+      * Called from serializeAnnotations to cover both Named and TermRef tycon forms.
+      */
+    private def tyconFqn(
+        t: Tasty.Type,
+        symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
+        fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String]
+    ): String =
+        import Tasty.Name.asString
+        t match
+            case Tasty.Type.Named(annSymId) =>
+                val annSym = symbolById.getOrElse(annSymId.value, null)
+                if annSym != null then
+                    val fqn = fqnBySymbol.get(annSym)
+                    if fqn != null && fqn.nonEmpty then fqn
+                    else nameToStr(annSym.name)
+                else ""
+                end if
+            case Tasty.Type.TermRef(qual, name) =>
+                val q = tyconFqn(qual, symbolById, fqnBySymbol)
+                if q.nonEmpty then q + "." + name.asString else name.asString
+            case Tasty.Type.Applied(base, _) =>
+                tyconFqn(base, symbolById, fqnBySymbol)
+            case _ => ""
+        end match
+    end tyconFqn
 
 end SnapshotWriter

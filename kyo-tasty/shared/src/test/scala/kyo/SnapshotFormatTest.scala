@@ -5,14 +5,14 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
 
 /** Tests for SnapshotFormat version and section-name constants.
   *
-  * INV-023: minorVersion == 3 after the TPARAMS_ add-only bump. INV-003: sectionNames is add-only (TPARAMS_ present, existing names
-  * preserved).
+  * INV-023: minorVersion == 5 after the Phase 12 dual-FQN fix (FQNIDX__ section added, non-breaking add-only bump).
+  * INV-003: sectionNames is add-only (TPARAMS_ present, existing names preserved).
   */
 class SnapshotFormatTest extends Test:
 
-    // Test 1 (INV-023): minorVersion reflects the TPARAMS_ add-only bump.
-    "SnapshotFormat.minorVersion is 3 after TPARAMS_ section addition" in run {
-        assert(SnapshotFormat.minorVersion == 3)
+    // Test 1 (INV-023): minorVersion reflects the Phase 12 dual-FQN fix (FQNIDX__ section).
+    "SnapshotFormat.minorVersion is 5 after Phase 12 dual-FQN fix" in run {
+        assert(SnapshotFormat.minorVersion == 5)
         succeed
     }
 

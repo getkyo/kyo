@@ -38,10 +38,17 @@ package kyo.internal.tasty.snapshot
   *   - `FILES`: Per-source-file metadata (path, mtime, size, uuid).
   *   - `BODYBYTE`: Inline byte storage for lazy body decode.
   *   - `ERRORS`: Serialized TastyError cases accumulated during decode.
+  *   - `PERMITS2`: permittedSubclassIds per symbol (added in minor=4).
+  *   - `ANNOTS_`: annotation tycon FQN ids per symbol (added in minor=4).
+  *   - `JAVAMETA`: javaMetadata accessFlags per symbol (added in minor=4).
+  *   - `FQNIDX__`: full fqnIndex (all keys including dual-index aliases) per symbol (added in minor=5).
   *
   * Versioning policy:
   *   - Major bump: invalidates all old snapshots (full re-decode + fresh write). Reader emits `TastyError.SnapshotVersionMismatch`.
-  *   - Minor bump: add-only sections; old snapshots load (new sections are empty).
+  *   - Minor bump (non-breaking add-only): old snapshots load; new sections are absent and fall back to empty.
+  *   - Minor bump (breaking in-record change): old snapshots must be rejected; reader emits `TastyError.SnapshotVersionMismatch`.
+  *     minor=4 is a breaking bump because the SYMBOLS record layout is not changed but new relational sections are required for
+  *     correct permittedSubclassIds / annotations / javaMetadata; a minor=3 snapshot must trigger cold re-decode.
   *   - Patch bump: format-stable.
   *
   * Digest algorithm: FNV-1a 64-bit (non-cryptographic; sufficient for cache-invalidation). See `DigestComputer`.
@@ -56,7 +63,7 @@ object SnapshotFormat:
 
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
-    val minorVersion: Int = 3
+    val minorVersion: Int = 5
 
     /** Size of the fixed-length file header in bytes (magic + version + flags + digest + reserved). */
     val headerSize: Int = 4 + 4 + 8 + 8 + 8
@@ -66,7 +73,22 @@ object SnapshotFormat:
 
     /** Section IDs (exactly 8 ASCII bytes, zero-padded). */
     val sectionNames: Array[String] =
-        Array("NAMES", "SYMBOLS", "TYPES", "TYPESEXT", "PARENTS", "MEMBERS", "TPARAMS_", "FILES", "BODYBYTE", "ERRORS")
+        Array(
+            "NAMES",
+            "SYMBOLS",
+            "TYPES",
+            "TYPESEXT",
+            "PARENTS",
+            "MEMBERS",
+            "TPARAMS_",
+            "FILES",
+            "BODYBYTE",
+            "ERRORS",
+            "PERMITS2",
+            "ANNOTS_",
+            "JAVAMETA",
+            "FQNIDX__"
+        )
 
     val sectionNAMES: String     = "NAMES"
     val sectionSYMBOLS: String   = "SYMBOLS"
@@ -78,6 +100,20 @@ object SnapshotFormat:
     val sectionFILES: String     = "FILES"
     val sectionBODYBYTES: String = "BODYBYTE"
     val sectionERRORS: String    = "ERRORS"
+
+    /** Phase 12 sections: permittedSubclassIds, annotations, javaMetadata. */
+    val sectionPERMITS2: String = "PERMITS2"
+    val sectionANNOTS: String   = "ANNOTS_"
+    val sectionJAVAMETA: String = "JAVAMETA"
+
+    /** Phase 12 dual-FQN section: full fqnIndex serialization.
+      *
+      * Stores every key in the classpath fqnIndex (including dual-index source-FQN aliases for Object companions and opaque types) so that
+      * warm-load lookups via source FQN work identically to cold-load.
+      *
+      * Added in minor=5 (non-breaking add; absent in minor=4 snapshots, which are rejected anyway).
+      */
+    val sectionFQNIDX: String = "FQNIDX__"
 
     /** Write a little-endian 32-bit int at position `pos` in `buf`. */
     def writeInt32LE(buf: Array[Byte], pos: Int, value: Int): Unit =
