@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 
@@ -11,7 +12,7 @@ import kyo.internal.TestClasspaths2
   * Phase 2.01 active leaves (4): no-unknown-tags-on-clean-load, single-tasty-load-zero-warnings, kyo-tasty-jar-zero-warnings,
   * forty-four-pending-leaves-at-phase-2-01.
   */
-class RealClasspathFidelity2Test extends Test:
+class RealClasspathFidelity2Test extends Fidelity2TestBase:
 
     import AllowUnsafe.embrace.danger
 

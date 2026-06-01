@@ -22,6 +22,17 @@ import scala.collection.mutable
   * Cross-platform: no JVM-only APIs; all bit-pattern conversions use java.lang.Float/Double which are available on Scala.js and Scala
   * Native.
   */
+/** Exception wrapper that carries a `TastyError` through synchronous decode paths.
+  *
+  * Thrown by `decodeTag` when an unrecognised tag is encountered (Phase 2.04-strict). The `readType` catch block re-lifts this
+  * into `Abort.fail(error)` so that `TastyError.UnknownTagInPosition` is preserved as the actual error variant rather than being
+  * wrapped in the generic `MalformedSection` fallback that catches plain `Exception`.
+  *
+  * Private to the reader package; not part of the public or internal API.
+  */
+final private[reader] class TastyErrorException(val error: TastyError)
+    extends RuntimeException(error.toString, null, true, false)
+
 object TypeUnpickler:
 
     /** Synthetic sentinel symbol for MatchCaseType representation.
@@ -79,20 +90,6 @@ object TypeUnpickler:
         )
     end sentinelRecPlaceholder
 
-    /** Interned sentinel for genuinely unknown TASTy type tags (F-G-007 pass B).
-      *
-      * Replaces per-tag `unknown-type-tag-N` symbols. After Phase 03 routed all known TPT tags to TreeUnpickler,
-      * this sentinel should appear zero times on the real classpath. It is retained as a safety net for future
-      * TASTy format changes that introduce new tags before this decoder adds explicit handlers.
-      */
-    private[kyo] val sentinelUnknownTag: Tasty.Symbol =
-        InternalSymbol.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name("<unknown-type-tag>")
-        )
-    end sentinelUnknownTag
-
     /** Decode a single type node from `view`.
       *
       * @param view
@@ -136,6 +133,10 @@ object TypeUnpickler:
                 val t = readTypeNode(view, ctx)
                 Right(t)
             catch
+                case ex: TastyErrorException =>
+                    // Phase 2.04-strict: preserve the specific TastyError (e.g. UnknownTagInPosition)
+                    // rather than wrapping it in the generic MalformedSection fallback.
+                    Left(ex.error)
                 case ex: ArrayIndexOutOfBoundsException =>
                     Left(TastyError.MalformedSection("ASTs", s"unexpected end reading type: ${ex.getMessage}", view.position))
                 case ex: Exception =>
@@ -1069,31 +1070,19 @@ object TypeUnpickler:
                     case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
                     case null             => Tasty.Type.Named(sentinelUnresolved.id)
 
-            // ── Unknown tag fallbacks (forward-compat safety net) ─────────────────
+            // ── Unknown tag: fail loudly (HARD RULE 13 / Phase 2.04-strict) ─────────
 
             case other if other >= TastyFormat.firstLengthTreeTag =>
-                // F-A2-001 keystone fix: the 8 tracked term-tag-in-type-position classes now have
-                // explicit handlers above. Any cat-5 tag that still lands here is a genuinely new
-                // TASTy wire-format tag (e.g. a future Scala 3 release). Warn and continue.
-                given Frame = ctx.frame
-                Sync.Unsafe.evalOrThrow(Log.warn(
-                    s"TypeUnpickler: unhandled cat-5 TASTy tag $other at offset ${view.positionInt} ; " +
-                        s"check AstUnpickler.isTreeTptTag / isTermTagInTypePosition dispatch."
-                ))
-                val end = view.readEnd()
-                view.goto(end)
-                Tasty.Type.Named(sentinelUnknownTag.id)
+                // Phase 2.04-strict: any cat-5 tag not handled above is a genuinely unrecognised
+                // TASTy format extension. Throw TastyErrorException(UnknownTagInPosition) so the
+                // error propagates to cp.errors rather than silently producing a sentinel Named(-1)
+                // symbol. The previous warn+sentinel pattern is eliminated here.
+                throw new TastyErrorException(TastyError.UnknownTagInPosition(other, "type"))
 
             case other =>
-                // F-A2-001 keystone fix: same rationale as the cat-5 branch above.
-                // INV-003 asserts ZERO of these warnings on the stdlib + kyo load.
-                given Frame = ctx.frame
-                Sync.Unsafe.evalOrThrow(Log.warn(
-                    s"TypeUnpickler: unhandled cat-1..4 TASTy tag $other at offset ${view.positionInt} ; " +
-                        s"check AstUnpickler.isTermTagInTypePosition dispatch."
-                ))
-                skipTreeBody(other, view)
-                Tasty.Type.Named(sentinelUnknownTag.id)
+                // Phase 2.04-strict: same rationale as the cat-5 branch above.
+                // Any cat-1..4 tag not handled above is genuinely unrecognised.
+                throw new TastyErrorException(TastyError.UnknownTagInPosition(other, "type"))
 
         end match
     end decodeTag

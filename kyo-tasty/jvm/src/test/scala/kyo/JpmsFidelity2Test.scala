@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths2
 
 /** Phase 2.03 fidelity tests for JPMS jrt:/ classfile decoding.
@@ -10,7 +11,7 @@ import kyo.internal.TestClasspaths2
   * JDK version requirement: JDK 11+ for jrt:/ filesystem; JDK 14+ for java.lang.Runtime.Version records; JDK 17+ for sealed classes
   * (java.lang.constant.Constable PermittedSubclasses). The running JVM must be JDK 17 or later for all leaves to pass.
   */
-class JpmsFidelity2Test extends Test:
+class JpmsFidelity2Test extends Fidelity2TestBase:
 
     // JDK classfile decoding loads java.base (~7,000 entries) from jrt:/ via TestClasspaths2.standardWithPlatformModules.
     // The load is started in a background thread at object init time; tests block until it completes.

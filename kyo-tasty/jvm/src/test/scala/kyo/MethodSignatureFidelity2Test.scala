@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths
 
 /** Fidelity tests for Method.declaredType correctness after the F-A2-002 Named(-1) sentinel fix.
@@ -8,7 +9,7 @@ import kyo.internal.TestClasspaths
   * 78,501 warning-induced Named(-1)s from parentTypes, and the TYPEREFdirect tracked-ID fix eliminates the remaining Named(-1)s in
   * declaredType (including scala.Tuple.splitAt and scala.Tuple.++).
   */
-class MethodSignatureFidelity2Test extends Test:
+class MethodSignatureFidelity2Test extends Fidelity2TestBase:
 
     import AllowUnsafe.embrace.danger
 

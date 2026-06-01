@@ -111,7 +111,10 @@ object SnapshotReader:
                         )
                     )
                 else
-                    deserialize(path, bytes)
+                    try deserialize(path, bytes)
+                    catch
+                        case ex: SectionValidator.SectionValidationException =>
+                            Abort.fail(ex.error)
                 end if
 
     /** Deserialize section payloads into a new Tasty.Classpath. */
@@ -137,22 +140,34 @@ object SnapshotReader:
 
         // Read NAMES section
         val namePool = sectionMap.get(SnapshotFormat.sectionNAMES) match
-            case Some((offset, length)) => readNamePool(bytes, offset, length)
-            case None                   => Array.empty[String]
+            case Some((offset, length)) =>
+                val sectionBytes = java.util.Arrays.copyOfRange(bytes, offset, offset + length)
+                SectionValidator.validate(SnapshotFormat.sectionNAMES, sectionBytes, SectionValidator.SectionLayout.VariableLength)
+                readNamePool(bytes, offset, length)
+            case None => Array.empty[String]
 
         // Read BODY_BYTES section: shared backing store for all TASTy body slices
         val bodyBytesArray: Array[Byte] = sectionMap.get(SnapshotFormat.sectionBODYBYTES) match
             case Some((offset, length)) if length > 0 =>
                 val arr = new Array[Byte](length)
                 java.lang.System.arraycopy(bytes, offset, arr, 0, length)
+                // BODYBYTE is a raw byte blob; VariableLength has no alignment constraint.
+                SectionValidator.validate(SnapshotFormat.sectionBODYBYTES, arr, SectionValidator.SectionLayout.VariableLength)
                 arr
             case _ =>
                 Array.empty[Byte]
 
-        // Read SYMBOLS section
+        // Read SYMBOLS section: each record is exactly 40 bytes.
         val (allSymbols, fqnIndex, packageIndex, topLevelCls, packages) =
             sectionMap.get(SnapshotFormat.sectionSYMBOLS) match
-                case Some((offset, length)) => readSymbols(bytes, offset, length, namePool, bodyBytesArray)
+                case Some((offset, length)) =>
+                    val sectionBytes = java.util.Arrays.copyOfRange(bytes, offset, offset + length)
+                    SectionValidator.validate(
+                        SnapshotFormat.sectionSYMBOLS,
+                        sectionBytes,
+                        SectionValidator.SectionLayout.FixedRecordWithHeader(40)
+                    )
+                    readSymbols(bytes, offset, length, namePool, bodyBytesArray)
                 case None =>
                     (
                         Chunk.empty[Tasty.Symbol],
@@ -164,8 +179,11 @@ object SnapshotReader:
 
         // Read ERRORS section
         val errors = sectionMap.get(SnapshotFormat.sectionERRORS) match
-            case Some((offset, length)) => readErrors(bytes, offset, length)
-            case None                   => Chunk.empty[TastyError]
+            case Some((offset, length)) =>
+                val sectionBytes = java.util.Arrays.copyOfRange(bytes, offset, offset + length)
+                SectionValidator.validate(SnapshotFormat.sectionERRORS, sectionBytes, SectionValidator.SectionLayout.VariableLength)
+                readErrors(bytes, offset, length)
+            case None => Chunk.empty[TastyError]
 
         // Collect relational data from sections, then rebuild Symbols with full field set.
         val partialSymbols = allSymbols
@@ -177,6 +195,8 @@ object SnapshotReader:
         java.util.Arrays.fill(parentsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionPARENTS) match
             case Some((off, len)) if len > 0 =>
+                val sb = java.util.Arrays.copyOfRange(bytes, off, off + len)
+                SectionValidator.validate(SnapshotFormat.sectionPARENTS, sb, SectionValidator.SectionLayout.Int32Array)
                 deserializeRefListsByIdx(
                     bytes,
                     off,
@@ -193,6 +213,8 @@ object SnapshotReader:
         java.util.Arrays.fill(typeParamsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionTPARAMS) match
             case Some((off, len)) if len > 0 =>
+                val sb = java.util.Arrays.copyOfRange(bytes, off, off + len)
+                SectionValidator.validate(SnapshotFormat.sectionTPARAMS, sb, SectionValidator.SectionLayout.Int32Array)
                 deserializeRefListsByIdx(
                     bytes,
                     off,
@@ -209,6 +231,8 @@ object SnapshotReader:
         java.util.Arrays.fill(declarationsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionMEMBERS) match
             case Some((off, len)) if len > 0 =>
+                val sb = java.util.Arrays.copyOfRange(bytes, off, off + len)
+                SectionValidator.validate(SnapshotFormat.sectionMEMBERS, sb, SectionValidator.SectionLayout.Int32Array)
                 deserializeRefListsByIdx(
                     bytes,
                     off,
@@ -225,6 +249,8 @@ object SnapshotReader:
         java.util.Arrays.fill(permittedByIdx.asInstanceOf[Array[Object]], kyo.Maybe.Absent)
         sectionMap.get(SnapshotFormat.sectionPERMITS2) match
             case Some((off, len)) if len > 0 =>
+                val sb = java.util.Arrays.copyOfRange(bytes, off, off + len)
+                SectionValidator.validate(SnapshotFormat.sectionPERMITS2, sb, SectionValidator.SectionLayout.Int32Array)
                 deserializeRefListsByIdx(
                     bytes,
                     off,
@@ -560,6 +586,11 @@ object SnapshotReader:
             sectionMap.get(SnapshotFormat.sectionSYMBOLS) match
                 case Some((off, len)) =>
                     val symBytes = copyViewRange(view, off, off + len)
+                    SectionValidator.validate(
+                        SnapshotFormat.sectionSYMBOLS,
+                        symBytes,
+                        SectionValidator.SectionLayout.FixedRecordWithHeader(40)
+                    )
                     readSymbolsMapped(symBytes, 0, len, namePool, bodyView)
                 case None =>
                     (
@@ -591,6 +622,7 @@ object SnapshotReader:
         sectionMap.get(SnapshotFormat.sectionPARENTS) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
+                SectionValidator.validate(SnapshotFormat.sectionPARENTS, secBytes, SectionValidator.SectionLayout.Int32Array)
                 deserializeRefListsByIdx(
                     secBytes,
                     0,
@@ -605,6 +637,7 @@ object SnapshotReader:
         sectionMap.get(SnapshotFormat.sectionTPARAMS) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
+                SectionValidator.validate(SnapshotFormat.sectionTPARAMS, secBytes, SectionValidator.SectionLayout.Int32Array)
                 deserializeRefListsByIdx(
                     secBytes,
                     0,
@@ -619,6 +652,7 @@ object SnapshotReader:
         sectionMap.get(SnapshotFormat.sectionMEMBERS) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
+                SectionValidator.validate(SnapshotFormat.sectionMEMBERS, secBytes, SectionValidator.SectionLayout.Int32Array)
                 deserializeRefListsByIdx(
                     secBytes,
                     0,
@@ -636,6 +670,7 @@ object SnapshotReader:
         sectionMap.get(SnapshotFormat.sectionPERMITS2) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
+                SectionValidator.validate(SnapshotFormat.sectionPERMITS2, secBytes, SectionValidator.SectionLayout.Int32Array)
                 deserializeRefListsByIdx(
                     secBytes,
                     0,

@@ -540,7 +540,7 @@ object AstUnpickler:
                 // APPLY=136, CASEDEF=155, SINGLETONtpt=101, BYNAMEtpt=94) can appear in TYPE
                 // position inside ANNOTATEDtype payloads, TEMPLATE parent expressions, and
                 // INLINED-as-type contexts. Route to decodeTermTagInTypePosition instead of
-                // TypeUnpickler.decodeTag which would emit Named(sentinelUnknownTag.id) and log a warning.
+                // TypeUnpickler.decodeTag which would throw TastyError.UnknownTagInPosition (Phase 2.04-strict).
                 try Present(TreeUnpickler.decodeTermTagInTypePosition(view, typeSession, nextTag, sectionOffset))
                 catch
                     case _: Exception =>

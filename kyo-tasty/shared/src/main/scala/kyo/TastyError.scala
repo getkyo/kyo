@@ -73,4 +73,16 @@ enum TastyError derives CanEqual:
       * JVM-only. Calling it on Scala.js or Scala Native raises this error. The `feature` string identifies the unsupported operation.
       */
     case UnsupportedPlatform(feature: String)
+
+    /** An unknown tag byte was read at a position where only a known set of tags is valid.
+      *
+      * Thrown by the exhaustive tag-dispatch helpers (`TagKind.TypePositionTag.from`, etc.) when a raw byte does not match any known
+      * tag in that position. This replaces the previous silent `case other => warn(...); Named(-1)` fallback pattern in
+      * TypeUnpickler and TreeUnpickler, making unknown-tag encounters fail loudly at decode time rather than producing sentinel
+      * symbols that propagate silently downstream.
+      *
+      * `tag` is the raw byte value (0-255). `position` is a human-readable label for the decode position (e.g. "type", "tree",
+      * "modifier").
+      */
+    case UnknownTagInPosition(tag: Int, position: String)
 end TastyError

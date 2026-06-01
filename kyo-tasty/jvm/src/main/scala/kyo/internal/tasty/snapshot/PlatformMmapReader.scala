@@ -17,6 +17,8 @@ object PlatformMmapReader:
                 catch
                     case ex: SnapshotReader.VersionMismatchException =>
                         Abort.fail(TastyError.SnapshotVersionMismatch(ex.found, ex.supported))
+                    case ex: SectionValidator.SectionValidationException =>
+                        Abort.fail(ex.error)
                     case ex: java.io.IOException =>
                         // no cursor: IOException does not carry a byte offset
                         Abort.fail(TastyError.SnapshotFormatError(path, ex.getMessage, 0L))

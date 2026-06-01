@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.Fidelity2TestBase
 import kyo.internal.SnapshotEquivalence
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
@@ -12,7 +13,7 @@ import kyo.internal.TestClasspaths2
   *
   * All real-classpath leaves depend on TestClasspaths2.standardWithSnapshot (cold + warm pair).
   */
-class SnapshotFidelity2Test extends Test:
+class SnapshotFidelity2Test extends Fidelity2TestBase:
 
     // F-A4-005 loads the standard classpath twice (two independent cold inits) to check logical equivalence.
     // Two sequential loads at 20-30s each exceed the 60s default timeout on a loaded machine.
@@ -168,6 +169,16 @@ class SnapshotFidelity2Test extends Test:
                 )
                 succeed
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Fidelity2TestBase.coldWarmEquiv assertions (Phase 2.04-strict Proposal 4)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Phase 2.04-strict: use coldWarmEquiv helper to assert fqnIndex parity as a
+    // canonical cold/warm equivalence leaf. This leaf runs the body twice (cold + warm)
+    // and asserts equality via Fidelity2TestBase.coldWarmEquiv, which is the standard
+    // cold/warm assertion pattern introduced by Proposal 4.
+    coldWarmEquiv("INV-013-cw: fqnIndex.size is equal on cold and warm")(_.fqnIndex.size)
 
     // ─────────────────────────────────────────────────────────────────────────
     // Previously-pending leaves from RealClasspathFidelity2Test: un-pend here
