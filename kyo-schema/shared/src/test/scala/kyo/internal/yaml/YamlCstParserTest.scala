@@ -212,6 +212,31 @@ class YamlCstParserTest extends Test:
             }
         }
 
+        "captures CRLF document leading comments before explicit document start" in {
+            val yaml = "# document comment\r\n---\r\nname: Alice\r\n"
+
+            val doc       = YamlCstParser.document(yaml).getOrThrow
+            val nameIndex = yaml.indexOf("name")
+
+            assertResult(
+                (
+                    leading = Chunk("# document comment"),
+                    rendered = yaml,
+                    rootMark = Yaml.Mark(nameIndex, 3, 1),
+                    keyStart = Yaml.Mark(nameIndex, 3, 1)
+                )
+            ) {
+                val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
+                val key                                  = root.entries(0).key.asInstanceOf[Yaml.Cst.Node.Scalar]
+                (
+                    leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
+                    rendered = doc.render(using Yaml.WriterConfig.Default),
+                    rootMark = root.meta.mark,
+                    keyStart = key.span.start
+                )
+            }
+        }
+
         "records scalar syntax for flow quoted and block scalar values" in {
             val yaml =
                 """plain: hello
