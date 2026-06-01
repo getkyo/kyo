@@ -977,22 +977,35 @@ object Tasty:
         end hashCode
 
         // 40 flag predicates on base trait (identical bodies, preserved per layered/no-restriction rule)
-        def isFinal: Boolean         = flags.contains(Flag.Final)
-        def isAbstract: Boolean      = flags.contains(Flag.Abstract)
-        def isSealed: Boolean        = flags.contains(Flag.Sealed)
-        def isCase: Boolean          = flags.contains(Flag.Case)
-        def isLazy: Boolean          = flags.contains(Flag.Lazy)
-        def isOverride: Boolean      = flags.contains(Flag.Override)
-        def isPrivate: Boolean       = flags.contains(Flag.Private)
-        def isProtected: Boolean     = flags.contains(Flag.Protected)
-        def isPublic: Boolean        = flags.contains(Flag.Public)
-        def isStatic: Boolean        = flags.contains(Flag.Static)
-        def isMutable: Boolean       = flags.contains(Flag.Mutable)
-        def isErased: Boolean        = flags.contains(Flag.Erased)
-        def isInfix: Boolean         = flags.contains(Flag.Infix)
-        def isOpen: Boolean          = flags.contains(Flag.Open)
-        def isTransparent: Boolean   = flags.contains(Flag.Transparent)
-        def isMacro: Boolean         = flags.contains(Flag.Macro)
+        def isFinal: Boolean       = flags.contains(Flag.Final)
+        def isAbstract: Boolean    = flags.contains(Flag.Abstract)
+        def isSealed: Boolean      = flags.contains(Flag.Sealed)
+        def isCase: Boolean        = flags.contains(Flag.Case)
+        def isLazy: Boolean        = flags.contains(Flag.Lazy)
+        def isOverride: Boolean    = flags.contains(Flag.Override)
+        def isPrivate: Boolean     = flags.contains(Flag.Private)
+        def isProtected: Boolean   = flags.contains(Flag.Protected)
+        def isPublic: Boolean      = flags.contains(Flag.Public)
+        def isStatic: Boolean      = flags.contains(Flag.Static)
+        def isMutable: Boolean     = flags.contains(Flag.Mutable)
+        def isErased: Boolean      = flags.contains(Flag.Erased)
+        def isInfix: Boolean       = flags.contains(Flag.Infix)
+        def isOpen: Boolean        = flags.contains(Flag.Open)
+        def isTransparent: Boolean = flags.contains(Flag.Transparent)
+
+        /** Symbol marked as a macro method.
+          *
+          * F-E-006 fix: dotty emits Flag.Macro on enum-case synthetic methods (ordinal, productElement, etc.). These are NOT
+          * user-defined macros. Excluding symbols that also carry Flag.Synthetic avoids false positives. Real macro methods
+          * (defined with the `macro` keyword or `inline`) are not synthetic. The `isInstanceOf[Symbol.Method]` gate
+          * prevents non-method symbols from matching even if they somehow carry Flag.Macro.
+          *
+          * Deviation from Phase 11 plan AFTER snippet: the plan used `Symbol.EnumCase` pattern match which does not exist
+          * until Phase 13. This implementation uses `!flags.contains(Flag.Synthetic)` as a conservative substitute;
+          * see phase-11/decisions.md.
+          */
+        def isMacro: Boolean =
+            flags.contains(Flag.Macro) && !flags.contains(Flag.Synthetic) && this.isInstanceOf[Symbol.Method]
         def isSynthetic: Boolean     = flags.contains(Flag.Synthetic)
         def isArtifact: Boolean      = flags.contains(Flag.Artifact)
         def isCovariant: Boolean     = flags.contains(Flag.CoVariant)
@@ -1016,9 +1029,15 @@ object Tasty:
         def isModule: Boolean        = flags.contains(Flag.Module)
         def isJava: Boolean          = flags.contains(Flag.JavaDefined)
         def isInline: Boolean        = flags.contains(Flag.Inline)
-        def isGiven: Boolean         = flags.contains(Flag.Given)
-        def isContextual: Boolean    = flags.contains(Flag.Given) // alias retained per layered/no-restriction
-        def isOpaque: Boolean        = flags.contains(Flag.Opaque)
+
+        /** Symbol marked as a `given` instance.
+          *
+          * F-E-004 fix: using-clause parameters also carry Flag.Given but are NOT `given` instances in the user-facing sense. Excluding
+          * `isParameter` prevents false positives for every `using foo: Foo` parameter.
+          */
+        def isGiven: Boolean      = flags.contains(Flag.Given) && !isParameter
+        def isContextual: Boolean = flags.contains(Flag.Given) // alias retained per layered/no-restriction
+        def isOpaque: Boolean     = flags.contains(Flag.Opaque)
 
         // 14 kind discriminators computed structurally
         def isPackage: Boolean        = this.isInstanceOf[Symbol.Package]
@@ -2088,9 +2107,14 @@ object Tasty:
 
         // ── typed Classpath-wide all* aggregations ──
 
-        /** All Class symbols in the classpath. Linear scan. */
-        def allClasses: Chunk[Symbol.Class] =
-            symbols.flatMap { case c: Symbol.Class => Chunk(c); case _ => Chunk.empty }
+        /** All ClassLike symbols (Class, Trait, Object, EnumCase) at any nesting depth.
+          *
+          * F-G-006 fix: the prior implementation returned `Chunk[Symbol.Class]`, excluding Trait and Object. Widening to `Symbol.ClassLike`
+          * restores the invariant `allClasses.size >= topLevelClasses.size`. The return type widening is additive per HARD RULE 4 (ClassLike
+          * is a supertype of Class; existing code that pattern-matches on `Symbol.Class` continues to work over the subset).
+          */
+        def allClasses: Chunk[Symbol.ClassLike] =
+            symbols.flatMap { case c: Symbol.ClassLike => Chunk(c); case _ => Chunk.empty }
 
         /** All Trait symbols in the classpath. Linear scan. */
         def allTraits: Chunk[Symbol.Trait] =

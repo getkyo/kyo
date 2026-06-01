@@ -85,10 +85,11 @@ class RealClasspathFidelityTest extends Test:
         // Phase 08 un-pended INV-009, bringing the count to 24.
         // Phase 09 un-pended 4 FQN-normalization leaves, bringing the count to 20.
         // Phase 10 un-pended 4 JPMS + findConcreteClass leaves, bringing the count to 16.
-        // The threshold is updated to 15 to give phases 11-15 room to un-pend more.
+        // Phase 11 un-pended 10 leaves (7 CollectionInvariants + 2 SymbolId + 1 RealClasspath), bringing the count to ~6.
+        // The threshold is updated to 4 to give phases 12-15 room to un-pend remaining leaves.
         assert(
-            pendingCount >= 15,
-            s"Expected at least 15 pending fidelity leaves, found $pendingCount. " +
+            pendingCount >= 4,
+            s"Expected at least 4 pending fidelity leaves (for phases 12-15), found $pendingCount. " +
                 "Each finding from the exploration should be pinned as a pending leaf."
         )
         succeed
@@ -208,7 +209,20 @@ class RealClasspathFidelityTest extends Test:
     //       before fix at Phase 01 commit size > 3 (up to 11 distinct fabricated names
     //       from makeUnresolvedSym: termref@N, typeref@N, rec@N, this-unknown, ann, etc.)
     // Pins: INV-012
-    "INV-012 (Phase 11): SymbolId(-1) sentinel name set size <= 3 on real classpath" in pending
+    "INV-012 (Phase 11): SymbolId(-1) sentinel name set size <= 3 on real classpath" in run {
+        val cp = TestClasspaths.withClasspath()
+        cp.map: classpath =>
+            import Tasty.Name.asString
+            val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
+            assert(
+                sentinelNames.size <= 3,
+                s"Expected <= 3 distinct SymbolId(-1) sentinel names after Phase 11 consolidation, " +
+                    s"but found ${sentinelNames.size}: ${sentinelNames.mkString(", ")}. " +
+                    "Phase 11 consolidates all fabricated placeholder names to 3 interned sentinels: " +
+                    "<unresolved>, <rec-placeholder>, <unknown-type-tag>."
+            )
+            succeed
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Private helpers

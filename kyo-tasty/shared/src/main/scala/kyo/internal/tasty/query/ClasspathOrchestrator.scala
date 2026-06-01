@@ -3,6 +3,7 @@ package kyo.internal.tasty.query
 import kyo.*
 import kyo.Maybe.Absent
 import kyo.internal.tasty.binary.ByteView
+import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.classfile.ModuleInfoReader
 import kyo.internal.tasty.reader.AstUnpickler
 import kyo.internal.tasty.reader.AttributeUnpickler
@@ -85,7 +86,13 @@ object ClasspathOrchestrator:
         /** F-G-001 fix: per-symbol annotation lists decoded from ANNOTATION modifier blocks. Populated in Phase B by AstUnpickler;
           * consumed by finalizeMerge to write descs(idx).annotations.
           */
-        annotationsBySymbol: mutable.HashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]]
+        annotationsBySymbol: mutable.HashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]],
+        /** F-G-002 fix: javaMetadata from the companion .class file, keyed by the partial (pre-finalize) TASTy symbol.
+          *
+          * Populated during readAndDecodeTastyFile when a same-named .class file exists alongside the .tasty file.
+          * Consumed by finalizeMerge to write descs(idx).javaMetadata for TASTy-loaded class symbols.
+          */
+        companionJavaMeta: mutable.HashMap[Tasty.Symbol, Tasty.JavaMetadata]
     )
 
     /** Tagged union for results flowing through the result channel.
@@ -689,6 +696,18 @@ object ClasspathOrchestrator:
                         frIdxAnn += 1
                     end for
 
+                    // F-G-002 fix: populate javaMetadata from companion .class files decoded during readAndDecodeTastyFile.
+                    // The companion decode runs before finalizeMerge and stores JavaMetadata keyed by partial (Phase B) symbols.
+                    // Here we look up each partial symbol in symbolIdMap and write into descs(idx).javaMetadata.
+                    // HARD RULE 7: this write happens before materializeSymbols converts descriptors to immutable Symbols.
+                    for fr <- fileResults do
+                        for (sym, meta) <- fr.companionJavaMeta do
+                            val idx = symbolIdMap.getOrDefault(sym, -1)
+                            if idx >= 0 && idx < count && descs(idx).javaMetadata.isEmpty then
+                                descs(idx).javaMetadata = Maybe(meta)
+                        end for
+                    end for
+
                     // F-I-003 / INV-007 fix: populate permittedSubclassIds by mining @Child annotations.
                     //
                     // Scala 3 TASTy encodes sealed children as @scala.annotation.internal.Child[T]
@@ -836,10 +855,6 @@ object ClasspathOrchestrator:
                         val idx = symbolIdMap.getOrDefault(partial, -1)
                         if idx >= 0 then (pkg, finalSymbols(idx)) else (pkg, partial)
                     }
-                    val newTopLevelCls = topLevelCls.map { partial =>
-                        val idx = symbolIdMap.getOrDefault(partial, -1)
-                        if idx >= 0 then finalSymbols(idx) else partial
-                    }
                     val newPackages = packages.map { partial =>
                         val idx = symbolIdMap.getOrDefault(partial, -1)
                         if idx >= 0 then finalSymbols(idx) else partial
@@ -849,9 +864,23 @@ object ClasspathOrchestrator:
                     val symsChunk   = Chunk.from(finalSymbols)
                     val fqnIdIdx    = newFqnIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap
                     val pkgIdIdx    = newPackageIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap
-                    val topIds      = Chunk.from(newTopLevelCls.map(_.id))
-                    val pkgIds      = Chunk.from(newPackages.map(_.id))
-                    val rootId      = if finalSymbols.nonEmpty then SymbolId(0) else SymbolId(-1)
+                    // F-G-006 fix: filter topLevelClassIds to only ClassLike symbols whose owner is a Package.
+                    // The prior approach appended ALL ClassLike symbols to topLevelCls regardless of nesting
+                    // depth, producing a count (3,514) larger than allClasses (1,508). The correct invariant
+                    // is topLevelClasses.size <= allClasses.size. We filter finalSymbols directly (post-
+                    // materialization) so the Package kind check uses the final symbol's kind, not a partial
+                    // symbol's kind.
+                    val topIds: Chunk[SymbolId] = symsChunk.flatMap:
+                        case c: Tasty.Symbol.ClassLike =>
+                            val ownerIdx = c.ownerId.value
+                            if ownerIdx >= 0 && ownerIdx < finalSymbols.length &&
+                                finalSymbols(ownerIdx).isInstanceOf[Tasty.Symbol.Package]
+                            then Chunk(c.id)
+                            else Chunk.empty
+                            end if
+                        case _ => Chunk.empty
+                    val pkgIds = Chunk.from(newPackages.map(_.id))
+                    val rootId = if finalSymbols.nonEmpty then SymbolId(0) else SymbolId(-1)
 
                     val subclassIdx  = buildSubclassIndex(symsChunk)
                     val companionIdx = buildCompanionIndex(symsChunk, fqnIdIdx)
@@ -955,7 +984,12 @@ object ClasspathOrchestrator:
         out
     end materializeSymbols
 
-    /** Read bytes and decode a single TASTy file. Returns FileResult. */
+    /** Read bytes and decode a single TASTy file. Returns FileResult.
+      *
+      * F-G-002 fix: after decoding the .tasty file, speculatively decode the companion .class (same base name, .class extension). If the
+      * .class exists and decodes cleanly, extract javaMetadata from the classSymbol and populate fr.companionJavaMeta for every top-level
+      * FQN in the file. The companion decode is always soft-fail; a missing or malformed .class never fails the TASTy decode.
+      */
     private def readAndDecodeTastyFile(
         file: String,
         interner: Interner,
@@ -968,8 +1002,35 @@ object ClasspathOrchestrator:
                     TastyPerfStats.entryReads.inc()
                     TastyPerfStats.bytesRead.add(bytes.length.toLong)
                 .andThen(decodeTastyBytes(file, bytes, interner))
-        ).map:
-            case Result.Success(fr) => fr
+        ).flatMap:
+            case Result.Success(fr) =>
+                // F-G-002: attempt companion .class decode in soft-fail mode
+                val companionPath = file.stripSuffix(".tasty") + ".class"
+                source.exists(companionPath).flatMap: exists =>
+                    if !exists then fr
+                    else
+                        Abort.run[TastyError](
+                            source.read(companionPath).flatMap: classBytes =>
+                                given AllowUnsafe = AllowUnsafe.embrace.danger
+                                ClassfileUnpickler.read(classBytes, interner, fr.arena)
+                        ).map:
+                            case Result.Success(cfResult) =>
+                                cfResult.classSymbol match
+                                    case c: Tasty.Symbol.ClassLike =>
+                                        c.javaMetadata match
+                                            case Maybe.Present(meta) =>
+                                                // Populate companionJavaMeta for all top-level symbols in this file
+                                                // that match the classfile's symbol name. The fqns list maps each
+                                                // TASTy partial symbol to its FQN; we populate all of them since
+                                                // a single .tasty file may declare exactly one top-level class.
+                                                for (_, sym) <- fr.fqns do
+                                                    fr.companionJavaMeta(sym) = meta
+                                                end for
+                                            case Maybe.Absent => ()
+                                    case _ => ()
+                                end match
+                                fr
+                            case _ => fr
             case Result.Failure(err: TastyError) =>
                 if mode == Tasty.ErrorMode.FailFast then
                     Abort.fail(err)
@@ -1002,7 +1063,8 @@ object ClasspathOrchestrator:
             Array.empty[Tasty.Name],
             scala.collection.immutable.IntMap.empty[Tasty.Symbol],
             mutable.HashMap.empty[Int, String],
-            mutable.HashMap.empty[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]]
+            mutable.HashMap.empty[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]],
+            mutable.HashMap.empty[Tasty.Symbol, Tasty.JavaMetadata]
         )
 
     /** Wrap a synchronous Kyo computation, adding elapsed nanoseconds to `counter` after it completes.
@@ -1083,7 +1145,10 @@ object ClasspathOrchestrator:
                 pass1Result.names,
                 pass1Result.addrMap,
                 pass1Result.unresolvedIdToFqn,
-                pass1Result.annotationsBySymbol
+                pass1Result.annotationsBySymbol,
+                // companionJavaMeta is populated by readAndDecodeTastyFile AFTER decodeTastyBytes returns,
+                // so this field starts empty here and is filled in the caller.
+                mutable.HashMap.empty[Tasty.Symbol, Tasty.JavaMetadata]
             )
         end for
     end decodeTastyBytes

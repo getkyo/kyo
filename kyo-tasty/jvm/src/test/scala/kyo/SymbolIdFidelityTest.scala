@@ -45,7 +45,19 @@ class SymbolIdFidelityTest extends Test:
     // Then: post-fix size <= 3 (one per failure category: unresolved, rec-placeholder, unknown-tag);
     //       before fix size > 3 (up to 11 distinct fabricated names)
     // Pins: INV-012 completion (F-G-007)
-    "INV-012 (Phase 11): SymbolId(-1) sentinel name-set size <= 3 on real classpath" in pending
+    "INV-012 (Phase 11): SymbolId(-1) sentinel name-set size <= 3 on real classpath" in run {
+        val cp = TestClasspaths.withClasspath()
+        cp.map: classpath =>
+            import Tasty.Name.asString
+            val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
+            assert(
+                sentinelNames.size <= 3,
+                s"Expected <= 3 distinct sentinel names after Phase 11 consolidation, " +
+                    s"but found ${sentinelNames.size}: ${sentinelNames.mkString(", ")}. " +
+                    "Expected at most: <unresolved>, <rec-placeholder>, <unknown-type-tag>."
+            )
+            succeed
+    }
 
     // F-G-007 leaf 3 (Phase 11): no-rec-placeholder-names-final
     // Given: the real classpath loaded via TestClasspaths.withClasspath at the Phase 11 commit
@@ -53,6 +65,26 @@ class SymbolIdFidelityTest extends Test:
     // Then: post-fix zero names start with "rec@", "rec-placeholder@", "typeref@", or "termref@";
     //       before fix all four prefixes appeared in cp.symbols as side effects of type decoding
     // Pins: F-G-007 (all fabricated-name categories eliminated)
-    "F-G-007 (Phase 11): no fabricated type-decode placeholder names remain in cp.symbols" in pending
+    "F-G-007 (Phase 11): no fabricated type-decode placeholder names remain in cp.symbols" in run {
+        val cp = TestClasspaths.withClasspath()
+        cp.map: classpath =>
+            import Tasty.Name.asString
+            val allNames = classpath.symbols.map(_.name.asString)
+            val fabricated = allNames.filter: n =>
+                n.startsWith("rec@") ||
+                    n.startsWith("rec-placeholder@") ||
+                    n.startsWith("typeref@") ||
+                    n.startsWith("termref@") ||
+                    n.startsWith("sharedref@") ||
+                    n.startsWith("param@") ||
+                    n.startsWith("unknown-type-tag-")
+            assert(
+                fabricated.isEmpty,
+                s"Found ${fabricated.size} fabricated placeholder name(s) in cp.symbols: " +
+                    s"${fabricated.take(10).mkString(", ")}. " +
+                    "F-G-007 pass B: all fabricated names must be eliminated by sentinel consolidation."
+            )
+            succeed
+    }
 
 end SymbolIdFidelityTest

@@ -112,7 +112,12 @@ class SymbolPredicateTest extends Test:
         assert(sym.isInfix, "isInfix")
         assert(sym.isOpen, "isOpen")
         assert(sym.isTransparent, "isTransparent")
-        assert(sym.isMacro, "isMacro")
+        // isMacro requires Symbol.Method && !Flag.Synthetic (F-E-006 fix); test with a Method that has Flag.Macro but not Synthetic.
+        val macroMethodSym = makeSymbol(kind = Tasty.SymbolKind.Method, flags = flagsOf(Tasty.Flag.Macro))
+        assert(macroMethodSym.isMacro, "isMacro: Method + Flag.Macro without Synthetic must return true")
+        assert(!sym.isMacro, "isMacro: non-Method symbol with Flag.Macro must return false (kind check)")
+        val syntheticMacroSym = makeSymbol(kind = Tasty.SymbolKind.Method, flags = flagsOf(Tasty.Flag.Macro, Tasty.Flag.Synthetic))
+        assert(!syntheticMacroSym.isMacro, "isMacro: Method + Flag.Macro + Flag.Synthetic must return false (F-E-006)")
         assert(sym.isSynthetic, "isSynthetic")
         assert(sym.isArtifact, "isArtifact")
         assert(sym.isCovariant, "isCovariant")

@@ -63,6 +63,36 @@ object TypeUnpickler:
         )
     end sentinelUnresolved
 
+    /** Interned sentinel for RECtype cycle-breaker placeholders (F-G-007 pass B).
+      *
+      * A single shared instance replaces the per-address `rec-placeholder@N` symbols that Phase 04 introduced.
+      * The RECtype handler installs this as the placeholder Rec during cycle decoding; after the Rec resolves,
+      * RECthis nodes find the real result in addrCache and the placeholder is never exposed to cp.symbols.
+      * Using a single interned instance rather than per-address instances is safe because the RECtype handler
+      * discards the placeholder from inProgressRec once decoding completes.
+      */
+    private[kyo] val sentinelRecPlaceholder: Tasty.Symbol =
+        InternalSymbol.makeSymbol(
+            Tasty.SymbolKind.Unresolved,
+            Tasty.Flags.empty,
+            Tasty.Name("<rec-placeholder>")
+        )
+    end sentinelRecPlaceholder
+
+    /** Interned sentinel for genuinely unknown TASTy type tags (F-G-007 pass B).
+      *
+      * Replaces per-tag `unknown-type-tag-N` symbols. After Phase 03 routed all known TPT tags to TreeUnpickler,
+      * this sentinel should appear zero times on the real classpath. It is retained as a safety net for future
+      * TASTy format changes that introduce new tags before this decoder adds explicit handlers.
+      */
+    private[kyo] val sentinelUnknownTag: Tasty.Symbol =
+        InternalSymbol.makeSymbol(
+            Tasty.SymbolKind.Unresolved,
+            Tasty.Flags.empty,
+            Tasty.Name("<unknown-type-tag>")
+        )
+    end sentinelUnknownTag
+
     /** Decode a single type node from `view`.
       *
       * @param view
@@ -392,7 +422,8 @@ object TypeUnpickler:
                             // the referenced type was in a position not decoded during Pass 1.
                             // Return an unresolved placeholder rather than throwing, so that callers
                             // (e.g. decodeTemplateParents) can continue scanning.
-                            Tasty.Type.Named(makeUnresolvedSym(s"sharedref@$astRef").id)
+                            // F-G-007 pass B: use interned sentinelUnresolved instead of per-address fabricated name
+                            Tasty.Type.Named(sentinelUnresolved.id)
                         end if
                     }
                 )
@@ -403,7 +434,8 @@ object TypeUnpickler:
                 // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
                 val absRef = ctx.sectionOffset + astRef
                 if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
-                else Tasty.Type.Named(makeUnresolvedSym(s"termref@$astRef").id)
+                // F-G-007 pass B: cross-file or unresolved TERMREFdirect -- use interned sentinel
+                else Tasty.Type.Named(sentinelUnresolved.id)
 
             case TastyFormat.TYPEREFdirect =>
                 val astRef = view.readNat()
@@ -411,7 +443,8 @@ object TypeUnpickler:
                 // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
                 val absRef = ctx.sectionOffset + astRef
                 if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
-                else Tasty.Type.Named(makeUnresolvedSym(s"typeref@$astRef").id)
+                // F-G-007 pass B: cross-file or unresolved TYPEREFdirect -- use interned sentinel
+                else Tasty.Type.Named(sentinelUnresolved.id)
 
             case TastyFormat.TERMREFpkg =>
                 val nameRef = view.readNat()
@@ -420,7 +453,8 @@ object TypeUnpickler:
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case _ =>
-                        Tasty.Type.Named(makeUnresolvedSym(fqn).id)
+                        // F-G-007 pass B: no session context -- use interned sentinel instead of per-fqn name
+                        Tasty.Type.Named(sentinelUnresolved.id)
                 end match
 
             case TastyFormat.TYPEREFpkg =>
@@ -430,7 +464,8 @@ object TypeUnpickler:
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case _ =>
-                        Tasty.Type.Named(makeUnresolvedSym(fqn).id)
+                        // F-G-007 pass B: no session context -- use interned sentinel instead of per-fqn name
+                        Tasty.Type.Named(sentinelUnresolved.id)
                 end match
 
             case TastyFormat.RECthis =>
@@ -513,8 +548,10 @@ object TypeUnpickler:
                 // Cycle-break: allocate a typed placeholder Rec before decoding parent.
                 // inProgressRec is keyed by the RECtype node's start addr so RECthis nodes
                 // encountered during parent decoding can find the placeholder.
-                val sentinelSym                 = makeUnresolvedSym(s"rec-placeholder@$startAddr")
-                val placeholder: Tasty.Type.Rec = Tasty.Type.Rec(Tasty.Type.Named(sentinelSym.id))
+                // F-G-007 pass B: use the single interned sentinelRecPlaceholder instead of per-address fabricated name.
+                // This is safe because the placeholder is installed in inProgressRec keyed by startAddr and is
+                // removed via inProgressRec.remove BEFORE the result is returned. No per-address identity needed.
+                val placeholder: Tasty.Type.Rec = Tasty.Type.Rec(Tasty.Type.Named(sentinelRecPlaceholder.id))
                 ctx.inProgressRec(startAddr) = placeholder
                 val parent = readTypeNode(view, ctx)
                 discard(ctx.inProgressRec.remove(startAddr))
@@ -592,7 +629,8 @@ object TypeUnpickler:
                 val termStart = view.positionInt
                 val endInt    = Math.toIntExact(end)
                 skipToEnd(view, end)
-                val annotationType = Tasty.Type.Named(makeUnresolvedSym("ann").id)
+                // F-G-007 pass B: use interned sentinelUnresolved for the annotation-tycon placeholder position
+                val annotationType = Tasty.Type.Named(sentinelUnresolved.id)
                 val annotation =
                     if ctx.sectionBytes == null then
                         Tasty.Annotation(annotationType, Maybe.Absent)
@@ -715,7 +753,9 @@ object TypeUnpickler:
                 val absBinderAddr = ctx.sectionOffset + binderAddr
                 ctx.binderAddrMap.get(absBinderAddr) match
                     case Some(params) if paramNum < params.length => Tasty.Type.ParamRef(params(paramNum).id, paramNum)
-                    case _                                        => Tasty.Type.Named(makeUnresolvedSym(s"param@$binderAddr:$paramNum").id)
+                    // F-G-007 pass B: binder addr miss -- use interned sentinel
+                    case _ => Tasty.Type.Named(sentinelUnresolved.id)
+                end match
 
             case TastyFormat.TYPEREFin =>
                 val end        = view.readEnd()
@@ -738,7 +778,8 @@ object TypeUnpickler:
                         val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + simpleName else simpleName
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case _ =>
-                        Tasty.Type.Named(makeUnresolvedSym(simpleName).id)
+                        // F-G-007 pass B: no session context -- use interned sentinel
+                        Tasty.Type.Named(sentinelUnresolved.id)
                 end match
 
             case TastyFormat.TERMREFin =>
@@ -838,7 +879,8 @@ object TypeUnpickler:
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case _ =>
-                        Tasty.Type.Named(makeUnresolvedSym(fullFqn).id)
+                        // F-G-007 pass B: no session context -- use interned sentinel
+                        Tasty.Type.Named(sentinelUnresolved.id)
                 end match
 
             case TastyFormat.REFINEDtpt =>
@@ -899,7 +941,8 @@ object TypeUnpickler:
                 ))
                 val end = view.readEnd()
                 view.goto(end)
-                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other").id)
+                // F-G-007 pass B: use single interned sentinelUnknownTag instead of per-tag fabricated name
+                Tasty.Type.Named(sentinelUnknownTag.id)
 
             case other =>
                 // Unknown category 1-4 node: log a warning, skip body and return placeholder.
@@ -910,7 +953,8 @@ object TypeUnpickler:
                     s"TypeUnpickler: unknown TASTy type tag $other at offset ${view.positionInt}"
                 ))
                 skipTreeBody(other, view)
-                Tasty.Type.Named(makeUnresolvedSym(s"unknown-type-tag-$other").id)
+                // F-G-007 pass B: use single interned sentinelUnknownTag instead of per-tag fabricated name
+                Tasty.Type.Named(sentinelUnknownTag.id)
 
         end match
     end decodeTag

@@ -218,12 +218,13 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // ── Leaf 118: allClasses-typed ────────────────────────────────────────────
     // Given: fixture with 3 classes.
     // When: cp.allClasses
-    // Then: Chunk[Symbol.Class] size 3
+    // Then: Chunk[Symbol.ClassLike] including Class, Trait, Object -- size 6 (3+2+1)
+    // F-G-006 fix: allClasses now returns Chunk[Symbol.ClassLike] (widened from Chunk[Symbol.Class])
     // Pins: INV-005
-    "Leaf 118: allClasses returns Chunk[Class] of size 3" in run {
+    "Leaf 118: allClasses returns Chunk[ClassLike] of size 6 (3 Class + 2 Trait + 1 Object)" in run {
         buildFixture.map: cp =>
-            val cs: Chunk[Tasty.Symbol.Class] = cp.allClasses
-            assert(cs.size == 3, s"Expected 3 classes but got ${cs.size}: $cs")
+            val cs: Chunk[Tasty.Symbol.ClassLike] = cp.allClasses
+            assert(cs.size == 6, s"Expected 6 classlike symbols (3 class + 2 trait + 1 object) but got ${cs.size}: $cs")
             succeed
     }
 
