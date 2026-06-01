@@ -81,7 +81,11 @@ object ClasspathOrchestrator:
           */
         addrMap: scala.collection.immutable.IntMap[Tasty.Symbol],
         /** Cross-file unresolved FQN tracking: maps unique negative SymbolIds to FQNs for Phase C parent type resolution. */
-        unresolvedIdToFqn: mutable.HashMap[Int, String]
+        unresolvedIdToFqn: mutable.HashMap[Int, String],
+        /** F-G-001 fix: per-symbol annotation lists decoded from ANNOTATION modifier blocks. Populated in Phase B by AstUnpickler;
+          * consumed by finalizeMerge to write descs(idx).annotations.
+          */
+        annotationsBySymbol: mutable.HashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]]
     )
 
     /** Tagged union for results flowing through the result channel.
@@ -513,6 +517,8 @@ object ClasspathOrchestrator:
                                 Tasty.Type.MatchType(remapType(bound, fr), remapType(scrut, fr), cases.map(remapType(_, fr)))
                             case Tasty.Type.FlexibleType(underlying) =>
                                 Tasty.Type.FlexibleType(remapType(underlying, fr))
+                            case Tasty.Type.MatchCase(pat, rhs) =>
+                                Tasty.Type.MatchCase(remapType(pat, fr), remapType(rhs, fr))
                             case Tasty.Type.Rec(parent) =>
                                 Tasty.Type.Rec(remapType(parent, fr))
                             case Tasty.Type.RecThis(rec) =>
@@ -593,6 +599,23 @@ object ClasspathOrchestrator:
                             if idx >= 0 && idx < count && descs(idx).sourcePosition.isEmpty then
                                 descs(idx).sourcePosition = Maybe(pos)
                         end for
+                    end for
+
+                    // F-G-001 fix: populate annotations from ANNOTATION modifier blocks decoded in Phase B.
+                    // Each annotation's tycon may contain Named(negId) cross-file refs; remap through
+                    // the same FileRemap used for parent types so symbolsAnnotatedWith FQN matching works.
+                    var frIdxAnn = 0
+                    for fr <- fileResults do
+                        val frRemapAnn = fileRemaps(frIdxAnn)
+                        for (sym, annBuf) <- fr.annotationsBySymbol do
+                            val idx = symbolIdMap.get(sym)
+                            if idx >= 0 && idx < count then
+                                val remapped = annBuf.map: ann =>
+                                    Tasty.Annotation(remapType(ann.annotationType, frRemapAnn), ann.args)
+                                descs(idx).annotations = Chunk.from(remapped.toSeq)
+                            end if
+                        end for
+                        frIdxAnn += 1
                     end for
 
                     for fr <- fileResults do
@@ -784,7 +807,8 @@ object ClasspathOrchestrator:
             0,
             Array.empty[Tasty.Name],
             scala.collection.immutable.IntMap.empty[Tasty.Symbol],
-            mutable.HashMap.empty[Int, String]
+            mutable.HashMap.empty[Int, String],
+            mutable.HashMap.empty[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]]
         )
 
     /** Wrap a synchronous Kyo computation, adding elapsed nanoseconds to `counter` after it completes.
@@ -864,7 +888,8 @@ object ClasspathOrchestrator:
                 pass1Result.sectionOffset,
                 pass1Result.names,
                 pass1Result.addrMap,
-                pass1Result.unresolvedIdToFqn
+                pass1Result.unresolvedIdToFqn,
+                pass1Result.annotationsBySymbol
             )
         end for
     end decodeTastyBytes

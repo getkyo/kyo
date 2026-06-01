@@ -236,10 +236,22 @@ object TreeUnpickler:
                 val name    = nameFromRef(nameRef, ctx)
                 Tasty.Tree.TypeRefPkg(name)
 
-            // These category-2 tags have no structured representation; skip Nat and return Unknown.
-            case TastyFormat.RECthis | TastyFormat.IMPORTED | TastyFormat.RENAMED =>
-                discard(view.readNat())
-                Tasty.Tree.Unknown(tag, 0)
+            // Cat-2: tag + Nat.
+            case TastyFormat.RECthis =>
+                // RECthis: address of the enclosing Rec type frame.
+                val addr = view.readNat()
+                Tasty.Tree.RecThisAddr(addr)
+
+            case TastyFormat.IMPORTED =>
+                // IMPORTED: cat-2 (tag + NameRef) -- imported name in an import selector.
+                val nameRef = view.readNat()
+                val name    = nameFromRef(nameRef, ctx)
+                Tasty.Tree.Imported(Tasty.Tree.Ident(name, Tasty.Type.Named(makeUnresolvedSym(name.asString).id)))
+
+            case TastyFormat.RENAMED =>
+                // RENAMED: cat-2 (tag + NameRef) -- rename target in import selector.
+                val nameRef = view.readNat()
+                Tasty.Tree.Renamed(nameFromRef(nameRef, ctx))
 
             // ── Category 3: tag + sub-AST (90-109) ───────────────────────────────
 
@@ -292,14 +304,25 @@ object TreeUnpickler:
                 val inner = readTree(view, ctx)
                 Tasty.Tree.SingletonTpt(inner)
 
-            // Other category-3 type-position nodes; skip sub-tree.
-            case TastyFormat.BYNAMEtpt | TastyFormat.BOUNDED | TastyFormat.EXPLICITtpt =>
-                skipOneTree(view)
-                Tasty.Tree.Unknown(tag, 0)
+            case TastyFormat.BYNAMEtpt =>
+                // BYNAMEtpt: cat-3 (tag + body_Type). Type-position by-name annotation.
+                val inner = readType(view, ctx)
+                Tasty.Tree.ByNameTpt(inner)
+
+            case TastyFormat.BOUNDED =>
+                // BOUNDED: cat-3 (tag + bound_Tree). Bounded wildcard type.
+                val bound = readTree(view, ctx)
+                Tasty.Tree.Bounded(bound)
+
+            case TastyFormat.EXPLICITtpt =>
+                // EXPLICITtpt: cat-3 (tag + tpe_Type). Explicit type position.
+                val inner = readType(view, ctx)
+                Tasty.Tree.ExplicitTpt(inner)
 
             case TastyFormat.ELIDED =>
-                skipOneTree(view)
-                Tasty.Tree.Unknown(tag, 0)
+                // ELIDED: cat-3 (tag + tpe_Type). Elided (inferred) type position.
+                val inner = readType(view, ctx)
+                Tasty.Tree.Elided(inner)
 
             // ── Category 4: tag + Nat + sub-AST (110-127) ────────────────────────
 
@@ -363,17 +386,19 @@ object TreeUnpickler:
                 val qual = readTree(view, ctx)
                 Tasty.Tree.TypeRefSymbol(addr, qual)
 
-            // TYPEREF: type-position tag; skip and return Unknown.
             case TastyFormat.TYPEREF =>
-                discard(view.readNat())
-                skipOneTree(view)
-                Tasty.Tree.Unknown(tag, 0)
+                // TYPEREF: cat-4 (tag + NameRef + qual_Tree). Type-position type reference.
+                val nameRef = view.readNat()
+                val qual    = readTree(view, ctx)
+                val name    = nameFromRef(nameRef, ctx)
+                Tasty.Tree.TypeRefTree(qual, name)
 
             case TastyFormat.SELFDEF =>
-                // SELFDEF nameRef type; appears in TEMPLATE; skip in tree position.
-                discard(view.readNat())
-                skipOneTree(view)
-                Tasty.Tree.Unknown(tag, 0)
+                // SELFDEF: cat-4 (tag + NameRef + type_Tree). Self type definition in TEMPLATE.
+                val nameRef = view.readNat()
+                val tpe     = readTree(view, ctx)
+                val name    = nameFromRef(nameRef, ctx)
+                Tasty.Tree.SelfDef(name, tpe)
 
             // ── Category 5: tag + Length + payload (128-255) ─────────────────────
 
@@ -585,9 +610,15 @@ object TreeUnpickler:
                 Tasty.Tree.Inlined(call, bindings, body)
 
             case TastyFormat.SELECTouter =>
-                val end = view.readEnd()
+                // SELECTouter: cat-5 (tag + Length + levels_Nat + name_NameRef + qual_Tree + tpe_Type).
+                // Encodes an outer-class reference from an inner class.
+                val end    = view.readEnd()
+                val levels = view.readNat()
+                val nm     = nameFromRef(view.readNat(), ctx)
+                val qual   = readTree(view, ctx)
+                val tpe    = readType(view, ctx)
                 view.goto(end)
-                Tasty.Tree.Unknown(TastyFormat.SELECTouter, Math.toIntExact(end - startAddr))
+                Tasty.Tree.SelectOuter(qual, nm, levels, tpe)
 
             case TastyFormat.REPEATED =>
                 val end   = view.readEnd()
@@ -737,11 +768,95 @@ object TreeUnpickler:
                 val name = nameFromRef(nameRef, ctx)
                 Tasty.Tree.SelectIn(qual, name, owner)
 
-            // All remaining category-5 nodes: skip and return Unknown.
+            // Cat-5 handlers for type-form tags that appear in term position.
+
+            case TastyFormat.TERMREFin =>
+                // TERMREFin: cat-5 (tag + Length + NameRef + qual_Type + owner_Type).
+                // Term-position path-dependent reference. Deferred to Phase 13 Tree.TermRef;
+                // until then, decode as Select(Ident(name, qualType), name, qualType).
+                val end     = view.readEnd()
+                val nameRef = view.readNat()
+                val nm      = nameFromRef(nameRef, ctx)
+                val qual    = readType(view, ctx)
+                view.goto(end)
+                Tasty.Tree.Select(Tasty.Tree.Ident(nm, qual), nm, qual)
+
+            case TastyFormat.TYPEREFin =>
+                // TYPEREFin: cat-5 (tag + Length + NameRef + qual_Type + owner_Type).
+                // Type-position path-dependent reference; decode as SelectIn.
+                val end     = view.readEnd()
+                val nameRef = view.readNat()
+                val nm      = nameFromRef(nameRef, ctx)
+                val qual    = readTree(view, ctx)
+                val owner   = readTree(view, ctx)
+                view.goto(end)
+                Tasty.Tree.SelectIn(qual, nm, owner)
+
+            case TastyFormat.POLYtype =>
+                // POLYtype: cat-5 type-form lambda; decode type and discard.
+                val end = view.readEnd()
+                val tpe = readType(view, ctx)
+                view.goto(end)
+                Tasty.Tree.TypeDef(makeUnresolvedSym("poly"), tpe)
+
+            case TastyFormat.TYPELAMBDAtype =>
+                // TYPELAMBDAtype: cat-5 type-lambda form; decode type and discard.
+                val end = view.readEnd()
+                val tpe = readType(view, ctx)
+                view.goto(end)
+                Tasty.Tree.TypeDef(makeUnresolvedSym("typelambda"), tpe)
+
+            case TastyFormat.METHODtype =>
+                // METHODtype: cat-5 method-type form in term position.
+                val end = view.readEnd()
+                val tpe = readType(view, ctx)
+                view.goto(end)
+                Tasty.Tree.DefDef(makeUnresolvedSym("mtype"), Chunk.empty, tpe, Maybe.Absent)
+
+            case TastyFormat.PARAMtype =>
+                // PARAMtype: cat-5 (tag + Length + binder_addr + paramNum). Param reference type.
+                val end = view.readEnd()
+                view.goto(end)
+                Tasty.Tree.Ident(Tasty.Name("param"), Tasty.Type.Named(makeUnresolvedSym("param").id))
+
+            // Explicit Unknown arms for macro/quote tags (legitimate but rare).
+            case TastyFormat.QUOTE =>
+                val end = view.readEnd()
+                view.goto(end)
+                Tasty.Tree.Unknown(TastyFormat.QUOTE, Math.toIntExact(end - startAddr))
+
+            case TastyFormat.SPLICE =>
+                val end = view.readEnd()
+                view.goto(end)
+                Tasty.Tree.Unknown(TastyFormat.SPLICE, Math.toIntExact(end - startAddr))
+
+            case TastyFormat.APPLYsigpoly =>
+                val end = view.readEnd()
+                view.goto(end)
+                Tasty.Tree.Unknown(TastyFormat.APPLYsigpoly, Math.toIntExact(end - startAddr))
+
+            case TastyFormat.QUOTEPATTERN =>
+                val end = view.readEnd()
+                view.goto(end)
+                Tasty.Tree.Unknown(TastyFormat.QUOTEPATTERN, Math.toIntExact(end - startAddr))
+
+            case TastyFormat.SPLICEPATTERN =>
+                val end = view.readEnd()
+                view.goto(end)
+                Tasty.Tree.Unknown(TastyFormat.SPLICEPATTERN, Math.toIntExact(end - startAddr))
+
+            case TastyFormat.HOLE =>
+                val end = view.readEnd()
+                view.goto(end)
+                Tasty.Tree.Unknown(TastyFormat.HOLE, Math.toIntExact(end - startAddr))
+
+            // HARD RULE 2: no silent fallback for remaining cat-5 tags.
             case other if other >= TastyFormat.firstLengthTreeTag =>
                 val end = view.readEnd()
                 view.goto(end)
-                Tasty.Tree.Unknown(other, Math.toIntExact(end - startAddr))
+                throw new IllegalStateException(
+                    s"decodeTreeTag: unhandled cat-5 tag $other at addr $startAddr; add a handler or an explicit Unknown arm"
+                )
 
             // Category 1 modifier tags (tag in [1, firstASTtag)): decode as Modifier.
             case other if other < TastyFormat.firstASTtag =>
@@ -1238,6 +1353,23 @@ object TreeUnpickler:
                 discard(view.readNat())
                 TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
 
+            case TastyFormat.SELECTtpt =>
+                // SELECTtpt (113): cat-4 (tag + NameRef + qual_Tree). Type-position member selection.
+                // Encodes e.g. `scala.deprecated` as SELECT("deprecated", TERMREFpkg("scala")).
+                // Build a qualified FQN: decode qual to get its FQN, then combine with the selected name.
+                val nameRef = view.readNat()
+                val nm      = session.names(nameRef).asString
+                val qual    = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
+                val qualFqn: String = qual match
+                    case Tasty.Type.Named(sid) if sid.value < -1 =>
+                        session.unresolvedIdToFqn.getOrElse(sid.value, "")
+                    case _ =>
+                        ""
+                val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
+                val id      = session.nextUnresolvedId()
+                session.unresolvedIdToFqn(id) = fullFqn
+                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(id))
+
             case TastyFormat.APPLIEDtpt =>
                 // APPLIEDtpt (162): cat-5 (tag + Length + tycon_Tree + arg_Tree*).
                 // F-A-004 fix: use TypeOps.applied to normalize FunctionN/ContextFunctionN/TupleN/Array,
@@ -1340,13 +1472,12 @@ object TreeUnpickler:
 
             case TastyFormat.MATCHCASEtype =>
                 // MATCHCASEtype (192): cat-5 (tag + Length + pat_Tree + rhs_Tree).
-                // Phase 05 will add Type.MatchCase as a first-class ADT case and replace this shape.
-                // Until then, encode as Applied(Named(MatchCaseSentinel), Chunk(pat, rhs)).
+                // F-A-006: Type.MatchCase is a first-class ADT case added in Phase 05.
                 val payloadEnd = view.readEnd()
                 val pat        = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 val rhs        = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 view.goto(payloadEnd)
-                Tasty.Type.Applied(Tasty.Type.Named(TypeUnpickler.MatchCaseSentinel.id), Chunk(pat, rhs))
+                Tasty.Type.MatchCase(pat, rhs)
 
             case other =>
                 // decodeTptAsType must only be called for tags in isTreeTptTag; any other tag is a bug.

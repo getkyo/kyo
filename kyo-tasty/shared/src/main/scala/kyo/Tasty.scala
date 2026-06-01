@@ -443,6 +443,15 @@ object Tasty:
         case MatchType(bound: Type, scrutinee: Type, cases: Chunk[Type])
         case FlexibleType(underlying: Type)
 
+        /** Match-type case: `pat => rhs`. Wire-level TASTy tag MATCHCASEtype (192).
+          *
+          * First-class ADT case (F-A-006). The prior decoder emitted
+          * `Applied(Named(MatchCaseSentinel), Chunk(pat, rhs))` because no first-class
+          * case existed. Additive; existing exhaustive matches via Type.children remain
+          * total via the wildcard fallback.
+          */
+        case MatchCase(pat: Type, rhs: Type)
+
         /** Structural subtype check.
           *
           * Pure: walks Type cases recursively; uses cp.symbol(id) to resolve parents when needed. Returns Sub when this is a subtype of
@@ -472,6 +481,7 @@ object Tasty:
             case Skolem(u)                => Chunk(u)
             case MatchType(b, sc, cases)  => Chunk(b, sc) ++ cases
             case FlexibleType(u)          => Chunk(u)
+            case MatchCase(p, r)          => Chunk(p, r)
             case _                        => Chunk.empty
 
         /** Visit this type and every structural descendant in pre-order (self first). */
@@ -838,6 +848,46 @@ object Tasty:
         final case class AnnotationNode(annotType: Tree, arg: Tree) extends Tree:
             def children: Chunk[Tree] = Chunk(annotType, arg)
 
+        /** Recursive-this reference (RECthis tag): address of the enclosing Rec frame. */
+        final case class RecThisAddr(addr: Int) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
+
+        /** Import selector: the imported name (IMPORTED tag). */
+        final case class Imported(qual: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual)
+
+        /** Import rename: the renamed-to name (RENAMED tag). */
+        final case class Renamed(name: Name) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
+
+        /** By-name type annotation in type position (BYNAMEtpt tag). */
+        final case class ByNameTpt(inner: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
+
+        /** Bounded wildcard type (BOUNDED tag): the bound tree. */
+        final case class Bounded(bound: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(bound)
+
+        /** Explicit type annotation in type position (EXPLICITtpt tag). */
+        final case class ExplicitTpt(inner: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
+
+        /** Elided (inferred) type position (ELIDED tag). */
+        final case class Elided(inner: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk.empty
+
+        /** Type-position reference by name and qualifier (TYPEREF tag). */
+        final case class TypeRefTree(qual: Tree, name: Name) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual)
+
+        /** Self type definition in a class template (SELFDEF tag). */
+        final case class SelfDef(name: Name, tpe: Tree) extends Tree:
+            def children: Chunk[Tree] = Chunk(tpe)
+
+        /** Outer reference (SELECTouter tag): outer class at given level. */
+        final case class SelectOuter(qual: Tree, name: Name, levels: Int, tpe: Type) extends Tree:
+            def children: Chunk[Tree] = Chunk(qual)
+
         /** Unknown tag -- encountered a tag not covered by this ADT version. */
         final case class Unknown(tag: Int, length: Int) extends Tree:
             def children: Chunk[Tree] = Chunk.empty
@@ -1083,11 +1133,9 @@ object Tasty:
           * Scala and Java annotation lists; Field walks `javaAnnotations` only; TypeParam / Package / Unresolved return `false`.
           */
         def hasAnnotation(annotationFqn: String)(using cp: Classpath): Boolean =
-            def matchScala(a: Annotation): Boolean = a.annotationType match
-                case Type.Named(aid) =>
-                    import Name.asString
-                    cp.symbol(aid).fullName.asString == annotationFqn
-                case _ => false
+            def matchScala(a: Annotation): Boolean =
+                import Name.asString
+                cp.typeFqnString(a.annotationType) == annotationFqn
             def matchJava(a: JavaAnnotation): Boolean =
                 import Name.asString
                 cp.fullName(a.annotationClass).asString == annotationFqn
@@ -1109,11 +1157,9 @@ object Tasty:
 
         /** Subtype-aware annotation getter; first Scala match preferred, then first Java match. */
         def getAnnotation(annotationFqn: String)(using cp: Classpath): Maybe[Annotation | JavaAnnotation] =
-            def matchScala(a: Annotation): Boolean = a.annotationType match
-                case Type.Named(aid) =>
-                    import Name.asString
-                    cp.symbol(aid).fullName.asString == annotationFqn
-                case _ => false
+            def matchScala(a: Annotation): Boolean =
+                import Name.asString
+                cp.typeFqnString(a.annotationType) == annotationFqn
             def matchJava(a: JavaAnnotation): Boolean =
                 import Name.asString
                 cp.fullName(a.annotationClass).asString == annotationFqn
@@ -2110,10 +2156,24 @@ object Tasty:
 
         private def annotationFqnMatches(ann: Annotation, fqn: String): Boolean =
             import Name.asString
-            ann.annotationType match
-                case Type.Named(id) => fullName(symbol(id)).asString == fqn
-                case _              => false
+            typeFqnString(ann.annotationType) == fqn
         end annotationFqnMatches
+
+        /** Reconstruct a dotted FQN string from a Type.Named or Type.TermRef tycon, or empty string when unavailable.
+          *
+          * Used by annotation FQN matching to support both Type.Named(id) and Type.TermRef(qual, name) tycon forms.
+          * F-G-001 fix: annotation tycons decoded from TYPEREF wire tag arrive as Type.TermRef.
+          */
+        private[Tasty] def typeFqnString(t: Type): String =
+            import Name.asString
+            t match
+                case Type.Named(id) => fullName(symbol(id)).asString
+                case Type.TermRef(qual, name) =>
+                    val q = typeFqnString(qual)
+                    if q.nonEmpty then q + "." + name.asString else name.asString
+                case _ => ""
+            end match
+        end typeFqnString
 
         /** Look up the companion symbol (companion object for a class/trait; companion class for an object).
           *

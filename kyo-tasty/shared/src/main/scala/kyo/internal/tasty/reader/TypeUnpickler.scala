@@ -863,15 +863,13 @@ object TypeUnpickler:
 
             case TastyFormat.MATCHCASEtype =>
                 // MATCHCASEtype (192): cat-5 (tag + Length + pat_Tree + rhs_Tree).
-                // Phase 05 adds Type.MatchCase as a first-class ADT case and replaces this shape.
-                // Until then, encode as Applied(Named(MatchCaseSentinel), Chunk(pat, rhs)).
-                // Previously classified as a TPT tag in AstUnpickler routing; handled here for
-                // the nested-decode path (when encountered inside type-arg positions).
+                // F-A-006 fix (Phase 05): Type.MatchCase is now a first-class ADT case.
+                // This handler is reached for nested decodes (e.g. cases inside MATCHtpt).
                 val end = view.readEnd()
                 val pat = readTypeNode(view, ctx)
                 val rhs = readTypeNode(view, ctx)
                 view.goto(end)
-                Tasty.Type.Applied(Tasty.Type.Named(MatchCaseSentinel.id), Chunk(pat, rhs))
+                Tasty.Type.MatchCase(pat, rhs)
 
             case other if other >= TastyFormat.firstLengthTreeTag =>
                 // Unknown category 5 node: log a warning, skip and return a placeholder.

@@ -76,6 +76,8 @@ final class TypeArena:
                     Tasty.Type.TermRef(internRec(p, depth), n)
                 case Tasty.Type.TypeLambda(paramIds, body) =>
                     Tasty.Type.TypeLambda(paramIds, internRec(body, depth))
+                case Tasty.Type.MatchCase(pat, rhs) =>
+                    Tasty.Type.MatchCase(internRec(pat, depth), internRec(rhs, depth))
             end match
         end recurse
 
@@ -199,6 +201,8 @@ object TypeKey:
                 31 * computeHash(b) + computeHash(sc) + csHash
             case Tasty.Type.FlexibleType(u) =>
                 31 * computeHash(u) + 13
+            case Tasty.Type.MatchCase(pat, rhs) =>
+                31 * computeHash(pat) + computeHash(rhs) + 14
 
     def structuralEquals(a: Tasty.Type, b: Tasty.Type): Boolean =
         (a, b) match
@@ -252,6 +256,8 @@ object TypeKey:
                 cs1.length == cs2.length && cs1.zip(cs2).forall((x, y) => structuralEquals(x, y))
             case (Tasty.Type.FlexibleType(u1), Tasty.Type.FlexibleType(u2)) =>
                 structuralEquals(u1, u2)
+            case (Tasty.Type.MatchCase(p1, r1), Tasty.Type.MatchCase(p2, r2)) =>
+                structuralEquals(p1, p2) && structuralEquals(r1, r2)
             case _ =>
                 false
 
