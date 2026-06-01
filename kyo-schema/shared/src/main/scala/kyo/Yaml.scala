@@ -777,8 +777,10 @@ object Yaml:
 
         /** Parses a YAML source into a CST after routing events through this pipeline's processors.
           *
-          * Pipelines with no processors delegate to [[Yaml.cst]] after source selection so source-backed CST rendering remains lossless.
-          * Processor-backed CSTs are rebuilt from transformed events and do not preserve original source text or trivia.
+          * Pipelines with no processors delegate to [[Yaml.cst]] after source selection, so source-backed CST rendering can return the
+          * selected source unchanged until an edit is applied. Processor-backed CSTs are materialized from transformed events. They do not
+          * preserve original source text or trivia because the transformed event stream, rather than the original bytes, is the source of
+          * truth.
           */
         def cst(input: String)(using Frame): Result[Err | DecodeException, Cst.Document] =
             processor match
@@ -791,15 +793,19 @@ object Yaml:
             end match
         end cst
 
-        /** Parses UTF-8 YAML bytes into a CST after routing events through this pipeline's processors. */
+        /** Parses UTF-8 YAML bytes into a CST after routing events through this pipeline's processors.
+          *
+          * This is the byte-input counterpart to [[cst]]. With no processors, rendering keeps the decoded UTF-8 source backing. With
+          * processors, the returned CST is rebuilt from transformed events and renders canonically.
+          */
         def cstBytes(input: Span[Byte])(using Frame): Result[Err | DecodeException, Cst.Document] =
             cst(String(input.toArray, StandardCharsets.UTF_8))
         end cstBytes
 
         /** Parses a YAML stream into a CST stream after routing events through this pipeline's processors.
           *
-          * Pipelines with no processors delegate to [[Yaml.cstAll]] so stream source is preserved. Processor-backed streams process each
-          * split document and return canonical CST documents with no original stream source.
+          * Pipelines with no processors delegate to [[Yaml.cstAll]], so rendering can return the original stream unchanged until an edit is
+          * applied. Processor-backed streams process each split document and return canonical CST documents with no original stream source.
           */
         def cstAll(input: String)(using Frame): Result[Err | DecodeException, Cst.Stream] =
             processor match
@@ -1229,11 +1235,21 @@ object Yaml:
     def parseAll(input: String)(using Frame): Result[DecodeException, Chunk[Node]] =
         parseEach(input)(parse)
 
-    /** Parses a single YAML document into a source-backed CST. */
+    /** Parses a single YAML document into a source-backed CST.
+      *
+      * The returned document keeps the original source text and source spans. Rendering an unchanged document returns that source without
+      * re-emitting YAML events. Structural edits may preserve source-backed slices around the edited path, while changed regions render
+      * canonically. Use CST parsing for format-aware tooling; ordinary schema decoding should use [[decode]].
+      */
     def cst(input: String)(using Frame): Result[DecodeException, Cst.Document] =
         internal.yaml.YamlCstParser.document(input)
 
-    /** Parses a YAML document stream into a source-backed CST stream. */
+    /** Parses a YAML document stream into a source-backed CST stream.
+      *
+      * The stream retains the original input so an unchanged render can return it directly, including document separators and stream-level
+      * trivia. Documents inside the stream expose the same structural edit API as [[cst]]. Use [[decodeAll]] for typed values and reserve CST
+      * parsing for source-preserving YAML tools.
+      */
     def cstAll(input: String)(using Frame): Result[DecodeException, Cst.Stream] =
         internal.yaml.YamlCstParser.stream(input)
 
