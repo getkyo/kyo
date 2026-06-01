@@ -1,0 +1,540 @@
+package kyo
+
+/** Server and client capability trees for the LSP 3.17 initialize handshake.
+  *
+  * The top-level `object LspCapabilities` nests two sub-objects, `Server` and `Client`, each
+  * containing the matching capability case class and all its nested option records. The `Name`
+  * enum provides a typed discriminator for every standard capability, used by the engine to
+  * report `LspException.Dispatch.CapabilityNotAdvertised`.
+  *
+  * Canonical type aliases `BooleanOr[T]` and `StringOr[T]` re-export the sealed unions declared
+  * inside `LspHandler`; they are provided here for ergonomic import at capability use sites.
+  *
+  * `Server.empty` and `Client.empty` provide zero-capability baselines for use in tests and as
+  * starting points for builder calls.
+  *
+  * @see [[LspCapabilities.Server]]
+  * @see [[LspCapabilities.Client]]
+  * @see [[LspCapabilities.Name]]
+  */
+object LspCapabilities:
+
+    type BooleanOr[T] = LspHandler.BooleanOr[T]
+    type StringOr[T]  = LspHandler.StringOr[T]
+
+    // =========================================================================
+    // Server capabilities
+    // =========================================================================
+
+    /** The capabilities that the server provides. */
+    object Server:
+
+        /** All capabilities a server may advertise in the `InitializeResult`. */
+        final case class Server(
+            positionEncoding: Maybe[LspHandler.PositionEncodingKind] = Absent,
+            textDocumentSync: Maybe[LspHandler.BooleanOr[LspHandler.TextDocumentSyncOptions]] = Absent,
+            completionProvider: Maybe[LspHandler.CompletionOptions] = Absent,
+            hoverProvider: Maybe[LspHandler.BooleanOr[LspHandler.HoverOptions]] = Absent,
+            signatureHelpProvider: Maybe[LspHandler.SignatureHelpOptions] = Absent,
+            declarationProvider: Maybe[LspHandler.BooleanOr[LspHandler.DeclarationOptions]] = Absent,
+            definitionProvider: Maybe[LspHandler.BooleanOr[LspHandler.DefinitionOptions]] = Absent,
+            typeDefinitionProvider: Maybe[LspHandler.BooleanOr[LspHandler.TypeDefinitionOptions]] = Absent,
+            implementationProvider: Maybe[LspHandler.BooleanOr[LspHandler.ImplementationOptions]] = Absent,
+            referencesProvider: Maybe[LspHandler.BooleanOr[LspHandler.ReferencesOptions]] = Absent,
+            documentHighlightProvider: Maybe[LspHandler.BooleanOr[LspHandler.DocumentHighlightOptions]] = Absent,
+            documentSymbolProvider: Maybe[LspHandler.BooleanOr[LspHandler.DocumentSymbolOptions]] = Absent,
+            codeActionProvider: Maybe[LspHandler.BooleanOr[LspHandler.CodeActionOptions]] = Absent,
+            codeLensProvider: Maybe[LspHandler.CodeLensOptions] = Absent,
+            documentLinkProvider: Maybe[LspHandler.DocumentLinkOptions] = Absent,
+            colorProvider: Maybe[LspHandler.BooleanOr[WorkspaceColorProviderOptions]] = Absent,
+            documentFormattingProvider: Maybe[LspHandler.BooleanOr[DocumentFormattingOptions]] = Absent,
+            documentRangeFormattingProvider: Maybe[LspHandler.BooleanOr[DocumentRangeFormattingOptions]] = Absent,
+            documentOnTypeFormattingProvider: Maybe[LspHandler.DocumentOnTypeFormattingOptions] = Absent,
+            renameProvider: Maybe[LspHandler.BooleanOr[LspHandler.RenameOptions]] = Absent,
+            foldingRangeProvider: Maybe[LspHandler.BooleanOr[LspHandler.FoldingRangeOptions]] = Absent,
+            executeCommandProvider: Maybe[LspHandler.ExecuteCommandOptions] = Absent,
+            selectionRangeProvider: Maybe[LspHandler.BooleanOr[SelectionRangeOptions]] = Absent,
+            linkedEditingRangeProvider: Maybe[LspHandler.BooleanOr[LspHandler.LinkedEditingRangeOptions]] = Absent,
+            callHierarchyProvider: Maybe[LspHandler.BooleanOr[LspHandler.CallHierarchyOptions]] = Absent,
+            semanticTokensProvider: Maybe[LspHandler.SemanticTokensOptions] = Absent,
+            monikerProvider: Maybe[LspHandler.BooleanOr[LspHandler.MonikerOptions]] = Absent,
+            typeHierarchyProvider: Maybe[LspHandler.BooleanOr[LspHandler.TypeHierarchyOptions]] = Absent,
+            inlineValueProvider: Maybe[LspHandler.BooleanOr[LspHandler.InlineValueOptions]] = Absent,
+            inlayHintProvider: Maybe[LspHandler.BooleanOr[LspHandler.InlayHintOptions]] = Absent,
+            diagnosticProvider: Maybe[DiagnosticOptions] = Absent,
+            workspaceSymbolProvider: Maybe[LspHandler.BooleanOr[LspHandler.WorkspaceSymbolOptions]] = Absent,
+            notebookDocumentSyncProvider: Maybe[NotebookDocumentSyncOptions] = Absent,
+            workspace: Maybe[WorkspaceServerCapabilities] = Absent,
+            private[kyo] _rawExperimental: Maybe[String] = Absent
+        ) derives CanEqual
+
+        object Server:
+            given Schema[Server] = Schema.derived
+
+        val empty: Server = Server()
+
+        // --- Nested option records ---
+
+        /** Options for workspace color providers. */
+        final case class WorkspaceColorProviderOptions(workDoneProgress: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        /** Options for document formatting registration. */
+        final case class DocumentFormattingOptions(workDoneProgress: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        /** Options for document range formatting registration. */
+        final case class DocumentRangeFormattingOptions(workDoneProgress: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        /** Options for selection range registration. */
+        final case class SelectionRangeOptions(workDoneProgress: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        /** Options for diagnostic providers. */
+        final case class DiagnosticOptions(
+            identifier: Maybe[String] = Absent,
+            interFileDependencies: Boolean = false,
+            workspaceDiagnostics: Boolean = false,
+            workDoneProgress: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        /** Options for notebook document synchronization. */
+        final case class NotebookDocumentSyncOptions(
+            notebookSelector: Chunk[NotebookSelector],
+            save: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        /** A notebook selector item. */
+        final case class NotebookSelector(
+            notebook: Maybe[NotebookSelectorItem] = Absent,
+            cells: Chunk[CellSelectorItem] = Chunk.empty
+        ) derives Schema, CanEqual
+
+        /** A notebook selector item (by notebook type, scheme, or pattern). */
+        final case class NotebookSelectorItem(
+            notebookType: Maybe[String] = Absent,
+            scheme: Maybe[String] = Absent,
+            pattern: Maybe[String] = Absent
+        ) derives Schema, CanEqual
+
+        /** A cell selector item. */
+        final case class CellSelectorItem(language: String) derives Schema, CanEqual
+
+        /** Workspace-level server capabilities. */
+        final case class WorkspaceServerCapabilities(
+            workspaceFolders: Maybe[WorkspaceFoldersServerCapabilities] = Absent,
+            fileOperations: Maybe[FileOperationsServerCapabilities] = Absent
+        ) derives Schema, CanEqual
+
+        /** Workspace folders server capabilities. */
+        final case class WorkspaceFoldersServerCapabilities(
+            supported: Maybe[Boolean] = Absent,
+            changeNotifications: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        /** File operations server capabilities. */
+        final case class FileOperationsServerCapabilities(
+            didCreate: Maybe[LspHandler.FileOperationRegistrationOptions] = Absent,
+            willCreate: Maybe[LspHandler.FileOperationRegistrationOptions] = Absent,
+            didRename: Maybe[LspHandler.FileOperationRegistrationOptions] = Absent,
+            willRename: Maybe[LspHandler.FileOperationRegistrationOptions] = Absent,
+            didDelete: Maybe[LspHandler.FileOperationRegistrationOptions] = Absent,
+            willDelete: Maybe[LspHandler.FileOperationRegistrationOptions] = Absent
+        ) derives Schema, CanEqual
+
+    end Server
+
+    // =========================================================================
+    // Client capabilities
+    // =========================================================================
+
+    /** The capabilities that the client provides. */
+    object Client:
+
+        /** All capabilities a client may send in the `initialize` request. */
+        final case class Client(
+            workspace: Maybe[WorkspaceClientCapabilities] = Absent,
+            textDocument: Maybe[TextDocumentClientCapabilities] = Absent,
+            notebookDocument: Maybe[NotebookDocumentClientCapabilities] = Absent,
+            window: Maybe[WindowClientCapabilities] = Absent,
+            general: Maybe[GeneralClientCapabilities] = Absent,
+            // flow-allow: Structure carve-out per INV-055 (raw JSON slot for experimental)
+            private[kyo] _rawExperimental: Maybe[String] = Absent
+        ) derives CanEqual
+
+        object Client:
+            given Schema[Client] = Schema.derived
+
+        val empty: Client = Client()
+
+        // --- Workspace client capabilities ---
+
+        /** Workspace-related client capabilities. */
+        final case class WorkspaceClientCapabilities(
+            applyEdit: Maybe[Boolean] = Absent,
+            workspaceEdit: Maybe[WorkspaceEditClientCapabilities] = Absent,
+            didChangeConfiguration: Maybe[DidChangeConfigurationClientCapabilities] = Absent,
+            didChangeWatchedFiles: Maybe[DidChangeWatchedFilesClientCapabilities] = Absent,
+            symbol: Maybe[WorkspaceSymbolClientCapabilities] = Absent,
+            executeCommand: Maybe[ExecuteCommandClientCapabilities] = Absent,
+            workspaceFolders: Maybe[Boolean] = Absent,
+            configuration: Maybe[Boolean] = Absent,
+            semanticTokens: Maybe[SemanticTokensWorkspaceClientCapabilities] = Absent,
+            codeLens: Maybe[CodeLensWorkspaceClientCapabilities] = Absent,
+            fileOperations: Maybe[FileOperationsClientCapabilities] = Absent,
+            inlineValue: Maybe[InlineValueWorkspaceClientCapabilities] = Absent,
+            inlayHint: Maybe[InlayHintWorkspaceClientCapabilities] = Absent,
+            diagnostics: Maybe[DiagnosticWorkspaceClientCapabilities] = Absent
+        ) derives Schema, CanEqual
+
+        final case class WorkspaceEditClientCapabilities(
+            documentChanges: Maybe[Boolean] = Absent,
+            resourceOperations: Chunk[String] = Chunk.empty,
+            failureHandling: Maybe[String] = Absent,
+            normalizesLineEndings: Maybe[Boolean] = Absent,
+            changeAnnotationSupport: Maybe[ChangeAnnotationSupportOptions] = Absent
+        ) derives Schema, CanEqual
+
+        final case class ChangeAnnotationSupportOptions(groupsOnLabel: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DidChangeConfigurationClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DidChangeWatchedFilesClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            relativePatternSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class WorkspaceSymbolClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            symbolKind: Maybe[SymbolKindOptions] = Absent,
+            tagSupport: Maybe[SymbolTagSupportOptions] = Absent,
+            resolveSupport: Maybe[ResolveSupport] = Absent
+        ) derives Schema, CanEqual
+
+        final case class SymbolKindOptions(valueSet: Chunk[LspHandler.SymbolKind] = Chunk.empty) derives Schema, CanEqual
+
+        final case class SymbolTagSupportOptions(valueSet: Chunk[LspHandler.SymbolTag] = Chunk.empty) derives Schema, CanEqual
+
+        final case class ResolveSupport(properties: Chunk[String]) derives Schema, CanEqual
+
+        final case class ExecuteCommandClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class SemanticTokensWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class CodeLensWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class FileOperationsClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            didCreate: Maybe[Boolean] = Absent,
+            willCreate: Maybe[Boolean] = Absent,
+            didRename: Maybe[Boolean] = Absent,
+            willRename: Maybe[Boolean] = Absent,
+            didDelete: Maybe[Boolean] = Absent,
+            willDelete: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class InlineValueWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class InlayHintWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DiagnosticWorkspaceClientCapabilities(refreshSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        // --- TextDocument client capabilities ---
+
+        /** Text document related client capabilities. */
+        final case class TextDocumentClientCapabilities(
+            synchronization: Maybe[TextDocumentSyncClientCapabilities] = Absent,
+            completion: Maybe[CompletionClientCapabilities] = Absent,
+            hover: Maybe[HoverClientCapabilities] = Absent,
+            signatureHelp: Maybe[SignatureHelpClientCapabilities] = Absent,
+            declaration: Maybe[DeclarationClientCapabilities] = Absent,
+            definition: Maybe[DefinitionClientCapabilities] = Absent,
+            typeDefinition: Maybe[TypeDefinitionClientCapabilities] = Absent,
+            implementation: Maybe[ImplementationClientCapabilities] = Absent,
+            references: Maybe[ReferenceClientCapabilities] = Absent,
+            documentHighlight: Maybe[DocumentHighlightClientCapabilities] = Absent,
+            documentSymbol: Maybe[DocumentSymbolClientCapabilities] = Absent,
+            codeAction: Maybe[CodeActionClientCapabilities] = Absent,
+            codeLens: Maybe[CodeLensClientCapabilities] = Absent,
+            documentLink: Maybe[DocumentLinkClientCapabilities] = Absent,
+            colorProvider: Maybe[DocumentColorClientCapabilities] = Absent,
+            formatting: Maybe[DocumentFormattingClientCapabilities] = Absent,
+            rangeFormatting: Maybe[DocumentRangeFormattingClientCapabilities] = Absent,
+            onTypeFormatting: Maybe[DocumentOnTypeFormattingClientCapabilities] = Absent,
+            rename: Maybe[RenameClientCapabilities] = Absent,
+            publishDiagnostics: Maybe[PublishDiagnosticsClientCapabilities] = Absent,
+            foldingRange: Maybe[FoldingRangeClientCapabilities] = Absent,
+            selectionRange: Maybe[SelectionRangeClientCapabilities] = Absent,
+            linkedEditingRange: Maybe[LinkedEditingRangeClientCapabilities] = Absent,
+            callHierarchy: Maybe[CallHierarchyClientCapabilities] = Absent,
+            semanticTokens: Maybe[SemanticTokensClientCapabilities] = Absent,
+            moniker: Maybe[MonikerClientCapabilities] = Absent,
+            typeHierarchy: Maybe[TypeHierarchyClientCapabilities] = Absent,
+            inlineValue: Maybe[InlineValueClientCapabilities] = Absent,
+            inlayHint: Maybe[InlayHintClientCapabilities] = Absent,
+            diagnostic: Maybe[DiagnosticClientCapabilities] = Absent
+        ) derives Schema, CanEqual
+
+        final case class TextDocumentSyncClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            willSave: Maybe[Boolean] = Absent,
+            willSaveWaitUntil: Maybe[Boolean] = Absent,
+            didSave: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class CompletionClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            completionItem: Maybe[CompletionItemClientCapabilities] = Absent,
+            completionItemKind: Maybe[CompletionItemKindOptions] = Absent,
+            insertTextMode: Maybe[LspHandler.InsertTextMode] = Absent,
+            contextSupport: Maybe[Boolean] = Absent,
+            completionList: Maybe[CompletionListClientCapabilities] = Absent
+        ) derives Schema, CanEqual
+
+        final case class CompletionItemClientCapabilities(
+            snippetSupport: Maybe[Boolean] = Absent,
+            commitCharactersSupport: Maybe[Boolean] = Absent,
+            documentationFormat: Chunk[LspHandler.MarkupKind] = Chunk.empty,
+            deprecatedSupport: Maybe[Boolean] = Absent,
+            preselectSupport: Maybe[Boolean] = Absent,
+            tagSupport: Maybe[CompletionItemTagSupportOptions] = Absent,
+            insertReplaceSupport: Maybe[Boolean] = Absent,
+            resolveSupport: Maybe[ResolveSupport] = Absent,
+            insertTextModeSupport: Maybe[InsertTextModeSupport] = Absent,
+            labelDetailsSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class CompletionItemTagSupportOptions(valueSet: Chunk[LspHandler.CompletionItemTag]) derives Schema, CanEqual
+
+        final case class InsertTextModeSupport(valueSet: Chunk[LspHandler.InsertTextMode]) derives Schema, CanEqual
+
+        final case class CompletionItemKindOptions(valueSet: Chunk[LspHandler.CompletionItemKind] = Chunk.empty) derives Schema, CanEqual
+
+        final case class CompletionListClientCapabilities(itemDefaults: Chunk[String] = Chunk.empty) derives Schema, CanEqual
+
+        final case class HoverClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            contentFormat: Chunk[LspHandler.MarkupKind] = Chunk.empty
+        ) derives Schema, CanEqual
+
+        final case class SignatureHelpClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            signatureInformation: Maybe[SignatureInformationClientCapabilities] = Absent,
+            contextSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class SignatureInformationClientCapabilities(
+            documentationFormat: Chunk[LspHandler.MarkupKind] = Chunk.empty,
+            parameterInformation: Maybe[ParameterInformationClientCapabilities] = Absent,
+            activeParameterSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class ParameterInformationClientCapabilities(labelOffsetSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DeclarationClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            linkSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class DefinitionClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            linkSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class TypeDefinitionClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            linkSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class ImplementationClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            linkSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class ReferenceClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DocumentHighlightClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DocumentSymbolClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            symbolKind: Maybe[SymbolKindOptions] = Absent,
+            hierarchicalDocumentSymbolSupport: Maybe[Boolean] = Absent,
+            tagSupport: Maybe[SymbolTagSupportOptions] = Absent,
+            labelSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class CodeActionClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            codeActionLiteralSupport: Maybe[CodeActionLiteralSupportOptions] = Absent,
+            isPreferredSupport: Maybe[Boolean] = Absent,
+            disabledSupport: Maybe[Boolean] = Absent,
+            dataSupport: Maybe[Boolean] = Absent,
+            resolveSupport: Maybe[ResolveSupport] = Absent,
+            honorsChangeAnnotations: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class CodeActionLiteralSupportOptions(
+            codeActionKind: CodeActionKindOptions
+        ) derives Schema, CanEqual
+
+        final case class CodeActionKindOptions(valueSet: Chunk[LspHandler.CodeActionKind]) derives Schema, CanEqual
+
+        final case class CodeLensClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DocumentLinkClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            tooltipSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class DocumentColorClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DocumentFormattingClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DocumentRangeFormattingClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class DocumentOnTypeFormattingClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class RenameClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            prepareSupport: Maybe[Boolean] = Absent,
+            prepareSupportDefaultBehavior: Maybe[Int] = Absent,
+            honorsChangeAnnotations: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class PublishDiagnosticsClientCapabilities(
+            relatedInformation: Maybe[Boolean] = Absent,
+            tagSupport: Maybe[DiagnosticTagSupportOptions] = Absent,
+            versionSupport: Maybe[Boolean] = Absent,
+            codeDescriptionSupport: Maybe[Boolean] = Absent,
+            dataSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class DiagnosticTagSupportOptions(valueSet: Chunk[LspHandler.DiagnosticTag]) derives Schema, CanEqual
+
+        final case class FoldingRangeClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            rangeLimit: Maybe[Int] = Absent,
+            lineFoldingOnly: Maybe[Boolean] = Absent,
+            foldingRangeKind: Maybe[FoldingRangeKindOptions] = Absent,
+            foldingRange: Maybe[FoldingRangeOptions] = Absent
+        ) derives Schema, CanEqual
+
+        final case class FoldingRangeKindOptions(valueSet: Chunk[LspHandler.FoldingRangeKind] = Chunk.empty) derives Schema, CanEqual
+
+        final case class FoldingRangeOptions(collapsedText: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class SelectionRangeClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class LinkedEditingRangeClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class CallHierarchyClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class SemanticTokensClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            requests: SemanticTokensRequestsCapabilities,
+            tokenTypes: Chunk[LspHandler.SemanticTokenTypes],
+            tokenModifiers: Chunk[LspHandler.SemanticTokenModifiers],
+            formats: Chunk[String],
+            overlappingTokenSupport: Maybe[Boolean] = Absent,
+            multilineTokenSupport: Maybe[Boolean] = Absent,
+            serverCancelSupport: Maybe[Boolean] = Absent,
+            augmentsSyntaxTokens: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class SemanticTokensRequestsCapabilities(
+            range: Maybe[Boolean] = Absent,
+            full: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        final case class MonikerClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class TypeHierarchyClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class InlineValueClientCapabilities(dynamicRegistration: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class InlayHintClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            resolveSupport: Maybe[ResolveSupport] = Absent
+        ) derives Schema, CanEqual
+
+        final case class DiagnosticClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            relatedDocumentSupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        // --- Notebook document client capabilities ---
+
+        /** Notebook document related client capabilities. */
+        final case class NotebookDocumentClientCapabilities(
+            synchronization: Maybe[NotebookDocumentSyncClientCapabilities] = Absent
+        ) derives Schema, CanEqual
+
+        final case class NotebookDocumentSyncClientCapabilities(
+            dynamicRegistration: Maybe[Boolean] = Absent,
+            executionSummarySupport: Maybe[Boolean] = Absent
+        ) derives Schema, CanEqual
+
+        // --- Window client capabilities ---
+
+        /** Window-related client capabilities. */
+        final case class WindowClientCapabilities(
+            workDoneProgress: Maybe[Boolean] = Absent,
+            showMessage: Maybe[ShowMessageRequestClientCapabilities] = Absent,
+            showDocument: Maybe[ShowDocumentClientCapabilities] = Absent
+        ) derives Schema, CanEqual
+
+        final case class ShowMessageRequestClientCapabilities(
+            messageActionItem: Maybe[MessageActionItemClientCapabilities] = Absent
+        ) derives Schema, CanEqual
+
+        final case class MessageActionItemClientCapabilities(additionalPropertiesSupport: Maybe[Boolean] = Absent) derives Schema, CanEqual
+
+        final case class ShowDocumentClientCapabilities(support: Boolean) derives Schema, CanEqual
+
+        // --- General client capabilities ---
+
+        /** General client capabilities. */
+        final case class GeneralClientCapabilities(
+            staleRequestSupport: Maybe[StaleRequestSupportOptions] = Absent,
+            regularExpressions: Maybe[RegularExpressionsClientCapabilities] = Absent,
+            markdown: Maybe[MarkdownClientCapabilities] = Absent,
+            positionEncodings: Chunk[LspHandler.PositionEncodingKind] = Chunk.empty
+        ) derives Schema, CanEqual
+
+        final case class StaleRequestSupportOptions(
+            cancel: Boolean,
+            retryOnContentModified: Chunk[String]
+        ) derives Schema, CanEqual
+
+        final case class RegularExpressionsClientCapabilities(engine: String, version: Maybe[String] = Absent) derives Schema, CanEqual
+
+        final case class MarkdownClientCapabilities(
+            parser: String,
+            version: Maybe[String] = Absent,
+            allowedTags: Chunk[String] = Chunk.empty
+        ) derives Schema, CanEqual
+
+    end Client
+
+    // =========================================================================
+    // Capability name enum
+    // =========================================================================
+
+    /** Typed discriminator for every standard LSP 3.17 capability.
+      *
+      * Used by `LspException.Dispatch.CapabilityNotAdvertised` and by the engine
+      * capability gate to identify which capability was missing.
+      */
+    enum Name derives CanEqual:
+        case Completion, Hover, SignatureHelp, Declaration, Definition, TypeDefinition
+        case Implementation, References, DocumentHighlight, DocumentSymbol
+        case CodeAction, CodeLens, DocumentLink, DocumentColor, Formatting
+        case RangeFormatting, OnTypeFormatting, Rename, FoldingRange, SelectionRange
+        case CallHierarchy, TypeHierarchy, SemanticTokens, Moniker, LinkedEditingRange
+        case InlayHint, InlineValue, Diagnostic, NotebookDocumentSync
+        case ExecuteCommand, WorkspaceSymbol, WorkspaceFolders, FileOperations
+    end Name
+
+    object Name:
+        // lazy val stub; Phase 02/03 fills the stringSchema.transform body
+        given Schema[Name] = ??? // Phase 03 fills
+    end Name
+
+end LspCapabilities
