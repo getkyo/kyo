@@ -57,6 +57,17 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
             assert(Yaml.pipeline.encode(value) == Result.succeed(Yaml.encode(value)))
         }
 
+        "builds source-backed CST without processors" in {
+            val yaml = """# app
+name: Alice
+age: 30
+"""
+
+            assertResult(Result.succeed((source = Maybe(yaml), rendered = yaml))) {
+                Yaml.pipeline.cst(yaml).map(doc => (source = doc.source, rendered = doc.render(using Yaml.WriterConfig.Default)))
+            }
+        }
+
         "decodes transformed scalar values directly from processor events" in {
             val yaml =
                 """name: placeholder
@@ -134,6 +145,19 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
             )
         }
 
+        "builds canonical CST from processor events" in {
+            val yaml =
+                """name: placeholder
+                  |age: 30
+                  |""".stripMargin
+
+            val doc =
+                Yaml.pipeline.through(scalarRewrite("placeholder", "Alice")).cst(yaml).getOrThrow
+
+            assert(doc.source.isEmpty)
+            assert(Yaml.decode[MTPerson](doc.render(using Yaml.WriterConfig.Default)) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
         "selects document index before processor decode" in {
             val yaml =
                 """---
@@ -151,6 +175,94 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
                 Yaml.pipeline.reader(config).through(scalarRewrite("Robert", "Bob")).decode[MTPerson](yaml) ==
                     Result.succeed(MTPerson("Bob", 25))
             )
+        }
+
+        "selects document index before processor CST" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Robert
+                  |age: 25
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            val doc =
+                Yaml.pipeline.reader(config).through(scalarRewrite("Robert", "Bob")).cst(yaml).getOrThrow
+
+            assert(doc.source.isEmpty)
+            assert(Yaml.decode[MTPerson](doc.render(using Yaml.WriterConfig.Default)) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "builds source-backed CST stream without processors" in {
+            val yaml =
+                """# first
+                  |---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            assertResult(Result.succeed((source = Maybe(yaml), count = 2, rendered = yaml))) {
+                Yaml.pipeline.cstAll(yaml).map(stream =>
+                    (
+                        source = stream.source,
+                        count = stream.documents.size,
+                        rendered = stream.render(using Yaml.WriterConfig.Default)
+                    )
+                )
+            }
+        }
+
+        "builds canonical CST stream from processor events" in {
+            val yaml =
+                """---
+                  |name: placeholder
+                  |age: 30
+                  |---
+                  |name: placeholder
+                  |age: 25
+                  |""".stripMargin
+
+            val stream =
+                Yaml.pipeline.through(scalarRewrite("placeholder", "Alice")).cstAll(yaml).getOrThrow
+            val rendered =
+                stream.render(using Yaml.WriterConfig.Default)
+
+            assert(stream.source.isEmpty)
+            assert(stream.documents.size == 2)
+            assert(stream.documents.forall(_.source.isEmpty))
+            assert(Yaml.decodeAll[MTPerson](rendered) == Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Alice", 25))))
+        }
+
+        "builds CST from UTF-8 bytes after source selection" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Café
+                  |age: 25
+                  |""".stripMargin
+            val selected =
+                """name: Café
+                  |age: 25
+                  |""".stripMargin
+            val bytes =
+                Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            assertResult(Result.succeed((source = Maybe(selected), rendered = selected))) {
+                Yaml.pipeline.reader(config).cstBytes(bytes).map(doc =>
+                    (source = doc.source, rendered = doc.render(using Yaml.WriterConfig.Default))
+                )
+            }
         }
 
         "merges document stream fragments for case-class processor decode" in {
@@ -201,6 +313,24 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
 
             assert(
                 Yaml.pipeline.through(reject).decode[MTPerson](yaml) ==
+                    Result.fail(PipelineError.Rejected)
+            )
+        }
+
+        "returns processor failures from CST without building a document" in {
+            val yaml =
+                """name: reject
+                  |age: 30
+                  |""".stripMargin
+
+            val reject =
+                Yaml.Events.Processor.mapScalars[PipelineError] { (value, meta) =>
+                    if value == "reject" then Result.fail(PipelineError.Rejected)
+                    else Result.succeed((value, meta))
+                }
+
+            assert(
+                Yaml.pipeline.through(reject).cst(yaml) ==
                     Result.fail(PipelineError.Rejected)
             )
         }

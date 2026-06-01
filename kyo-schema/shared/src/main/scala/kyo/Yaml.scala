@@ -775,6 +775,64 @@ object Yaml:
             visit(input, ())(builder).flatMap(_ => builder.result)
         end parse
 
+        /** Parses a YAML source into a CST after routing events through this pipeline's processors.
+          *
+          * Pipelines with no processors delegate to [[Yaml.cst]] after source selection so source-backed CST rendering remains lossless.
+          * Processor-backed CSTs are rebuilt from transformed events and do not preserve original source text or trivia.
+          */
+        def cst(input: String)(using Frame): Result[Err | DecodeException, Cst.Document] =
+            processor match
+                case Absent =>
+                    selectedSource(input).flatMap(Yaml.cst)
+                case Present(current) =>
+                    decodeSource(input).flatMap { source =>
+                        internal.yaml.YamlEventScanner.collect(source, current).flatMap(Yaml.Cst.fromEvents)
+                    }
+            end match
+        end cst
+
+        /** Parses UTF-8 YAML bytes into a CST after routing events through this pipeline's processors. */
+        def cstBytes(input: Span[Byte])(using Frame): Result[Err | DecodeException, Cst.Document] =
+            cst(String(input.toArray, StandardCharsets.UTF_8))
+        end cstBytes
+
+        /** Parses a YAML stream into a CST stream after routing events through this pipeline's processors.
+          *
+          * Pipelines with no processors delegate to [[Yaml.cstAll]] so stream source is preserved. Processor-backed streams process each
+          * split document and return canonical CST documents with no original stream source.
+          */
+        def cstAll(input: String)(using Frame): Result[Err | DecodeException, Cst.Stream] =
+            processor match
+                case Absent =>
+                    Yaml.cstAll(input)
+                case Present(current) =>
+                    val docs = splitDocuments(input)
+
+                    @tailrec def loop(index: Int, acc: Chunk[Cst.Document]): Result[Err | DecodeException, Chunk[Cst.Document]] =
+                        if index >= docs.size then Result.succeed(acc)
+                        else
+                            val result =
+                                internal.yaml.YamlEventScanner.collect(docs(index), current).flatMap(Yaml.Cst.fromEvents)
+                            result.value match
+                                case Present(doc) =>
+                                    loop(index + 1, acc :+ doc)
+                                case Absent =>
+                                    result.panic match
+                                        case Present(error) => Result.panic(error)
+                                        case Absent =>
+                                            result.failure.fold(Result.panic(IllegalStateException("Unexpected empty YAML CST result")))(
+                                                error => Result.fail(error)
+                                            )
+                                    end match
+                            end match
+                    end loop
+
+                    loop(0, Chunk.empty).map { documents =>
+                        Cst.Stream(documents, Chunk.empty, Chunk.empty, streamSpan(documents), Absent)
+                    }
+            end match
+        end cstAll
+
         /** Visits a YAML source after routing its events through this pipeline's processors. */
         def visit[Ctx, Err2](
             input: String,
@@ -850,6 +908,14 @@ object Yaml:
                     end match
             end match
         end decodeSource
+
+        private def streamSpan(documents: Chunk[Cst.Document]): Cst.SourceSpan =
+            if documents.isEmpty then
+                val mark = Mark(0, 1, 1)
+                Cst.SourceSpan(mark, mark)
+            else
+                Cst.SourceSpan(documents(0).span.start, documents(documents.size - 1).span.end)
+        end streamSpan
 
     end Pipeline
 
