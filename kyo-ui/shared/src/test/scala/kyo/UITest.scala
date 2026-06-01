@@ -14,6 +14,23 @@ abstract class UITest extends Test:
     private val retrySchedule: Schedule =
         Schedule.exponentialBackoff(initial = 1.second, factor = 2, maxBackoff = 8.seconds).take(2)
 
+    /** Marker substring in the unsupported-platform setup failure (kyo.internal.ChromeDownloader). Keep in sync with kyo-browser's BrowserTest. */
+    private val unsupportedPlatformMarker = "cannot auto-download chrome-headless-shell"
+
+    /** On platforms with no chrome-headless-shell (linux-arm64, win-arm64), Chrome launch fails with a BrowserSetupFailedException carrying
+      * install guidance. Translate that one case into a ScalaTest `cancel(...)` so those platforms report the browser-backed UI tests as
+      * canceled (skipped) rather than red failures that each burn the retry budget and push the job past its timeout. Mirrors kyo-browser's
+      * BrowserTest.cancelOnUnsupportedPlatform; every other failure propagates unchanged.
+      */
+    private def cancelOnUnsupportedPlatform[A, S](
+        f: A < (Async & Scope & Abort[BrowserSetupException] & S)
+    )(using Frame): A < (Async & Scope & Abort[BrowserSetupException] & S) =
+        Abort.recover[BrowserSetupException] { (ex: BrowserSetupException) =>
+            val msg = ex.getMessage
+            if msg != null && msg.contains(unsupportedPlatformMarker) then Sync.defer(cancel(msg))
+            else Abort.fail[BrowserSetupException](ex)
+        } { f }
+
     def withUI[A, S](ui: UI < Async)(f: A < (Browser & S))(using
         Frame
     ): A < (Async & Scope & Abort[BrowserException] & S) =
@@ -34,14 +51,16 @@ abstract class UITest extends Test:
         // E-typed failures, so assertion failures and every other BrowserException propagate
         // immediately and are never masked.
         Retry[BrowserConnectionLostException | BrowserSetupFailedException](retrySchedule) {
-            for
-                uiTree   <- ui
-                handlers <- UI.runHandlers("/")(uiTree)
-                server   <- HttpServer.init(0, "localhost")(handlers*)
-                result <- Browser.runShared() {
-                    Browser.goto(s"http://localhost:${server.port}/").andThen(f)
-                }
-            yield result
+            cancelOnUnsupportedPlatform {
+                for
+                    uiTree   <- ui
+                    handlers <- UI.runHandlers("/")(uiTree)
+                    server   <- HttpServer.init(0, "localhost")(handlers*)
+                    result <- Browser.runShared() {
+                        Browser.goto(s"http://localhost:${server.port}/").andThen(f)
+                    }
+                yield result
+            }
         }
     end withUI
 
