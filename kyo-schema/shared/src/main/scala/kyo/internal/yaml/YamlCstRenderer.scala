@@ -256,17 +256,32 @@ private[kyo] object YamlCstRenderer:
                 case Yaml.Cst.Node.Alias(name, _, _, _) =>
                     "*" + name.value
                 case _ =>
-                    doubleQuoted(renderInline(node))
+                    renderFlow(node)
             end match
         end renderKey
 
-        private def renderInline(node: Yaml.Cst.Node): String =
+        private def renderFlow(node: Yaml.Cst.Node): String =
             node match
-                case Yaml.Cst.Node.Scalar(value, _, _, _, _) => value
-                case Yaml.Cst.Node.Alias(name, _, _, _)      => "*" + name.value
-                case _                                       => node.toString
+                case Yaml.Cst.Node.Scalar(value, _, meta, _, _) =>
+                    prefixed(properties(meta.anchor, meta.tag), flowScalar(value, meta))
+                case Yaml.Cst.Node.Alias(name, _, _, _) =>
+                    "*" + name.value
+                case mapping: Yaml.Cst.Node.Mapping =>
+                    val body = mapping.entries.map(entry => renderFlow(entry.key) + ": " + renderFlow(entry.value)).mkString("{", ", ", "}")
+                    prefixed(collectionProperties(node), body)
+                case sequence: Yaml.Cst.Node.Sequence =>
+                    val body = sequence.entries.map(entry => renderFlow(entry.value)).mkString("[", ", ", "]")
+                    prefixed(collectionProperties(node), body)
             end match
-        end renderInline
+        end renderFlow
+
+        private def flowScalar(value: String, meta: Yaml.ScalarMeta): String =
+            meta.style match
+                case Yaml.ScalarStyle.SingleQuoted                => "'" + value.replace("'", "''") + "'"
+                case Yaml.ScalarStyle.Plain if plainScalar(value) => value
+                case _                                            => doubleQuoted(value)
+            end match
+        end flowScalar
 
         private def collectionProperties(node: Yaml.Cst.Node): String =
             node match

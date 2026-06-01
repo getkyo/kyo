@@ -1180,11 +1180,18 @@ object Yaml:
             def events: Chunk[Events.Event] =
                 internal.yaml.YamlCstBuilder.events(this)
 
-            /** Replaces the node at `path`. */
+            /** Replaces the node at `path`.
+              *
+              * Fails when a mapping segment along `path` is ambiguous because the mapping contains more than one entry with the same key.
+              */
             def replace(path: Path, node: Node): Result[Error, Document] =
                 internal.yaml.YamlCstEdits.replace(this, path, node)
 
-            /** Inserts `node` at `path`. */
+            /** Inserts `node` at `path`.
+              *
+              * For a mapping key that does not yet exist the entry is appended. Inserting a mapping key that already exists fails rather
+              * than overwriting it; use [[replace]] to change an existing value. Fails when a mapping segment along `path` is ambiguous.
+              */
             def insert(path: Path, node: Node): Result[Error, Document] =
                 internal.yaml.YamlCstEdits.insert(this, path, node)
 

@@ -65,7 +65,7 @@ private[kyo] object YamlCstEdits:
             case Cst.Path.Segment.Key(key) =>
                 node match
                     case Cst.Node.Mapping(entries, syntax, meta, span, _) =>
-                        findMappingEntry(entries, key) match
+                        mappingEntryIndex(entries, key, path, Maybe(span.start)).flatMap {
                             case Present(entryIndex) =>
                                 val entry = entries(entryIndex)
                                 if index == segments.size - 1 then
@@ -79,7 +79,7 @@ private[kyo] object YamlCstEdits:
                                 end if
                             case Absent =>
                                 fail(s"Missing mapping key '$key'", path, Maybe(span.start))
-                        end match
+                        }
                     case _ =>
                         fail(s"Expected mapping while replacing '${path.show}'", path, Maybe(spanOf(node).start))
                 end match
@@ -118,19 +118,19 @@ private[kyo] object YamlCstEdits:
                 node match
                     case Cst.Node.Mapping(entries, syntax, meta, span, _) =>
                         if index == segments.size - 1 then
-                            val updated =
-                                findMappingEntry(entries, key) match
-                                    case Present(entryIndex) =>
-                                        update(entries, entryIndex, entries(entryIndex).copy(value = inserted))
-                                    case Absent =>
-                                        entries :+ Cst.MappingEntry(
-                                            scalarKey(key, span.start),
-                                            inserted,
-                                            Cst.SourceSpan(span.start, spanOf(inserted).end)
-                                        )
-                            Result.succeed(Cst.Node.Mapping(updated, syntax, meta, span, Absent))
+                            mappingEntryIndex(entries, key, path, Maybe(span.start)).flatMap {
+                                case Present(_) =>
+                                    fail(s"Mapping key '$key' already exists", path, Maybe(span.start))
+                                case Absent =>
+                                    val updated = entries :+ Cst.MappingEntry(
+                                        scalarKey(key, span.start),
+                                        inserted,
+                                        Cst.SourceSpan(span.start, spanOf(inserted).end)
+                                    )
+                                    Result.succeed(Cst.Node.Mapping(updated, syntax, meta, span, Absent))
+                            }
                         else
-                            findMappingEntry(entries, key) match
+                            mappingEntryIndex(entries, key, path, Maybe(span.start)).flatMap {
                                 case Present(entryIndex) =>
                                     val entry = entries(entryIndex)
                                     insertNode(entry.value, segments, index + 1, path, inserted).map { child =>
@@ -138,7 +138,7 @@ private[kyo] object YamlCstEdits:
                                     }
                                 case Absent =>
                                     fail(s"Missing mapping key '$key'", path, Maybe(span.start))
-                            end match
+                            }
                         end if
                     case _ =>
                         fail(s"Expected mapping while inserting '${path.show}'", path, Maybe(spanOf(node).start))
@@ -178,7 +178,7 @@ private[kyo] object YamlCstEdits:
             case Cst.Path.Segment.Key(key) =>
                 node match
                     case Cst.Node.Mapping(entries, syntax, meta, span, _) =>
-                        findMappingEntry(entries, key) match
+                        mappingEntryIndex(entries, key, path, Maybe(span.start)).flatMap {
                             case Present(entryIndex) =>
                                 if index == segments.size - 1 then
                                     Result.succeed(Cst.Node.Mapping(removeAt(entries, entryIndex), syntax, meta, span, Absent))
@@ -190,7 +190,7 @@ private[kyo] object YamlCstEdits:
                                 end if
                             case Absent =>
                                 fail(s"Missing mapping key '$key'", path, Maybe(span.start))
-                        end match
+                        }
                     case _ =>
                         fail(s"Expected mapping while removing '${path.show}'", path, Maybe(spanOf(node).start))
                 end match
@@ -213,19 +213,28 @@ private[kyo] object YamlCstEdits:
         end match
     end removeNode
 
-    private def findMappingEntry(entries: Chunk[Cst.MappingEntry], key: String): Maybe[Int] =
-        def loop(index: Int): Maybe[Int] =
-            if index >= entries.size then Absent
+    private def mappingEntryIndex(
+        entries: Chunk[Cst.MappingEntry],
+        key: String,
+        path: Cst.Path,
+        mark: Maybe[Yaml.Mark]
+    ): Result[Cst.Error, Maybe[Int]] =
+        @scala.annotation.tailrec
+        def loop(index: Int, found: Maybe[Int]): Result[Cst.Error, Maybe[Int]] =
+            if index >= entries.size then Result.succeed(found)
             else
                 entries(index).key match
-                    case Cst.Node.Scalar(value, _, _, _, _) if value == key => Maybe(index)
-                    case _                                                  => loop(index + 1)
+                    case Cst.Node.Scalar(value, _, _, _, _) if value == key =>
+                        if found.isDefined then fail(s"Ambiguous mapping key '$key'", path, mark)
+                        else loop(index + 1, Maybe(index))
+                    case _ =>
+                        loop(index + 1, found)
                 end match
             end if
         end loop
 
-        loop(0)
-    end findMappingEntry
+        loop(0, Absent)
+    end mappingEntryIndex
 
     private def update[A](values: Chunk[A], index: Int, value: A): Chunk[A] =
         values.take(index) ++ Chunk(value) ++ values.drop(index + 1)

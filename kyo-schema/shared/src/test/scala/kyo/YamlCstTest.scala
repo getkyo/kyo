@@ -1273,6 +1273,63 @@ class YamlCstTest extends Test:
             assert(Yaml.decode[Map[String, List[Int]]](rendered) == Result.succeed(Map("ports" -> List(8081, 8082))))
         }
 
+        "renders complex collection keys as valid flow in the trivia path" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val seqKey =
+                Yaml.Cst.Node.Sequence(
+                    Chunk(
+                        Yaml.Cst.SequenceEntry(scalar("a"), span),
+                        Yaml.Cst.SequenceEntry(scalar("b"), span)
+                    ),
+                    Yaml.Cst.SequenceSyntax.Canonical,
+                    Yaml.Meta(Absent, Absent, mark),
+                    span,
+                    Absent
+                )
+            val entry =
+                Yaml.Cst.MappingEntry(seqKey, scalar("value"), span, Chunk(Yaml.Cst.Trivia("# keep", span)))
+            val root =
+                Yaml.Cst.Node.Mapping(Chunk(entry), Yaml.Cst.MappingSyntax.Canonical, Yaml.Meta(Absent, Absent, mark), span, Absent)
+            val doc      = Yaml.Cst.Document(Maybe(root), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = doc.render(using Yaml.WriterConfig.Default)
+
+            assert(!rendered.contains("Sequence("))
+            assert(rendered.contains("[a, b]: value"))
+            assert(Yaml.cst(rendered).isSuccess)
+        }
+
+        "fails editing through an ambiguous duplicate mapping key" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val duplicate =
+                Yaml.Cst.Document(
+                    Maybe(mapping("name" -> scalar("a"), "name" -> scalar("b"))),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+
+            duplicate.replace(Yaml.Cst.Path.root / "name", scalar("c")) match
+                case Result.Failure(e: Yaml.Cst.EditException) =>
+                    assert(e.getMessage.contains("Ambiguous mapping key 'name'"))
+                    assert(e.path.show == "name")
+                case other =>
+                    fail(s"Expected ambiguity failure, got $other")
+            end match
+        }
+
+        "fails inserting a mapping key that already exists" in {
+            Yaml.cst("name: Alice\n").getOrThrow.insert(Yaml.Cst.Path.root / "name", scalar("Bob")) match
+                case Result.Failure(e: Yaml.Cst.EditException) =>
+                    assert(e.getMessage.contains("already exists"))
+                    assert(e.path.show == "name")
+                case other =>
+                    fail(s"Expected collision failure, got $other")
+            end match
+        }
+
         "fails removing a missing path with the concrete path" in {
             val result =
                 Yaml.cst("name: Alice\n").getOrThrow.remove(Yaml.Cst.Path.root / "missing")
