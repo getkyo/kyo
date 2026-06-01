@@ -883,6 +883,224 @@ object Yaml:
         case Alias(name: Anchor, mark: Mark)
     end Node
 
+    /** Concrete syntax tree for YAML documents.
+      *
+      * `Cst` models YAML structure together with source spans and surface syntax metadata. It is intended for tools that need structural
+      * paths, format-aware rendering, or later edit operations. Ordinary schema decoding and encoding continue to use the direct YAML
+      * reader and writer paths.
+      */
+    object Cst:
+
+        /** Span of source text covered by a CST value. */
+        case class SourceSpan(start: Mark, end: Mark) derives CanEqual
+
+        /** Base type for CST-specific failures. */
+        sealed trait Error extends Exception
+
+        /** Raised when a CST edit cannot be applied. */
+        case class EditException(message: String, path: Path, mark: Maybe[Mark]) extends Exception(message), Error
+
+        /** Preserved non-structural YAML text. */
+        case class Trivia(text: String, span: SourceSpan) derives CanEqual
+
+        /** Source token captured by a CST node or entry. */
+        case class Token(text: String, span: SourceSpan) derives CanEqual
+
+        /** Scalar surface syntax. */
+        enum ScalarSyntax derives CanEqual:
+            /** Canonical syntax chosen by the CST renderer. */
+            case Canonical
+
+            /** Plain scalar syntax. */
+            case Plain
+
+            /** Single-quoted scalar syntax. */
+            case SingleQuoted
+
+            /** Double-quoted scalar syntax. */
+            case DoubleQuoted
+
+            /** Literal block scalar syntax. */
+            case Literal
+
+            /** Folded block scalar syntax. */
+            case Folded
+        end ScalarSyntax
+
+        /** Mapping surface syntax. */
+        enum MappingSyntax derives CanEqual:
+            /** Block mapping syntax. */
+            case Block
+
+            /** Flow mapping syntax. */
+            case Flow
+        end MappingSyntax
+
+        /** Sequence surface syntax. */
+        enum SequenceSyntax derives CanEqual:
+            /** Block sequence syntax. */
+            case Block
+
+            /** Flow sequence syntax. */
+            case Flow
+        end SequenceSyntax
+
+        /** Alias surface syntax. */
+        enum AliasSyntax derives CanEqual:
+            /** Canonical `*anchor` alias syntax. */
+            case Canonical
+        end AliasSyntax
+
+        /** Structural path to a YAML CST node. */
+        opaque type Path = Chunk[Path.Segment]
+
+        /** Constructors and accessors for [[Path]]. */
+        object Path:
+            /** One structural path step. */
+            enum Segment derives CanEqual:
+                /** Mapping key segment. */
+                case Key(value: String)
+
+                /** Sequence index segment. */
+                case Index(value: Int)
+            end Segment
+
+            /** Root path with no segments. */
+            val root: Path = Chunk.empty
+
+            /** Creates a path from explicit segments. */
+            def apply(segments: Chunk[Segment]): Path = segments
+
+            given CanEqual[Path, Path] = CanEqual.derived
+
+            extension (path: Path)
+                /** Appends a mapping key segment. */
+                @targetName("slashKey")
+                def /(key: String): Path =
+                    path :+ Segment.Key(key)
+
+                /** Appends a sequence index segment. */
+                @targetName("slashIndex")
+                def /(index: Int): Path =
+                    path :+ Segment.Index(index)
+
+                /** Returns the path segments. */
+                def segments: Chunk[Segment] =
+                    path
+
+                /** Renders the path in dotted form with bracketed indexes. */
+                def show: String =
+                    val builder = StringBuilder()
+
+                    @tailrec def loop(index: Int): String =
+                        if index >= path.size then builder.toString
+                        else
+                            path(index) match
+                                case Segment.Key(value) =>
+                                    if builder.length > 0 then
+                                        val _ = builder.append('.')
+                                    val _ = builder.append(value)
+                                case Segment.Index(value) =>
+                                    val _ = builder.append('[').append(value).append(']')
+                            end match
+                            loop(index + 1)
+                        end if
+                    end loop
+
+                    loop(0)
+                end show
+            end extension
+        end Path
+
+        /** One YAML CST node. */
+        enum Node derives CanEqual:
+            /** Mapping node with entry CSTs. */
+            case Mapping(entries: Chunk[MappingEntry], syntax: MappingSyntax, meta: Meta, span: SourceSpan, originalSource: Maybe[String])
+
+            /** Sequence node with element CSTs. */
+            case Sequence(
+                entries: Chunk[SequenceEntry],
+                syntax: SequenceSyntax,
+                meta: Meta,
+                span: SourceSpan,
+                originalSource: Maybe[String]
+            )
+
+            /** Scalar node with scalar text and syntax metadata. */
+            case Scalar(value: String, syntax: ScalarSyntax, meta: ScalarMeta, span: SourceSpan, originalSource: Maybe[String])
+
+            /** Alias node referencing an anchor. */
+            case Alias(name: Anchor, syntax: AliasSyntax, span: SourceSpan, originalSource: Maybe[String])
+        end Node
+
+        /** Mapping key-value entry. */
+        case class MappingEntry(
+            key: Node,
+            value: Node,
+            span: SourceSpan,
+            leadingTrivia: Chunk[Trivia] = Chunk.empty,
+            trailingTrivia: Chunk[Trivia] = Chunk.empty
+        ) derives CanEqual
+
+        /** Sequence element entry. */
+        case class SequenceEntry(
+            value: Node,
+            span: SourceSpan,
+            leadingTrivia: Chunk[Trivia] = Chunk.empty,
+            trailingTrivia: Chunk[Trivia] = Chunk.empty
+        ) derives CanEqual
+
+        /** One YAML document CST. */
+        case class Document(
+            root: Maybe[Node],
+            leadingTrivia: Chunk[Trivia],
+            trailingTrivia: Chunk[Trivia],
+            span: SourceSpan,
+            originalSource: Maybe[String]
+        ) derives CanEqual:
+            /** Renders this document to YAML. */
+            def render(using config: WriterConfig): String =
+                internal.yaml.YamlCstRenderer.document(this)
+
+            /** Emits this document as YAML events. */
+            def events: Chunk[Events.Event] =
+                internal.yaml.YamlCstBuilder.events(this)
+
+            /** Replaces the node at `path`. */
+            def replace(path: Path, node: Node): Result[Error, Document] =
+                internal.yaml.YamlCstEdits.replace(this, path, node)
+
+            /** Inserts `node` at `path`. */
+            def insert(path: Path, node: Node): Result[Error, Document] =
+                internal.yaml.YamlCstEdits.insert(this, path, node)
+
+            /** Removes the node at `path`. */
+            def remove(path: Path): Result[Error, Document] =
+                internal.yaml.YamlCstEdits.remove(this, path)
+        end Document
+
+        /** YAML stream CST containing one or more documents. */
+        case class Stream(
+            documents: Chunk[Document],
+            leadingTrivia: Chunk[Trivia],
+            trailingTrivia: Chunk[Trivia],
+            span: SourceSpan,
+            originalSource: Maybe[String]
+        ) derives CanEqual:
+            /** Renders this stream to YAML. */
+            def render(using config: WriterConfig): String =
+                internal.yaml.YamlCstRenderer.stream(this)
+        end Stream
+
+        /** Builds a CST document from YAML events. */
+        def fromEvents(events: Chunk[Events.Event])(using Frame): Result[DecodeException, Document] =
+            internal.yaml.YamlCstBuilder.fromEvents(events)
+
+        /** Builds a CST document from a schema value. */
+        def from[A](value: A)(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): Result[DecodeException, Document] =
+            internal.yaml.YamlCstBuilder.fromValue(value)
+    end Cst
+
     /** Parses a single YAML document into an optional DOM node tree. */
     def parse(input: String)(using Frame): Result[DecodeException, Node] =
         val builder = NodeBuilder()
