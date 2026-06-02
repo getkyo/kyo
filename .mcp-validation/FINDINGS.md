@@ -94,6 +94,57 @@ and the server stays responsive for the duration of the session.
 
 All 202 + 364 + 765 = 1331 JVM tests still pass.
 
+## Fixed: jsonrpc decode rejected `Null` params
+
+JSON-RPC 2.0 + MCP / LSP specs treat `params` as optional. Real MCP clients
+(Claude Code, VS Code, Cursor) send `tools/list`, `resources/list`, `prompts/list`
+without a `params` field. kyo-jsonrpc's request decoder passed the resulting
+`Structure.Value.Null` straight to `Structure.decode[In]`, which failed with
+"expected Record or Variant but got Null". Every spec-compliant client got
+`-32602 InvalidParams` for every list call and dropped the connection.
+
+Fix (commit `ab2204aaa`): coerce `Null` to `Structure.Value.Record(Chunk.empty)`
+in both `RequestRoute.handle` and `NotificationRoute.handle` so kyo-schema's
+case-class decoder can fall back to default field values.
+
+Validated live: server now returns the three Filesystem tools in `tools/list`
+instead of an error. Same fix unblocks every `*/list` call across MCP and LSP.
+
+## Known issue: tools/list `inputSchema` wire shape
+
+`tools/list` now succeeds but the per-tool `inputSchema` field comes out in
+kyo-schema's variant format (`{"Obj":{"properties":[],"required":[],...}}`)
+instead of the MCP-spec JSON Schema (`{"type":"object","properties":{...},
+"required":[...]}`). Claude Code presumably rejects the malformed schema and
+won't register the tool.
+
+Fix path: provide a hand-rolled `Schema[Json.JsonSchema]` (or an MCP-specific
+wire-shim layer in kyo-mcp) that emits standard JSON Schema. This affects all
+three tool-listing factories (`tools/list`, `resources/list`, `resources/
+templates/list`, `prompts/list`).
+
+## Known issue: tools/call arguments decode as Variant, not Record
+
+When the wire payload is plain JSON like `{"name":"list_directory","arguments":
+{"path":"."}}`, kyo-schema's `Structure.decode[Any](arguments)(using Schema[Any])`
+misinterprets the `{"path":"."}` record as a sealed-variant tag and returns
+"Unknown variant 'path'". This blocks every tool invocation through a real MCP
+host even though the in-memory paired-transport integration tests work, because
+those tests `Structure.encode` the input first (round-tripping through kyo-schema's
+own format) rather than receiving plain JSON.
+
+Fix path: either (1) make `Structure.decode` accept plain-JSON records into
+case-class schemas without the variant discriminator dance, or (2) introduce a
+JSON-first decode path for the MCP carrier's `inSchema.decode` that bypasses the
+kyo-schema variant tagging convention.
+
+Both `inputSchema` and `tools/call` arguments share the same root cause:
+**kyo-schema's wire encoding is not standard JSON Schema or MCP-spec plain
+JSON**; it uses an internal discriminated-variant format. Fully wiring kyo-mcp
+to an external MCP host requires either a kyo-schema mode that emits canonical
+JSON, or hand-rolled translation layers in kyo-mcp for every wire-exposed type.
+That work is substantially larger than a validation session.
+
 ## Artifacts left in the repo
 
 - `.mcp-validation/run-demo.sh` — hardened launcher (cache validation, kills
