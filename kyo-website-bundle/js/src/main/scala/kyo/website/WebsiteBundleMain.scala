@@ -9,12 +9,16 @@ import org.scalajs.dom
   * Bootstraps the kyo website single-page application in the browser:
   * 1. Injects `WebsiteStyles.sheet` into the document `<head>` so styles are present before the
   *    first render.
-  * 2. Reads `data-boot-scenario` from `document.body` to select the app arm (landing vs docs).
-  * 3. Mounts the appropriate app under the `UILocation`-driven router.
+  * 2. Routes on `window.location` (via `UILocation.current`) to select the initial body (landing
+  *    for `/`, docs for a `/<prefix>/...` route).
+  * 3. Wraps the body in the unified `SiteApp` shell and mounts it under the `UILocation`-driven
+  *    router.
   *
-  * The landing arm is fully wired (Phase 3). The docs arm wires the full SPA with client routing
-  * via `UILocation.current`, reactive content driven by a `SignalRef[UI]` updated on navigation,
-  * and `DocsClient.fetchMarkdown` + `DocsMarkdown.transpile` for uncached routes (INV-013).
+  * Phase 1 keeps the bundle on a minimal two-arm initial selection while the SSG path is rebuilt
+  * around `SiteApp`; the single-mount, client-side `/`-to-docs routing rewrite lands in Phase 2.
+  * The docs arm wires the SPA with client routing via `UILocation.current`, reactive content driven
+  * by a `SignalRef[UI]` updated on navigation, and `DocsClient.fetchMarkdown` + `DocsMarkdown.transpile`
+  * for uncached routes (INV-013).
   *
   * This object is the one shared ESModule entry across all doc versions (INV-008).
   */
@@ -68,22 +72,30 @@ object WebsiteBundleMain:
         // Unsafe: browser entry-point bridge; single controlled crossing from JS main into the
         // Kyo scheduler. AllowUnsafe is necessary here because we have no Kyo fiber context.
         runStylesheetUnsafe()
-        // The generator writes data-boot-scenario on the page's root content div (WebsitePage.withBootHook),
-        // not on <body>, so query for the element that carries it rather than reading document.body.
-        val bootEl = dom.document.querySelector("[data-boot-scenario]")
-        val boot   = if bootEl != null then bootEl.getAttribute("data-boot-scenario") else "landing"
-        val view: UI < (Sync & Async) = boot match
-            case "landing" => buildLanding()
-            case _         => buildDocs()
+        // Phase 1: route on window.location (G3 removed data-boot-scenario). The root `/` mounts the
+        // landing body; any `/<prefix>/...` route mounts the docs body. Both are wrapped in the one
+        // SiteApp shell. The single-mount, client-side `/`-to-docs swap is the Phase 2 rewrite.
+        // Unsafe: reading the current location at JS entry; UILocation initializes synchronously
+        // before this call and current is a Sync-only read.
+        val initialPath: String =
+            import AllowUnsafe.embrace.danger
+            Sync.Unsafe.evalOrThrow(UILocation.current.current)
+        val isRoot = initialPath.split("/").count(_.nonEmpty) == 0
+        val view: UI < (Sync & Async) =
+            if isRoot then buildLanding() else buildDocs()
         runMountUnsafe(view)
     end main
 
     private def buildLanding()(using Frame): UI < (Sync & Async) =
+        val versions = readVersions()
+        val island   = readDocsIsland()
+        val home     = docsHome(island.content, routePrefix("/", island.content.version.tag))
         for
-            route <- Sync.defer(UILocation.current)
-            versions = readVersions()
-            view <- LandingApp.view(versions)
-        yield UI.Ast.Reactive(route.map(_ => view))
+            body <- LandingApp.body(versions, home)
+            view <- siteShell(versions, home, body)
+        yield view
+        end for
+    end buildLanding
 
     private def buildDocs()(using Frame): UI < (Sync & Async) =
         val island = readDocsIsland()
@@ -99,7 +111,9 @@ object WebsiteBundleMain:
         // `/v1.2.0/...` (the latest version's own versioned tree) must keep navigating within
         // `/v1.2.0/...`, never jumping to `/latest/` (WARN-1). Fall back to the seeded version's tag
         // when the route has no leading segment.
-        val prefix = routePrefix(initialRoute, island.content.version.tag)
+        val prefix   = routePrefix(initialRoute, island.content.version.tag)
+        val home     = docsHome(island.content, prefix)
+        val versions = island.versions
         seedMarkdownCache(initialRoute, island.markdown)
         for
             initialRendered <- DocsMarkdown.transpile(island.markdown)
@@ -135,18 +149,41 @@ object WebsiteBundleMain:
                     end for
                 }
             }
-            view <- DocsApp.view(
+            body <- DocsApp.body(
                 island.content,
-                island.versions,
                 prefix,
                 route,
                 tocRef,
                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
                 UI.Ast.Reactive(articleRef.map(a => a))
             )
+            view <- siteShell(versions, home, body)
         yield view
         end for
     end buildDocs
+
+    /** Wrap a route's content `body` in the unified `SiteApp` shell (the Phase 1 minimal bundle
+      * touch). The search query and index are empty (search is wired in Phase 3); the content signal
+      * is constant for now (the single-mount, route-reactive content swap is the Phase 2 rewrite).
+      */
+    private def siteShell(versions: Chunk[WebsiteVersion], home: String, body: UI)(using Frame): UI < (Sync & Async) =
+        for
+            queryRef <- Signal.initRef("")
+            view <- SiteApp.view(
+                versions,
+                home,
+                Signal.initConst(DocsSearch.Index(Chunk.empty)),
+                queryRef,
+                Signal.initConst(body)
+            )
+        yield view
+
+    /** The header Docs/Modules/Get-started target for the seeded `content` under `prefix`: the first
+      * module's route `/<prefix>/<firstSlug>/`, falling back to the prefix root `/<prefix>/`. Mirrors
+      * `WebsiteGenerator.docsHome` so the bundle and the SSG agree on the header target (parity).
+      */
+    private def docsHome(content: WebsiteContent, prefix: String): String =
+        content.groups.flatMap(_.modules).headOption.fold(s"/$prefix/")(m => s"/$prefix/${m.slug}/")
 
     /** The physical route-tree prefix for a docs path: the path's first non-empty segment (`latest`
       * or `v<X>`). This is the directory the SSG served the page from, so all intra-page links stay

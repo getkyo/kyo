@@ -9,8 +9,7 @@ class WebsitePageTest extends Test:
         title = "Kyo",
         description = "Build with AI. Ship something that holds.",
         canonical = "https://getkyo.io/",
-        bundleHref = "main.js",
-        bootScenario = "landing"
+        bundleHref = "main.js"
     )
 
     private def renderPage(opts: WebsitePage.Options, view: UI)(using Frame): String < Async =
@@ -51,13 +50,14 @@ class WebsitePageTest extends Test:
         }
     }
 
-    "body carries view markup and data-boot-scenario attribute" in run {
+    "body carries the view markup directly (no boot-hook wrapper, G3)" in run {
         renderPage(defaultOpts, UI.div.id("inner-content")).map { html =>
             val bodyStart = html.indexOf("<body>")
             val bodyEnd   = html.indexOf("</body>")
             val body      = html.substring(bodyStart, bodyEnd)
             assert(body.contains("inner-content"))
-            assert(body.contains("data-boot-scenario"))
+            // G3: the page root is the view directly; there is no data-boot-scenario wrapper anymore.
+            assert(!body.contains("data-boot-scenario"), "boot-scenario wrapper must be gone (G3)")
         }
     }
 
@@ -84,19 +84,6 @@ class WebsitePageTest extends Test:
         renderPage(defaultOpts.copy(bundleHref = "javascript:alert(1)"), UI.div).map { html =>
             assert(html.contains("src=\"main.js\""))
             assert(!html.contains("javascript:alert"))
-        }
-    }
-
-    "bootScenario outside allowed set defaults to landing" in run {
-        renderPage(defaultOpts.copy(bootScenario = "evil"), UI.div).map { html =>
-            assert(html.contains("data-boot-scenario=\"landing\""))
-            assert(!html.contains("data-boot-scenario=\"evil\""))
-        }
-    }
-
-    "bootScenario = docs passes through" in run {
-        renderPage(defaultOpts.copy(bootScenario = "docs"), UI.div).map { html =>
-            assert(html.contains("data-boot-scenario=\"docs\""))
         }
     }
 

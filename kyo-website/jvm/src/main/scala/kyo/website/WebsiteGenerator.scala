@@ -68,7 +68,7 @@ object WebsiteGenerator:
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val versions = content.map(_.version)
         for
-            _ <- emitLanding(versions, outDir)
+            _ <- emitLanding(content, versions, outDir)
             _ <- Kyo.foreachDiscard(content)(c => emitVersion(c, versions, outDir))
             _ <- emitLatest(content, versions, outDir)
             _ <- writeVersionsJson(versions, outDir)
@@ -160,7 +160,8 @@ object WebsiteGenerator:
         val route = s"/$prefix/"
         for
             fixedRoute <- Signal.initRef(route)
-            view       <- DocsApp.view(c, versions, prefix, fixedRoute, Signal.initConst(Chunk.empty[DocsMarkdown.Heading]), UI.empty)
+            body       <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(Chunk.empty[DocsMarkdown.Heading]), UI.empty)
+            view       <- siteShell(versions, docsHome(c, prefix), body)
             html       <- wrapFirst(docOpts(c, prefix, "", route), view)
             island = docsIsland(c, versions, "")
             _ <- writeRoute(outDir / prefix / "index.html", injectIslands(html, island, versions))
@@ -179,7 +180,8 @@ object WebsiteGenerator:
         for
             rendered   <- DocsMarkdown.transpile(module.readme)
             fixedRoute <- Signal.initRef(route)
-            view       <- DocsApp.view(c, versions, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article)
+            body       <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article)
+            view       <- siteShell(versions, docsHome(c, prefix), body)
             html       <- wrapFirst(docOpts(c, prefix, module.slug, route), view)
             island = docsIsland(c, versions, module.readme)
             _ <- writeRoute(outDir / prefix / module.slug / "index.html", injectIslands(html, island, versions))
@@ -192,6 +194,33 @@ object WebsiteGenerator:
         end for
     end emitModulePage
 
+    /** Wrap a route's content `body` in the unified `SiteApp` shell for SSG. The header inputs (the
+      * versions dropdown, the `docsHome` target, the empty search query and index) are exactly the
+      * inputs the bundle passes for the same route, so the server-rendered shell and the bundle's
+      * first render produce a structurally identical `data-kyo-path` tree (hydration parity, INV-003).
+      * The content signal is constant on SSG (one route is emitted per call); the bundle uses a
+      * `SignalRef` updated by its nav fiber.
+      */
+    private def siteShell(versions: Chunk[WebsiteVersion], docsHome: String, body: UI)(using Frame): UI < Sync =
+        for
+            queryRef <- Signal.initRef("")
+            view <- SiteApp.view(
+                versions,
+                docsHome,
+                Signal.initConst(DocsSearch.Index(Chunk.empty)),
+                queryRef,
+                Signal.initConst(body)
+            )
+        yield view
+
+    /** The header Docs/Modules/Get-started target for content `c` served under `prefix`: the first
+      * module's route `/<prefix>/<firstSlug>/`, falling back to the prefix root `/<prefix>/` when the
+      * version has no modules. Reused by every docs emit path and mirrored by the bundle's own
+      * `docsHome` computation so SSG and bundle agree (the header target must be identical for parity).
+      */
+    private def docsHome(c: WebsiteContent, prefix: String): String =
+        c.groups.flatMap(_.modules).headOption.fold(s"/$prefix/")(m => s"/$prefix/${m.slug}/")
+
     private def docOpts(c: WebsiteContent, prefix: String, slug: String, route: String): WebsitePage.Options =
         val title =
             if slug.isEmpty then s"Kyo docs ${c.version.label}"
@@ -200,8 +229,7 @@ object WebsiteGenerator:
             title = title,
             description = s"Kyo ${c.version.label} documentation.",
             canonical = s"https://getkyo.io$route",
-            bundleHref = "/main.js",
-            bootScenario = "docs"
+            bundleHref = "/main.js"
         )
     end docOpts
 
@@ -284,6 +312,7 @@ object WebsiteGenerator:
     // ---- Private helpers ----
 
     private def emitLanding(
+        content: Chunk[WebsiteContent],
         versions: Chunk[WebsiteVersion],
         outDir: Path
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
@@ -292,13 +321,20 @@ object WebsiteGenerator:
             description =
                 "Kyo is the reliability foundation for AI-built software: structured effects, typed errors, and production-grade concurrency on JVM, JS, and Native.",
             canonical = "https://getkyo.io/",
-            bundleHref = "main.js",
-            bootScenario = "landing"
+            bundleHref = "main.js"
         )
+        // The landing's header Docs/Modules/Get-started target and its seeded island are the latest
+        // version's first module under `latest/`. The same content seeds the #docs-island so the
+        // bundle hydrates `/` with the same docsHome the SSG header used (D4: islands now ship on `/`).
+        val latest      = pickLatest(content)
+        val landingHome = latest.fold("/")(c => docsHome(c, "latest"))
         for
-            view <- LandingApp.view(versions)
+            body <- LandingApp.body(versions, landingHome)
+            view <- siteShell(versions, landingHome, body)
             html <- wrapFirst(opts, view)
-            _    <- writeRoute(outDir / "index.html", html)
+            island      = latest.fold("")(c => docsIsland(c.copy(version = c.version.copy(latest = true)), versions, ""))
+            withIslands = if island.isEmpty then html else injectIslands(html, island, versions)
+            _ <- writeRoute(outDir / "index.html", withIslands)
         yield ()
         end for
     end emitLanding

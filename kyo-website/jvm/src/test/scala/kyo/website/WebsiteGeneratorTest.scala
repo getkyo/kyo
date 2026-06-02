@@ -297,7 +297,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 14: bundle href in emitted HTML ends with main.js (INV-008) ----
 
-    "bundle href in emitted index.html ends with main.js, boot-scenario landing (INV-008)" in run {
+    "bundle href in emitted index.html ends with main.js (INV-008)" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -308,10 +308,92 @@ class WebsiteGeneratorTest extends Test:
                 html.contains("src=\"main.js\""),
                 "emitted page must reference main.js as the module script source"
             )
+            // G3: the data-boot-scenario wrapper is removed; the page root is the SiteApp div directly.
             assert(
-                html.contains("""data-boot-scenario="landing""""),
-                "boot-scenario attribute missing"
+                !html.contains("data-boot-scenario"),
+                "G3: the boot-scenario wrapper must be gone from the emitted page"
             )
+        end for
+    }
+
+    // ---- Test D4: the landing page carries the unified header + islands ----
+
+    "landing index.html carries the unified SiteApp header and #docs-island + #versions-island (D4)" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            html      <- readFile(out / "index.html")
+        yield
+            // The unified header is now on the landing page too.
+            assert(html.contains("class=\"site-header\""), s"landing must carry the unified site-header: $html")
+            assert(html.contains("search-input"), s"landing header must carry the search input: $html")
+            // D4: the islands now ship on `/` (today emitLanding skipped them), so the bundle can
+            // hydrate `/` and the search/version dropdown have their seed data.
+            assert(
+                html.contains("""<script type="application/json" id="docs-island">"""),
+                s"landing must carry #docs-island (D4): $html"
+            )
+            assert(
+                html.contains("""<script type="application/json" id="versions-island">"""),
+                s"landing must carry #versions-island (D4): $html"
+            )
+            // The landing content body is still present under the header.
+            assert(html.contains("data-section=\"hero\""), s"landing hero must still be present: $html")
+        end for
+    }
+
+    // ---- SEO-2: the unified shell keeps a route-specific <head> per route ----
+
+    "route-specific <head>: /, /latest/, and a module route differ and each matches its own route (SEO-2)" in run {
+        for
+            out         <- tmpDir
+            bundleDir   <- stubBundleDir
+            _           <- emit(Chunk(vWithModules), out, bundleDir)
+            landingHtml <- readFile(out / "index.html")
+            introHtml   <- readFile(out / "latest" / "index.html")
+            moduleHtml  <- readFile(out / "latest" / "kyo-data" / "index.html")
+        yield
+            val landingTitle = headField(landingHtml, "title")
+            val introTitle   = headField(introHtml, "title")
+            val moduleTitle  = headField(moduleHtml, "title")
+            // The three titles are route-specific and all differ (the shell did NOT flatten the head).
+            assert(landingTitle.contains("Build with AI"), s"landing title must be the landing title, got: $landingTitle")
+            assert(introTitle.contains("Kyo docs"), s"intro title must be the docs title, got: $introTitle")
+            assert(moduleTitle.contains("kyo-data"), s"module title must name the module, got: $moduleTitle")
+            assert(landingTitle != introTitle, "landing and intro titles must differ")
+            assert(introTitle != moduleTitle, "intro and module titles must differ")
+            assert(landingTitle != moduleTitle, "landing and module titles must differ")
+            // Each page's canonical link is its own route.
+            assert(canonical(landingHtml) == "https://getkyo.io/", s"landing canonical wrong: ${canonical(landingHtml)}")
+            assert(canonical(introHtml) == "https://getkyo.io/latest/", s"intro canonical wrong: ${canonical(introHtml)}")
+            assert(
+                canonical(moduleHtml) == "https://getkyo.io/latest/kyo-data/",
+                s"module canonical wrong: ${canonical(moduleHtml)}"
+            )
+            // og:url mirrors the canonical per route.
+            assert(moduleHtml.contains("https://getkyo.io/latest/kyo-data/"), "module og:url must match its route")
+        end for
+    }
+
+    // ---- SEO-1: the full transpiled article prose ships in the raw module HTML ----
+
+    "module index.html ships the full transpiled article prose in raw HTML (SEO-1)" in run {
+        // The fixture README carries a distinctive prose sentence; the SSG must ship its transpiled
+        // text in the page HTML (not a JS-hydrated stub) so non-JS crawlers index it.
+        val prose  = "Channels carry values between fibers without blocking a thread."
+        val readme = s"# kyo-distinct\n## Overview\n$prose\n"
+        val mod    = WebsiteModule("kyo-distinct", "Foundation", "kyo-distinct", readme, WebsiteModule.Platforms(true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            html      <- readFile(out / "latest" / "kyo-distinct" / "index.html")
+        yield
+            assert(html.contains(prose), s"the full article prose must be present in the raw module HTML (SEO-1): $html")
+            assert(html.contains("""id="overview""""), s"the transpiled heading anchor must be present (SEO-1): $html")
         end for
     }
 
@@ -623,6 +705,30 @@ class WebsiteGeneratorTest extends Test:
         val end   = html.indexOf("</script>", from)
         html.substring(from, end)
     end extractIsland
+
+    /** The text content of a `<tag>...</tag>` element in the document head (e.g. `<title>`). */
+    private def headField(html: String, tag: String): String =
+        val open  = s"<$tag>"
+        val start = html.indexOf(open)
+        if start < 0 then ""
+        else
+            val from = start + open.length
+            val end  = html.indexOf(s"</$tag>", from)
+            if end < 0 then "" else html.substring(from, end)
+        end if
+    end headField
+
+    /** The href of the `<link rel="canonical">` element (SEO-2). */
+    private def canonical(html: String): String =
+        val marker = "<link rel=\"canonical\" href=\""
+        val start  = html.indexOf(marker)
+        if start < 0 then ""
+        else
+            val from = start + marker.length
+            val end  = html.indexOf('"', from)
+            if end < 0 then "" else html.substring(from, end)
+        end if
+    end canonical
 
     private def countOccurrences(haystack: String, needle: String): Int =
         var count = 0

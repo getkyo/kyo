@@ -3,27 +3,28 @@ package kyo.website
 import kyo.*
 import kyo.UI.PageHead
 
-/** Verifies INV-003 for the landing page and (Phase 6) the docs shell.
+/** Verifies INV-003 hydration parity for the unified `SiteApp` shell on BOTH a landing route and a
+  * docs route, plus the docs-shell 3-pane body.
   *
-  * Landing arm: renders byte-identically via `UI.runRender` (SSG path) and
-  * `RecordingBackend.render` (the same renderer `DomBackend.mountInto` calls), at the initial
-  * signal state (dropdown closed, no interaction). The two paths must produce identical HTML after
-  * normalizing `data-kyo-path` attribute values (which are positional and deterministic for an
-  * identical UI tree).
+  * The central hydration contract: the SSG-emitted shell for a route and the bundle's first render
+  * of the same route must produce a structurally identical `data-kyo-path` tree, because
+  * `DomBackend.mountInto` overwrites the server HTML with `container.innerHTML = html`. A divergence
+  * desyncs the later reactive `onChange` patches. We prove it by rendering the SAME `SiteApp.view`
+  * (same versions, same docsHome, same empty search query/index, same content body) through
+  * `UI.runRender` (the SSG path) and `RecordingBackend.render` (the same renderer
+  * `DomBackend.mountInto` calls) and asserting normalized equality.
   *
-  * Docs arm (Phase 6, leaves 13/13b/13c): same parity guarantee for the 3-pane docs shell with
-  * an embedded transpiled article subtree. The article is a real `UI` subtree produced by
-  * `DocsMarkdown.transpile`, so two calls with the same Markdown produce byte-identical output.
-  *
-  * JVM-only: `RecordingBackend` uses `HtmlRenderer` directly, which is `private[kyo]` and
-  * accessible here because `kyo.website` is a subpackage of `kyo`. `UI.runMount` is JS-only;
-  * this backend replaces it for parity assertions on the JVM.
+  * JVM-only: `RecordingBackend` uses `HtmlRenderer` directly, which is `private[kyo]` and accessible
+  * here because `kyo.website` is a subpackage of `kyo`. `UI.runMount` is JS-only; this backend
+  * replaces it for parity assertions on the JVM.
   */
 class ChromeParityTest extends Test:
 
     private val v1        = WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", true)
     private val v0        = WebsiteVersion("v0.9.3", "0.9.3", false)
     private val versions2 = Chunk(v1, v0)
+
+    private val docsHomeRoute = "/latest/kyo-core/"
 
     /** Strip `data-kyo-path="..."` values (they are positional indices and are deterministic for
       * an identical UI tree; this normalization is a safeguard for any future ordering sensitivity).
@@ -32,38 +33,71 @@ class ChromeParityTest extends Test:
         html.replaceAll("""data-kyo-path="[^"]*"""", "data-kyo-path=\"\"")
     end normalize
 
-    "landing SSG vs RecordingBackend parity (INV-003)" in run {
+    /** Build the unified `SiteApp.view` for a route, wrapping `body` with the SAME header inputs the
+      * SSG and the bundle both pass: same versions, same docsHome, an empty search query/index, and
+      * a constant content signal. Identical inputs are the parity contract.
+      */
+    private def siteShell(versions: Chunk[WebsiteVersion], docsHome: String, body: UI)(using Frame): UI < Sync =
         for
-            view  <- LandingApp.view(versions2)
+            queryRef <- Signal.initRef("")
+            view <- SiteApp.view(
+                versions,
+                docsHome,
+                Signal.initConst(DocsSearch.Index(Chunk.empty)),
+                queryRef,
+                Signal.initConst(body)
+            )
+        yield view
+
+    "SiteApp landing-route shell: SSG vs RecordingBackend parity (INV-003)" in run {
+        for
+            body  <- LandingApp.body(versions2, docsHomeRoute)
+            view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             mount <- RecordingBackend.render(view)
         yield assert(
             normalize(ssg) == normalize(mount),
-            "SSG (runRender) and mount (RecordingBackend) must produce identical HTML at initial state (INV-003)"
+            "SSG (runRender) and mount (RecordingBackend) must produce identical HTML for the landing route shell (INV-003)"
         )
         end for
     }
 
-    "parity holds for the dropdown subtree (INV-003)" in run {
+    "SiteApp docs-route shell: SSG vs RecordingBackend parity (INV-003)" in run {
+        val src = "## Scope\n\nSome text.\n"
         for
-            view  <- LandingApp.view(versions2)
+            rendered <- DocsMarkdown.transpile(src)
+            route    <- Signal.initRef[String](docsHomeRoute)
+            reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
+            body  <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive)
+            view  <- siteShell(versions2, docsHomeRoute, body)
+            ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
+            mount <- RecordingBackend.render(view)
+        yield assert(
+            normalize(ssg) == normalize(mount),
+            "SSG (runRender) and mount (RecordingBackend) must produce identical HTML for the docs route shell (INV-003)"
+        )
+        end for
+    }
+
+    "parity holds for the header dropdown subtree under SiteApp (INV-003)" in run {
+        for
+            body  <- LandingApp.body(versions2, docsHomeRoute)
+            view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             mount <- RecordingBackend.render(view)
         yield
             val ssgNorm   = normalize(ssg)
             val mountNorm = normalize(mount)
-            // Both outputs must contain the dropdown markup for both version labels
+            // Both outputs must contain the dropdown markup for both version labels.
             assert(ssgNorm.contains("1.0.0-RC2"), "SSG must contain version label")
             assert(mountNorm.contains("1.0.0-RC2"), "mount must contain version label")
             assert(ssgNorm.contains("0.9.3"), "SSG must contain second version label")
             assert(mountNorm.contains("0.9.3"), "mount must contain second version label")
-            // kyo-ui dropdown renders as a div with data-kyo-dropdown attribute (not a <select>).
-            // The dropdown subtree must be identical between the two paths.
+            // kyo-ui dropdown renders as a div with a data-kyo-dropdown attribute (not a <select>).
             val ssgDropStart   = ssgNorm.indexOf("data-kyo-dropdown")
             val mountDropStart = mountNorm.indexOf("data-kyo-dropdown")
             assert(ssgDropStart >= 0, "SSG must have dropdown element (data-kyo-dropdown)")
             assert(mountDropStart >= 0, "mount must have dropdown element (data-kyo-dropdown)")
-            // Find the closing tag of the outer dropdown div: search for the hidden div that ends it
             val ssgDropEnd   = ssgNorm.indexOf("</div></div>", ssgDropStart)
             val mountDropEnd = mountNorm.indexOf("</div></div>", mountDropStart)
             val ssgDrop = if ssgDropEnd > ssgDropStart then ssgNorm.substring(ssgDropStart, ssgDropEnd) else ssgNorm.substring(ssgDropStart)
@@ -73,7 +107,7 @@ class ChromeParityTest extends Test:
         end for
     }
 
-    // ---- Phase 6: Docs shell parity (INV-003) ----
+    // ---- Docs shell body parity (INV-003) ----
 
     private val testHead = PageHead(title = "t")
 
@@ -89,15 +123,14 @@ class ChromeParityTest extends Test:
             version = WebsiteVersion("latest", "latest", true)
         )
 
-    // Leaf 13: docs shell SSG path renders the article inside data-kyo-reactive (INV-003)
-    "docs shell SSG runRenderPage contains data-kyo-reactive wrapping article (INV-003, leaf 13)" in run {
+    // Leaf 13: docs body SSG path renders the article inside data-kyo-reactive (INV-003)
+    "docs body SSG runRenderPage contains data-kyo-reactive wrapping article (INV-003, leaf 13)" in run {
         val src = "## Scope\n\nSome text.\n"
         for
             rendered <- DocsMarkdown.transpile(src)
             route    <- Signal.initRef[String]("/latest/kyo-core/")
-            // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
-            view <- DocsApp.view(docsContent, Chunk.empty, "latest", route, Signal.initConst(rendered.headings), reactive)
+            view <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive)
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield
             assert(html.contains("data-kyo-reactive"), s"data-kyo-reactive not found: $html")

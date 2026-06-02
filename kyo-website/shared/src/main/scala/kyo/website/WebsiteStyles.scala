@@ -131,14 +131,26 @@ object WebsiteStyles:
                 Selector.tag("header"),
                 Style.position(_.flow).bg(_.variable("bg")).borderBottom(1.px, _.variable("line-soft"))
             )
-            // nav bar (landing header carries `wrap nav`; docs header carries `wrap nav-bar`)
+            // Unified site header (G2): a full-bleed bar whose inner row is capped at 1500px (the
+            // docs-shell width) and centered, so the one header sits above both the 1120px landing
+            // body and the 1500px docs 3-pane without ever appearing narrower than the docs content.
             .rule(
-                "nav",
-                Style.row.align(_.center).gap(28.px).height(66.px)
+                "site-header",
+                Style.column.width(Length.Pct(100))
+                    .bg(_.variable("bg")).borderBottom(1.px, _.variable("line-soft"))
             )
             .rule(
-                "nav-bar",
-                Style.row.align(_.center).justify(_.spaceBetween).height(60.px)
+                "site-header-inner",
+                Style.row.align(_.center).gap(24.px).height(60.px)
+                    .maxWidth(1500.px).margin(0.px, Length.Auto).width(Length.Pct(100))
+                    .padding(0.px, 24.px)
+            )
+            // The inert search-results region (always present for SSG<->bundle hydration parity).
+            // Empty at the empty query; the populated dropdown styling lands in the search-wiring
+            // phase. Kept off the normal flow so an empty container does not reserve header height.
+            .rule(
+                "search-results",
+                Style.column.position(_.overlay)
             )
             .rule(
                 "brand",
@@ -556,25 +568,9 @@ object WebsiteStyles:
                 Style.row.align(_.start).flexWrap(_.noWrap)
                     .maxWidth(1500.px).margin(0.px, Length.Auto).width(Length.Pct(100))
             )
-            .rule(
-                "docs-header",
-                Style.row.align(_.center).justify(_.spaceBetween)
-                    .height(60.px).bg(_.variable("surface")).borderBottom(1.px, _.variable("line"))
-                    .padding(0.px, 24.px)
-            )
-            .rule(
-                "docs-header-right",
-                Style.row.align(_.center).gap(12.px)
-            )
-            .rule(
-                "docs-nav",
-                Style.row.align(_.center).gap(20.px).color(_.variable("dim"))
-            )
-            .rule(
-                Selector.cls("docs-nav").descendant(Selector.tag("a")),
-                Style.color(_.variable("dim")).fontSize(14.px).fontWeight(_.w500)
-                    .hover(_.color(_.variable("ink")))
-            )
+            // The header search box (rendered by SiteApp). The dead docs-header chrome
+            // (.docs-header/.docs-header-right/.docs-nav) is folded into the unified .site-header*
+            // and .links rules, so those rules are removed here to keep the sheet honest.
             .rule(
                 "search-input",
                 Style.fontFamily(Style.FontFamily.Custom("var(--sans)")).fontSize(13.5.px)

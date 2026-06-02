@@ -22,20 +22,20 @@ object WebsitePage:
         title: String,
         description: String,
         canonical: String,
-        bundleHref: String,
-        bootScenario: String
+        bundleHref: String
     ) derives CanEqual
 
     /** Wraps `view` in a complete HTML document and returns a stream of rendered HTML.
       *
-      * Delegates to `UI.runRenderPage` with a `UI.PageHead` built from `opts`. The caller's
-      * `view` is wrapped in a top-level `div` carrying `data-boot-scenario` so the bundle entry
-      * can identify which app to mount. Take the first emission for a one-shot SSG snapshot.
+      * Delegates to `UI.runRenderPage` with a `UI.PageHead` built from `opts`. The caller's `view`
+      * (the `SiteApp` shell) is the page root directly: there is no boot-hook wrapper `div`
+      * anymore (G3), since the bundle routes on `window.location` rather than a
+      * `data-boot-scenario` attribute. Take the first emission for a one-shot SSG snapshot.
       *
       * Effect row: `Stream[String, Async]` (same as `UI.runRenderPage`).
       */
     def wrap(opts: Options)(view: UI)(using Frame): Stream[String, Async] =
-        UI.runRenderPage(pageHead(opts))(withBootHook(opts.bootScenario, view))
+        UI.runRenderPage(pageHead(opts))(view)
 
     // ---- Private helpers ----
 
@@ -59,19 +59,11 @@ object WebsitePage:
                 case _               => Absent
         )
 
-    private def withBootHook(scenario: String, view: UI)(using Frame): UI =
-        UI.div.data("boot-scenario", validBootScenario(scenario))(view)
-
     private def validBundleHref(s: String): String =
         // Reject javascript: scheme and other potentially unsafe hrefs; fall back to main.js
         if s.isEmpty then ""
         else if s.trim.toLowerCase.startsWith("javascript:") then "main.js"
         else s
-
-    private def validBootScenario(s: String): String =
-        s match
-            case "landing" | "docs" => s
-            case _                  => "landing"
 
     /** Google Fonts preconnect + stylesheet links for Newsreader, Inter, JetBrains Mono. */
     private def fontLinks: Seq[(String, String)] = Seq(

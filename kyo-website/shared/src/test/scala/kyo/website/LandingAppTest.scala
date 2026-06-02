@@ -8,17 +8,11 @@ class LandingAppTest extends Test:
     private val v0        = WebsiteVersion("v0.9.3", "0.9.3", false)
     private val versions2 = Chunk(v1, v0)
 
-    private val versions5 = Chunk(
-        v1,
-        v0,
-        WebsiteVersion("v0.9.2", "0.9.2", false),
-        WebsiteVersion("v0.9.1", "0.9.1", false),
-        WebsiteVersion("v0.9.0", "0.9.0", false)
-    )
+    private val home = "/latest/kyo-core/"
 
     private def renderLanding(versions: Chunk[WebsiteVersion])(using Frame): String < Async =
         for
-            view <- LandingApp.view(versions)
+            view <- LandingApp.body(versions, home)
             html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
 
@@ -35,6 +29,16 @@ class LandingAppTest extends Test:
             assert(html.contains("data-section=\"footer\""))
             assert(html.contains("class=\"feat-grid\""), "feat-grid class hook must be present (INV-012)")
             assert(html.contains("class=\"wrap\""), "root must carry class=\"wrap\" (INV-012)")
+        }
+    }
+
+    "body renders no header (the header is owned by SiteApp, D5)" in run {
+        renderLanding(versions2).map { html =>
+            // The landing body must NOT carry its own header chrome: no data-section="header",
+            // no version dropdown, no search input. Those belong to the unified SiteApp shell.
+            assert(!html.contains("data-section=\"header\""), "body must not render a header section")
+            assert(!html.contains("data-kyo-dropdown"), "body must not render a version dropdown")
+            assert(!html.contains("search-input"), "body must not render the search input")
         }
     }
 
@@ -65,36 +69,21 @@ class LandingAppTest extends Test:
         }
     }
 
-    "dropdown lists one option per version (INV-010)" in run {
+    "in-body CTAs and footer doc links target the local docs home (Href.Path), not getkyo.io (D2)" in run {
         renderLanding(versions2).map { html =>
-            assert(html.contains("1.0.0-RC2"))
-            assert(html.contains("0.9.3"))
-            // kyo-ui dropdown renders option slots as data-kyo-dropdown-opt="N" divs
-            val optionCount = countOccurrences(html, "data-kyo-dropdown-opt=")
-            assert(optionCount == 2, s"expected 2 dropdown options, got $optionCount")
+            // The hero/depth/final-CTA/footer internal links now route locally to docsHome.
+            assert(html.contains(s"""href="$home""""), s"in-body CTAs must target $home: $html")
+            // No internal getkyo.io anchor links remain in the body CTAs (the Community footer
+            // getkyo.io identity link stays external and is asserted separately below).
+            assert(!html.contains("getkyo.io#getting-started"), "footer Get started must be local, not getkyo.io#getting-started")
+            assert(!html.contains("getkyo.io#modules"), "footer Modules must be local, not getkyo.io#modules")
         }
     }
 
-    "dropdown lists intro-only versions too (INV-010)" in run {
-        renderLanding(versions5).map { html =>
-            assert(html.contains("1.0.0-RC2"))
-            assert(html.contains("0.9.3"))
-            assert(html.contains("0.9.2"))
-            assert(html.contains("0.9.1"))
-            assert(html.contains("0.9.0"))
-            // kyo-ui dropdown renders option slots as data-kyo-dropdown-opt="N" divs
-            val optionCount = countOccurrences(html, "data-kyo-dropdown-opt=")
-            assert(optionCount == 5, s"expected 5 dropdown options, got $optionCount")
-        }
-    }
-
-    "empty versions yields a valid page with an empty dropdown" in run {
-        renderLanding(Chunk.empty).map { html =>
-            assert(html.nonEmpty, "page must render with empty versions")
-            assert(html.contains("data-section=\"hero\""), "hero section must be present")
-            // kyo-ui dropdown renders option slots as data-kyo-dropdown-opt="N" divs
-            val optionCount = countOccurrences(html, "data-kyo-dropdown-opt=")
-            assert(optionCount == 0, s"expected 0 dropdown options, got $optionCount")
+    "footer keeps the external Community getkyo.io identity link (D2)" in run {
+        renderLanding(versions2).map { html =>
+            // The Community column's getkyo.io link is an external identity link and stays external.
+            assert(html.contains("getkyo.io"), "footer Community getkyo.io identity link must remain")
         }
     }
 
@@ -109,65 +98,24 @@ class LandingAppTest extends Test:
             assert(html.contains("Flaky calls don&#39;t take you down"))
             assert(html.contains("algebraic effects"))
             assert(html.contains("Build something that holds"))
-            assert(html.contains("getkyo.io"))
         }
     }
 
-    "view carries no DOM or IO in effect row" in run {
-        // LandingApp.view returns UI < Sync (not UI < Async). Asserting via explicit annotation:
+    "body carries no DOM or IO in effect row" in run {
+        // LandingApp.body returns UI < Sync (not UI < Async). Asserting via explicit annotation:
         // if the row widened to include Async the type annotation below would fail to compile.
-        val _: Chunk[WebsiteVersion] => Frame ?=> UI < Sync = v => LandingApp.view(v)
-        // Also verify the view can be built and rendered without error.
-        LandingApp.view(Chunk.empty).map { view =>
-            assert(view != null, "view must be a concrete UI value")
+        val _: (Chunk[WebsiteVersion], String) => Frame ?=> UI < Sync = (v, h) => LandingApp.body(v, h)
+        // Also verify the body can be built and rendered without error.
+        LandingApp.body(Chunk.empty, home).map { view =>
+            assert(view != null, "body must be a concrete UI value")
         }
     }
 
-    "logo hook present with relative path (not raw.githubusercontent URL)" in run {
+    "logo hook present with relative path (footer brand, not raw.githubusercontent URL)" in run {
         renderLanding(Chunk.empty).map { html =>
-            assert(html.contains("data-role=\"logo\""), "logo anchor must carry data-role=logo")
             assert(html.contains("/kyo.png"), "logo src must use relative path /kyo.png")
             assert(!html.contains("raw.githubusercontent"), "logo must NOT use raw.githubusercontent URL")
         }
-    }
-
-    "dropdown preserves version order" in run {
-        val ordered = Chunk(
-            WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", true),
-            WebsiteVersion("v0.9.3", "0.9.3", false),
-            WebsiteVersion("v0.9.2", "0.9.2", false)
-        )
-        renderLanding(ordered).map { html =>
-            val rc2Idx  = html.indexOf("1.0.0-RC2")
-            val v093Idx = html.indexOf("0.9.3")
-            val v092Idx = html.indexOf("0.9.2")
-            assert(rc2Idx >= 0, "RC2 label must be present")
-            assert(v093Idx >= 0, "0.9.3 label must be present")
-            assert(v092Idx >= 0, "0.9.2 label must be present")
-            assert(rc2Idx < v093Idx, "RC2 must appear before 0.9.3 in document order")
-            assert(v093Idx < v092Idx, "0.9.3 must appear before 0.9.2 in document order")
-        }
-    }
-
-    "boot scenario compatibility via WebsitePage.wrap (INV-008)" in run {
-        for
-            view <- LandingApp.view(versions2)
-            html <- WebsitePage.wrap(
-                WebsitePage.Options(
-                    title = "Kyo",
-                    description = "Build with AI. Ship something that holds.",
-                    canonical = "https://getkyo.io/",
-                    bundleHref = "main.js",
-                    bootScenario = "landing"
-                )
-            )(view).take(1).run
-        yield
-            val doc = html.headMaybe.getOrElse("")
-            assert(
-                doc.contains("data-boot-scenario=\"landing\""),
-                "wrapped document must carry data-boot-scenario=landing so WebsiteBundleMain selects the landing arm"
-            )
-        end for
     }
 
     // Helper: count non-overlapping occurrences of a substring

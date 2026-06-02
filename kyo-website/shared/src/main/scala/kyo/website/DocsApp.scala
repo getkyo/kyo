@@ -4,32 +4,33 @@ package kyo.website
 import kyo.*
 import kyo.UI.Href
 
-/** The 3-pane documentation shell as a kyo-ui `UI` value.
+/** The 3-pane documentation content body as a kyo-ui `UI` value.
   *
-  * Assembles the docs chrome: a top header with logo, version switcher, and search input; a left
-  * sidebar listing modules by group with active-route highlighting; a main content area embedding
-  * the transpiled article subtree; and a right table-of-contents pane built from the heading
-  * outline.
+  * Assembles the docs body: a left sidebar listing modules by group with active-route
+  * highlighting; a main content area embedding the transpiled article subtree; and a right
+  * table-of-contents pane built from the heading outline. This is the content body ONLY: the
+  * persistent header (logo, search, version switcher) is owned by `SiteApp` (D5), so `body` no
+  * longer renders its own header, and the header-out-of-shell layout invariant is now automatic.
   *
-  * The shell is a pure composition of kyo-ui elements styled via `WebsiteStyles.sheet` CSS
-  * classes. No raw CSS or raw HTML is used here; the sole `UI.rawHtml` exception lives inside
+  * The body is a pure composition of kyo-ui elements styled via `WebsiteStyles.sheet` CSS classes.
+  * No raw CSS or raw HTML is used here; the sole `UI.rawHtml` exception lives inside
   * `DocsMarkdown.transpile` for the few inline image/link snippets in READMEs.
   *
   * Navigation links in the sidebar are plain `<a>` elements; `UILocation`'s capture-phase anchor
   * interceptor (JS-only) converts same-origin clicks to `pushState` without per-link wiring.
   *
   * @see
-  *   [[DocsApp.view]] for the main entry point
+  *   [[DocsApp.body]] for the main entry point
   */
 object DocsApp:
 
-    /** Assemble the complete 3-pane docs shell for one route.
+    /** Assemble the 3-pane docs content body for one route (header excluded, owned by `SiteApp`).
       *
-      * The returned `UI < Sync` renders the full chrome: header (logo + version switcher), left
-      * sidebar (module groups, active link highlighting), main content area (wrapping `article`),
-      * and right TOC pane (headings with `#slug` links). The content area embeds `article`
-      * directly; when `article` is a `Reactive` node the kyo-ui renderer makes that region
-      * reactive without additional wrapping (INV-013).
+      * The returned `UI < Sync` renders the `docs-shell` 3-pane row: left sidebar (module groups,
+      * active link highlighting), main content area (wrapping `article`), and right TOC pane
+      * (headings with `#slug` links). The content area embeds `article` directly; when `article` is
+      * a `Reactive` node the kyo-ui renderer makes that region reactive without additional wrapping
+      * (INV-013).
       *
       * For SSG call sites: pass the pre-transpiled `DocsMarkdown.Rendered.article` as `article`.
       * For the bundle: pass `articleRef.render(a => a)` as `article` so the region re-renders on
@@ -37,8 +38,6 @@ object DocsApp:
       *
       * @param content
       *   The versioned documentation content (groups, modules, version record).
-      * @param versions
-      *   All available versions for the dropdown (INV-010).
       * @param prefix
       *   The physical route tree the page is served under (`latest` or the version's own tag, e.g.
       *   `v1.2.0`). All intra-page links (sidebar, prev/next) use this prefix so a page links within
@@ -54,11 +53,10 @@ object DocsApp:
       * @param article
       *   The transpiled article subtree to embed in the content area. May be a `Reactive` node.
       * @return
-      *   A `UI < Sync` representing the complete 3-pane docs shell.
+      *   A `UI < Sync` representing the 3-pane docs content body.
       */
-    def view(
+    def body(
         content: WebsiteContent,
-        versions: Chunk[WebsiteVersion],
         prefix: String,
         route: Signal[String],
         tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
@@ -66,46 +64,19 @@ object DocsApp:
     )(using Frame): UI < Sync =
         Sync.defer {
             val allModules = content.groups.flatMap(_.modules)
-            // The "Docs" link targets the first module under this page's own prefix tree: a real,
-            // client-routable docs page with content, not the empty `/<prefix>/` intro. Falls back to
-            // the prefix root when there are no modules.
-            val docsHome = allModules.headOption.fold(s"/$prefix/")(m => s"/$prefix/${m.slug}/")
-            // The header is a full-width bar above the centered 3-column row. It must NOT be a child of
-            // docs-shell: docs-shell is flex-direction:row, so a header sibling there steals a column's
-            // width and squishes the content. The bare wrapper is a flex column (base div rule), so the
-            // header stacks above the shell; docs-shell holds only the three panes.
-            UI.div(
-                docsHeader(versions, docsHome),
-                UI.div.cssClass("docs-shell")(
-                    sidebar(content, route, prefix),
-                    contentArea(article, allModules, route, prefix),
-                    tocPane(tocSignal)
-                )
+            // The `docs-shell` is the 3-pane row ONLY: the persistent header is owned by SiteApp and
+            // sits above this body, so the header-out-of-shell layout invariant holds automatically
+            // (docs-shell is flex-direction:row; a header sibling here would steal a column and squish
+            // the content). The three panes are the sole children.
+            UI.div.cssClass("docs-shell")(
+                sidebar(content, route, prefix),
+                contentArea(article, allModules, route, prefix),
+                tocPane(tocSignal)
             )
         }
-    end view
+    end body
 
     // ---- Private helpers ----
-
-    private def docsHeader(versions: Chunk[WebsiteVersion], docsHome: String)(using Frame): UI =
-        val versionOptions: Seq[(String, String)] = versions.toSeq.map(v => v.tag -> v.label)
-        UI.header.cssClass("docs-header")(
-            UI.div.cssClass("wrap").cssClass("nav-bar")(
-                UI.a.cssClass("brand").href(Href.Path("/"))(
-                    UI.span("kyo")
-                ),
-                UI.nav.cssClass("docs-nav")(
-                    UI.a("Docs").href(Href.Path(docsHome)),
-                    UI.a("API")
-                        .href(Href.External("https", "//javadoc.io/doc/io.getkyo/kyo-core_3"))
-                ),
-                UI.div.cssClass("docs-header-right")(
-                    UI.input.cssClass("search-input").placeholder("Search docs"),
-                    UI.dropdown(versionOptions*).cssClass("ver")
-                )
-            )
-        )
-    end docsHeader
 
     private def versionBanner(current: WebsiteVersion)(using Frame): UI =
         if current.latest then UI.empty

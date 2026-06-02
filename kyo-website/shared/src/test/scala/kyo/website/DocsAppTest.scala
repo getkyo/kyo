@@ -7,12 +7,12 @@ class DocsAppTest extends Test:
 
     private val testHead = PageHead(title = "t")
 
-    // Helper: render DocsApp.view to the first HTML emission. The default `prefix` mirrors the
+    // Helper: render DocsApp.body to the first HTML emission. The default `prefix` mirrors the
     // version's own canonical tree (`latest` when the version is flagged latest, else its tag); the
-    // WARN-1 regression leaves pass an explicit prefix to assert the physical-tree decoupling.
+    // WARN-1 regression leaves pass an explicit prefix to assert the physical-tree decoupling. The
+    // body no longer renders a header (D5), so there is no `versions` argument anymore.
     private def rendered(
         content: WebsiteContent,
-        versions: Chunk[WebsiteVersion],
         route: Signal[String],
         toc: Chunk[DocsMarkdown.Heading],
         article: UI,
@@ -22,7 +22,7 @@ class DocsAppTest extends Test:
         else if content.version.latest then "latest"
         else content.version.tag
         for
-            view <- DocsApp.view(content, versions, resolvedPrefix, route, Signal.initConst(toc), article)
+            view <- DocsApp.body(content, resolvedPrefix, route, Signal.initConst(toc), article)
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield html
         end for
@@ -56,7 +56,7 @@ class DocsAppTest extends Test:
                 ),
                 version = WebsiteVersion("latest", "latest", true)
             )
-            html <- rendered(content, Chunk.empty, route, Chunk.empty, UI.empty)
+            html <- rendered(content, route, Chunk.empty, UI.empty)
         yield
             val foundationIdx = html.indexOf("Foundation")
             val appIdx        = html.indexOf("Application runtime")
@@ -86,7 +86,7 @@ class DocsAppTest extends Test:
                 ),
                 version = WebsiteVersion("latest", "latest", true)
             )
-            html <- rendered(content, Chunk.empty, route, Chunk.empty, UI.empty)
+            html <- rendered(content, route, Chunk.empty, UI.empty)
         yield
             assert(html.contains("/latest/kyo-data/"), s"kyo-data href not found: $html")
             assert(html.contains("/latest/kyo-kernel/"), s"kyo-kernel href not found: $html")
@@ -101,7 +101,7 @@ class DocsAppTest extends Test:
         )
         for
             route <- fixedRoute("/latest/kyo-core/")
-            html  <- rendered(emptyContent(), Chunk.empty, route, toc, UI.empty)
+            html  <- rendered(emptyContent(), route, toc, UI.empty)
         yield
             assert(html.contains("#kyo-core"), s"kyo-core anchor not found: $html")
             assert(html.contains("#scope"), s"scope anchor not found: $html")
@@ -117,7 +117,7 @@ class DocsAppTest extends Test:
         )
         for
             route <- fixedRoute("/latest/kyo-core/")
-            html  <- rendered(emptyContent(), Chunk.empty, route, toc, UI.empty)
+            html  <- rendered(emptyContent(), route, toc, UI.empty)
         yield
             // Each level gets its own indentation hook; the three are structurally distinguishable.
             assert(html.contains("toc-h1"), s"level-1 hook (toc-h1) missing: $html")
@@ -143,32 +143,29 @@ class DocsAppTest extends Test:
             rendered <- DocsMarkdown.transpile("## Scope\n")
             // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
-            html <- this.rendered(emptyContent(), Chunk.empty, route, Chunk.empty, reactive)
+            html <- this.rendered(emptyContent(), route, Chunk.empty, reactive)
         yield
             assert(html.contains("data-kyo-reactive"), s"data-kyo-reactive not found in HTML: $html")
             assert(html.contains("<h2"), s"h2 element not found in HTML: $html")
         end for
     }
 
-    // Leaf 6: version dropdown lists all versions (INV-010)
-    "version dropdown lists all versions INV-010 (leaf 6)" in run {
-        val versions = Chunk(
-            WebsiteVersion("v1.0.0", "1.0.0", true),
-            WebsiteVersion("v0.9.3", "0.9.3", false),
-            WebsiteVersion("v0.9.2", "0.9.2", false),
-            WebsiteVersion("v0.9.1", "0.9.1", false),
-            WebsiteVersion("v0.9.0", "0.9.0", false)
-        )
+    // Leaf 6 (version dropdown, INV-010) MOVED to SiteAppTest: the dropdown is owned by the header
+    // (SiteApp), not the docs body. The docs body must NOT render a header/dropdown/search-input;
+    // that negative is asserted by the "body renders no header" leaf below.
+
+    // Leaf 6b: the docs body renders no header chrome (D5)
+    "docs body renders no header, dropdown, or search input (D5, leaf 6b)" in run {
+        val versions = Chunk(WebsiteVersion("v1.0.0", "1.0.0", true), WebsiteVersion("v0.9.3", "0.9.3", false))
         for
             route <- fixedRoute("/latest/")
-            html  <- rendered(emptyContent(), versions, route, Chunk.empty, UI.empty)
+            // versions is intentionally unused here: the body has no header to populate.
+            _    <- Sync.defer(versions)
+            html <- rendered(emptyContent(), route, Chunk.empty, UI.empty)
         yield
-            // Dropdown options: each version label must appear
-            assert(html.contains("1.0.0"), s"1.0.0 not found: $html")
-            assert(html.contains("0.9.3"), s"0.9.3 not found: $html")
-            assert(html.contains("0.9.2"), s"0.9.2 not found: $html")
-            assert(html.contains("0.9.1"), s"0.9.1 not found: $html")
-            assert(html.contains("0.9.0"), s"0.9.0 not found: $html")
+            assert(!html.contains("data-section=\"header\""), s"docs body must not render a header: $html")
+            assert(!html.contains("data-kyo-dropdown"), s"docs body must not render a version dropdown: $html")
+            assert(!html.contains("search-input"), s"docs body must not render the search input: $html")
         end for
     }
 
@@ -178,7 +175,7 @@ class DocsAppTest extends Test:
         for
             route <- fixedRoute("/v0.9.3/kyo-core/")
             content = emptyContent(ver)
-            html <- rendered(content, Chunk.empty, route, Chunk.empty, UI.empty)
+            html <- rendered(content, route, Chunk.empty, UI.empty)
         yield
             assert(html.contains("version-banner"), s"version-banner class not found for non-latest: $html")
             assert(html.contains("not the latest") || html.contains("older version"), s"Banner text not found: $html")
@@ -191,7 +188,7 @@ class DocsAppTest extends Test:
         for
             route <- fixedRoute("/latest/kyo-core/")
             content = emptyContent(ver)
-            html <- rendered(content, Chunk.empty, route, Chunk.empty, UI.empty)
+            html <- rendered(content, route, Chunk.empty, UI.empty)
         yield assert(!html.contains("version-banner"), s"version-banner should not appear for latest: $html")
         end for
     }
@@ -208,7 +205,7 @@ class DocsAppTest extends Test:
         )
         for
             route <- fixedRoute("/latest/mod-b/")
-            html  <- rendered(content, Chunk.empty, route, Chunk.empty, UI.empty)
+            html  <- rendered(content, route, Chunk.empty, UI.empty)
         yield
             // The rendered prev/next nav must contain links to the adjacent modules.
             assert(html.contains("/latest/mod-a/"), s"prev link to mod-a not found in prev-next nav: $html")
@@ -226,7 +223,7 @@ class DocsAppTest extends Test:
         )
         for
             route <- fixedRoute("/latest/kyo-core/")
-            html  <- rendered(content, Chunk.empty, route, Chunk.empty, UI.empty)
+            html  <- rendered(content, route, Chunk.empty, UI.empty)
         yield assert(html.contains("nav-item-active"), s"nav-item-active not found for active route: $html")
         end for
     }
@@ -235,7 +232,7 @@ class DocsAppTest extends Test:
     "intro-only content renders shell with no module links (leaf 11)" in run {
         for
             route <- fixedRoute("/latest/")
-            html  <- rendered(emptyContent(), Chunk.empty, route, Chunk.empty, UI.empty)
+            html  <- rendered(emptyContent(), route, Chunk.empty, UI.empty)
         yield
             // Shell renders (has sidebar-nav), no module links present
             assert(html.contains("sidebar-nav"), s"sidebar-nav not found: $html")
@@ -256,7 +253,7 @@ class DocsAppTest extends Test:
         )
         for
             route <- fixedRoute("/v0.9.3/mod-b/")
-            html  <- rendered(content, Chunk.empty, route, Chunk.empty, UI.empty)
+            html  <- rendered(content, route, Chunk.empty, UI.empty)
         yield
             // Sidebar links resolve within v0.9.3.
             assert(html.contains("/v0.9.3/mod-a/"), s"sidebar must link within v0.9.3: $html")
@@ -286,10 +283,10 @@ class DocsAppTest extends Test:
         for
             // Served under the version's own v1.2.0/ tree: the reader is at /v1.2.0/mod-b/.
             vRoute <- fixedRoute("/v1.2.0/mod-b/")
-            vHtml  <- rendered(content, Chunk.empty, vRoute, Chunk.empty, UI.empty, prefix = "v1.2.0")
+            vHtml  <- rendered(content, vRoute, Chunk.empty, UI.empty, prefix = "v1.2.0")
             // Served under latest/ tree: the reader is at /latest/mod-b/.
             latestRoute <- fixedRoute("/latest/mod-b/")
-            latestHtml  <- rendered(content, Chunk.empty, latestRoute, Chunk.empty, UI.empty, prefix = "latest")
+            latestHtml  <- rendered(content, latestRoute, Chunk.empty, UI.empty, prefix = "latest")
         yield
             // v<X> tree: sidebar links resolve within v1.2.0, and NO link jumps to /latest/.
             assert(vHtml.contains("/v1.2.0/mod-a/"), s"v-tree sidebar must link within v1.2.0: $vHtml")
@@ -315,7 +312,7 @@ class DocsAppTest extends Test:
         )
         for
             route <- fixedRoute("/latest/kyo-data/")
-            html  <- rendered(content, Chunk.empty, route, Chunk.empty, UI.empty)
+            html  <- rendered(content, route, Chunk.empty, UI.empty)
         yield
             // Sidebar group headings are real text in HTML, not JS placeholders
             assert(html.contains("Foundation"), s"Foundation group text not found: $html")

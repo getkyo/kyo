@@ -5,11 +5,13 @@ import kyo.*
 /** Guard test: every CSS class the website UI emits must have a matching rule in
   * `WebsiteStyles.sheet`.
   *
-  * It renders `LandingApp.view` and a fully-featured `DocsApp.view` (an article carrying callouts,
-  * a blockquote, bold runs, a table, and a highlighted code block so the `callout`/`blockquote`/
-  * `md-strong`/`tok-*` hooks all appear), harvests every `class="..."` token from the produced
-  * HTML, and asserts each token is styled by some rule in the sheet. A future `cssClass` with no
-  * rule fails the build with the offending class named.
+  * It renders the unified `SiteApp.view` shell around the landing body and around a fully-featured
+  * docs body (an article carrying callouts, a blockquote, bold runs, a table, and a highlighted
+  * code block so the `callout`/`blockquote`/`md-strong`/`tok-*` hooks all appear), so the merged
+  * header chrome (`site-header`/`site-header-inner`/`search-input`/`search-results` plus the reused
+  * `brand`/`links`/`right`/`btn`/`ver`) is harvested alongside the body classes. It then harvests
+  * every `class="..."` token from the produced HTML and asserts each token is styled by some rule
+  * in the sheet. A future `cssClass` with no rule fails the build with the offending class named.
   */
 class WebsiteStylesCoverageTest extends Test:
 
@@ -64,9 +66,25 @@ class WebsiteStylesCoverageTest extends Test:
         out.toSet
     end emittedClasses
 
+    private val versions = Chunk(WebsiteVersion("v1.0.0", "1.0.0", true))
+
+    // Wrap a content body in the unified SiteApp shell so the merged header chrome is harvested too.
+    private def shell(home: String, body: UI)(using Frame): UI < Sync =
+        for
+            queryRef <- Signal.initRef("")
+            view <- SiteApp.view(
+                versions,
+                home,
+                Signal.initConst(DocsSearch.Index(Chunk.empty)),
+                queryRef,
+                Signal.initConst(body)
+            )
+        yield view
+
     private def landingHtml(using Frame): String < Async =
         for
-            view <- LandingApp.view(Chunk(WebsiteVersion("v1.0.0", "1.0.0", true)))
+            body <- LandingApp.body(versions, "/latest/kyo-core/")
+            view <- shell("/latest/kyo-core/", body)
             html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
 
@@ -110,14 +128,14 @@ class WebsiteStylesCoverageTest extends Test:
         for
             route    <- Signal.initRef[String]("/v0.9.0/kyo-core/")
             rendered <- DocsMarkdown.transpile(article)
-            view <- DocsApp.view(
+            body <- DocsApp.body(
                 content,
-                Chunk(WebsiteVersion("v0.9.0", "0.9.0", false)),
                 "v0.9.0",
                 route,
                 Signal.initConst(toc),
                 rendered.article
             )
+            view <- shell("/v0.9.0/kyo-core/", body)
             html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
         end for

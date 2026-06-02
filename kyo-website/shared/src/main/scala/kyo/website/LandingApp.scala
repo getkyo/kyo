@@ -6,76 +6,50 @@ import kyo.UI.Href
 import kyo.UI.ImgSrc
 import kyo.UI.Target
 
-/** The evergreen marketing landing page as a kyo-ui `UI` value, structured into the mock's
-  * sections: header, hero, problem+stat, promise, outcomes grid, "built for AI", one-foundation +
-  * platforms band, depth, final CTA, footer. Renders via `runRender` (SSG) and `runMount`
-  * (interactivity) unchanged. Elements opt into the `WebsiteStyles.sheet` rules via
-  * `UI.cssClass(...)` hooks (D5), with per-element one-offs via `.style(Style)`; both coexist.
-  * No raw CSS. No raw HTML.
+/** The evergreen marketing landing content as a kyo-ui `UI` value, structured into the mock's
+  * sections: hero, problem+stat, promise, outcomes grid, "built for AI", one-foundation +
+  * platforms band, depth, final CTA, footer. This is the content body ONLY: the persistent header
+  * is owned by `SiteApp` (D5), so `body` no longer renders its own header. Renders via `runRender`
+  * (SSG) and `runMount` (interactivity) unchanged. Elements opt into the `WebsiteStyles.sheet`
+  * rules via `UI.cssClass(...)` hooks (D5), with per-element one-offs via `.style(Style)`; both
+  * coexist. No raw CSS. No raw HTML.
   *
-  * `versions` populates the header version dropdown (INV-010). The dropdown uses kyo-ui's
-  * `dropdown` for client interactivity; on the static page it renders its current label and links
-  * to releases.
+  * In-body calls to action and footer documentation links target the local docs home
+  * (`Href.Path(docsHome)`), client-routed by `UILocation` with no reload; genuinely external links
+  * (GitHub, Discord, releases, the javadoc API, the Community `getkyo.io` identity link) stay
+  * external (D2).
   */
 object LandingApp:
 
-    /** The landing page. `versions` populates the header version dropdown (INV-010).
+    /** The landing content body (header excluded, owned by `SiteApp`).
       *
       * @param versions
-      *   The list of available documentation versions shown in the header dropdown. May be empty.
+      *   The list of available documentation versions. Retained for a uniform call shape with the
+      *   SSG generator and the bundle; the header dropdown is now populated by `SiteApp`, not here.
+      * @param docsHome
+      *   The local docs home (`/<prefix>/<firstSlug>/`) every in-body "Start building" / "Get
+      *   started" / "Documentation" / "Modules" / "Read the technical docs" call to action targets.
       * @return
-      *   A `UI < Sync` value representing the complete landing page.
+      *   A `UI < Sync` value representing the landing content body.
       */
-    def view(versions: Chunk[WebsiteVersion])(using Frame): UI < Sync =
+    def body(versions: Chunk[WebsiteVersion], docsHome: String)(using Frame): UI < Sync =
         Sync.defer {
             UI.div.cssClass("wrap").data("section", "page")(
-                pageHeader(versions),
-                hero,
+                hero(docsHome),
                 problem,
                 promise,
                 outcomes,
                 builtForAI,
                 oneFoundation,
-                depth,
-                finalCta,
-                pageFooter
+                depth(docsHome),
+                finalCta(docsHome),
+                pageFooter(docsHome)
             )
         }
 
     // ---- Private section helpers ----
 
-    private def pageHeader(versions: Chunk[WebsiteVersion])(using Frame): UI =
-        val versionOptions: Seq[(String, String)] = versions.toSeq.map(v => v.tag -> v.label)
-        UI.header.data("section", "header")(
-            UI.div.cssClass("wrap").cssClass("nav")(
-                UI.a.cssClass("brand").data("role", "logo").href(Href.Fragment("top"))(
-                    UI.img(ImgSrc.Path("/kyo.png"), "Kyo").cssClass("mark"),
-                    UI.span("kyo")
-                ),
-                UI.nav.cssClass("links")(
-                    UI.a("Get started").href(Href.External("https", "//getkyo.io#getting-started")),
-                    UI.a("Modules").href(Href.External("https", "//getkyo.io#modules")),
-                    UI.a("API")
-                        .href(Href.External("https", "//javadoc.io/doc/io.getkyo/kyo-core_3"))
-                        .target(Target.Blank)
-                ),
-                UI.div.cssClass("right")(
-                    UI.dropdown(versionOptions*).cssClass("ver"),
-                    UI.a
-                        .cssClass("btn")
-                        .cssClass("btn-ghost")
-                        .href(Href.External("https", "//github.com/getkyo/kyo"))
-                        .target(Target.Blank)("GitHub"),
-                    UI.a
-                        .cssClass("btn")
-                        .cssClass("btn-primary")
-                        .href(Href.External("https", "//getkyo.io"))("Start building")
-                )
-            )
-        )
-    end pageHeader
-
-    private def hero(using Frame): UI =
+    private def hero(docsHome: String)(using Frame): UI =
         UI.section.cssClass("hero").id("top").data("section", "hero")(
             UI.div.cssClass("wrap")(
                 UI.div.cssClass("eyebrow")("The reliability layer for AI"),
@@ -93,7 +67,7 @@ object LandingApp:
                     UI.a
                         .cssClass("btn")
                         .cssClass("btn-primary")
-                        .href(Href.External("https", "//getkyo.io"))("Start building"),
+                        .href(Href.Path(docsHome))("Start building"),
                     UI.a
                         .cssClass("btn")
                         .href(Href.Fragment("how"))("See how it works")
@@ -341,7 +315,7 @@ object LandingApp:
         )
     end oneFoundation
 
-    private def depth(using Frame): UI =
+    private def depth(docsHome: String)(using Frame): UI =
         UI.section.cssClass("band").cssClass("depth").id("how").data("section", "depth")(
             UI.div.cssClass("wrap").cssClass("inner")(
                 UI.div.cssClass("sec-head")(
@@ -367,7 +341,7 @@ object LandingApp:
                     ),
                     UI.div.cssClass("links")(
                         UI.a("Read the technical docs")
-                            .href(Href.External("https", "//getkyo.io")),
+                            .href(Href.Path(docsHome)),
                         UI.a("Explore the source")
                             .href(Href.External("https", "//github.com/getkyo/kyo"))
                             .target(Target.Blank)
@@ -377,7 +351,7 @@ object LandingApp:
         )
     end depth
 
-    private def finalCta(using Frame): UI =
+    private def finalCta(docsHome: String)(using Frame): UI =
         UI.section.cssClass("band").cssClass("dark").cssClass("promise").data("section", "final-cta")(
             UI.div.cssClass("wrap")(
                 UI.div.cssClass("cta-final").cssClass("on-dark")(
@@ -386,7 +360,7 @@ object LandingApp:
                         UI.a
                             .cssClass("btn")
                             .cssClass("btn-primary")
-                            .href(Href.External("https", "//getkyo.io"))("Start building"),
+                            .href(Href.Path(docsHome))("Start building"),
                         UI.a
                             .cssClass("btn")
                             .href(Href.External("https", "//discord.gg/KxxkBbW8bq"))
@@ -397,7 +371,7 @@ object LandingApp:
         )
     end finalCta
 
-    private def pageFooter(using Frame): UI =
+    private def pageFooter(docsHome: String)(using Frame): UI =
         UI.footer.data("section", "footer")(
             UI.div.cssClass("wrap")(
                 UI.div.cssClass("foot")(
@@ -412,9 +386,9 @@ object LandingApp:
                     ),
                     UI.div(
                         UI.h5("Docs"),
-                        UI.a("Get started").href(Href.External("https", "//getkyo.io#getting-started")),
-                        UI.a("Documentation").href(Href.External("https", "//getkyo.io")),
-                        UI.a("Modules").href(Href.External("https", "//getkyo.io#modules")),
+                        UI.a("Get started").href(Href.Path(docsHome)),
+                        UI.a("Documentation").href(Href.Path(docsHome)),
+                        UI.a("Modules").href(Href.Path(docsHome)),
                         UI.a("API reference")
                             .href(Href.External("https", "//javadoc.io/doc/io.getkyo/kyo-core_3"))
                             .target(Target.Blank)
