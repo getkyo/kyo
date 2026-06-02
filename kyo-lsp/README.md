@@ -160,14 +160,14 @@ val showMsgHandler: LspHandler[LspHandler.ShowMessageParams, Unit, LspException]
 
 ### Custom handlers
 
-`LspHandler.custom[In, Out](method)(handler)` registers a server-handled vendor extension. `LspHandler.customClient[In, Out](method)(handler)` registers a client-handled vendor extension.
+`LspHandler.custom[In](method)(handler)` registers a server-handled vendor extension. `LspHandler.customClient[In](method)(handler)` registers a client-handled vendor extension. Both factories use clause interleaving: annotate `[In]` and let the compiler infer `Out` and `E` from the handler.
 
 ```scala
 case class PingParams(id: String)    derives Schema
 case class PingResult(id: String)    derives Schema
 
 val pingHandler: LspHandler[PingParams, PingResult, LspException] =
-    LspHandler.custom[PingParams, PingResult]("acme/ping") { params =>
+    LspHandler.custom[PingParams]("acme/ping") { params =>
         PingResult(id = params.id)
     }
 ```
@@ -182,7 +182,7 @@ The `method` string must not collide with a standard LSP method name. The engine
 case class LintError(file: String, line: Int) derives Schema
 
 val lintHandler: LspHandler[LspHandler.DocumentDiagnosticParams, LspHandler.DocumentDiagnosticReport, LspException | LintError] =
-    LspHandler.TextDocument.documentDiagnostic { params =>
+    LspHandler.TextDocument.diagnostic { params =>
         Abort.fail(LintError("main.scala", 42))
     }.error[LintError](code = -32099, message = "lint failed")
 ```
@@ -199,9 +199,9 @@ val docSymHandler: LspHandler[LspHandler.DocumentSymbolParams, LspHandler.Docume
                 // doc.text: the current file contents as a String
                 // doc.uri: LspHandler.LspDocument.Uri
                 // doc.version: Int (the latest client-provided version)
-                LspHandler.DocumentSymbolResult.Flat(Chunk.empty)
+                LspHandler.DocumentSymbolResult.Symbols(Chunk.empty)
             case Absent =>
-                LspHandler.DocumentSymbolResult.Flat(Chunk.empty)
+                LspHandler.DocumentSymbolResult.Symbols(Chunk.empty)
         }
     }
 ```
@@ -232,7 +232,7 @@ Notebook-level metadata (notebook type, notebook URI, cell structure array) is a
 Handlers emit work-done progress through `Lsp.workDoneBegin`, `Lsp.workDoneReport`, and `Lsp.workDoneEnd`, keyed on the `workDoneToken` the client supplies in the request params:
 
 ```scala
-val slowAnalysis: LspHandler[LspHandler.WorkspaceDiagnosticParams, LspHandler.WorkspaceDiagnosticReport, LspException] =
+val slowAnalysis: LspHandler[LspHandler.WorkspaceDiagnosticParams, LspHandler.WorkspaceDiagnosticReport, LspException | Closed] =
     LspHandler.Workspace.diagnostic { params =>
         Lsp.workDoneToken.flatMap {
             case Absent => ()
@@ -258,14 +258,14 @@ Handlers can observe cancellation through `Lsp.cancelled`, which returns a `Fibe
 val interruptibleHover: LspHandler[LspHandler.HoverParams, Maybe[LspHandler.Hover], LspException] =
     LspHandler.TextDocument.hover { params =>
         Lsp.cancelled.flatMap { cancelPromise =>
-            Fiber.race(
+            Async.race(Seq(
                 cancelPromise.get.map(_ => Absent),
                 Async.sleep(100.millis).map(_ => Present(LspHandler.Hover(
                     contents = LspHandler.HoverContents.Markup(
                         LspHandler.MarkupContent(LspHandler.MarkupKind.PlainText, "result")
                     )
                 )))
-            )
+            ))
         }
     }
 ```
@@ -325,7 +325,7 @@ val explicitCaps: LspConfig =
             )
         )
         .withSemanticTokensLegend(LspHandler.SemanticTokensLegend(
-            tokenTypes = Chunk("keyword", "variable"),
+            tokenTypes = Chunk(LspHandler.SemanticTokenTypes.Keyword, LspHandler.SemanticTokenTypes.Variable),
             tokenModifiers = Chunk.empty
         ))
 ```
