@@ -992,7 +992,18 @@ object Tasty:
         names: Array[Name],
         sectionOffset: Int,
         addrMap: IntMap[SymbolId]
-    )
+    ):
+        /** Render this SymbolBody without leaking array identity hashes.
+          *
+          * F-W2-23 fix: the default case-class toString prints `sectionBytes` and `names` as `[B@<hash>` and
+          * `[Lkyo.Tasty$Name;@<hash>` respectively, which is useless for debugging. This override renders
+          * `sectionBytes` as `len=<N>` and `names` as `names=[<N> entries]` so assertion failure messages and
+          * debug logs contain actionable information.
+          */
+        override def toString: String =
+            s"SymbolBody(bodyStart=$bodyStart, bodyEnd=$bodyEnd, sectionBytes=len=${sectionBytes.length}, " +
+                s"names=[${names.length} entries], sectionOffset=$sectionOffset, addrMap=${addrMap.size} entries)"
+    end SymbolBody
 
     // ── Symbol ──────────────────────────────────────────────────────────────
 
@@ -1004,6 +1015,12 @@ object Tasty:
       *
       * Resolution methods (`owner`, `fullName`, `binaryName`, etc.) require a `Classpath` in scope and are pure data accessors with no
       * effect row.
+      *
+      * Equality contract (F-W2-16): `derives CanEqual` enables `==` comparisons between any two `Symbol` values regardless of their concrete
+      * subtype. Equality is implemented via a custom `equals` that compares `SymbolId` values: two symbols are equal if and only if
+      * `id.value == other.id.value` and neither id is the sentinel (-1). Comparing a `Symbol.Class` to a `Symbol.Trait` always returns
+      * `false` even when they represent the same named entity after a kind-change, because their `SymbolId` values differ. Use `id` for
+      * cross-kind identity checks.
       */
     sealed trait Symbol derives CanEqual:
         def id: SymbolId
@@ -2092,14 +2109,52 @@ object Tasty:
           */
         unresolvedFqnByNegId: Map[Int, String] = Map.empty
     ):
-        // NOT a constructor parameter -- excluded from auto-generated equals / hashCode / copy / unapply.
-        // A cp.copy(...) call produces a new Classpath with a fresh empty memo; this is correct because
-        // memoized decode results are an optimization, not observable state.
+        // NOT constructor parameters -- excluded from auto-generated equals / hashCode / copy / unapply.
+        // A cp.copy(...) call produces a new Classpath with fresh empty memos; this is correct because
+        // memoized results are an optimization, not observable state.
         private lazy val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Either[TastyError, Tree]] =
             new java.util.concurrent.ConcurrentHashMap()
 
+        // F-W2-7: cached unresolvedTypeReferenceCount -- linear scan performed once and memoized.
+        // A cp.copy(...) call recomputes this lazily on the new Classpath.
+        private lazy val cachedUnresolvedTypeReferenceCount: Int =
+            val sentinelId = Classpath.sentinelUnresolved.id.value
+            symbols.foldLeft(0): (acc, sym) =>
+                sym match
+                    case c: Symbol.ClassLike =>
+                        acc + c.parentTypes.count:
+                            case Type.Named(id) => id.value == sentinelId
+                            case _              => false
+                    case _ => acc
+        end cachedUnresolvedTypeReferenceCount
+
+        // F-W2-24: simple-name index for O(1) findClassByName. Keyed by String (decoded name); built once.
+        // Names in the symbols array are interned via the orchestrator's internal Interner, which is a
+        // DIFFERENT Interner instance from Tasty.globalInterner. Using decoded String keys ensures that
+        // Name("Foo") via globalInterner and cls.name via the orchestrator's interner both map to the
+        // same entry, because String equality is content-based.
+        // A cp.copy(...) call rebuilds this lazily on the new Classpath.
+        private lazy val nameIndex: Map[String, Chunk[Symbol.Class]] =
+            import Name.asString
+            val builder = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[Symbol.Class]]
+            symbols.foreach:
+                case c: Symbol.Class =>
+                    builder.getOrElseUpdate(c.name.asString, new scala.collection.mutable.ArrayBuffer()) += c
+                case _ => ()
+            builder.map((k, v) => k -> Chunk.from(v)).toMap
+        end nameIndex
+
         /** O(1) Symbol lookup by SymbolId. Returns the Symbol at index `id.value`. Returns a sentinel Unresolved symbol for out-of-range or
-          * unassigned ids (id.value == -1, or id.value >= symbols.length).
+          * unassigned ids.
+          *
+          * Sentinel cases (F-W2-19, F-W2-22):
+          *   - `id.value == -1`: the canonical sentinel value (SymbolId.sentinel); returns `sentinelUnresolved`.
+          *   - `id.value < 0` (including `Int.MinValue`): any negative index is treated identically to -1 and returns `sentinelUnresolved`.
+          *     Only -1 is documented as the sentinel by convention, but all negative values are safe.
+          *   - `id.value >= symbols.length`: out-of-range positive index; returns `sentinelUnresolved`.
+          *   - Empty classpath (`symbols.isEmpty`, `rootSymbolId.value == -1`): `cp.symbol(cp.rootSymbolId)` returns `sentinelUnresolved`
+          *     because `rootSymbolId` is -1 when no symbols were loaded. Callers that expect a synthetic root Package should check
+          *     `symbols.nonEmpty` first.
           */
         def symbol(id: SymbolId): Symbol =
             val idx = SymbolId.value(id)
@@ -2111,6 +2166,9 @@ object Tasty:
           *
           * Pure O(1) lookup in the immutable fqnIndex. Returns `Absent` if the FQN is not registered. For typed lookups that narrow to a
           * specific subtype, use `findClass`, `findTrait`, `findObject`, `findClassLike`, or `findPackage`.
+          *
+          * Null safety (F-W2-4): a `null` `fqn` argument resolves to `Maybe.Absent` (Scala Map.get(null) returns None). No NPE is raised.
+          * Defensive null checks in call sites are unnecessary.
           */
         def findSymbol(fqn: String): Maybe[Symbol] =
             fqnIndex.get(fqn) match
@@ -2123,6 +2181,9 @@ object Tasty:
           * (e.g., a Trait or Object). Use `findClassLike` to match any class-like symbol regardless of subtype.
           *
           * Includes sealed abstract classes (e.g. `scala.Option`); use `findConcreteClass` to restrict to non-abstract classes.
+          *
+          * Null safety (F-W2-4): a `null` `fqn` argument returns `Maybe.Absent`; no NPE is raised. An empty string `""` also returns
+          * `Maybe.Absent` because no symbol is registered under the empty key.
           *
           * Example:
           * {{{
@@ -2163,17 +2224,12 @@ object Tasty:
           *
           * Note: a count > 0 is expected behavior when the classpath does not include all transitive
           * dependencies. It is not an error condition.
+          *
+          * Performance (F-W2-7): the result is computed once and cached. Repeated calls are O(1). The
+          * cache is NOT a constructor parameter and is NOT preserved by `cp.copy(...)`; copying recomputes
+          * it lazily on the next access of the new Classpath.
           */
-        def unresolvedTypeReferenceCount: Int =
-            val sentinelId = Classpath.sentinelUnresolved.id.value
-            symbols.foldLeft(0): (acc, sym) =>
-                sym match
-                    case c: Symbol.ClassLike =>
-                        acc + c.parentTypes.count:
-                            case Type.Named(id) => id.value == sentinelId
-                            case _              => false
-                    case _ => acc
-        end unresolvedTypeReferenceCount
+        def unresolvedTypeReferenceCount: Int = cachedUnresolvedTypeReferenceCount
 
         /** Look up a trait symbol by fully-qualified dotted name.
           *
@@ -2225,14 +2281,15 @@ object Tasty:
 
         /** Find all `Symbol.Class` instances whose simple name equals `simpleName`.
           *
-          * Linear scan over all symbols. Returns an empty Chunk when no match is found.
+          * Returns an empty Chunk when no match is found.
+          *
+          * Performance (F-W2-24): O(1) lookup via an internal name index built lazily on first access.
+          * The index maps interned `Name` values to `Chunk[Symbol.Class]`. Subsequent calls on the same
+          * `Classpath` instance are O(1). The index is NOT preserved by `cp.copy(...)`; copying rebuilds
+          * it lazily on the next `findClassByName` call of the new Classpath.
           */
         def findClassByName(simpleName: String): Chunk[Symbol.Class] =
-            import Name.asString
-            symbols.flatMap: s =>
-                s match
-                    case c: Symbol.Class if c.name.asString == simpleName => Chunk(c)
-                    case _                                                => Chunk.empty
+            nameIndex.getOrElse(simpleName, Chunk.empty)
         end findClassByName
 
         /** All package symbols in this classpath.
@@ -2279,14 +2336,31 @@ object Tasty:
           * Converts the binary name to a dotted FQN and delegates to `findClass`. Returns `Maybe[Symbol.Class]`.
           *
           * Pure O(1) lookup; no I/O.
+          *
+          * Nested-class handling (F-W2-15): the naive `'/' -> '.'` and `'$' -> '.'` translation fails for binary names that include
+          * anonymous-class or local-class suffixes such as `com/example/Foo$1` (produces `com.example.Foo.1`) or
+          * `com/example/Foo$$anon$1` (produces `com.example.Foo..anon.1` with a double dot). This method passes the translated dotted
+          * name through `FqnNormalizer.canonicalSourceFqn` to apply the same normalization rules as the cold-load path, so that most
+          * named inner classes resolve correctly. Truly anonymous classes (`$1`, `$anon$N`) remain unresolvable via this method because
+          * they are excluded from user-facing indexes (they carry `isSyntheticName == true`).
           */
         def findClassByBinary(binaryName: String): Maybe[Symbol.Class] =
-            val fqn = binaryName.replace('/', '.').replace('$', '.')
+            // First translate slashes to dots (standard binary-to-FQN conversion).
+            val dotted = binaryName.replace('/', '.')
+            // Apply the same FQN normalization as the cold-load path. This handles named inner classes
+            // encoded as Outer$Inner (produced by javac) and converts them to Outer.Inner.
+            val fqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(dotted)
             findClass(fqn)
+        end findClassByBinary
 
         // ── require* throwing variants (INV-010: sole new effect-row additions in this phase) ──
 
-        /** Require a class by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a Class. */
+        /** Require a class by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a Class.
+          *
+          * Empty-string behavior (F-W2-17): `requireClass("")` raises `TastyError.NotFound("")` because `findClass("")` returns `Absent`
+          * (no symbol is registered under the empty key). The error carries an empty-string FQN, which is internally consistent but may look
+          * unusual. If an empty FQN indicates a caller-side programming error, validate the input before calling this method.
+          */
         def requireClass(fqn: String)(using Frame): Symbol.Class < Abort[TastyError] =
             findClass(fqn) match
                 case Maybe.Present(c) => c
@@ -2875,10 +2949,13 @@ object Tasty:
         /** CanEqual instance for structural equality comparisons in tests. */
         given CanEqual[Classpath, Classpath] = CanEqual.canEqualAny
 
-        /** Test helper: copy a Classpath with a new errors field.
+        /** Internal helper: copy a Classpath with a replacement errors field.
           *
-          * Equivalent to cp.copy(errors = newErrors) but accessible from tests outside object Tasty. Phase 07 removes this once the copy
-          * method becomes public.
+          * Equivalent to `cp.copy(errors = newErrors)` but accessible from `kyo.internal.*` callers via `private[kyo]`.
+          *
+          * F-W2-13: the stale "Phase 07 removes this" scaladoc has been removed. The Classpath case class is
+          * `final case class Classpath private[Tasty](...)`, so `cp.copy(...)` is inaccessible from outside
+          * `object Tasty` because the constructor is `private[Tasty]`. This helper remains the correct bridge.
           */
         private[kyo] def copyWithErrors(cp: Classpath, newErrors: Chunk[TastyError]): Classpath =
             cp.copy(errors = newErrors)
@@ -2887,6 +2964,8 @@ object Tasty:
           *
           * Called from `ClasspathOrchestrator.init` after running the decode pipeline with only the valid roots. Accessible from
           * `kyo.internal.*` callers via `private[kyo]`.
+          *
+          * F-W2-13: the stale "Phase 07 removes this" scaladoc has been removed (see copyWithErrors note above).
           */
         private[kyo] def copyWithPreErrors(cp: Classpath, preErrors: Chunk[TastyError]): Classpath =
             cp.copy(errors = preErrors ++ cp.errors)
@@ -2907,9 +2986,16 @@ object Tasty:
     /** Snapshot cache management utilities. */
     object Snapshot:
 
-        /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge` milliseconds.
+        /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAgeMs` milliseconds.
           *
           * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
+          *
+          * Performance (F-W2-25): this is a maintenance operation, not a hot path. Each call lists all `.krfl` files in `cacheDir`
+          * and calls `stat` on each one. On a CI host with many snapshots this is O(N) syscalls per call. If the call site is on a
+          * hot path, rate-limit or schedule it externally.
+          *
+          * Units (F-W2-32): `maxAgeMs` is in *milliseconds*. To delete files older than 1 hour pass `3_600_000L`. For convenience
+          * the `evictOlderThan(cacheDir, d: Duration)` overload accepts a `Duration` directly.
           *
           * @param cacheDir
           *   directory containing snapshot files
@@ -2934,6 +3020,10 @@ object Tasty:
         /** Delete snapshot files in `cacheDir` whose modification time is older than `d`.
           *
           * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
+          *
+          * Units (F-W2-32): `d` is a `Duration`; this overload converts to milliseconds before delegating to
+          * the Long overload. A literal numeric call (e.g. `evictOlderThan(dir, 1000)`) will resolve to the
+          * `Long`-milliseconds overload, not this one.
           */
         @scala.annotation.targetName("evictOlderThanDuration")
         def evictOlderThan(cacheDir: String, d: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =

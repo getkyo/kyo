@@ -21,6 +21,13 @@ object SnapshotReader:
 
     /** Read a snapshot from `path` and return a fully-constructed `Tasty.Classpath`.
       *
+      * Digest non-verification (F-W2-21): this method is a low-level decode primitive. It reads the bytes at `path` and decodes
+      * whatever is there, without checking whether the snapshot's embedded `inputDigest` field matches any expected value. Callers
+      * who need digest-validated loading should use `Classpath.initCached`, which selects the snapshot file by digest (the digest
+      * is the filename component) and therefore guarantees correspondence without an in-file check. Direct callers of `read` that
+      * want additional assurance should read the embedded digest from the header (bytes at offset 16, 8 bytes little-endian) and
+      * compare it to their own computed digest before trusting the returned Classpath.
+      *
       * @param path
       *   absolute path to the `.krfl` file
       * @param source

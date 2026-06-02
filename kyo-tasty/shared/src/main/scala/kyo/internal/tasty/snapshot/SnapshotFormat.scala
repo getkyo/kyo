@@ -26,6 +26,10 @@ package kyo.internal.tasty.snapshot
   *
   * All multi-byte integers are little-endian. Byte order flag in `flags` is always 0 (LE) for all platforms.
   *
+  * Symbol field coverage: every field in all 14 `Symbol` case classes is serialized. There is no `home` field on any Symbol subtype
+  * (F-W2-26: a historical comment in an earlier design draft claimed that a `home` field was NOT serialized; that field was never added to
+  * any Symbol case class; the comment has been removed to prevent future audit confusion).
+  *
   * Section IDs:
   *   - `NAMES`: Packed name bytes + (offset: Int, length: Int) table indexed by NameId.
   *   - `SYMBOLS`: Fixed-size records encoding symbol fields (kind, flags, nameId, ownerId, body offsets, etc.).
@@ -84,7 +88,13 @@ object SnapshotFormat:
     /** Size of one section-index entry: name (8) + offset (8) + length (8). */
     val sectionIndexEntrySize: Int = 24
 
-    /** Section IDs (exactly 8 ASCII bytes, zero-padded). */
+    /** Section IDs (exactly 8 ASCII bytes, zero-padded).
+      *
+      * Constraint (F-W2-18): every name must be at most 8 bytes and must not contain any NUL byte (0x00). The 8-byte zero-pad encoding
+      * reads a section name by stopping at the first NUL byte; a NUL embedded inside a name would silently truncate the name at that
+      * position, causing a lookup miss. All names in this array satisfy these constraints; the `requireValidSectionNames` check below
+      * provides a compile-time-equivalent guard.
+      */
     val sectionNames: Array[String] =
         Array(
             "NAMES",
@@ -105,6 +115,28 @@ object SnapshotFormat:
             "SUBCIDX_",
             "COMPIDX_"
         )
+
+    /** Validate that every entry in `sectionNames` is at most 8 bytes and contains no NUL character.
+      *
+      * F-W2-18: section names are encoded as 8-byte zero-padded ASCII fields. If a name contains a NUL byte at position k, then
+      * `readSectionName` will return only the first k characters, silently truncating the name. This method is called from the
+      * `SnapshotFormat` companion object initializer so that an assertion fires at class-load time if a future code change introduces
+      * an invalid section name.
+      */
+    def requireValidSectionNames(): Unit =
+        sectionNames.foreach: name =>
+            require(
+                name.length <= 8,
+                s"Section name '$name' exceeds 8-byte limit (length=${name.length})"
+            )
+            require(
+                !name.exists(c => c == 0.toChar),
+                s"Section name '$name' contains NUL byte (would cause silent truncation during read)"
+            )
+    end requireValidSectionNames
+
+    // Eagerly validate all section names at class-load time (F-W2-18 guard).
+    requireValidSectionNames()
 
     val sectionNAMES: String     = "NAMES"
     val sectionSYMBOLS: String   = "SYMBOLS"
