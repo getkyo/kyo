@@ -117,8 +117,12 @@ private[kyo] object DomBackend:
                             modifiers = UI.Modifiers(me.ctrlKey, me.altKey, me.shiftKey, me.metaKey),
                             targetId = targetId.fold(Absent: Maybe[String])(Present(_))
                         )
-                        // Speculatively prevent navigation on anchor elements with a kyo handler
-                        if target.tagName.toLowerCase == "a" then e.preventDefault()
+                        // Prevent the browser's default navigation only when the anchor carries a kyo
+                        // click handler (so the handler, not the href, drives the action). A plain href
+                        // keeps native behavior: an in-page `#anchor` scrolls, and a cross-document route
+                        // is handled by UILocation's interceptor. Prevent-defaulting every anchor here
+                        // would also kill those.
+                        if target.tagName.toLowerCase == "a" && evTypes.contains("click") then e.preventDefault()
                         Present(UIEvent.Click(path, mouse))
                     else if t == "input" && evTypes.contains("input") then
                         Present(UIEvent.Input(path, e.target.asInstanceOf[dom.html.Input].value))

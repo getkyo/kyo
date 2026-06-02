@@ -53,7 +53,13 @@ object UILocation:
                     val sameOrigin = a.host == dom.window.location.host
                     val noModifier = !me.ctrlKey && !me.metaKey && !me.shiftKey && !me.altKey && me.button == 0
                     val notBlank   = a.target != "_blank"
-                    if sameOrigin && noModifier && notBlank then
+                    // A same-document link (only the hash differs, e.g. a `#section` table-of-contents
+                    // or scroll anchor) must keep the browser's native in-page scrolling: intercepting
+                    // it would preventDefault the scroll and push a hash-less path, so the anchor would
+                    // appear dead. Only same-origin cross-document navigations are routed client-side.
+                    val sameDocument =
+                        a.pathname == dom.window.location.pathname && a.search == dom.window.location.search
+                    if sameOrigin && noModifier && notBlank && !sameDocument then
                         me.preventDefault()
                         dom.window.history.pushState(null, "", a.pathname + a.search)
                         currentRef.unsafe.set(readWindowPath())
