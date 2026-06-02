@@ -71,8 +71,14 @@ sealed abstract class McpExecutionException(code: Int, message: Text, cause: Tex
   * Sealed: callers register additional typed errors via `route.error[E2](code, message)` on the
   * route rather than by extending this class directly.
   */
-sealed abstract class McpApplicationException(code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
-    extends McpException(code, message, Absent, cause)
+sealed abstract class McpApplicationException(
+    code: Int,
+    message: Text,
+    cause: Text | Throwable = "",
+    // flow-allow: Structure carve-out per §11a / INV-021 (forwarded to McpException)
+    data: Maybe[Structure.Value] = Absent
+)(using Frame)
+    extends McpException(code, message, data, cause)
 
 // =============================================================================
 // Handshake-failure leaves
@@ -321,3 +327,22 @@ case class McpPromptRenderException(name: String, reason: String, cause: Throwab
         message = s"Failed to render prompt '$name': $reason",
         cause = cause
     )
+
+/** Remote application error received from the peer.
+  *
+  * Surfaces user-defined error types that the remote registered via
+  * `route.error[E2](code, message)` on a server-side handler. The wire code, message, and
+  * data triple are preserved verbatim; the caller pattern-matches on `code` to discriminate
+  * across user-defined error families.
+  *
+  * @param code    the JSON-RPC error code from the wire response
+  * @param message the JSON-RPC error message from the wire response
+  * @param data    the Schema-encoded `data` payload (Absent when the peer did not include one)
+  */
+// flow-allow: Structure carve-out per §11a / INV-021 (passes wire data through to JsonRpcApplicationError)
+case class McpRemoteApplicationException(
+    remoteCode: Int,
+    remoteMessage: String,
+    remoteData: Maybe[Structure.Value] = Absent
+)(using Frame)
+    extends McpApplicationException(code = remoteCode, message = remoteMessage, cause = "", data = remoteData)

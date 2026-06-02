@@ -4,11 +4,9 @@ import kyo.*
 
 /** Integration test: McpException propagates across the wire to the client (T-021, INV-003, INV-005).
   *
-  * Server-side handler errors reach the client as McpException failures. The exact leaf type
-  * depends on how McpClientEngine.callToolUnsafe wraps JsonRpcError responses; the wire
-  * round-trip guarantees that the client call aborts with some McpException. Message content
-  * carries the original error description. Wire-encoding asymmetry (McpClientEngine converts
-  * all JsonRpcError to McpInvalidArgumentException) is a known limitation documented in decisions.md.
+  * Server-side handler errors reach the client as McpException failures. JsonRpcError responses
+  * from the wire are preserved as McpRemoteApplicationException with the original code/message/data
+  * triple (see McpClientEngine), so the caller can pattern-match by `code` to discriminate.
   */
 class McpErrorRoundtripTest extends Test:
 
@@ -68,7 +66,7 @@ class McpErrorRoundtripTest extends Test:
         }
     }
 
-    "tool call for non-existent tool aborts with McpException code -32602 (T-021, INV-003)" in run {
+    "tool call for non-existent tool aborts with McpException code -32601 (T-021, INV-003)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
@@ -81,7 +79,7 @@ class McpErrorRoundtripTest extends Test:
                     yield
                         assert(result.isFailure)
                         result match
-                            case Result.Failure(err) => assert(err.code == -32602)
+                            case Result.Failure(err) => assert(err.code == -32601)
                             case _                   => fail(s"expected Failure, got $result")
                         end match
                     end for

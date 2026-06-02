@@ -71,9 +71,15 @@ object LspException:
     sealed abstract class Execution private[kyo] (code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
         extends LspException(code, message, Absent, cause)
 
-    /** Marks user-domain application errors from handler bodies. No concrete library leaves. */
-    sealed abstract class Application private[kyo] (code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
-        extends LspException(code, message, Absent, cause)
+    /** Marks user-domain application errors from handler bodies. */
+    sealed abstract class Application private[kyo] (
+        code: Int,
+        message: Text,
+        cause: Text | Throwable = "",
+        // flow-allow: Structure carve-out per INV-029 (forwarded to LspException)
+        data: Maybe[Structure.Value] = Absent
+    )(using Frame)
+        extends LspException(code, message, data, cause)
 
     // =========================================================================
     // Handshake leaves
@@ -181,9 +187,31 @@ object LspException:
     // Application (no concrete library leaves; user errors via .error[E2])
     // =========================================================================
 
-    /** Container for user-domain application errors. No concrete library leaves are declared here.
-      * Register user errors per-handler via `handler.error[E2](code, message)`.
+    /** Container for user-domain application errors.
+      * Register user errors per-handler via `handler.error[E2](code, message)`. The wire
+      * triple of any such error is surfaced on the receiving peer as [[Application.Remote]].
       */
-    object Application
+    object Application:
+
+        /** Remote application error received from the peer.
+          *
+          * Surfaces user-defined error types that the remote registered via
+          * `handler.error[E2](code, message)` on a server-side or client-side handler. The
+          * wire `code`, `message`, and `data` triple are preserved verbatim; the caller
+          * pattern-matches on `code` to discriminate across user-defined error families.
+          *
+          * @param code    the JSON-RPC error code from the wire response
+          * @param message the JSON-RPC error message from the wire response
+          * @param data    the Schema-encoded `data` payload (Absent when the peer did not include one)
+          */
+        // flow-allow: Structure carve-out per INV-029 (passes wire data through to LspException)
+        final case class Remote(
+            remoteCode: Int,
+            remoteMessage: String,
+            remoteData: Maybe[Structure.Value] = Absent
+        )(using Frame)
+            extends Application(code = remoteCode, message = remoteMessage, cause = "", data = remoteData)
+
+    end Application
 
 end LspException

@@ -105,7 +105,7 @@ private[kyo] object LspClientEngine:
             val handshakeEffect: Unit < (Async & Abort[LspException | Closed]) =
                 handler.call[InitializeClientParams, InitializeResult]("initialize", initParams)
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(LspException.Dispatch.InvalidParams("initialize", e.message))
+                        Abort.fail(LspException.Application.Remote(e.code, e.message, e.data))
                     })
                     .map { result =>
                         // Store server capabilities.
@@ -142,7 +142,7 @@ private[kyo] object LspClientEngine:
                     ): Out < (Async & Abort[LspException | Closed]) =
                         handler.call[In, Out](method, params)
                             .handle(Abort.recover[JsonRpcError] { e =>
-                                Abort.fail(LspException.Dispatch.InvalidParams(method, e.message))
+                                Abort.fail(LspException.Application.Remote(e.code, e.message, e.data))
                             })
 
                     // textDocument requests

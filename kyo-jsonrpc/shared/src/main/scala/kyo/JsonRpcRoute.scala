@@ -147,6 +147,49 @@ object JsonRpcRoute:
         new NotificationRoute[In, E](name, capturedSchemaIn, handler, Chunk.empty)
     end notification
 
+    /** Applies a chunk of typed error mappings at a dispatch boundary.
+      *
+      * Use from indirection routes that look up user handlers by name and invoke them inline
+      * (MCP `tools/call`, `resources/read`, `prompts/get`, `completion/complete`). The wire-level
+      * `JsonRpcRoute.request("tools/call")` does not own the user handler's per-handler
+      * `.error[E2]` mappings ; those are stored on the carrier. Without this helper, a user
+      * `Abort.fail(MyError(...))` falls through the route's empty `errorMappings` and is wrapped
+      * as `JsonRpcInternalError` (-32603) instead of the registered code.
+      *
+      * Captures any abort via `Abort.run[Any]`, then re-routes:
+      *   - `JsonRpcResponse.Halt`: propagated for the engine to emit verbatim.
+      *   - matching `ErrorMapping`: encoded as `JsonRpcCustomError(code, message, data)`.
+      *   - `JsonRpcError`: propagated verbatim.
+      *   - any other value: wrapped in `JsonRpcInternalError` (unmapped handler error).
+      *   - panics: wrapped in `JsonRpcHandlerPanicError`.
+      */
+    private[kyo] def applyMappingsAtBoundary[A](
+        routeName: String,
+        body: A < (Async & Abort[Any]),
+        mappings: Chunk[ErrorMapping[?]]
+    )(using fr: Frame): A < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt]) =
+        Abort.run[Any](body).map:
+            case Result.Success(a)                          => a
+            case Result.Failure(halt: JsonRpcResponse.Halt) => Abort.fail(halt)
+            case Result.Failure(err) =>
+                mappings.iterator.find(_.matches(err)) match
+                    case Some(mapping) =>
+                        Abort.fail(JsonRpcCustomError(
+                            mapping.code,
+                            mapping.message,
+                            data = Present(mapping.encode(err))
+                        )(using fr))
+                    case None =>
+                        err match
+                            case e: JsonRpcError => Abort.fail(e)
+                            case other =>
+                                Abort.fail(JsonRpcInternalError(
+                                    JsonRpcInternalError.Operation.Other,
+                                    new RuntimeException(s"unmapped handler error in '$routeName': $other")
+                                )(using fr))
+            case Result.Panic(t) => Abort.fail(JsonRpcHandlerPanicError(routeName, t)(using fr))
+    end applyMappingsAtBoundary
+
     /** Dispatches `params` to the named route in `routes`. Returns Absent for unknown route.
       * Internal helper for non-engine consumers (one-shot stdio loop, HTTP POST endpoints,
       * custom routers); keeps `JsonRpcRoute.handle` private[kyo]. For Notification kind the
@@ -213,12 +256,6 @@ object JsonRpcRoute:
                                         data = Present(mapping.encode(err))
                                     )(using fr))
                                 case None =>
-                                    // If the value already extends JsonRpcError, propagate verbatim
-                                    // ; framework-generated errors (InvalidParams, ContentModified,
-                                    // and the rest) keep their wire codes unchanged. Otherwise the
-                                    // user aborted with an unmapped value: wrap in
-                                    // JsonRpcInternalError so the wire still receives a well-formed
-                                    // envelope rather than panic.
                                     err match
                                         case e: JsonRpcError =>
                                             Abort.fail(e)
@@ -227,6 +264,8 @@ object JsonRpcRoute:
                                                 JsonRpcInternalError.Operation.Other,
                                                 new RuntimeException(s"unmapped handler error: $other")
                                             )(using fr))
+                                    end match
+                            end match
                         case Result.Panic(t) =>
                             Abort.fail(JsonRpcHandlerPanicError(name, t)(using fr))
                 case Result.Failure(e) =>

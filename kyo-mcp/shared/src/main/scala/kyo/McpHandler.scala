@@ -56,10 +56,11 @@ object McpHandler:
       */
     sealed private[kyo] trait LoggingHook
 
-    /** A single `.error[E2]` registration: the type tag, the schema, and the wire `code`/`message`. */
-    final private[kyo] class ErrorMapping[E](val code: Int, val message: String)(using val tag: ConcreteTag[E], val schema: Schema[E]):
-        def matches(e: Any): Boolean = tag.accepts(e)
-    end ErrorMapping
+    /** A single `.error[E2]` registration: the type tag, the schema, and the wire `code`/`message`.
+      * Aliased to `JsonRpcRoute.ErrorMapping` so the engine can apply the mapping at the dispatch
+      * boundary of MCP indirection routes (`tools/call`, `resources/read`, ...) without converting.
+      */
+    private[kyo] type ErrorMapping[E] = JsonRpcRoute.ErrorMapping[E]
 
     // --- ResourceContents -----------------------------------------------------
 

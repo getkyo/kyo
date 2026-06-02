@@ -113,7 +113,11 @@ private[kyo] object McpBuiltInRoutes:
                         Structure.decode[Any](params.arguments)(using carrier.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
                     args match
                         case Result.Success(in) =>
-                            withCtx(jrCtx, serverRef, "tools/call")(carrier.toolHandler(in))
+                            JsonRpcRoute.applyMappingsAtBoundary(
+                                "tools/call",
+                                withCtx(jrCtx, serverRef, "tools/call")(carrier.toolHandler(in)),
+                                carrier.errorMappings
+                            )
                         case Result.Failure(e) => Abort.fail(McpInvalidArgumentException("tools/call", "arguments", e.getMessage))
                         case Result.Panic(t)   => Abort.panic(t)
                     end match
@@ -122,10 +126,14 @@ private[kyo] object McpBuiltInRoutes:
                         Structure.decode[Any](params.arguments)(using carrier.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
                     args match
                         case Result.Success(in) =>
-                            withCtx(jrCtx, serverRef, "tools/call") {
-                                carrier.toolHandler(in)
-                                    .map(out => McpHandler.ToolOutcome(Chunk(out), isError = false, structuredContent = Absent))
-                            }
+                            JsonRpcRoute.applyMappingsAtBoundary(
+                                "tools/call",
+                                withCtx(jrCtx, serverRef, "tools/call") {
+                                    carrier.toolHandler(in)
+                                        .map(out => McpHandler.ToolOutcome(Chunk(out), isError = false, structuredContent = Absent))
+                                },
+                                carrier.errorMappings
+                            )
                         case Result.Failure(e) => Abort.fail(McpInvalidArgumentException("tools/call", "arguments", e.getMessage))
                         case Result.Panic(t)   => Abort.panic(t)
                     end match
@@ -153,9 +161,13 @@ private[kyo] object McpBuiltInRoutes:
                     }
                     matched match
                         case Some(carrier) =>
-                            withCtx(jrCtx, serverRef, "resources/read") {
-                                carrier.resourceHandler().map(contents => ResourceReadResponse(contents))
-                            }
+                            JsonRpcRoute.applyMappingsAtBoundary(
+                                "resources/read",
+                                withCtx(jrCtx, serverRef, "resources/read") {
+                                    carrier.resourceHandler().map(contents => ResourceReadResponse(contents))
+                                },
+                                carrier.errorMappings
+                            )
                         case None =>
                             val registeredUris = Chunk.from(catalog.resourceHandlers.map(h => catalog.resourceMetaOf(h).uri))
                             Abort.fail(McpUnknownResourceException(uri, registeredUris))
@@ -184,7 +196,11 @@ private[kyo] object McpBuiltInRoutes:
             }
             matched match
                 case Some(carrier) =>
-                    withCtx(jrCtx, serverRef, "prompts/get")(carrier.promptHandler(params.arguments))
+                    JsonRpcRoute.applyMappingsAtBoundary(
+                        "prompts/get",
+                        withCtx(jrCtx, serverRef, "prompts/get")(carrier.promptHandler(params.arguments)),
+                        carrier.errorMappings
+                    )
                 case None =>
                     val registeredNames = Chunk.from(catalog.promptHandlers.map(_.name))
                     Abort.fail(McpUnknownPromptException(params.name, registeredNames))
@@ -222,9 +238,13 @@ private[kyo] object McpBuiltInRoutes:
             }
             matched match
                 case Some(carrier) =>
-                    withCtx(jrCtx, serverRef, "completion/complete") {
-                        carrier.completionHandler(params.argument, params.context).map(r => CompleteResult(r))
-                    }
+                    JsonRpcRoute.applyMappingsAtBoundary(
+                        "completion/complete",
+                        withCtx(jrCtx, serverRef, "completion/complete") {
+                            carrier.completionHandler(params.argument, params.context).map(r => CompleteResult(r))
+                        },
+                        carrier.errorMappings
+                    )
                 case None =>
                     // No handler registered for this ref; return empty completion.
                     CompleteResult(McpHandler.CompletionOutcome(Chunk.empty, Absent, Absent))

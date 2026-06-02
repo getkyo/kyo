@@ -170,7 +170,7 @@ private[kyo] object LspEngine:
                 ): Out < (Async & Abort[LspException | Closed]) =
                     handler.call[In, Out](method, params)
                         .handle(Abort.recover[JsonRpcError] { e =>
-                            Abort.fail(LspException.Dispatch.InvalidParams(method, e.message))
+                            Abort.fail(LspException.Application.Remote(e.code, e.message, e.data))
                         })
 
                 def showMessage(params: LspHandler.ShowMessageParams)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =

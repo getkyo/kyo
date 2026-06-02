@@ -197,7 +197,7 @@ private[kyo] object McpClientEngine:
                 handler.call[ListRequest, ToolsListResponse]("tools/list", ListRequest(cursor))
                     .map(r => McpClient.Page(r.tools, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("tools/list", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def callToolEffect[In](name: String, arguments: In)(using
@@ -207,7 +207,7 @@ private[kyo] object McpClientEngine:
                 val encodedArgs = Structure.encode[In](arguments)
                 handler.call[ToolCallRequest, McpHandler.ToolOutcome]("tools/call", ToolCallRequest(name, encodedArgs))
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("tools/call", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
             end callToolEffect
 
@@ -233,7 +233,7 @@ private[kyo] object McpClientEngine:
                 handler.call[ListRequest, ResourcesListResponse]("resources/list", ListRequest(cursor))
                     .map(r => McpClient.Page(r.resources, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("resources/list", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def listResourceTemplatesEffect(cursor: Maybe[String])(using
@@ -242,7 +242,7 @@ private[kyo] object McpClientEngine:
                 handler.call[ListRequest, ResourceTemplatesListResponse]("resources/templates/list", ListRequest(cursor))
                     .map(r => McpClient.Page(r.resourceTemplates, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("resources/templates/list", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def readResourceEffect(uri: McpResourceUri)(using
@@ -251,7 +251,7 @@ private[kyo] object McpClientEngine:
                 handler.call[ReadResourceRequest, ReadResourceResponse]("resources/read", ReadResourceRequest(uri.asString))
                     .map(_.contents)
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("resources/read", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def listPromptsEffect(cursor: Maybe[String])(using
@@ -260,7 +260,7 @@ private[kyo] object McpClientEngine:
                 handler.call[ListRequest, PromptsListResponse]("prompts/list", ListRequest(cursor))
                     .map(r => McpClient.Page(r.prompts, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("prompts/list", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def getPromptEffect(name: String, arguments: Map[String, String])(using
@@ -268,14 +268,14 @@ private[kyo] object McpClientEngine:
             ): McpHandler.PromptOutcome < (Async & Abort[McpException | Closed]) =
                 handler.call[GetPromptRequest, McpHandler.PromptOutcome]("prompts/get", GetPromptRequest(name, arguments))
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("prompts/get", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def setLogLevelEffect(level: McpServer.LogLevel)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
                 handler.call[SetLogLevelRequest, SetLogLevelResponse]("logging/setLevel", SetLogLevelRequest(level.toString.toLowerCase))
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("logging/setLevel", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def completeEffect(
@@ -291,7 +291,7 @@ private[kyo] object McpClientEngine:
                 )
                     .map(_.completion)
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("completion/complete", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def notifyRootsListChangedEffect(using Frame): Unit < (Async & Abort[Closed]) =
@@ -301,21 +301,21 @@ private[kyo] object McpClientEngine:
                 handler.call[NotifyEmptyParams, NotifyEmptyParams]("ping", NotifyEmptyParams())
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("ping", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def subscribeResourceEffect(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
                 handler.call[SubscribeRequest, SubscribeResponse]("resources/subscribe", SubscribeRequest(uri.asString))
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("resources/subscribe", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             private def unsubscribeResourceEffect(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[McpException | Closed]) =
                 handler.call[SubscribeRequest, SubscribeResponse]("resources/unsubscribe", SubscribeRequest(uri.asString))
                     .map(_ => ())
                     .handle(Abort.recover[JsonRpcError] { e =>
-                        Abort.fail(McpInvalidArgumentException("resources/unsubscribe", "response", e.message))
+                        Abort.fail(McpRemoteApplicationException(e.code, e.message, e.data))
                     })
 
             // --- Public Unsafe interface ---
