@@ -602,6 +602,19 @@ age: 30
             }
         }
 
+        "applies stream transform first then per-document transform on survivors" in {
+            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+            val pipeline =
+                Yaml.pipeline
+                    .throughCstStream(stream => Result.succeed(stream.copy(documents = stream.documents.drop(1))))
+                    .throughCst(_.replace(Yaml.Cst.Path.root / "name", cstScalar("Robert")))
+
+            assertResult((hasRobert = true, hasAge25 = true, hasAlice = false)) {
+                val rendered = pipeline.render(yaml).getOrThrow
+                (hasRobert = rendered.contains("Robert"), hasAge25 = rendered.contains("age: 25"), hasAlice = rendered.contains("Alice"))
+            }
+        }
+
         "leaves String decode and render unchanged when no CST transform is set" in {
             val yaml = "name: Alice\nage: 30\n"
 

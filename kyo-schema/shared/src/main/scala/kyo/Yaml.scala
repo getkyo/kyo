@@ -746,15 +746,11 @@ object Yaml:
           * trivia intact.
           */
         def throughCst[Err2](f: Cst.Document => Result[Err2, Cst.Document]): Pipeline[Err | Err2] =
-            val widenedF: Cst.Document => Result[Err | Err2, Cst.Document] =
-                document => f(document)
             val combined: Cst.Document => Result[Err | Err2, Cst.Document] =
                 cstTransform match
                     case Present(existing) =>
-                        val widenedExisting: Cst.Document => Result[Err | Err2, Cst.Document] =
-                            document => existing(document)
-                        document => widenedExisting(document).flatMap(widenedF)
-                    case Absent => widenedF
+                        d => documentTransformWiden[Err, Err2](existing)(d).flatMap(documentTransformWiden[Err2, Err](f))
+                    case Absent => documentTransformWiden[Err2, Err](f)
             new Pipeline[Err | Err2](
                 readerConfig,
                 writerConfig,
@@ -766,15 +762,11 @@ object Yaml:
 
         /** Adds a whole-stream CST transform stage, applied before any per-document transform. */
         def throughCstStream[Err2](f: Cst.Stream => Result[Err2, Cst.Stream]): Pipeline[Err | Err2] =
-            val widenedF: Cst.Stream => Result[Err | Err2, Cst.Stream] =
-                stream => f(stream)
             val combined: Cst.Stream => Result[Err | Err2, Cst.Stream] =
                 cstStreamTransform match
                     case Present(existing) =>
-                        val widenedExisting: Cst.Stream => Result[Err | Err2, Cst.Stream] =
-                            stream => existing(stream)
-                        stream => widenedExisting(stream).flatMap(widenedF)
-                    case Absent => widenedF
+                        s => streamTransformWiden[Err, Err2](existing)(s).flatMap(streamTransformWiden[Err2, Err](f))
+                    case Absent => streamTransformWiden[Err2, Err](f)
             new Pipeline[Err | Err2](
                 readerConfig,
                 writerConfig,
@@ -832,7 +824,7 @@ object Yaml:
                 cstStreamTransform match
                     case Present(_) =>
                         stagedStream(input).map(stream => stream.render(using writerConfig))
-                    case Absent =>
+                    case Absent => // no stream transform: per-document render path
                         stagedDocument(input).map(doc => doc.render(using writerConfig))
             else
                 val renderer = Events.Renderer(writerConfig)
