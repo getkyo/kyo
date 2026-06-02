@@ -1,29 +1,47 @@
 #!/usr/bin/env bash
-# Launcher for kyo-mcp / kyo-lsp demo servers used by Claude Code MCP integration.
+# Launcher for kyo-mcp / kyo-lsp demo servers used by Claude Code MCP / LSP integration.
 # Usage: run-demo.sh <module> <fqcn> [demo-args...]
-#   module: kyo-mcp | kyo-lsp
-#   fqcn:   fully-qualified main class (e.g. demo.Filesystem)
-# Caches the test classpath in .mcp-validation/<module>.classpath so subsequent
-# launches skip the sbt export. Refresh by removing the cache file.
-
-set -euo pipefail
+#
+# Do NOT use `set -e` here ; MCP hosts inspect stderr and exit codes, and any subshell
+# hiccup would silently kill the server. We fail explicitly with status messages to the
+# launch log so failures are diagnosable.
 
 MODULE="$1"
 FQCN="$2"
 shift 2
 
+LAUNCH_LOG="/tmp/mcp-validation/launch.log"
+mkdir -p "$(dirname "$LAUNCH_LOG")"
+{
+    echo "==== $(date '+%Y-%m-%d %H:%M:%S') launching $MODULE/$FQCN ===="
+    echo "  args: $*"
+    echo "  pwd : $PWD"
+    echo "  ppid: $PPID"
+    echo "  env : SHELL=$SHELL PATH=$PATH"
+} >> "$LAUNCH_LOG"
+
 WORKTREE="$(cd "$(dirname "$0")/.." && pwd)"
 CACHE_DIR="$WORKTREE/.mcp-validation"
 CP_FILE="$CACHE_DIR/${MODULE}.classpath"
 
-# Refresh classpath if missing or older than the module's compile output.
-TARGET_DIR="$WORKTREE/${MODULE}/jvm/target/scala-3.8.3/test-classes"
-if [[ ! -f "$CP_FILE" ]] || [[ "$TARGET_DIR" -nt "$CP_FILE" ]]; then
+if [[ ! -s "$CP_FILE" ]]; then
+    {
+        echo "  classpath cache missing or empty, exporting via sbt"
+        echo "  cache : $CP_FILE"
+    } >> "$LAUNCH_LOG"
     cd "$WORKTREE"
     export JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8"
-    export JVM_OPTS="$JAVA_OPTS"
-    sbt -error "export ${MODULE}/Test/fullClasspath" 2>/dev/null | tail -1 > "$CP_FILE"
+    sbt -error "export ${MODULE}/Test/fullClasspath" 2>>"$LAUNCH_LOG" | tail -1 > "$CP_FILE"
 fi
 
-CP="$(cat "$CP_FILE")"
-exec java -cp "$CP" "$FQCN" "$@"
+CP="$(cat "$CP_FILE" 2>/dev/null || true)"
+if [[ -z "$CP" ]]; then
+    echo "  FATAL: empty classpath after attempted export" >> "$LAUNCH_LOG"
+    exit 2
+fi
+
+echo "  cp_chars=${#CP}, exec java -cp ... $FQCN $*" >> "$LAUNCH_LOG"
+# Route java's stderr into our log so any JVM noise (Unsafe deprecation warnings on
+# JDK 25, etc.) is captured here instead of leaking to Claude Code's MCP host — some
+# hosts treat startup stderr as fatal.
+exec java --enable-native-access=ALL-UNNAMED -cp "$CP" "$FQCN" "$@" 2>>"$LAUNCH_LOG"
