@@ -1,12 +1,9 @@
 package kyo
 
-import java.nio.file.Paths
 import kyo.internal.TestClasspaths
-import tastyquery.Classpaths.ClasspathEntry
 import tastyquery.Contexts.Context
 import tastyquery.Symbols.ClassSymbol
 import tastyquery.Symbols.PackageSymbol
-import tastyquery.jdk.ClasspathLoaders
 
 /** Differential testing: kyo-tasty vs tasty-query 1.7.0.
   *
@@ -21,12 +18,20 @@ import tastyquery.jdk.ClasspathLoaders
   * Comparison scope: top-level class FQN sets. tasty-query does not expose a stable
   * "declared type" API that is directly comparable to kyo-tasty Symbol.Method.declaredType,
   * so we focus on FQN enumeration which is the most reliable structural invariant.
+  *
+  * Timeout: 5 minutes per leaf. Under scoverage bytecode instrumentation the blocking
+  * ClasspathLoaders.read() calls are measurably slower than in a plain run. Caching the
+  * two distinct loads (fixtureRoots and standard) in DifferentialTastyTest.Cache ensures
+  * each root set is read at most once across all leaves.
   */
 class DifferentialTastyTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
+    // 5 minutes per leaf: covers scoverage overhead on the blocking ClasspathLoaders.read() calls.
+    // Under plain sbt the test finishes in ~25s; under coverage the instrumentation overhead
+    // can push a single leaf close to 3 minutes, so 5 minutes gives a safe margin.
+    override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(5))
 
     /** Collect all top-level ClassSymbol FQNs from a tasty-query Context by walking the package tree. */
     private def tqTopLevelFqns(ctx: Context): Set[String] =
@@ -87,10 +92,8 @@ class DifferentialTastyTest extends Test:
             TestClasspaths.withClasspath(fixtureRoots).map: kyoCp =>
                 val kyoFqns = kyoFqnSet(kyoCp)
 
-                val rootPaths = fixtureRoots.map(Paths.get(_)).toList
-                val entries   = ClasspathLoaders.read(rootPaths)
-                val tqCtx     = Context.initialize(entries)
-                val tqFqns    = tqTopLevelFqns(tqCtx)
+                // Reuse the cached Context to avoid a second blocking NIO scan in the same JVM.
+                val tqFqns = tqTopLevelFqns(DifferentialTastyTest.fixturesContext)
 
                 // Normalize FQNs: tasty-query uses '.' for both packages and classes.
                 // kyo-tasty uses '.' throughout, so no transformation needed.
@@ -141,10 +144,8 @@ class DifferentialTastyTest extends Test:
             val kyoCountAll   = kyoCp.topLevelClasses.size
             val kyoCountNoObj = kyoCp.topLevelClasses.count(!_.isInstanceOf[Tasty.Symbol.Object])
 
-            val rootPaths = roots.map(Paths.get(_)).toList
-            val entries   = ClasspathLoaders.read(rootPaths)
-            val tqCtx     = Context.initialize(entries)
-            val tqCount   = tqTopLevelFqns(tqCtx).size
+            // Reuse the cached Context to avoid a second blocking NIO scan in the same JVM.
+            val tqCount = tqTopLevelFqns(DifferentialTastyTest.standardContext).size
 
             if tqCount == 0 then
                 info("DIFF-002: tasty-query returned 0 top-level classes; skipping ratio check")
@@ -176,10 +177,8 @@ class DifferentialTastyTest extends Test:
             TestClasspaths.withClasspath(fixtureRoots).map: kyoCp =>
                 val kyoCount = kyoCp.topLevelClasses.size
 
-                val rootPaths = fixtureRoots.map(Paths.get(_)).toList
-                val entries   = ClasspathLoaders.read(rootPaths)
-                val tqCtx     = Context.initialize(entries)
-                val tqCount   = tqTopLevelFqns(tqCtx).size
+                // Reuse the cached Context (same root set as DIFF-001) to avoid a third blocking NIO scan.
+                val tqCount = tqTopLevelFqns(DifferentialTastyTest.fixturesContext).size
 
                 assert(kyoCount > 0, s"DIFF-003: kyo-tasty decoded 0 top-level classes from fixtures")
                 assert(tqCount > 0, s"DIFF-003: tasty-query decoded 0 top-level classes from fixtures")
@@ -216,4 +215,32 @@ class DifferentialTastyTest extends Test:
         end if
     }
 
+end DifferentialTastyTest
+
+object DifferentialTastyTest:
+    // Cache tasty-query ClasspathLoaders.read() results across test leaves.
+    // ClasspathLoaders.read() is a blocking NIO scan that cannot be interrupted by Kyo's
+    // Async.timeout. Loading each root set once and reusing the Context eliminates the
+    // duplicate fixture load that DIFF-001 and DIFF-003 would otherwise each pay.
+    //
+    // Unsafe: ClasspathLoaders.read() performs blocking java.nio.file I/O. The lazy vals
+    // are initialised at most once per JVM process (the sbt test runner) and are read-only
+    // after initialisation, so the mutation is safely confined to the first accessor thread.
+    private[kyo] lazy val fixturesContext: tastyquery.Contexts.Context =
+        import tastyquery.Contexts
+        import tastyquery.jdk.ClasspathLoaders
+        import java.nio.file.Paths
+        val roots   = kyo.internal.TestClasspaths.kyoTastyFixtures
+        val entries = ClasspathLoaders.read(roots.map(Paths.get(_)).toList)
+        Contexts.Context.initialize(entries)
+    end fixturesContext
+
+    private[kyo] lazy val standardContext: tastyquery.Contexts.Context =
+        import tastyquery.Contexts
+        import tastyquery.jdk.ClasspathLoaders
+        import java.nio.file.Paths
+        val roots   = kyo.internal.TestClasspaths.standard
+        val entries = ClasspathLoaders.read(roots.map(Paths.get(_)).toList)
+        Contexts.Context.initialize(entries)
+    end standardContext
 end DifferentialTastyTest
