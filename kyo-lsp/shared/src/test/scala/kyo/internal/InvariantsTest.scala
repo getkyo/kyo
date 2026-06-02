@@ -148,7 +148,7 @@ class InvariantsTest extends Test:
 
     // INV-006: Direction filtering at init time.
     "INV-006: WrongDirection thrown for ClientHandled handler on server" in run {
-        val h = LspHandler.mkNotif[LspHandler.ShowMessageParams](
+        val h = LspHandler.initNotification[LspHandler.ShowMessageParams, Nothing](
             "window/showMessage",
             LspHandler.Kind.ShowMessage,
             _ => ()

@@ -7,17 +7,17 @@ class LspCatalogTest extends Test:
 
     // Helper: build a minimal server-handled request handler
     private def serverHandler(kind: LspHandler.Kind, name: String): LspHandler[Unit, Unit, LspException] =
-        LspHandler.mkReq[Unit, Unit](name, kind, _ => ())
+        LspHandler.initRequest[Unit, Unit, Nothing](name, kind, _ => ())
 
     private def notifHandler(kind: LspHandler.Kind, name: String): LspHandler[Unit, Unit, LspException] =
-        LspHandler.mkNotif[Unit](name, kind, _ => ())
+        LspHandler.initNotification[Unit, Nothing](name, kind, _ => ())
 
     private def clientHandler(kind: LspHandler.Kind, name: String): LspHandler[Unit, Unit, LspException] =
-        LspHandler.mkReq[Unit, Unit](name, kind, _ => ())
+        LspHandler.initRequest[Unit, Unit, Nothing](name, kind, _ => ())
 
     // Client-handled handler: window/showMessage
     private def showMessageHandler: LspHandler[LspHandler.ShowMessageParams, Unit, LspException] =
-        LspHandler.mkNotif[LspHandler.ShowMessageParams]("window/showMessage", LspHandler.Kind.ShowMessage, _ => ())
+        LspHandler.initNotification[LspHandler.ShowMessageParams, Nothing]("window/showMessage", LspHandler.Kind.ShowMessage, _ => ())
 
     "LspCatalogTest" - {
 
@@ -31,7 +31,7 @@ class LspCatalogTest extends Test:
         }
 
         "INV-006: Direction.Either handler is accepted on server" in {
-            val h = LspHandler.mkNotif[Unit]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
+            val h = LspHandler.initNotification[Unit, Nothing]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
             )
@@ -39,7 +39,7 @@ class LspCatalogTest extends Test:
         }
 
         "INV-006: Direction.Either handler is accepted on client" in {
-            val h = LspHandler.mkNotif[Unit]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
+            val h = LspHandler.initNotification[Unit, Nothing]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ClientHandled)
             )
@@ -47,7 +47,7 @@ class LspCatalogTest extends Test:
         }
 
         "INV-039/INV-082: Reserved method in CustomHandler throws ReservedMethod" in {
-            val h = LspHandler.custom[Unit, Unit]("initialize")(_ => ())
+            val h = LspHandler.custom[Unit]("initialize")(_ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
             )
@@ -58,7 +58,7 @@ class LspCatalogTest extends Test:
         "INV-039: All reserved method names are blocked" in {
             val reserved = Seq("initialize", "initialized", "shutdown", "exit", "$/cancelRequest", "$/progress", "$/setTrace")
             reserved.foreach { name =>
-                val h = LspHandler.custom[Unit, Unit](name)(_ => ())
+                val h = LspHandler.custom[Unit](name)(_ => ())
                 val result = scala.util.Try(
                     LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
                 )
@@ -79,8 +79,8 @@ class LspCatalogTest extends Test:
         }
 
         "INV-047: Duplicate Custom name throws DuplicateHandler" in {
-            val h1 = LspHandler.custom[Unit, Unit]("vendor/foo")(_ => ())
-            val h2 = LspHandler.custom[Unit, Unit]("vendor/foo")(_ => ())
+            val h1 = LspHandler.custom[Unit]("vendor/foo")(_ => ())
+            val h2 = LspHandler.custom[Unit]("vendor/foo")(_ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h1, h2), LspHandler.Direction.ServerHandled)
             )

@@ -42,7 +42,7 @@ class LspHandlerLiftTest extends Test:
         }
 
         "CustomHandler carries inSchema and outSchema" in {
-            val h = LspHandler.custom[String, Int]("vendor/test")(_ => 42)
+            val h = LspHandler.custom[String]("vendor/test")(_ => 42)
             h match
                 case ch: LspHandler.CustomHandler[?, ?, ?] =>
                     assert(ch.inSchema != null)

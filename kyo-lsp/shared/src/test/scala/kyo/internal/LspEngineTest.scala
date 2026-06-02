@@ -43,7 +43,7 @@ class LspEngineTest extends Test:
         }
 
         "LspCatalog.fromHandlers WrongDirection error message contains Kind name" in {
-            val h = LspHandler.mkNotif[LspHandler.ShowMessageParams](
+            val h = LspHandler.initNotification[LspHandler.ShowMessageParams, Nothing](
                 "window/showMessage",
                 LspHandler.Kind.ShowMessage,
                 _ => ()

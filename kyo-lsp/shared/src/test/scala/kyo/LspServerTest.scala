@@ -232,7 +232,7 @@ class LspServerTest extends Test:
     // =========================================================================
 
     "initUnscoped rejects a ClientHandled handler at init time (INV-006)" in run {
-        val wrongHandler = LspHandler.mkNotif[LspHandler.ShowMessageParams](
+        val wrongHandler = LspHandler.initNotification[LspHandler.ShowMessageParams, Nothing](
             "window/showMessage",
             LspHandler.Kind.ShowMessage,
             _ => ()

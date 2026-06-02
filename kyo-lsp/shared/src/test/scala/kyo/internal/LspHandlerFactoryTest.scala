@@ -616,7 +616,7 @@ class LspHandlerFactoryTest extends kyo.Test:
 
     "custom escape hatch factories" - {
         "custom creates ServerHandled handler with given method" in {
-            val h = LspHandler.custom[String, String]("vendor/myMethod")(s => s)
+            val h = LspHandler.custom[String]("vendor/myMethod")(s => s)
             assert(h.name == "vendor/myMethod")
             assert(h.kind == LspHandler.Kind.Custom)
             assert(h.direction == LspHandler.Direction.ServerHandled)
@@ -624,7 +624,7 @@ class LspHandlerFactoryTest extends kyo.Test:
         }
 
         "customClient creates ClientHandled handler" in {
-            val h = LspHandler.customClient[String, String]("vendor/clientMethod")(s => s)
+            val h = LspHandler.customClient[String]("vendor/clientMethod")(s => s)
             assert(h.name == "vendor/clientMethod")
             assert(h.kind == LspHandler.Kind.Custom)
             assert(h.direction == LspHandler.Direction.ClientHandled)
@@ -674,7 +674,7 @@ class LspHandlerFactoryTest extends kyo.Test:
 
         "adds error mapping to CustomHandler" in {
             case class CustomErr(reason: String) derives Schema, CanEqual
-            val h0 = LspHandler.custom[String, String]("vendor/x")(s => s)
+            val h0 = LspHandler.custom[String]("vendor/x")(s => s)
             val h1 = h0.error[CustomErr](code = -32003, message = "custom err")
             assert(h1.errorMappings.size == 1)
             assert(h1.errorMappings(0).code == -32003)

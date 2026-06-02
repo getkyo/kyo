@@ -9,7 +9,7 @@ class LspClientEngineTest extends Test:
 
         "LspClientEngine.initClient catalog rejects wrong-direction handlers" in {
             // A server-handled handler passed to client-side init should throw WrongDirection.
-            val serverHandler = LspHandler.mkReq[LspHandler.CompletionParams, Maybe[LspHandler.CompletionResult]](
+            val serverHandler = LspHandler.initRequest[LspHandler.CompletionParams, Maybe[LspHandler.CompletionResult], Nothing](
                 "textDocument/completion",
                 LspHandler.Kind.Completion,
                 _ => ???
@@ -26,7 +26,7 @@ class LspClientEngineTest extends Test:
         }
 
         "LspClientEngine.initClient catalog accepts client-direction handlers" in {
-            val clientHandler = LspHandler.mkNotif[LspHandler.ShowMessageParams](
+            val clientHandler = LspHandler.initNotification[LspHandler.ShowMessageParams, Nothing](
                 "window/showMessage",
                 LspHandler.Kind.ShowMessage,
                 _ => ()
