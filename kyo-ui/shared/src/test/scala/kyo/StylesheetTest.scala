@@ -111,10 +111,10 @@ class StylesheetTest extends Test:
         }
     }
 
-    "gradient Style and Stylesheet compare equal by value (regression: BgGradientProp Span equality)" in {
+    "gradient Style and Stylesheet compare equal by value (regression: BgGradientProp Chunk equality)" in {
         // Two independently-built gradient styles must compare equal and share a hashCode.
-        // BgGradientProp holds Span[Color] and Span[Double] (opaque Arrays); without the
-        // propEqual/propHash fix, Array reference equality causes them to compare UNEQUAL.
+        // BgGradientProp holds Chunk[Color] and Chunk[Double]; Chunk has structural Seq equality,
+        // so the auto-derived case-class equality compares them by value (no hand-written equals).
         val a = Style.bgGradient(_.toRight, Style.Color.white -> 0.pct, Style.Color.black -> 100.pct)
         val b = Style.bgGradient(_.toRight, Style.Color.white -> 0.pct, Style.Color.black -> 100.pct)
         assert(a == b)

@@ -27,24 +27,7 @@ import kyo.internal.CssStyleRenderer
   * @see
   *   [[kyo.UI.cssClass]] for the element-side class hook a class selector targets
   */
-final case class Stylesheet private[kyo] (entries: Span[Stylesheet.Entry]) derives CanEqual:
-
-    // Span is an opaque Array; case-class equals delegates to Array.equals, which is reference
-    // equality. Override to compare entries element-by-element so value semantics hold (INV-012).
-    override def equals(that: Any): Boolean = that match
-        case s: Stylesheet =>
-            entries.size == s.entries.size &&
-            (0 until entries.size).forall(i => entries(i) == s.entries(i))
-        case _ => false
-
-    override def hashCode: Int =
-        var h = 1
-        var i = 0
-        while i < entries.size do
-            h = 31 * h + entries(i).hashCode
-            i += 1
-        h
-    end hashCode
+final case class Stylesheet private[kyo] (entries: Chunk[Stylesheet.Entry]) derives CanEqual:
 
     /** Appends a single rule (a selector and the [[kyo.Style]] declarations applied to it). */
     def rule(selector: Selector, style: Style): Stylesheet =
@@ -92,7 +75,7 @@ end Stylesheet
 object Stylesheet:
 
     /** The empty stylesheet; the identity for `++`. */
-    val empty: Stylesheet = Stylesheet(Span.empty[Entry])
+    val empty: Stylesheet = Stylesheet(Chunk.empty[Entry])
 
     /** Starts a stylesheet from a single rule. */
     def rule(selector: Selector, style: Style): Stylesheet = empty.rule(selector, style)

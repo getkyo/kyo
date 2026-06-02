@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 /** An immutable, ordered list of style properties to attach to a [[kyo.UI]] element.
   *
-  * A `Style` is a pure value: it holds a `Span[Style.Prop]` and nothing else. Every setter (`bg`, `padding`, `width`, ...) returns a *new*
+  * A `Style` is a pure value: it holds a `Chunk[Style.Prop]` and nothing else. Every setter (`bg`, `padding`, `width`, ...) returns a *new*
   * `Style` with the property appended, leaving the receiver untouched, so a `Style` is safe to share and reuse across elements. Attach one to
   * an element with its `.style(...)` setter.
   *
@@ -33,26 +33,7 @@ import scala.language.implicitConversions
   * @see
   *   [[kyo.UI]] for the element tree a `Style` attaches to
   */
-final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
-
-    // Span is an opaque Array; case-class equals would use reference equality for the props field.
-    // Override to compare element-by-element so value semantics hold.
-    // BgGradientProp's auto-derived equals also uses Array reference equality for its nested
-    // Span[Color] and Span[Double] fields, so we use propEqual to handle that case structurally.
-    override def equals(that: Any): Boolean = that match
-        case s: Style =>
-            props.size == s.props.size &&
-            (0 until props.size).forall(i => Style.propEqual(props(i), s.props(i)))
-        case _ => false
-
-    override def hashCode: Int =
-        var h = 1
-        var i = 0
-        while i < props.size do
-            h = 31 * h + Style.propHash(props(i))
-            i += 1
-        h
-    end hashCode
+final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
 
     import Style.*
     import Style.Prop.*
@@ -432,7 +413,7 @@ final case class Style private[kyo] (props: Span[Style.Prop]) derives CanEqual:
                 positions(i) = math.max(0.0, math.min(100.0, allStops(i)._2.value))
                 loop(i + 1)
         loop(0)
-        appendProp(Prop.BgGradientProp(direction, Span.from(colors), Span.from(positions)))
+        appendProp(Prop.BgGradientProp(direction, Chunk.from(colors), Chunk.from(positions)))
     end bgGradient
 
 end Style
@@ -450,37 +431,10 @@ end Style
   */
 object Style:
 
-    // Prop equality and hashing helpers. The auto-derived equality for BgGradientProp uses
-    // Array reference equality for its nested Span[Color] and Span[Double] fields (Span is an
-    // opaque Array). These helpers handle that case structurally; all other Prop cases use
-    // their auto-derived equals/hashCode, which is correct (no nested Span fields).
-    private[kyo] def propEqual(a: Prop, b: Prop): Boolean = (a, b) match
-        case (Prop.BgGradientProp(da, ca, pa), Prop.BgGradientProp(db, cb, pb)) =>
-            da == db &&
-            ca.size == cb.size &&
-            pa.size == pb.size &&
-            (0 until ca.size).forall(i => ca(i) == cb(i)) &&
-            (0 until pa.size).forall(i => pa(i) == pb(i))
-        case _ => a == b
-
-    private[kyo] def propHash(p: Prop): Int = p match
-        case Prop.BgGradientProp(d, colors, positions) =>
-            var h = d.hashCode
-            var i = 0
-            while i < colors.size do
-                h = 31 * h + colors(i).hashCode
-                i += 1
-            i = 0
-            while i < positions.size do
-                h = 31 * h + positions(i).hashCode
-                i += 1
-            h
-        case _ => p.hashCode
-
     // ---- Style factory methods ----
 
     /** The identity `Style` with no properties; the unit for `++`. */
-    val empty: Style = Style(Span.empty[Prop])
+    val empty: Style = Style(Chunk.empty[Prop])
 
     def bg(c: Color): Style                                     = empty.bg(c)
     def bg(f: Color.type => Color): Style                       = empty.bg(f)
@@ -756,7 +710,7 @@ object Style:
 
     /** The encoded representation of a single style property that a [[kyo.Style]] stores.
       *
-      * Each setter on `Style` produces exactly one `Prop` case, and a `Style` is just the ordered `Span` of these. The enum case is the
+      * Each setter on `Style` produces exactly one `Prop` case, and a `Style` is just the ordered `Chunk` of these. The enum case is the
       * "kind" key that drives last-write-wins dedup and `++` merging, so two writes of the same case (e.g. two `Width` props) collapse to the
       * last one. Pseudo-states are themselves props (`HoverProp`, `FocusProp`, ...) carrying a nested `Style`.
       *
@@ -828,7 +782,7 @@ object Style:
         case HueRotateProp(value: Double)
         case BlurProp(value: Length)
         // Background gradient
-        case BgGradientProp(direction: GradientDirection, colors: Span[Color], positions: Span[Double])
+        case BgGradientProp(direction: GradientDirection, colors: Chunk[Color], positions: Chunk[Double])
         // Pseudo-states
         case HoverProp(style: Style)
         case FocusProp(style: Style)
