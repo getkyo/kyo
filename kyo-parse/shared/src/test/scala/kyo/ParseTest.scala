@@ -1487,4 +1487,52 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
     }
+
+    "performance" - {
+        // Per-token reads must index into the input, not copy the remaining tail on every read.
+        // With the tail-copy bug, `repeat` over an n-token input is O(n^2): at this size the buggy
+        // code takes minutes (and churns O(n^2) garbage), while the fixed linear code finishes in well
+        // under a second. The 30s wall-clock bound fails against the bug with a wide margin and passes
+        // comfortably after the fix on the JVM/JS/Native runners.
+        val perfLen = 500000
+        def withinBudget(label: String)(body: => Assertion): Assertion =
+            val start   = java.lang.System.nanoTime()
+            val result  = body
+            val elapsed = (java.lang.System.nanoTime() - start) / 1000000L
+            assert(elapsed < 30000L, s"$label took ${elapsed}ms (budget 30000ms): repeat is not linear")
+            result
+        end withinBudget
+
+        "repeat(any) over a large input is linear" in run {
+            val text   = "a" * perfLen
+            val parser = Parse.repeat(Parse.any[Char])
+            Parse.runOrAbort(text)(parser).map { result =>
+                withinBudget("repeat(any)") {
+                    assert(result.length == perfLen)
+                }
+            }
+        }
+
+        "readWhile over a large input is linear" in run {
+            val text   = "a" * perfLen
+            val parser = Parse.readWhile[Char](_ == 'a')
+            Parse.runOrAbort(text)(parser).map { result =>
+                withinBudget("readWhile") {
+                    assert(result.length == perfLen)
+                }
+            }
+        }
+
+        "literal in a repeat over a large input is linear" in run {
+            // Each iteration probes a 1-char literal then consumes a char; the literal check must be
+            // O(prefix), not O(remaining).
+            val text   = "a" * perfLen
+            val parser = Parse.repeat(Parse.firstOf(Parse.literal("z").map(_ => 'z'), Parse.any[Char]))
+            Parse.runOrAbort(text)(parser).map { result =>
+                withinBudget("repeat(literal/any)") {
+                    assert(result.length == perfLen)
+                }
+            }
+        }
+    }
 end ParseTest

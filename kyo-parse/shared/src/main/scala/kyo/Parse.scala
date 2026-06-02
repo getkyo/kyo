@@ -244,11 +244,12 @@ object Parse:
 
     def readOne[In, Out](f: In => Result[Chunk[String], Out])(using Tag[Parse[In]], Frame): Out < Parse[In] =
         read(input =>
-            if input.done then Result.fail(Chunk(ParseFailure("EOF", input.position)))
-            else
-                f(input.remaining.head) match
-                    case Result.Failure(messages) => Result.fail(messages.map(ParseFailure(_, input.position)))
-                    case Result.Success(out)      => Result.succeed((input.advance(1), out))
+            input.headMaybe match
+                case Absent => Result.fail(Chunk(ParseFailure("EOF", input.position)))
+                case Present(token) =>
+                    f(token) match
+                        case Result.Failure(messages) => Result.fail(messages.map(ParseFailure(_, input.position)))
+                        case Result.Success(out)      => Result.succeed((input.advance(1), out))
         )
 
     def readWhile[A](f: A => Boolean)(using Tag[Parse[A]], Frame): Chunk[A] < Parse[A] =
@@ -327,9 +328,11 @@ object Parse:
 
     def anyMatch[A](using Frame)[In](pf: PartialFunction[In, A])(using Tag[Parse[In]]): A < Parse[In] =
         Parse.read(in =>
-            if in.done then Result.fail(Chunk(ParseFailure("Unexpected token, got EOF", in.position)))
-            else if pf.isDefinedAt(in.remaining.head) then Result.succeed((in.advance(1), pf(in.remaining.head)))
-            else Result.fail(Chunk(ParseFailure("Unexpected token", in.position)))
+            in.headMaybe match
+                case Absent => Result.fail(Chunk(ParseFailure("Unexpected token, got EOF", in.position)))
+                case Present(token) =>
+                    if pf.isDefinedAt(token) then Result.succeed((in.advance(1), pf(token)))
+                    else Result.fail(Chunk(ParseFailure("Unexpected token", in.position)))
         )
 
     @targetName("anyInSeq")
@@ -375,7 +378,7 @@ object Parse:
       */
     def literal(text: String)(using Frame): String < Parse[Char] =
         read(in =>
-            if in.remaining.startsWith(text) then
+            if in.startsWith(text) then
                 Result.succeed((in.advance(text.length), text))
             else
                 Result.fail(Chunk(ParseFailure(s"Expected: $text", in.position)))
@@ -716,7 +719,7 @@ object Parse:
     def end[In](using Tag[Parse[In]], Frame): Unit < Parse[In] =
         read(input =>
             if input.done then Result.succeed(input, ())
-            else Result.fail(Chunk(ParseFailure(s"Expected: EOF, Got: ${input.remaining.head}", input.position)))
+            else Result.fail(Chunk(ParseFailure(s"Expected: EOF, Got: ${input.headMaybe.getOrElse("")}", input.position)))
         )
 
     def not[In, S](parser: Any < (Parse[In] & S))(using Tag[Parse[In]], Frame): Unit < (Parse[In] & S) =
@@ -827,8 +830,8 @@ object Parse:
       */
     def boolean(using Frame): Boolean < Parse[Char] =
         read(in =>
-            if in.remaining.startsWith("true") then Result.succeed((in.advance(4), true))
-            else if in.remaining.startsWith("false") then Result.succeed((in.advance(5), false))
+            if in.startsWith("true") then Result.succeed((in.advance(4), true))
+            else if in.startsWith("false") then Result.succeed((in.advance(5), false))
             else Result.fail(Chunk(ParseFailure("Invalid boolean", in.position)))
         )
 
@@ -839,9 +842,8 @@ object Parse:
       */
     def identifier(using Frame): String < Parse[Char] =
         Parse.read: in =>
-            val remaining = in.remaining
-            remaining.headMaybe.filter(c => c.isLetter || c == '_').map(_ =>
-                val text = remaining.takeWhile(c => c.isLetterOrDigit || c == '_')
+            in.headMaybe.filter(c => c.isLetter || c == '_').map(_ =>
+                val text = in.remaining.takeWhile(c => c.isLetterOrDigit || c == '_')
                 (in.advance(text.length), text.mkString)
             ).toResult(Result.fail(Chunk(ParseFailure("Invalid identifier", in.position))))
 
