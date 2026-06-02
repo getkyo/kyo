@@ -1,0 +1,24 @@
+{
+  "name": "kyo-validation",
+  "description": "Local marketplace for kyo-lsp / kyo-mcp validation demos.",
+  "plugins": [
+    {
+      "name": "kyo-todo-lsp",
+      "description": "TodoLsp demo server: textDocument/hover and textDocument/completion for .todo files.",
+      "version": "0.1.0",
+      "source": "./kyo-todo-lsp",
+      "category": "development",
+      "strict": false,
+      "lspServers": {
+        "kyo-todo-lsp": {
+          "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+          "args": ["kyo-lsp", "demo.TodoLsp"],
+          "extensionToLanguage": {
+            ".todo": "todo"
+          },
+          "startupTimeout": 60000
+        }
+      }
+    }
+  ]
+}
