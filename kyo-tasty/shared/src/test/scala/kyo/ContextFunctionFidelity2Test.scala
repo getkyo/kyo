@@ -14,13 +14,16 @@ import kyo.internal.tasty.symbol.SymbolId
   * Context function types are found in kyo-core, which uses `AllowUnsafe ?=> ...` and `Safepoint ?=> ...` in method signatures. The test
   * classpath is extended with kyo-core (via TestClasspaths.standardWithKyoCore) to ensure real-world ContextFunctionN usages are present.
   *
+  * Phase 2.10: relocated from jvm/src/test to shared/src/test. Leaves 1-4 use TestClasspaths.standardWithKyoCore which is JVM-only
+  * (kyo-core is not in the embedded fixture set); those leaves are gated with jvmOnly. Leaves 5 and 7 use pure ADT construction and
+  * TestClasspaths.withClasspath which works on JS/Native. The coldWarmEquiv leaf (leaf 6) is gated jvmOnly by Fidelity2TestBase.
+  *
   * Invariant produced: INV-105-DF2 (context-function half).
   */
 class ContextFunctionFidelity2Test extends Fidelity2TestBase:
 
     import AllowUnsafe.embrace.danger
 
-    /** Walk a type recursively and count ContextFunction occurrences. */
     private def countContextFunctions(t: Tasty.Type): Int =
         var n = 0
         t.foreach:
@@ -32,11 +35,11 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Leaf 1 (Phase 2.05): conversion-convert-is-context-function
     // Given: kyo-core extended classpath
     // When: counting all ContextFunction types reachable from symbol declarations
-    // Then: post-fix count > 0 (kyo-core uses AllowUnsafe ?=> and Safepoint ?=> in several methods);
-    //       before fix count is 0
+    // Then: post-fix count > 0; before fix count is 0
+    // JVM-only: kyo-core is not embedded on JS/Native.
     // Pins: F-A2-005 + INV-105-DF2
-    "F-A2-005 (Phase 2.05): kyo-core symbols have at least one ContextFunction in their types" in run {
-        TestClasspaths.withClasspath(TestClasspaths.standardWithKyoCore).map: cp =>
+    "F-A2-005 (Phase 2.05): kyo-core symbols have at least one ContextFunction in their types" taggedAs jvmOnly in run {
+        TestClasspaths2.withKyoCoreClasspath.map: cp =>
             given Tasty.Classpath = cp
 
             def walkType(t: Tasty.Type): Int =
@@ -70,13 +73,12 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
 
     // Leaf 2 (Phase 2.05): kyo-AllowUnsafe-uses-context-function
     // Given: kyo-core extended classpath
-    // When: counting all symbols with ContextFunction in any declared type or parent type
+    // When: counting all parameters with ContextFunction type
     // Then: post-fix count > 0; before fix none
-    // Note: ContextFunction appears in parameter declaredTypes, not method declaredTypes.
-    //   Method.declaredType = TypeLambda(paramIds, result); params have their own declaredType.
+    // JVM-only: kyo-core is not embedded on JS/Native.
     // Pins: F-A2-005
-    "F-A2-005 (Phase 2.05): kyo-core parameters have at least one ContextFunction type" in run {
-        TestClasspaths.withClasspath(TestClasspaths.standardWithKyoCore).map: cp =>
+    "F-A2-005 (Phase 2.05): kyo-core parameters have at least one ContextFunction type" taggedAs jvmOnly in run {
+        TestClasspaths2.withKyoCoreClasspath.map: cp =>
             var paramCtxFnCount = 0
             cp.symbols.foreach: sym =>
                 sym match
@@ -95,9 +97,10 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Given: kyo-core extended classpath
     // When: counting total ContextFunction types across all symbol types
     // Then: post-fix count > 0; before fix the count is 0
+    // JVM-only: kyo-core is not embedded on JS/Native.
     // Pins: INV-105-DF2 producer; F-A2-005
-    "INV-105-DF2 (Phase 2.05): kyo-core has positive ContextFunction count across all symbol types" in run {
-        TestClasspaths.withClasspath(TestClasspaths.standardWithKyoCore).map: cp =>
+    "INV-105-DF2 (Phase 2.05): kyo-core has positive ContextFunction count across all symbol types" taggedAs jvmOnly in run {
+        TestClasspaths2.withKyoCoreClasspath.map: cp =>
             var total = 0
             cp.symbols.foreach: sym =>
                 sym match
@@ -121,9 +124,10 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Given: kyo-core extended classpath
     // When: checking that no parameter or method has Function(_, _, true) in its type
     // Then: every ContextFunction-carrying parameter/method decodes ContextFunction not Function(_, _, true)
+    // JVM-only: kyo-core is not embedded on JS/Native.
     // Pins: HARD RULE 4 layered preservation
-    "HARD RULE 4 (Phase 2.05): no symbol has Function(_, _, true) in its type" in run {
-        TestClasspaths.withClasspath(TestClasspaths.standardWithKyoCore).map: cp =>
+    "HARD RULE 4 (Phase 2.05): no symbol has Function(_, _, true) in its type" taggedAs jvmOnly in run {
+        TestClasspaths2.withKyoCoreClasspath.map: cp =>
             var violations = 0
             cp.symbols.foreach: sym =>
                 sym match
@@ -150,9 +154,10 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     }
 
     // Leaf 5 (Phase 2.05): pattern-match-on-function-still-works
-    // Given: a value of Type.ContextFunction
+    // Given: a value of Type.ContextFunction (constructed directly)
     // When: pattern matching on Type.Function(p, r, isCtx) (legacy)
     // Then: the match does NOT trigger on ContextFunction types (new case is additive, not overlapping)
+    // Cross-platform: uses pure ADT construction; works on JS/Native.
     // Pins: HARD RULE 4
     "HARD RULE 4 (Phase 2.05): Type.Function pattern does not match Type.ContextFunction" in run {
         TestClasspaths.withClasspath().map: cp =>
@@ -171,14 +176,10 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     }
 
     // Leaf 6 (Phase 2.05): snapshot-roundtrip-consistent-for-standard-classpath
-    // Given: (cold, warm) Classpath pair from the STANDARD classpath (kyo-tasty + kyo-data + scala-library)
+    // Given: (cold, warm) Classpath pair from the STANDARD classpath
     // When: counting Type.ContextFunction reachable from all symbol types in both
-    // Then: the two counts are equal (both 0 for the standard classpath, because ContextFunction types
-    //   only appear in parameter declaredTypes which are NOT snapshot-serialized; method parentTypes
-    //   and parentTypes don't contain ContextFunction in the standard classpath)
-    // Note: Parameter.declaredType is not persisted in the KRFL snapshot (it's decoded from body bytes
-    //   in cold load but not re-decoded in warm load). This is a known snapshot limitation; a future
-    //   phase may extend KRFL to include parameter type sections.
+    // Then: the two counts are equal
+    // JVM-only: coldWarmEquiv uses TestClasspaths2.standardWithSnapshot (JVM filesystem).
     // Pins: INV-101-DF2
     coldWarmEquiv("INV-101-DF2 (Phase 2.05): snapshot cold/warm ContextFunction count consistent on standard classpath") { cp =>
         var n = 0
@@ -200,6 +201,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Given: Type.ContextFunction(Chunk(Named(id)), Named(id))
     // When: invoking .show
     // Then: the result contains "?=>" (context function arrow)
+    // Cross-platform: uses pure ADT construction + show; works on JS/Native.
     // Pins: show-format consistency
     "show (Phase 2.05): Type.ContextFunction.show uses ?=> arrow" in run {
         TestClasspaths.withClasspath().map: cp =>

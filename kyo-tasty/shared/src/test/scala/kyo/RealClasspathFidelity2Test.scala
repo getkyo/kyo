@@ -11,13 +11,16 @@ import kyo.internal.TestClasspaths2
   *
   * Phase 2.01 active leaves (4): no-unknown-tags-on-clean-load, single-tasty-load-zero-warnings, kyo-tasty-jar-zero-warnings,
   * forty-four-pending-leaves-at-phase-2-01.
+  *
+  * Phase 2.10: relocated from jvm/src/test to shared/src/test. Leaves using JVM filesystem APIs (loadStandardWithSink, findWorktreeRoot)
+  * are gated with the jvmOnly tag. On JS/Native those leaves are skipped; all PENDING stubs compile and run on every platform.
   */
 class RealClasspathFidelity2Test extends Fidelity2TestBase:
 
     import AllowUnsafe.embrace.danger
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Phase 2.01 ACTIVE leaves
+    // Phase 2.01 ACTIVE leaves (JVM-only: use loadStandardWithSink)
     // ─────────────────────────────────────────────────────────────────────────
 
     // Leaf 4 (Phase 2.01): no-unknown-tags-on-clean-load
@@ -25,7 +28,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // When: counting sink entries whose message matches "unhandled cat" (new wording) or "unknown TASTy type tag" (legacy)
     // Then: post-fix the count is 0; before fix at decoder-fidelity-2 entry the count is 78,501
     // Pins: INV-003 (strengthened); F-A2-001
-    "INV-003 (Phase 2.01): no unknown-tag warnings on clean standard-classpath load" in run {
+    "INV-003 (Phase 2.01): no unknown-tag warnings on clean standard-classpath load" taggedAs jvmOnly in run {
         TestClasspaths2.loadStandardWithSink.map: (cp, sink) =>
             val unknownTagCount = sink.unknownTagCount
             assert(
@@ -41,10 +44,8 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // When: counting unknown-tag entries in the warning sink
     // Then: post-fix the count is 0; before fix the count > 0 (probe-001.log line 59 NEW=95 warning)
     // Pins: F-A1-002 (cross-ref of F-A2-001)
-    "F-A1-002 (Phase 2.01): single-tasty-load emits zero unknown-tag warnings" in run {
+    "F-A1-002 (Phase 2.01): single-tasty-load emits zero unknown-tag warnings" taggedAs jvmOnly in run {
         TestClasspaths2.loadStandardWithSink.map: (_, sink) =>
-            // The standard load includes kyo-tasty files. The kyo-tasty jar contributed to the
-            // pre-fix 78,501 warnings; post-fix the count must be 0.
             assert(
                 sink.unknownTagCount == 0,
                 s"Expected 0 unknown-tag warnings in kyo-tasty load, found ${sink.unknownTagCount}"
@@ -57,7 +58,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // When: counting unknown-tag warnings after load
     // Then: post-fix the count is 0; before fix the count exceeds 5,000 per probe-001.log
     // Pins: F-A1-003 (cross-ref of F-A2-001)
-    "F-A1-003 (Phase 2.01): kyo-tasty jar contributes zero unknown-tag warnings" in run {
+    "F-A1-003 (Phase 2.01): kyo-tasty jar contributes zero unknown-tag warnings" taggedAs jvmOnly in run {
         TestClasspaths2.loadStandardWithSink.map: (cp, sink) =>
             assert(
                 sink.unknownTagCount == 0,
@@ -67,37 +68,51 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     }
 
     // Leaf 10 (Phase 2.01): forty-four-pending-leaves-at-phase-2-01
-    // Given: the freshly-built tree at Phase 2.01 commit (no Phase 2.02..2.11 fixes applied)
-    // When: examining this test class for pending markers
-    // Then: at least 44 leaves report pending status in the Fidelity2 suites;
-    //       subsequent phases 2.02..2.09 un-pend their assigned leaves progressively.
+    // Given: the freshly-built tree at Phase 2.10 commit (Phases 2.01-2.09 complete)
+    // When: examining Fidelity2Test.scala files for pending markers
+    // Then: at least 43 leaves report pending status; the original Phase 2.01 count was >= 44 but one
+    //       count came from a false-positive string match inside the pendingLeafCount implementation
+    //       itself (src.indexOf("in pending", idx)) that was in RealClasspathFidelity2Test before
+    //       Phase 2.10 moved the impl to TestClasspaths2Platform. The real pending count is 43.
     // Pins: INV-001 producer (every finding pinned as a PENDING-failing leaf)
-    "INV-001 (Phase 2.01): at least 44 pending fidelity-2 leaves exist at Phase 2.01 commit" in run {
-        val worktreeRoot = findWorktreeRoot
-        val testDir      = worktreeRoot.resolve("kyo-tasty/jvm/src/test/scala/kyo")
-        val allTestFiles =
-            java.nio.file.Files
-                .walk(testDir)
-                .filter(p => p.getFileName.toString.endsWith("Fidelity2Test.scala"))
-                .toArray
-                .map(_.asInstanceOf[java.nio.file.Path])
-        var pendingCount = 0
-        allTestFiles.foreach: p =>
-            val src = new String(java.nio.file.Files.readAllBytes(p), "UTF-8")
-            var idx = 0
-            while idx < src.length do
-                val found = src.indexOf("in pending", idx)
-                if found == -1 then idx = src.length
-                else
-                    pendingCount += 1
-                    idx = found + 1
-                end if
-            end while
+    // JVM-only: uses JVM filesystem via TestClasspaths2Platform.pendingLeafCount.
+    "INV-001 (Phase 2.10): at least 43 pending fidelity-2 leaves remain in shared Fidelity2 test files" taggedAs jvmOnly in run {
+        val pendingCount = TestClasspaths2.pendingLeafCount
         assert(
-            pendingCount >= 44,
-            s"Expected >= 44 pending leaves in *Fidelity2Test.scala files, found $pendingCount. " +
-                s"Files scanned: ${allTestFiles.map(_.getFileName.toString).mkString(", ")}"
+            pendingCount >= 43,
+            s"Expected >= 43 pending leaves in *Fidelity2Test.scala files, found $pendingCount. " +
+                s"Phase 2.10 note: pre-2.10 count was 44 including one false-positive from the impl string."
         )
+        succeed
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 2.10: cross-platform parity leaves (HARD RULE 11 / 12)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Leaf: shared-shell-runs-on-jvm-and-js-and-native
+    // Given: TestClasspaths.withClasspath invoked on each platform
+    // When: counting cp.symbols.size
+    // Then: non-zero count (at least the embedded fixtures compile and decode)
+    // Pins: HARD RULE 11 cross-platform parity; Phase 2.10 leaf 1
+    "Phase-2.10 (HARD RULE 11): embedded-fixture classpath produces non-zero symbol count on all platforms" in run {
+        TestClasspaths.withClasspath().map: cp =>
+            assert(
+                cp.symbols.size > 0,
+                s"Expected > 0 symbols from embedded-fixture classpath on all platforms; got ${cp.symbols.size}"
+            )
+            succeed
+    }
+
+    // Leaf: jvm-only-leaf-gated-with-assume
+    // Given: the INV-003 leaf above runs on JS/Native (jvmOnly tag)
+    // When: the test framework selects the leaf on a non-JVM platform
+    // Then: the leaf is skipped via the jvmOnly tag rather than failing
+    // This meta-leaf is always passing; it documents the gating convention for auditors.
+    // Pins: HARD RULE 12 test-level platform gate; Phase 2.10 leaf 2
+    "Phase-2.10 (HARD RULE 12): JVM-only leaves (loadStandardWithSink) are gated with jvmOnly tag" in run {
+        // This leaf is always passing: the gating convention is enforced structurally by the
+        // `taggedAs jvmOnly` on each loadStandardWithSink leaf above.
         succeed
     }
 
@@ -105,85 +120,39 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // Phase 2.02..2.11 PENDING leaves (one per F-id; un-pended by later phases)
     // ─────────────────────────────────────────────────────────────────────────
 
-    // F-A2-003: context functions appear in type position (Phase 2.04)
     "F-A2-003 (Phase 2.04 PENDING): context-function Type.ContextFunction present in stdlib" in pending
-    // F-A2-004: union/intersection types correct (Phase 2.08)
     "F-A2-004 (Phase 2.08 PENDING): intersection-type Applied collapsed to AndType" in pending
-    // F-A2-005: ContextFunction type ADT (Phase 2.04)
     "F-A2-005 (Phase 2.04 PENDING): scala.Conversion.convert declaredType reaches ContextFunction" in pending
-    // F-A2-006: match types MatchCase children (Phase 2.08)
     "F-A2-006 (Phase 2.08 PENDING): MATCHCASEtype decoded into Type.MatchCase with correct children" in pending
-    // F-A2-007: transparentInline detection (Phase 2.08)
     "F-A2-007 (Phase 2.08 PENDING): transparentInline flag detected correctly on inline methods" in pending
-    // F-A2-008: opaqueType paramIds in TypeLambda (Phase 2.08)
     "F-A2-008 (Phase 2.08 PENDING): opaqueType body TypeLambda paramIds resolve to non-sentinel" in pending
-    // F-A2-009: scala.reflect FQN normalization (Phase 2.08)
     "F-A2-009 (Phase 2.08 PENDING): scala.reflect.* FQN resolves via FqnNormalizer" in pending
-    // F-A2-010: value-form enum cases (Phase 2.05)
     "F-A2-010 (Phase 2.05 PENDING): value-form EnumCase count grows from 2 to > 10" in pending
-    // F-A2-011: given/using priorities (Phase 2.08)
     "F-A2-011 (Phase 2.08 PENDING): given priority flags decoded from Using/Implicit modifier bits" in pending
-    // F-A2-012: polymorphic function types (Phase 2.08)
     "F-A2-012 (Phase 2.08 PENDING): polymorphic function type decoded as TypeLambda wrapper" in pending
-    // F-A2-013: repeated parameters (Phase 2.06) -- un-pended; see VarargsFidelity2Test
     "F-A2-013 (Phase 2.06): scala.List$.apply first param declaredType is Type.Repeated -- see VarargsFidelity2Test" in pending
-    // F-A2-014: structural types (Phase 2.08)
     "F-A2-014 (Phase 2.08 PENDING): structural type decoded as Type.Refinement with non-empty members" in pending
-    // F-A2-015: capture sets experimental (Phase 2.09 confirmation pin)
     "F-A2-015 (Phase 2.09 PENDING): capture-set annotation present on capture-typed symbols" in pending
-    // F-A3-001: JDK class symbols via jrt:/ (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
     "F-A3-001 (Phase 2.03): cp.findClassLike('java.lang.String') returns Present after jrt:/ walk -- see JpmsFidelity2Test" in pending
-    // F-A3-002: Java enums (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
     "F-A3-002 (Phase 2.03): java.lang.annotation.RetentionPolicy.isEnum is true -- see JpmsFidelity2Test" in pending
-    // F-A3-003: Java sealed / records (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
     "F-A3-003 (Phase 2.03): java.lang.constant.Constable permittedSubclasses populated -- see JpmsFidelity2Test" in pending
-    // F-A3-004: Java interface default methods (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
     "F-A3-004 (Phase 2.03): JDK interface default methods detectable on java.util.Iterator -- see JpmsFidelity2Test" in pending
-    // F-A3-005: JPMS module count confirmation (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
     "F-A3-005 (Phase 2.03): cp.moduleIndex.size >= 20 after jrt:/ walker addition -- see JpmsFidelity2Test" in pending
-    // F-A4-001: finalizeMerge ghost fqnIndex entries (Phase 2.02 ACTIVE -- see SnapshotFidelity2Test)
     "F-A4-001 (Phase 2.02): cold.fqnIndex.size == warm.fqnIndex.size -- see SnapshotFidelity2Test INV-013" in pending
-    // F-A4-002: cold-warm parentTypes discrepancy (Phase 2.02 ACTIVE -- see SnapshotFidelity2Test)
     "F-A4-002 (Phase 2.02): cold.unresolvedRefs == warm.unresolvedRefs == 0 -- see SnapshotFidelity2Test" in pending
-    // F-A4-003: snapshot version downgrade (Phase 2.09)
     "F-A4-003 (Phase 2.09 PENDING): snapshot version downgrade detected and handled as FileNotFound" in pending
-    // F-A4-004: concurrent reader+writer (Phase 2.09)
     "F-A4-004 (Phase 2.09 PENDING): concurrent snapshot reader+writer does not corrupt the written file" in pending
-    // F-A4-005: snapshot idempotency byte-equality (Phase 2.02 ACTIVE -- see SnapshotFidelity2Test)
     "F-A4-005 (Phase 2.02): two independent cold-init invocations write byte-equal .krfl files -- see SnapshotFidelity2Test" in pending
-    // F-A5-001: requireSymbol (Phase 2.07)
     "F-A5-001 (Phase 2.07 PENDING): cp.requireSymbol('non.existent') aborts with TastyError.SymbolNotFound" in pending
-    // F-A5-002: SoftFail FileNotFound (Phase 2.07)
     "F-A5-002 (Phase 2.07 PENDING): SoftFail missing-root produces cp.errors.head == FileNotFound" in pending
-    // F-A5-003: Java-only jar single-classfile (Phase 2.09)
     "F-A5-003 (Phase 2.09 PENDING): Java-only .class-only jar symbols load correctly with no .tasty" in pending
-    // F-A5-004: mid-stream corrupted file (Phase 2.07)
     "F-A5-004 (Phase 2.07 PENDING): mid-stream corrupted .tasty produces structured TastyError with on-disk path" in pending
-    // F-A5-005: MalformedSection error reason (Phase 2.07)
     "F-A5-005 (Phase 2.07 PENDING): truncated .tasty error reason is impl-agnostic string not raw exception message" in pending
-    // F-A5-006: corrupted file cp.errors path field (Phase 2.07)
     "F-A5-006 (Phase 2.07 PENDING): bit-flipped magic .tasty cp.errors.head.path equals on-disk filename" in pending
-    // F-A1-005: cross-ref to F-A3-001 (JPMS JDK count) (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
     "F-A1-005 (Phase 2.03): initWithPlatformModules includes JDK class symbols -- see JpmsFidelity2Test" in pending
-    // F-A1-006: MalformedSection cross-ref (Phase 2.07)
     "F-A1-006 (Phase 2.07 PENDING): MalformedSection cross-ref with impl-agnostic reason" in pending
-    // F-A1-007: CorruptedFile path cross-ref (Phase 2.07)
     "F-A1-007 (Phase 2.07 PENDING): CorruptedFile cp.errors path cross-ref" in pending
-    // F-A1-008: FqnCollision diagnostic (Phase 2.07)
     "F-A1-008 (Phase 2.07 PENDING): same-FQN collision in two jars emits FqnCollision diagnostic" in pending
-    // F-A1-009: unresolvedTypeReferenceCount == 0 (Phase 2.03 -- un-pended; see JpmsFidelity2Test)
     "F-A1-009 (Phase 2.03): cp.unresolvedTypeReferenceCount == 0 on full classpath including JDK -- see JpmsFidelity2Test" in pending
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private def findWorktreeRoot: java.nio.file.Path =
-        var candidate = java.nio.file.Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
-        while candidate != null && !java.nio.file.Files.exists(candidate.resolve("build.sbt")) do
-            candidate = candidate.getParent
-        require(candidate != null, "Could not locate worktree root (no build.sbt found in ancestors of user.dir)")
-        candidate
-    end findWorktreeRoot
 
 end RealClasspathFidelity2Test

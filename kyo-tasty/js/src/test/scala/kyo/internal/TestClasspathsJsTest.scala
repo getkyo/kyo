@@ -5,7 +5,7 @@ import kyo.*
 /** Phase 14 test leaves: JS cross-platform fixture helper verification. Updated in Phase 15 to include Shape fixture.
   *
   * Pins: F-F-001 (JS parity). All leaves use the embedded TASTy fixture helper and do not require a real JVM classpath. The `run {}` harness
-  * (BaseKyoCoreTest) handles `Abort[Any] & Async & Scope`, so test bodies call `TestClasspaths.withClasspath.map(cp => ...)` directly.
+  * (BaseKyoCoreTest) handles `Abort[Any] & Async & Scope`, so test bodies call `TestClasspaths.withClasspath().map(cp => ...)` directly.
   *
   * Leaves:
   *   1. js-embedded-fixture-loads: cp.allClasses.size > 0 from embedded fixtures.
@@ -23,7 +23,7 @@ class TestClasspathsJsTest extends Test:
     // Then: the resulting Classpath has at least one class-like symbol.
     // Pins: F-F-001 (JS parity).
     "js-embedded-fixture-loads: allClasses non-empty from embedded fixtures" in run {
-        TestClasspaths.withClasspath.map: cp =>
+        TestClasspaths.withClasspath().map: cp =>
             assert(cp.allClasses.size > 0, s"Expected allClasses.size > 0 but got ${cp.allClasses.size}")
             succeed
     }
@@ -34,7 +34,7 @@ class TestClasspathsJsTest extends Test:
     // Then: size > 0 (includes methods, vals, classes).
     // Pins: F-F-001 (JS parity, broader symbol check).
     "js-symbols-non-empty: cp.symbols non-empty from embedded fixtures" in run {
-        TestClasspaths.withClasspath.map: cp =>
+        TestClasspaths.withClasspath().map: cp =>
             assert(cp.symbols.size > 0, s"Expected cp.symbols.size > 0 but got ${cp.symbols.size}")
             succeed
     }
@@ -57,7 +57,7 @@ class TestClasspathsJsTest extends Test:
     // Then: cp.errors is empty (no parse errors on valid fixture bytes).
     // Pins: F-F-001 (correctness check beyond existence).
     "js-no-classpath-errors: no errors loading well-formed embedded fixtures" in run {
-        TestClasspaths.withClasspath.map: cp =>
+        TestClasspaths.withClasspath().map: cp =>
             assert(
                 cp.errors.isEmpty,
                 s"Expected no classpath errors but got ${cp.errors.size}"
@@ -73,7 +73,7 @@ class TestClasspathsJsTest extends Test:
     //   This leaf pins that Symbol.EnumCase is decoded and round-trips correctly on JS (Phase 13 + 15).
     // Pins: F-E-007 on JS (Symbol.EnumCase class-form from Phase 13, tightened in Phase 15 with Shape fixture).
     "js-enum-case-symbol-kind: shapeTasty produces Symbol.EnumCase instances" in run {
-        TestClasspaths.withClasspath.map: cp =>
+        TestClasspaths.withClasspath().map: cp =>
             val enumCaseSymbols = cp.symbols.filter(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(
                 enumCaseSymbols.size > 0,
@@ -88,7 +88,7 @@ class TestClasspathsJsTest extends Test:
     // Then: both kyo.fixtures.BaseClass and kyo.fixtures.ChildClass are findable by FQN.
     // Pins: cross-file TYPEREFpkg resolution from Phase 13, verified on JS.
     "js-cross-file-resolution: BaseClass and ChildClass both resolve by FQN" in run {
-        TestClasspaths.withClasspath.map: cp =>
+        TestClasspaths.withClasspath().map: cp =>
             val baseResult  = cp.findClassLike("kyo.fixtures.BaseClass")
             val childResult = cp.findClassLike("kyo.fixtures.ChildClass")
             assert(baseResult.isDefined, "Expected kyo.fixtures.BaseClass to be findable by FQN")
