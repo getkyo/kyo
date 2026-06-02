@@ -1009,7 +1009,7 @@ val navBar: UI =
 
 ## Pattern-matching on UI (AST access)
 
-Every element factory returns an `UI.Ast.*` case class. `UI.Ast.Element` is the sealed base trait; the case classes are `Div`, `P`, `Section`, `Main`, `Header`, `Footer`, `Pre`, `Code`, `Ul`, `Ol`, `Table`, `H1`..`H6`, `SpanElement`, `Nav`, `Li`, `Tr`, `Form`, `Textarea`, `Select`, `Hr`, `Br`, `Td`, `Th`, `Label`, `Opt`, `Button`, `Checkbox`, `Radio`, `Input`, `PasswordInput`, `EmailInput`, `TelInput`, `UrlInput`, `SearchInput`, `NumberInput`, `DateInput`, `TimeInput`, `ColorInput`, `RangeInput`, `FileInput`, `HiddenInput`, `Anchor`, `Img`, `Dropdown`. The non-element AST cases are `Text(value)`, `Reactive(signal)`, `Foreach[A](signal, key, render)`, `Fragment(children)`.
+Every element factory returns an `UI.Ast.*` case class. `UI.Ast.Element` is the sealed base trait; the case classes are `Div`, `P`, `Section`, `Main`, `Header`, `Footer`, `Pre`, `Code`, `Ul`, `Ol`, `Table`, `H1`..`H6`, `SpanElement`, `Nav`, `Li`, `Tr`, `Form`, `Textarea`, `Select`, `Hr`, `Br`, `Td`, `Th`, `Label`, `Opt`, `Button`, `Checkbox`, `Radio`, `Input`, `PasswordInput`, `EmailInput`, `TelInput`, `UrlInput`, `SearchInput`, `NumberInput`, `DateInput`, `TimeInput`, `ColorInput`, `RangeInput`, `FileInput`, `HiddenInput`, `Anchor`, `Img`, `Dropdown`. The non-element AST cases are `Text(value)`, `Reactive(signal)`, `Foreach[A](signal, key, render)`, `Fragment(children)`, and `RawHtml(value)` (the verbatim inline HTML passthrough described below).
 
 Capability traits surface here too: `Interactive`, `Block`, `Inline`, `Void`, `Focusable`, `HasDisabled`, `TextInput`, `PickerInput`, `BooleanInput`, `Activatable`, `Clickable`. They let you pattern-match on capability rather than a specific element class.
 
@@ -1053,6 +1053,30 @@ val isInputWithRef: Boolean < Async =
 ```
 
 `Foreach[A]` carries an existential `A`. To re-introduce the type parameter inside a custom backend, use `applyTyped` (the source documents it as the audited single-cast escape hatch).
+
+### Inline HTML passthrough (escape hatch)
+
+`UI.rawHtml(html: String)` is the single named escape hatch for content that cannot be expressed as a `UI` subtree. It returns an `Ast.RawHtml(value)` node that the renderer emits byte-for-byte with no HTML escaping.
+
+> **Caution:** `rawHtml` bypasses all escaping. Passing user-supplied, externally-sourced, or otherwise untrusted content here creates an XSS vulnerability. Use only for trusted, controlled HTML strings, such as inline `<img>` or `<a><img></a>` snippets from your own templates.
+
+The safe alternative is a plain string child or `Ast.Text(s)`, both of which always HTML-escape their argument:
+
+```scala
+import UI.*
+import kyo.*
+
+// verbatim: renders <b>x</b>
+val raw: UI = rawHtml("<b>x</b>")
+
+// escaped: renders &lt;b&gt;x&lt;/b&gt; (string auto-lifts to Ast.Text)
+val safe: UI = Ast.Text("<b>x</b>")
+
+// pattern-match the AST node directly
+val matched: Boolean = raw match
+    case Ast.RawHtml("<b>x</b>") => true
+    case _                       => false
+```
 
 ## Putting it together: a todo list
 

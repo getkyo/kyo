@@ -159,6 +159,28 @@ object UI:
     /** Groups children into a single UI without introducing a wrapper element; the children render as siblings in the parent. */
     def fragment(cs: UI*)(using Frame): UI = Fragment(Chunk.from(cs))
 
+    /** Inline HTML passthrough: emits `html` verbatim into the rendered output without any escaping.
+      *
+      * This is the framework's single deliberate escape hatch for trusted HTML content that cannot be expressed through the normal `UI`
+      * element API. Use it only for content you control and trust completely: strings from external sources, user input, or any untrusted
+      * origin must NOT be passed here as doing so creates an XSS vulnerability. There is no sanitization.
+      *
+      * Intended for the bounded case of inline HTML snippets (such as `<img>` or `<a><img></a>` nodes found in module README files) that
+      * the Markdown transpiler encounters and must pass through verbatim. The article body itself is always a real `UI` subtree; this node
+      * appears only at the leaf positions where raw HTML snippets exist in the source.
+      *
+      * The rendered bytes are byte-identical to `html`. Contrast with `UI.text`, which HTML-escapes its argument:
+      * `UI.text("<b>x</b>")` renders `&lt;b&gt;x&lt;/b&gt;`; `UI.rawHtml("<b>x</b>")` renders `<b>x</b>`.
+      *
+      * @param html
+      *   Trusted HTML string to emit verbatim. Must come from a controlled, trusted source.
+      * @see
+      *   [[kyo.UI.Ast.RawHtml]] for the AST node this factory returns
+      * @see
+      *   [[kyo.UI.text]] for the safe alternative that HTML-escapes its argument
+      */
+    def rawHtml(html: String)(using Frame): UI = Ast.RawHtml(html)
+
     /** Conditional rendering: shows `ui` while `condition` is true and an empty node otherwise, re-evaluating when the signal emits. */
     def when(condition: Signal[Boolean])(ui: => UI)(using Frame): UI =
         Reactive(condition.map(v => if v then ui else UI.empty))
@@ -674,6 +696,18 @@ object UI:
 
         /** A literal text node; a bare `String` child auto-lifts to one. */
         case class Text(value: String)(using val frame: Frame) extends UI
+
+        /** Verbatim inline HTML passthrough node. The `value` string is emitted byte-for-byte into the rendered output with no HTML
+          * escaping. This is the AST counterpart to [[kyo.UI.rawHtml]].
+          *
+          * Security contract: `value` must come from a trusted, controlled source. There is no sanitization; passing user-supplied or
+          * externally-sourced strings here creates an XSS vulnerability. Use [[kyo.UI.Ast.Text]] (which escapes its argument) for any
+          * content that is not fully trusted.
+          *
+          * @param value
+          *   Trusted HTML string; rendered verbatim, no escaping applied.
+          */
+        case class RawHtml(value: String)(using val frame: Frame) extends UI
 
         /** A subtree driven by a `Signal[UI]`: re-renders the bound region whenever the signal emits a new value. */
         case class Reactive(signal: Signal[UI])(using val frame: Frame) extends UI

@@ -87,6 +87,9 @@ private[kyo] object HtmlRenderer:
                     end if
                 end for
 
+            case UI.Ast.RawHtml(value) =>
+                w(sb, value)
+
             case UI.Ast.Text(value) =>
                 w(sb, esc(value))
 

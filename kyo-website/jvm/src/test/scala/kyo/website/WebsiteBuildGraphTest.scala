@@ -55,33 +55,23 @@ class WebsiteBuildGraphTest extends Test:
         }
     }
 
-    "build.sbt declares flexmark only on JVM config (INV-005 build-graph half)" - {
-        "flexmark deps are inside .jvmSettings block, not shared .settings" in {
-            val lines = buildSbtLines()
+    "build.sbt uses kyo-parse (no flexmark) for Markdown (INV-005 build-graph half, D6)" - {
+        "no flexmark in build.sbt" in {
+            val lines         = buildSbtLines()
+            val flexmarkLines = lines.filter(_.contains("com.vladsch.flexmark"))
+            assert(flexmarkLines.isEmpty, s"unexpected flexmark in build.sbt: ${flexmarkLines.mkString(", ")}")
+        }
 
-            // Locate the kyo-website project block: starts at "lazy val `kyo-website`"
+        "kyo-parse dependency present in build.sbt for kyo-website" in {
+            val lines        = buildSbtLines()
             val projectStart = lines.indexWhere(l => l.contains("lazy val `kyo-website`") && !l.contains("bundle"))
             assert(projectStart >= 0, "kyo-website project not found in build.sbt")
-
-            // Locate the .jvmSettings block within the kyo-website project
-            val jvmSettingsStart = lines.indexWhere(_.contains(".jvmSettings"), projectStart)
-            assert(jvmSettingsStart > projectStart, ".jvmSettings block not found in kyo-website")
-
-            // flexmark declarations should exist in the file at all
-            val flexmarkLines = lines.filter(_.contains("com.vladsch.flexmark"))
-            assert(flexmarkLines.nonEmpty, "no flexmark declaration found in build.sbt")
-
-            // Every flexmark line must appear after jvmSettings opens and before any line closing that block
-            // (i.e., inside jvmSettings), not in a shared .settings block.
-            for line <- flexmarkLines do
-                val lineIdx = lines.indexOf(line)
-                assert(
-                    lineIdx > jvmSettingsStart,
-                    s"flexmark declaration '${line.trim}' appears before .jvmSettings at line $jvmSettingsStart"
-                )
-            end for
-
-            succeed
+            // Find the next project or end of file.
+            val nextProject  = lines.indexWhere(l => l.startsWith("lazy val") && !l.contains("kyo-website"), projectStart + 1)
+            val projectEnd   = if nextProject > 0 then nextProject else lines.length
+            val projectBlock = lines.slice(projectStart, projectEnd)
+            val hasParseDep  = projectBlock.exists(l => l.contains("kyo-parse") && l.contains("dependsOn"))
+            assert(hasParseDep, s"kyo-parse dependsOn not found in kyo-website project block")
         }
     }
 
