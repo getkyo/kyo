@@ -4,33 +4,33 @@ import kyo.*
 import scala.annotation.nowarn
 import scala.annotation.publicInBinary
 
-/** Hand-rolled discriminator-key Schema for `McpRoute.CompletionRef`.
+/** Hand-rolled discriminator-key Schema for `McpHandler.CompletionRef`.
   *
   * Uses `"type"` as the discriminator key. `Prompt` encodes as
   * `{"type":"ref/prompt","name":"..."}` and `Resource` encodes as
   * `{"type":"ref/resource","uri":"..."}`.
   *
-  * The schema is a singleton (INV-013): every `summon[Schema[McpRoute.CompletionRef]]`
-  * resolves to the same reference via the given in `McpRoute.CompletionRef`'s companion.
+  * The schema is a singleton (INV-013): every `summon[Schema[McpHandler.CompletionRef]]`
+  * resolves to the same reference via the given in `McpHandler.CompletionRef`'s companion.
   *
   * Precedent: `McpContentSchema` at kyo/internal/McpContentSchema.scala.
   */
 private[kyo] object McpCompletionRefSchema:
 
     @nowarn("msg=anonymous")
-    val schema: Schema[McpRoute.CompletionRef] = new Schema[McpRoute.CompletionRef](Seq.empty):
+    val schema: Schema[McpHandler.CompletionRef] = new Schema[McpHandler.CompletionRef](Seq.empty):
 
-        @publicInBinary private[kyo] def serializeWrite(ref: McpRoute.CompletionRef, w: Codec.Writer): Unit =
+        @publicInBinary private[kyo] def serializeWrite(ref: McpHandler.CompletionRef, w: Codec.Writer): Unit =
             ref match
-                case McpRoute.CompletionRef.Prompt(name) =>
-                    w.objectStart("McpRoute.CompletionRef.Prompt", 2)
+                case McpHandler.CompletionRef.Prompt(name) =>
+                    w.objectStart("McpHandler.CompletionRef.Prompt", 2)
                     w.field("type", 1)
                     w.string("ref/prompt")
                     w.field("name", 2)
                     w.string(name)
                     w.objectEnd()
-                case McpRoute.CompletionRef.Resource(uri) =>
-                    w.objectStart("McpRoute.CompletionRef.Resource", 2)
+                case McpHandler.CompletionRef.Resource(uri) =>
+                    w.objectStart("McpHandler.CompletionRef.Resource", 2)
                     w.field("type", 1)
                     w.string("ref/resource")
                     w.field("uri", 2)
@@ -38,7 +38,7 @@ private[kyo] object McpCompletionRefSchema:
                     w.objectEnd()
         end serializeWrite
 
-        @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): McpRoute.CompletionRef =
+        @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): McpHandler.CompletionRef =
             var typeTag: String     = ""
             var name: String        = ""
             var uri: McpResourceUri = McpResourceUri("")
@@ -59,22 +59,22 @@ private[kyo] object McpCompletionRefSchema:
             end while
             reader.objectEnd()
             typeTag match
-                case "ref/prompt"   => McpRoute.CompletionRef.Prompt(name)
-                case "ref/resource" => McpRoute.CompletionRef.Resource(uri)
+                case "ref/prompt"   => McpHandler.CompletionRef.Prompt(name)
+                case "ref/resource" => McpHandler.CompletionRef.Resource(uri)
                 case other =>
                     throw TypeMismatchException(Seq.empty, "ref/prompt|ref/resource", other)(using Frame.internal)
             end match
         end serializeRead
 
-        @publicInBinary private[kyo] def getter(value: McpRoute.CompletionRef): Maybe[Any] = Maybe(value)
-        @publicInBinary private[kyo] def setter(value: McpRoute.CompletionRef, next: Any): McpRoute.CompletionRef =
+        @publicInBinary private[kyo] def getter(value: McpHandler.CompletionRef): Maybe[Any] = Maybe(value)
+        @publicInBinary private[kyo] def setter(value: McpHandler.CompletionRef, next: Any): McpHandler.CompletionRef =
             next match
-                case r: McpRoute.CompletionRef => r
-                case _                         => value
+                case r: McpHandler.CompletionRef => r
+                case _                           => value
 
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using
             Frame
-        ): Result[DecodeException, McpRoute.CompletionRef] =
+        ): Result[DecodeException, McpHandler.CompletionRef] =
             sv match
                 case Structure.Value.Record(fields) =>
                     val m = fields.iterator.toMap
@@ -82,14 +82,14 @@ private[kyo] object McpCompletionRefSchema:
                         case Some(Structure.Value.Str("ref/prompt")) =>
                             m.get("name") match
                                 case Some(Structure.Value.Str(n)) =>
-                                    Result.Success(McpRoute.CompletionRef.Prompt(n))
+                                    Result.Success(McpHandler.CompletionRef.Prompt(n))
                                 case _ =>
                                     Result.Failure(TypeMismatchException(Seq("name"), "String", m.get("name").fold("absent")(_.toString)))
                         case Some(Structure.Value.Str("ref/resource")) =>
                             m.get("uri") match
                                 case Some(uriSv) =>
                                     summon[Schema[McpResourceUri]].fromStructureValue(uriSv).map { u =>
-                                        McpRoute.CompletionRef.Resource(u)
+                                        McpHandler.CompletionRef.Resource(u)
                                     }
                                 case scala.None =>
                                     Result.Failure(TypeMismatchException(Seq("uri"), "McpResourceUri", "absent"))

@@ -39,7 +39,7 @@ class McpContentTest extends Test:
 
     "EmbeddedResource: wire JSON contains type:resource" in {
         val uri      = McpResourceUri.apply("file:///x")
-        val resource = McpRoute.ResourceContents.Text(uri, Absent, "body")
+        val resource = McpHandler.ResourceContents.Text(uri, Absent, "body")
         val content  = McpContent.EmbeddedResource(resource)
         val json     = encodedJson[McpContent](content)
         assert(json.contains("\"type\":\"resource\""))
@@ -63,7 +63,7 @@ class McpContentTest extends Test:
 
     "EmbeddedResource round-trip preserves fields" in {
         val uri      = McpResourceUri.apply("file:///path/to/resource")
-        val resource = McpRoute.ResourceContents.Text(uri, Absent, "resource body")
+        val resource = McpHandler.ResourceContents.Text(uri, Absent, "resource body")
         val content  = McpContent.EmbeddedResource(resource)
         assert(roundtrip[McpContent](content) == content)
     }

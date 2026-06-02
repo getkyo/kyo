@@ -76,14 +76,14 @@ class CompileSpineTest extends Test:
         assert(i.isInstanceOf[McpContent.Image])
     }
 
-    "McpRoute.ResourceContents uri field is McpResourceUri not String (INV-022)" in {
-        val uri                           = McpResourceUri.parse("file:///x").get
-        val rc: McpRoute.ResourceContents = McpRoute.ResourceContents.text(uri, "hello")
+    "McpHandler.ResourceContents uri field is McpResourceUri not String (INV-022)" in {
+        val uri                             = McpResourceUri.parse("file:///x").get
+        val rc: McpHandler.ResourceContents = McpHandler.ResourceContents.text(uri, "hello")
         assert(rc.uri == uri)
     }
 
-    "McpRoute.CompletionArg is a named record not positional strings (Audit-A8)" in {
-        val arg = McpRoute.CompletionArg(name = "model", value = "gpt-4")
+    "McpHandler.CompletionArg is a named record not positional strings (Audit-A8)" in {
+        val arg = McpHandler.CompletionArg(name = "model", value = "gpt-4")
         assert(arg.name == "model")
         assert(arg.value == "gpt-4")
     }
@@ -101,7 +101,7 @@ class CompileSpineTest extends Test:
         // 2. McpServer.SamplingRequest.metadata: Maybe[Structure.Value]
         // 3. McpCapabilities.Server.experimental: Map[String, Structure.Value]
         // 4. McpCapabilities.Client.experimental: Map[String, Structure.Value]
-        // 5. McpRoute.ToolCallResult.structuredContent: Maybe[Structure.Value]
+        // 5. McpHandler.ToolOutcome.structuredContent: Maybe[Structure.Value]
         // 6. McpException.data: Maybe[Structure.Value] (forwarded to JsonRpcApplicationError)
         // All other public flat-layer signatures must have zero Structure.Value occurrences.
         // The lint regex in flow-verify enforces this; this test asserts the type is reachable.

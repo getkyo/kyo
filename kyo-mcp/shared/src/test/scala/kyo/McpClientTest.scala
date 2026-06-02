@@ -27,8 +27,8 @@ class McpClientTest extends Test:
     // T-011: callToolTyped[In, Out] returns the decoded Out when structuredContent = Present.
     // INV-027: typed overload decodes structuredContent.
     "callToolTyped[In, Out] returns typed Out when structuredContent = Present (T-011, INV-027)" in run {
-        val addRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
-            McpRoute.ToolCallResult(
+        val addRoute = McpHandler.toolMulti[AddIn]("add") { in =>
+            McpHandler.ToolOutcome(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
                 isError = false,
                 structuredContent = Present(Structure.encode(Sum(in.a + in.b)))
@@ -44,8 +44,8 @@ class McpClientTest extends Test:
     // T-012: callToolTyped[In, Out] aborts with McpToolStructuredMissingException when structuredContent = Absent.
     // INV-027: typed overload must abort when structured content is absent.
     "callToolTyped[In, Out] aborts McpToolStructuredMissingException when structuredContent = Absent (T-012, INV-027)" in run {
-        val addUntypedRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
-            McpRoute.ToolCallResult(
+        val addUntypedRoute = McpHandler.toolMulti[AddIn]("add") { in =>
+            McpHandler.ToolOutcome(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
                 isError = false,
                 structuredContent = Absent
@@ -63,10 +63,10 @@ class McpClientTest extends Test:
         }
     }
 
-    // T-012 untyped: untyped callTool[In] (one type param) returns raw ToolCallResult without aborting.
-    "callTool with one type param (untyped) returns raw ToolCallResult when structuredContent = Absent" in run {
-        val addRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
-            McpRoute.ToolCallResult(
+    // T-012 untyped: untyped callTool[In] (one type param) returns raw ToolOutcome without aborting.
+    "callTool with one type param (untyped) returns raw ToolOutcome when structuredContent = Absent" in run {
+        val addRoute = McpHandler.toolMulti[AddIn]("add") { in =>
+            McpHandler.ToolOutcome(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
                 isError = false,
                 structuredContent = Absent
@@ -80,9 +80,9 @@ class McpClientTest extends Test:
         }
     }
 
-    // T-013: McpClient.init positional parameter order is (transport, clientInfo, capabilities, routes*).
+    // T-013: McpClient.init positional parameter order is (transport, clientInfo, capabilities, handlers*).
     // INV-014: parameter order locked.
-    "McpClient.init positional parameter order is (transport, clientInfo, capabilities, routes*) (T-013, INV-014)" in run {
+    "McpClient.init positional parameter order is (transport, clientInfo, capabilities, handlers*) (T-013, INV-014)" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             // The following must compile with this exact parameter order.
             // Swapping clientInfo and capabilities would fail because McpInfo != McpCapabilities.Client.
@@ -94,7 +94,7 @@ class McpClientTest extends Test:
 
     // INV-023: listTools returns McpClient.Page[ToolMeta] with .items and .nextCursor fields.
     "listTools returns McpClient.Page with .items and .nextCursor (INV-023)" in run {
-        val toolRoute = McpRoute.tool[AddIn]("add").handler { in =>
+        val toolRoute = McpHandler.tool[AddIn]("add") { in =>
             McpContent.Text(s"${in.a + in.b}")
         }
         withPair(Seq(toolRoute), Seq.empty) { (_, client) =>
@@ -110,7 +110,7 @@ class McpClientTest extends Test:
     // INV-023: McpClient.Page is a named record; verify listResources also returns McpClient.Page.
     "listResources returns McpClient.Page with .items and .nextCursor (INV-023)" in run {
         val uri           = McpResourceUri.parse("file:///data").get
-        val resourceRoute = McpRoute.resource(uri, "data").handler((_) => Chunk.empty)
+        val resourceRoute = McpHandler.resource(uri, "data")(Chunk.empty)
         withPair(Seq(resourceRoute), Seq.empty) { (_, client) =>
             client.listResources().map { page =>
                 assert(page.items.size == 1)

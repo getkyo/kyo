@@ -347,68 +347,68 @@ object McpServer:
 
     // --- Scoped init quartet ---
 
-    /** Initialises a server using `routes` and `McpConfig.default`, releasing it when the `Scope` exits. */
-    def init(transport: JsonRpcTransport, routes: McpHandler[?, ?, ?]*)(using Frame): McpServer < (Async & Scope) =
-        init(transport, routes, McpConfig.default)
+    /** Initialises a server using `handlers` and `McpConfig.default`, releasing it when the `Scope` exits. */
+    def init(transport: JsonRpcTransport, handlers: McpHandler[?, ?, ?]*)(using Frame): McpServer < (Async & Scope) =
+        init(transport, handlers, McpConfig.default)
 
-    /** Initialises a server using `routes` and the supplied `config`, releasing it when the `Scope` exits. */
-    def init(transport: JsonRpcTransport, config: McpConfig)(routes: McpHandler[?, ?, ?]*)(using Frame): McpServer < (Async & Scope) =
-        init(transport, routes, config)
+    /** Initialises a server using `handlers` and the supplied `config`, releasing it when the `Scope` exits. */
+    def init(transport: JsonRpcTransport, config: McpConfig)(handlers: McpHandler[?, ?, ?]*)(using Frame): McpServer < (Async & Scope) =
+        init(transport, handlers, config)
 
-    /** Initialises a server from a `Seq` of routes and optional config, releasing it when the `Scope` exits. */
+    /** Initialises a server from a `Seq` of handlers and optional config, releasing it when the `Scope` exits. */
     def init(
         transport: JsonRpcTransport,
-        routes: Seq[McpHandler[?, ?, ?]],
+        handlers: Seq[McpHandler[?, ?, ?]],
         config: McpConfig = McpConfig.default
     )(using Frame): McpServer < (Async & Scope) =
         McpConfig.require(config)
         Scope.acquireRelease(
-            internal.mcp.McpEngine.initServer(transport, routes, config).map(_.safe)
+            internal.mcp.McpEngine.initServer(transport, handlers, config).map(_.safe)
         )(_.closeNow)
     end init
 
     /** Initialises a server and immediately applies `f`, releasing the server when the `Scope` exits. */
-    def initWith[A, S](transport: JsonRpcTransport, routes: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
+    def initWith[A, S](transport: JsonRpcTransport, handlers: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
         Frame
     ): A < (S & Async & Scope) =
-        init(transport, routes*).map(f)
+        init(transport, handlers*).map(f)
 
     /** Initialises a server with `config` and immediately applies `f`, releasing the server when the `Scope` exits. */
-    def initWith[A, S](transport: JsonRpcTransport, config: McpConfig)(routes: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
+    def initWith[A, S](transport: JsonRpcTransport, config: McpConfig)(handlers: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
         Frame
     ): A < (S & Async & Scope) =
-        init(transport, config)(routes*).map(f)
+        init(transport, config)(handlers*).map(f)
 
     // --- Unscoped init ---
 
-    /** Initialises a server using `routes` and `McpConfig.default` without a managed `Scope`. */
-    def initUnscoped(transport: JsonRpcTransport, routes: McpHandler[?, ?, ?]*)(using Frame): McpServer < Async =
-        initUnscoped(transport, routes, McpConfig.default)
+    /** Initialises a server using `handlers` and `McpConfig.default` without a managed `Scope`. */
+    def initUnscoped(transport: JsonRpcTransport, handlers: McpHandler[?, ?, ?]*)(using Frame): McpServer < Async =
+        initUnscoped(transport, handlers, McpConfig.default)
 
-    /** Initialises a server using `routes` and the supplied `config` without a managed `Scope`. */
-    def initUnscoped(transport: JsonRpcTransport, config: McpConfig)(routes: McpHandler[?, ?, ?]*)(using Frame): McpServer < Async =
-        initUnscoped(transport, routes, config)
+    /** Initialises a server using `handlers` and the supplied `config` without a managed `Scope`. */
+    def initUnscoped(transport: JsonRpcTransport, config: McpConfig)(handlers: McpHandler[?, ?, ?]*)(using Frame): McpServer < Async =
+        initUnscoped(transport, handlers, config)
 
-    /** Initialises a server from a `Seq` of routes without a managed `Scope`. */
+    /** Initialises a server from a `Seq` of handlers without a managed `Scope`. */
     def initUnscoped(
         transport: JsonRpcTransport,
-        routes: Seq[McpHandler[?, ?, ?]],
+        handlers: Seq[McpHandler[?, ?, ?]],
         config: McpConfig = McpConfig.default
     )(using Frame): McpServer < Async =
         McpConfig.require(config)
-        internal.mcp.McpEngine.initServer(transport, routes, config).map(_.safe)
+        internal.mcp.McpEngine.initServer(transport, handlers, config).map(_.safe)
     end initUnscoped
 
     /** Initialises an unscoped server and immediately applies `f`. */
-    def initUnscopedWith[A, S](transport: JsonRpcTransport, routes: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
+    def initUnscopedWith[A, S](transport: JsonRpcTransport, handlers: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
         Frame
     ): A < (S & Async) =
-        initUnscoped(transport, routes*).map(f)
+        initUnscoped(transport, handlers*).map(f)
 
     /** Initialises an unscoped server with `config` and immediately applies `f`. */
-    def initUnscopedWith[A, S](transport: JsonRpcTransport, config: McpConfig)(routes: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
+    def initUnscopedWith[A, S](transport: JsonRpcTransport, config: McpConfig)(handlers: McpHandler[?, ?, ?]*)(f: McpServer => A < S)(using
         Frame
     ): A < (S & Async) =
-        initUnscoped(transport, config)(routes*).map(f)
+        initUnscoped(transport, config)(handlers*).map(f)
 
 end McpServer

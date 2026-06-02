@@ -8,8 +8,8 @@ class McpStructuredContentMissingTest extends Test:
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
     case class Sum(value: Int) derives Schema, CanEqual
 
-    private val textOnlyRoute = McpRoute.toolMulti[AddIn]("text-only-tool").handler { in =>
-        McpRoute.ToolCallResult(
+    private val textOnlyRoute = McpHandler.toolMulti[AddIn]("text-only-tool") { in =>
+        McpHandler.ToolOutcome(
             content = Chunk(McpContent.text(s"${in.a + in.b}")),
             isError = false,
             structuredContent = Absent
@@ -44,7 +44,7 @@ class McpStructuredContentMissingTest extends Test:
         }
     }
 
-    "callTool[In] (untyped) returns raw ToolCallResult when structuredContent is Absent (T-023, Q-018)" in run {
+    "callTool[In] (untyped) returns raw ToolOutcome when structuredContent is Absent (T-023, Q-018)" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, textOnlyRoute),

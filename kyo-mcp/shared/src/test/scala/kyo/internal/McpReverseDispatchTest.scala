@@ -137,7 +137,7 @@ class McpReverseDispatchTest extends Test:
             maxTokens = 8
         )
         val userSamplingRoute =
-            McpRoute.custom[McpServer.SamplingRequest]("sampling/createMessage").handler { _ =>
+            McpHandler.custom[McpServer.SamplingRequest]("sampling/createMessage") { _ =>
                 McpServer.SamplingResponse(McpContent.Role.Assistant, McpContent.Text("pong"), "test-model")
             }
         withPair(Seq.empty, Seq(userSamplingRoute)) { (server, _) =>

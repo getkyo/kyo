@@ -8,9 +8,9 @@ class McpCapabilityDerivationTest extends Test:
 
     private val testUri = McpResourceUri.parse("file:///x").get
 
-    private val toolRoute     = McpRoute.tool[Unit]("t").handler((_) => McpContent.Text(""))
-    private val resourceRoute = McpRoute.resource(testUri, "r").handler((_) => Chunk.empty)
-    private val promptRoute   = McpRoute.prompt("p").handler((_) => McpRoute.PromptGetResult(Absent, Chunk.empty))
+    private val toolRoute     = McpHandler.tool[Unit]("t")((_) => McpContent.Text(""))
+    private val resourceRoute = McpHandler.resource(testUri, "r")(Chunk.empty)
+    private val promptRoute   = McpHandler.prompt("p")((_) => McpHandler.PromptOutcome(Absent, Chunk.empty))
 
     "Case A: declaredCapabilities=Absent with tool, resource, prompt routes" in run {
         val config =

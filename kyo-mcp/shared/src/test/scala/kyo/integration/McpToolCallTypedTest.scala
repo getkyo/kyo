@@ -8,8 +8,8 @@ class McpToolCallTypedTest extends Test:
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
     case class Sum(value: Int) derives Schema, CanEqual
 
-    private val addRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
-        McpRoute.ToolCallResult(
+    private val addRoute = McpHandler.toolMulti[AddIn]("add") { in =>
+        McpHandler.ToolOutcome(
             content = Chunk(McpContent.text(s"${in.a + in.b}")),
             isError = false,
             structuredContent = Present(Structure.encode(Sum(in.a + in.b)))

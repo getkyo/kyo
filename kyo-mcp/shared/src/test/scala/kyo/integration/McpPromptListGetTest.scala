@@ -5,14 +5,14 @@ import kyo.*
 /** Integration test: prompt list and get roundtrip (T-017, INV-023). */
 class McpPromptListGetTest extends Test:
 
-    private val promptRoute = McpRoute.prompt(
+    private val promptRoute = McpHandler.prompt(
         name = "greet",
         description = "greet a user",
-        arguments = Chunk(McpRoute.PromptArgument("name", Absent, required = true))
-    ).handler { args =>
-        McpRoute.PromptGetResult(
+        arguments = Chunk(McpHandler.PromptArgument("name", Absent, required = true))
+    ) { args =>
+        McpHandler.PromptOutcome(
             description = Absent,
-            messages = Chunk(McpRoute.PromptMessage(McpContent.Role.User, McpContent.text(s"hello ${args("name")}")))
+            messages = Chunk(McpHandler.PromptMessage(McpContent.Role.User, McpContent.text(s"hello ${args("name")}")))
         )
     }
 

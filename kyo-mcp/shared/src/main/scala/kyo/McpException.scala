@@ -228,7 +228,7 @@ case class McpInvalidArgumentException(method: String, field: String, reason: St
 /** Typed tool call returned no structured content (-32603).
   *
   * Raised when `McpClient.callTool[In, Out]` (the typed overload) is used and the server
-  * returns a `ToolCallResult` with `structuredContent = Absent`. The caller should use
+  * returns a `ToolOutcome` with `structuredContent = Absent`. The caller should use
   * the untyped `callTool[In]` overload for tools that return unstructured content.
   *
   * @param tool the tool name that failed to provide structured content
@@ -241,7 +241,7 @@ case class McpToolStructuredMissingException(tool: String)(using Frame)
 
   Use the untyped overload `client.callTool[In](name, args)` if the tool
   emits unstructured content, or fix the server to populate
-  `ToolCallResult.structuredContent`."""
+  `ToolOutcome.structuredContent`."""
     )
 
 /** Sampling request rejected by the client (-32603).

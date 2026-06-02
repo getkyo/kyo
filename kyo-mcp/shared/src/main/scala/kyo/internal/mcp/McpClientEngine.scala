@@ -30,7 +30,7 @@ private[kyo] object McpClientEngine:
 
     // Wire types for resources/read request (Decision 8).
     final private case class ReadResourceRequest(uri: String) derives Schema
-    final private case class ReadResourceResponse(contents: Chunk[McpRoute.ResourceContents]) derives Schema
+    final private case class ReadResourceResponse(contents: Chunk[McpHandler.ResourceContents]) derives Schema
 
     // Wire types for prompts/get request (Decision 9).
     final private case class GetPromptRequest(name: String, arguments: Map[String, String] = Map.empty) derives Schema
@@ -41,20 +41,20 @@ private[kyo] object McpClientEngine:
 
     // Wire types for list methods (Decision 7).
     final private case class ListRequest(cursor: Maybe[String] = Absent) derives Schema
-    final private case class ToolsListResponse(tools: Chunk[McpRoute.ToolMeta], nextCursor: Maybe[String] = Absent)
+    final private case class ToolsListResponse(tools: Chunk[McpHandler.ToolMeta], nextCursor: Maybe[String] = Absent)
         derives Schema
-    final private case class ResourcesListResponse(resources: Chunk[McpRoute.ResourceMeta], nextCursor: Maybe[String] = Absent)
+    final private case class ResourcesListResponse(resources: Chunk[McpHandler.ResourceMeta], nextCursor: Maybe[String] = Absent)
         derives Schema
     final private case class ResourceTemplatesListResponse(
-        resourceTemplates: Chunk[McpRoute.ResourceTemplateMeta],
+        resourceTemplates: Chunk[McpHandler.ResourceTemplateMeta],
         nextCursor: Maybe[String] = Absent
     ) derives Schema
-    final private case class PromptsListResponse(prompts: Chunk[McpRoute.PromptMeta], nextCursor: Maybe[String] = Absent)
+    final private case class PromptsListResponse(prompts: Chunk[McpHandler.PromptMeta], nextCursor: Maybe[String] = Absent)
         derives Schema
 
     // Wire types for completion/complete (Decision 11).
-    final private case class CompleteRequest(ref: McpRoute.CompletionRef, argument: McpRoute.CompletionArg) derives Schema
-    final private case class CompleteResponse(completion: McpRoute.CompletionResult) derives Schema
+    final private case class CompleteRequest(ref: McpHandler.CompletionRef, argument: McpHandler.CompletionArg) derives Schema
+    final private case class CompleteResponse(completion: McpHandler.CompletionOutcome) derives Schema
 
     // Wire types for resources/subscribe and resources/unsubscribe.
     final private case class SubscribeRequest(uri: String) derives Schema
@@ -117,9 +117,10 @@ private[kyo] object McpClientEngine:
 
     /** Builds a no-op McpServer.Unsafe sentinel for client-side route carriers.
       *
-      * Client-side route handlers (sampling, elicitation, roots) receive a [[McpRoute.Context]]
-      * that includes a `server` field. On the client side there is no McpServer, so we provide a
-      * sentinel that aborts with a clear error if any reverse-direction method is called.
+      * Client-side route handlers (sampling, elicitation, roots) receive a [[JsonRpcRoute.Context]]
+      * carrying the inbound request envelope. They do not have an `McpServer` (no reverse-direction
+      * peer in client mode), so we provide a sentinel that aborts with a clear error if a handler
+      * accidentally reaches into `Mcp.server` for a reverse-direction call.
       * The handler itself must not call `ctx.server`; this sentinel exists solely to satisfy the
       * carrier's serverRef requirement and avoid IllegalStateException during dispatch.
       */
@@ -177,9 +178,9 @@ private[kyo] object McpClientEngine:
 
     // Wire type for the complete request that includes the optional context field.
     final private case class CompleteRequestWithContext(
-        ref: McpRoute.CompletionRef,
-        argument: McpRoute.CompletionArg,
-        context: Maybe[McpRoute.CompletionArg.Context] = Absent
+        ref: McpHandler.CompletionRef,
+        argument: McpHandler.CompletionArg,
+        context: Maybe[McpHandler.CompletionArg.Context] = Absent
     ) derives Schema
 
     private def buildUnsafe(
@@ -192,7 +193,7 @@ private[kyo] object McpClientEngine:
 
             private def listToolsEffect(cursor: Maybe[String])(using
                 Frame
-            ): McpClient.Page[McpRoute.ToolMeta] < (Async & Abort[McpException | Closed]) =
+            ): McpClient.Page[McpHandler.ToolMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, ToolsListResponse]("tools/list", ListRequest(cursor))
                     .map(r => McpClient.Page(r.tools, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
@@ -202,9 +203,9 @@ private[kyo] object McpClientEngine:
             private def callToolEffect[In](name: String, arguments: In)(using
                 Frame,
                 Schema[In]
-            ): McpRoute.ToolCallResult < (Async & Abort[McpException | Closed]) =
+            ): McpHandler.ToolOutcome < (Async & Abort[McpException | Closed]) =
                 val encodedArgs = Structure.encode[In](arguments)
-                handler.call[ToolCallRequest, McpRoute.ToolCallResult]("tools/call", ToolCallRequest(name, encodedArgs))
+                handler.call[ToolCallRequest, McpHandler.ToolOutcome]("tools/call", ToolCallRequest(name, encodedArgs))
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("tools/call", "response", e.message))
                     })
@@ -228,7 +229,7 @@ private[kyo] object McpClientEngine:
 
             private def listResourcesEffect(cursor: Maybe[String])(using
                 Frame
-            ): McpClient.Page[McpRoute.ResourceMeta] < (Async & Abort[McpException | Closed]) =
+            ): McpClient.Page[McpHandler.ResourceMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, ResourcesListResponse]("resources/list", ListRequest(cursor))
                     .map(r => McpClient.Page(r.resources, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
@@ -237,7 +238,7 @@ private[kyo] object McpClientEngine:
 
             private def listResourceTemplatesEffect(cursor: Maybe[String])(using
                 Frame
-            ): McpClient.Page[McpRoute.ResourceTemplateMeta] < (Async & Abort[McpException | Closed]) =
+            ): McpClient.Page[McpHandler.ResourceTemplateMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, ResourceTemplatesListResponse]("resources/templates/list", ListRequest(cursor))
                     .map(r => McpClient.Page(r.resourceTemplates, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
@@ -246,7 +247,7 @@ private[kyo] object McpClientEngine:
 
             private def readResourceEffect(uri: McpResourceUri)(using
                 Frame
-            ): Chunk[McpRoute.ResourceContents] < (Async & Abort[McpException | Closed]) =
+            ): Chunk[McpHandler.ResourceContents] < (Async & Abort[McpException | Closed]) =
                 handler.call[ReadResourceRequest, ReadResourceResponse]("resources/read", ReadResourceRequest(uri.asString))
                     .map(_.contents)
                     .handle(Abort.recover[JsonRpcError] { e =>
@@ -255,7 +256,7 @@ private[kyo] object McpClientEngine:
 
             private def listPromptsEffect(cursor: Maybe[String])(using
                 Frame
-            ): McpClient.Page[McpRoute.PromptMeta] < (Async & Abort[McpException | Closed]) =
+            ): McpClient.Page[McpHandler.PromptMeta] < (Async & Abort[McpException | Closed]) =
                 handler.call[ListRequest, PromptsListResponse]("prompts/list", ListRequest(cursor))
                     .map(r => McpClient.Page(r.prompts, r.nextCursor))
                     .handle(Abort.recover[JsonRpcError] { e =>
@@ -264,8 +265,8 @@ private[kyo] object McpClientEngine:
 
             private def getPromptEffect(name: String, arguments: Map[String, String])(using
                 Frame
-            ): McpRoute.PromptGetResult < (Async & Abort[McpException | Closed]) =
-                handler.call[GetPromptRequest, McpRoute.PromptGetResult]("prompts/get", GetPromptRequest(name, arguments))
+            ): McpHandler.PromptOutcome < (Async & Abort[McpException | Closed]) =
+                handler.call[GetPromptRequest, McpHandler.PromptOutcome]("prompts/get", GetPromptRequest(name, arguments))
                     .handle(Abort.recover[JsonRpcError] { e =>
                         Abort.fail(McpInvalidArgumentException("prompts/get", "response", e.message))
                     })
@@ -278,12 +279,12 @@ private[kyo] object McpClientEngine:
                     })
 
             private def completeEffect(
-                ref: McpRoute.CompletionRef,
-                arg: McpRoute.CompletionArg,
-                context: Maybe[McpRoute.CompletionArg.Context]
+                ref: McpHandler.CompletionRef,
+                arg: McpHandler.CompletionArg,
+                context: Maybe[McpHandler.CompletionArg.Context]
             )(using
                 Frame
-            ): McpRoute.CompletionResult < (Async & Abort[McpException | Closed]) =
+            ): McpHandler.CompletionOutcome < (Async & Abort[McpException | Closed]) =
                 handler.call[CompleteRequestWithContext, CompleteResponse](
                     "completion/complete",
                     CompleteRequestWithContext(ref, arg, context)
@@ -322,14 +323,14 @@ private[kyo] object McpClientEngine:
             def listTools(cursor: Maybe[String])(using
                 AllowUnsafe,
                 Frame
-            ): Fiber.Unsafe[McpClient.Page[McpRoute.ToolMeta], Abort[McpException | Closed]] =
+            ): Fiber.Unsafe[McpClient.Page[McpHandler.ToolMeta], Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(listToolsEffect(cursor))).unsafe
 
             def callTool[In](name: String, arguments: In)(using
                 AllowUnsafe,
                 Frame,
                 Schema[In]
-            ): Fiber.Unsafe[McpRoute.ToolCallResult, Abort[McpException | Closed]] =
+            ): Fiber.Unsafe[McpHandler.ToolOutcome, Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(callToolEffect[In](name, arguments))).unsafe
 
             def callToolTyped[In, Out](name: String, arguments: In)(using
@@ -343,41 +344,41 @@ private[kyo] object McpClientEngine:
             def listResources(cursor: Maybe[String])(using
                 AllowUnsafe,
                 Frame
-            ): Fiber.Unsafe[McpClient.Page[McpRoute.ResourceMeta], Abort[McpException | Closed]] =
+            ): Fiber.Unsafe[McpClient.Page[McpHandler.ResourceMeta], Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(listResourcesEffect(cursor))).unsafe
 
             def listResourceTemplates(cursor: Maybe[String])(using
                 AllowUnsafe,
                 Frame
-            ): Fiber.Unsafe[McpClient.Page[McpRoute.ResourceTemplateMeta], Abort[McpException | Closed]] =
+            ): Fiber.Unsafe[McpClient.Page[McpHandler.ResourceTemplateMeta], Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(listResourceTemplatesEffect(cursor))).unsafe
 
             def readResource(uri: McpResourceUri)(using
                 AllowUnsafe,
                 Frame
-            ): Fiber.Unsafe[Chunk[McpRoute.ResourceContents], Abort[McpException | Closed]] =
+            ): Fiber.Unsafe[Chunk[McpHandler.ResourceContents], Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(readResourceEffect(uri))).unsafe
 
             def listPrompts(cursor: Maybe[String])(using
                 AllowUnsafe,
                 Frame
-            ): Fiber.Unsafe[McpClient.Page[McpRoute.PromptMeta], Abort[McpException | Closed]] =
+            ): Fiber.Unsafe[McpClient.Page[McpHandler.PromptMeta], Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(listPromptsEffect(cursor))).unsafe
 
             def getPrompt(name: String, arguments: Map[String, String])(using
                 AllowUnsafe,
                 Frame
-            ): Fiber.Unsafe[McpRoute.PromptGetResult, Abort[McpException | Closed]] =
+            ): Fiber.Unsafe[McpHandler.PromptOutcome, Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(getPromptEffect(name, arguments))).unsafe
 
             def setLogLevel(level: McpServer.LogLevel)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(setLogLevelEffect(level))).unsafe
 
             def complete(
-                ref: McpRoute.CompletionRef,
-                arg: McpRoute.CompletionArg,
-                context: Maybe[McpRoute.CompletionArg.Context]
-            )(using AllowUnsafe, Frame): Fiber.Unsafe[McpRoute.CompletionResult, Abort[McpException | Closed]] =
+                ref: McpHandler.CompletionRef,
+                arg: McpHandler.CompletionArg,
+                context: Maybe[McpHandler.CompletionArg.Context]
+            )(using AllowUnsafe, Frame): Fiber.Unsafe[McpHandler.CompletionOutcome, Abort[McpException | Closed]] =
                 Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(completeEffect(ref, arg, context))).unsafe
 
             def notifyRootsListChanged(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =

@@ -7,15 +7,15 @@ class McpCompletionContextTest extends Test:
 
     // AllowUnsafe: AtomicRef for capturing the context received by the completion handler.
     private def makeContextRef =
-        AtomicRef.Unsafe.init[Maybe[McpRoute.CompletionArg.Context]](Absent)(using AllowUnsafe.embrace.danger).safe
+        AtomicRef.Unsafe.init[Maybe[McpHandler.CompletionArg.Context]](Absent)(using AllowUnsafe.embrace.danger).safe
 
     "completion handler receives Maybe[CompletionArg.Context] from CompleteParams" in run {
         val capturedContext = makeContextRef
-        val ref             = McpRoute.CompletionRef.Prompt("myPrompt")
-        val completionRoute = McpRoute.completion(ref).handlerWith { (_, arg, ctx) =>
+        val ref             = McpHandler.CompletionRef.Prompt("myPrompt")
+        val completionRoute = McpHandler.completionWith(ref) { (arg, ctx) =>
             Sync.defer {
                 capturedContext.unsafe.set(ctx)(using AllowUnsafe.embrace.danger)
-                McpRoute.CompletionResult(Chunk(arg.value + "-ok"), Absent, Absent)
+                McpHandler.CompletionOutcome(Chunk(arg.value + "-ok"), Absent, Absent)
             }
         }
 
@@ -25,8 +25,8 @@ class McpCompletionContextTest extends Test:
                 McpClient.initUnscoped(tc, McpInfo("ctx-test"), McpCapabilities.Client())
             ).flatMap { (srv, client) =>
                 client.complete(
-                    McpRoute.CompletionRef.Prompt("myPrompt"),
-                    McpRoute.CompletionArg("arg", "val")
+                    McpHandler.CompletionRef.Prompt("myPrompt"),
+                    McpHandler.CompletionArg("arg", "val")
                 ).flatMap { result =>
                     for
                         _ <- srv.closeNow
@@ -44,11 +44,11 @@ class McpCompletionContextTest extends Test:
     }
 
     "CompletionArg.Context round-trips via Schema" in {
-        val ctxObj  = McpRoute.CompletionArg.Context(Map("foo" -> "bar"))
-        val encoded = Json.encode[McpRoute.CompletionArg.Context](ctxObj)
+        val ctxObj  = McpHandler.CompletionArg.Context(Map("foo" -> "bar"))
+        val encoded = Json.encode[McpHandler.CompletionArg.Context](ctxObj)
         assert(encoded.contains("\"foo\""), s"expected foo in JSON, got: $encoded")
         assert(encoded.contains("\"bar\""), s"expected bar in JSON, got: $encoded")
-        val roundTripped = Json.decode[McpRoute.CompletionArg.Context](encoded).getOrThrow
+        val roundTripped = Json.decode[McpHandler.CompletionArg.Context](encoded).getOrThrow
         assert(roundTripped == ctxObj)
     }
 

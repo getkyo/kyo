@@ -7,7 +7,7 @@ class McpCapabilityAdvertisementTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
 
-    private val toolRoute = McpRoute.tool[AddIn]("add").handler { in =>
+    private val toolRoute = McpHandler.tool[AddIn]("add") { in =>
         McpContent.Text(s"${in.a + in.b}")
     }
 

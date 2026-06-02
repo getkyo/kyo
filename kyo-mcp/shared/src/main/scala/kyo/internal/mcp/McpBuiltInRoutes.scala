@@ -30,13 +30,14 @@ private[kyo] object McpBuiltInRoutes:
 
     // Wire shapes for list request/response payloads.
     final private case class ListParams(cursor: Maybe[String] = Absent) derives Schema
-    final private case class ToolsListResult(tools: Chunk[McpRoute.ToolMeta], nextCursor: Maybe[String] = Absent) derives Schema
-    final private case class ResourcesListResult(resources: Chunk[McpRoute.ResourceMeta], nextCursor: Maybe[String] = Absent) derives Schema
+    final private case class ToolsListResult(tools: Chunk[McpHandler.ToolMeta], nextCursor: Maybe[String] = Absent) derives Schema
+    final private case class ResourcesListResult(resources: Chunk[McpHandler.ResourceMeta], nextCursor: Maybe[String] = Absent)
+        derives Schema
     final private case class ResourceTemplatesListResult(
-        resourceTemplates: Chunk[McpRoute.ResourceTemplateMeta],
+        resourceTemplates: Chunk[McpHandler.ResourceTemplateMeta],
         nextCursor: Maybe[String] = Absent
     ) derives Schema
-    final private case class PromptsListResult(prompts: Chunk[McpRoute.PromptMeta], nextCursor: Maybe[String] = Absent) derives Schema
+    final private case class PromptsListResult(prompts: Chunk[McpHandler.PromptMeta], nextCursor: Maybe[String] = Absent) derives Schema
 
     // Wire shapes for tools/call dispatcher.
     // flow-allow: Structure carve-out per §11a / INV-021
@@ -55,17 +56,17 @@ private[kyo] object McpBuiltInRoutes:
 
     // Wire shapes for resources/read dispatcher.
     final private case class ResourceReadParams(uri: String) derives Schema
-    final private case class ResourceReadResponse(contents: Chunk[McpRoute.ResourceContents]) derives Schema
+    final private case class ResourceReadResponse(contents: Chunk[McpHandler.ResourceContents]) derives Schema
 
     // Wire shapes for prompts/get dispatcher.
     final private case class PromptGetParams(name: String, arguments: Map[String, String] = Map.empty) derives Schema
 
     final private case class CompleteParams(
-        ref: McpRoute.CompletionRef,
-        argument: McpRoute.CompletionArg,
-        context: Maybe[McpRoute.CompletionArg.Context] = Absent
+        ref: McpHandler.CompletionRef,
+        argument: McpHandler.CompletionArg,
+        context: Maybe[McpHandler.CompletionArg.Context] = Absent
     ) derives Schema
-    final private case class CompleteResult(completion: McpRoute.CompletionResult) derives Schema
+    final private case class CompleteResult(completion: McpHandler.CompletionOutcome) derives Schema
 
     // Wire shape for logging/setLevel.
     final private case class SetLogLevelParams(level: McpServer.LogLevel) derives Schema
@@ -96,7 +97,7 @@ private[kyo] object McpBuiltInRoutes:
         }
 
     def toolsCall(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[ToolCallParams, McpRoute.ToolCallResult]("tools/call") { (params, jrCtx) =>
+        JsonRpcRoute.request[ToolCallParams, McpHandler.ToolOutcome]("tools/call") { (params, jrCtx) =>
             val matchedTool = catalog.toolHandlers.collectFirst {
                 case c: McpHandler.ToolHandler[?, ?, ?] if c.name == params.name =>
                     c.asInstanceOf[McpHandler.ToolHandler[Any, McpContent, McpException]]
@@ -109,7 +110,7 @@ private[kyo] object McpBuiltInRoutes:
             (matchedTool, matchedMulti) match
                 case (_, Some(carrier)) =>
                     val args =
-                        Structure.decode[Any](params.arguments)(using carrier.toolRoute.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
+                        Structure.decode[Any](params.arguments)(using carrier.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
                     args match
                         case Result.Success(in) =>
                             withCtx(jrCtx, serverRef, "tools/call")(carrier.toolHandler(in))
@@ -118,12 +119,12 @@ private[kyo] object McpBuiltInRoutes:
                     end match
                 case (Some(carrier), _) =>
                     val args =
-                        Structure.decode[Any](params.arguments)(using carrier.toolRoute.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
+                        Structure.decode[Any](params.arguments)(using carrier.inSchema.asInstanceOf[Schema[Any]], summon[Frame])
                     args match
                         case Result.Success(in) =>
                             withCtx(jrCtx, serverRef, "tools/call") {
                                 carrier.toolHandler(in)
-                                    .map(out => McpRoute.ToolCallResult(Chunk(out), isError = false, structuredContent = Absent))
+                                    .map(out => McpHandler.ToolOutcome(Chunk(out), isError = false, structuredContent = Absent))
                             }
                         case Result.Failure(e) => Abort.fail(McpInvalidArgumentException("tools/call", "arguments", e.getMessage))
                         case Result.Panic(t)   => Abort.panic(t)
@@ -153,7 +154,7 @@ private[kyo] object McpBuiltInRoutes:
                     matched match
                         case Some(carrier) =>
                             withCtx(jrCtx, serverRef, "resources/read") {
-                                carrier.resourceHandler(uri).map(contents => ResourceReadResponse(contents))
+                                carrier.resourceHandler().map(contents => ResourceReadResponse(contents))
                             }
                         case None =>
                             val registeredUris = Chunk.from(catalog.resourceHandlers.map(h => catalog.resourceMetaOf(h).uri))
@@ -177,7 +178,7 @@ private[kyo] object McpBuiltInRoutes:
         }
 
     def promptsGet(catalog: McpCatalog, serverRef: AtomicRef[Maybe[McpServer.Unsafe]])(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[PromptGetParams, McpRoute.PromptGetResult]("prompts/get") { (params, jrCtx) =>
+        JsonRpcRoute.request[PromptGetParams, McpHandler.PromptOutcome]("prompts/get") { (params, jrCtx) =>
             val matched = catalog.promptHandlers.collectFirst {
                 case c: McpHandler.PromptHandler[?] if c.name == params.name => c
             }
@@ -222,11 +223,11 @@ private[kyo] object McpBuiltInRoutes:
             matched match
                 case Some(carrier) =>
                     withCtx(jrCtx, serverRef, "completion/complete") {
-                        carrier.completionHandler(params.ref, params.argument, params.context).map(r => CompleteResult(r))
+                        carrier.completionHandler(params.argument, params.context).map(r => CompleteResult(r))
                     }
                 case None =>
                     // No handler registered for this ref; return empty completion.
-                    CompleteResult(McpRoute.CompletionResult(Chunk.empty, Absent, Absent))
+                    CompleteResult(McpHandler.CompletionOutcome(Chunk.empty, Absent, Absent))
             end match
         }
 

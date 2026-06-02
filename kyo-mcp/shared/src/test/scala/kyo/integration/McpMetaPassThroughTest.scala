@@ -2,15 +2,15 @@ package kyo.integration
 
 import kyo.*
 
-/** Tests for _meta pass-through on ToolCallResult (§3.7). */
+/** Tests for _meta pass-through on ToolOutcome (§3.7). */
 class McpMetaPassThroughTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
 
-    "ToolCallResult meta field round-trips through the wire" in run {
+    "ToolOutcome meta field round-trips through the wire" in run {
         val metaVal = Structure.encode(Map("echo" -> "bar"))
-        val toolRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
-            McpRoute.ToolCallResult(
+        val toolRoute = McpHandler.toolMulti[AddIn]("add") { in =>
+            McpHandler.ToolOutcome(
                 content = Chunk(McpContent.text(s"${in.a + in.b}")),
                 isError = false,
                 structuredContent = Absent,
@@ -33,9 +33,9 @@ class McpMetaPassThroughTest extends Test:
         }
     }
 
-    "ToolCallResult meta defaults to Absent when not set" in run {
-        val toolRoute = McpRoute.toolMulti[AddIn]("add").handler { in =>
-            McpRoute.ToolCallResult(
+    "ToolOutcome meta defaults to Absent when not set" in run {
+        val toolRoute = McpHandler.toolMulti[AddIn]("add") { in =>
+            McpHandler.ToolOutcome(
                 content = Chunk(McpContent.text(s"${in.a + in.b}")),
                 isError = false,
                 structuredContent = Absent

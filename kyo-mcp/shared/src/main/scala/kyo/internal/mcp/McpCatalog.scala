@@ -4,7 +4,7 @@ import kyo.*
 
 /** Frozen snapshot of user-registered handlers built once at `McpServer.init` time.
   *
-  * Partitions handlers by `McpRoute.Kind` for engine dispatch and for the built-in
+  * Partitions handlers by `McpHandler.Kind` for engine dispatch and for the built-in
   * list endpoints. No mutation is possible after construction (INV-018).
   *
   * Auto-derives `McpCapabilities.Server` when `McpConfig.declaredCapabilities` is
@@ -14,42 +14,42 @@ final private[kyo] class McpCatalog(val handlers: Seq[McpHandler[?, ?, ?]]):
 
     // Partition at construction time; allocation is bounded to init, not per-request.
     val toolHandlers: Seq[McpHandler[?, ?, ?]] =
-        handlers.filter(_.kind == McpRoute.Kind.Tool)
+        handlers.filter(_.kind == McpHandler.Kind.Tool)
 
     val resourceHandlers: Seq[McpHandler[?, ?, ?]] =
-        handlers.filter(_.kind == McpRoute.Kind.Resource)
+        handlers.filter(_.kind == McpHandler.Kind.Resource)
 
     val resourceTemplateHandlers: Seq[McpHandler[?, ?, ?]] =
-        handlers.filter(_.kind == McpRoute.Kind.ResourceTemplate)
+        handlers.filter(_.kind == McpHandler.Kind.ResourceTemplate)
 
     val promptHandlers: Seq[McpHandler[?, ?, ?]] =
-        handlers.filter(_.kind == McpRoute.Kind.Prompt)
+        handlers.filter(_.kind == McpHandler.Kind.Prompt)
 
     // Completion handlers use Kind.Custom per Decision 13.
     val completionHandlers: Seq[McpHandler[?, ?, ?]] =
         handlers.collect { case h: McpHandler.CompletionHandler[?] => h }
 
     /** Extracts `ToolMeta` from a tool handler. */
-    def toolMetaOf(h: McpHandler[?, ?, ?]): McpRoute.ToolMeta =
+    def toolMetaOf(h: McpHandler[?, ?, ?]): McpHandler.ToolMeta =
         h match
             case c: McpHandler.ToolHandler[?, ?, ?]   => c.toolMeta
             case c: McpHandler.ToolMultiHandler[?, ?] => c.toolMeta
             case _                                    => throw new IllegalStateException(s"expected Tool handler for route '${h.name}'")
 
     /** Extracts `ResourceMeta` from a resource handler. */
-    def resourceMetaOf(h: McpHandler[?, ?, ?]): McpRoute.ResourceMeta =
+    def resourceMetaOf(h: McpHandler[?, ?, ?]): McpHandler.ResourceMeta =
         h match
             case c: McpHandler.ResourceHandler[?] => c.resourceMeta
             case _                                => throw new IllegalStateException(s"expected Resource handler for route '${h.name}'")
 
     /** Extracts `ResourceTemplateMeta` from a resource template handler. */
-    def resourceTemplateMetaOf(h: McpHandler[?, ?, ?]): McpRoute.ResourceTemplateMeta =
+    def resourceTemplateMetaOf(h: McpHandler[?, ?, ?]): McpHandler.ResourceTemplateMeta =
         h match
             case c: McpHandler.ResourceTemplateHandler[?] => c.resourceTemplateMeta
             case _ => throw new IllegalStateException(s"expected ResourceTemplate handler for route '${h.name}'")
 
     /** Extracts `PromptMeta` from a prompt handler. */
-    def promptMetaOf(h: McpHandler[?, ?, ?]): McpRoute.PromptMeta =
+    def promptMetaOf(h: McpHandler[?, ?, ?]): McpHandler.PromptMeta =
         h match
             case c: McpHandler.PromptHandler[?] => c.promptMeta
             case _                              => throw new IllegalStateException(s"expected Prompt handler for route '${h.name}'")

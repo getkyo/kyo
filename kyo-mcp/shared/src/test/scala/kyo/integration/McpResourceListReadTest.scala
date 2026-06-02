@@ -8,11 +8,11 @@ class McpResourceListReadTest extends Test:
     private val fileUri = McpResourceUri.parse("file:///a").get
     private val tmplUri = McpResourceUri.Template.parse("file:///{x}").get
 
-    private val resRoute = McpRoute.resource(fileUri, "a-file").handler { uri =>
-        Chunk(McpRoute.ResourceContents.Text(uri, Absent, "content-a"))
+    private val resRoute = McpHandler.resource(fileUri, "a-file") {
+        Chunk(McpHandler.ResourceContents.Text(fileUri, Absent, "content-a"))
     }
-    private val tmplRoute = McpRoute.resourceTemplate(tmplUri, "file-tmpl").handler { uri =>
-        Chunk(McpRoute.ResourceContents.Text(uri, Absent, "content-tmpl"))
+    private val tmplRoute = McpHandler.resourceTemplate(tmplUri, "file-tmpl") { uri =>
+        Chunk(McpHandler.ResourceContents.Text(uri, Absent, "content-tmpl"))
     }
 
     "listResources returns page with the registered resource URI (T-016, INV-022, INV-023)" in run {
@@ -68,7 +68,7 @@ class McpResourceListReadTest extends Test:
                     yield
                         assert(contents.size == 1)
                         contents.head match
-                            case McpRoute.ResourceContents.Text(uri, _, text) =>
+                            case McpHandler.ResourceContents.Text(uri, _, text) =>
                                 assert(uri == fileUri)
                                 assert(text == "content-a")
                             case other =>

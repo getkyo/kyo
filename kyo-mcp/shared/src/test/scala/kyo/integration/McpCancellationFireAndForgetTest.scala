@@ -16,7 +16,7 @@ class McpCancellationFireAndForgetTest extends Test:
         // AllowUnsafe: AtomicBoolean used as a signal flag to detect when the handler has started.
         val handlerReady = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
-        val slowRoute = McpRoute.tool[SlowReq]("slow").handler { req =>
+        val slowRoute = McpHandler.tool[SlowReq]("slow") { req =>
             Sync.defer(discard(handlerReady.set(true)(using AllowUnsafe.embrace.danger)))
                 .andThen(Mcp.cancelled.flatMap(_.get))
                 .andThen(McpContent.Text(s"done-${req.n}"))

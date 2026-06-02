@@ -18,38 +18,38 @@ class McpCompletionRefWireTest extends Test:
         Structure.decode[A](encoded).getOrElse(fail(s"decode failed for $value"))
 
     "CompletionRef.Prompt encodes with type 'ref/prompt'" in {
-        val ref  = McpRoute.CompletionRef.Prompt("my-prompt")
-        val json = encodedJson[McpRoute.CompletionRef](ref)
+        val ref  = McpHandler.CompletionRef.Prompt("my-prompt")
+        val json = encodedJson[McpHandler.CompletionRef](ref)
         assert(json.contains("\"type\":\"ref/prompt\""))
         assert(json.contains("\"name\":\"my-prompt\""))
     }
 
     "CompletionRef.Resource encodes with type 'ref/resource'" in {
-        val ref  = McpRoute.CompletionRef.Resource(McpResourceUri("file:///my-resource"))
-        val json = encodedJson[McpRoute.CompletionRef](ref)
+        val ref  = McpHandler.CompletionRef.Resource(McpResourceUri("file:///my-resource"))
+        val json = encodedJson[McpHandler.CompletionRef](ref)
         assert(json.contains("\"type\":\"ref/resource\""))
         assert(json.contains("file:///my-resource"))
     }
 
     "CompletionRef.Prompt round-trips" in {
-        val ref = McpRoute.CompletionRef.Prompt("x")
-        assert(roundtrip[McpRoute.CompletionRef](ref) == ref)
+        val ref = McpHandler.CompletionRef.Prompt("x")
+        assert(roundtrip[McpHandler.CompletionRef](ref) == ref)
     }
 
     "CompletionRef.Resource round-trips" in {
-        val ref = McpRoute.CompletionRef.Resource(McpResourceUri("file:///r"))
-        assert(roundtrip[McpRoute.CompletionRef](ref) == ref)
+        val ref = McpHandler.CompletionRef.Resource(McpResourceUri("file:///r"))
+        assert(roundtrip[McpHandler.CompletionRef](ref) == ref)
     }
 
     "CompletionRef.Prompt with empty name encodes correctly" in {
-        val ref  = McpRoute.CompletionRef.Prompt("")
-        val json = encodedJson[McpRoute.CompletionRef](ref)
+        val ref  = McpHandler.CompletionRef.Prompt("")
+        val json = encodedJson[McpHandler.CompletionRef](ref)
         assert(json.contains("\"type\":\"ref/prompt\""))
     }
 
     "Schema singleton reference is stable (INV-013)" in {
-        val s1 = summon[Schema[McpRoute.CompletionRef]]
-        val s2 = summon[Schema[McpRoute.CompletionRef]]
+        val s1 = summon[Schema[McpHandler.CompletionRef]]
+        val s2 = summon[Schema[McpHandler.CompletionRef]]
         assert(s1 eq s2)
     }
 

@@ -63,7 +63,7 @@ class InvariantsTest extends Test:
                 "McpElicitationResponse.scala",
                 "McpSamplingRequest.scala",
                 "McpCapabilities.scala",
-                "McpRoute.scala",
+                "McpHandler.scala",
                 "McpException.scala"
             )
             val rootPath = Paths.get(moduleRoot)

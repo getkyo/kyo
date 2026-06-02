@@ -65,33 +65,34 @@ private[kyo] object McpHandlerLift:
         h: McpHandler.ToolHandler[In, Out, E],
         serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[In, McpRoute.ToolCallResult](h.toolRoute.name) { (in, jrCtx) =>
+        JsonRpcRoute.request[In, McpHandler.ToolOutcome](h.name) { (in, jrCtx) =>
             withCtx(jrCtx, serverRef) {
-                h.toolHandler(in).map(out => McpRoute.ToolCallResult(Chunk(out), isError = false, structuredContent = Absent))
+                h.toolHandler(in).map(out => McpHandler.ToolOutcome(Chunk(out), isError = false, structuredContent = Absent))
             }
-        }(using h.toolRoute.inSchema, summon[Schema[McpRoute.ToolCallResult]])
+        }(using h.inSchema, summon[Schema[McpHandler.ToolOutcome]])
 
     private def liftToolMulti[In, E](
         h: McpHandler.ToolMultiHandler[In, E],
         serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[In, McpRoute.ToolCallResult](h.toolRoute.name) { (in, jrCtx) =>
+        JsonRpcRoute.request[In, McpHandler.ToolOutcome](h.name) { (in, jrCtx) =>
             withCtx(jrCtx, serverRef)(h.toolHandler(in))
-        }(using h.toolRoute.inSchema, summon[Schema[McpRoute.ToolCallResult]])
+        }(using h.inSchema, summon[Schema[McpHandler.ToolOutcome]])
 
     private def liftResource[E](
         h: McpHandler.ResourceHandler[E],
         serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[McpResourceUri, Chunk[McpRoute.ResourceContents]](h.resourceMeta.uri.asString) { (uri, jrCtx) =>
-            withCtx(jrCtx, serverRef)(h.resourceHandler(uri))
+        JsonRpcRoute.request[McpResourceUri, Chunk[McpHandler.ResourceContents]](h.resourceMeta.uri.asString) { (_, jrCtx) =>
+            // Inbound URI always equals h.resourceMeta.uri (engine routes by URI match); ignored.
+            withCtx(jrCtx, serverRef)(h.resourceHandler())
         }
 
     private def liftResourceTemplate[E](
         h: McpHandler.ResourceTemplateHandler[E],
         serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[McpResourceUri, Chunk[McpRoute.ResourceContents]](h.resourceTemplateMeta.uriTemplate.asString) {
+        JsonRpcRoute.request[McpResourceUri, Chunk[McpHandler.ResourceContents]](h.resourceTemplateMeta.uriTemplate.asString) {
             (uri, jrCtx) =>
                 withCtx(jrCtx, serverRef)(h.resourceTemplateHandler(uri))
         }
@@ -100,7 +101,7 @@ private[kyo] object McpHandlerLift:
         h: McpHandler.PromptHandler[E],
         serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[Map[String, String], McpRoute.PromptGetResult](h.promptRoute.name) { (args, jrCtx) =>
+        JsonRpcRoute.request[Map[String, String], McpHandler.PromptOutcome](h.name) { (args, jrCtx) =>
             withCtx(jrCtx, serverRef)(h.promptHandler(args))
         }
 
@@ -108,8 +109,8 @@ private[kyo] object McpHandlerLift:
         h: McpHandler.CompletionHandler[E],
         serverRef: AtomicRef[Maybe[McpServer.Unsafe]]
     )(using Frame): JsonRpcRoute[?, ?, ?] =
-        JsonRpcRoute.request[(McpRoute.CompletionRef, McpRoute.CompletionArg), McpRoute.CompletionResult](h.completionRoute.name) {
-            (pair, jrCtx) => withCtx(jrCtx, serverRef)(h.completionHandler(pair._1, pair._2, Absent))
+        JsonRpcRoute.request[(McpHandler.CompletionRef, McpHandler.CompletionArg), McpHandler.CompletionOutcome](h.name) {
+            (pair, jrCtx) => withCtx(jrCtx, serverRef)(h.completionHandler(pair._2, Absent))
         }
 
     private def liftCustom[In, Out, E](
@@ -118,6 +119,6 @@ private[kyo] object McpHandlerLift:
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[In, Out](h.method) { (in, jrCtx) =>
             withCtx(jrCtx, serverRef)(h.customHandler(in))
-        }(using h.customRoute.inSchema, h.outSchema)
+        }(using h.inSchema, h.outSchema)
 
 end McpHandlerLift
