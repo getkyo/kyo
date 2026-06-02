@@ -40,12 +40,9 @@ if [[ -z "$CP" ]]; then
     exit 2
 fi
 
-TRACE_DIR="/tmp/mcp-validation/trace"
-mkdir -p "$TRACE_DIR"
-STDIN_LOG="$TRACE_DIR/${MODULE}-${FQCN##*.}-stdin.log"
-echo "  cp_chars=${#CP}, tee stdin->$STDIN_LOG (no stdout tee — would buffer)" >> "$LAUNCH_LOG"
-# Tee stdin only. A stdout-side tee would fully-buffer when its own stdout is a pipe
-# (MCP host case), so the demo's response never reaches the host and the handshake
-# times out. Java's stderr still folds into LAUNCH_LOG.
-exec tee -a "$STDIN_LOG" \
-  | java --enable-native-access=ALL-UNNAMED -cp "$CP" "$FQCN" "$@" 2>>"$LAUNCH_LOG"
+echo "  cp_chars=${#CP}, exec java -cp ... $FQCN $*" >> "$LAUNCH_LOG"
+# No tee instrumentation: tee buffers when its stdout is a pipe (which it is when
+# Claude Code is the host), so either direction would stall the handshake. Java's
+# stdin and stdout flow directly between Claude Code and the demo. Stderr alone
+# folds into the launch log.
+exec java --enable-native-access=ALL-UNNAMED -cp "$CP" "$FQCN" "$@" 2>>"$LAUNCH_LOG"
