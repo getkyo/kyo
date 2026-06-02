@@ -268,7 +268,7 @@ object McpHandler:
       * Call sites annotate `[In]` and the compiler infers `[Out]` from the handler's return
       * type via clause interleaving.
       */
-    def tool[In](
+    inline def tool[In](
         name: String,
         description: String = "",
         annotations: ToolAnnotations = ToolAnnotations.noop
@@ -277,6 +277,9 @@ object McpHandler:
     )[Out <: McpContent, E](
         handler: In => Out < (Async & Abort[McpException | JsonRpcResponse.Halt | E])
     )(using outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, McpException | E] =
+        // `inline` so `Json.jsonSchema[In]` expands at the user's call site where `In` is concrete — otherwise
+        // `Structure.of[In]` is invoked against an abstract type parameter and yields an empty Product, leaving
+        // `inputSchema` without its properties/required fields on the wire.
         val meta = ToolMeta(
             name = name,
             description = if description.isEmpty then Absent else Present(description),
@@ -288,13 +291,15 @@ object McpHandler:
     end tool
 
     /** Constructs a multi-content tool handler that returns a full [[ToolOutcome]] directly. INV-020. */
-    def toolMulti[In](
+    inline def toolMulti[In](
         name: String,
         description: String = "",
         annotations: ToolAnnotations = ToolAnnotations.noop
     )[E](
         handler: In => ToolOutcome < (Async & Abort[McpException | JsonRpcResponse.Halt | E])
     )(using inSchema: Schema[In], frame: Frame): McpHandler[In, ToolOutcome, McpException | E] =
+        // `inline` so `Json.jsonSchema[In]` resolves against the concrete `In` at the user's call site rather than
+        // an abstract type parameter (see `tool`).
         val meta = ToolMeta(
             name = name,
             description = if description.isEmpty then Absent else Present(description),
@@ -410,7 +415,7 @@ object McpHandler:
 
     // --- Concrete handler carriers (internal) ---------------------------------
 
-    final private[kyo] class ToolHandler[In, Out <: McpContent, +E] private[kyo] (
+    final private[kyo] class ToolHandler[In, Out <: McpContent, +E] @scala.annotation.publicInBinary private[kyo] (
         val toolMeta: ToolMeta,
         val inSchema: Schema[In],
         val outSchema: Schema[Out],
@@ -430,7 +435,7 @@ object McpHandler:
             )
     end ToolHandler
 
-    final private[kyo] class ToolMultiHandler[In, +E] private[kyo] (
+    final private[kyo] class ToolMultiHandler[In, +E] @scala.annotation.publicInBinary private[kyo] (
         val toolMeta: ToolMeta,
         val inSchema: Schema[In],
         val toolHandler: In => ToolOutcome < (Async & Abort[McpException | JsonRpcResponse.Halt | E]),
