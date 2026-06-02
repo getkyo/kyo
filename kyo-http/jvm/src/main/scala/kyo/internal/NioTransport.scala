@@ -65,6 +65,17 @@ final private[kyo] class NioTransport private (
                     summon[Frame],
                     s"connect() failed to $host:$port: ${e.getMessage}"
                 )))
+            case e: RuntimeException =>
+                // `new InetSocketAddress(host, port)` returns an unresolved address when DNS
+                // resolution fails (rather than throwing), and `channel.connect(unresolved)`
+                // then raises `java.nio.channels.UnresolvedAddressException` (a
+                // `RuntimeException`, NOT an `IOException`). Without this arm such failures
+                // escape `connect` synchronously and surface upstream as opaque panics.
+                promise.completeDiscard(Result.fail(Closed(
+                    "NioTransport",
+                    summon[Frame],
+                    s"connect() failed to $host:$port: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                )))
         end try
 
         promise.asInstanceOf[Fiber.Unsafe[Connection[NioHandle], Abort[Closed]]]
@@ -278,6 +289,16 @@ final private[kyo] class NioTransport private (
                     "NioTransport",
                     summon[Frame],
                     s"TLS connect() failed to $host:$port: ${e.getMessage}"
+                )))
+            case e: RuntimeException =>
+                // Mirrors the plain-TCP `connect` arm: DNS failure surfaces here as
+                // `java.nio.channels.UnresolvedAddressException` (a `RuntimeException`),
+                // not an `IOException`. Without this arm `https://` URLs to unresolvable
+                // hosts surface upstream as opaque panics.
+                promise.completeDiscard(Result.fail(Closed(
+                    "NioTransport",
+                    summon[Frame],
+                    s"TLS connect() failed to $host:$port: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
                 )))
         end try
 

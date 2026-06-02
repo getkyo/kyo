@@ -82,7 +82,18 @@ final private[kyo] class HttpClientBackend[Handle] private (
                         Result.fail(HttpConnectException(h, p, new IOException(closed.getMessage)))
                     )
                 case Result.Panic(t) =>
-                    resultPromise.completeDiscard(Result.panic(t))
+                    // Wrap OS-level connect failures (UnknownHostException, ConnectException,
+                    // SocketException, ...) as `HttpConnectException` so callers see a typed
+                    // `HttpException` in `Abort.recover[HttpException]` instead of the raw
+                    // throwable surfacing as an opaque `-32603 Handler panicked` at the
+                    // JSON-RPC boundary.
+                    val (h, p) = hostPort(url)
+                    val cause = t match
+                        case io: IOException => io
+                        case other           => new IOException(Option(other.getMessage).getOrElse(other.getClass.getName), other)
+                    resultPromise.completeDiscard(
+                        Result.fail(HttpConnectException(h, p, cause))
+                    )
         }
         resultPromise
     end connect
