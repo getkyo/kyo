@@ -142,16 +142,14 @@ object WebsiteGenerator:
         val flagged = content.filter(_.version.latest)
         if flagged.nonEmpty then flagged.lastMaybe
         else
-            val stable = content.filter(c => isStable(c.version.tag))
+            // Stability is owned by WebsiteVersion.parse: a tag is stable iff it parses and carries no
+            // pre-release suffix. Reusing it keeps ONE definition of "stable" across the generator and
+            // WebsiteMain.pickLatestTag, instead of a second substring-marker list that could drift.
+            val stable = content.filter(c => WebsiteVersion.parse(c.version.tag).exists(_.preRelease.isEmpty))
             if stable.nonEmpty then stable.lastMaybe
             else content.lastMaybe
         end if
     end pickLatest
-
-    private def isStable(tag: String): Boolean =
-        val markers = Seq("-RC", "-M", "-SNAPSHOT", "-alpha", "-beta", "-rc")
-        !markers.exists(m => tag.contains(m))
-    end isStable
 
     private def emitIntroPage(
         c: WebsiteContent,

@@ -46,7 +46,7 @@ object WebsiteContent:
     private def readRequired(path: Path)(using Frame): String < (Sync & Abort[WebsiteException]) =
         Abort.run[FileReadException](path.read).map {
             case Result.Success(s) => s
-            case Result.Failure(_) => Abort.fail(WebsiteReadmeException(path, ReadmeFailure.Missing))
+            case Result.Failure(_) => Abort.fail(WebsiteReadmeException(path, WebsiteReadmeException.ReadmeFailure.Missing))
             case p: Result.Panic   => Abort.error(p)
         }
 
@@ -132,7 +132,7 @@ object WebsiteContent:
         // The first pipe row is the header and one is the separator; the remaining rows are modules.
         val moduleRows = tableRows.filter(l => !isSeparatorRow(l)).drop(1)
         if tableRows.size < 2 || !tableRows.exists(isSeparatorRow) then
-            Abort.fail(WebsiteReadmeException(root / "README.md", ReadmeFailure.MalformedGroups))
+            Abort.fail(WebsiteReadmeException(root / "README.md", WebsiteReadmeException.ReadmeFailure.MalformedGroups))
         else
             Kyo.foreach(moduleRows)(row => buildModule(root, name, row)).map(mods => Group(name, mods))
         end if
@@ -149,16 +149,19 @@ object WebsiteContent:
       */
     private def buildModule(root: Path, group: String, row: String)(using Frame): WebsiteModule < (Sync & Abort[WebsiteException]) =
         val cells = pipeCells(row)
-        if cells.size < 5 then Abort.fail(WebsiteReadmeException(root / "README.md", ReadmeFailure.MalformedTable))
+        if cells.size < 5 then Abort.fail(WebsiteReadmeException(root / "README.md", WebsiteReadmeException.ReadmeFailure.MalformedTable))
         else
             extractSlug(cells(0)) match
-                case Absent => Abort.fail(WebsiteReadmeException(root / "README.md", ReadmeFailure.MalformedTable))
+                case Absent => Abort.fail(WebsiteReadmeException(root / "README.md", WebsiteReadmeException.ReadmeFailure.MalformedTable))
                 case Present(slug) =>
                     val platforms = WebsiteModule.Platforms(
                         jvm = isSupported(cells(2)),
                         js = isSupported(cells(3)),
                         native = isSupported(cells(4))
                     )
+                    // title = slug by design: the root README module table has no separate title
+                    // column (`| [slug](target) | description | JVM | JS | Native |`), and the slug
+                    // (`kyo-core`, `kyo-data`, ...) is the display title for kyo modules.
                     readRequired(root / slug / "README.md").map(readme => WebsiteModule(slug, group, slug, readme, platforms))
             end match
         end if

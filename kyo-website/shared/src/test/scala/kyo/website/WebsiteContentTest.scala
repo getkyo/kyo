@@ -145,7 +145,7 @@ class WebsiteContentTest extends Test:
             result <- fromRepoResult(Seq("README.md" -> readme))
         yield result match
             case Result.Failure(e: WebsiteReadmeException) =>
-                assert(e.detail == ReadmeFailure.Missing, s"expected Missing, got ${e.detail}")
+                assert(e.detail == WebsiteReadmeException.ReadmeFailure.Missing, s"expected Missing, got ${e.detail}")
             case other => fail(s"expected Failure(WebsiteReadmeException Missing), got $other")
         end for
     }
@@ -166,8 +166,32 @@ class WebsiteContentTest extends Test:
             result <- fromRepoResult(Seq("README.md" -> readme))
         yield result match
             case Result.Failure(e: WebsiteReadmeException) =>
-                assert(e.detail == ReadmeFailure.MalformedTable, s"expected MalformedTable, got ${e.detail}")
+                assert(e.detail == WebsiteReadmeException.ReadmeFailure.MalformedTable, s"expected MalformedTable, got ${e.detail}")
             case other => fail(s"expected Failure(WebsiteReadmeException MalformedTable), got $other")
+        end for
+    }
+
+    "fromRepo aborts MalformedGroups on a group heading with no table (P7-4b)" in run {
+        // The `### Foundation` heading inside `## Modules` is followed by prose, not a GFM pipe table,
+        // so buildGroup finds zero pipe rows and aborts MalformedGroups (distinct from MalformedTable,
+        // which is a present-but-corrupt table row).
+        val readme =
+            """# Kyo
+              |
+              |## Modules
+              |
+              |### Foundation
+              |This group heading has no module table beneath it, only this sentence.
+              |""".stripMargin
+        for
+            result <- fromRepoResult(Seq("README.md" -> readme))
+        yield result match
+            case Result.Failure(e: WebsiteReadmeException) =>
+                assert(
+                    e.detail == WebsiteReadmeException.ReadmeFailure.MalformedGroups,
+                    s"expected MalformedGroups, got ${e.detail}"
+                )
+            case other => fail(s"expected Failure(WebsiteReadmeException MalformedGroups), got $other")
         end for
     }
 

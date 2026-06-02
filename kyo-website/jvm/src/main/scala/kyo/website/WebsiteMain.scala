@@ -145,13 +145,20 @@ object WebsiteMain extends KyoApp:
         val targetDir = JPath.of(repoRoot, "kyo-website-bundle", "js", "target")
         if !Files.isDirectory(targetDir) then fallback.toString
         else
-            // Using closes each directory stream after the iterator is drained to a list.
+            // Using closes each directory stream after the iterator is drained to a list. Both levels
+            // are sorted by path string so the `-opt`-with-main.js selection is deterministic: when two
+            // `scala-*` dirs both hold an `-opt/main.js`, `Files.list` order is filesystem-dependent, so
+            // sorting picks the same directory on every run regardless of the platform's listing order.
             val scalaDirs = Using.resource(Files.list(targetDir))(s =>
-                s.iterator().asScala.toList.filter(p => Files.isDirectory(p) && p.getFileName.toString.startsWith("scala-"))
+                s.iterator().asScala.toList
+                    .filter(p => Files.isDirectory(p) && p.getFileName.toString.startsWith("scala-"))
+                    .sortBy(_.toString)
             )
             val optDirs = scalaDirs.flatMap(scalaDir =>
                 Using.resource(Files.list(scalaDir))(s =>
-                    s.iterator().asScala.toList.filter(p => Files.isDirectory(p) && p.getFileName.toString.endsWith("-opt"))
+                    s.iterator().asScala.toList
+                        .filter(p => Files.isDirectory(p) && p.getFileName.toString.endsWith("-opt"))
+                        .sortBy(_.toString)
                 )
             )
             optDirs.find(p => Files.isRegularFile(p.resolve("main.js"))).map(_.toString).getOrElse(fallback.toString)

@@ -18,11 +18,12 @@ class DeployWorkflowTest extends Test:
     // Locate the repo root by walking up from user.dir until build.sbt is found, so the workflow file
     // resolves regardless of the JVM working directory (mirrors WebsiteBuildGraphTest).
     private def repoRoot(): java.nio.file.Path =
-        var dir = Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
-        while dir != null && !Files.exists(dir.resolve("build.sbt")) do
-            dir = dir.getParent
-        if dir == null then throw new RuntimeException("repo root with build.sbt not found")
-        dir
+        val start = Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
+        Iterator
+            .iterate(start)(_.getParent)
+            .takeWhile(_ != null)
+            .find(dir => Files.exists(dir.resolve("build.sbt")))
+            .getOrElse(throw new RuntimeException("repo root with build.sbt not found"))
     end repoRoot
 
     private def repoFile(relative: String): java.nio.file.Path =
@@ -30,6 +31,43 @@ class DeployWorkflowTest extends Test:
 
     private val workflowText: String =
         new String(Files.readAllBytes(repoFile(".github/workflows/deploy-site.yml")))
+
+    /** The shell content of every `run:` step in the workflow, with comment lines stripped.
+      *
+      * Leaf 6 asserts the deploy pipeline issues no `git commit` / `git push`. That is a property of
+      * the executed shell, not of the file's prose: a YAML `#` comment that merely mentions
+      * "git commit" (as the design note at the foot of the file does) must neither trip the assertion
+      * (false positive) nor mask a real command added in a comment-heavy region. Scoping the check to
+      * the `run:` bodies and dropping `#` comment lines pins it to what the pipeline actually runs.
+      *
+      * A `run:` step is either a single-line `run: <cmd>` or a YAML block scalar (`run: |` / `run: >`)
+      * whose body is the more-indented lines that follow. This walker collects both forms.
+      */
+    private val runStepShell: String =
+        val lines = workflowText.linesIterator.toList
+        val out   = new StringBuilder
+        // Match the `run:` key at any indentation, capturing its indent and the inline remainder.
+        val runKey                   = """^(\s*)run:\s*(.*)$""".r
+        def indentOf(s: String): Int = s.takeWhile(_ == ' ').length
+        def collectBlock(rest: List[String], keyIndent: Int): List[String] =
+            rest match
+                case head :: tail if head.isBlank               => collectBlock(tail, keyIndent)
+                case head :: tail if indentOf(head) > keyIndent => out.append(head).append('\n'); collectBlock(tail, keyIndent)
+                case _                                          => rest
+        def walk(rest: List[String]): Unit =
+            rest match
+                case Nil => ()
+                case line :: tail =>
+                    line match
+                        case runKey(indent, inline) if inline == "|" || inline == ">" || inline.startsWith("|") || inline.startsWith(">") =>
+                            walk(collectBlock(tail, indent.length))
+                        case runKey(_, inline) =>
+                            out.append(inline).append('\n'); walk(tail)
+                        case _ => walk(tail)
+        walk(lines)
+        // Drop `#` comment lines so comment prose inside a block scalar cannot trip the check.
+        out.toString.linesIterator.filterNot(_.trim.startsWith("#")).mkString("\n")
+    end runStepShell
 
     // ---- Leaf 1: the verified action pair (INV-011) ----
 
@@ -75,8 +113,10 @@ class DeployWorkflowTest extends Test:
     // ---- Leaf 6: no git commit of generated output (INV-011) ----
 
     "no git commit or push of generated output (INV-011)" in {
-        assert(!workflowText.contains("git commit"), "deploy workflow must not git commit generated output")
-        assert(!workflowText.contains("git push"), "deploy workflow must not git push generated output")
+        // Scoped to the executed `run:` shell (comments stripped) so comment prose mentioning
+        // "git commit" neither trips this nor masks a real command (see runStepShell).
+        assert(!runStepShell.contains("git commit"), "deploy workflow must not git commit generated output")
+        assert(!runStepShell.contains("git push"), "deploy workflow must not git push generated output")
     }
 
     // ---- Leaf 7: scaladoc.yml removed (INV-011, Q-006) ----

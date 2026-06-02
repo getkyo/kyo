@@ -225,6 +225,10 @@ object DocsClient:
             slug  <- extractString(obj, "slug")
             group <- extractString(obj, "group")
             title <- extractString(obj, "title")
+        // The manifest/island JSON carries only slug/group/title (the fields the client nav needs);
+        // it does not serialize per-platform support or the raw README. `readme` is fetched on demand
+        // via fetchMarkdown, and `Platforms(true, true, true)` is an unused placeholder here (the
+        // client never reads module.platforms), not a claim that every module is cross-platform.
         yield WebsiteModule(slug, group, title, "", WebsiteModule.Platforms(true, true, true))
     end parseModule
 

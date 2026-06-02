@@ -6,13 +6,13 @@ class WebsiteExceptionTest extends Test:
 
     "ReadmeException carries typed detail" - {
         "detail and path fields are accessible" in {
-            val ex = WebsiteReadmeException(Path("x", "README.md"), ReadmeFailure.Missing)
-            assert(ex.detail == ReadmeFailure.Missing)
+            val ex = WebsiteReadmeException(Path("x", "README.md"), WebsiteReadmeException.ReadmeFailure.Missing)
+            assert(ex.detail == WebsiteReadmeException.ReadmeFailure.Missing)
         }
 
         "message contains path and Missing" in {
             val path = Path("kyo-missing", "README.md")
-            val ex   = WebsiteReadmeException(path, ReadmeFailure.Missing)
+            val ex   = WebsiteReadmeException(path, WebsiteReadmeException.ReadmeFailure.Missing)
             val msg  = ex.getMessage()
             assert(msg.contains("Missing"))
             assert(msg.contains("kyo-missing"))
@@ -43,6 +43,7 @@ class WebsiteExceptionTest extends Test:
 
     "ReadmeFailure enum exhaustiveness" - {
         "all three cases match" in {
+            import WebsiteReadmeException.ReadmeFailure
             val cases = List(ReadmeFailure.Missing, ReadmeFailure.MalformedGroups, ReadmeFailure.MalformedTable)
             val matched = cases.map {
                 case ReadmeFailure.Missing         => "Missing"
@@ -55,7 +56,7 @@ class WebsiteExceptionTest extends Test:
 
     "leaves are WebsiteException subtypes" - {
         "WebsiteReadmeException is a WebsiteException" in {
-            val ex = WebsiteReadmeException(Path("x", "README.md"), ReadmeFailure.Missing)
+            val ex = WebsiteReadmeException(Path("x", "README.md"), WebsiteReadmeException.ReadmeFailure.Missing)
             assert(ex.isInstanceOf[WebsiteException])
         }
 
@@ -70,7 +71,7 @@ class WebsiteExceptionTest extends Test:
         }
 
         "base is KyoException" in {
-            val ex = WebsiteReadmeException(Path("x", "README.md"), ReadmeFailure.Missing)
+            val ex = WebsiteReadmeException(Path("x", "README.md"), WebsiteReadmeException.ReadmeFailure.Missing)
             assert(ex.isInstanceOf[KyoException])
         }
     }

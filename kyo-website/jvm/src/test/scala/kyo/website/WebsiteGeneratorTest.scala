@@ -59,11 +59,12 @@ class WebsiteGeneratorTest extends Test:
         Path(findRepoRoot().toString)
 
     private def findRepoRoot(): java.nio.file.Path =
-        var dir = Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
-        while dir != null && !Files.exists(dir.resolve("build.sbt")) do
-            dir = dir.getParent
-        if dir == null then throw new RuntimeException("repo root not found")
-        dir
+        val start = Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
+        Iterator
+            .iterate(start)(_.getParent)
+            .takeWhile(_ != null)
+            .find(dir => Files.exists(dir.resolve("build.sbt")))
+            .getOrElse(throw new RuntimeException("repo root not found"))
     end findRepoRoot
 
     private def emit(
@@ -439,6 +440,49 @@ class WebsiteGeneratorTest extends Test:
         yield
             assert(rc2m, "latest/ must mirror rc2 (the newest pre-release)")
             assert(!rc1m, "latest/ must NOT mirror rc1")
+        end for
+    }
+
+    // ---- Test P7-10b: stable wins over a NEWER pre-release (pickLatest stability consolidation) ----
+
+    "latest mirrors an older stable over a newer pre-release (stability via WebsiteVersion.parse) (P7-10b)" in run {
+        // pickLatest's stable filter is `WebsiteVersion.parse(tag).exists(_.preRelease.isEmpty)` (one
+        // shared stability definition, not a substring-marker list). Here v1.0.1-RC1 is a NEWER triple
+        // than the stable v1.0.0 but carries a pre-release suffix, so the stable v1.0.0 must still be
+        // chosen as latest. This locks the consolidated semantics: a higher version number does not win
+        // when it is a pre-release and a stable release exists.
+        val stable100 = WebsiteContent(
+            "intro",
+            Chunk(WebsiteContent.Group(
+                "Foundation",
+                Chunk(WebsiteModule(
+                    "kyo-stable100",
+                    "Foundation",
+                    "kyo-stable100",
+                    "# stable\n",
+                    WebsiteModule.Platforms(true, true, true)
+                ))
+            )),
+            WebsiteVersion("v1.0.0", "1.0.0", false)
+        )
+        val rc101 = WebsiteContent(
+            "intro",
+            Chunk(WebsiteContent.Group(
+                "Foundation",
+                Chunk(WebsiteModule("kyo-rc101", "Foundation", "kyo-rc101", "# rc\n", WebsiteModule.Platforms(true, true, true)))
+            )),
+            WebsiteVersion("v1.0.1-RC1", "1.0.1-RC1", false)
+        )
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            // Oldest-first by semantic order: stable v1.0.0 sorts before the v1.0.1-RC1 pre-release.
+            _            <- emit(Chunk(stable100, rc101), out, bundleDir)
+            stableMirror <- (out / "latest" / "kyo-stable100" / "index.html").exists
+            rcMirror     <- (out / "latest" / "kyo-rc101" / "index.html").exists
+        yield
+            assert(stableMirror, "latest/ must mirror the stable v1.0.0 module, not the newer pre-release")
+            assert(!rcMirror, "latest/ must NOT mirror the v1.0.1-RC1 pre-release module")
         end for
     }
 

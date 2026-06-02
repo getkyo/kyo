@@ -19,7 +19,10 @@ import scala.collection.mutable
   *
   * Unknown inline constructs degrade gracefully to plain text via kyo-parse `recoverWith` +
   * `RecoverStrategy`; unknown block constructs degrade to `UI.p` containing the verbatim line text.
-  * The effect row is `Sync` only (no `Abort`): the transpiler never aborts on malformed corpus input.
+  * The effect row is `Sync` only (no `Abort`): malformed input degrades to plain text rather than
+  * failing the row. A genuinely undefined evaluation (an exception thrown inside `Sync.defer`) would
+  * still surface as a `Sync` panic; the design intent is that the bounded grammar plus the total
+  * fall-throughs leave no malformed-corpus path that reaches one.
   *
   * Inline HTML snippets (such as `<img>` or `<a><img></a>` tags found in the root README) are
   * emitted as [[kyo.UI.Ast.RawHtml]] leaves via `UI.rawHtml`. All other text is HTML-escaped by the
@@ -53,10 +56,11 @@ object DocsMarkdown:
 
     /** Transpile a single README Markdown source to a [[Rendered]] value.
       *
-      * The effect row is `Sync` only. The function never aborts: unknown constructs are degraded to
-      * plain `UI.p` / `UI.text` nodes (via kyo-parse `recoverWith` for inline content and a total
-      * paragraph fall-through for blocks), and an empty source returns `Rendered(UI.empty, Chunk.empty)`
-      * without raising any error.
+      * The effect row is `Sync` only (no `Abort`). Malformed input degrades rather than failing:
+      * unknown inline constructs become plain `UI.text` (via kyo-parse `recoverWith`), unknown block
+      * constructs become a `UI.p` carrying the verbatim line, and an empty source returns
+      * `Rendered(UI.empty, Chunk.empty)`. The bounded RI-002 grammar plus those total fall-throughs
+      * are designed so no malformed-corpus path reaches an undefined evaluation; the row stays `Sync`.
       *
       * @param source
       *   The Markdown text to transpile. May be empty.
@@ -127,9 +131,9 @@ object DocsMarkdown:
         case Heading(line: String)
         case Fence(info: String, body: String)
         case Quote(content: String)
-        case Table(lines: Seq[String])
-        case Unordered(lines: Seq[String])
-        case Ordered(lines: Seq[String])
+        case Table(lines: Chunk[String])
+        case Unordered(lines: Chunk[String])
+        case Ordered(lines: Chunk[String])
         case RawEmbed(snippet: String)
         case Paragraph(text: String)
     end Block
@@ -144,7 +148,7 @@ object DocsMarkdown:
       * (RI-002 trap 5). This is line-level structuring only; the content of each block is parsed
       * by the kyo-parse block/inline parsers.
       */
-    private def splitBlocks(cleaned: String): Seq[Block] =
+    private def splitBlocks(cleaned: String): Chunk[Block] =
         val lines  = cleaned.linesIterator.toArray
         val blocks = new mutable.ArrayBuffer[Block]()
         var i      = 0
@@ -189,7 +193,7 @@ object DocsMarkdown:
                 while i < lines.length && lines(i).trim.startsWith("|") do
                     tableLines += lines(i).trim
                     i += 1
-                blocks += Block.Table(tableLines.toSeq)
+                blocks += Block.Table(Chunk.from(tableLines))
             else if trimmed.startsWith("- ") || line.startsWith("  - ") then
                 val listLines = new mutable.ArrayBuffer[String]()
                 while i < lines.length &&
@@ -198,13 +202,13 @@ object DocsMarkdown:
                     listLines += lines(i)
                     i += 1
                 end while
-                blocks += Block.Unordered(listLines.toSeq)
+                blocks += Block.Unordered(Chunk.from(listLines))
             else if isOrderedItem(trimmed) then
                 val listLines = new mutable.ArrayBuffer[String]()
                 while i < lines.length && isOrderedItem(lines(i).trim) do
                     listLines += lines(i).trim
                     i += 1
-                blocks += Block.Ordered(listLines.toSeq)
+                blocks += Block.Ordered(Chunk.from(listLines))
 
             // Block-level raw HTML embed: lines starting with <img or <a only (root README corpus).
             // <img is single line. <a may wrap <img on subsequent lines; coalesce until the closing
@@ -244,7 +248,7 @@ object DocsMarkdown:
             end if
         end while
 
-        blocks.toSeq
+        Chunk.from(blocks)
     end splitBlocks
 
     // ---- article assembly ----
@@ -357,7 +361,7 @@ object DocsMarkdown:
       * (addressing the NOTE-1 naive-split limitation: an escaped pipe stays inside the cell rather
       * than splitting it).
       */
-    private def parseRowCells(line: String)(using Frame): Seq[String] =
+    private def parseRowCells(line: String)(using Frame): Chunk[String] =
         val cellChar: String < Parse[Char] =
             Parse.firstOf(
                 Parse.literal("\\|").andThen("|"),
@@ -368,27 +372,27 @@ object DocsMarkdown:
                 chars <- Parse.repeat(cellChar)
                 _     <- Parse.literal('|')
             yield chars.mkString.trim
-        val row: Seq[String] < Parse[Char] =
+        val row: Chunk[String] < Parse[Char] =
             for
                 _     <- Parse.literal('|')
                 cells <- Parse.repeat(cell)
-            yield cells.toSeq
+            yield Chunk.from(cells)
         runParser(line)(row).getOrElse {
             // Total fall-through for a row that is not pipe-delimited.
-            Seq(line.stripPrefix("|").stripSuffix("|").trim)
+            Chunk(line.stripPrefix("|").stripSuffix("|").trim)
         }
     end parseRowCells
 
     /** Parse a GFM pipe table. The first row is the header; the second is the separator; remaining
       * rows are body rows. Cell content is re-parsed with [[parseInline]].
       */
-    private def parseTable(tableLines: Seq[String])(using Frame): UI =
+    private def parseTable(tableLines: Chunk[String])(using Frame): UI =
         if tableLines.length < 2 then
             // Malformed table (missing separator): degrade to paragraph.
             UI.p(Ast.Text(tableLines.headOption.getOrElse("")))
         else
             val headerCells = parseRowCells(tableLines.head)
-            val bodyRows    = if tableLines.length > 2 then tableLines.drop(2) else Seq.empty
+            val bodyRows    = if tableLines.length > 2 then tableLines.drop(2) else Chunk.empty[String]
             val headerTr    = UI.tr(headerCells.map(cell => UI.th(parseInline(cell)*))*)
             val bodyTrs = bodyRows.map { row =>
                 val cells = parseRowCells(row)
@@ -401,7 +405,7 @@ object DocsMarkdown:
     /** Parse an unordered list from its grouped lines, handling two-space sub-indented items. The
       * `- ` / `  - ` markers are recognized with a `Parse[Char]` parser per line.
       */
-    private def parseUnorderedList(lines: Seq[String])(using Frame): UI =
+    private def parseUnorderedList(lines: Chunk[String])(using Frame): UI =
         val arr   = lines.toArray
         val items = new mutable.ArrayBuffer[Ast.Li]()
         var i     = 0
@@ -448,7 +452,7 @@ object DocsMarkdown:
         else UI.div.cssClass("blockquote")(bqBlocks*)
     end parseBlockquote
 
-    private def parseBlockquoteContent(content: String)(using Frame): Seq[UI] =
+    private def parseBlockquoteContent(content: String)(using Frame): Chunk[UI] =
         val lines  = content.linesIterator.toArray
         val result = new mutable.ArrayBuffer[UI]()
         var i      = 0
@@ -473,7 +477,7 @@ object DocsMarkdown:
                 result += UI.p(parseInline(paraLines.mkString(" "))*)
             end if
         end while
-        result.toSeq
+        Chunk.from(result)
     end parseBlockquoteContent
 
     // ---- inline kyo-parse grammar ----
@@ -496,9 +500,9 @@ object DocsMarkdown:
       * does not parse degrades to a single literal character via `recoverWith` +
       * `RecoverStrategy`, so the row never aborts.
       */
-    private def parseInline(text: String)(using Frame): Seq[UI] =
-        if text.isEmpty then Seq(Ast.Text(""))
-        else runParser(text)(inlineNodes).getOrElse(Seq(Ast.Text(text)))
+    private def parseInline(text: String)(using Frame): Chunk[UI] =
+        if text.isEmpty then Chunk(Ast.Text(""))
+        else runParser(text)(inlineNodes).getOrElse(Chunk(Ast.Text(text)))
 
     /** One result of the inline grammar: either a single literal character (a degrade unit, coalesced
       * into `Ast.Text` runs) or a fully parsed inline `UI` node.
@@ -510,8 +514,8 @@ object DocsMarkdown:
     /** The inline grammar: repeat a single inline token until end of input, then coalesce adjacent
       * literal characters into `Ast.Text` runs.
       */
-    private def inlineNodes(using Frame): Seq[UI] < Parse[Char] =
-        Parse.repeat(inlineToken).map(tokens => coalesceText(tokens.toSeq))
+    private def inlineNodes(using Frame): Chunk[UI] < Parse[Char] =
+        Parse.repeat(inlineToken).map(tokens => coalesceText(Chunk.from(tokens)))
 
     /** A single inline token, as a `Token`: `Lit(char)` is one literal character (a degrade unit);
       * `Node(ui)` is a parsed inline node. Unknown markup degrades to one literal character via the
@@ -539,7 +543,7 @@ object DocsMarkdown:
     /** Coalesce a token stream of literal-char runs and parsed nodes into a UI sequence, merging
       * adjacent literal characters into single `Ast.Text` leaves.
       */
-    private def coalesceText(tokens: Seq[Token])(using Frame): Seq[UI] =
+    private def coalesceText(tokens: Chunk[Token])(using Frame): Chunk[UI] =
         val out = new mutable.ArrayBuffer[UI]()
         val buf = new mutable.StringBuilder()
         def flush(): Unit =
@@ -551,7 +555,7 @@ object DocsMarkdown:
             case Token.Node(ui) => flush(); out += ui
         }
         flush()
-        out.toSeq
+        Chunk.from(out)
     end coalesceText
 
     /** Read characters until (but not including) the next occurrence of `stop`, as a String. */

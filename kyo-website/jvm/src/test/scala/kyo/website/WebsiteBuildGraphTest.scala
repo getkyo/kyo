@@ -7,11 +7,12 @@ class WebsiteBuildGraphTest extends Test:
 
     // Locate the repo root by walking up from user.dir until we find build.sbt.
     private def repoRoot(): java.nio.file.Path =
-        var dir = Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
-        while dir != null && !Files.exists(dir.resolve("build.sbt")) do
-            dir = dir.getParent
-        if dir == null then throw new RuntimeException("repo root with build.sbt not found")
-        dir
+        val start = Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
+        Iterator
+            .iterate(start)(_.getParent)
+            .takeWhile(_ != null)
+            .find(dir => Files.exists(dir.resolve("build.sbt")))
+            .getOrElse(throw new RuntimeException("repo root with build.sbt not found"))
     end repoRoot
 
     // build.sbt is at the repo root.
