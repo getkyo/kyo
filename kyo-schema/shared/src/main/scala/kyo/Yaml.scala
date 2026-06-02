@@ -1588,14 +1588,18 @@ object Yaml:
 
     /** Renders a CST document to YAML through the event renderer.
       *
-      * Unlike [[Cst.Document.render]], which returns the original source byte-for-byte until the document is edited, this always emits
+      * Unlike [[Cst.Document.render]], which returns the original source verbatim until the document is edited, this always emits
       * canonically through the supplied [[WriterConfig]].
       */
     def render(document: Cst.Document)(using config: WriterConfig, frame: Frame): Result[DecodeException, String] =
         pipeline.writer(config).render(document)
     end render
 
-    /** Renders a CST stream to YAML through the event renderer. */
+    /** Renders a CST stream to YAML through the event renderer.
+      *
+      * Unlike [[Cst.Stream.render]], which returns the original source verbatim until the stream is edited, this always emits
+      * canonically through the supplied [[WriterConfig]].
+      */
     def render(stream: Cst.Stream)(using config: WriterConfig, frame: Frame): Result[DecodeException, String] =
         pipeline.writer(config).render(stream)
     end render

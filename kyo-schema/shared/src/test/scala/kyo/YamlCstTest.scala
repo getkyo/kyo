@@ -1619,18 +1619,28 @@ class YamlCstTest extends Test:
             val stream =
                 Yaml.cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
 
+            val parsedKeys =
+                Yaml.parse(document).getOrThrow match
+                    case Yaml.Node.Mapping(entries, _) =>
+                        entries.map {
+                            case (Yaml.Node.Scalar(key, _), _) => key
+                            case (other, _)                    => fail(s"Expected scalar key, found $other")
+                        }
+                    case other =>
+                        fail(s"Expected mapping root, found $other")
+
             assertResult(
                 (
                     rendered = Result.succeed("name: Alice\nage: 30\n"),
                     renderedStream = Result.succeed("---\nname: Alice\n---\nname: Bob\n"),
-                    parsedIsMapping = true,
+                    parsedKeys = Chunk("name", "age"),
                     nodeCount = Result.succeed(2)
                 )
             ) {
                 (
                     rendered = Yaml.render(document),
                     renderedStream = Yaml.render(stream),
-                    parsedIsMapping = Yaml.parse(document).getOrThrow.isInstanceOf[Yaml.Node.Mapping],
+                    parsedKeys = parsedKeys,
                     nodeCount = Yaml.parseAll(stream).map(_.size)
                 )
             }
