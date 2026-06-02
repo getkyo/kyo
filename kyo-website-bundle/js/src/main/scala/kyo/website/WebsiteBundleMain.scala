@@ -105,21 +105,32 @@ object WebsiteBundleMain:
             initialRendered <- DocsMarkdown.transpile(island.markdown)
             articleRef      <- Signal.initRef[UI](initialRendered.article)
             tocRef          <- Signal.initRef[Chunk[DocsMarkdown.Heading]](initialRendered.headings)
-            // Launch a fiber that updates the article and the TOC outline on each navigation.
+            // Launch a fiber that updates the article and the TOC outline on each navigation. Only a
+            // docs module route (`/<prefix>/<slug>/`, two or more path segments) has a sibling
+            // `content.md` to fetch and render in place. Any other route the interceptor captured (the
+            // landing `/`, or a `/<prefix>/` intro page) has no content.md, so hand it off to a full
+            // browser navigation: the server serves the correct page instead of the fetch 404-ing and
+            // leaving stale content behind.
             _ <- Fiber.initUnscoped {
                 Loop.forever {
                     for
                         nextRoute <- route.next
-                        md        <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
-                        fetched <- if md.nonEmpty then Sync.defer(md)
-                        else
-                            DocsClient.fetchMarkdown(nextRoute).map { f =>
-                                seedMarkdownCache(nextRoute, f)
-                                f
-                            }
-                        rendered <- DocsMarkdown.transpile(fetched)
-                        _        <- articleRef.set(rendered.article)
-                        _        <- tocRef.set(rendered.headings)
+                        isModuleRoute = nextRoute.split("/").count(_.nonEmpty) >= 2
+                        _ <-
+                            if !isModuleRoute then Sync.defer(dom.window.location.href = nextRoute)
+                            else
+                                for
+                                    md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
+                                    fetched <- if md.nonEmpty then Sync.defer(md)
+                                    else
+                                        DocsClient.fetchMarkdown(nextRoute).map { f =>
+                                            seedMarkdownCache(nextRoute, f)
+                                            f
+                                        }
+                                    rendered <- DocsMarkdown.transpile(fetched)
+                                    _        <- articleRef.set(rendered.article)
+                                    _        <- tocRef.set(rendered.headings)
+                                yield ()
                     yield Loop.continue
                     end for
                 }

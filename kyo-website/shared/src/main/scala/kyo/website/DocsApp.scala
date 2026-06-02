@@ -66,12 +66,16 @@ object DocsApp:
     )(using Frame): UI < Sync =
         Sync.defer {
             val allModules = content.groups.flatMap(_.modules)
+            // The "Docs" link targets the first module under this page's own prefix tree: a real,
+            // client-routable docs page with content, not the empty `/<prefix>/` intro. Falls back to
+            // the prefix root when there are no modules.
+            val docsHome = allModules.headOption.fold(s"/$prefix/")(m => s"/$prefix/${m.slug}/")
             // The header is a full-width bar above the centered 3-column row. It must NOT be a child of
             // docs-shell: docs-shell is flex-direction:row, so a header sibling there steals a column's
             // width and squishes the content. The bare wrapper is a flex column (base div rule), so the
             // header stacks above the shell; docs-shell holds only the three panes.
             UI.div(
-                docsHeader(versions),
+                docsHeader(versions, docsHome),
                 UI.div.cssClass("docs-shell")(
                     sidebar(content, route, prefix),
                     contentArea(article, allModules, route, prefix),
@@ -83,7 +87,7 @@ object DocsApp:
 
     // ---- Private helpers ----
 
-    private def docsHeader(versions: Chunk[WebsiteVersion])(using Frame): UI =
+    private def docsHeader(versions: Chunk[WebsiteVersion], docsHome: String)(using Frame): UI =
         val versionOptions: Seq[(String, String)] = versions.toSeq.map(v => v.tag -> v.label)
         UI.header.cssClass("docs-header")(
             UI.div.cssClass("wrap").cssClass("nav-bar")(
@@ -91,7 +95,7 @@ object DocsApp:
                     UI.span("kyo")
                 ),
                 UI.nav.cssClass("docs-nav")(
-                    UI.a("Docs").href(Href.Path("/latest/")),
+                    UI.a("Docs").href(Href.Path(docsHome)),
                     UI.a("API")
                         .href(Href.External("https", "//javadoc.io/doc/io.getkyo/kyo-core_3"))
                 ),
