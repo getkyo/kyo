@@ -34,21 +34,52 @@ private[kyo] object YamlCstBuilder:
         document: Cst.Document,
         context: Ctx
     )(handler: Yaml.Events.Handler[Ctx, Err]): Result[Err, Ctx] =
-        val start = document.span.start
-        val end   = document.span.end
-        handler.streamStart(context, start).flatMap { c1 =>
-            handler.documentStart(c1, start).flatMap { c2 =>
-                document.root match
-                    case Present(root) => emitNode(root, c2)(handler)
-                    case Absent        => Result.succeed(c2)
-                end match
-            }.flatMap { c3 =>
-                handler.documentEnd(c3, end)
-            }.flatMap { c4 =>
-                handler.streamEnd(c4, end)
+        handler.streamStart(context, document.span.start).flatMap { c1 =>
+            emitDocumentBody(document, c1)(handler).flatMap { c2 =>
+                handler.streamEnd(c2, document.span.end)
             }
         }
     end emitDocument
+
+    def emitDocumentBody[Ctx, Err](
+        document: Cst.Document,
+        context: Ctx
+    )(handler: Yaml.Events.Handler[Ctx, Err]): Result[Err, Ctx] =
+        handler.documentStart(context, document.span.start).flatMap { c1 =>
+            val body =
+                document.root match
+                    case Present(root) => emitNode(root, c1)(handler)
+                    case Absent        => Result.succeed(c1)
+            body.flatMap { c2 =>
+                handler.documentEnd(c2, document.span.end)
+            }
+        }
+    end emitDocumentBody
+
+    def emitStream[Ctx, Err](
+        stream: Cst.Stream,
+        context: Ctx
+    )(handler: Yaml.Events.Handler[Ctx, Err]): Result[Err, Ctx] =
+        handler.streamStart(context, stream.span.start).flatMap { c1 =>
+            emitStreamDocuments(stream, handler, 0, c1)
+        }.flatMap { last =>
+            handler.streamEnd(last, stream.span.end)
+        }
+    end emitStream
+
+    @tailrec private def emitStreamDocuments[Ctx, Err](
+        stream: Cst.Stream,
+        handler: Yaml.Events.Handler[Ctx, Err],
+        index: Int,
+        context: Ctx
+    ): Result[Err, Ctx] =
+        if index >= stream.documents.size then Result.succeed(context)
+        else
+            emitDocumentBody(stream.documents(index), context)(handler) match
+                case Result.Success(next) => emitStreamDocuments(stream, handler, index + 1, next)
+                case failure              => failure
+            end match
+    end emitStreamDocuments
 
     private def emitNode[Ctx, Err](
         node: Cst.Node,
