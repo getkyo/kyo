@@ -45,7 +45,7 @@ jobs:
             git archive "$tag" README.md '*/README.md' | tar -x -C "content/$tag" || true
           done
       - name: Render and assemble the site
-        run: sbt 'kyo-websiteJVM/run --out site --content content'
+        run: sbt 'kyo-websiteJVM/run --out site --content content --repo-root "$GITHUB_WORKSPACE"'
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -63,5 +63,8 @@ jobs:
 # the degrade-not-fail step half: a tag with no module READMEs still extracts the root README, and
 # WebsiteContent.fromRepo then yields intro-only (INV-007). The render step omits --bundle-dir: when
 # the flag is absent, WebsiteMain discovers the fullLinkJS output directory under
-# kyo-website-bundle/js/target/scala-<version>/ (the -opt sibling holding main.js). Nothing here writes
+# kyo-website-bundle/js/target/scala-<version>/ (the -opt sibling holding main.js). It passes
+# --repo-root "$GITHUB_WORKSPACE" so kyo.png, kyo-website/assets/kyo.ico, and the discovered bundle dir
+# resolve from the repo root even when sbt forks the run into kyo-website/jvm (WebsiteMain also walks up
+# to the nearest build.sbt when the flag is absent, so this is belt-and-suspenders). Nothing here writes
 # the generated output back to the repo with git; the site ships only as the Pages artifact (INV-011).

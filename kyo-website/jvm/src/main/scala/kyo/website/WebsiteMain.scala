@@ -16,7 +16,9 @@ import kyo.*
   *                          `<repo-root>/kyo-website-bundle/js/target/scala-<version>/` (the `fullLinkJS`
   *                          `-opt` output holding `main.js`), so the deploy workflow needs no path flag.
   *   - `--repo-root <dir>`  Repo root for locating `kyo.png` and `kyo-website/assets/kyo.ico`.
-  *                          Defaults to the current working directory.
+  *                          When absent, the root is discovered by walking up from the working
+  *                          directory to the nearest ancestor holding a `build.sbt` (so a forked
+  *                          `sbt run` cwd of `kyo-website/jvm` still resolves correctly).
   *   - `--content <dir>`    Directory with one `<tag>/` subdirectory per version, each an extracted
   *                          tag tree (root `README.md` + `<slug>/README.md`). Each subdirectory is
   *                          read via `WebsiteContent.fromRepo` into the version manifest. When absent
@@ -165,9 +167,29 @@ object WebsiteMain extends KyoApp:
         end if
     end discoverBundleDir
 
+    /** The repo root for locating `kyo.png`, `kyo-website/assets/kyo.ico`, and the discovered bundle
+      * directory. `--repo-root <dir>` overrides when supplied. Otherwise the root is discovered by
+      * walking UP from `user.dir`: under `sbt 'kyo-websiteJVM/run …'` the forked cwd is
+      * `kyo-website/jvm`, not the repo root, so the bare `user.dir` resolves those paths wrong. The
+      * nearest ancestor directory holding a `build.sbt` (the repository's marker file) is the root;
+      * falls back to `user.dir` if none is found. Total and pure: no exceptions, no effects.
+      */
     private def parseRepoRoot(theArgs: Chunk[String]): String =
-        flagValue(theArgs, "--repo-root")
-            .getOrElse(java.lang.System.getProperty("user.dir", "."))
+        flagValue(theArgs, "--repo-root").getOrElse(discoverRepoRoot())
+
+    private def discoverRepoRoot(): String =
+        import java.nio.file.Files
+        import java.nio.file.Path as JPath
+        val userDir                     = java.lang.System.getProperty("user.dir", ".")
+        val start                       = JPath.of(userDir).toAbsolutePath
+        def isRoot(dir: JPath): Boolean = Files.isRegularFile(dir.resolve("build.sbt"))
+        @scala.annotation.tailrec
+        def walkUp(dir: JPath): Maybe[JPath] =
+            if dir == null then Absent
+            else if isRoot(dir) then Present(dir)
+            else walkUp(dir.getParent)
+        walkUp(start).map(_.toString).getOrElse(userDir)
+    end discoverRepoRoot
 
     private[website] def flagValue(theArgs: Chunk[String], flag: String): Maybe[String] =
         val idx = theArgs.indexWhere(_ == flag)

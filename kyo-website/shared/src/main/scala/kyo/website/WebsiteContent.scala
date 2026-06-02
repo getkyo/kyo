@@ -134,7 +134,11 @@ object WebsiteContent:
         if tableRows.size < 2 || !tableRows.exists(isSeparatorRow) then
             Abort.fail(WebsiteReadmeException(root / "README.md", WebsiteReadmeException.ReadmeFailure.MalformedGroups))
         else
-            Kyo.foreach(moduleRows)(row => buildModule(root, name, row)).map(mods => Group(name, mods))
+            // buildModule yields Absent for a directory-link row (a module table entry pointing at a
+            // bare directory rather than a `<slug>/README.md`, e.g. `[kyo-examples](kyo-examples)`):
+            // such a module ships no doc-page README, so it is dropped from the rendered group rather
+            // than aborting (degrade-not-fail, INV-007). Present rows keep README order.
+            Kyo.foreach(moduleRows)(row => buildModule(root, name, row)).map(mods => Group(name, mods.flatMap(_.toChunk)))
         end if
     end buildGroup
 
@@ -143,26 +147,37 @@ object WebsiteContent:
         cells.nonEmpty && cells.forall(c => c.nonEmpty && c.forall(ch => ch == '-' || ch == ':'))
     end isSeparatorRow
 
-    /** Parse one module table row into a `WebsiteModule`, reading its README. The expected columns are
-      * `| [slug](target) | description | JVM | JS | Native |`. Aborts `MalformedTable` if the row does
-      * not have at least the 5 cells or the slug link cannot be extracted.
+    /** Parse one module table row into a `WebsiteModule`, reading its README, or `Absent` when the row
+      * is a directory-link entry that ships no doc-page README (degrade-not-fail, INV-007). The columns
+      * are `| [slug](target) | JVM | JS | Native | Identity |`. Aborts `MalformedTable` if the row does
+      * not have at least the 5 cells or the link cannot be parsed.
+      *
+      * A `<slug>/README.md` link (`[kyo-data](kyo-data/README.md)`) is a documentation module: its
+      * README is read from `root/<slug>/README.md` and a genuinely-absent file aborts `Missing`. A
+      * bare-directory link (`[kyo-examples](kyo-examples)`) points at a directory with no module-level
+      * README (the deploy's `git archive` README pathspec extracts no `<slug>/README.md` for it), so it
+      * yields `Absent` and the module is dropped from the rendered group rather than failing the whole
+      * site.
       */
-    private def buildModule(root: Path, group: String, row: String)(using Frame): WebsiteModule < (Sync & Abort[WebsiteException]) =
+    private def buildModule(root: Path, group: String, row: String)(using Frame): Maybe[WebsiteModule] < (Sync & Abort[WebsiteException]) =
         val cells = pipeCells(row)
         if cells.size < 5 then Abort.fail(WebsiteReadmeException(root / "README.md", WebsiteReadmeException.ReadmeFailure.MalformedTable))
         else
-            extractSlug(cells(0)) match
+            extractLink(cells(0)) match
                 case Absent => Abort.fail(WebsiteReadmeException(root / "README.md", WebsiteReadmeException.ReadmeFailure.MalformedTable))
-                case Present(slug) =>
-                    val platforms = WebsiteModule.Platforms(
-                        jvm = isSupported(cells(2)),
-                        js = isSupported(cells(3)),
-                        native = isSupported(cells(4))
-                    )
-                    // title = slug by design: the root README module table has no separate title
-                    // column (`| [slug](target) | description | JVM | JS | Native |`), and the slug
-                    // (`kyo-core`, `kyo-data`, ...) is the display title for kyo modules.
-                    readRequired(root / slug / "README.md").map(readme => WebsiteModule(slug, group, slug, readme, platforms))
+                case Present(ModuleLink(slug, hasReadme)) =>
+                    if !hasReadme then Maybe.empty[WebsiteModule]
+                    else
+                        val platforms = WebsiteModule.Platforms(
+                            jvm = isSupported(cells(1)),
+                            js = isSupported(cells(2)),
+                            native = isSupported(cells(3))
+                        )
+                        // title = slug by design: the root README module table has no separate title
+                        // column (`| [slug](target) | JVM | JS | Native | Identity |`), and the slug
+                        // (`kyo-core`, `kyo-data`, ...) is the display title for kyo modules.
+                        readRequired(root / slug / "README.md").map(readme => Present(WebsiteModule(slug, group, slug, readme, platforms)))
+                    end if
             end match
         end if
     end buildModule
@@ -179,18 +194,31 @@ object WebsiteContent:
         end if
     end pipeCells
 
-    /** Extract the slug from a Markdown link cell `[text](target)`, stripping any leading `../` from
-      * the target, or `Absent` if the cell is not a link.
+    /** A parsed module-table link: the directory `slug` and whether the link targets a module README
+      * (`<slug>/README.md`) versus a bare directory. `hasReadme` is the degrade signal: `false` means
+      * the row is a directory pointer with no doc-page README (see [[buildModule]]).
       */
-    private def extractSlug(cell: String): Maybe[String] =
+    final private case class ModuleLink(slug: String, hasReadme: Boolean)
+
+    /** Parse the module DIRECTORY slug and the link kind from a Markdown link cell `[text](target)`, or
+      * `Absent` if the cell is not a link. The real README links point at `<slug>/README.md` (e.g.
+      * `[kyo-data](kyo-data/README.md)`), so the target is reduced to the directory: leading `./`/`../`
+      * are stripped, then a trailing `/README.md` (which sets `hasReadme = true`) and any trailing `/`.
+      * The slug is BOTH the URL slug and the directory under `root`, so `root/<slug>/README.md` resolves
+      * the module README. `kyo-data/README.md` yields `ModuleLink("kyo-data", hasReadme = true)`; a bare
+      * `kyo-examples` yields `ModuleLink("kyo-examples", hasReadme = false)`.
+      */
+    private def extractLink(cell: String): Maybe[ModuleLink] =
         val open  = cell.indexOf('(')
         val close = cell.indexOf(')', open + 1)
         if open >= 0 && close > open then
-            val target = cell.substring(open + 1, close).trim.stripPrefix("./").stripPrefix("../")
-            if target.nonEmpty then Present(target) else Absent
+            val target    = cell.substring(open + 1, close).trim.stripPrefix("./").stripPrefix("../")
+            val hasReadme = target.endsWith("/README.md")
+            val slug      = target.stripSuffix("/README.md").stripSuffix("/")
+            if slug.nonEmpty then Present(ModuleLink(slug, hasReadme)) else Absent
         else Absent
         end if
-    end extractSlug
+    end extractLink
 
     private def isSupported(cell: String): Boolean =
         val c = cell.trim
