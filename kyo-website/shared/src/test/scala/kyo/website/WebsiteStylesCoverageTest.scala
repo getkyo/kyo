@@ -110,8 +110,15 @@ class WebsiteStylesCoverageTest extends Test:
         for
             route    <- Signal.initRef[String]("/v0.9.0/kyo-core/")
             rendered <- DocsMarkdown.transpile(article)
-            view     <- DocsApp.view(content, Chunk(WebsiteVersion("v0.9.0", "0.9.0", false)), "v0.9.0", route, toc, rendered.article)
-            html     <- UI.runRender(view).take(1).run
+            view <- DocsApp.view(
+                content,
+                Chunk(WebsiteVersion("v0.9.0", "0.9.0", false)),
+                "v0.9.0",
+                route,
+                Signal.initConst(toc),
+                rendered.article
+            )
+            html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
         end for
     end docsHtml

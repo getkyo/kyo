@@ -104,7 +104,8 @@ object WebsiteBundleMain:
         for
             initialRendered <- DocsMarkdown.transpile(island.markdown)
             articleRef      <- Signal.initRef[UI](initialRendered.article)
-            // Launch a fiber that updates articleRef on each navigation.
+            tocRef          <- Signal.initRef[Chunk[DocsMarkdown.Heading]](initialRendered.headings)
+            // Launch a fiber that updates the article and the TOC outline on each navigation.
             _ <- Fiber.initUnscoped {
                 Loop.forever {
                     for
@@ -118,6 +119,7 @@ object WebsiteBundleMain:
                             }
                         rendered <- DocsMarkdown.transpile(fetched)
                         _        <- articleRef.set(rendered.article)
+                        _        <- tocRef.set(rendered.headings)
                     yield Loop.continue
                     end for
                 }
@@ -127,7 +129,7 @@ object WebsiteBundleMain:
                 island.versions,
                 prefix,
                 route,
-                initialRendered.headings,
+                tocRef,
                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
                 UI.Ast.Reactive(articleRef.map(a => a))
             )

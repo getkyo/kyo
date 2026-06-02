@@ -97,7 +97,7 @@ class ChromeParityTest extends Test:
             route    <- Signal.initRef[String]("/latest/kyo-core/")
             // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
-            view <- DocsApp.view(docsContent, Chunk.empty, "latest", route, rendered.headings, reactive)
+            view <- DocsApp.view(docsContent, Chunk.empty, "latest", route, Signal.initConst(rendered.headings), reactive)
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield
             assert(html.contains("data-kyo-reactive"), s"data-kyo-reactive not found: $html")

@@ -22,7 +22,7 @@ class DocsAppTest extends Test:
         else if content.version.latest then "latest"
         else content.version.tag
         for
-            view <- DocsApp.view(content, versions, resolvedPrefix, route, toc, article)
+            view <- DocsApp.view(content, versions, resolvedPrefix, route, Signal.initConst(toc), article)
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield html
         end for

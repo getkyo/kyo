@@ -47,8 +47,10 @@ object DocsApp:
       *   version is also emitted under its own `v<X>/` tree where its links must stay `/v<X>/...`.
       * @param route
       *   Signal tracking the current pathname, used to compute active sidebar state and prev/next.
-      * @param toc
-      *   The heading outline for the TOC pane (from `DocsMarkdown.Rendered.headings`).
+      * @param tocSignal
+      *   The heading outline for the TOC pane (from `DocsMarkdown.Rendered.headings`), as a `Signal`
+      *   so the pane re-renders on client navigation. Pass `Signal.initConst(headings)` for a static
+      *   page (the SSG generator), or a `SignalRef` updated per route for the client bundle.
       * @param article
       *   The transpiled article subtree to embed in the content area. May be a `Reactive` node.
       * @return
@@ -59,7 +61,7 @@ object DocsApp:
         versions: Chunk[WebsiteVersion],
         prefix: String,
         route: Signal[String],
-        toc: Chunk[DocsMarkdown.Heading],
+        tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
         article: UI
     )(using Frame): UI < Sync =
         Sync.defer {
@@ -73,7 +75,7 @@ object DocsApp:
                 UI.div.cssClass("docs-shell")(
                     sidebar(content, route, prefix),
                     contentArea(article, allModules, route, prefix),
-                    tocPane(toc)
+                    tocPane(tocSignal)
                 )
             )
         }
@@ -148,24 +150,30 @@ object DocsApp:
         )
     end contentArea
 
-    private def tocPane(toc: Chunk[DocsMarkdown.Heading])(using Frame): UI =
+    private def tocPane(tocSignal: Signal[Chunk[DocsMarkdown.Heading]])(using Frame): UI =
+        // Reactive so client navigation swaps the outline to the new page's headings (the article and
+        // sidebar are reactive too; a static TOC would keep showing the previous module's headings).
+        // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
         UI.div.cssClass("docs-toc")(
-            UI.nav.cssClass("toc-nav")(
-                toc.toSeq.map { heading =>
-                    // Each entry carries a distinct per-level hook (toc-h1 / toc-h2 / toc-h3) so the
-                    // stylesheet can indent levels independently; level-3+ also carries the `sub` hook.
-                    val levelClass = heading.level match
-                        case 1 => "toc-item toc-h1"
-                        case 2 => "toc-item toc-h2"
-                        case 3 => "toc-item toc-h3 sub"
-                        case _ => "toc-item toc-h4 sub"
-                    UI.div.cssClass(levelClass)(
-                        UI.a(heading.text).href(Href.Fragment(heading.slug))
-                    )
-                }*
-            )
+            UI.Ast.Reactive(tocSignal.map(t => tocNav(t)))
         )
-    end tocPane
+
+    private def tocNav(toc: Chunk[DocsMarkdown.Heading])(using Frame): UI =
+        UI.nav.cssClass("toc-nav")(
+            toc.toSeq.map { heading =>
+                // Each entry carries a distinct per-level hook (toc-h1 / toc-h2 / toc-h3) so the
+                // stylesheet can indent levels independently; level-3+ also carries the `sub` hook.
+                val levelClass = heading.level match
+                    case 1 => "toc-item toc-h1"
+                    case 2 => "toc-item toc-h2"
+                    case 3 => "toc-item toc-h3 sub"
+                    case _ => "toc-item toc-h4 sub"
+                UI.div.cssClass(levelClass)(
+                    UI.a(heading.text).href(Href.Fragment(heading.slug))
+                )
+            }*
+        )
+    end tocNav
 
     private def prevNextNav(modules: Chunk[WebsiteModule], currentRoute: String, prefix: String)(using Frame): UI =
         val (prev, next) = prevNext(modules, currentRoute)
