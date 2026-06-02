@@ -84,4 +84,86 @@ private[kyo] object TestClasspaths2Platform:
         count
     end pendingLeafCount
 
+    /** Locate the worktree root directory (directory containing build.sbt). JVM only. */
+    def findWorktreeRoot: String =
+        var candidate = java.nio.file.Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
+        while candidate != null && !java.nio.file.Files.exists(candidate.resolve("build.sbt")) do
+            candidate = candidate.getParent
+        require(candidate != null, "Could not locate worktree root (no build.sbt found in ancestors of user.dir)")
+        candidate.toString
+    end findWorktreeRoot
+
+    /** Create a temporary directory and return its absolute path. JVM only. */
+    def createTempDir(prefix: String): String =
+        java.nio.file.Files.createTempDirectory(prefix).toString
+
+    /** Write bytes to a file at the given path. JVM only. */
+    def writeBytes(path: String, bytes: Array[Byte]): Unit =
+        java.nio.file.Files.write(java.nio.file.Paths.get(path), bytes)
+        ()
+
+    /** List all file names in a directory that end with the given suffix. JVM only. */
+    def listFilesWithSuffix(dir: String, suffix: String): Array[String] =
+        val f = new java.io.File(dir)
+        if f.exists && f.isDirectory then
+            f.listFiles().filter(_.getName.endsWith(suffix)).map(_.getName)
+        else Array.empty
+    end listFilesWithSuffix
+
+    /** Walk a directory recursively and return absolute paths of files ending with the given suffix. JVM only. */
+    def walkFilesWithSuffix(dir: String, suffix: String): Array[String] =
+        val base = java.nio.file.Paths.get(dir)
+        if !java.nio.file.Files.exists(base) then Array.empty
+        else
+            java.nio.file.Files
+                .walk(base)
+                .filter(_.getFileName.toString.endsWith(suffix))
+                .toArray
+                .map(_.asInstanceOf[java.nio.file.Path].toAbsolutePath.toString)
+        end if
+    end walkFilesWithSuffix
+
+    /** Read a file from an absolute path as a UTF-8 string. JVM only. */
+    def readFileAsString(path: String): String =
+        new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8")
+
+    /** Read a classpath resource by name as a UTF-8 string. JVM only. */
+    def readClasspathResource(resourcePath: String): String =
+        val stream = getClass.getResourceAsStream(resourcePath)
+        require(stream != null, s"Classpath resource not found: $resourcePath")
+        val content = new String(stream.readAllBytes(), "UTF-8")
+        stream.close()
+        content
+    end readClasspathResource
+
+    /** Run the concurrent reader+writer snapshot test. JVM only (uses StutterFileSource). */
+    def runConcurrentReaderWriterTest(
+        cp: Tasty.Classpath,
+        digest: Array[Byte],
+        tmpDir: String
+    )(using Frame): Boolean < (Async & Scope & Abort[TastyError]) =
+        val platSrc = kyo.internal.tasty.query.JvmFileSource
+        kyo.internal.tasty.snapshot.SnapshotWriter.write(cp, tmpDir, digest, platSrc).flatMap: _ =>
+            val hexDigest               = kyo.internal.tasty.snapshot.DigestComputer.toHexString(digest)
+            val snapshotPath            = s"$tmpDir/$hexDigest.krfl"
+            val (stutterSrc, semaphore) = StutterFileSource.wrapping(platSrc)
+            Fiber.init:
+                Abort.run[TastyError](
+                    kyo.internal.tasty.snapshot.SnapshotReader.read(snapshotPath, stutterSrc)
+                )
+            .flatMap: readerFiber =>
+                Async.sleep(30.millis).flatMap: _ =>
+                    Fiber.init:
+                        Abort.run[TastyError](
+                            kyo.internal.tasty.snapshot.SnapshotWriter.write(cp, tmpDir, digest, platSrc)
+                        )
+                    .flatMap: writerFiber =>
+                        writerFiber.get.flatMap: _ =>
+                            Sync.defer(semaphore.release()).flatMap: _ =>
+                                readerFiber.get.map: readResult =>
+                                    readResult match
+                                        case Result.Panic(_) => false
+                                        case _               => true
+    end runConcurrentReaderWriterTest
+
 end TestClasspaths2Platform

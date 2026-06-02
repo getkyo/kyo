@@ -79,8 +79,19 @@ private[kyo] object TestClasspaths:
             (p.contains("/kyo-core") && p.endsWith("/classes")) ||
                 (p.contains("/kyo-core") && p.endsWith(".jar"))
 
-    /** A standard 3-root combo used by most fidelity tests: kyo-tasty + kyo-data + scala-library. */
-    lazy val standard: Seq[String] = kyoTasty ++ kyoData ++ scalaLibrary
+    /** Subset: kyo-tasty-fixtures compiled classes directory, when available on the test classpath.
+      *
+      * kyo-tasty-fixtures provides the cross-platform fixture TASTy files (PlainClass, SomeCaseClass, Animal, Vehicle, etc.) that mirror the
+      * embedded fixture set used by JS/Native TestClasspaths. Including it in standard ensures JVM fidelity tests have access to the same
+      * fixture classes that JS/Native sees via the embedded bytes, enabling cross-platform parity (HARD RULE 14).
+      */
+    lazy val kyoTastyFixtures: Seq[String] =
+        all.filter: p =>
+            (p.contains("/kyo-tasty-fixtures") && p.endsWith("/classes")) ||
+                (p.contains("/kyo-tasty-fixtures") && p.endsWith(".jar"))
+
+    /** A standard 3-root combo used by most fidelity tests: kyo-tasty + kyo-data + scala-library + kyo-tasty-fixtures. */
+    lazy val standard: Seq[String] = kyoTasty ++ kyoData ++ scalaLibrary ++ kyoTastyFixtures
 
     /** A broader combo that adds kyo-core to the standard set, enabling ContextFunctionN coverage. */
     lazy val standardWithKyoCore: Seq[String] = standard ++ kyoCore

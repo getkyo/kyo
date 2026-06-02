@@ -8,9 +8,11 @@ import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for Phase 10: Scala 2 pickle reader.
   *
-  * All 7 tests are JVM-only because:
-  *   - InflaterInputStream is available on JVM and Native (Phase 20a); JS is still NotImplemented.
-  *   - The ScalaSig compact-encoding tests use TestResourceLoader which is JVM-only.
+  * Tests 1-4 and 6-9 use hand-crafted synthetic bytes and are cross-platform. Test 5 loads a JDK classfile via TestResourceLoader and
+  * remains jvmOnly.
+  *
+  * Phase 2.12 corrective: tests 1-4, 6-7 ungated because they use only synthetic bytes; test 5 is the only genuinely JVM-only test in
+  * this file (requires JDK java/lang/Object.class via TestResourceLoader).
   *
   * Tests use hand-crafted synthetic Scala 2 pickle bytes (raw format, no compact encoding) because generating real Scala 2 classfiles
   * during the agent run requires a Scala 2 compiler. Deviations from plan (see PHASE-10-IMPL-NOTES.md).
@@ -96,7 +98,7 @@ class Scala2PickleTest extends Test:
     // Test 1: ScalaSig attribute -> Flag.Scala2 on all symbols
     // -------------------------------------------------------------------------
 
-    "Test 1: ScalaSig classfile dispatch: classfile with ScalaSig produces symbols with Flag.Scala2" taggedAs jvmOnly in run {
+    "Test 1: ScalaSig classfile dispatch: classfile with ScalaSig produces symbols with Flag.Scala2" in run {
         // Build a minimal pickle with one TERMname entry (idx 0 = "MyClass") and one CLASSsym entry (idx 1)
         // CLASSsym data: nameRef=0 ownerRef=0 flags=0 (no flags)
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("MyClass"))
@@ -113,7 +115,7 @@ class Scala2PickleTest extends Test:
     // Test 2: Scala 2 case class -> kind == Class, Flag.Case
     // -------------------------------------------------------------------------
 
-    "Test 2: Scala 2 case class: CLASSsym with CASE flag -> kind=Class and Flag.Case" taggedAs jvmOnly in run {
+    "Test 2: Scala 2 case class: CLASSsym with CASE flag -> kind=Class and Flag.Case" in run {
         // CLASSsym with CASE_FLAG (0x00000800L) set
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("MyCaseClass"))
         val classEntry  = entry(Scala2PickleReader.CLASSsym, symData(0, 0, Scala2PickleReader.CASE_FLAG))
@@ -132,7 +134,7 @@ class Scala2PickleTest extends Test:
     // Test 3: Scala 2 method -> declaredType is Type.Function
     // -------------------------------------------------------------------------
 
-    "Test 3: Scala 2 method: VALsym with METH flag -> declaredType is Type.Function" taggedAs jvmOnly in run {
+    "Test 3: Scala 2 method: VALsym with METH flag -> declaredType is Type.Function" in run {
         // VALsym with METH_FLAG (0x00040000L): a method named "apply"
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("apply"))
         val methodEntry = entry(Scala2PickleReader.VALsym, symData(0, 0, Scala2PickleReader.METH_FLAG))
@@ -161,7 +163,7 @@ class Scala2PickleTest extends Test:
     // Test 4: Scala 2 type alias -> kind == TypeAlias, declaredType is Named
     // -------------------------------------------------------------------------
 
-    "Test 4: Scala 2 type alias: ALIASsym -> kind=TypeAlias and declaredType=Type.Named" taggedAs jvmOnly in run {
+    "Test 4: Scala 2 type alias: ALIASsym -> kind=TypeAlias and declaredType=Type.Named" in run {
         // ALIASsym entry: a type alias named "Alias"
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("Alias"))
         val aliasEntry  = entry(Scala2PickleReader.ALIASsym, symData(0, 0, 0L))
@@ -209,7 +211,7 @@ class Scala2PickleTest extends Test:
     // Test 6: corrupt ScalaSig bytes -> Abort.fail(CorruptedFile)
     // -------------------------------------------------------------------------
 
-    "Test 6: corrupt Scala 2 pickle bytes -> Abort.fail(CorruptedFile)" taggedAs jvmOnly in run {
+    "Test 6: corrupt Scala 2 pickle bytes -> Abort.fail(CorruptedFile)" in run {
         // A pickle with wrong major version (e.g., 99 instead of 5) should produce CorruptedFile
         val badPickle = Array[Byte](99.toByte, 0.toByte) // wrong major version
         Abort.run(readPickleDirect(badPickle)).map: result =>
@@ -228,7 +230,7 @@ class Scala2PickleTest extends Test:
     // Test 7: Scala 2 class parents resolve via placeholder mechanism
     // -------------------------------------------------------------------------
 
-    "Test 7: Scala 2 class symbol has at least one parent type (AnyRef placeholder)" taggedAs jvmOnly in run {
+    "Test 7: Scala 2 class symbol has at least one parent type (AnyRef placeholder)" in run {
         // Build a pickle with a single CLASSsym entry. The Scala2PickleReader adds an AnyRef placeholder parent.
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("MyParentClass"))
         val classEntry  = entry(Scala2PickleReader.CLASSsym, symData(0, 0, 0L))

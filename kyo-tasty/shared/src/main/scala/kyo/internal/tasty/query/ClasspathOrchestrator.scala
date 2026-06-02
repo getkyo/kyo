@@ -670,6 +670,11 @@ object ClasspathOrchestrator:
                         negIdToFinal: java.util.HashMap[Int, Int]
                     )
 
+                    // Accumulate negId -> FQN for annotation types that reference external symbols not in the
+                    // classpath (e.g. scala.deprecated when scala-library is absent). Stored in the Classpath
+                    // so that typeFqnString can fall back to the FQN string for symbolsAnnotatedWith matching.
+                    val unresolvedFqnByNegId = mutable.HashMap.empty[Int, String]
+
                     val fileRemaps = fileResults.map: fr =>
                         // Map 1: addr -> finalId (for PHASE_B_ADDR_OFFSET refs)
                         val addrToFinal = new java.util.HashMap[Int, Int](fr.addrMap.size * 2)
@@ -686,8 +691,10 @@ object ClasspathOrchestrator:
                                     val finalIdx = symbolIdMap.getOrDefault(partialSym, -1)
                                     if finalIdx >= 0 then discard(negIdToFinal.put(negId, finalIdx))
                                 case None =>
-                                    // FQN not found: leave as unresolved
-                                    ()
+                                    // FQN not found: the defining library is absent from the classpath.
+                                    // Record the negId -> FQN mapping so typeFqnString can match by FQN string
+                                    // even without a resolved symbol (e.g. scala.deprecated on JS/Native).
+                                    unresolvedFqnByNegId(negId) = fqn
                         }
                         FileRemap(addrToFinal, negIdToFinal)
                     .toArray
@@ -1388,7 +1395,8 @@ object ClasspathOrchestrator:
                         moduleIndex = moduleIndex,
                         errors = finalErrors,
                         canonical = canonical,
-                        diagnostics = collisionDiagnostics
+                        diagnostics = collisionDiagnostics,
+                        unresolvedFqnByNegId = unresolvedFqnByNegId.toMap
                     )
                     (cp, failFastError)
             }.flatMap: result =>

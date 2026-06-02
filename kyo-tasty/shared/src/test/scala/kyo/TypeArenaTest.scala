@@ -122,6 +122,7 @@ class TypeArenaTest extends Test:
     // plan: phase-05; hashOf also recurses without a depth guard; at MaxDepth+1 levels of nesting either the depth check
     // fires (DepthExceededException) or hashOf stack-overflows first (StackOverflowError). Both indicate the depth limit
     // has been exceeded. Phase 09 adds a hash depth guard to fully fix this.
+    // HARD RULE 14 exemption: MaxDepth+1 (1025) levels of recursion overflow the JS/Native call stack before DepthExceededException fires.
     "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge" taggedAs jvmOnly in run {
         nextId = 0
         val baseSym       = makeSym("DepthBase")
@@ -150,6 +151,7 @@ class TypeArenaTest extends Test:
     }
 
     // Test 7 (B8 boundary): nesting at MaxDepth-1 (1023 levels) succeeds without exception.
+    // HARD RULE 14 exemption: MaxDepth-1 (1023) levels of recursive merge overflows the JS/Native call stack.
     "B8: nesting at MaxDepth-1 (1023 levels) merges successfully" taggedAs jvmOnly in run {
         nextId = 0
         val baseSym       = makeSym("BoundBase")
@@ -169,6 +171,7 @@ class TypeArenaTest extends Test:
     }
 
     // Test 8 (T4, Rec depth boundary): Rec-type nesting at MaxDepth-1 succeeds.
+    // HARD RULE 14 exemption: MaxDepth-1 (1023) levels of recursive Rec merge overflows the JS/Native call stack.
     "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException" taggedAs jvmOnly in run {
         nextId = 0
         val leafSym          = makeSym("RecDepthLeaf")

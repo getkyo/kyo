@@ -92,7 +92,7 @@ class JavaSymbolTest extends Test:
     // Test 1: fullName for inner class - Phase 09 restores sym.fullName.
     // ArrayRecord is a JVM-only class fixture in kyo-tasty fixtures.
     // -------------------------------------------------------------------------
-    "sym.fullName for ArrayRecord returns a non-empty string" taggedAs jvmOnly in run {
+    "sym.fullName for ArrayRecord returns a non-empty string" in run {
         import kyo.internal.tasty.symbol.SymbolId
         val bytes     = kyo.fixtures.Embedded.arrayRecordClass
         val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)
@@ -113,7 +113,7 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 2: binaryName - Phase 09 restores sym.binaryName.
     // -------------------------------------------------------------------------
-    "sym.binaryName for ArrayRecord returns a non-empty string" taggedAs jvmOnly in run {
+    "sym.binaryName for ArrayRecord returns a non-empty string" in run {
         import kyo.internal.tasty.symbol.SymbolId
         val bytes     = kyo.fixtures.Embedded.arrayRecordClass
         val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)

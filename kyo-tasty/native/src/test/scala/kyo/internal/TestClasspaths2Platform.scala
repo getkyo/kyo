@@ -54,4 +54,31 @@ private[kyo] object TestClasspaths2Platform:
 
     def pendingLeafCount: Int = throw new UnsupportedOperationException("JVM-only: pendingLeafCount")
 
+    def findWorktreeRoot: String = throw new UnsupportedOperationException("JVM-only: findWorktreeRoot")
+
+    def runConcurrentReaderWriterTest(
+        cp: Tasty.Classpath,
+        digest: Array[Byte],
+        tmpDir: String
+    )(using Frame): Boolean < (Async & Scope & Abort[TastyError]) =
+        throw new UnsupportedOperationException("JVM-only: runConcurrentReaderWriterTest")
+
+    def createTempDir(prefix: String): String =
+        throw new UnsupportedOperationException("JVM-only: createTempDir")
+
+    def writeBytes(path: String, bytes: Array[Byte]): Unit =
+        throw new UnsupportedOperationException("JVM-only: writeBytes")
+
+    def listFilesWithSuffix(dir: String, suffix: String): Array[String] =
+        throw new UnsupportedOperationException("JVM-only: listFilesWithSuffix")
+
+    def walkFilesWithSuffix(dir: String, suffix: String): Array[String] =
+        throw new UnsupportedOperationException("JVM-only: walkFilesWithSuffix")
+
+    def readFileAsString(path: String): String =
+        throw new UnsupportedOperationException("JVM-only: readFileAsString")
+
+    def readClasspathResource(resourcePath: String): String =
+        throw new UnsupportedOperationException("JVM-only: readClasspathResource")
+
 end TestClasspaths2Platform

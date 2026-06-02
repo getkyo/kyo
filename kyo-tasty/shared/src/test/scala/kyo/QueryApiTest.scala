@@ -610,7 +610,7 @@ class QueryApiTest extends Test:
     // (parentTypes/typeParamIds/declarationIds) on the partial classSymbol are empty at this stage;
     // we read the pre-merge ClassfileResult fields (cr.parents, cr.typeParams, cr.symbols) directly.
     // Phase 09 adds sym.parents/typeParams/declarations as member methods accessible post-finalizeMerge.
-    "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" taggedAs jvmOnly in run {
+    "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" in run {
         val bytes    = kyo.fixtures.Embedded.arrayRecordClass
         val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError]:
@@ -836,7 +836,7 @@ class QueryApiTest extends Test:
     // Phase 5 Test 4 (G20, classfile path): sym.declaredType for a Java record field returns the
     // expected type. ArrayRecord.class has a single int[] component 'values'; its member symbol's
     // declaredType should be Type.Array(Type.Named(intSym)).
-    "Phase 5: Java classfile field declaredType returns Array type for int[] values" taggedAs jvmOnly in run {
+    "Phase 5: Java classfile field declaredType returns Array type for int[] values" in run {
         val bytes    = kyo.fixtures.Embedded.arrayRecordClass
         val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError]:

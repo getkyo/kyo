@@ -1362,13 +1362,31 @@ object TreeUnpickler:
             case TastyFormat.SELECTtpt =>
                 // SELECTtpt (113): cat-4 (tag + NameRef + qual_Tree). Type-position member selection.
                 // Encodes e.g. `scala.deprecated` as SELECT("deprecated", TERMREFpkg("scala")).
+                // Encodes e.g. `scala.annotation.tailrec` as SELECT("tailrec", SELECT("annotation", TERMREFpkg("scala")))
+                //   or as SELECT("tailrec", TERMREFsymbol(addr_for_scala.annotation_package))
+                //   where the latter produces TermRef(outer_qual, "annotation").
                 // Build a qualified FQN: decode qual to get its FQN, then combine with the selected name.
                 val nameRef = view.readNat()
                 val nm      = session.names(nameRef).asString
                 val qual    = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 val qualFqn: String = qual match
                     case Tasty.Type.Named(sid) if sid.value < -1 =>
+                        // Cross-file FQN reference (TERMREFpkg / TYPEREFpkg): look up the FQN from session.
                         session.unresolvedIdToFqn.getOrElse(sid.value, "")
+                    case Tasty.Type.TermRef(innerQual, innerName) =>
+                        // TERMREFsymbol for a package produces TermRef(outerQual, packageName).
+                        // Reconstruct the FQN by walking the TermRef chain.
+                        def termRefFqn(t: Tasty.Type): String = t match
+                            case Tasty.Type.Named(sid) if sid.value < -1 =>
+                                session.unresolvedIdToFqn.getOrElse(sid.value, "")
+                            case Tasty.Type.TermRef(q2, n2) =>
+                                import Tasty.Name.asString as nameAsString
+                                val base = termRefFqn(q2)
+                                if base.nonEmpty then base + "." + nameAsString(n2) else nameAsString(n2)
+                            case _ => ""
+                        import Tasty.Name.asString as nameAsString
+                        val base = termRefFqn(innerQual)
+                        if base.nonEmpty then base + "." + nameAsString(innerName) else nameAsString(innerName)
                     case _ =>
                         ""
                 val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm

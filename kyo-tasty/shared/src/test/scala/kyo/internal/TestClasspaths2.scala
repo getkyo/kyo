@@ -90,4 +90,62 @@ private[kyo] object TestClasspaths2:
     )(using Frame): (Array[Byte], Array[Byte]) < (Async & Scope & Abort[TastyError]) =
         TestClasspaths2Platform.twoColdInits(roots)
 
+    /** Locate the worktree root directory (directory containing build.sbt) (JVM only).
+      *
+      * Walks up from user.dir until build.sbt is found. Used by filesystem-scan leaves. Callers must gate invocations with the `jvmOnly`
+      * tag.
+      */
+    def findWorktreeRoot: String = TestClasspaths2Platform.findWorktreeRoot
+
+    /** Run the concurrent reader+writer snapshot test (JVM only).
+      *
+      * Writes an initial snapshot, starts a reader fiber via StutterFileSource, starts a writer fiber, releases the stutter latch, and
+      * returns true if the reader completed without a Panic. Callers must gate invocations with the `jvmOnly` tag.
+      */
+    def runConcurrentReaderWriterTest(
+        cp: Tasty.Classpath,
+        digest: Array[Byte],
+        tmpDir: String
+    )(using Frame): Boolean < (Async & Scope & Abort[TastyError]) =
+        TestClasspaths2Platform.runConcurrentReaderWriterTest(cp, digest, tmpDir)
+
+    /** Create a temporary directory and return its absolute path (JVM only).
+      *
+      * Callers must gate invocations with the `jvmOnly` tag.
+      */
+    def createTempDir(prefix: String): String = TestClasspaths2Platform.createTempDir(prefix)
+
+    /** Write bytes to a file at the given absolute path (JVM only).
+      *
+      * Callers must gate invocations with the `jvmOnly` tag.
+      */
+    def writeBytes(path: String, bytes: Array[Byte]): Unit = TestClasspaths2Platform.writeBytes(path, bytes)
+
+    /** List all file names in a directory that end with the given suffix (JVM only).
+      *
+      * Callers must gate invocations with the `jvmOnly` tag.
+      */
+    def listFilesWithSuffix(dir: String, suffix: String): Array[String] =
+        TestClasspaths2Platform.listFilesWithSuffix(dir, suffix)
+
+    /** Walk a directory recursively and return absolute paths of files ending with the given suffix (JVM only).
+      *
+      * Callers must gate invocations with the `jvmOnly` tag.
+      */
+    def walkFilesWithSuffix(dir: String, suffix: String): Array[String] =
+        TestClasspaths2Platform.walkFilesWithSuffix(dir, suffix)
+
+    /** Read a file from an absolute path as a UTF-8 string (JVM only).
+      *
+      * Callers must gate invocations with the `jvmOnly` tag.
+      */
+    def readFileAsString(path: String): String = TestClasspaths2Platform.readFileAsString(path)
+
+    /** Read a classpath resource by name as a UTF-8 string (JVM only).
+      *
+      * Uses the classloader resource stream. Callers must gate invocations with the `jvmOnly` tag.
+      */
+    def readClasspathResource(resourcePath: String): String =
+        TestClasspaths2Platform.readClasspathResource(resourcePath)
+
 end TestClasspaths2

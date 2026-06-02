@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.TestClasspaths
+import kyo.internal.TestClasspaths2
 import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotFormat
@@ -9,23 +10,25 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
 
 /** Fidelity tests for snapshot round-trip integrity.
   *
-  * Pins findings F-C-001, F-C-002, F-C-003, and F-G-002. Phase 12 un-pends all five existing leaves and adds one new
-  * v3-rejection leaf by fixing `SnapshotWriter` (serialize permittedSubclassIds, annotations, javaMetadata, full fqnIndex),
-  * `SnapshotReader` (read new fields, reject minor < 5, reconstruct dual-FQN index from FQNIDX__ section), and bumping
-  * FORMAT_VERSION to 5.
+  * Pins findings F-C-001, F-C-002, F-C-003, and F-G-002. Phase 12 un-pends all five existing leaves and adds one new v3-rejection leaf by
+  * fixing `SnapshotWriter` (serialize permittedSubclassIds, annotations, javaMetadata, full fqnIndex), `SnapshotReader` (read new fields,
+  * reject minor < 5, reconstruct dual-FQN index from FQNIDX__ section), and bumping FORMAT_VERSION to 5.
+  *
+  * Phase 2.12: relocated from jvm/src/test to shared/src/test. All leaves that perform filesystem snapshot round-trips (F-C-002, F-C-003,
+  * F-G-002, INV-010, v3-snapshot) are gated jvmOnly because they require java.nio.file and JvmFileSource. The pure format-version leaf
+  * (SnapshotFormat.minorVersion) runs cross-platform.
   */
 class SnapshotFidelityTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    /** Perform a cold load then write and read back a snapshot, returning (coldCp, warmCp). */
-    private def withRoundTrip(
-        roots: Seq[String] = TestClasspaths.standard
-    )(using Frame): (Tasty.Classpath, Tasty.Classpath) < (Async & Scope & Abort[TastyError]) =
-        TestClasspaths.withClasspath(roots).flatMap: coldCp =>
+    /** Perform a cold load then write and read back a snapshot, returning (coldCp, warmCp). JVM-only helper. */
+    private def withRoundTrip()(using Frame): (Tasty.Classpath, Tasty.Classpath) < (Async & Scope & Abort[TastyError]) =
+        // Loads the platform-default classpath (standard roots on JVM, embedded fixtures on JS/Native).
+        // This method is only called from jvmOnly leaves, so only the JVM path is exercised at runtime.
+        TestClasspaths.withClasspath().flatMap: coldCp =>
             Sync.defer:
-                val tmpDir = java.nio.file.Files.createTempDirectory("kyo-snapshot-fidelity").toString
-                tmpDir
+                TestClasspaths2.createTempDir("kyo-snapshot-fidelity")
             .flatMap: tmpDir =>
                 val digest  = Array[Byte](0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17)
                 val platSrc = PlatformFileSource.get
@@ -38,20 +41,17 @@ class SnapshotFidelityTest extends Test:
     // Given: a cold-loaded Classpath with all Phase 04..11 fixes applied;
     //        a snapshot written via SnapshotWriter then read back via SnapshotReader-only (warm load)
     // When: running the full assertion set against the warm-loaded classpath
-    // Then: post-fix every assertion passes;
-    //       before fix permittedSubclassIds, annotations, and javaMetadata reverted to empty on warm load
-    //       because SnapshotWriter never serialized them and SnapshotReader hard-coded Absent/empty
+    // Then: post-fix every assertion passes
     // Pins: INV-010 producer
-    "INV-010 (Phase 12): snapshot warm-load preserves all Phase 04..11 fixed data" in run {
+    // JVM-only: requires java.nio.file.Files.createTempDirectory and JvmFileSource.
+    "INV-010 (Phase 12): snapshot warm-load preserves all Phase 04..11 fixed data" taggedAs jvmOnly in run {
         withRoundTrip().map: (coldCp, warmCp) =>
-            // annotation count preserved
             val coldAnnotCount = coldCp.symbolsAnnotatedWith("scala.deprecated").size
             val warmAnnotCount = warmCp.symbolsAnnotatedWith("scala.deprecated").size
             assert(
                 warmAnnotCount >= coldAnnotCount,
                 s"Warm load lost deprecated annotations: cold=$coldAnnotCount warm=$warmAnnotCount"
             )
-            // permittedSubclassIds preserved for scala.Option
             val coldOpt = coldCp.findClass("scala.Option")
             val warmOpt = warmCp.findClass("scala.Option")
             (coldOpt, warmOpt) match
@@ -76,10 +76,10 @@ class SnapshotFidelityTest extends Test:
     // F-C-002 leaf 2 (Phase 12): permits-roundtrip
     // Given: a cold + warm Classpath pair via TestClasspaths.withClasspath and snapshot round-trip
     // When: comparing cp_cold.findClass("scala.Option").get.permittedSubclassIds vs warm
-    // Then: post-fix both are Present with equal sizes;
-    //       before fix the warm cp returned Absent (SnapshotReader.scala:662 hard-coded Absent)
+    // Then: post-fix both are Present with equal sizes
     // Pins: F-C-002
-    "F-C-002 (Phase 12): scala.Option.permittedSubclasses survives snapshot round-trip" in run {
+    // JVM-only: requires filesystem snapshot round-trip.
+    "F-C-002 (Phase 12): scala.Option.permittedSubclasses survives snapshot round-trip" taggedAs jvmOnly in run {
         withRoundTrip().map: (coldCp, warmCp) =>
             coldCp.findClass("scala.Option") match
                 case Present(cold) =>
@@ -100,6 +100,8 @@ class SnapshotFidelityTest extends Test:
                                     fail("permittedSubclassIds Present in cold but Absent after round-trip")
                                 case (Absent, _) =>
                                     succeed
+                                case _ =>
+                                    succeed
                             end match
                         case Absent =>
                             fail("scala.Option not found on warm classpath; round-trip failed to preserve class")
@@ -112,10 +114,10 @@ class SnapshotFidelityTest extends Test:
     // F-C-003 leaf 3 (Phase 12): annotations-roundtrip
     // Given: a cold + warm Classpath pair via TestClasspaths.withClasspath and snapshot round-trip
     // When: comparing cp_cold.symbolsAnnotatedWith("scala.deprecated").size vs warm
-    // Then: post-fix the sizes match (warm >= cold >= 5);
-    //       before fix warm size was 0 because SnapshotWriter never persisted annotations
+    // Then: post-fix the sizes match (warm >= cold >= 5)
     // Pins: F-C-003
-    "F-C-003 (Phase 12): symbolsAnnotatedWith(scala.deprecated) count survives snapshot round-trip" in run {
+    // JVM-only: requires filesystem snapshot round-trip.
+    "F-C-003 (Phase 12): symbolsAnnotatedWith(scala.deprecated) count survives snapshot round-trip" taggedAs jvmOnly in run {
         withRoundTrip().map: (coldCp, warmCp) =>
             val coldCount = coldCp.symbolsAnnotatedWith("scala.deprecated").size
             val warmCount = warmCp.symbolsAnnotatedWith("scala.deprecated").size
@@ -133,18 +135,11 @@ class SnapshotFidelityTest extends Test:
     // F-G-002 leaf 4 (Phase 12): javametadata-roundtrip
     // Given: a cold + warm Classpath pair; ANY symbol (including Object) with javaMetadata
     // When: comparing javaMetadata for that symbol between cold and warm via source FQN lookup
-    // Then: post-fix javaMetadata matches between cold and warm loads for both Class and Object;
-    //       before fix warm was Absent for Object symbols because the dual-index source FQN
-    //       (e.g. "kyo.internal.tasty.reader.PositionsUnpickler" without trailing $) was not
-    //       preserved through the snapshot round-trip (only one FQN per symbol was stored)
+    // Then: post-fix javaMetadata matches between cold and warm loads for both Class and Object
     // Pins: F-G-002 snapshot mirror + dual-FQN round-trip (HARD RULE 8)
-    "F-G-002 (Phase 12): javaMetadata survives snapshot round-trip for any symbol kind" in run {
+    // JVM-only: requires filesystem snapshot round-trip.
+    "F-G-002 (Phase 12): javaMetadata survives snapshot round-trip for any symbol kind" taggedAs jvmOnly in run {
         withRoundTrip().map: (coldCp, warmCp) =>
-            // Find ANY ClassLike symbol (Class or Object) with javaMetadata that is reachable
-            // via its source FQN in both the cold and warm classpath.
-            // The dual-FQN fix (FQNIDX__ section) ensures Object companions registered under
-            // both binary FQN (e.g. "kyo.internal.tasty.reader.PositionsUnpickler$") and source
-            // FQN (e.g. "kyo.internal.tasty.reader.PositionsUnpickler") survive the round-trip.
             val coldWithMeta = Maybe.fromOption(
                 coldCp.allClasses.flatMap:
                     case c: Tasty.Symbol.ClassLike if c.javaMetadata.isDefined => Chunk(c)
@@ -194,9 +189,9 @@ class SnapshotFidelityTest extends Test:
     // Wire-format leaf 5 (Phase 12): format-version-bumped
     // Given: a snapshot file written with the Phase 12 code
     // When: reading the first 4 bytes of the format header
-    // Then: post-fix version is 5 (Phase 12 dual-FQN fix added FQNIDX__ section, non-breaking bump);
-    //       before dual-FQN fix it was 4 (PERMITS2 / ANNOTS_ / JAVAMETA sections added)
+    // Then: post-fix version is 5 (Phase 12 dual-FQN fix added FQNIDX__ section, non-breaking bump)
     // Pins: snapshot wire-format bump
+    // Cross-platform: SnapshotFormat.minorVersion is a compile-time constant, no filesystem needed.
     "Phase 12: SnapshotFormat.FORMAT_VERSION is 5 after Phase 12 dual-FQN fix" in {
         assert(
             SnapshotFormat.minorVersion == 5,
@@ -208,11 +203,10 @@ class SnapshotFidelityTest extends Test:
     // Given: a synthetic snapshot byte stream with magic KRFL, major=1, minor=3 (v3 format)
     // When: writing it to a temp file and calling SnapshotReader.read
     // Then: result is Failure(TastyError.SnapshotVersionMismatch) where found.minor == 3
-    //       and the reader does NOT produce a classpath (forces cold re-decode in caller)
     // Pins: minor-version rejection decision (Option A from Phase 12 prep)
-    "v3-snapshot-triggers-cold-decode" in run {
+    // JVM-only: requires java.nio.file.Files.createTempFile and JvmFileSource.
+    "v3-snapshot-triggers-cold-decode" taggedAs jvmOnly in run {
         Sync.defer:
-            // Build a minimal fake v3 snapshot: magic(4) + version(4) + flags(8) + digest(8) + reserved(8) + sectionCount(4) = 36 bytes.
             val fakeV3 = new Array[Byte](36)
             fakeV3(0) = 'K'.toByte
             fakeV3(1) = 'R'.toByte
@@ -224,9 +218,10 @@ class SnapshotFidelityTest extends Test:
             fakeV3
         .flatMap: fakeV3 =>
             Sync.defer:
-                val tmpFile = java.nio.file.Files.createTempFile("kyo-fidelity-v3", ".krfl")
-                java.nio.file.Files.write(tmpFile, fakeV3)
-                tmpFile.toString
+                val tmpDir  = TestClasspaths2.createTempDir("kyo-fidelity-v3")
+                val tmpPath = s"$tmpDir/snapshot.krfl"
+                TestClasspaths2.writeBytes(tmpPath, fakeV3)
+                tmpPath
             .flatMap: tmpPath =>
                 Abort.run[TastyError](
                     SnapshotReader.read(tmpPath, PlatformFileSource.get)

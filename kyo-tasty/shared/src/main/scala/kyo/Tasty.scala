@@ -2082,7 +2082,15 @@ object Tasty:
           * Unlike `errors` (which carries decode-time failures such as `MalformedSection`), `diagnostics` carries build-time observations
           * about the classpath shape itself.
           */
-        diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty
+        diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty,
+        /** Map from negative SymbolId values to their fully-qualified name string for annotation types that could not be resolved
+          * because the defining library (e.g. scala-library) is not on the classpath.
+          *
+          * Used by `typeFqnString` as a fallback when `symbol(id)` returns `sentinelUnresolved` for a negative id. This enables
+          * `symbolsAnnotatedWith` to find symbols annotated with `scala.deprecated` or `scala.annotation.tailrec` even on JS/Native
+          * where the embedded fixture set does not include scala-library.
+          */
+        unresolvedFqnByNegId: Map[Int, String] = Map.empty
     ):
         // NOT a constructor parameter -- excluded from auto-generated equals / hashCode / copy / unapply.
         // A cp.copy(...) call produces a new Classpath with a fresh empty memo; this is correct because
@@ -2447,7 +2455,15 @@ object Tasty:
         private[Tasty] def typeFqnString(t: Type): String =
             import Name.asString
             t match
-                case Type.Named(id) => fullName(symbol(id)).asString
+                case Type.Named(id) =>
+                    val sym = symbol(id)
+                    if sym eq Classpath.sentinelUnresolved then
+                        // The type resolved to the sentinel. For annotation types that reference
+                        // external symbols (e.g. scala.deprecated when scala-library is absent),
+                        // the negative SymbolId may have a known FQN in unresolvedFqnByNegId.
+                        unresolvedFqnByNegId.getOrElse(SymbolId.value(id), "")
+                    else fullName(sym).asString
+                    end if
                 case Type.TermRef(qual, name) =>
                     val q = typeFqnString(qual)
                     if q.nonEmpty then q + "." + name.asString else name.asString
@@ -2806,7 +2822,8 @@ object Tasty:
             moduleIndex: Map[String, ModuleDescriptor],
             errors: Chunk[TastyError],
             canonical: kyo.internal.tasty.type_.TypeArena,
-            diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty
+            diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty,
+            unresolvedFqnByNegId: Map[Int, String] = Map.empty
         ): Classpath =
             new Classpath(
                 symbols = symbols,
@@ -2820,7 +2837,8 @@ object Tasty:
                 moduleIndex = moduleIndex,
                 errors = errors,
                 canonical = canonical,
-                diagnostics = diagnostics
+                diagnostics = diagnostics,
+                unresolvedFqnByNegId = unresolvedFqnByNegId
             )
         end make
 

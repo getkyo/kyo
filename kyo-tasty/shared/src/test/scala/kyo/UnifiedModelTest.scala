@@ -33,8 +33,13 @@ class UnifiedModelTest extends Test:
     /** Load fixture bytes from test resources (TASTy or .class files). */
     private def loadFixture(name: String): Array[Byte] =
         name match
-            case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
-            case other              => TestResourceLoader.loadBytes(s"/kyo/fixtures/$other")
+            case "PlainClass.tasty"             => kyo.fixtures.Embedded.plainClassTasty
+            case "SomeObject.tasty"             => kyo.fixtures.Embedded.someObjectTasty
+            case "SomeTrait.tasty"              => kyo.fixtures.Embedded.someTraitTasty
+            case "SomeCaseClass.tasty"          => kyo.fixtures.Embedded.someCaseClassTasty
+            case "FixtureClasses$package.tasty" => kyo.fixtures.Embedded.fixtureClassesPackageTasty
+            case "Container.tasty"              => kyo.fixtures.Embedded.containerTasty
+            case other                          => TestResourceLoader.loadBytes(s"/kyo/fixtures/$other")
         end match
     end loadFixture
 
@@ -238,7 +243,7 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 17: Scala case class has Flag.Case
     // -------------------------------------------------------------------------
-    "a Scala case class decoded from TASTy has flags.contains(Flag.Case)" taggedAs jvmOnly in run {
+    "a Scala case class decoded from TASTy has flags.contains(Flag.Case)" in run {
         tastySymbols("SomeCaseClass.tasty").map: result =>
             val caseClass = result.symbols.find: sym =>
                 sym.kind == Tasty.SymbolKind.Class && sym.flags.contains(Tasty.Flag.Case)
