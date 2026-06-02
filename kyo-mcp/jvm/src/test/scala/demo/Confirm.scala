@@ -17,7 +17,15 @@ object Confirm extends KyoApp:
     /** Inputs: the target to operate on; the engine asks the user to confirm before "deleting". */
     case class DestructiveOp(target: String) derives Schema, CanEqual
 
+    /** Response schema the host renders the elicitation form for. A real schema (with at least one
+      * property) is required by spec-compliant hosts ; the earlier `Json.JsonSchema.from[Unit]` emitted
+      * an empty-property object that Claude Code rejected as `requestedSchema.properties: undefined`.
+      */
+    case class ConfirmResponse(confirm: Boolean) derives Schema, CanEqual
+
     case class ConfirmDeclined(reason: String) derives Schema, CanEqual
+
+    case class ConfirmHostError(reason: String) derives Schema, CanEqual
 
     run {
         val destructiveTool =
@@ -26,11 +34,8 @@ object Confirm extends KyoApp:
                 description = "Pretends to delete the given target, but only after the user confirms via elicitation."
             ) { req =>
                 val request = McpServer.ElicitationRequest(
-                    message = s"Really delete '${req.target}'? Type yes / no.",
-                    // The MCP spec requires `requestedSchema` to describe the expected response shape.
-                    // The minimal one for "any object" is the JSON Schema for `Unit`, which kyo-schema
-                    // emits as `{}` post the Unit-as-empty-object fix landed earlier.
-                    requestedSchema = Json.JsonSchema.from[Unit]
+                    message = s"Really delete '${req.target}'? Confirm yes / no.",
+                    requestedSchema = Json.JsonSchema.from[ConfirmResponse]
                 )
                 Mcp.server.map(_.requestElicitation(request)).map { resp =>
                     resp.action match
@@ -40,8 +45,15 @@ object Confirm extends KyoApp:
                             Abort.fail(ConfirmDeclined(reason = "user declined"))
                         case McpServer.ElicitationResponse.Action.Cancel =>
                             Abort.fail(ConfirmDeclined(reason = "user cancelled"))
-                }
-            }.error[ConfirmDeclined](code = -32040, message = "confirm-declined")
+                }.handle(Abort.recover[McpException] { ex =>
+                    // Surface the host's verbatim message so debugging via the wire `data` field is
+                    // possible. Without this the typed error's `message` field is "elicitation-host-error"
+                    // and the underlying reason is lost.
+                    Abort.fail(ConfirmHostError(reason = Maybe(ex.getMessage).getOrElse(ex.getClass.getSimpleName)))
+                })
+            }
+                .error[ConfirmDeclined](code = -32040, message = "confirm-declined")
+                .error[ConfirmHostError](code = -32041, message = "elicitation-host-error")
 
         JsonRpcTransport.stdio().map { t =>
             McpServer.initWith(t, destructiveTool) { _ =>

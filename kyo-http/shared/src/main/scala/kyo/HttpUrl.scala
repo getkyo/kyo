@@ -165,7 +165,19 @@ object HttpUrl:
         else
             val schemeName  = url.substring(0, schemeEnd)
             val afterScheme = schemeEnd + 3
-            val isUnix      = schemeName.equalsIgnoreCase("http+unix") || schemeName.equalsIgnoreCase("https+unix")
+            val schemeLower = schemeName.toLowerCase
+            val isHttp      = schemeLower == "http" || schemeLower == "https"
+            val isWs        = schemeLower == "ws" || schemeLower == "wss"
+            val isUnix      = schemeLower == "http+unix" || schemeLower == "https+unix"
+            // Reject schemes outside the HTTP / WebSocket / HTTP-over-Unix-socket families up-front
+            // so callers cannot reach an arbitrary host on the HTTP transport via, e.g.,
+            // `ftp://internal/`. The check covers the BUG-C SSRF surface where a non-HTTP scheme
+            // would otherwise be silently downgraded to HTTP.
+            if !isHttp && !isWs && !isUnix then
+                throw new IllegalArgumentException(
+                    s"unsupported URL scheme: $schemeName (only http, https, ws, wss, http+unix, https+unix are allowed)"
+                )
+            end if
             if isUnix then
                 parseUnixSocketUrl(url, schemeName, afterScheme)
             else

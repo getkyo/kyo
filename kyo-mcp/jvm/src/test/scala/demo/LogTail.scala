@@ -3,7 +3,6 @@ package demo
 import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
-import kyo.Path as KPath
 
 /** MCP server demonstrating the resources/subscribe protocol.
   *
@@ -22,7 +21,7 @@ object LogTail extends KyoApp:
 
     run {
         val tailArg  = args.headOption.getOrElse("/tmp/mcp-validation/logtail.txt")
-        val tailPath = KPath.of(java.nio.file.Paths.get(tailArg).toAbsolutePath.normalize())
+        val tailPath = Path.of(java.nio.file.Paths.get(tailArg).toAbsolutePath.normalize())
 
         val readCurrent: String < Sync =
             tailPath.read.handle(Abort.recover[FileReadException](_ => ""))

@@ -40,7 +40,11 @@ object Summarize extends KyoApp:
                         case other =>
                             McpContent.text(s"[model=${resp.model}; stop=${resp.stopReason}] (non-text content: $other)")
                 }.handle(Abort.recover[McpException] { ex =>
-                    Abort.fail(SamplingRejected(reason = ex.getMessage))
+                    // Print the host's full error to stderr so a wire-level diagnostic is available
+                    // when the typed-error `data` channel is hidden by the calling host's UI surface.
+                    val reason = Maybe(ex.getMessage).getOrElse(ex.getClass.getSimpleName)
+                    Console.printLineErr(s"[Summarize] requestSampling failed: $reason")
+                        .map(_ => Abort.fail(SamplingRejected(reason = reason)))
                 })
             }.error[SamplingRejected](code = -32050, message = "sampling-rejected")
 

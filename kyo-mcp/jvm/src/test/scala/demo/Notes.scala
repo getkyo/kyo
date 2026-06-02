@@ -25,33 +25,45 @@ object Notes extends KyoApp:
     case class AddNote(title: String, body: String) derives Schema, CanEqual
     case class SearchNotes(query: String) derives Schema, CanEqual
 
+    case class NotesBadInput(reason: String) derives Schema, CanEqual
+
     private val notes: ConcurrentHashMap[String, String] = new ConcurrentHashMap[String, String]()
 
     run {
-        // -- add_note: stores a note keyed by title (replaces existing)
+        // -- add_note: stores a note keyed by title (replaces existing). Empty titles are rejected
+        // so two empty-title adds don't silently collide on the same map key.
         val addNoteTool =
             McpHandler.tool[AddNote](
                 name = "add_note",
-                description = "Stores a note keyed by title. Overwrites any existing note with the same title."
+                description = "Stores a note keyed by title. Overwrites any existing note with the same title. Title must be non-empty."
             ) { req =>
-                Sync.defer(notes.put(req.title, req.body))
-                    .map(_ => McpContent.text(s"stored note '${req.title}' (${req.body.length} chars)"))
+                if req.title.isEmpty then
+                    Abort.fail(NotesBadInput("title must be non-empty"))
+                else
+                    Sync.defer(notes.put(req.title, req.body))
+                        .map(_ => McpContent.text(s"stored note '${req.title}' (${req.body.length} chars)"))
             }
+                .error[NotesBadInput](code = -32060, message = "notes-bad-input")
 
-        // -- search_notes: toolMulti, one Text block per match; an empty result set is a successful
-        // empty search, not an error. The MCP `isError` flag is reserved for genuine failure paths
-        // (e.g. tool-internal exceptions that the engine catches and surfaces back to the host).
+        // -- search_notes: case-insensitive substring search over title + body. Empty query
+        // returns no matches (rather than matching everything) so callers don't accidentally
+        // page through the entire store.
         val searchNotesTool =
             McpHandler.toolMulti[SearchNotes](
                 name = "search_notes",
-                description = "Returns every note whose title or body contains the query substring."
+                description = "Returns every note whose title or body contains the query substring (case-insensitive). " +
+                    "An empty query returns no matches."
             ) { req =>
                 Sync.defer {
                     import scala.jdk.CollectionConverters.*
-                    val matches = notes.entrySet.iterator.asScala
-                        .filter(e => e.getKey.contains(req.query) || e.getValue.contains(req.query))
-                        .map(e => McpContent.text(s"${e.getKey}: ${e.getValue}"))
-                        .toList
+                    val q = req.query.toLowerCase
+                    val matches =
+                        if q.isEmpty then List.empty
+                        else
+                            notes.entrySet.iterator.asScala
+                                .filter(e => e.getKey.toLowerCase.contains(q) || e.getValue.toLowerCase.contains(q))
+                                .map(e => McpContent.text(s"${e.getKey}: ${e.getValue}"))
+                                .toList
                     val content =
                         if matches.isEmpty then Chunk(McpContent.text(s"No notes matching '${req.query}'."))
                         else Chunk.from(matches)

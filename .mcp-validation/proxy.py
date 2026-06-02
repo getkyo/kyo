@@ -21,6 +21,7 @@ Args:
     fqcn   : main class FQCN, e.g. "demo.Filesystem"
     rest   : forwarded to the demo's `args`
 """
+import fcntl
 import json
 import os
 import signal
@@ -151,11 +152,21 @@ def main() -> int:
                         log(f"upstream write failed: {e}")
 
     def child_to_upstream(c: subprocess.Popen):
-        """One thread per child generation. Reads child stdout -> Claude Code stdout."""
+        """One thread per child generation. Reads child stdout -> Claude Code stdout.
+
+        On EOF (child crashed, OOM, external kill), auto-respawns the JVM via trigger_reload
+        rather than going silent. Without this, a dead child would only be recovered by a
+        manual `touch reload.sentinel` (BUG-I from the QA pass).
+        """
         while not state["shutdown"]:
             body = read_one_message(c.stdout)
             if body is None:
-                log(f"child {c.pid} stdout EOF")
+                log(f"child {c.pid} stdout EOF — auto-respawning")
+                if not state["shutdown"]:
+                    try:
+                        trigger_reload()
+                    except Exception as e:
+                        log(f"auto-respawn failed: {e}")
                 return
             # If this is the synthetic-init response we injected, swallow it.
             try:
@@ -208,23 +219,44 @@ def main() -> int:
             log(f"replay write failed: {e}")
 
     def trigger_reload() -> None:
-        """Recompile + swap child."""
+        """Recompile + swap child.
+
+        Serializes the `sbt compile` step across all proxy instances via a filesystem flock
+        on `.mcp-validation/sbt-compile.lock`. Without serialization, a single
+        sentinel-touch fans out to N proxies that all race for the sbt ivy lock and
+        ~half of them fail their compile silently (BUG-J from the QA pass). Retries
+        the compile up to 3 times with exponential backoff so a transient lock loss
+        doesn't leave the proxy in a half-spawned state.
+        """
         log("reload triggered")
-        # Recompile
-        try:
-            subprocess.run(
-                ["sbt", "-batch", "-error", f"{module}/Test/compile"],
-                cwd=str(SCRIPT_DIR.parent),
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-                timeout=300,
-                env={**os.environ, "JAVA_OPTS": os.environ.get("JAVA_OPTS",
-                    "-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M "
-                    "-XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8")}
-            )
-        except Exception as e:
-            log(f"reload compile failed: {e}")
+        compile_lock = SCRIPT_DIR / "sbt-compile.lock"
+        env = {**os.environ, "JAVA_OPTS": os.environ.get("JAVA_OPTS",
+            "-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M "
+            "-XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8")}
+        compiled = False
+        for attempt in range(3):
+            try:
+                with open(compile_lock, "w") as f:
+                    fcntl.flock(f, fcntl.LOCK_EX)
+                    result = subprocess.run(
+                        ["sbt", "-batch", "-error", f"{module}/Test/compile"],
+                        cwd=str(SCRIPT_DIR.parent),
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.STDOUT,
+                        timeout=300,
+                        env=env,
+                    )
+                if result.returncode == 0:
+                    compiled = True
+                    break
+                log(f"reload compile attempt {attempt+1} returned non-zero ({result.returncode})")
+            except Exception as e:
+                log(f"reload compile attempt {attempt+1} failed: {e}")
+            if attempt < 2:
+                time.sleep(2 + attempt * 3)
+        if not compiled:
+            log("reload compile gave up after 3 attempts — spawning with stale bytecode")
 
         with state["lock"]:
             old = state["child"]

@@ -114,7 +114,13 @@ object RunAll extends KyoApp:
                         case 1 => McpServer.ElicitationResponse.Action.Accept
                         case 2 => McpServer.ElicitationResponse.Action.Decline
                         case _ => McpServer.ElicitationResponse.Action.Cancel
-                    McpServer.ElicitationResponse(action = action)
+                    // Demo.Confirm requests `ConfirmResponse(confirm: Boolean)`; supply matching content
+                    // so the kyo-mcp engine's response-schema validation does not reject the mock reply.
+                    val content =
+                        if action == McpServer.ElicitationResponse.Action.Accept then
+                            Present(Structure.Value.Record(Chunk("confirm" -> Structure.Value.Bool(true))))
+                        else Absent
+                    McpServer.ElicitationResponse(action = action, content = content)
                 }
             }
         val caps = McpCapabilities.Client(elicitation = Present(McpCapabilities.ElicitationCapability()))

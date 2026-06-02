@@ -3,7 +3,6 @@ package demo
 import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
-import kyo.Path as KPath
 
 /** MCP server exposing read-only `git` introspection for a configured repository.
   *
@@ -36,7 +35,7 @@ object GitInsight extends KyoApp:
 
     run {
         val repoArg = args.headOption.getOrElse(".")
-        val repo    = KPath.of(java.nio.file.Paths.get(repoArg).toAbsolutePath.normalize())
+        val repo    = Path.of(java.nio.file.Paths.get(repoArg).toAbsolutePath.normalize())
 
         // Run a `git` subcommand under `repo`, returning the trimmed stdout. Any pre-launch failure
         // (missing program, permission denied, missing cwd) or non-zero exit is mapped to GitError.
@@ -63,14 +62,19 @@ object GitInsight extends KyoApp:
                 }
             }.error[GitError](code = -32010, message = "git-error")
 
-        // -- git_log: recent commits, oneline format. Limit is optional and capped at 100.
+        // -- git_log: recent commits, oneline format. Limit is optional, must be >= 1, capped at 100.
         val logTool =
             McpHandler.tool[GitLog](
                 name = "git_log",
-                description = "Recent commits as oneline. Optional `limit` (default 10, max 100)."
+                description = "Recent commits as oneline. Optional `limit` (default 10, must be >= 1, max 100)."
             ) { req =>
-                val n = req.limit.getOrElse(10).max(1).min(100)
-                git("log", "--oneline", s"-n$n").map(McpContent.text(_))
+                val raw = req.limit.getOrElse(10)
+                if raw < 1 then
+                    Abort.fail(GitError(s"limit must be >= 1, got $raw"))
+                else
+                    val n = raw.min(100)
+                    git("log", "--oneline", s"-n$n").map(McpContent.text(_))
+                end if
             }.error[GitError](code = -32010, message = "git-error")
 
         // -- git_diff: pending or staged diff (default: unstaged).

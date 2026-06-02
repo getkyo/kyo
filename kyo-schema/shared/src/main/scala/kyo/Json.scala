@@ -228,16 +228,18 @@ object Json:
             value match
                 case obj: Obj =>
                     discard(entries.addOne("type" -> (() => writer.string("object"))))
-                    if obj.properties.nonEmpty then
-                        discard(entries.addOne("properties" -> { () =>
-                            writer.objectStart("", obj.properties.size)
-                            obj.properties.foreach { (name, sub) =>
-                                writer.fieldBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
-                                writeJsonSchema(sub, writer)
-                            }
-                            writer.objectEnd()
-                        }))
-                    end if
+                    // Always emit `properties` (even empty) so the wire shape matches the JSON-Schema
+                    // record validators (e.g. MCP elicitation/sampling hosts) that expect the field to
+                    // exist on every `type: object`. Omitting it on empty objects produces `{"type":"object"}`
+                    // which strict Zod-style record schemas reject as `properties: undefined`.
+                    discard(entries.addOne("properties" -> { () =>
+                        writer.objectStart("", obj.properties.size)
+                        obj.properties.foreach { (name, sub) =>
+                            writer.fieldBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
+                            writeJsonSchema(sub, writer)
+                        }
+                        writer.objectEnd()
+                    }))
                     if obj.required.nonEmpty then
                         discard(entries.addOne("required" -> { () =>
                             writer.arrayStart(obj.required.size)
