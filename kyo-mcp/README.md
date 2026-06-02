@@ -287,6 +287,31 @@ The hierarchy is sealed end-to-end. Register typed user-domain errors per handle
 
 Three application-error leaves ship with the library: `McpToolExecutionException(tool, reason, cause)`, `McpResourceReadException(uri, reason, cause)`, and `McpPromptRenderException(name, reason, cause)`. Each carries a typed `cause: Throwable | Text` and aborts directly inside tool, resource, and prompt handlers without needing a per-route `.error` registration.
 
+When the receiving peer reads a wire error response, it arrives as `McpRemoteApplicationException(remoteCode, remoteMessage, remoteData)` ; the wire triple is preserved verbatim from the sender. The caller pattern-matches on `remoteCode` to discriminate across user-defined error families. The handshake-failure leaves and dispatch-failure leaves (`McpUnknownToolException` and the rest) remain distinct because they are framework-generated, not user-mapped.
+
+### Catching Java throwables
+
+`Sync.defer { javaCallThatThrows() }` is the kyo idiom for wrapping a synchronous side effect, but kyo does not auto-convert escaping `Throwable`s into typed `Abort` rows. An uncaught `IOException` from `Files.readString` inside `Sync.defer` surfaces as a panic at the engine dispatch boundary and the client sees `-32603 InternalError`. Convert to a typed `Abort` row at the boundary:
+
+```scala
+case class ReadFile(path: String)              derives Schema, CanEqual
+case class FsError(reason: String, path: String) derives Schema, CanEqual
+
+val readTool: McpHandler[ReadFile, McpContent, McpException | FsError] =
+    McpHandler.tool[ReadFile](name = "read", description = "Read a file") { req =>
+        Abort.catching[java.io.IOException](
+            Sync.defer(java.nio.file.Files.readString(java.nio.file.Paths.get(req.path)))
+        )
+            .map(s => McpContent.text(s))
+            .handle(Abort.recover[java.io.IOException] { ex =>
+                Abort.fail(FsError(reason = ex.getMessage, path = req.path))
+            })
+    }
+    .error[FsError](code = -32001, message = "filesystem-error")
+```
+
+The `Abort.catching[java.io.IOException]` narrows the throw to a typed effect-row entry; `Abort.recover` converts it into the registered `FsError`. Once `.error[FsError]` is wired, the wire response carries code `-32001` and the schema-encoded `FsError` in the `data` slot, and the client receives `McpRemoteApplicationException(-32001, "filesystem-error", Present(...))`.
+
 ### Why the stage trait, not a flat enum
 
 Pipeline stage is the only axis along which an error-handling caller actually wants to fan out. A flat enum forces every caller to enumerate every leaf even when the only distinction that matters is "the handshake never completed" vs "the handler aborted". The sealed traits keep pattern-matching by stage one line long while the leaf case classes preserve the precise diagnostic for logging.
