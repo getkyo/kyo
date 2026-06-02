@@ -68,7 +68,10 @@ object WebsiteBundleMain:
         // Unsafe: browser entry-point bridge; single controlled crossing from JS main into the
         // Kyo scheduler. AllowUnsafe is necessary here because we have no Kyo fiber context.
         runStylesheetUnsafe()
-        val boot = dom.document.body.getAttribute("data-boot-scenario")
+        // The generator writes data-boot-scenario on the page's root content div (WebsitePage.withBootHook),
+        // not on <body>, so query for the element that carries it rather than reading document.body.
+        val bootEl = dom.document.querySelector("[data-boot-scenario]")
+        val boot   = if bootEl != null then bootEl.getAttribute("data-boot-scenario") else "landing"
         val view: UI < (Sync & Async) = boot match
             case "landing" => buildLanding()
             case _         => buildDocs()
