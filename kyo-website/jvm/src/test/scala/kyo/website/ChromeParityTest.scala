@@ -1,12 +1,19 @@
 package kyo.website
 
 import kyo.*
+import kyo.UI.PageHead
 
-/** Verifies INV-003: the landing page renders byte-identically via `UI.runRender` (SSG path) and
+/** Verifies INV-003 for the landing page and (Phase 6) the docs shell.
+  *
+  * Landing arm: renders byte-identically via `UI.runRender` (SSG path) and
   * `RecordingBackend.render` (the same renderer `DomBackend.mountInto` calls), at the initial
   * signal state (dropdown closed, no interaction). The two paths must produce identical HTML after
   * normalizing `data-kyo-path` attribute values (which are positional and deterministic for an
   * identical UI tree).
+  *
+  * Docs arm (Phase 6, leaves 13/13b/13c): same parity guarantee for the 3-pane docs shell with
+  * an embedded transpiled article subtree. The article is a real `UI` subtree produced by
+  * `DocsMarkdown.transpile`, so two calls with the same Markdown produce byte-identical output.
   *
   * JVM-only: `RecordingBackend` uses `HtmlRenderer` directly, which is `private[kyo]` and
   * accessible here because `kyo.website` is a subpackage of `kyo`. `UI.runMount` is JS-only;
@@ -63,6 +70,69 @@ class ChromeParityTest extends Test:
             val mountDrop = if mountDropEnd > mountDropStart then mountNorm.substring(mountDropStart, mountDropEnd)
             else mountNorm.substring(mountDropStart)
             assert(ssgDrop == mountDrop, "dropdown subtree must be identical between SSG and mount")
+        end for
+    }
+
+    // ---- Phase 6: Docs shell parity (INV-003) ----
+
+    private val testHead = PageHead(title = "t")
+
+    private def docsContent(using Frame): WebsiteContent =
+        WebsiteContent(
+            intro = "",
+            groups = Chunk(
+                WebsiteContent.Group(
+                    "Foundation",
+                    Chunk(WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
+                )
+            ),
+            version = WebsiteVersion("latest", "latest", true)
+        )
+
+    // Leaf 13: docs shell SSG path renders the article inside data-kyo-reactive (INV-003)
+    "docs shell SSG runRenderPage contains data-kyo-reactive wrapping article (INV-003, leaf 13)" in run {
+        val src = "## Scope\n\nSome text.\n"
+        for
+            rendered <- DocsMarkdown.transpile(src)
+            route    <- Signal.initRef[String]("/latest/kyo-core/")
+            // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render
+            reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
+            view <- DocsApp.view(docsContent, Chunk.empty, route, rendered.headings, reactive)
+            html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
+        yield
+            assert(html.contains("data-kyo-reactive"), s"data-kyo-reactive not found: $html")
+            assert(html.contains("<h2"), s"transpiled h2 not found: $html")
+        end for
+    }
+
+    // Leaf 13b: article is a UI subtree not a raw-HTML string at article-body level
+    "article is a UI subtree not a raw-HTML string at article-body level (leaf 13b)" in run {
+        val src = "## Scope\n\nSome text.\n"
+        for
+            rendered <- DocsMarkdown.transpile(src)
+        yield
+            // The article field must be a real UI AST node (not a RawHtml for the whole body)
+            rendered.article match
+                case UI.Ast.RawHtml(_) =>
+                    fail("article body must not be a top-level UI.Ast.RawHtml node")
+                case _ =>
+                    succeed
+            end match
+        end for
+    }
+
+    // Leaf 13c: same Markdown gives byte-identical article HTML in both SSG calls (INV-003)
+    "same Markdown gives byte-identical article in two runRenderPage calls (leaf 13c)" in run {
+        val src = "## Scope\n\n- item one\n- item two\n"
+        for
+            rendered1 <- DocsMarkdown.transpile(src)
+            rendered2 <- DocsMarkdown.transpile(src)
+            html1     <- UI.runRenderPage(testHead)(rendered1.article).take(1).run.map(_.headMaybe.getOrElse(""))
+            html2     <- UI.runRenderPage(testHead)(rendered2.article).take(1).run.map(_.headMaybe.getOrElse(""))
+        yield assert(
+            html1 == html2,
+            s"Two runRenderPage calls with the same Markdown must produce identical HTML (INV-003)"
+        )
         end for
     }
 

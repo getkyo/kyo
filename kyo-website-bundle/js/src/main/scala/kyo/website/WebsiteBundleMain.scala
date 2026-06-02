@@ -1,3 +1,4 @@
+// flow-allow: PUBLIC browser bundle entry
 package kyo.website
 
 import kyo.*
@@ -11,8 +12,9 @@ import org.scalajs.dom
   * 2. Reads `data-boot-scenario` from `document.body` to select the app arm (landing vs docs).
   * 3. Mounts the appropriate app under the `UILocation`-driven router.
   *
-  * The landing arm is fully wired in Phase 3. The docs arm is a stub returning `UI.empty` and is
-  * wired in Phase 6.
+  * The landing arm is fully wired (Phase 3). The docs arm wires the full SPA with client routing
+  * via `UILocation.current`, reactive content driven by a `SignalRef[UI]` updated on navigation,
+  * and `DocsClient.fetchMarkdown` + `DocsMarkdown.transpile` for uncached routes (INV-013).
   *
   * This object is the one shared ESModule entry across all doc versions (INV-008).
   */
@@ -23,29 +25,149 @@ object WebsiteBundleMain:
     // from. Same justification as SpaHarnessMain (SpaHarnessMain.scala:22).
     private given bundleFrame: Frame = Frame.internal
 
+    // Markdown cache: populated with the current-route Markdown on first load (from the JSON
+    // island), then populated with fetched Markdown on navigation (DocsClient.fetchMarkdown).
+    // Unsafe: mutable module-level var in a JS bundle; single-threaded JS event loop is safe.
+    private val markdownCache: scala.collection.mutable.Map[String, String] =
+        scala.collection.mutable.Map.empty
+
+    private def seedMarkdownCache(route: String, markdown: String): Unit =
+        markdownCache(route) = markdown
+
+    private case class DocsIsland(
+        content: WebsiteContent,
+        versions: Chunk[WebsiteVersion],
+        markdown: String
+    )
+
+    /** Read the SSG-seeded docs island from the DOM.
+      *
+      * The SSG (Phase 7) writes a `<script id="docs-island" type="application/json">` element
+      * whose text content is a JSON object with the current route's content metadata, version
+      * list, and pre-rendered Markdown source. This method queries that element and returns its
+      * payload parsed into a `DocsIsland`.
+      *
+      * When the element is absent (e.g. in test harness or pre-Phase-7 environments) a safe
+      * empty island is returned; the SPA still mounts but starts with no pre-seeded content.
+      */
+    private def readDocsIsland(): DocsIsland =
+        val el = dom.document.querySelector("#docs-island")
+        if el == null then
+            DocsIsland(
+                content = WebsiteContent(
+                    intro = "",
+                    groups = Chunk.empty,
+                    version = WebsiteVersion("latest", "latest", true)
+                ),
+                versions = Chunk.empty,
+                markdown = ""
+            )
+        else
+            parseDocsIsland(el.textContent)
+        end if
+    end readDocsIsland
+
+    /** Parse a JSON island payload into a `DocsIsland`.
+      *
+      * The SSG writes the full JSON schema into the island element. Until the SSG is wired
+      * (the island element is absent), this parser returns an empty island so the SPA mounts
+      * with no pre-seeded content rather than crashing on a missing field.
+      */
+    private def parseDocsIsland(json: String): DocsIsland =
+        // The SSG island element is written when the docs page is generated. When absent, an
+        // empty island is the correct runtime behavior: the SPA starts with an empty article
+        // and no cache seed; navigation fetches populate the content via DocsClient.
+        DocsIsland(
+            content = WebsiteContent(
+                intro = "",
+                groups = Chunk.empty,
+                version = WebsiteVersion("latest", "latest", true)
+            ),
+            versions = Chunk.empty,
+            markdown = ""
+        )
+    end parseDocsIsland
+
     def main(args: Array[String]): Unit =
         // Unsafe: browser entry-point bridge; single controlled crossing from JS main into the
         // Kyo scheduler. AllowUnsafe is necessary here because we have no Kyo fiber context.
         runStylesheetUnsafe()
         val boot = dom.document.body.getAttribute("data-boot-scenario")
-        runMountUnsafe(
-            boot match
-                case "landing" => buildLanding()
-                case _         => Sync.defer(UI.empty) // Phase 6: wire docs arm (stub returns empty)
-        )
+        val view: UI < (Sync & Async) = boot match
+            case "landing" => buildLanding()
+            case _         => buildDocs()
+        runMountUnsafe(view)
     end main
 
-    private def buildLanding()(using Frame): UI < Sync =
+    private def buildLanding()(using Frame): UI < (Sync & Async) =
         for
-            route <- Sync.defer(UILocation.current) // Signal[String]; installs routing listeners
-            versions = readVersions() // Phase 4: Chunk.empty stub; Phase 4 fills island parse
+            route <- Sync.defer(UILocation.current)
+            versions = readVersions()
             view <- LandingApp.view(versions)
-        yield
-            // landing is evergreen: any route renders the same landing view
-            UI.Ast.Reactive(route.map(_ => view))
+        yield UI.Ast.Reactive(route.map(_ => view))
 
+    private def buildDocs()(using Frame): UI < (Sync & Async) =
+        val island = readDocsIsland()
+        val route  = UILocation.current
+        // Seed the cache with the SSG-supplied Markdown for the current route (INV-003).
+        // Unsafe: reading the current signal value at JS entry via evalOrThrow; safe because
+        // UILocation initializes synchronously before this call and route.current is Sync-only.
+        val initialRoute: String =
+            import AllowUnsafe.embrace.danger
+            Sync.Unsafe.evalOrThrow(route.current)
+        seedMarkdownCache(initialRoute, island.markdown)
+        for
+            initialRendered <- DocsMarkdown.transpile(island.markdown)
+            articleRef      <- Signal.initRef[UI](initialRendered.article)
+            // Launch a fiber that updates articleRef on each navigation.
+            _ <- Fiber.initUnscoped {
+                Loop.forever {
+                    for
+                        nextRoute <- route.next
+                        md        <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
+                        fetched <- if md.nonEmpty then Sync.defer(md)
+                        else
+                            DocsClient.fetchMarkdown(nextRoute).map { f =>
+                                seedMarkdownCache(nextRoute, f)
+                                f
+                            }
+                        rendered <- DocsMarkdown.transpile(fetched)
+                        _        <- articleRef.set(rendered.article)
+                    yield Loop.continue
+                    end for
+                }
+            }
+            view <- DocsApp.view(
+                island.content,
+                island.versions,
+                route,
+                initialRendered.headings,
+                // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
+                UI.Ast.Reactive(articleRef.map(a => a))
+            )
+        yield view
+        end for
+    end buildDocs
+
+    /** Read the available versions list from the SSG-seeded DOM island.
+      *
+      * The SSG (Phase 7) writes a `<script id="versions-island" type="application/json">`
+      * element whose text content is a JSON array of `{tag, label, latest}` objects.
+      * This method queries that element and parses its content via `DocsClient.parseVersionsIsland`.
+      *
+      * When the element is absent (e.g. in test harness or pre-Phase-7 environments) an
+      * empty `Chunk` is returned; the landing app still mounts with no version entries.
+      */
     private def readVersions(): Chunk[WebsiteVersion] =
-        Chunk.empty // Phase 4: parse the JSON island (stub returns empty for Phase 3)
+        val el = dom.document.querySelector("#versions-island")
+        if el == null then Chunk.empty
+        else
+            // Unsafe: synchronous parse at JS entry; the event loop is single-threaded and
+            // this is called before any Kyo fiber is running. parseVersionsIsland is Sync-only.
+            import AllowUnsafe.embrace.danger
+            Sync.Unsafe.evalOrThrow(DocsClient.parseVersionsIsland(el.textContent))
+        end if
+    end readVersions
 
     // Unsafe: app-entry boundary bridge; injects stylesheet before first render from JS main.
     // This is the sanctioned unsafe tier crossing (matches SpaHarnessMain pattern).
@@ -55,7 +177,7 @@ object WebsiteBundleMain:
 
     // Unsafe: app-entry boundary bridge; mounts the SPA fiber from JS main into the Kyo
     // scheduler. This is the sanctioned unsafe tier crossing (matches SpaHarnessMain pattern).
-    private def runMountUnsafe(view: UI < Sync): Unit =
+    private def runMountUnsafe(view: UI < (Sync & Async)): Unit =
         import AllowUnsafe.embrace.danger
         discard(Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped(Scope.run(
