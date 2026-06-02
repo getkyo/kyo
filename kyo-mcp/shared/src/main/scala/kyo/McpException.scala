@@ -29,39 +29,31 @@ import kyo.*
   */
 sealed abstract class McpException(
     code: Int,
-    message: Text,
+    message: String,
     data: Maybe[Structure.Value] = Absent,
-    cause: Text | Throwable = ""
+    cause: String | Throwable = ""
 )(using Frame)
     extends JsonRpcApplicationError(
         code,
-        message.show,
+        message,
         data,
-        McpException.toRpcCause(cause)
+        cause
     )
-
-object McpException:
-    private[kyo] def toRpcCause(cause: Text | Throwable): String | Throwable =
-        cause match
-            case t: Throwable => t
-            case s: String    => s
-            case other        => other.asInstanceOf[Text].show
-end McpException
 
 // =============================================================================
 // Subcategory bases
 // =============================================================================
 
 /** Marks errors arising during the MCP initialization handshake (initialize / notifications/initialized). */
-sealed abstract class McpHandshakeException(code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class McpHandshakeException(code: Int, message: String, cause: String | Throwable = "")(using Frame)
     extends McpException(code, message, Absent, cause)
 
 /** Marks errors arising during method dispatch (unknown tool, resource, or prompt). */
-sealed abstract class McpDispatchException(code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class McpDispatchException(code: Int, message: String, cause: String | Throwable = "")(using Frame)
     extends McpException(code, message, Absent, cause)
 
 /** Marks errors arising during handler execution or structured-payload validation. */
-sealed abstract class McpExecutionException(code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+sealed abstract class McpExecutionException(code: Int, message: String, cause: String | Throwable = "")(using Frame)
     extends McpException(code, message, Absent, cause)
 
 /** Marks user-domain application errors from handler bodies.
@@ -71,8 +63,8 @@ sealed abstract class McpExecutionException(code: Int, message: Text, cause: Tex
   */
 sealed abstract class McpApplicationException(
     code: Int,
-    message: Text,
-    cause: Text | Throwable = "",
+    message: String,
+    cause: String | Throwable = "",
     data: Maybe[Structure.Value] = Absent
 )(using Frame)
     extends McpException(code, message, data, cause)
@@ -294,7 +286,7 @@ case class McpElicitationDeclinedException(reason: String)(using Frame)
   * @param reason a brief description of the execution failure
   * @param cause  optional underlying throwable or string cause
   */
-case class McpToolExecutionException(tool: String, reason: String, cause: Throwable | Text = "")(using Frame)
+case class McpToolExecutionException(tool: String, reason: String, cause: Throwable | String = "")(using Frame)
     extends McpApplicationException(
         code = -32000,
         message = s"Tool '$tool' execution failed: $reason",
@@ -310,7 +302,7 @@ case class McpToolExecutionException(tool: String, reason: String, cause: Throwa
   * @param reason a brief description of the read failure
   * @param cause  optional underlying throwable or string cause
   */
-case class McpResourceReadException(uri: McpResourceUri, reason: String, cause: Throwable | Text = "")(using Frame)
+case class McpResourceReadException(uri: McpResourceUri, reason: String, cause: Throwable | String = "")(using Frame)
     extends McpApplicationException(
         code = -32001,
         message = s"Failed to read resource '${uri.asString}': $reason",
@@ -326,7 +318,7 @@ case class McpResourceReadException(uri: McpResourceUri, reason: String, cause: 
   * @param reason a brief description of the render failure
   * @param cause  optional underlying throwable or string cause
   */
-case class McpPromptRenderException(name: String, reason: String, cause: Throwable | Text = "")(using Frame)
+case class McpPromptRenderException(name: String, reason: String, cause: Throwable | String = "")(using Frame)
     extends McpApplicationException(
         code = -32003,
         message = s"Failed to render prompt '$name': $reason",

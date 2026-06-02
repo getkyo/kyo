@@ -15,9 +15,9 @@ val orderId: Long = 42L
 
 val resilient: Order < Async =
     Kyo.fromOption(OrderRepo.lookup(orderId))
-       .absentToFailure(OrderNotFound(orderId))
-       .retry(Schedule.exponential(100.millis, 2.0).take(3))
-       .recover(_ => Order(0L))
+        .absentToFailure(OrderNotFound(orderId))
+        .retry(Schedule.exponential(100.millis, 2.0).take(3))
+        .recover(_ => Order(0L))
 ```
 
 The rest of this README walks the combinators by cluster, starting with construction (lifting plain values into the effect row) and finishing with dependency injection (handling `Env[E]`).
@@ -46,8 +46,6 @@ val parsed: Int < Abort[Throwable] =
     Kyo.attempt("not a number".toInt)
 ```
 
-`Kyo.attempt` catches synchronously. If the body is itself an effectful computation that may panic, the `Abort[Throwable]` row absorbs runtime exceptions thrown during execution.
-
 ### Async primitives
 
 `Kyo.sleep(duration)` pauses under `Async`. `Kyo.never` is an `Async` computation that never completes (useful as a sentinel in races and timeouts). `Kyo.async` bridges a callback API into `Async`: the body receives a "register" function that the callback eventually calls with the result.
@@ -69,10 +67,13 @@ val sentinel: Nothing < Async = Kyo.never
 
 val fromCallback: Order < (Abort[OrderNotFound] & Async) =
     Kyo.async { register =>
-        legacyClient.fetchOrder(orderId, {
-            case Right(order) => register(order)
-            case Left(err)    => register(Kyo.fail(OrderNotFound(orderId)))
-        })
+        legacyClient.fetchOrder(
+            orderId,
+            {
+                case Right(order) => register(order)
+                case Left(err)    => register(Kyo.fail(OrderNotFound(orderId)))
+            }
+        )
     }
 ```
 
@@ -84,15 +85,16 @@ Each `fromX` constructor lifts a standard-library result-or-optionality type int
 
 ```scala
 import kyo.*
-import scala.concurrent.{ Future, Promise }
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
+import scala.concurrent.Promise
 
 case class Order(id: Long, items: Seq[Item])
 case class Item(sku: String, qty: Int)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
+case class OrderNotFound(id: Long)      extends Exception(s"Order $id not found")
 case class ValidationError(msg: String) extends Exception(msg)
 val orderId: Long = 42L
-val order: Order = Order(orderId, Seq(Item("sku1", 1)))
+val order: Order  = Order(orderId, Seq(Item("sku1", 1)))
 
 object OrderRepo:
     def lookup(id: Long): Option[Order] = None
@@ -107,8 +109,9 @@ trait Repo:
     def lookupResult(id: Long): Result[OrderNotFound, Order]
     def lookupOrThrow(id: Long): Order
     def lookupAsync(id: Long): Future[Order]
-val repo: Repo = ???
-val rawJson: String = "{}"
+end Repo
+val repo: Repo                   = ???
+val rawJson: String              = "{}"
 val orderPromise: Promise[Order] = Promise[Order]()
 
 val fromOpt: Order < Abort[Absent] =
@@ -145,12 +148,12 @@ val fromSq: Item < Choice =
 Lifecycle constructors register cleanup with `Scope`. The acquired value is in scope until the surrounding `Scope.run` exits, at which point the registered finalizer runs.
 
 ```scala
-import kyo.*
 import java.sql.Connection
+import kyo.*
 
 case class Order(id: Long)
 val orderId: Long = 42L
-val url: String = "jdbc:postgresql://localhost/db"
+val url: String   = "jdbc:postgresql://localhost/db"
 
 trait Database:
     def begin: Connection < Sync
@@ -227,7 +230,7 @@ object inventory:
 
 object profiles:
     def lookup(sku: String): Profile < Async = ???
-    def touch(sku: String): Unit < Async = ???
+    def touch(sku: String): Unit < Async     = ???
 
 val stockChecks: Chunk[Stock] < (Abort[Throwable] & Async) =
     Kyo.foreachPar(order.items, Async.defaultConcurrency)(item => inventory.check(item.sku))
@@ -267,11 +270,11 @@ val one: Maybe[Order] < Poll[Order] =
 import kyo.*
 
 case class Order(id: Long)
-val order: Order = Order(42L)
+val order: Order  = Order(42L)
 val ex: Throwable = new RuntimeException("payment failed")
 
-val logInfo2: Unit < Sync = Kyo.logInfo("processing order")
-val logWarn2: Unit < Sync = Kyo.logWarn("payment retry", new RuntimeException("network"))
+val logInfo2: Unit < Sync  = Kyo.logInfo("processing order")
+val logWarn2: Unit < Sync  = Kyo.logWarn("payment retry", new RuntimeException("network"))
 val logDebug2: Unit < Sync = Kyo.logDebug(s"order=$order")
 val logError2: Unit < Sync = Kyo.logError("payment failed", ex)
 val logTrace2: Unit < Sync = Kyo.logTrace("entering checkout")
@@ -291,9 +294,9 @@ import kyo.*
 case class Order(id: Long)
 case class Profile(name: String)
 case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
+val orderId: Long                                = 42L
 val load: Order < (Abort[OrderNotFound] & Async) = ???
-val profileFor: Long => Profile < Async = _ => ???
+val profileFor: Long => Profile < Async          = _ => ???
 
 val ignoreFirst: Order < (Abort[OrderNotFound] & Async) =
     Kyo.logInfo("loading") *> load
@@ -332,8 +335,8 @@ import kyo.*
 case class Order(id: Long, total: BigDecimal)
 case class Receipt(orderId: Long)
 case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
-val order: Order = Order(orderId, BigDecimal(100))
+val orderId: Long                                = 42L
+val order: Order                                 = Order(orderId, BigDecimal(100))
 val load: Order < (Abort[OrderNotFound] & Async) = ???
 
 def sendReceipt(o: Order): Receipt < (Abort[Throwable] & Async) = ???
@@ -397,7 +400,8 @@ val polled: Order < (Abort[OrderNotFound] & Async) =
 ```scala
 import kyo.*
 
-enum Status { case Pending, Completed }
+enum Status:
+    case Pending, Completed
 case class Order(id: Long, status: Status)
 case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
 val load: Order < (Abort[OrderNotFound] & Async) = ???
@@ -445,6 +449,8 @@ val later: Order < (Abort[OrderNotFound] & Async) =
 
 `delay` is the one-shot sibling to `repeatAtInterval`'s per-iteration backoff: it sleeps once before evaluating the effect.
 
+> **Note:** `delay` adds `Async` to the effect row because it sleeps before evaluating, just like `repeat(Schedule)` above.
+
 ## Error handling
 
 Everything below applies to `A < (Abort[E] & S)`. The combinators are organised by what they DO to the error: handle it (to a `Result` or `Maybe`), recover from it, fold over it, transform its type, route it to a different effect, retry on it, or convert it to a panic.
@@ -489,7 +495,7 @@ import kyo.*
 
 case class Order(id: Long)
 case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
+val orderId: Long                                = 42L
 val load: Order < (Abort[OrderNotFound] & Async) = ???
 
 val safe: Order < Async =
@@ -515,20 +521,20 @@ val load: Order < (Abort[OrderNotFound] & Async) = ???
 val rendered: String < Async =
     load.foldAbort(
         onSuccess = order => s"order ${order.id}: ${order.total}",
-        onFail    = err   => s"failed: $err"
+        onFail = err => s"failed: $err"
     )
 
 val renderedWithPanic: String < Async =
     load.foldAbort(
         onSuccess = order => s"order ${order.id}",
-        onFail    = err   => s"failed: $err",
-        onPanic   = thr   => s"panic: ${thr.getMessage}"
+        onFail = err => s"failed: $err",
+        onPanic = thr => s"panic: ${thr.getMessage}"
     )
 
 val renderedThrowing: String < Async =
     load.foldAbortOrThrow(
         onSuccess = order => s"order ${order.id}",
-        onFail    = err   => s"failed: $err"
+        onFail = err => s"failed: $err"
     )
 ```
 
@@ -635,8 +641,8 @@ When the error type is a union (`Abort[A | B | C]`), `forAbort[A]` enters a narr
 import kyo.*
 
 case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-case class InventoryEmpty() extends Exception("Inventory empty")
+case class OrderNotFound(id: Long)         extends Exception(s"Order $id not found")
+case class InventoryEmpty()                extends Exception("Inventory empty")
 case class PaymentDeclined(reason: String) extends Exception(reason)
 sealed trait ServiceError
 object ServiceError:
@@ -733,7 +739,7 @@ import kyo.*
 
 case class Order(id: Long)
 case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
+val orderId: Long                           = 42L
 val lookup: Order < (Abort[Absent] & Async) = Kyo.fromOption(None)
 
 val asChoice: Order < (Async & Choice) =
@@ -787,7 +793,7 @@ case class Order(id: Long)
 case class Profile(name: String)
 
 // Parallel zip composes with extra effects beyond Abort[E] & Async.
-val orderEff = Sync.defer(Order(1L))
+val orderEff   = Sync.defer(Order(1L))
 val profileEff = Sync.defer(Profile("alice"))
 
 val ignoreFirstPar = orderEff &> profileEff
@@ -854,7 +860,7 @@ case class Item(sku: String, qty: Int)
 case class Order(id: Long, items: Seq[Item])
 val order: Order = Order(1L, Seq(Item("sku1", 1), Item("sku2", 2)))
 object inventory:
-    def check(item: Item): Item < Async = Kyo.defer(item)
+    def check(item: Item): Item < Async        = Kyo.defer(item)
     def available(sku: String): Boolean < Sync = Kyo.defer(true)
 
 val branches: Item < (Choice & Async) =
@@ -875,7 +881,7 @@ case class Item(sku: String, qty: Int)
 case class Order(id: Long, items: Seq[Item])
 case class NoMatchingItems(orderId: Long) extends Exception("no matching items")
 val orderId: Long = 42L
-val order: Order = Order(orderId, Seq(Item("sku1", 1)))
+val order: Order  = Order(orderId, Seq(Item("sku1", 1)))
 object inventory:
     def check(item: Item): Item < Async = Kyo.defer(item)
 
@@ -903,7 +909,8 @@ val nonEmptyDomain: Item < (Choice & Async & Abort[NoMatchingItems]) =
 ```scala
 import kyo.*
 
-enum ShipmentEvent { case Shipped(sku: String) }
+enum ShipmentEvent:
+    case Shipped(sku: String)
 case class Item(sku: String, qty: Int)
 case class Order(id: Long, items: Seq[Item])
 val order: Order = Order(1L, Seq(Item("sku1", 1), Item("sku2", 2)))
@@ -930,7 +937,8 @@ val sideEffect: Unit < Sync =
 ```scala
 import kyo.*
 
-enum ShipmentEvent { case Shipped(sku: String) }
+enum ShipmentEvent:
+    case Shipped(sku: String)
 val emitting: Unit < Emit[ShipmentEvent] =
     Kyo.emit(ShipmentEvent.Shipped("sku1"))
 
@@ -945,7 +953,8 @@ The channel must be initialised separately. If the channel is closed before the 
 ```scala
 import kyo.*
 
-enum ShipmentEvent { case Shipped(sku: String) }
+enum ShipmentEvent:
+    case Shipped(sku: String)
 val emitting: Unit < Emit[ShipmentEvent] =
     Kyo.emit(ShipmentEvent.Shipped("sku1"))
 
@@ -964,7 +973,8 @@ Six conversion variants exist, distinguished by three axes: chunked vs single-va
 ```scala
 import kyo.*
 
-enum ShipmentEvent { case Shipped(sku: String) }
+enum ShipmentEvent:
+    case Shipped(sku: String)
 val emitting: Unit < Emit[ShipmentEvent] =
     Kyo.emit(ShipmentEvent.Shipped("sku1"))
 val nonUnitEmitting: Long < Emit[ShipmentEvent] =
@@ -977,7 +987,7 @@ val s1: Stream[ShipmentEvent, Any] =
     emitting.emitChunked(32).emitToStream
 // Emit[A] -> Stream[A, S], discarding non-Unit result B
 val s2: Stream[ShipmentEvent, Any] =
-    nonUnitEmitting.emitChunkedToStreamDiscarding(32)  // discards B
+    nonUnitEmitting.emitChunkedToStreamDiscarding(32) // discards B
 
 // Emit[Chunk[A]] -> Stream[A, S], retaining result as a separate Async effect
 val s3: (Stream[ShipmentEvent, Async], Unit < Async) < Async =
@@ -1048,7 +1058,7 @@ The clusters above are orthogonal. A single chain can cross construction, sequen
 import kyo.*
 
 opaque type OrderId = Long
-opaque type Money = BigDecimal
+opaque type Money   = BigDecimal
 case class Order(id: OrderId, total: Money)
 case class Item(sku: String, qty: Int, price: Money)
 case class Profile(name: String, tier: String)
@@ -1060,14 +1070,14 @@ object OrderRepo:
 trait Database:
     def begin: Any < Sync
 
-val db: Database = ???
-val orderId: Long = 42L
+val db: Database                        = ???
+val orderId: Long                       = 42L
 val profileFor: Long => Profile < Async = _ => ???
 
 // Construction: lift a fallible operation into Abort[OrderNotFound]
 val load: Order < (Abort[OrderNotFound] & Async) =
     Kyo.fromOption(OrderRepo.lookup(orderId))
-       .absentToFailure(OrderNotFound(orderId))
+        .absentToFailure(OrderNotFound(orderId))
 
 // Sequencing: log then load
 val priced: Order < (Abort[OrderNotFound] & Async) =

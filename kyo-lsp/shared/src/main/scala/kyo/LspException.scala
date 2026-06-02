@@ -34,47 +34,41 @@ package kyo
   */
 sealed abstract class LspException private[kyo] (
     code: Int,
-    message: Text,
+    message: String,
     // Structure carve-out: data forwarded to JsonRpcApplicationError
     data: Maybe[Structure.Value] = Absent,
-    cause: Text | Throwable = ""
+    cause: String | Throwable = ""
 )(using Frame)
     extends JsonRpcApplicationError(
         code,
-        message.show,
+        message,
         data,
-        LspException.toRpcCause(cause)
+        cause
     )
 
 object LspException:
-
-    private[kyo] def toRpcCause(cause: Text | Throwable): String | Throwable =
-        cause match
-            case t: Throwable => t
-            case s: String    => s
-            case other        => other.asInstanceOf[Text].show
 
     // =========================================================================
     // Stage bases
     // =========================================================================
 
     /** Errors arising during the LSP initialize / initialized lifecycle. */
-    sealed abstract class Handshake private[kyo] (code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+    sealed abstract class Handshake private[kyo] (code: Int, message: String, cause: String | Throwable = "")(using Frame)
         extends LspException(code, message, Absent, cause)
 
     /** Errors arising during method dispatch, capability gating, and direction filtering. */
-    sealed abstract class Dispatch private[kyo] (code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+    sealed abstract class Dispatch private[kyo] (code: Int, message: String, cause: String | Throwable = "")(using Frame)
         extends LspException(code, message, Absent, cause)
 
     /** Errors arising during handler execution or structured-payload validation. */
-    sealed abstract class Execution private[kyo] (code: Int, message: Text, cause: Text | Throwable = "")(using Frame)
+    sealed abstract class Execution private[kyo] (code: Int, message: String, cause: String | Throwable = "")(using Frame)
         extends LspException(code, message, Absent, cause)
 
     /** Marks user-domain application errors from handler bodies. */
     sealed abstract class Application private[kyo] (
         code: Int,
-        message: Text,
-        cause: Text | Throwable = "",
+        message: String,
+        cause: String | Throwable = "",
         // Structure carve-out: data forwarded to LspException
         data: Maybe[Structure.Value] = Absent
     )(using Frame)
@@ -162,7 +156,7 @@ object LspException:
             extends Execution(code = -32802, message = s"Server cancelled the request: $reason")
 
         /** An unhandled exception escaped a handler body. JSON-RPC code -32603. */
-        final case class ExecutionPanic(method: String, cause: Throwable | Text = "")(using Frame)
+        final case class ExecutionPanic(method: String, cause: Throwable | String = "")(using Frame)
             extends Execution(code = -32603, message = s"Execution panic in '$method'.", cause = cause)
 
         /** A `$/progress` create token was already in use. JSON-RPC code -32603. */

@@ -254,10 +254,10 @@ object Browser:
     ): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
         val body =
             for
-                wsUrl   <- BrowserLauncher.launch(launch)
-                backend <- CdpBackend.init(wsUrl, launch)
-                tab     <- BrowserTabSetup.attachAndSetupTab(backend)
-                a       <- runOn(tab)(v)
+                wsUrl  <- BrowserLauncher.launch(launch)
+                client <- CdpClient.init(wsUrl, launch)
+                tab    <- BrowserTabSetup.attachAndSetupTab(client)
+                a      <- runOn(tab)(v)
             yield a
         Scope.run {
             session match
@@ -268,14 +268,10 @@ object Browser:
 
     /** Connects to an existing browser via WebSocket URL and runs the computation. Closes the client when the body completes (success,
       * failure, or interruption). Resource lifetime is bound to this call via an internal `Scope.run`.
-      *
-      * The effect row includes [[BrowserSetupException]] so that callers can distinguish a failed Q-002 probe (setup failure) from a
-      * mid-session connection loss ([[BrowserConnectionLostException]]). Decision 45: the previous absorption of
-      * [[BrowserSetupException]] → [[BrowserConnectionLostException]] defeated Q-002's typed-distinction intent.
       */
-    def run[A, S](wsUrl: String)(v: A < (Browser & S))(using Frame): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
-        Scope.run(CdpBackend.init(wsUrl, Browser.LaunchConfig.default).map(backend =>
-            BrowserTabSetup.attachAndSetupTab(backend).map(tab => runOn(tab)(v))
+    def run[A, S](wsUrl: String)(v: A < (Browser & S))(using Frame): A < (Async & Abort[BrowserReadException] & S) =
+        Scope.run(CdpClient.init(wsUrl, Browser.LaunchConfig.default).map(client =>
+            BrowserTabSetup.attachAndSetupTab(client).map(tab => runOn(tab)(v))
         ))
 
     /** Runs the computation against a JVM-shared Chrome process. The process is launched lazily on the first call, kept alive for the
@@ -296,6 +292,7 @@ object Browser:
     ): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
         // Browser.run(url) already wraps its body in Scope.run; runShared inherits that absorption.
         // configLocal propagation mirrors Browser.run(launch, session): Present(sc) overrides via withConfig; Absent inherits outer Local.
+        // withUrl (not init) so a dead shared Chrome is invalidated and relaunched once instead of cascading the dead URL to every caller.
         val body = SharedChrome.withUrl(url => Browser.run(url)(f))
         session match
             case Absent      => body
@@ -659,6 +656,10 @@ object Browser:
                     else
                         Abort.fail(ex)
                 }
+            case ex =>
+                // Any reason other than NotAttached: re-raise unchanged so the original abort propagates
+                // instead of falling through to a MatchError.
+                Abort.fail(ex)
         } {
             pressOnSelector(selector, key, modifiers)
         }
@@ -2155,11 +2156,11 @@ object Browser:
 
         private def install[A, S](accept: Boolean, promptText: String)(v: A < S)(using Frame): A < (Browser & S) =
             Env.use[BrowserTab] { tab =>
-                val backend = tab.backend
+                val client = tab.client
                 // Key the handler map by CDP session ID so concurrent tabs don't clobber each other's entries.
                 val sidKey = tab.sessionId.value
-                backend.dialogHandlers.getAndUpdate(m => m.update(sidKey, (accept, promptText))).map { previousMap =>
-                    val restore = backend.dialogHandlers.getAndUpdate { m =>
+                client.dialogHandlers.getAndUpdate(m => m.update(sidKey, (accept, promptText))).map { previousMap =>
+                    val restore = client.dialogHandlers.getAndUpdate { m =>
                         previousMap.get(sidKey) match
                             case Present(prev) => m.update(sidKey, prev)
                             case Absent        => m.remove(sidKey)
@@ -2191,11 +2192,11 @@ object Browser:
             Isolate[S, Sync, S]
         ): (Chunk[Browser.DialogEvent], A) < (Browser & Async & Abort[BrowserReadException] & S) =
             Env.use[BrowserTab] { tab =>
-                val backend = tab.backend
-                val sidKey  = tab.sessionId.value
+                val client = tab.client
+                val sidKey = tab.sessionId.value
                 AtomicRef.init(Chunk.empty[Browser.DialogEvent]).map { recorder =>
-                    backend.dialogRecorders.getAndUpdate(_.update(sidKey, recorder)).map { previousMap =>
-                        val restore = backend.dialogRecorders.getAndUpdate { m =>
+                    client.dialogRecorders.getAndUpdate(_.update(sidKey, recorder)).map { previousMap =>
+                        val restore = client.dialogRecorders.getAndUpdate { m =>
                             previousMap.get(sidKey) match
                                 case Present(prev) => m.update(sidKey, prev)
                                 case Absent        => m.remove(sidKey)
@@ -2518,8 +2519,8 @@ object Browser:
         Isolate[S, Sync, S]
     ): A < (Browser & Async & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
-            val backend = tab.backend
-            val sidKey  = tab.sessionId.value
+            val client = tab.client
+            val sidKey = tab.sessionId.value
             // Bounded unscoped channel; closed explicitly via `Scope.ensure` inside the inner `Scope.run`. Keeping the channel unscoped
             // lets `onDownload`'s effect row stay free of `Scope` while still binding teardown to the body's lifetime.
             Channel.initUnscoped[Browser.DownloadEvent](PageDownload.onDownloadChannelCapacity).map { channel =>
@@ -2534,8 +2535,8 @@ object Browser:
                 // the subscription. The trailing `Scope.run + Scope.ensure` (mirroring [[withDialogs.install]]) unregisters the dispatcher
                 // and closes the channel on body completion (success, failure, OR interruption). The drainer fiber is `Scope`-bound via
                 // `Fiber.init`, so it is interrupted on scope exit.
-                backend.downloadEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
-                    val restoreDispatcher = backend.downloadEventDispatchers.getAndUpdate { m =>
+                client.downloadEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
+                    val restoreDispatcher = client.downloadEventDispatchers.getAndUpdate { m =>
                         previousMap.get(sidKey) match
                             case Present(prev) => m.update(sidKey, prev)
                             case Absent        => m.remove(sidKey)
@@ -2587,15 +2588,15 @@ object Browser:
     private def parseDownloadEvent(ev: CdpEvent.Generic)(using Frame): Maybe[Browser.DownloadEvent] =
         ev.method match
             case "Page.downloadWillBegin" =>
-                // ev.paramsJson carries the params object directly (Json.encode of the typed params),
-                // NOT wrapped in CdpEventParams. Decode without the envelope wrapper.
-                Json.decode[PageDownload.DownloadWillBeginWire](ev.paramsJson) match
-                    case Result.Success(w) =>
+                Json.decode[CdpEventParams[PageDownload.DownloadWillBeginWire]](ev.paramsJson) match
+                    case Result.Success(env) =>
+                        val w = env.params
                         Present(Browser.DownloadEvent.WillBegin(w.guid, w.url, w.suggestedFilename))
                     case _ => Absent
             case "Page.downloadProgress" =>
-                Json.decode[PageDownload.DownloadProgressWire](ev.paramsJson) match
-                    case Result.Success(w) =>
+                Json.decode[CdpEventParams[PageDownload.DownloadProgressWire]](ev.paramsJson) match
+                    case Result.Success(env) =>
+                        val w = env.params
                         Present(Browser.DownloadEvent.Progress(w.guid, w.totalBytes, w.receivedBytes, w.state))
                     case _ => Absent
             case _ => Absent
@@ -2738,14 +2739,14 @@ object Browser:
     ): A < (Browser & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { parent =>
             Scope.run {
-                CdpBackend.getTargets(parent.backend).map { before =>
+                CdpBackend.getTargets(parent.client).map { before =>
                     val beforeIds = before.targetInfos.map(_.targetId).toSet
                     Env.run(parent)(trigger).andThen {
                         // Poll for new target
                         configLocal.use { cfg =>
                             val effectiveSchedule = schedule.getOrElse(cfg.retrySchedule)
                             Retry[BrowserReadException](effectiveSchedule) {
-                                CdpBackend.getTargets(parent.backend).map { after =>
+                                CdpBackend.getTargets(parent.client).map { after =>
                                     val newTargets = after.targetInfos.filter(t =>
                                         !beforeIds.contains(t.targetId) && t.`type` == "page"
                                     )
@@ -2758,15 +2759,15 @@ object Browser:
                                 }
                             }.map { newTarget =>
                                 Scope.ensure(
-                                    CdpBackend.closeTarget(parent.backend, CloseTargetParams(newTarget.targetId))
+                                    CdpBackend.closeTarget(parent.client, CloseTargetParams(newTarget.targetId))
                                 ).andThen {
                                     // Attach to the new target
-                                    CdpBackend.attachToTarget(parent.backend, AttachParams(newTarget.targetId, flatten = true)).map {
+                                    CdpBackend.attachToTarget(parent.client, AttachParams(newTarget.targetId, flatten = true)).map {
                                         attached =>
                                             BrowserTabSetup.mkBrowserTab(
                                                 TargetId(newTarget.targetId),
                                                 SessionId(attached.sessionId),
-                                                parent.backend,
+                                                parent.client,
                                                 parent.browserContextId
                                             ).map { tab =>
                                                 BrowserTabSetup.installFrameContextTracker(tab).andThen {
@@ -2818,15 +2819,15 @@ object Browser:
             val parentCtx = parent.browserContextId
             Scope.run {
                 for
-                    created <- CdpBackend.createTarget(parent.backend, CreateTargetParams("about:blank", parentCtx))
+                    created <- CdpBackend.createTarget(parent.client, CreateTargetParams("about:blank", parentCtx))
                     _ <- Scope.ensure(
-                        CdpBackend.closeTarget(parent.backend, CloseTargetParams(created.targetId))
+                        CdpBackend.closeTarget(parent.client, CloseTargetParams(created.targetId))
                     )
-                    attached <- CdpBackend.attachToTarget(parent.backend, AttachParams(created.targetId, flatten = true))
+                    attached <- CdpBackend.attachToTarget(parent.client, AttachParams(created.targetId, flatten = true))
                     tab <- BrowserTabSetup.mkBrowserTab(
                         TargetId(created.targetId),
                         SessionId(attached.sessionId),
-                        parent.backend,
+                        parent.client,
                         parent.browserContextId
                     )
                     _ <- BrowserTabSetup.installFrameContextTracker(tab)

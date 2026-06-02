@@ -1,5 +1,6 @@
 package kyo.internal
 
+import CdpBackend.decodeOrFail
 import CdpTypes.NodeRef
 import kyo.*
 
@@ -40,65 +41,52 @@ private[kyo] object Resolver:
                 val s      = tab.session
                 val node   = Selector.toNode(selector)
                 val jsExpr = SelectorJs.resolveElementJs(node)
-                translateContextDestroyed {
-                    s.send[EvaluateObjectParams, EvaluateObjectResult](
-                        CdpBackend.RuntimeEvaluateMethod,
-                        EvaluateObjectParams(s"(() => $jsExpr)()", returnByValue = false, awaitPromise = false, contextId = ctxOpt)
-                    )
-                }.map { evalResult =>
-                    evalResult.exceptionDetails match
-                        case Present(details) =>
-                            // Use ExceptionDetailsFormat.format to combine `text` AND `exception.description`. Chrome's
-                            // `text` for a malformed-selector SyntaxError is just "Uncaught" on some platforms (JS/Native);
-                            // the actual error message naming the bad selector lives in `exception.description`. Reading
-                            // only `text` drops the diagnostic the test asserts on.
-                            val msg = ExceptionDetailsFormat.format(details)
-                            val msgOrDefault =
-                                if msg.isEmpty || msg == "Unknown script error" then "Runtime.evaluate exception" else msg
-                            Abort.fail(BrowserProtocolErrorException(CdpBackend.RuntimeEvaluateMethod, msgOrDefault))
-                        case Absent =>
-                            evalResult.result.objectId match
+                s.send(
+                    CdpBackend.RuntimeEvaluateMethod,
+                    EvaluateObjectParams(s"(() => $jsExpr)()", returnByValue = false, awaitPromise = false, contextId = ctxOpt)
+                )
+                    .map(BrowserEval.translateContextDestroyed)
+                    .map { evalJson =>
+                        decodeOrFail[EvaluateObjectResult](evalJson, CdpBackend.RuntimeEvaluateMethod).map { evalResult =>
+                            evalResult.exceptionDetails match
+                                case Present(details) =>
+                                    // Use ExceptionDetailsFormat.format to combine `text` AND `exception.description`. Chrome's
+                                    // `text` for a malformed-selector SyntaxError is just "Uncaught" on some platforms (JS/Native);
+                                    // the actual error message naming the bad selector lives in `exception.description`. Reading
+                                    // only `text` drops the diagnostic the test asserts on.
+                                    val msg = ExceptionDetailsFormat.format(details)
+                                    val msgOrDefault =
+                                        if msg.isEmpty || msg == "Unknown script error" then "Runtime.evaluate exception" else msg
+                                    Abort.fail(BrowserProtocolErrorException(CdpBackend.RuntimeEvaluateMethod, msgOrDefault))
                                 case Absent =>
-                                    Absent: Maybe[NodeRef]
-                                case Present(objectId) =>
-                                    // `Scope.run + Scope.ensure` runs the release on success AND on Abort/Panic /
-                                    // interruption, so the JS handle drains even if `describeByObjectId` aborts mid-flight
-                                    // (otherwise the handle leaks until tab teardown, forcing `CdpBackend.close` to wait
-                                    // its full grace period). Plain `Sync.ensure` does NOT fire on Abort short-circuits
-                                    // see the equivalent dialog-handler restore comment at `Browser.withDialogs`.
-                                    Scope.run {
-                                        Scope.ensure(releaseObjectQuiet(s, objectId)).andThen {
-                                            Abort.recover[BrowserProtocolErrorException] { e =>
-                                                if isStaleNodeError(e) then (Absent: Maybe[NodeRef])
-                                                else Abort.fail(e)
-                                            } {
-                                                describeByObjectId(s, objectId).map { backendNodeId =>
-                                                    Present(NodeRef(backendNodeId)): Maybe[NodeRef]
+                                    evalResult.result.objectId match
+                                        case Absent =>
+                                            Absent: Maybe[NodeRef]
+                                        case Present(objectId) =>
+                                            // `Scope.run + Scope.ensure` runs the release on success AND on Abort/Panic /
+                                            // interruption, so the JS handle drains even if `describeByObjectId` aborts mid-flight
+                                            // (otherwise the handle leaks until tab teardown, forcing `CdpClient.close` to wait
+                                            // its full grace period). Plain `Sync.ensure` does NOT fire on Abort short-circuits
+                                            // see the equivalent dialog-handler restore comment at `Browser.withDialogs`.
+                                            Scope.run {
+                                                Scope.ensure(releaseObjectQuiet(s, objectId)).andThen {
+                                                    Abort.recover[BrowserProtocolErrorException] { e =>
+                                                        if isStaleNodeError(e) then (Absent: Maybe[NodeRef])
+                                                        else Abort.fail(e)
+                                                    } {
+                                                        describeByObjectId(s, objectId).map { backendNodeId =>
+                                                            Present(NodeRef(backendNodeId)): Maybe[NodeRef]
+                                                        }
+                                                    }
                                                 }
                                             }
-                                        }
-                                    }
+                                    end match
                             end match
-                    end match
-                }
+                        }
+                    }
             }
         }
     end resolveOne
-
-    /** Translates a `BrowserProtocolErrorException` for `"Cannot find context with specified id"` into
-      * `BrowserIFrameInvalidException`. In the typed send path, the engine already recovers
-      * `JsonRpcError` to `BrowserProtocolErrorException`; this helper then inspects the message to
-      * give callers the typed iframe error. The [[CdpErrorStrings.ContextDestroyedErrorMessage]] constant
-      * is used for consistency with the legacy `BrowserEval.translateContextDestroyed` path.
-      */
-    private def translateContextDestroyed[A](
-        effect: A < (Async & Abort[BrowserReadException])
-    )(using Frame): A < (Async & Abort[BrowserReadException]) =
-        Abort.recover[BrowserProtocolErrorException] { e =>
-            if e.error.contains(CdpErrorStrings.ContextDestroyedErrorMessage) then
-                Abort.fail(BrowserIFrameInvalidException(BrowserIFrameInvalidException.Reason.ContextDestroyed))
-            else Abort.fail(e)
-        }(effect)
 
     /** Resolves every match of the selector to a typed backend node ref in document order. */
     def resolveAll(selector: Selector)(using
@@ -114,80 +102,82 @@ private[kyo] object Resolver:
                 // objectId. The Absent-objectId branch below short-circuits to Chunk.empty without the extra
                 // DOM.getProperties + Runtime.releaseObject round-trips that a non-null empty array would
                 // require, shaving ~2 CDP messages per probe on the common zero-match retry path.
-                translateContextDestroyed {
-                    s.send[EvaluateObjectParams, EvaluateObjectResult](
-                        CdpBackend.RuntimeEvaluateMethod,
-                        EvaluateObjectParams(
-                            s"(() => { const _r = $jsExpr; return _r.length ? _r : null; })()",
-                            returnByValue = false,
-                            awaitPromise = false,
-                            contextId = ctxOpt
-                        )
+                s.send(
+                    CdpBackend.RuntimeEvaluateMethod,
+                    EvaluateObjectParams(
+                        s"(() => { const _r = $jsExpr; return _r.length ? _r : null; })()",
+                        returnByValue = false,
+                        awaitPromise = false,
+                        contextId = ctxOpt
                     )
-                }.map { evalResult =>
-                    evalResult.exceptionDetails match
-                        case Present(details) =>
-                            // Use ExceptionDetailsFormat.format to combine `text` AND `exception.description`. Chrome's
-                            // `text` for a malformed-selector SyntaxError is just "Uncaught" on some platforms (JS/Native);
-                            // the actual error message naming the bad selector lives in `exception.description`. Reading
-                            // only `text` drops the diagnostic the test asserts on.
-                            val msg = ExceptionDetailsFormat.format(details)
-                            val msgOrDefault =
-                                if msg.isEmpty || msg == "Unknown script error" then "Runtime.evaluate exception" else msg
-                            Abort.fail(BrowserProtocolErrorException(CdpBackend.RuntimeEvaluateMethod, msgOrDefault))
-                        case Absent =>
-                            evalResult.result.objectId match
+                )
+                    .map(BrowserEval.translateContextDestroyed)
+                    .map { evalJson =>
+                        decodeOrFail[EvaluateObjectResult](evalJson, CdpBackend.RuntimeEvaluateMethod).map { evalResult =>
+                            evalResult.exceptionDetails match
+                                case Present(details) =>
+                                    // Use ExceptionDetailsFormat.format to combine `text` AND `exception.description`. Chrome's
+                                    // `text` for a malformed-selector SyntaxError is just "Uncaught" on some platforms (JS/Native);
+                                    // the actual error message naming the bad selector lives in `exception.description`. Reading
+                                    // only `text` drops the diagnostic the test asserts on.
+                                    val msg = ExceptionDetailsFormat.format(details)
+                                    val msgOrDefault =
+                                        if msg.isEmpty || msg == "Unknown script error" then "Runtime.evaluate exception" else msg
+                                    Abort.fail(BrowserProtocolErrorException(CdpBackend.RuntimeEvaluateMethod, msgOrDefault))
                                 case Absent =>
-                                    Chunk.empty[NodeRef]
-                                case Present(arrayObjectId) =>
-                                    CdpBackend.getProperties(s, GetPropertiesParams(arrayObjectId, ownProperties = true))
-                                        .map { props =>
-                                            // Keep only numeric-indexed descriptors with a Present objectId (the array
-                                            // elements; CDP also returns 'length' and possibly accessor props which we
-                                            // skip). Sort by index defensively: CDP returns own props in insertion
-                                            // order for arrays but we don't depend on that for cross-version safety.
-                                            val indexed: Chunk[(Int, String)] = Chunk.from(props.result.flatMap { d =>
-                                                d.name.toIntOption match
-                                                    case Some(i) =>
-                                                        d.value.flatMap(_.objectId) match
-                                                            case Present(oid) => Seq((i, oid))
-                                                            case Absent       => Seq.empty
-                                                    case None => Seq.empty
-                                            }.sortBy(_._1))
-                                            // `Scope.run + Scope.ensure` releases each handle (per-element + array) on
-                                            // success AND on Abort/Panic / interruption. Plain `Sync.ensure` does NOT
-                                            // fire on Abort short-circuits, so a mid-loop describe failure would leak
-                                            // the array handle plus any not-yet-described element handles until tab
-                                            // teardown.
-                                            Scope.run {
-                                                Scope.ensure(releaseObjectQuiet(s, arrayObjectId)).andThen {
-                                                    Kyo.foreach(indexed) { case (_, elemObjectId) =>
-                                                        Scope.run {
-                                                            Scope.ensure(releaseObjectQuiet(s, elemObjectId)).andThen {
-                                                                // A node that vanished mid-snapshot makes the WHOLE snapshot
-                                                                // inconsistent; re-raise as a retryable
-                                                                // BrowserElementNotFoundException so the enclosing assertion
-                                                                // loop re-resolves a clean snapshot. Dropping just the stale
-                                                                // node instead would return a partial stable-looking set and
-                                                                // mask a genuinely flickering page.
-                                                                Abort.recover[BrowserProtocolErrorException] { e =>
-                                                                    if isStaleNodeError(e) then
-                                                                        Abort.fail(BrowserElementNotFoundException(
-                                                                            Selector.toNode(selector).toString
-                                                                        ))
-                                                                    else Abort.fail(e)
-                                                                } {
-                                                                    describeByObjectId(s, elemObjectId).map(id => NodeRef(id))
+                                    evalResult.result.objectId match
+                                        case Absent =>
+                                            Chunk.empty[NodeRef]
+                                        case Present(arrayObjectId) =>
+                                            CdpBackend.getProperties(s, GetPropertiesParams(arrayObjectId, ownProperties = true))
+                                                .map { props =>
+                                                    // Keep only numeric-indexed descriptors with a Present objectId (the array
+                                                    // elements; CDP also returns 'length' and possibly accessor props which we
+                                                    // skip). Sort by index defensively: CDP returns own props in insertion
+                                                    // order for arrays but we don't depend on that for cross-version safety.
+                                                    val indexed: Chunk[(Int, String)] = Chunk.from(props.result.flatMap { d =>
+                                                        d.name.toIntOption match
+                                                            case Some(i) =>
+                                                                (d.value.flatMap(_.objectId): @unchecked) match
+                                                                    case Present(oid) => Seq((i, oid))
+                                                                    case Absent       => Seq.empty
+                                                            case None => Seq.empty
+                                                    }.sortBy(_._1))
+                                                    // `Scope.run + Scope.ensure` releases each handle (per-element + array) on
+                                                    // success AND on Abort/Panic / interruption. Plain `Sync.ensure` does NOT
+                                                    // fire on Abort short-circuits, so a mid-loop describe failure would leak
+                                                    // the array handle plus any not-yet-described element handles until tab
+                                                    // teardown.
+                                                    Scope.run {
+                                                        Scope.ensure(releaseObjectQuiet(s, arrayObjectId)).andThen {
+                                                            Kyo.foreach(indexed) { case (_, elemObjectId) =>
+                                                                Scope.run {
+                                                                    Scope.ensure(releaseObjectQuiet(s, elemObjectId)).andThen {
+                                                                        // A node that vanished mid-snapshot makes the WHOLE snapshot
+                                                                        // inconsistent; re-raise as a retryable
+                                                                        // BrowserElementNotFoundException so the enclosing assertion
+                                                                        // loop re-resolves a clean snapshot. Dropping just the stale
+                                                                        // node instead would return a partial stable-looking set and
+                                                                        // mask a genuinely flickering page.
+                                                                        Abort.recover[BrowserProtocolErrorException] { e =>
+                                                                            if isStaleNodeError(e) then
+                                                                                Abort.fail(BrowserElementNotFoundException(
+                                                                                    Selector.toNode(selector).toString
+                                                                                ))
+                                                                            else Abort.fail(e)
+                                                                        } {
+                                                                            describeByObjectId(s, elemObjectId).map(id => NodeRef(id))
+                                                                        }
+                                                                    }
                                                                 }
-                                                            }
+                                                            }.map(Chunk.from)
                                                         }
-                                                    }.map(Chunk.from)
+                                                    }
                                                 }
-                                            }
-                                        }
+                                    end match
                             end match
-                    end match
-                }
+                        }
+                    }
             }
         }
     end resolveAll
@@ -219,7 +209,7 @@ private[kyo] object Resolver:
       * `requestNode` returns `0`, call `getDocument` once and retry. Once the agent's `m_document` is set, subsequent resolves go straight
       * through without bootstrap, so the bootstrap cost is paid at most once per navigation per session.
       */
-    private def describeByObjectId(s: CdpBackend, objectId: String)(using
+    private def describeByObjectId(s: CdpClient, objectId: String)(using
         Frame
     ): Int < (Async & Abort[BrowserReadException]) =
         requestAndDescribe(s, objectId).map {
@@ -227,10 +217,10 @@ private[kyo] object Resolver:
             case backendNodeId => backendNodeId
         }
 
-    /** Single-pass `requestNode -> describeNode(nodeId)`. Returns the `backendNodeId` on success, or `0` if `requestNode` returned `nodeId:
+    /** Single-pass `requestNode → describeNode(nodeId)`. Returns the `backendNodeId` on success, or `0` if `requestNode` returned `nodeId:
       * 0` (agent has no document; caller is expected to bootstrap and retry).
       */
-    private def requestAndDescribe(s: CdpBackend, objectId: String)(using
+    private def requestAndDescribe(s: CdpClient, objectId: String)(using
         Frame
     ): Int < (Async & Abort[BrowserReadException]) =
         CdpBackend.requestNode(s, RequestNodeParams(objectId)).map { req =>
@@ -242,11 +232,11 @@ private[kyo] object Resolver:
         }
 
     /** Synchronous release of a CDP `objectId` handle. Awaits Chrome's response so the request drains before the surrounding scope's
-      * `CdpBackend.close` runs; otherwise a fire-and-forget release racing with tab teardown leaves the request in flight and forces `close`
+      * `CdpClient.close` runs; otherwise a fire-and-forget release racing with tab teardown leaves the request in flight and forces `close`
       * to wait out its full grace period. Any release failure is swallowed via `Abort.run` because a stale handle past tab close is
       * harmless (Chrome GCs the JS object on execution-context teardown anyway).
       */
-    private def releaseObjectQuiet(s: CdpBackend, objectId: String)(using Frame): Unit < Async =
+    private def releaseObjectQuiet(s: CdpClient, objectId: String)(using Frame): Unit < Async =
         Abort.run(s.sendUnit("Runtime.releaseObject", ReleaseObjectParams(objectId))).unit
 
 end Resolver

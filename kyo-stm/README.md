@@ -14,9 +14,9 @@ Because the body may rerun, the rule for what goes inside a transaction is narro
 ```scala
 val transfer: Unit < (Async & Abort[FailedTransaction]) =
     for
-        from   <- TRef.init(500)
-        to     <- TRef.init(300)
-        _      <- STM.run:
+        from <- TRef.init(500)
+        to   <- TRef.init(300)
+        _ <- STM.run:
             for
                 _ <- from.update(_ - 100)
                 _ <- to.update(_ + 100)
@@ -36,9 +36,9 @@ A `TRef[A]` holds one value of type `A`. Use it when the state is a scalar (a co
 val balanceAfter: Int < (Async & Abort[FailedTransaction]) =
     for
         balance <- TRef.init(500)
-        _       <- STM.run:
+        _ <- STM.run:
             balance.update(_ - 100)
-        result  <- STM.run(balance.get)
+        result <- STM.run(balance.get)
     yield result
 ```
 
@@ -48,7 +48,7 @@ The four operations on `TRef[A]` are read-only `get` and `use(f)`, and mutating 
 val balanceMatched: String < (Async & Abort[FailedTransaction]) =
     for
         balance <- TRef.init(500)
-        result  <- STM.run:
+        result <- STM.run:
             balance.use:
                 case b if b <= 0  => "empty"
                 case b if b < 100 => "low"
@@ -76,20 +76,20 @@ Calling `initWith` outside a transaction is the same as `init(value).map(use)`; 
 
 ### TMap: keyed state with per-value concurrency
 
-A `TMap[K, V]` is internally `TRef[Map[K, TRef[V]]]`, one outer ref tracking the key set and one inner ref per value. The shape matters for contention: updates to different keys touch different inner refs and never conflict with each other. Only structural changes (a `put` of a new key, a `remove`) write to the outer ref and serialize against each other.
+When many transactions update different keys of a shared map concurrently, reach for `TMap[K, V]`: updates to different keys touch different inner refs and never conflict with each other, while only structural changes (a `put` of a new key, a `remove`) write to the outer ref and serialize against each other. That per-key isolation comes from the internal shape: `TMap[K, V]` is `TRef[Map[K, TRef[V]]]`, one outer ref tracking the key set and one inner ref per value.
 
 ```scala
 val stockAfter: Map[String, Int] < (Async & Abort[FailedTransaction]) =
     for
         stock <- TMap.init[String, Int]("sku-1" -> 10, "sku-2" -> 5)
-        _     <- STM.run:
+        _ <- STM.run:
             for
                 _ <- stock.updateWith("sku-1"):
                     case Present(n) => Maybe(n - 1)
                     case Absent     => Absent
                 _ <- stock.put("sku-3", 20)
             yield ()
-        snap  <- STM.run(stock.snapshot)
+        snap <- STM.run(stock.snapshot)
     yield snap
 ```
 
@@ -113,25 +113,25 @@ The write surface is `put`, `updateWith`, `remove`, `removeDiscard`, `removeAll(
 val reserved: Map[String, Int] < (Async & Abort[FailedTransaction]) =
     for
         stock <- TMap.init[String, Int]("sku-1" -> 1)
-        _     <- STM.run:
+        _ <- STM.run:
             stock.updateWith("sku-1"):
                 case Present(n) if n > 0 => Maybe(n - 1)
                 case Present(_)          => Absent
                 case Absent              => Absent
-        snap  <- STM.run(stock.snapshot)
+        snap <- STM.run(stock.snapshot)
     yield snap
 ```
 
 ### TChunk: transactional sequence
 
-A `TChunk[A]` is internally `TRef[Chunk[A]]`. Every write replaces the whole chunk, so a `TChunk` is the right choice when the access pattern reads or rewrites the sequence as a whole (append-only logs, snapshots of recent events, ordered lists of size known to stay small enough that whole-chunk replacement is cheap). It is the wrong choice if you want to mutate isolated positions concurrently: that pattern is a `TMap[Int, A]`, because `TChunk` writes will always conflict on the single underlying ref.
+`TChunk[A]` is the right choice when the access pattern reads or rewrites the sequence as a whole (append-only logs, snapshots of recent events, ordered lists of size known to stay small enough that whole-chunk replacement is cheap). It is the wrong choice if you want to mutate isolated positions concurrently: that pattern is a `TMap[Int, A]`, because `TChunk` writes will always conflict on the single underlying ref. The reason is the internal shape: `TChunk[A]` is `TRef[Chunk[A]]`, and every write replaces the whole chunk.
 
 ```scala
 val events: Chunk[String] < (Async & Abort[FailedTransaction]) =
     for
-        log <- TChunk.init[String]
-        _   <- STM.run(log.append("opened"))
-        _   <- STM.run(log.append("transferred"))
+        log  <- TChunk.init[String]
+        _    <- STM.run(log.append("opened"))
+        _    <- STM.run(log.append("transferred"))
         snap <- STM.run(log.snapshot)
     yield snap
 ```
@@ -149,7 +149,7 @@ val people =
     for
         table <- TTable.init["name" ~ String & "age" ~ Int]
         _     <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
-        _     <- STM.run(table.insert("name" ~ "Bob"   & "age" ~ 25))
+        _     <- STM.run(table.insert("name" ~ "Bob" & "age" ~ 25))
         snap  <- STM.run(table.snapshot)
     yield snap
 ```
@@ -165,7 +165,7 @@ val matches: Chunk[Record["name" ~ String & "age" ~ Int]] < (Async & Abort[Faile
     for
         table   <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
         _       <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
-        _       <- STM.run(table.insert("name" ~ "Bob"   & "age" ~ 25))
+        _       <- STM.run(table.insert("name" ~ "Bob" & "age" ~ 25))
         _       <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 35))
         results <- STM.run(table.query("name" ~ "Alice"))
     yield results
@@ -211,9 +211,9 @@ The second `STM.run` overload takes a `Schedule` from kyo-core. Use it when the 
 val tightlyBudgeted: Int < (Async & Abort[FailedTransaction]) =
     for
         ref <- TRef.init(0)
-        _   <- STM.run(Schedule.fixed(1.millis).take(10)):
+        _ <- STM.run(Schedule.fixed(1.millis).take(10)):
             ref.update(_ + 1)
-        r   <- STM.run(ref.get)
+        r <- STM.run(ref.get)
     yield r
 ```
 
@@ -229,13 +229,13 @@ The default schedule (`STM.defaultRetrySchedule`) is `Schedule.fixed(1.millis).j
 val withdraw: Int < (Async & Abort[FailedTransaction]) =
     for
         balance <- TRef.init(500)
-        _       <- STM.run:
+        _ <- STM.run:
             for
                 b <- balance.get
                 _ <- STM.retryIf(b < 100)
                 _ <- balance.update(_ - 100)
             yield ()
-        r       <- STM.run(balance.get)
+        r <- STM.run(balance.get)
     yield r
 ```
 
@@ -251,16 +251,16 @@ An `STM.run` call inside another `STM.run` does NOT start a new transaction. It 
 val composite: Int < (Async & Abort[FailedTransaction]) =
     for
         ref <- TRef.init(0)
-        r   <- STM.run:
+        r <- STM.run:
             for
                 _ <- ref.update(_ + 1)
-                _ <- STM.run(ref.update(_ + 10))  // not a new transaction
+                _ <- STM.run(ref.update(_ + 10)) // not a new transaction
                 v <- ref.get
             yield v
     yield r
 ```
 
-> **Unlike** some other STM implementations, kyo-stm has no `orElse` operator and does not commit nested transactions independently. The composition is by `Abort` (the inner block's failure can be caught with `Abort.run` without affecting the outer transaction's commit) and by the shared log (everything the inner block writes is visible to the rest of the outer body and commits with it).
+> **Note:** kyo-stm has no `orElse` operator. Nested composition works through two mechanisms: `Abort` (an inner block's failure can be caught with `Abort.run` without affecting the outer transaction's commit) and the shared transaction log (everything the inner block writes is visible to the rest of the outer body and commits with it). A nested `STM.run` call joins the parent transaction rather than committing independently.
 
 ## What may run inside a transaction
 
@@ -275,13 +275,13 @@ val transferAndNotify: Unit < (Async & Abort[FailedTransaction] & Sync) =
     for
         from <- TRef.init(500)
         to   <- TRef.init(300)
-        _    <- STM.run:
+        _ <- STM.run:
             for
                 _ <- from.update(_ - 100)
                 _ <- to.update(_ + 100)
             yield ()
         // After commit, side effects run exactly once.
-        _    <- Sync.defer(println("transferred 100"))
+        _ <- Sync.defer(println("transferred 100"))
     yield ()
 ```
 
@@ -289,7 +289,7 @@ val transferAndNotify: Unit < (Async & Abort[FailedTransaction] & Sync) =
 
 ### Isolate requirement
 
-`STM.run` takes an `Isolate[S, Async & Abort[E | FailedTransaction], S]` for whatever effects `S` the body uses. The isolate is how the runtime re-isolates per-retry state: a `Var[Int]` inside a transaction needs an isolate so the runtime can snapshot its value on entry and restore it on each retry attempt, rather than carrying changes from a failed attempt into the next one.
+Because a failed attempt must carry no changes into the next retry, the runtime needs to snapshot transactional state on entry and restore it cleanly each time. That snapshotting is provided by an `Isolate` instance: `STM.run` requires an `Isolate[S, Async & Abort[E | FailedTransaction], S]` for whatever effects `S` the body uses. A `Var[Int]` inside a transaction, for example, needs an isolate so the runtime can capture its value before the attempt and reset to that value on each retry.
 
 Effects without an `Isolate` instance cannot be used inside a transaction. Effects with an `Isolate` instance (the standard kyo-prelude effects: `Var`, `Emit`, `Choice`, `Memo`, `Aspect`) compose naturally; the isolate threading is invisible at the call site.
 
@@ -312,7 +312,7 @@ val unsafelyAllocated: TRef[Int] = TRef.Unsafe.init(42)
 
 > **Caution:** Calling `TRef.Unsafe.init` from inside an in-flight transaction produces a ref whose tick is unrelated to the transaction tick and can cause spurious retries. Use `TRef.initWith` instead when you want to allocate inside a transaction; the orchestration is the whole point.
 
-## Failures
+## When a transaction gives up
 
 ### FailedTransaction
 
@@ -323,13 +323,14 @@ val handled: String < Async =
     val tx: Int < (Async & Abort[FailedTransaction]) =
         for
             ref <- TRef.init(0)
-            _   <- STM.run(Schedule.fixed(1.millis).take(1)):
+            _ <- STM.run(Schedule.fixed(1.millis).take(1)):
                 STM.retry
         yield 0
     tx.handle(Abort.run).map:
-        case Result.Success(_)              => "committed"
-        case Result.Failure(_)              => "gave up after retries"
-        case p: Result.Panic                => s"panic: ${p.exception}"
+        case Result.Success(_) => "committed"
+        case Result.Failure(_) => "gave up after retries"
+        case p: Result.Panic   => s"panic: ${p.exception}"
+end handled
 ```
 
 Treat `FailedTransaction` as a real failure, not a transient error. If you see it in production, contention has exceeded your retry budget; the fix is either to widen the budget (a custom `Schedule` passed to `STM.run`) or to reshape the data so that fewer transactions touch the same ref (per-key locking via `TMap` rather than a single `TRef[Map[...]]`).

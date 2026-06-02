@@ -86,7 +86,7 @@ In Kyo, `map` and `flatMap` are the same method. Both have this signature:
 
 ```scala doctest:expect=skipped
 extension [A, S](v: A < S)
-    def map    [B, S2](f: A => B < S2): B < (S & S2)
+    def map[B, S2](f: A => B < S2): B < (S & S2)
     def flatMap[B, S2](f: A => B < S2): B < (S & S2)
 ```
 
@@ -130,9 +130,9 @@ Defining a brand-new effect is therefore an advanced, rarely-needed step. The th
 ```scala doctest:scope=inherited
 val program: Int < (Abort[String] & Env[Int]) =
     for
-        v <- Abort.get(Right(42))  // introduce a value into Abort[String]'s row
-        e <- Env.get[Int]          // read the Env[Int] context value
-    yield v + e                    // use both; Kyo tracks the row in the type
+        v <- Abort.get(Right(42)) // introduce a value into Abort[String]'s row
+        e <- Env.get[Int]         // read the Env[Int] context value
+    yield v + e // use both; Kyo tracks the row in the type
 
 // run* discharges one effect at a time, narrowing the row
 val handled: Result[String, Int] < Any =
@@ -275,7 +275,7 @@ Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-act
 
 ### Domain modules
 
-Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation.
+Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation, and web UIs.
 
 | Module                                                 | JVM | JS  | Native | Identity                                                                                                  |
 | ------------------------------------------------------ | --- | --- | ------ | --------------------------------------------------------------------------------------------------------- |
@@ -284,6 +284,7 @@ Domain-shaped modules: parsing, durable workflows, container management, low-lat
 | [kyo-pod](kyo-pod/README.md)                           | ✅   | ✅   | ✅      | Docker and Podman client cross-compiled to JVM/JS/Native, streaming logs/stats, scope-managed cleanup     |
 | [kyo-aeron](kyo-aeron/README.md)                       | ✅   | ❌   | ❌      | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API             |
 | [kyo-browser](kyo-browser/README.md)                   | ✅   | ✅   | ✅      | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown |
+| [kyo-ui](kyo-ui/README.md)                             | ✅   | ✅   | ✅      | Web UIs as pure values: one `UI` runs as a Scala.js DOM app (`runMount`), server HTML-over-SSE (`runHandlers`), or SSR stream (`runRender`); first-class `Signal` reactivity, compile-checked HTML |
 
 ### Observability
 

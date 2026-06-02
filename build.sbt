@@ -165,7 +165,7 @@ lazy val kyoJVM: Project = project
             inAggregates(kyoJVM) -- inProjects(
                 `kyo-bench`.jvm,
                 `kyo-examples`.jvm,
-                `kyo-compat`
+                `kyo-compat-plugin`
             ),
         ScalaUnidoc / unidoc / scalacOptions ++= Seq(
             "-project",
@@ -237,6 +237,7 @@ lazy val kyoJVM: Project = project
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-browser`.jvm,
+        `kyo-ui`.jvm,
         `kyo-case-app`.jvm,
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
@@ -247,9 +248,9 @@ lazy val kyoJVM: Project = project
         `kyo-compat-ce`.jvm,
         `kyo-compat-ox`.jvm,
         `kyo-compat-twitter-future`.jvm,
-        `kyo-compat`,
+        `kyo-compat-plugin`,
         `kyo-doctest`.jvm,
-        `sbt-kyo-doctest`,
+        `kyo-doctest-plugin`,
         `root-readme`
     )
 
@@ -287,6 +288,7 @@ lazy val kyoJS = project
         `kyo-mcp`.js,
         `kyo-lsp`.js,
         `kyo-browser`.js,
+        `kyo-ui`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
@@ -329,6 +331,7 @@ lazy val kyoNative = project
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
         `kyo-browser`.native,
+        `kyo-ui`.native,
         `kyo-pod`.native,
         `kyo-compat-future`.native,
         `kyo-compat-kyo`.native,
@@ -1205,7 +1208,9 @@ lazy val `kyo-browser` =
             // in a 10-minute run; isolating each suite eliminates that contamination at the cost of ~3
             // minutes of additional Chrome startup. parallelExecution = false serializes the per-suite
             // groups so Chrome processes don't compete for resources; testForkedParallel = false keeps
-            // within-fork tests sequential as a belt-and-braces safeguard.
+            // within-fork tests sequential as a belt-and-braces safeguard. (Running the per-suite forks
+            // concurrently was tried and reverted: cores/2 simultaneous Chrome processes starve each other,
+            // a Chrome dies, and the dead-Chrome failures cascade -- the very thing the serial mode prevents.)
             Test / parallelExecution  := false,
             Test / testForkedParallel := false,
             Test / testGrouping := {
@@ -1251,6 +1256,56 @@ lazy val `kyo-browser` =
         )
         .jsSettings(
             `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+
+lazy val `kyo-ui` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-ui"))
+        .dependsOn(`kyo-core`, `kyo-http`)
+        .dependsOn(`kyo-browser` % Test)
+        .settings(`kyo-settings`)
+        .jvmSettings(
+            mimaCheck(false),
+            // kyo-ui tests drive real Chrome via kyo-browser's SharedChrome. Per-suite JVM forking gives
+            // each test class its own JVM and SharedChrome; parallelExecution = false serializes the
+            // per-suite groups so the Chrome processes don't compete. Mirrors kyo-browser's jvmSettings.
+            Test / parallelExecution  := false,
+            Test / testForkedParallel := false,
+            Test / testGrouping := {
+                val javaOptionsValue = (Test / javaOptions).value.toVector
+                val envsVarsValue    = envVars.value
+                (Test / definedTests).value map { test =>
+                    Tests.Group(
+                        name = test.name,
+                        tests = Seq(test),
+                        runPolicy = Tests.SubProcess(
+                            ForkOptions(
+                                javaHome = javaHome.value,
+                                outputStrategy = outputStrategy.value,
+                                bootJars = Vector.empty,
+                                workingDirectory = Some(baseDirectory.value),
+                                runJVMOptions = javaOptionsValue,
+                                connectInput = connectInput.value,
+                                envVars = envsVarsValue
+                            )
+                        )
+                    )
+                }
+            }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`,
+            // Chrome resource contention makes parallel test-suite execution flaky on Native. Serialize
+            // suites so each owns the shared Chrome WebSocket channel in turn.
+            Test / parallelExecution := false
+        )
+        .jsSettings(
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
 
@@ -1386,6 +1441,20 @@ lazy val `root-readme` =
             doctestSources := Seq((ThisBuild / baseDirectory).value / "README.md")
         )
 
+// Validates kyo-doctest's own README. kyo-doctest disables KyoDoctestPlugin on itself (a module
+// cannot doctest the very library that implements doctest), so a separate project, like root-readme,
+// validates that README against the kyo-doctest classpath.
+lazy val `kyo-doctest-readme` =
+    project
+        .in(file("target/kyo-doctest-readme"))
+        .disablePlugins(MimaPlugin)
+        .dependsOn(`kyo-doctest`.jvm)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-doctest" / "README.md")
+        )
+
 lazy val `openssl-native-settings` = Seq(
     nativeConfig ~= { c =>
         val isMac = System.getProperty("os.name").toLowerCase.contains("mac")
@@ -1435,36 +1504,58 @@ def mimaCheck(failOnProblem: Boolean) =
         mimaFailOnProblem := failOnProblem
     )
 
-// --- sbt-kyo-doctest (sbt plugin; pairs with kyo-doctest library)
+// --- kyo-doctest-plugin (sbt plugin; pairs with kyo-doctest library)
 //
 // Scala 2.12 sbt plugin that forks the kyo-doctest library CLI to validate Markdown fences.
-// Aggregated into kyoJVM only. Behavioral tests run via `sbt-kyo-doctest/scripted`.
-lazy val `sbt-kyo-doctest` = (project in file("sbt-kyo-doctest"))
+// In-tree at kyo-doctest/plugin (same layout as kyo-compat/plugin). Aggregated into kyoJVM only.
+// Behavioral tests run via `kyo-doctest-plugin/scripted`.
+lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
     .enablePlugins(SbtPlugin)
     .disablePlugins(KyoDoctestPlugin)
     .settings(
-        name               := "sbt-kyo-doctest",
+        moduleName         := "kyo-doctest-plugin",
         scalaVersion       := "2.12.20",
         crossScalaVersions := Seq("2.12.20"),
         sbtPlugin          := true,
+        // scalafmt-dynamic powers the `doctestFormat` task (rewrite-in-place of README scala
+        // blocks using the repo's .scalafmt.conf). Pinned to the .scalafmt.conf version.
+        libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.9.6",
         scriptedLaunchOpts := Seq(
             "-Xmx1024M",
-            "-Dplugin.version=" + version.value
+            "-Dplugin.version=" + version.value,
+            // Path to the runner-classpath file written by scriptedDependencies below.
+            "-Dkyo.doctest.runnerCpFile=" + (target.value / "doctest-runner-cp.txt").getAbsolutePath
         ),
-        scriptedBufferLog := false
+        scriptedBufferLog := false,
+        // Provide the kyo-doctest runner's built classpath to the scripted forks without ivy
+        // resolution (mirrors how kyo-settings injects it into the main build's doctest fork). The
+        // path is handed to each scripted sub-build, which reads it into doctestExtraClasspath.
+        scriptedDependencies := {
+            val compiled  = (Test / compile).value
+            val published = publishLocal.value
+            val cp        = (`kyo-doctest`.jvm / Compile / fullClasspath).value.files.map(_.getAbsolutePath)
+            val cpFile    = target.value / "doctest-runner-cp.txt"
+            IO.write(cpFile, cp.mkString(System.lineSeparator))
+            (compiled, published)
+            ()
+        },
+        // Run the scripted suite as part of the plugin's regular test task so CI gates it via
+        // `kyo-doctest-plugin/test` rather than a bespoke scripted invocation.
+        Test / test := (Test / test).dependsOn(scripted.toTask("")).value
     )
 
-// --- kyo-compat (in-tree sbt plugin; published as artifact `kyo-compat`)
+// --- kyo-compat-plugin (in-tree sbt plugin; published as artifact `kyo-compat-plugin`)
 //
 // First SbtPlugin module in kyo. Scala 2.12 only (sbt 1.x runtime).
 // Aggregated into kyoJVM only (not kyoJS/kyoNative, since an sbt plugin
 // is a single JVM artifact) so the JVM `ci-release` pass publishes it.
-// Its behavioral tests are scripted tests, run in CI via `kyo-compat/scripted`.
-lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
+// Its behavioral tests are scripted tests, bound into `test` (below) so the
+// regular testKyo 2.12 pass runs them, no bespoke CI step needed.
+lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
     .enablePlugins(SbtPlugin)
     .disablePlugins(KyoDoctestPlugin)
     .settings(
-        moduleName         := "kyo-compat",
+        moduleName         := "kyo-compat-plugin",
         scalaVersion       := "2.12.20",
         crossScalaVersions := Seq("2.12.20"),
         sbtPlugin          := true,
@@ -1481,5 +1572,8 @@ lazy val `kyo-compat` = (project in file("kyo-compat/plugin"))
             "-Xmx1024M",
             "-Dplugin.version=" + version.value
         ),
-        scriptedBufferLog := false
+        scriptedBufferLog := false,
+        // Run the scripted suite as part of the plugin's regular test task (matches
+        // kyo-doctest-plugin) so the testKyo 2.12 pass gates it; no bespoke CI step.
+        Test / test := (Test / test).dependsOn(scripted.toTask("")).value
     )

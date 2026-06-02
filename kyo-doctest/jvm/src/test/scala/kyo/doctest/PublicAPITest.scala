@@ -39,8 +39,8 @@ class PublicAPITest extends AnyFreeSpec with NonImplicitAssertions:
         assert(cfg.parallel == 8)
     }
 
-    // Test 3: Doctest.Report exposes totalBlocks, cacheHits, compiled, failures with declared types.
-    "Doctest.Report exposes totalBlocks/cacheHits/compiled/failures with declared types" in {
+    // Test 3: Doctest.Report exposes totalBlocks, cacheHits, compiled, warnings, failures with declared types.
+    "Doctest.Report exposes totalBlocks/cacheHits/compiled/warnings/failures with declared types" in {
         val failure = Doctest.Failure(
             file = Path("README.md"),
             line = 10,
@@ -50,15 +50,18 @@ class PublicAPITest extends AnyFreeSpec with NonImplicitAssertions:
             totalBlocks = 3,
             cacheHits = 1,
             compiled = 2,
+            warnings = 0,
             failures = Chunk(failure)
         )
         val _totalBlocks: Int                 = report.totalBlocks
         val _cacheHits: Int                   = report.cacheHits
         val _compiled: Int                    = report.compiled
+        val _warnings: Int                    = report.warnings
         val _failures: Chunk[Doctest.Failure] = report.failures
         assert(_totalBlocks == 3)
         assert(_cacheHits == 1)
         assert(_compiled == 2)
+        assert(_warnings == 0)
         assert(_failures.size == 1)
         // Verify Failure fields
         assert(failure.file == Path("README.md"))

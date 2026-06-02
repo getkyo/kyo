@@ -15,11 +15,13 @@ Log.let(JavaLog("kyo.app")) {
 }
 ```
 
-## Installing the backend
+## Installing it with Log.let
 
-`Log.live` in kyo-core defaults to an internal console logger. `JavaLog` does not replace that default globally, it produces a `Log` value you install for a scope with `Log.let`. Everything outside the `Log.let` block keeps using whatever `Log` is in effect there.
+Constructing a `JavaLog` does nothing on its own; you install it for a scope with `Log.let`. `Log.live` in kyo-core defaults to an internal console logger, and `JavaLog` does not replace that default globally: it produces a `Log` value you pass to `Log.let`. Everything outside the `Log.let` block keeps using whatever `Log` is in effect there.
 
-### `JavaLog(name)`
+### Construction by logger name
+
+`JavaLog(name: String): Log`
 
 The name-based factory is the typical first call. It delegates to `java.lang.System.getLogger(name)`, so the name is whatever the underlying JPL binding expects: with JUL that maps to a `java.util.logging.Logger` of the same name, with the SLF4J-to-JPL bridge it maps to an SLF4J `Logger`, and so on.
 
@@ -35,13 +37,15 @@ Log.let(log) {
 
 The factory returns an ordinary `kyo.Log` value, so it can be passed around, stored in a layer, or installed with `Log.let` at the boundary of a request, a fiber, or `main`.
 
-### `JavaLog(logger)`
+### Construction from an existing System.Logger
+
+`JavaLog(logger: java.lang.System.Logger): Log`
 
 When the caller already has a `java.lang.System.Logger` (resolved through a custom `LoggerFinder`, a service-loaded factory, or some other integration that hands the logger over), `JavaLog(logger)` wraps that exact instance instead of resolving a new one by name.
 
 ```scala
-import kyo.*
 import java.lang.System.Logger
+import kyo.*
 
 val custom: Logger = java.lang.System.getLogger("kyo.app")
 val log: Log       = JavaLog(custom)
@@ -51,7 +55,6 @@ Log.let(log) {
 }
 ```
 
-When you need to compute the diff yourself, use the name-based factory. When something upstream hands you the `System.Logger`, use the logger-based factory. Both produce the same shape of `kyo.Log`.
 
 ## How log calls reach the JDK
 
@@ -89,7 +92,7 @@ Kyo's levels map one-to-one onto JPL's:
 
 ### `level`: snapshot, not live
 
-The backend's `Log.Level` is computed once at construction by walking `isLoggable` from `TRACE` down to `ERROR` and picking the first level the underlying logger accepts.
+Querying `log.level` returns a value frozen at construction, not the logger's current threshold. The backend walks `isLoggable` from `TRACE` down to `ERROR` once at construction and picks the first level the underlying logger accepts.
 
 ```scala
 // At construction time, JavaLog probes the logger:
@@ -112,15 +115,15 @@ This module does not configure JPL. It consumes whatever binding the JVM resolve
 The example that follows uses plain JUL because it ships in the JDK and needs no extra dependencies. The shape is the same for any binding.
 
 ```scala
-import kyo.*
 import java.util.logging.{Logger as JulLogger, *}
+import kyo.*
 
 // Strip the default root handler so JDK-defaults don't pollute stderr.
 val root = JulLogger.getLogger("")
 root.getHandlers.foreach(root.removeHandler)
 
 // Attach our own handler, set BOTH the logger and the handler to DEBUG.
-val logger  = JulLogger.getLogger("kyo.app")
+val logger = JulLogger.getLogger("kyo.app")
 logger.setLevel(Level.FINE)
 val handler = new StreamHandler(java.lang.System.out, new SimpleFormatter)
 handler.setLevel(Level.FINE) // logger.setLevel isn't enough
@@ -128,9 +131,9 @@ logger.addHandler(handler)
 
 Log.let(JavaLog("kyo.app")) {
     for
-        _ <- Log.trace("won't show up")     // FINER, below the handler's threshold
-        _ <- Log.debug("test message")      // FINE
-        _ <- Log.info("info message")       // INFO
+        _ <- Log.trace("won't show up") // FINER, below the handler's threshold
+        _ <- Log.debug("test message")  // FINE
+        _ <- Log.info("info message")   // INFO
         _ <- Log.warn("warning", new RuntimeException("boom"))
     yield ()
 }
@@ -152,11 +155,9 @@ Log.let(JavaLog("kyo.app")) {
 
 ## Unsafe tier
 
-For integrations that need to share a single `Log.Unsafe` instance, plug into kyo-core's `Log.Unsafe` machinery, or interoperate with frameworks that already hold a `System.Logger`, the backend is exposed as `JavaLog.Unsafe.JPL`.
+### Sharing a Log.Unsafe instance
 
-### `JavaLog.Unsafe.JPL`
-
-`JavaLog.Unsafe.JPL(logger)` is the concrete `Log.Unsafe` implementation that `JavaLog(name)` and `JavaLog(logger)` wrap. Construction requires an `AllowUnsafe` because the `Log.Unsafe` surface bypasses kyo's `Sync` effect tracking.
+When you need to share a single `Log.Unsafe` across integrations, plug into kyo-core's `Log.Unsafe` machinery directly, or hand a `System.Logger` to a framework that already holds one, reach for `JavaLog.Unsafe.JPL`. `JavaLog.Unsafe.JPL(logger)` is the concrete `Log.Unsafe` implementation that `JavaLog(name)` and `JavaLog(logger)` wrap. Construction requires an `AllowUnsafe` because the `Log.Unsafe` surface bypasses kyo's `Sync` effect tracking.
 
 ```scala
 import kyo.*
@@ -165,7 +166,7 @@ import kyo.AllowUnsafe
 given AllowUnsafe = AllowUnsafe.embrace.danger
 
 val unsafe: Log.Unsafe = new JavaLog.Unsafe.JPL(java.lang.System.getLogger("kyo.app"))
-val log:    Log        = Log(unsafe)
+val log: Log           = Log(unsafe)
 
 Log.let(log) {
     Log.info("wired via Unsafe tier")

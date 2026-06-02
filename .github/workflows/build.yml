@@ -38,11 +38,11 @@ jobs:
       JAVA_OPTS: >-
         ${{ inputs.os == 'macos-arm64'
         && '-Xmx6G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
-        || '-Xms8G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
+        || '-Xms8G -Xmx12G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
       JVM_OPTS: >-
         ${{ inputs.os == 'macos-arm64'
         && '-Xmx6G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
-        || '-Xms8G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
+        || '-Xms8G -Xmx12G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
 
     steps:
       - uses: actions/checkout@v6.0.2
@@ -189,11 +189,3 @@ jobs:
           else
             sbt "$cmd"
           fi
-
-      # The kyo-compat sbt plugin is exercised by scripted tests, not the
-      # testKyo matrix. It is platform-independent, so run it once: on the
-      # JVM target of a single arch rather than every arch/target cell.
-      - name: Scripted tests (kyo-compat plugin)
-        if: matrix.target == 'JVM' && inputs.os == 'linux-x64'
-        shell: bash
-        run: sbt 'kyo-compat/scripted'

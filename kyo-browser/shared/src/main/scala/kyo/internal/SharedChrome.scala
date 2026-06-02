@@ -11,16 +11,16 @@ import kyo.*
   * (JVM exit, Node exit, Native exit), the fiber is interrupted and the scope's finalizers run, destroying Chrome and cleaning up its temp
   * user-data directory.
   *
-  * **Unsafe boundary.** The `private var cachedUrl` and `private val initStarted` below initialise a `Promise.Unsafe` and
-  * `AtomicBoolean.Unsafe` at static (val) init time, before any kyo `Sync` / `Async` handler is on the call stack to embrace the unsafe
-  * primitive. All subsequent reads/writes go through the safe wrappers (`cachedUrl.safe.get`, `initStarted.compareAndSet` inside
-  * `Sync.Unsafe.defer`), confining the unsafe construction to the val-init seam. `cachedUrl` is a `@volatile var` so `invalidate` can swap
-  * the Promise atomically; the `@volatile` annotation guarantees visibility of the new Promise to all subsequent readers.
+  * **Unsafe boundary.** The two `private val`s below initialise a `Promise.Unsafe` and `AtomicBoolean.Unsafe` at static (val) init time,
+  * before any kyo `Sync` / `Async` handler is on the call stack to embrace the unsafe primitive. All subsequent reads/writes go through the
+  * safe wrappers (`cachedUrl.safe.get`, `initStarted.compareAndSet` inside `Sync.Unsafe.defer`), confining the unsafe construction to the
+  * val-init seam.
   */
 private[kyo] object SharedChrome:
 
-    // Static-init boundary; see the `Unsafe boundary` paragraph on the enclosing object.
-    // `@volatile var` (not `val`) so `invalidate` can swap the Promise when Chrome dies.
+    // Static-init boundary; see the `Unsafe boundary` paragraph on the enclosing object. `var` (not `val`) so
+    // `invalidate` can swap in a fresh Promise when the shared Chrome dies; `@volatile` so the swap is visible to
+    // readers on other threads.
     @volatile private var cachedUrl: Promise.Unsafe[String, Abort[BrowserSetupException]] =
         // Unsafe: static var init runs before any Sync handler is on the stack; subsequent reads/writes go through .safe.
         import AllowUnsafe.embrace.danger
@@ -37,31 +37,25 @@ private[kyo] object SharedChrome:
     def init(using Frame): String < (Async & Abort[BrowserSetupException]) =
         ensureStarted.andThen(cachedUrl.safe.get)
 
-    /** Run `f` against the shared Chrome's WS URL with failure-driven retry.
+    /** Runs `f` against the shared Chrome URL, relaunching and retrying exactly once if the shared Chrome has died.
       *
-      * If `f` fails because Chrome is dead ([[BrowserSetupFailedException]] from the Q-002 probe gate, or
-      * [[BrowserConnectionLostException]] from transport-setup failure), the cache is invalidated, Chrome is relaunched, and `f` is retried
-      * once with the fresh URL. Any other failure — or a second-level failure after relaunch — propagates to the caller unchanged.
-      *
-      * This is the preferred entry point over calling [[init]] directly: callers get automatic recovery from mid-suite Chrome crashes
-      * without having to implement their own retry logic.
-      *
-      * Uses `kyo.Retry` with a one-shot immediate schedule (no added delay; the relaunch itself takes ~2-3 s wall-clock).
+      * When Chrome crashes mid-run the cached URL points at a port nothing listens on, so every later caller reusing it fails its WebSocket
+      * handshake. Without invalidation a single Chrome death cascades into failures for every subsequent test. Here, if `f` fails with a
+      * marker that means the shared Chrome is gone ([[BrowserConnectionLostException]] or [[BrowserSetupFailedException]]), the cache is
+      * invalidated, Chrome is relaunched, and `f` is retried once against the fresh URL. Every other failure (assertion, timeout,
+      * navigation, element, ...) propagates immediately and is never retried, so real test failures are not masked.
       */
-    def withUrl[A, S](
-        f: String => A < (Async & Abort[BrowserReadException | BrowserSetupException] & S)
-    )(using Frame): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
-        // One retry, no extra delay. Schedule.repeat(1) = Schedule.immediate.repeat(1):
-        // yields exactly one Step (Duration.Zero) then Done, so Retry fires exactly once on failure.
-        val schedule = Schedule.repeat(1)
-        Retry[BrowserSetupFailedException | BrowserConnectionLostException](schedule) {
+    def withUrl[A, S](f: String => A < (Async & Abort[BrowserReadException | BrowserSetupException] & S))(using
+        Frame
+    ): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
+        // Retry selects the two dead-Chrome markers by its type union; any other failure (assertion, timeout,
+        // element, navigation) propagates untouched and is never retried. On a dead-Chrome failure we invalidate
+        // (so the retry's `init` relaunches) then re-fail so Retry sees it; Schedule.repeat(1) allows exactly one
+        // relaunch + retry, after which a second failure propagates.
+        Retry[BrowserConnectionLostException | BrowserSetupFailedException](Schedule.repeat(1)) {
             init.map { url =>
-                // Intercept only the two "Chrome is dead" error types: invalidate the cache so
-                // the retry's `init` call sees an empty cache and re-launches, then re-raise so
-                // Retry can schedule the next attempt.  All other failures (navigation, script,
-                // etc.) are not handled here and remain in the outer error channel.
-                Abort.recover[BrowserSetupFailedException | BrowserConnectionLostException] {
-                    e => invalidate.andThen(Abort.fail(e))
+                Abort.recover[BrowserConnectionLostException | BrowserSetupFailedException] { e =>
+                    invalidate.andThen(Abort.fail(e))
                 } {
                     f(url)
                 }
@@ -69,14 +63,13 @@ private[kyo] object SharedChrome:
         }
     end withUrl
 
-    /** Atomically reset the cache so the next [[init]] call re-launches Chrome.
+    /** Atomically resets the cache so the next [[init]] relaunches Chrome.
       *
-      * Thundering-herd safe: if N concurrent callers invalidate simultaneously, only the first `initStarted` CAS wins the relaunch; the
-      * rest spin into the same new Promise and await its completion. Replace `cachedUrl` before clearing `initStarted` so any reader that
-      * already holds the stale (failed) Promise continues to see it, while readers entering after the swap see the new pending Promise.
+      * The fresh pending Promise is swapped in BEFORE `initStarted` is cleared: a reader that arrives after the swap awaits the new Promise
+      * the relaunch will complete, and the `compareAndSet` in `ensureStarted` collapses N concurrent invalidations into a single relaunch.
       */
     private[kyo] def invalidate(using Frame): Unit < Sync =
-        // AllowUnsafe is provided by Sync.Unsafe.defer; no explicit import needed here.
+        // Sync.Unsafe.defer supplies the AllowUnsafe evidence via its context-function body; the swap and reset are confined here.
         Sync.Unsafe.defer {
             cachedUrl = Promise.Unsafe.init[String, Abort[BrowserSetupException]]()
             initStarted.set(false)

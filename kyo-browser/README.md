@@ -35,14 +35,14 @@ Every entry point below lives on the `Browser` companion object (so `run` means 
 | `screenshot` / `pdf` / `readableContent` | Snapshot artefacts |
 | `mockFetchResponse` / `clearMocks` | In-page `fetch` interception |
 | `cookies` / `setCookie` / `deleteCookie` / `tryAcceptCookies` | Cookie jar |
-| `allowDownloads` / `withDownloads` / `onDownload` / `recordDownloads` | Download capture |
+| `withDownloads` / `onDownload` / `recordDownloads` | Download capture |
 | `iframe` / `iframes` / `mainFrame` / `withIFrame` | Cross-frame access |
 | `consoleLogs` | Captured console messages (`ConsoleMessage` / `ConsoleLevel`) |
 | `withConfig` / `withTimeout` / `withViewport` / `withDialogs` | Scoped configuration |
 | `withNewTab` / `withFork` / `withPopup` / `isolate.fresh` / `isolate.clone` | Sub-tab and concurrent isolation |
 | `dataUrl` | Build a `data:text/html` URL for inline-HTML fixtures |
 
-## Installation
+## Add the dependency
 
 ```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %% "kyo-browser" % "<latest version>"
@@ -56,7 +56,7 @@ import kyo.*
 
 Browser-side helpers (selectors, settle modes, page lifecycle, configuration types) live under the `Browser.*` namespace, so a single import line is enough.
 
-## Lifecycle
+## Browser lifecycle: process, context, tab, iframe
 
 A `Browser.run` body operates inside a four-layer hierarchy. Each layer contains the next, and each layer is cleaned up when its parent ends. Most call sites only think about the tab; the deeper layers exist so the library can attach resources to the right cleanup boundary.
 
@@ -72,6 +72,8 @@ There are three entry points for materialising a browser:
 `Browser.run(launch, session)` is the everyday form. It launches a fresh Chrome, runs the body, and shuts the process down when the body completes (whether by success, failure, or interruption). The no-argument overload downloads `chrome-headless-shell` (the lightweight headless build Google publishes alongside full Chrome for testing) on first use, caches the binary under the platform cache directory (override via `KYO_BROWSER_CACHE`), and launches it.
 
 Auto-download covers five platforms: macOS Intel, macOS Apple Silicon, Linux x86_64, Windows 64-bit, Windows 32-bit. Google does not publish a Linux ARM (or Windows ARM) build, so the zero-arg overload aborts on those platforms with a [`BrowserSetupException`](shared/src/main/scala/kyo/BrowserException.scala) whose message points you at a system-installed Chromium: install it via your package manager (e.g. `apt install chromium-browser`) and pass `Browser.LaunchConfig.chromium("chromium-browser")` (or another absolute path) to `Browser.run(config) { ... }` explicitly.
+
+To download a specific build variant or pin to a particular Chrome version before calling `Browser.run`, use `Browser.chromeForTestingLaunchConfig`. It accepts a `Browser.ChromeForTestingBuild` (`HeadlessShell` or `Chrome`) and an optional version string, downloads and caches the binary, and returns a `LaunchConfig` ready to pass to `Browser.run`. The `Chrome` variant (~190 MB) is required for headed mode (`headless = false`); `HeadlessShell` (~120 MB) is sufficient for all headless use.
 
 ```scala
 Browser.run {
@@ -116,8 +118,8 @@ A `Selector` describes how to locate an element on the page. Reach for the seman
 
 ```scala
 // ARIA role + accessible-name builders (one method per supported role)
-Browser.Selector.button("Sign in")       // role=button, accessible name "Sign in"
-Browser.Selector.textbox("Email")        // role=textbox, accessible name "Email"
+Browser.Selector.button("Sign in") // role=button, accessible name "Sign in"
+Browser.Selector.textbox("Email")  // role=textbox, accessible name "Email"
 Browser.Selector.link("Documentation")
 Browser.Selector.heading("Welcome")
 Browser.Selector.checkbox("I agree")
@@ -129,14 +131,14 @@ Browser.Selector.dialog("Confirm")
 // Pass no name to match any element with the role: Browser.Selector.button
 
 // Locators by visible content or form-control attributes
-Browser.Selector.text("Sign in")         // visible text (case-insensitive substring; pass exact = true for strict)
-Browser.Selector.label("Email")          // labelled control whose associated <label> text is "Email"
-Browser.Selector.placeholder("you@…")    // [placeholder="you@…"]
-Browser.Selector.title("More info")      // [title="More info"]
-Browser.Selector.testId("login-form")    // [data-testid="login-form"]
+Browser.Selector.text("Sign in")      // visible text (case-insensitive substring; pass exact = true for strict)
+Browser.Selector.label("Email")       // labelled control whose associated <label> text is "Email"
+Browser.Selector.placeholder("you@…") // [placeholder="you@…"]
+Browser.Selector.title("More info")   // [title="More info"]
+Browser.Selector.testId("login-form") // [data-testid="login-form"]
 
 // Direct locators
-Browser.Selector.id("submit-btn")        // #submit-btn
+Browser.Selector.id("submit-btn") // #submit-btn
 Browser.Selector.css("form button.primary")
 ```
 
@@ -146,11 +148,12 @@ Every public API in this module that takes a `Selector` also accepts a raw `Stri
 
 ```scala
 for
-    _ <- Browser.click("text=Sign in")        // == Browser.click(Browser.Selector.text("Sign in"))
-    _ <- Browser.click("#go")                 // == Browser.click(Browser.Selector.css("#go")) (no prefix, verbatim CSS)
+    _ <- Browser.click("text=Sign in") // == Browser.click(Browser.Selector.text("Sign in"))
+    _ <- Browser.click("#go")          // == Browser.click(Browser.Selector.css("#go")) (no prefix, verbatim CSS)
     _ <- Browser.fill("label=Email", "alice@example.com")
     _ <- Browser.assertExists("testid=login-form")
 yield ()
+end for
 ```
 
 Strings with an unrecognised prefix (for example `"abc=def"`) fall back to CSS verbatim, including the prefix text itself. `role=` is intentionally NOT a prefix; reach for the typed `Browser.Selector.button(name)` / `Selector.textbox(name)` / etc. constructors when the locator describes a role.
@@ -163,7 +166,7 @@ Strings with an unrecognised prefix (for example `"abc=def"`) fall back to CSS v
 import Browser.Selector.*
 
 // Try a semantic role first; fall back to the legacy CSS id if the role isn't set.
-val signIn = Browser.Selector.button("Sign in") or Browser.Selector.id("legacy-signin")
+val signIn = Browser.Selector.button("Sign in").or(Browser.Selector.id("legacy-signin"))
 
 // Locate the "Email" textbox inside the "Login" dialog.
 val emailInLoginDialog = Browser.Selector.dialog("Login")
@@ -194,6 +197,7 @@ for
     _ <- Browser.click(Browser.Selector.button("Sign in"))
     _ <- Browser.assertText(Browser.Selector.heading, "Welcome, Alice")
 yield ()
+end for
 ```
 
 The interaction surface:
@@ -205,12 +209,33 @@ The interaction surface:
 | `check(selector)` / `uncheck(selector)` | `Unit` | Set a checkbox to the desired state (no-op if already there) |
 | `select(selector, value)` | `Unit` | Choose an `<option>` by `value` in a `<select>` |
 | `press(selector, key, modifiers)` / `press(key, modifiers)` | `Unit` | Send a keystroke to a focused selector or to the page-level active element. `modifiers: KeyModifiers` carries Shift / Ctrl / Alt / Meta as a typed value; defaults to `KeyModifiers.none` |
+| `keyDown(key)` | `Unit` | Dispatch a raw keyDown CDP event for `key` (low-level; prefer `press` unless split down/up timing is required) |
+| `keyUp(key)` | `Unit` | Dispatch a raw keyUp CDP event for `key` |
 | `hover(selector)` | `Unit` | Move the mouse to the target's centre |
 | `dragAndDrop(source, target)` | `Unit` | Press at source, move to target, release |
 | `setFiles(selector, paths)` | `Unit` | Attach a `Seq[Path]` to an `<input type="file">` without opening a native picker |
 | `scrollTo(selector)` / `scrollToTop` / `scrollToBottom` | `Unit` | Scroll the element (or the page) into view |
 | `typeText(text)` | `Unit` | Send a character sequence to the page-level active element |
 | `focus(selector)` | `Unit` | Move keyboard focus to the target |
+
+### Browser.Key
+
+`press`, `keyDown`, and `keyUp` accept a `Browser.Key` value. The named constants cover all common non-printable keys; `Key(char)` wraps a single character for printable input:
+
+```scala
+import kyo.*
+
+Browser.press(Browser.Key.Enter)     // submit / confirm
+Browser.press(Browser.Key.Tab)       // focus next element
+Browser.press(Browser.Key.Escape)    // dismiss
+Browser.press(Browser.Key.ArrowDown) // ArrowUp / ArrowDown / ArrowLeft / ArrowRight
+Browser.press(Browser.Key.Home)      // Home / End / PageUp / PageDown
+Browser.press(Browser.Key.Backspace) // delete backwards
+Browser.press(Browser.Key.Delete)    // delete forwards
+Browser.press(Browser.Key('a'))      // printable character
+```
+
+The full set of named constants: `Enter`, `Tab`, `Backspace`, `Escape`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Home`, `End`, `PageUp`, `PageDown`, `Delete`, `Space`, `Shift`, `Control`, `Alt`, `Meta`.
 
 The assertion family. Each entry is auto-retried against the active retry schedule and raises a typed `BrowserAssertion*` exception when the schedule exhausts.
 
@@ -234,7 +259,7 @@ The two predicates are distinct because `textContent` and `value` carry differen
 
 Every retrying method also has a trailing `schedule: Maybe[Schedule]` argument so a single call can override the active retry schedule without reaching for `Browser.withConfig`.
 
-## Reads
+## Reading page state
 
 When you need the actual value of something rather than to assert on it, use the read APIs. Element-bound reads retry on the active schedule when the element is not yet attached; page-level reads (`url`, `title`, `readableContent`) return immediately. Each call returns its typed value in `Browser & Abort[BrowserReadException]` and composes with the rest of the surface:
 
@@ -244,6 +269,7 @@ for
     heading <- Browser.text(Browser.Selector.heading)
     items   <- Browser.textAll(Browser.Selector.css("li"))
 yield (title, heading, items)
+end for
 ```
 
 The read surface:
@@ -265,6 +291,8 @@ The read surface:
 | `readableContent` | `String` | Mozilla Readability extraction of the page's main content |
 | `accessibilityNodes` | `Chunk[Browser.AxNode]` | Flat AX tree of the current frame |
 | `consoleLogs` / `consoleLogs(level)` | `Chunk[Browser.ConsoleMessage]` | Console buffer captured since the tab attached. `ConsoleMessage` carries `level: Browser.ConsoleLevel`, `text: String`, and the source frame; the level-filtered overload returns only matching messages |
+
+`screenshot` and `screenshotElement` return a `Browser.Image`. The type exposes: `binary: Span[Byte]` (raw bytes), `base64: String` (Base64-encoded), `writeFileBinary(path)` / `writeFileBase64(path)` (write to disk), and `renderToConsole(charsWidth, charsHeight)` (terminal sixel/block rendering for debugging). `pdf` returns raw `Span[Byte]` PDF bytes directly (not a `Browser.Image`); it only works in headless Chrome. The capture methods take a format and quality: `screenshot(width, height, format, quality)` and `screenshotElement(selector, format, quality)`, where `format` is a `Browser.ScreenshotFormat` (`Png`, `Jpeg`, or `Webp`, default `Png`) and `quality` (0 to 100) applies only to the lossy formats (`Jpeg` and `Webp`) and is ignored for `Png`.
 
 ### Boolean predicates
 
@@ -290,6 +318,7 @@ for
     _      <- Browser.waitForNetworkIdle
     status <- Browser.waitForText(Browser.Selector.id("status"), _.contains("Ready"))
 yield status
+end for
 ```
 
 | Method | Returns | Description |
@@ -322,9 +351,9 @@ Each `waitForX` accepts an optional trailing `schedule: Maybe[Schedule]` so a si
 
 `Browser.expectNavigation(settle)(trigger)` arms a navigation watcher around `trigger` so the trigger's follow-on navigation is settled before the call returns. Use it when a click handler calls `location.assign`, a form posts JS-side, or `window.open` redirects after open.
 
-## Configuration
+## Configuration: launch-time vs per-session
 
-`Browser.SessionConfig` holds every per-session setting: retry schedule, load schedule, network-idle window, mutation-quiescence window, viewport. Most call sites do not construct one explicitly; instead they install a scoped override:
+`Browser.SessionConfig` holds every per-session setting: retry schedule, load schedule, network-idle window, mutation-quiescence windows, and assertion stability. Most call sites do not construct one explicitly; instead they install a scoped override:
 
 ```scala
 // Cap the total retry budget for every enclosed operation at 5 seconds.
@@ -351,15 +380,18 @@ Browser.withViewport(width = 1440, height = 900) {
 | `loadSchedule` | Per-load settle retry schedule |
 | `networkIdleWindow` | Idle window for `Settle.NetworkIdle` |
 | `mutationQuiescenceWindow` | Quiet-DOM window after an interaction |
-| `mutationPollInterval` | Polling interval for the quiet-DOM window |
 | `mutationSettlementTimeout` | Upper bound on the quiet-DOM wait |
+| `mutationFirstMutationGrace` | Grace period before the first DOM mutation is required after an interaction |
+| `assertionStabilityWindow` | Extra quiet window after an assertion matches before it is accepted (set to `Duration.Zero` for first-match behaviour) |
+| `mutationPollInterval` | Polling interval for the quiet-DOM window |
 | `navigationPostSettleWindow` | Extra grace window after navigation settle |
 | `navigationPollInterval` | Polling interval during navigation settle |
 | `navigationGraceWindow` | Pre-navigation grace before the watcher arms |
 | `stabilitySampleInterval` | Sample period for the actionability stability check |
 | `defaultActionTimeout` | Default timeout for interactions |
 | `defaultAssertionTimeout` | Default timeout for assertions |
-| `viewport` | Viewport width / height |
+
+Viewport is not a `SessionConfig` field; use `Browser.withViewport(width, height)` for a scoped viewport override.
 
 `Browser.LaunchConfig` holds the launch-time settings (executable path, headless flag, extra Chromium args, launch timeout, plus the new fields below). It is consumed once when Chrome starts and is frozen for the lifetime of that process. `Browser.withConfig` does not touch launch-time fields; only `Browser.run(launch, …)` does. Chrome / Chromium is the supported target.
 
@@ -377,6 +409,8 @@ Browser.withViewport(width = 1440, height = 900) {
 | `devToolsActivePortPollInterval` | Polling interval while waiting for `DevToolsActivePort` |
 | `chromeDownloaderConfig` | Config for the bundled `chrome-headless-shell` downloader |
 
+The split is compiler-enforced: `Browser.withConfig` accepts only a `SessionConfig`, so launch-time fields (executable, headless, extra args) cannot be changed after Chrome starts. They are settable only through `Browser.run(launch, ...)`.
+
 ## Isolation: sequential and concurrent
 
 For a sequential sub-computation, three single-purpose helpers each open one new scope and clean it up on exit:
@@ -389,15 +423,18 @@ For a sequential sub-computation, three single-purpose helpers each open one new
 for
     _ <- Browser.fill(Browser.Selector.id("draft"), "original")
     _ <- Browser.withFork {
-            for
-                _ <- Browser.fill(Browser.Selector.id("draft"), "experiment")
-                _ <- Browser.click(Browser.Selector.button("Save"))
-            yield ()
-        }
+        for
+            _ <- Browser.fill(Browser.Selector.id("draft"), "experiment")
+            _ <- Browser.click(Browser.Selector.button("Save"))
+        yield ()
+    }
     // Back in the parent: the draft field still says "original".
     draft <- Browser.attribute(Browser.Selector.id("draft"), "value")
 yield draft
+end for
 ```
+
+`withFork` is total isolation: the parent tab is not reachable from inside the body, and cookies, storage, mocks, dialog handlers, and download settings set inside the fork never leak back out. Callers who need parent state must capture it into a `val` before entering `withFork`.
 
 ### Concurrent forks via `Browser.isolate`
 
@@ -428,15 +465,16 @@ Browser.isolate.fresh.use {
 // Intercept fetch() for a specific URL and return a canned response.
 for
     _ <- Browser.mockFetchResponse(
-            url = "https://api.example.com/users",
-            status = 200,
-            body = """[{"id":1,"name":"Alice"}]""",
-            headers = Seq("Content-Type" -> "application/json")
-        )
+        url = "https://api.example.com/users",
+        status = 200,
+        body = """[{"id":1,"name":"Alice"}]""",
+        headers = Seq("Content-Type" -> "application/json")
+    )
     _ <- Browser.click(Browser.Selector.button("Load users"))
     _ <- Browser.assertText(Browser.Selector.css("li"), "Alice")
     _ <- Browser.clearMocks
 yield ()
+end for
 
 // Capture downloads triggered by the page (e.g. clicking an anchor with `download`).
 Browser.withDownloads(toPath = "/tmp/dl") {
@@ -444,11 +482,10 @@ Browser.withDownloads(toPath = "/tmp/dl") {
 }
 ```
 
-Download capture has three layered entry points; pick the one that matches what the test needs to do:
+Download capture has three public entry points; pick the one that matches what the test needs to do:
 
 | Method | Description |
 |---|---|
-| `allowDownloads(toPath)` | Enable download capture for the rest of the enclosing scope. The result of subsequent `click` actions is a file on disk. |
 | `withDownloads(toPath)(body)` | Scoped variant: enables capture for `body`, restores the previous setting on exit. |
 | `onDownload(handler)(body)` | Register an event handler invoked once per download begun inside `body`. The handler receives a `Browser.DownloadEvent` (URL, suggested filename, destination path on disk). Use for tests that need to observe downloads as a stream of events rather than just check that one file landed. |
 | `recordDownloads(body)` | Record every download started inside `body` into a `Chunk[Browser.DownloadEvent]` returned alongside the body's result. Equivalent to a passive `onDownload` that buffers. |
@@ -484,14 +521,15 @@ For anything outside the standard surface, `eval` runs an arbitrary JS expressio
 case class Point(x: Int, y: Int) derives Schema
 
 for
-    flag    <- Browser.eval("localStorage.getItem('flag')")      // String
-    point   <- Browser.evalJson[Point]("({ x: 10, y: 20 })")     // Point
+    flag    <- Browser.eval("localStorage.getItem('flag')")              // String
+    point   <- Browser.evalJson[Point]("({ x: 10, y: 20 })")             // Point
     isReady <- Browser.evalBoolean("document.readyState === 'complete'") // Boolean
     n       <- Browser.evalInt("document.querySelectorAll('li').length") // Int
-    ts      <- Browser.evalLong("Date.now()")                    // Long
-    ratio   <- Browser.evalDouble("window.devicePixelRatio")     // Double
-    _       <- Browser.evalDiscard("window.__flag = true")       // Unit; ignores return value
+    ts      <- Browser.evalLong("Date.now()")                            // Long
+    ratio   <- Browser.evalDouble("window.devicePixelRatio")             // Double
+    _       <- Browser.evalDiscard("window.__flag = true")               // Unit; ignores return value
 yield (flag, point, isReady, n, ts, ratio)
+end for
 ```
 
 Each `evalX` returns its value inside `Browser & Abort[BrowserReadException]`.
@@ -502,12 +540,12 @@ JS dialogs (`alert`, `confirm`, `prompt`) are auto-dismissed by default, so they
 
 ```scala
 Browser.withDialogs.accept {
-    Browser.click(Browser.Selector.button("Delete"))   // confirm() returns true
+    Browser.click(Browser.Selector.button("Delete")) // confirm() returns true
 }
 
 Browser.withDialogs.recorded {
-    Browser.click(Browser.Selector.button("Delete"))   // dismissed by the default handler;
-                                                       // the event is also captured for assertion
+    Browser.click(Browser.Selector.button("Delete")) // dismissed by the default handler;
+    // the event is also captured for assertion
 }
 ```
 
@@ -541,3 +579,19 @@ def signIn(email: String, pw: String)(using Frame): Unit < (Browser & Abort[Brow
 ## Cross-platform
 
 kyo-browser compiles and runs on JVM, JavaScript, and Scala Native. The CDP client uses `kyo-http`'s WebSocket and the Chrome process is spawned through `kyo.Command.spawn`; both pieces are cross-platform, so the same `Browser` body works against the same Chrome regardless of which target the application is compiled for.
+
+A single CDP WebSocket carries every command and event for a Chrome process. A `Meter` bounds in-flight commands so the single inbound reader fiber (the only one on JS and Native) is never flooded into a Chrome-initiated connection teardown, and `requestTimeout` turns a silently stalled Chrome into a typed `BrowserConnectionLostException`.
+
+## Demos
+
+Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-browser/Test/runMain demo.<Name>'`.
+
+- [**QuickstartApp**](shared/src/test/scala/demo/QuickstartDemo.scala): minimal quickstart against a self-contained page, exercising `goto`, `fill`, `click`, `assertText`, and `title`.
+- [**GitHubTrendingDemoApp**](shared/src/test/scala/demo/GitHubTrendingDemo.scala): SPA navigation that waits for client-rendered content, clicks into a repo, and switches the time range.
+- [**GitHubNotFoundRecoveryDemoApp**](shared/src/test/scala/demo/GitHubNotFoundRecoveryDemo.scala): typed recovery from a 4xx navigation, the lenient `failOnHttpError = false` escape hatch, and back/forward history.
+- [**HackerNewsDemoApp**](shared/src/test/scala/demo/HackerNewsDemo.scala): top-stories scraper that pages through "More" and uses `evalJson` to align sibling-row records.
+- [**HttpBinFormDemoApp**](shared/src/test/scala/demo/HttpBinFormDemo.scala): full form lifecycle (text, textarea, `select`, `check`) verified against the server's JSON echo.
+- [**WikipediaSearchDemoApp**](shared/src/test/scala/demo/WikipediaSearchDemo.scala): observes a typeahead XHR with `waitForRequestUrl`, submits via the Enter key, and asserts element order.
+- [**WikipediaKitDemoApp**](shared/src/test/scala/demo/WikipediaKitDemo.scala): turns an article into an offline kit (text, infobox PNG, full-page PDF) via `screenshotElement` and `pdf`.
+- [**CookieDanceDemoApp**](shared/src/test/scala/demo/CookieDanceDemo.scala): cookie lifecycle (set, reload, verify, delete) and the shared-context `withNewTab` tab model.
+- [**RegistryRaceDemoApp**](shared/src/test/scala/demo/RegistryRaceDemo.scala): five concurrent fibers, each in its own tab via `Browser.isolate.fresh`, searching package registries in parallel.

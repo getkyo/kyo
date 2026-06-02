@@ -56,16 +56,21 @@ object TestKyo {
         val state2 = runForScala(state1, targetScala)
 
         if (runBothScala) {
-            findScala2Version(extracted) match {
-                case Some(v) =>
-                    log(s"switching to Scala $v for cross-build modules")
-                    val state3 = if (isDryRun) state2 else Command.process(s"++$v", state2, msg => state2.log.error(msg))
-                    val state4 = runForScala(state3, v)
-                    log(s"restoring Scala $scala3")
-                    if (isDryRun) state4 else Command.process(s"++$scala3", state4, msg => state4.log.error(msg))
-                case None =>
+            findScala2Versions(extracted) match {
+                case Nil =>
                     log("no Scala 2.x cross-build modules found")
                     state2
+                case versions =>
+                    // One pass per distinct Scala 2.x version: 2.13 for the cross-build library
+                    // modules, 2.12 for the sbt plugins. This is why the regular test run also
+                    // covers the 2.12-only plugins (kyo-compat-plugin, kyo-doctest-plugin).
+                    val afterScala2 = versions.foldLeft(state2) { (st, v) =>
+                        log(s"switching to Scala $v for cross-build modules")
+                        val switched = if (isDryRun) st else Command.process(s"++$v", st, msg => st.log.error(msg))
+                        runForScala(switched, v)
+                    }
+                    log(s"restoring Scala $scala3")
+                    if (isDryRun) afterScala2 else Command.process(s"++$scala3", afterScala2, msg => afterScala2.log.error(msg))
             }
         } else {
             state2
@@ -265,5 +270,15 @@ object TestKyo {
         structure.allProjectRefs.flatMap { ref =>
             (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
         }.find(_.startsWith("2."))
+    }
+
+    /** All distinct Scala 2.x versions in crossScalaVersions across projects (e.g. 2.13 cross-build
+      * modules and 2.12 sbt plugins), sorted so each gets its own test pass.
+      */
+    private def findScala2Versions(extracted: Extracted): Seq[String] = {
+        val structure = extracted.structure
+        structure.allProjectRefs.flatMap { ref =>
+            (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
+        }.filter(_.startsWith("2.")).distinct.sorted
     }
 }

@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Browser.Key.value
+import kyo.internal.KeyInfo
 
 /** Pure unit tests for [[Key]]: no browser, no Async.delay, no Thread.sleep.
   *
@@ -164,6 +165,42 @@ class KeyTest extends Test:
 
     "Key.apply produces distinct Keys for different chars" in {
         assert(Browser.Key.apply('x').value != Browser.Key.apply('y').value)
+    }
+
+    // ── Printable chars: CDP `code` (physical key) + windowsVirtualKeyCode ──
+    // A printable key must dispatch a real DOM `code` ("KeyX", "Digit1", ...) and the
+    // matching virtual keycode, not the raw character. Chrome rejects an unrecognized
+    // `code` ("unrecognized code string 'x'"), so the wrong value can drop the keystroke.
+
+    "mapKey('x') uses physical code KeyX and virtual keycode 88" in {
+        val info = KeyInfo.mapKey(Browser.Key('x'))
+        assert(info.domCode == "KeyX")
+        assert(info.keyCode == 88)
+        assert(info.keyName == "x")
+    }
+
+    "mapKey('A') uses physical code KeyA and virtual keycode 65" in {
+        val info = KeyInfo.mapKey(Browser.Key('A'))
+        assert(info.domCode == "KeyA")
+        assert(info.keyCode == 65)
+    }
+
+    "mapKey('1') uses physical code Digit1 and virtual keycode 49" in {
+        val info = KeyInfo.mapKey(Browser.Key('1'))
+        assert(info.domCode == "Digit1")
+        assert(info.keyCode == 49)
+    }
+
+    "mapKey('!') uses physical code Digit1 and virtual keycode 49" in {
+        val info = KeyInfo.mapKey(Browser.Key('!'))
+        assert(info.domCode == "Digit1")
+        assert(info.keyCode == 49)
+    }
+
+    "mapKey('.') uses physical code Period and virtual keycode 190" in {
+        val info = KeyInfo.mapKey(Browser.Key('.'))
+        assert(info.domCode == "Period")
+        assert(info.keyCode == 190)
     }
 
 end KeyTest

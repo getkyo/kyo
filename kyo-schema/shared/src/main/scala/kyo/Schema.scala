@@ -1278,10 +1278,6 @@ object Schema:
     given kyoDurationSchema: Schema[kyo.Duration] =
         longSchema.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
 
-    /** Schema for kyo.Text values. */
-    given kyoTextSchema: Schema[kyo.Text] =
-        stringSchema.transform[kyo.Text](kyo.Text.apply)(_.show)
-
     /** Schema for Span[Byte] values. */
     given spanByteSchema: Schema[Span[Byte]] =
         Schema.init[Span[Byte]](writeFn = (v, w) => w.bytes(v), readFn = _.bytes())
