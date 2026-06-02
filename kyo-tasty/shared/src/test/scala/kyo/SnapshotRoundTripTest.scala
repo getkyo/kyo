@@ -741,7 +741,7 @@ class SnapshotRoundTripTest extends Test:
     // present (10 pre-Phase-12 + 3 Phase-12 additions: PERMITS2, ANNOTS_, JAVAMETA + 1 dual-FQN: FQNIDX__ +
     // 1 Phase-2.13 addition: FQNMAP__ for unresolvedFqnByNegId persistence) and that section offsets are
     // monotone increasing.
-    "new snapshot section-index: all 15 sections present and offsets monotone increasing" in run {
+    "new snapshot section-index: all 17 sections present and offsets monotone increasing" in run {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xc0.toByte, 0xc1.toByte, 0xc2.toByte, 0xc3.toByte, 0xc4.toByte, 0xc5.toByte, 0xc6.toByte, 0xc7.toByte)
         Scope.run:
@@ -754,7 +754,8 @@ class SnapshotRoundTripTest extends Test:
             ).map:
                 case Result.Success(Some(bytes)) =>
                     val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
-                    assert(sectionCount == 15, s"Expected 15 sections in new-writer snapshot, got $sectionCount")
+                    // Phase 5.02 added SUBCIDX_ and COMPIDX_, raising section count from 15 to 17.
+                    assert(sectionCount == 17, s"Expected 17 sections in new-writer snapshot, got $sectionCount")
 
                     val expectedNames = Set(
                         SnapshotFormat.sectionNAMES,
@@ -771,7 +772,9 @@ class SnapshotRoundTripTest extends Test:
                         SnapshotFormat.sectionANNOTS,
                         SnapshotFormat.sectionJAVAMETA,
                         SnapshotFormat.sectionFQNIDX,
-                        SnapshotFormat.sectionFQNMAP
+                        SnapshotFormat.sectionFQNMAP,
+                        SnapshotFormat.sectionSUBCIDX,
+                        SnapshotFormat.sectionCOMPIDX
                     )
 
                     val foundNames = scala.collection.mutable.Set.empty[String]

@@ -187,7 +187,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     "F-A5-001 leaf 7 (Phase 2.08): ClasspathBuilding fires from orchestrator on invariant violation" in run {
         Abort.run[TastyError](ClasspathOrchestrator.triggerClasspathBuildingForTest()).map: result =>
             result match
-                case Result.Failure(TastyError.ClasspathBuilding) =>
+                case Result.Failure(TastyError.ClasspathBuilding(_)) =>
                     succeed
                 case Result.Success(_) =>
                     fail(

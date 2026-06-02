@@ -2564,7 +2564,7 @@ object Tasty:
                                         Left(TastyError.MalformedSection("ASTs", "truncated body", 0L))
                                     case _: IllegalStateException =>
                                         // F-W2-2: mmap arena closed before decodeBody ran; documented contract is ClasspathClosed.
-                                        Left(TastyError.ClasspathClosed)
+                                        Left(TastyError.ClasspathClosed(s"decodeBody(sym.id=${sym.id.value})"))
                             bodyMemo.put(sym.id, result)
                             result match
                                 case Right(t) => Maybe(t)

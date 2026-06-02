@@ -11,10 +11,11 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
   */
 class SnapshotFormatTest extends Test:
 
-    // Test 1 (INV-023, updated Phase 5.02): minorVersion reflects the Phase 5.02 SUBCIDX_/COMPIDX_ bump.
-    // Phase 5.01b set minorVersion to 7 for ERRORS typed-format; Phase 5.02 sets it to 8 for index sections.
-    "SnapshotFormat.minorVersion is 8 after Phase 5.02 SUBCIDX_/COMPIDX_ section addition" in run {
-        assert(SnapshotFormat.minorVersion == 8)
+    // Test 1 (INV-023, updated Phase 5.03): minorVersion reflects the Phase 5.03 ClasspathClosed/ClasspathBuilding context-field bump.
+    // Phase 5.01b set minorVersion to 7 for ERRORS typed-format; Phase 5.02 set it to 8 for index sections;
+    // Phase 5.03 sets it to 9 for ClasspathClosed/ClasspathBuilding context field (F-W2-11).
+    "SnapshotFormat.minorVersion is 9 after Phase 5.03 ClasspathClosed/ClasspathBuilding context-field addition" in run {
+        assert(SnapshotFormat.minorVersion == 9)
         succeed
     }
 

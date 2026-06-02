@@ -110,6 +110,9 @@ object SnapshotReader:
                     // minor=7 is a breaking bump: ERRORS section re-encoded as typed tagged format.
                     // minor=8 is a breaking bump: SUBCIDX_ / COMPIDX_ added for subclassIndex and
                     // companionIndex persistence. Old snapshots return empty indexes (F-W2-30/31 regression).
+                    // minor=9 is a breaking bump: ClasspathClosed and ClasspathBuilding gained a context
+                    // string field. Old snapshots encode these as tag-only; reading them with the new
+                    // deserializer would consume the next error's tag as the context string.
                     // Reject to force cold re-decode.
                     Abort.fail(
                         TastyError.SnapshotVersionMismatch(
@@ -123,13 +126,29 @@ object SnapshotReader:
                         case ex: SectionValidator.SectionValidationException =>
                             Abort.fail(ex.error)
                         case ex: ArrayIndexOutOfBoundsException =>
-                            Abort.fail(TastyError.SnapshotFormatError(path, s"truncated snapshot: ${ex.getMessage}", 0L))
+                            Abort.fail(TastyError.SnapshotFormatError(
+                                path,
+                                s"truncated snapshot: ${ex.getClass.getSimpleName}: ${ex.getMessage}",
+                                0L
+                            ))
                         case ex: IndexOutOfBoundsException =>
-                            Abort.fail(TastyError.SnapshotFormatError(path, s"truncated snapshot: ${ex.getMessage}", 0L))
+                            Abort.fail(TastyError.SnapshotFormatError(
+                                path,
+                                s"truncated snapshot: ${ex.getClass.getSimpleName}: ${ex.getMessage}",
+                                0L
+                            ))
                         case ex: NegativeArraySizeException =>
-                            Abort.fail(TastyError.SnapshotFormatError(path, s"corrupt section length: ${ex.getMessage}", 0L))
+                            Abort.fail(TastyError.SnapshotFormatError(
+                                path,
+                                s"corrupt section length: ${ex.getClass.getSimpleName}: ${ex.getMessage}",
+                                0L
+                            ))
                         case ex: java.io.IOException =>
-                            Abort.fail(TastyError.SnapshotFormatError(path, s"corrupt header: ${ex.getMessage}", 0L))
+                            Abort.fail(TastyError.SnapshotFormatError(
+                                path,
+                                s"corrupt header: ${ex.getClass.getSimpleName}: ${ex.getMessage}",
+                                0L
+                            ))
                 end if
 
     /** Deserialize section payloads into a new Tasty.Classpath. */
@@ -1437,8 +1456,8 @@ object SnapshotReader:
                     case 5  => TastyError.SymbolNotFound(readStr())
                     case 6  => TastyError.NotFound(readStr())
                     case 7  => val p = readStr(); val r = readStr(); val at = readLong(); TastyError.ClassfileFormatError(p, r, at)
-                    case 8  => TastyError.ClasspathClosed
-                    case 9  => TastyError.ClasspathBuilding
+                    case 8  => TastyError.ClasspathClosed(readStr())
+                    case 9  => TastyError.ClasspathBuilding(readStr())
                     case 10 => val p = readStr(); val r = readStr(); val at = readLong(); TastyError.SnapshotFormatError(p, r, at)
                     case 11 => val f = readVersion(); val s = readVersion(); TastyError.SnapshotVersionMismatch(f, s)
                     case 12 => TastyError.SnapshotIoError(readStr())
@@ -1452,12 +1471,6 @@ object SnapshotReader:
             Chunk.from(buf.toSeq)
         end if
     end readErrors
-
-    private def extractParenContent(s: String): String =
-        val start = s.indexOf('(')
-        val end   = s.lastIndexOf(')')
-        if start >= 0 && end > start then s.substring(start + 1, end) else s
-    end extractParenContent
 
     /** Convert SymbolKind ordinal integer to enum case. */
     private def kindFromOrd(ord: Int): Tasty.SymbolKind =

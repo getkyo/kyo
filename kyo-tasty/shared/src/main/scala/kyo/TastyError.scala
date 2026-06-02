@@ -41,11 +41,19 @@ enum TastyError derives CanEqual:
     /** A Java classfile at `path` contains an undecodable constant-pool or attribute at `byteOffset`. */
     case ClassfileFormatError(path: String, reason: String, byteOffset: Long)
 
-    /** The Classpath was closed before this operation completed. */
-    case ClasspathClosed
+    /** The Classpath was closed before this operation completed.
+      *
+      * `context` carries the name of the failing operation and any relevant identifier (for example "decodeBody(sym.id=42)"), so the caller
+      * can identify which classpath and which operation triggered the error.
+      */
+    case ClasspathClosed(context: String)
 
-    /** The Classpath is still being built; a concurrent read was attempted before open completed. */
-    case ClasspathBuilding
+    /** The Classpath is still being built; a concurrent read was attempted before open completed.
+      *
+      * `context` carries the name of the failing operation and any relevant identifier (for example "finalizeMerge brokenFqnCount=3"), so
+      * the caller can identify the source.
+      */
+    case ClasspathBuilding(context: String)
 
     /** A KRFL snapshot file at `path` could not be parsed at `byteOffset`. */
     case SnapshotFormatError(path: String, reason: String, byteOffset: Long)
@@ -88,8 +96,11 @@ enum TastyError derives CanEqual:
       * TypeUnpickler and TreeUnpickler, making unknown-tag encounters fail loudly at decode time rather than producing sentinel
       * symbols that propagate silently downstream.
       *
-      * `tag` is the raw byte value (0-255). `position` is a human-readable label for the decode position (e.g. "type", "tree",
-      * "modifier").
+      * `tag` is the raw byte value as an Int. TASTy tag bytes are in the range 0-255; values outside that range are not produced by any
+      * internal decode path but are not rejected at construction time (Int is kept to avoid a widening cascade in callers). Callers
+      * constructing this variant directly should ensure tag is in 0-255.
+      *
+      * `position` is a human-readable label for the decode position (e.g. "type", "tree", "modifier").
       */
     case UnknownTagInPosition(tag: Int, position: String)
 end TastyError

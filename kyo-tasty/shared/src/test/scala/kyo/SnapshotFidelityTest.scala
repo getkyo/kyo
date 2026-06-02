@@ -193,13 +193,13 @@ class SnapshotFidelityTest extends Test:
     // Wire-format leaf 5 (Phase 12, updated Phase 2.13): format-version-bumped
     // Given: a snapshot file written with the Phase 2.13 code
     // When: reading the format version constant
-    // Then: version is 7 (Phase 5.01b bumped to 7 for ERRORS typed-format change, F-W2-5)
-    // Pins: snapshot wire-format bump (ERRORS typed format, Phase 5.01b)
+    // Then: version is 9 (Phase 5.03 bumped to 9 for ClasspathClosed/ClasspathBuilding context-field addition, F-W2-11)
+    // History: Phase 2.13 set 6, Phase 5.01b set 7, Phase 5.02 set 8, Phase 5.03 set 9.
     // Cross-platform: SnapshotFormat.minorVersion is a compile-time constant, no filesystem needed.
-    "Phase 2.13: SnapshotFormat.FORMAT_VERSION is 6 after Phase 2.13 FQNMAP__ section addition" in {
+    "Phase 2.13: SnapshotFormat.FORMAT_VERSION reflects current minor version after all phase bumps" in {
         assert(
-            SnapshotFormat.minorVersion == 7,
-            s"Expected SnapshotFormat.minorVersion == 7 but got ${SnapshotFormat.minorVersion}"
+            SnapshotFormat.minorVersion == 9,
+            s"Expected SnapshotFormat.minorVersion == 9 but got ${SnapshotFormat.minorVersion}"
         )
     }
 

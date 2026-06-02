@@ -1379,7 +1379,7 @@ object ClasspathOrchestrator:
                                 val zeroUUID = new java.util.UUID(0L, 0L)
                                 Maybe(TastyError.InconsistentClasspath(firstFqn, zeroUUID, zeroUUID))
                             else if brokenFqnCount > 0 then
-                                Maybe(TastyError.ClasspathBuilding)
+                                Maybe(TastyError.ClasspathBuilding(s"finalizeMerge: brokenFqnCount=$brokenFqnCount"))
                             else Maybe.Absent
                         else Maybe.Absent
 

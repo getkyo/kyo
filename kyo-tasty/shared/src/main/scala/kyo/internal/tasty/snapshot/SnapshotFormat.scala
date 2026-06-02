@@ -46,6 +46,8 @@ package kyo.internal.tasty.snapshot
   *     previous flat `err.toString` encoding.
   *   - `SUBCIDX_`: subclassIndex map (parent symIdx to list of child symIdx entries) (added in minor=8).
   *   - `COMPIDX_`: companionIndex map (symIdx to companion symIdx pairs) (added in minor=8).
+  *   - `ERRORS` format change (minor=9): `ClasspathClosed` and `ClasspathBuilding` variants gained a `context: String` field. Old snapshots
+  *     (minor=8 and below) serialize these as tag-only (no payload). Reader rejects minor=8 to force cold re-decode.
   *
   * Versioning policy:
   *   - Major bump: invalidates all old snapshots (full re-decode + fresh write). Reader emits `TastyError.SnapshotVersionMismatch`.
@@ -67,7 +69,7 @@ object SnapshotFormat:
 
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
-    val minorVersion: Int = 8
+    val minorVersion: Int = 9
 
     /** Maximum number of sections allowed in a snapshot header (F-W2-29 guard).
       *

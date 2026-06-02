@@ -462,7 +462,7 @@ object SnapshotWriter:
       * UUID:          [8-byte MSB LE][8-byte LSB LE].
       * Int fields:    [4-byte Int32 LE].
       *
-      * Zero-field variants (ClasspathClosed, ClasspathBuilding): only the 1-byte tag, no body.
+      * ClasspathClosed(ctx) and ClasspathBuilding(ctx): tag byte followed by one string field (context). Updated in minor=9.
       */
     private def serializeErrors(errors: Chunk[TastyError]): Array[Byte] =
         // Pre-size to 4 KB: errors are rare (decode failures, file-not-found, etc.) and messages are short.
@@ -507,8 +507,8 @@ object SnapshotWriter:
                 case TastyError.SymbolNotFound(fqn)                    => writeStr(fqn)
                 case TastyError.NotFound(fqn)                          => writeStr(fqn)
                 case TastyError.ClassfileFormatError(path, reason, at) => writeStr(path); writeStr(reason); writeLong(at)
-                case TastyError.ClasspathClosed                        => () // tag only
-                case TastyError.ClasspathBuilding                      => () // tag only
+                case TastyError.ClasspathClosed(ctx)                   => writeStr(ctx)
+                case TastyError.ClasspathBuilding(ctx)                 => writeStr(ctx)
                 case TastyError.SnapshotFormatError(path, reason, at)  => writeStr(path); writeStr(reason); writeLong(at)
                 case TastyError.SnapshotVersionMismatch(found, sup)    => writeVersion(found); writeVersion(sup)
                 case TastyError.SnapshotIoError(cause)                 => writeStr(cause)

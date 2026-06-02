@@ -167,7 +167,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
                                 s"Expected 'body bytes not available' in MalformedSection reason; got: '$reason'"
                             )
                             succeed
-                        case Result.Failure(TastyError.ClasspathClosed) =>
+                        case Result.Failure(TastyError.ClasspathClosed(_)) =>
                             // Also acceptable: arena accessed post-close raises ClasspathClosed.
                             succeed
                         case Result.Success(Maybe.Present(_)) =>
