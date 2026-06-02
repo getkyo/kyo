@@ -88,7 +88,7 @@ private[kyo] object DomStyleSheet:
       */
     private[kyo] def injectStylesheet(css: String): Unit =
         if !injectedSheets.contains(css) then
-            injectedSheets.add(css)
+            val _ = injectedSheets.add(css)
             inject(css)
 
     private def nextClass(using Frame): String < Sync =
