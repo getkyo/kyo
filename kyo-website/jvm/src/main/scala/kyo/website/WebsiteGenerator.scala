@@ -134,8 +134,9 @@ object WebsiteGenerator:
     /** The version to serve as `latest`. The caller (the deploy flow / `WebsiteMain.parseContent`)
       * marks the chosen version with `version.latest = true`, so that explicit flag wins. When no
       * version carries the flag, fall back to the newest stable (non-pre-release) version, then to the
-      * newest pre-release (Q-005). The content `Chunk` is ordered oldest-first (the deploy workflow's
-      * `sort -V`), so "newest" is the last matching entry.
+      * newest pre-release (Q-005). The content `Chunk` is ordered oldest-first by semantic version
+      * (`WebsiteMain.listTagDirs` sorts via `WebsiteVersion.tagOrdering`, independent of the deploy
+      * workflow's `sort -V`), so "newest" is the last matching entry.
       */
     private def pickLatest(content: Chunk[WebsiteContent]): Maybe[WebsiteContent] =
         val flagged = content.filter(_.version.latest)

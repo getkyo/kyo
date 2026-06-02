@@ -64,10 +64,12 @@ object WebsiteMain extends KyoApp:
 
     /** Read the content manifest from the `--content <dir>` directory: one `WebsiteContent` per
       * `<tag>/` subdirectory, built via `WebsiteContent.fromRepo`. The subdirectories are sorted by
-      * name (lexicographic, oldest-first for the `v0.x` ... `v1.x` scheme) so the generator's
-      * `emitLatest` (newest stable, else newest pre-release) sees them in deploy order. The version
-      * served as latest is flagged here so the dropdown and banner agree with the `latest/` mirror.
-      * When `--content` is absent, returns `Chunk.empty` (landing-only emit).
+      * SEMANTIC version (`WebsiteVersion.tagOrdering`, oldest-first), not lexicographically and not
+      * by the filesystem listing order, so the generator's `emitLatest` (newest stable, else newest
+      * pre-release) and the `versions.json` dropdown see them in true version order independent of
+      * the deploy workflow's `sort -V`. The version served as latest is flagged here via
+      * `pickLatestTag` so the dropdown and banner agree with the `latest/` mirror. When `--content`
+      * is absent, returns `Chunk.empty` (landing-only emit).
       */
     private[website] def parseContent(theArgs: Chunk[String])(using Frame): Chunk[WebsiteContent] < (Sync & Abort[WebsiteException]) =
         flagValue(theArgs, "--content") match
@@ -87,7 +89,7 @@ object WebsiteMain extends KyoApp:
 
     private def listTagDirs(contentDir: Path)(using Frame): Chunk[Path] < (Sync & Abort[WebsiteException]) =
         Abort.run[FileFsException](contentDir.list).map {
-            case Result.Success(paths) => Chunk.from(paths.toSeq.sortBy(tagName))
+            case Result.Success(paths) => Chunk.from(paths.toSeq.sortBy(tagName)(using WebsiteVersion.tagOrdering))
             case Result.Failure(_)     => Chunk.empty
             case p: Result.Panic       => Abort.error(p)
         }
@@ -98,10 +100,18 @@ object WebsiteMain extends KyoApp:
         if sep >= 0 then s.substring(sep + 1) else s
     end tagName
 
+    /** The tag served as `latest`: the newest STABLE version by semantic ordering, falling back to
+      * the newest pre-release only when no stable tag exists. Order-independent: the result is
+      * computed via `WebsiteVersion.tagOrdering` (the max), not by taking the last element of the
+      * input, so a lexicographic or shuffled `tags` argument yields the same answer. A tag is stable
+      * when it parses to a `WebsiteVersion.Parsed` with no pre-release suffix; unparseable tags are
+      * treated as non-stable (and rank oldest under the ordering), so they win only when nothing
+      * else is present.
+      */
     private def pickLatestTag(tags: Chunk[String]): Maybe[String] =
-        val markers = Seq("-RC", "-M", "-SNAPSHOT", "-alpha", "-beta", "-rc")
-        val stable  = tags.filter(t => !markers.exists(m => t.contains(m)))
-        if stable.nonEmpty then stable.lastMaybe else tags.lastMaybe
+        val stable = tags.filter(t => WebsiteVersion.parse(t).exists(_.preRelease.isEmpty))
+        val pool   = if stable.nonEmpty then stable else tags
+        Maybe.fromOption(pool.maxOption(using WebsiteVersion.tagOrdering))
     end pickLatestTag
 
     private[website] def parseOut(theArgs: Chunk[String]): String =
