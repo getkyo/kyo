@@ -1302,6 +1302,13 @@ lazy val `kyo-website` =
         .settings(`kyo-settings`)
         .settings(publish / skip := true)
         .disablePlugins(MimaPlugin)
+        .jsSettings(
+            `js-settings`,
+            // The content model shares WebsiteContent with the JVM generator, whose path.read pulls in
+            // node:path. Enable module support so the JS test link resolves it, matching kyo-ui. The
+            // browser bundle (kyo-website-bundle) re-links as ESModule for Chrome.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
 
 // The single browser-loadable ESModule bundle (chrome only), mirroring kyo-ui-spa-harness. Its
 // Compile classpath holds kyo-website.js + kyo-ui.js so the linked bundle has no Node-only require
