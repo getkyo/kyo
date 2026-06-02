@@ -79,7 +79,7 @@ object McpConfig:
         val kyoMcpVersion: String = "0.1.0"
 
         /** The set of MCP protocol versions this library accepts during handshake. */
-        val supported: Set[ProtocolVersion] = Set("2025-06-18")
+        val supported: Set[ProtocolVersion] = Set("2025-06-18", "2025-11-25")
 
         /** Returns `Present(v)` when `s` is a supported version string; `Absent` otherwise. */
         def parse(s: String): Maybe[ProtocolVersion] =
