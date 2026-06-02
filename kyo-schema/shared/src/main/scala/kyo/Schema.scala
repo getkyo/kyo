@@ -1332,10 +1332,28 @@ object Schema:
         )
 
     /** Schema for Unit values. */
+    /** Schema for Unit values.
+      *
+      * Unit serializes as an empty JSON object `{}`, not as `null`. The reasoning: Scala's `Unit` carries no
+      * information, which in JSON wire vocabulary is the "empty object" rather than the "literal null value".
+      * Using `null` would conflate Unit with absent-Maybe / None-Option (both of which DO mean null on the wire)
+      * and would break JSON Schema describers like [[Json.JsonSchema]] that need a `type: "object"` shape for
+      * downstream consumers (MCP tool `inputSchema`, OpenAPI request bodies, JSON Schema validators).
+      *
+      * On read the schema consumes one object value, ignoring any contents — so legacy producers that emit
+      * literal `null` for Unit would fail to decode against this schema. Callers that need to accept `null`
+      * bodies for Unit-typed endpoints (e.g. HTTP) should short-circuit at the boundary, not rely on
+      * `Schema[Unit]` to tolerate the wire-incorrect shape.
+      */
     given unitSchema: Schema[Unit] = Schema.init[Unit](
-        writeFn = (_, w) => w.nil(),
+        writeFn = (_, w) =>
+            w.objectStart("", 0)
+            w.objectEnd()
+        ,
         readFn = r =>
-            r.skip(); ()
+            discard(r.objectStart())
+            r.objectEnd()
+            ()
     )
 
     // --- Collection Schema givens ---

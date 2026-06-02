@@ -50,7 +50,9 @@ object GitInsight extends KyoApp:
                 .handle(Abort.recover[CommandException](ex => Abort.fail(GitError(reason = ex.getMessage))))
         end git
 
-        // -- git_status: short porcelain output, one line per changed path.
+        // -- git_status: short porcelain output, one line per changed path. `tool[Unit]` is the natural
+        // "no parameters" shape ; kyo-schema's `Schema[Unit]` + `Json.jsonSchema[Unit]` both encode Unit as
+        // `{"type":"object","properties":{}}` on the wire so the MCP host accepts the tool.
         val statusTool =
             McpHandler.tool[Unit](
                 name = "git_status",

@@ -545,7 +545,10 @@ object Json:
                             Structure.PrimitiveKind.BigDecimal => Num()
                         case Structure.PrimitiveKind.String | Structure.PrimitiveKind.Char => Str()
                         case Structure.PrimitiveKind.Boolean                               => Bool
-                        case Structure.PrimitiveKind.Unit                                  => Null
+                        // Unit maps to an empty object on the wire (see `Schema.unitSchema`). Describing it as
+                        // `{"type":"null"}` here would mismatch the actual wire shape AND violate consumers
+                        // that require an object-typed schema (e.g. MCP tool `inputSchema`).
+                        case Structure.PrimitiveKind.Unit => Obj(List.empty, List.empty)
 
                 case Structure.Type.Optional(_, _, inner) =>
                     Nullable(fromStructure(inner, seen))

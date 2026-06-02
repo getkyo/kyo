@@ -1055,16 +1055,20 @@ class JsonTest extends Test:
             end match
         }
 
-        "Json.jsonSchema[Unit] is JsonSchema.Null" in {
-            assert(Json.jsonSchema[Unit] == Json.JsonSchema.Null)
+        "Json.jsonSchema[Unit] is an empty object schema" in {
+            // Unit serializes as an empty JSON object (`{}`), so its JSON Schema description is an object
+            // shape with no properties — not `{"type":"null"}`. The MCP tool inputSchema and other JSON
+            // Schema consumers require the object form; the kyo-schema-wide convention is "Unit = empty
+            // object" (see Schema.unitSchema).
+            assert(Json.jsonSchema[Unit] == Json.JsonSchema.Obj(List.empty, List.empty))
         }
 
-        "Json.encode(()) emits null (regression)" in {
-            assert(Json.encode(()) == "null")
+        "Json.encode(()) emits an empty object" in {
+            assert(Json.encode(()) == "{}")
         }
 
-        "Json.decode[Unit](\"null\") returns ()" in {
-            assert(Json.decode[Unit]("null") == Result.Success(()))
+        "Json.decode[Unit](\"{}\") returns ()" in {
+            assert(Json.decode[Unit]("{}") == Result.Success(()))
         }
 
     }

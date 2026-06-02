@@ -1,31 +1,35 @@
 {
   "mcpServers": {
     "kyo-filesystem": {
-      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/proxy.py",
       "args": [
+        "ndjson",
         "kyo-mcp",
         "demo.Filesystem",
         "/tmp/mcp-validation/root"
       ]
     },
     "kyo-notes": {
-      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/proxy.py",
       "args": [
+        "ndjson",
         "kyo-mcp",
         "demo.Notes"
       ]
     },
     "kyo-git": {
-      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/proxy.py",
       "args": [
+        "ndjson",
         "kyo-mcp",
         "demo.GitInsight",
         "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur"
       ]
     },
     "kyo-http-fetch": {
-      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/proxy.py",
       "args": [
+        "ndjson",
         "kyo-mcp",
         "demo.HttpFetch"
       ]

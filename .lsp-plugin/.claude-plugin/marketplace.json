@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "kyo-local",
-  "description": "Local marketplace for kyo demo LSP servers (used to validate kyo-lsp through Claude Code's LSP harness end-to-end).",
+  "description": "Local marketplace for kyo demo LSP servers. Launches each demo through proxy.py so the JVM can be hot-reloaded by touching .mcp-validation/reload.sentinel without disconnecting Claude Code.",
   "owner": {
     "name": "kyo",
     "email": "fwbrasil@gmail.com"
@@ -20,8 +20,9 @@
       "strict": false,
       "lspServers": {
         "kyo-todo-lsp": {
-          "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+          "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/proxy.py",
           "args": [
+            "content-length",
             "kyo-lsp",
             "demo.TodoLsp"
           ],
@@ -44,8 +45,9 @@
       "strict": false,
       "lspServers": {
         "kyo-todo-diagnostics-lsp": {
-          "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+          "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/proxy.py",
           "args": [
+            "content-length",
             "kyo-lsp",
             "demo.TodoDiagnostics"
           ],
