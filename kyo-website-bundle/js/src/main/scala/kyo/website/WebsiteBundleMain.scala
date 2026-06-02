@@ -7,18 +7,21 @@ import org.scalajs.dom
 /** SPA bundle entry-point.
   *
   * Bootstraps the kyo website single-page application in the browser:
-  * 1. Injects `WebsiteStyles.sheet` into the document `<head>` so styles are present before the
-  *    first render.
-  * 2. Routes on `window.location` (via `UILocation.current`) to select the initial body (landing
-  *    for `/`, docs for a `/<prefix>/...` route).
-  * 3. Wraps the body in the unified `SiteApp` shell and mounts it under the `UILocation`-driven
-  *    router.
+  *   1. Injects `WebsiteStyles.sheet` into the document `<head>` so styles are present before the
+  *      first render.
+  *   2. Reads the SSG-seeded islands (`#docs-island`, `#versions-island`) and the current route
+  *      (via `UILocation.current`) to build the initial body (landing for `/`, docs for a
+  *      `/<prefix>/...` route).
+  *   3. Mounts the unified `SiteApp` shell ONCE around one route-reactive content slot, then drives
+  *      that slot from a single nav fiber on `route.next`: `/` swaps to the landing body with no
+  *      reload (D1), `/<prefix>/<slug>/` fetches + transpiles `content.md` and swaps the article/TOC
+  *      in place, `/<prefix>/` swaps to an empty-article docs shell, and any genuinely off-tree route
+  *      falls back to a full browser navigation.
   *
-  * Phase 1 keeps the bundle on a minimal two-arm initial selection while the SSG path is rebuilt
-  * around `SiteApp`; the single-mount, client-side `/`-to-docs routing rewrite lands in Phase 2.
-  * The docs arm wires the SPA with client routing via `UILocation.current`, reactive content driven
-  * by a `SignalRef[UI]` updated on navigation, and `DocsClient.fetchMarkdown` + `DocsMarkdown.transpile`
-  * for uncached routes (INV-013).
+  * After every in-shell content swap the nav fiber also updates `document.title` and the
+  * `<link rel=canonical>` href to match the new route (SEO-4), using the SAME title/canonical string
+  * formats `WebsiteGenerator` emits at build time, so the in-browser head never diverges from what
+  * crawlers indexed.
   *
   * This object is the one shared ESModule entry across all doc versions (INV-008).
   */
@@ -28,6 +31,14 @@ object WebsiteBundleMain:
     // JS entry point imposed by Scala.js and there is no user code above it to thread a Frame
     // from. Same justification as SpaHarnessMain (SpaHarnessMain.scala:22).
     private given bundleFrame: Frame = Frame.internal
+
+    // The physical tree the landing route `/` resolves into. The SSG emits the landing header's
+    // Docs/Modules/Get-started target and seeds its island from the latest version under `latest/`
+    // (WebsiteGenerator.emitLanding: landingHome = docsHome(c, "latest")), so the bundle must use the
+    // SAME `latest` prefix for `/`, NOT the island's version tag (which is the real tag, e.g.
+    // `v1.0.0-RC2`). Using the version tag here would point docsHome at `/v1.0.0-RC2/...` and diverge
+    // from the SSG header, breaking hydration parity on `/`.
+    private val LatestPrefix: String = "latest"
 
     // Markdown cache: populated with the current-route Markdown on first load (from the JSON
     // island), then populated with fetched Markdown on navigation (DocsClient.fetchMarkdown).
@@ -72,84 +83,45 @@ object WebsiteBundleMain:
         // Unsafe: browser entry-point bridge; single controlled crossing from JS main into the
         // Kyo scheduler. AllowUnsafe is necessary here because we have no Kyo fiber context.
         runStylesheetUnsafe()
-        // Phase 1: route on window.location (G3 removed data-boot-scenario). The root `/` mounts the
-        // landing body; any `/<prefix>/...` route mounts the docs body. Both are wrapped in the one
-        // SiteApp shell. The single-mount, client-side `/`-to-docs swap is the Phase 2 rewrite.
-        // Unsafe: reading the current location at JS entry; UILocation initializes synchronously
-        // before this call and current is a Sync-only read.
-        val initialPath: String =
-            import AllowUnsafe.embrace.danger
-            Sync.Unsafe.evalOrThrow(UILocation.current.current)
-        val isRoot = initialPath.split("/").count(_.nonEmpty) == 0
-        val view: UI < (Sync & Async) =
-            if isRoot then buildLanding() else buildDocs()
-        runMountUnsafe(view)
+        runMountUnsafe(build())
     end main
 
-    private def buildLanding()(using Frame): UI < (Sync & Async) =
-        val versions = readVersions()
+    /** Build the unified SPA: one content `SignalRef[UI]` initialised to the initial route's body, one
+      * nav fiber routing `/ <-> docs` client-side, and the single `SiteApp.view` mount.
+      *
+      * The header is rendered once by `SiteApp.view`; the nav fiber only ever rewrites the content
+      * signal (and, for docs pages, the shared `articleRef`/`tocRef`), so the header never remounts on
+      * navigation.
+      */
+    private def build()(using Frame): UI < (Sync & Async) =
         val island   = readDocsIsland()
-        val home     = docsHome(island.content, routePrefix("/", island.content.version.tag))
-        for
-            body <- LandingApp.body(versions, home)
-            view <- siteShell(versions, home, body)
-        yield view
-        end for
-    end buildLanding
-
-    private def buildDocs()(using Frame): UI < (Sync & Async) =
-        val island = readDocsIsland()
-        val route  = UILocation.current
-        // Seed the cache with the SSG-supplied Markdown for the current route (INV-003).
+        val versions = readVersions()
+        val route    = UILocation.current
         // Unsafe: reading the current signal value at JS entry via evalOrThrow; safe because
-        // UILocation initializes synchronously before this call and route.current is Sync-only.
+        // UILocation initialises synchronously before this call and route.current is Sync-only.
         val initialRoute: String =
             import AllowUnsafe.embrace.danger
             Sync.Unsafe.evalOrThrow(route.current)
-        // The link prefix is the physical tree the page is served under (its first path segment:
-        // `latest` or `v<X>`), NOT a re-derivation from `version.latest`. A reader who landed on
-        // `/v1.2.0/...` (the latest version's own versioned tree) must keep navigating within
-        // `/v1.2.0/...`, never jumping to `/latest/` (WARN-1). Fall back to the seeded version's tag
-        // when the route has no leading segment.
-        val prefix   = routePrefix(initialRoute, island.content.version.tag)
-        val home     = docsHome(island.content, prefix)
-        val versions = island.versions
+        // The active prefix is `latest` when on `/` (the SSG seeds the landing's header + island from
+        // the latest version under `latest/`); otherwise it is the path's first physical segment so a
+        // reader under `/v<X>/...` keeps navigating within that tree (WARN-1).
+        val prefix = activePrefix(initialRoute, island.content.version.tag)
+        val home   = docsHome(island.content, prefix)
+        // The physical trees a `/<prefix>/` intro route may legitimately name: `latest` plus every
+        // version's own tag. A single-segment route outside this set is off-tree and full-navigates.
+        val knownPrefixes: Set[String] = versions.toSeq.map(_.tag).toSet + LatestPrefix
+        // The island's Markdown is the current route's README when the initial route is a module page,
+        // and "" on `/` and `/<prefix>/` (the SSG seeds an empty island there). Seed the cache so the
+        // module branch reuses the first-paint content instead of re-fetching it.
         seedMarkdownCache(initialRoute, island.markdown)
         for
             initialRendered <- DocsMarkdown.transpile(island.markdown)
             articleRef      <- Signal.initRef[UI](initialRendered.article)
             tocRef          <- Signal.initRef[Chunk[DocsMarkdown.Heading]](initialRendered.headings)
-            // Launch a fiber that updates the article and the TOC outline on each navigation. Only a
-            // docs module route (`/<prefix>/<slug>/`, two or more path segments) has a sibling
-            // `content.md` to fetch and render in place. Any other route the interceptor captured (the
-            // landing `/`, or a `/<prefix>/` intro page) has no content.md, so hand it off to a full
-            // browser navigation: the server serves the correct page instead of the fetch 404-ing and
-            // leaving stale content behind.
-            _ <- Fiber.initUnscoped {
-                Loop.forever {
-                    for
-                        nextRoute <- route.next
-                        isModuleRoute = nextRoute.split("/").count(_.nonEmpty) >= 2
-                        _ <-
-                            if !isModuleRoute then Sync.defer(dom.window.location.href = nextRoute)
-                            else
-                                for
-                                    md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
-                                    fetched <- if md.nonEmpty then Sync.defer(md)
-                                    else
-                                        DocsClient.fetchMarkdown(nextRoute).map { f =>
-                                            seedMarkdownCache(nextRoute, f)
-                                            f
-                                        }
-                                    rendered <- DocsMarkdown.transpile(fetched)
-                                    _        <- articleRef.set(rendered.article)
-                                    _        <- tocRef.set(rendered.headings)
-                                yield ()
-                    yield Loop.continue
-                    end for
-                }
-            }
-            body <- DocsApp.body(
+            // ONE docs body instance, reused on every docs navigation. Its sidebar/article/TOC react
+            // to `route`/`articleRef`/`tocRef`, so swapping module-to-module only updates those refs;
+            // `content` is set to this body once (when arriving from the landing) and then left alone.
+            docsBody <- DocsApp.body(
                 island.content,
                 prefix,
                 route,
@@ -157,26 +129,133 @@ object WebsiteBundleMain:
                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
                 UI.Ast.Reactive(articleRef.map(a => a))
             )
-            view <- siteShell(versions, home, body)
-        yield view
-        end for
-    end buildDocs
-
-    /** Wrap a route's content `body` in the unified `SiteApp` shell (the Phase 1 minimal bundle
-      * touch). The search query and index are empty (search is wired in Phase 3); the content signal
-      * is constant for now (the single-mount, route-reactive content swap is the Phase 2 rewrite).
-      */
-    private def siteShell(versions: Chunk[WebsiteVersion], home: String, body: UI)(using Frame): UI < (Sync & Async) =
-        for
-            queryRef <- Signal.initRef("")
+            landingBody <- LandingApp.body(versions, home)
+            content     <- Signal.initRef[UI](if isRootRoute(initialRoute) then landingBody else docsBody)
+            queryRef    <- Signal.initRef("")
+            _           <- navFiber(route, knownPrefixes, island, content, articleRef, tocRef, landingBody, docsBody)
             view <- SiteApp.view(
                 versions,
                 home,
                 Signal.initConst(DocsSearch.Index(Chunk.empty)),
                 queryRef,
-                Signal.initConst(body)
+                content
             )
         yield view
+        end for
+    end build
+
+    /** The single nav fiber. On each new route it picks one of four branches:
+      *   - root `/` (zero path segments): swap `content` to the landing body, no reload (D1).
+      *   - module `/<prefix>/<slug>/` (two or more segments): fetch + transpile `content.md` (cache),
+      *     update `articleRef`/`tocRef`, and swap `content` to the docs body.
+      *   - intro `/<knownPrefix>/` (exactly one segment that names a real tree, `latest` or a known
+      *     version tag): clear the article/TOC and swap to the empty-article docs body.
+      *   - genuinely off-tree (a single segment that is NOT a known prefix): a full browser navigation
+      *     as the narrow safety fallback, so the server resolves the real page or a 404 instead of the
+      *     SPA rendering a docs shell for a route that does not exist.
+      *
+      * Same-document `#anchor` clicks never reach this fiber: `UILocation` skips same-document links
+      * (`UILocation.scala:60-62`), so a TOC or landing `#how` anchor scrolls natively without changing
+      * the route signal. After every in-shell branch the fiber updates the head (SEO-4).
+      */
+    private def navFiber(
+        route: Signal[String],
+        knownPrefixes: Set[String],
+        island: DocsClient.DocsIsland,
+        content: SignalRef[UI],
+        articleRef: SignalRef[UI],
+        tocRef: SignalRef[Chunk[DocsMarkdown.Heading]],
+        landingBody: UI,
+        docsBody: UI
+    )(using Frame): Fiber[Nothing, Any] < Sync =
+        Fiber.initUnscoped {
+            Loop.forever {
+                for
+                    nextRoute <- route.next
+                    segments = nextRoute.split('/').filter(_.nonEmpty)
+                    _ <-
+                        if segments.isEmpty then
+                            // Root `/`: swap to the landing body (no reload, D1).
+                            content.set(landingBody).andThen(updateHead(nextRoute, island))
+                        else if segments.length >= 2 then
+                            // Module route: fetch/transpile content.md, update article + TOC, show docs.
+                            for
+                                md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
+                                fetched <-
+                                    if md.nonEmpty then Sync.defer(md)
+                                    else
+                                        DocsClient.fetchMarkdown(nextRoute).map { f =>
+                                            seedMarkdownCache(nextRoute, f)
+                                            f
+                                        }
+                                rendered <- DocsMarkdown.transpile(fetched)
+                                _        <- articleRef.set(rendered.article)
+                                _        <- tocRef.set(rendered.headings)
+                                _        <- content.set(docsBody)
+                                _        <- updateHead(nextRoute, island)
+                            yield ()
+                        else if knownPrefixes.contains(segments(0)) then
+                            // Intro `/<knownPrefix>/`: empty-article docs shell, no content.md fetch.
+                            articleRef.set(UI.empty)
+                                .andThen(tocRef.set(Chunk.empty))
+                                .andThen(content.set(docsBody))
+                                .andThen(updateHead(nextRoute, island))
+                        else
+                            // Off-tree single-segment route: hand off to a full browser navigation so the
+                            // server resolves the real page or a 404 (narrow fallback; D1).
+                            // Unsafe: DOM bridge for the off-tree full-navigate fallback.
+                            Sync.defer(dom.window.location.href = nextRoute)
+                        end if
+                yield Loop.continue
+            }
+        }
+    end navFiber
+
+    /** SEO-4: update `document.title` and the `<link rel=canonical>` href to match `route`, with no
+      * reload. The strings mirror `WebsiteGenerator.docOpts` / the landing opts exactly:
+      *   - root `/`: title `"Kyo | Build with AI. Ship something that holds."`, canonical
+      *     `"https://getkyo.io/"`.
+      *   - module `/<prefix>/<slug>/`: title `"<slug> | Kyo docs <label>"`, canonical
+      *     `"https://getkyo.io/<prefix>/<slug>/"`.
+      *   - intro `/<prefix>/`: title `"Kyo docs <label>"`, canonical `"https://getkyo.io/<prefix>/"`.
+      *
+      * `<label>` is the seeded island's version label, the same record the SSG used to build the head
+      * for the latest tree. The canonical href is the absolute `https://getkyo.io<route>` URL, matching
+      * `WebsiteGenerator.docOpts.canonical = s"https://getkyo.io$route"`.
+      */
+    private def updateHead(route: String, island: DocsClient.DocsIsland)(using Frame): Unit < Sync =
+        Sync.defer {
+            val segments = route.split('/').filter(_.nonEmpty)
+            val label    = island.content.version.label
+            val title =
+                if segments.isEmpty then "Kyo | Build with AI. Ship something that holds."
+                else if segments.length >= 2 then s"${segments(segments.length - 1)} | Kyo docs $label"
+                else s"Kyo docs $label"
+            val canonical =
+                if segments.isEmpty then "https://getkyo.io/"
+                else s"https://getkyo.io$route"
+            // Unsafe: DOM bridge for the SEO-4 head update. Single-threaded JS event loop; these are
+            // plain document property/attribute writes with no Kyo state involved.
+            dom.document.title = title
+            val link = dom.document.querySelector("link[rel=canonical]")
+            // The canonical <link> is always present in the SSG head (WebsitePage.pageHead emits it);
+            // guard the null case so a harness without the element does not throw into the console.
+            if link != null then link.setAttribute("href", canonical)
+        }
+    end updateHead
+
+    private def isRootRoute(path: String): Boolean =
+        path.split('/').count(_.nonEmpty) == 0
+
+    /** The active physical prefix for the initial route. `/` resolves to `latest` (the tree the SSG
+      * seeds the landing from); any other route uses its own leading segment so the reader stays in
+      * the tree they landed on (WARN-1), falling back to the seeded version tag only when the path has
+      * no leading segment but is not the root (defensive; should not occur in practice).
+      */
+    private def activePrefix(path: String, versionTag: String): String =
+        val segments = path.split('/').filter(_.nonEmpty)
+        if segments.isEmpty then LatestPrefix else segments(0)
+    end activePrefix
 
     /** The header Docs/Modules/Get-started target for the seeded `content` under `prefix`: the first
       * module's route `/<prefix>/<firstSlug>/`, falling back to the prefix root `/<prefix>/`. Mirrors
@@ -185,24 +264,14 @@ object WebsiteBundleMain:
     private def docsHome(content: WebsiteContent, prefix: String): String =
         content.groups.flatMap(_.modules).headOption.fold(s"/$prefix/")(m => s"/$prefix/${m.slug}/")
 
-    /** The physical route-tree prefix for a docs path: the path's first non-empty segment (`latest`
-      * or `v<X>`). This is the directory the SSG served the page from, so all intra-page links stay
-      * within that tree, including the latest version's own `v<X>/` copy (WARN-1). Falls back to
-      * `versionTag` when the path has no leading segment (e.g. `/`).
-      */
-    private def routePrefix(path: String, versionTag: String): String =
-        val segments = path.split('/').filter(_.nonEmpty)
-        if segments.isEmpty then versionTag else segments(0)
-    end routePrefix
-
     /** Read the available versions list from the SSG-seeded DOM island.
       *
-      * The SSG (Phase 7) writes a `<script id="versions-island" type="application/json">`
-      * element whose text content is a JSON array of `{tag, label, latest}` objects.
-      * This method queries that element and parses its content via `DocsClient.parseVersionsIsland`.
+      * The SSG writes a `<script id="versions-island" type="application/json">` element whose text
+      * content is a JSON array of `{tag, label, latest}` objects. This method queries that element and
+      * parses its content via `DocsClient.parseVersionsIsland`.
       *
-      * When the element is absent (e.g. in test harness or pre-Phase-7 environments) an
-      * empty `Chunk` is returned; the landing app still mounts with no version entries.
+      * When the element is absent (e.g. in a test harness without the SSG island) an empty `Chunk` is
+      * returned; the SPA still mounts with no version entries.
       */
     private def readVersions(): Chunk[WebsiteVersion] =
         val el = dom.document.querySelector("#versions-island")
