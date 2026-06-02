@@ -28,8 +28,7 @@ package kyo.internal.tasty.snapshot
   *
   * Section IDs:
   *   - `NAMES`: Packed name bytes + (offset: Int, length: Int) table indexed by NameId.
-  *   - `SYMBOLS`: Fixed-size records encoding symbol fields (kind, flags, nameId, ownerId, etc.). `home` is NOT serialized; restored from
-  *     the enclosing `Classpath` at load time.
+  *   - `SYMBOLS`: Fixed-size records encoding symbol fields (kind, flags, nameId, ownerId, body offsets, etc.).
   *   - `TYPES`: Packed type records indexed by canonical type ID.
   *   - `TYPESEXT`: Variable-length operand data for multi-operand types.
   *   - `PARENTS`: Int arrays for class parent lists.
@@ -45,6 +44,8 @@ package kyo.internal.tasty.snapshot
   *   - `FQNMAP__`: unresolvedFqnByNegId map (negId to FQN string for external annotation types) (added in minor=6).
   *   - `ERRORS` (re-encoded in minor=7): typed tagged format; each error written as 1-byte tag + UTF-8-length-prefixed fields, replacing the
   *     previous flat `err.toString` encoding.
+  *   - `SUBCIDX_`: subclassIndex map (parent symIdx to list of child symIdx entries) (added in minor=8).
+  *   - `COMPIDX_`: companionIndex map (symIdx to companion symIdx pairs) (added in minor=8).
   *
   * Versioning policy:
   *   - Major bump: invalidates all old snapshots (full re-decode + fresh write). Reader emits `TastyError.SnapshotVersionMismatch`.
@@ -66,7 +67,7 @@ object SnapshotFormat:
 
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
-    val minorVersion: Int = 7
+    val minorVersion: Int = 8
 
     /** Maximum number of sections allowed in a snapshot header (F-W2-29 guard).
       *
@@ -98,7 +99,9 @@ object SnapshotFormat:
             "ANNOTS_",
             "JAVAMETA",
             "FQNIDX__",
-            "FQNMAP__"
+            "FQNMAP__",
+            "SUBCIDX_",
+            "COMPIDX_"
         )
 
     val sectionNAMES: String     = "NAMES"
@@ -137,11 +140,43 @@ object SnapshotFormat:
       */
     val sectionFQNMAP: String = "FQNMAP__"
 
+    /** Phase 5.02 subclass index section: subclassIndex map (parent SymbolId -> Chunk of child SymbolIds).
+      *
+      * Stores the inverted parent-types graph so that warm-loaded classpaths can answer
+      * `cp.directSubclassesOf`, `cp.subclassesOf`, and `cp.implementationsOf` without rebuilding
+      * the index from scratch.
+      *
+      * Layout: [4-byte count LE] then count entries each
+      *   [4-byte parentSymIdx LE][4-byte childCount LE][childCount x 4-byte childSymIdx LE].
+      * All indices are positions in the symbols array (snapshot order).
+      * Added in minor=8 (breaking bump: old snapshots lack this section; reject to force cold re-decode).
+      */
+    val sectionSUBCIDX: String = "SUBCIDX_"
+
+    /** Phase 5.02 companion index section: companionIndex map (SymbolId -> SymbolId).
+      *
+      * Stores the Class<->Object companion pairing built by ClasspathOrchestrator.buildCompanionIndex so
+      * that warm-loaded classpaths can answer `cp.companion(sym)` without an fqnIndex rescan.
+      *
+      * Layout: [4-byte count LE] then count entries each
+      *   [4-byte symIdx LE][4-byte companionSymIdx LE].
+      * All indices are positions in the symbols array (snapshot order).
+      * Added in minor=8 (same breaking bump as SUBCIDX_).
+      */
+    val sectionCOMPIDX: String = "COMPIDX_"
+
     /** minor=7 (breaking bump): ERRORS section re-encoded as typed tagged format instead of flat strings.
       *
       * Old snapshots (minor=6 and below) are already rejected by the existing minor-version guard; this constant documents the intent.
       */
     val minorVersion7ErrorsTyped: Int = 7
+
+    /** minor=8 (breaking bump): SUBCIDX_ and COMPIDX_ sections added for subclassIndex and companionIndex persistence.
+      *
+      * Old snapshots (minor=7) lack these sections. Warm loads from minor=7 snapshots would return empty
+      * subclassIndex and companionIndex, which is a fidelity regression. Rejecting them forces cold re-decode.
+      */
+    val minorVersion8IndexSections: Int = 8
 
     /** Write a little-endian 32-bit int at position `pos` in `buf`. */
     def writeInt32LE(buf: Array[Byte], pos: Int, value: Int): Unit =

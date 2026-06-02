@@ -284,6 +284,19 @@ object SnapshotWriter:
         // built after this call.
         val fqnMapBytes = serializeFqnMap(cp.unresolvedFqnByNegId, internName)
 
+        // SUBCIDX_ section: subclassIndex map (parent SymbolId -> Chunk of child SymbolIds).
+        // F-W2-30: serialize so warm loads can answer directSubclassesOf/subclassesOf/implementationsOf.
+        // Build symIdToIdx: SymbolId.value -> snapshot position (needed to convert SymbolId to index).
+        val symIdToIdxForIdx = new scala.collection.mutable.HashMap[Int, Int]()
+        for (sym, idx) <- symbolList.zipWithIndex do
+            symIdToIdxForIdx(sym.id.value) = idx
+        end for
+        val subcIdxBytes = serializeSubclassIndex(cp.subclassIndex, symIdToIdxForIdx)
+
+        // COMPIDX_ section: companionIndex map (SymbolId -> companion SymbolId).
+        // F-W2-31: serialize so warm loads can answer cp.companion(sym) without fqnIndex rescan.
+        val compIdxBytes = serializeCompanionIndex(cp.companionIndex, symIdToIdxForIdx)
+
         // NAMES section: length-prefixed UTF-8 strings.
         // Built AFTER all internName calls (symNames, symFqns, annotsBytes, fqnIdxBytes, fqnMapBytes) so
         // the pool is complete before serialization. Earlier placement caused FQNIDX__ name IDs to
@@ -306,7 +319,9 @@ object SnapshotWriter:
             (SnapshotFormat.sectionANNOTS, annotsBytes),
             (SnapshotFormat.sectionJAVAMETA, javaMetaBytes),
             (SnapshotFormat.sectionFQNIDX, fqnIdxBytes),
-            (SnapshotFormat.sectionFQNMAP, fqnMapBytes)
+            (SnapshotFormat.sectionFQNMAP, fqnMapBytes),
+            (SnapshotFormat.sectionSUBCIDX, subcIdxBytes),
+            (SnapshotFormat.sectionCOMPIDX, compIdxBytes)
         )
 
         assembleSections(sections, digest)
@@ -718,6 +733,72 @@ object SnapshotWriter:
         end for
         baos.toByteArray
     end serializeFqnMap
+
+    /** Serialize the subclassIndex map into a flat byte block.
+      *
+      * Layout: [4-byte count LE] then count entries each
+      *   [4-byte parentSymIdx LE][4-byte childCount LE][childCount x 4-byte childSymIdx LE].
+      * All indices are snapshot positions (0-based). Entries where the parent SymbolId is not in the
+      * symbols array (e.g. sentinel -1) are skipped. Child ids not in the symbols array are also
+      * skipped.
+      */
+    private def serializeSubclassIndex(
+        subclassIndex: Map[kyo.internal.tasty.symbol.SymbolId, Chunk[kyo.internal.tasty.symbol.SymbolId]],
+        symIdToIdx: scala.collection.mutable.HashMap[Int, Int]
+    ): Array[Byte] =
+        import kyo.internal.tasty.symbol.SymbolId
+        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
+        val tmp  = new Array[Byte](4)
+        // Collect valid entries: (parentIdx, filteredChildren).
+        val entries = subclassIndex.toSeq.sortBy(_._1.value).flatMap: (parentId, children) =>
+            symIdToIdx.get(parentId.value) match
+                case Some(parentIdx) =>
+                    val childIdxs = children.toSeq.flatMap(cid => symIdToIdx.get(cid.value)).filter(_ >= 0)
+                    if childIdxs.nonEmpty then Some((parentIdx, childIdxs)) else None
+                case None => None
+        SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
+        baos.write(tmp)
+        for (parentIdx, childIdxs) <- entries do
+            SnapshotFormat.writeInt32LE(tmp, 0, parentIdx)
+            baos.write(tmp)
+            SnapshotFormat.writeInt32LE(tmp, 0, childIdxs.size)
+            baos.write(tmp)
+            for ci <- childIdxs do
+                SnapshotFormat.writeInt32LE(tmp, 0, ci)
+                baos.write(tmp)
+            end for
+        end for
+        baos.toByteArray
+    end serializeSubclassIndex
+
+    /** Serialize the companionIndex map into a flat byte block.
+      *
+      * Layout: [4-byte count LE] then count entries each
+      *   [4-byte symIdx LE][4-byte companionSymIdx LE].
+      * Entries where either SymbolId is not in the symbols array are skipped.
+      */
+    private def serializeCompanionIndex(
+        companionIndex: Map[kyo.internal.tasty.symbol.SymbolId, kyo.internal.tasty.symbol.SymbolId],
+        symIdToIdx: scala.collection.mutable.HashMap[Int, Int]
+    ): Array[Byte] =
+        import kyo.internal.tasty.symbol.SymbolId
+        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
+        val tmp  = new Array[Byte](4)
+        val entries = companionIndex.toSeq.sortBy(_._1.value).flatMap: (symId, companionId) =>
+            for
+                symIdx       <- symIdToIdx.get(symId.value)
+                companionIdx <- symIdToIdx.get(companionId.value)
+            yield (symIdx, companionIdx)
+        SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
+        baos.write(tmp)
+        for (symIdx, companionIdx) <- entries do
+            SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
+            baos.write(tmp)
+            SnapshotFormat.writeInt32LE(tmp, 0, companionIdx)
+            baos.write(tmp)
+        end for
+        baos.toByteArray
+    end serializeCompanionIndex
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
     private def nameToStr(n: Tasty.Name): String =

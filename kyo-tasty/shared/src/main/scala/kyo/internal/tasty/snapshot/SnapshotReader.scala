@@ -70,6 +70,8 @@ object SnapshotReader:
         else if fileMinor < SnapshotFormat.minorVersion then
             // minor=4 is a breaking bump (PERMITS2/ANNOTS_/JAVAMETA).
             // minor=6 is a breaking bump (FQNMAP__): reject to force cold re-decode.
+            // minor=7 is a breaking bump (ERRORS typed format).
+            // minor=8 is a breaking bump (SUBCIDX_/COMPIDX_): reject to force cold re-decode.
             throw new VersionMismatchException(
                 Tasty.Version(fileMajor, fileMinor, 0),
                 Tasty.Version(SnapshotFormat.majorVersion, SnapshotFormat.minorVersion, 0)
@@ -103,10 +105,12 @@ object SnapshotReader:
                         )
                     )
                 else if fileMinor < SnapshotFormat.minorVersion then
-                    // minor=4 is a breaking bump: the PERMITS2 / ANNOTS_ / JAVAMETA sections were added.
-                    // minor=6 is a breaking bump: the FQNMAP__ section was added for unresolvedFqnByNegId
-                    // persistence. Old snapshots lack this section and lose annotation FQN resolution on
-                    // JS/Native warm loads. Reject to force cold re-decode.
+                    // minor=4 is a breaking bump: PERMITS2 / ANNOTS_ / JAVAMETA sections added.
+                    // minor=6 is a breaking bump: FQNMAP__ added for unresolvedFqnByNegId persistence.
+                    // minor=7 is a breaking bump: ERRORS section re-encoded as typed tagged format.
+                    // minor=8 is a breaking bump: SUBCIDX_ / COMPIDX_ added for subclassIndex and
+                    // companionIndex persistence. Old snapshots return empty indexes (F-W2-30/31 regression).
+                    // Reject to force cold re-decode.
                     Abort.fail(
                         TastyError.SnapshotVersionMismatch(
                             Tasty.Version(fileMajor, fileMinor, 0),
@@ -400,6 +404,22 @@ object SnapshotReader:
             case _ =>
                 Map.empty
 
+        // SUBCIDX_ section (Phase 5.02 F-W2-30): subclassIndex for warm-load parity.
+        val warmSubclassIndex: Map[SymbolId, Chunk[SymbolId]] =
+            sectionMap.get(SnapshotFormat.sectionSUBCIDX) match
+                case Some((off, len)) if len > 0 =>
+                    deserializeSubclassIndex(bytes, off, len, finalSymbols.length)
+                case _ =>
+                    Map.empty
+
+        // COMPIDX_ section (Phase 5.02 F-W2-31): companionIndex for warm-load parity.
+        val warmCompanionIndex: Map[SymbolId, SymbolId] =
+            sectionMap.get(SnapshotFormat.sectionCOMPIDX) match
+                case Some((off, len)) if len > 0 =>
+                    deserializeCompanionIndex(bytes, off, len, finalSymbols.length)
+                case _ =>
+                    Map.empty
+
         val canonical = TypeArena.canonical()
         val symsChunk = Chunk.from(finalSymbols)
         val pkgIdIdx  = finalPackageIndex.map { case (k, v) => k -> v.id }.toMap
@@ -413,8 +433,8 @@ object SnapshotReader:
             packageIds = pkgIds,
             fqnIndex = fullFqnIdIdx,
             packageIndex = pkgIdIdx,
-            subclassIndex = Map.empty,
-            companionIndex = Map.empty,
+            subclassIndex = warmSubclassIndex,
+            companionIndex = warmCompanionIndex,
             moduleIndex = Map.empty,
             errors = errors,
             canonical = canonical,
@@ -834,6 +854,24 @@ object SnapshotReader:
             case _ =>
                 Map.empty
 
+        // SUBCIDX_ section (Phase 5.02 F-W2-30): subclassIndex for warm-load parity.
+        val warmSubclassIndex2: Map[SymbolId, Chunk[SymbolId]] =
+            sectionMap.get(SnapshotFormat.sectionSUBCIDX) match
+                case Some((off, len)) if len > 0 =>
+                    val secBytes = copyViewRange(view, off, off + len)
+                    deserializeSubclassIndex(secBytes, 0, len, finalSymbols.length)
+                case _ =>
+                    Map.empty
+
+        // COMPIDX_ section (Phase 5.02 F-W2-31): companionIndex for warm-load parity.
+        val warmCompanionIndex2: Map[SymbolId, SymbolId] =
+            sectionMap.get(SnapshotFormat.sectionCOMPIDX) match
+                case Some((off, len)) if len > 0 =>
+                    val secBytes = copyViewRange(view, off, off + len)
+                    deserializeCompanionIndex(secBytes, 0, len, finalSymbols.length)
+                case _ =>
+                    Map.empty
+
         val canonical  = TypeArena.canonical()
         val symsChunk2 = Chunk.from(finalSymbols)
         val pkgIdIdx2  = newPackageIndex.map { case (k, v) => k -> v.id }.toMap
@@ -847,8 +885,8 @@ object SnapshotReader:
             packageIds = pkgIds2,
             fqnIndex = fullFqnIdIdx2,
             packageIndex = pkgIdIdx2,
-            subclassIndex = Map.empty,
-            companionIndex = Map.empty,
+            subclassIndex = warmSubclassIndex2,
+            companionIndex = warmCompanionIndex2,
             moduleIndex = Map.empty,
             errors = errors,
             canonical = canonical,
@@ -1081,6 +1119,75 @@ object SnapshotReader:
         end while
         builder.toMap
     end deserializeFqnMap
+
+    /** Deserialize subclassIndex from the SUBCIDX_ section (Phase 5.02 F-W2-30).
+      *
+      * Layout: [4-byte count LE] then count entries each
+      *   [4-byte parentSymIdx LE][4-byte childCount LE][childCount x 4-byte childSymIdx LE].
+      * Returns a Map[SymbolId, Chunk[SymbolId]] keyed by the SymbolId at snapshot position parentSymIdx.
+      * Entries with out-of-range indices are silently skipped.
+      */
+    private def deserializeSubclassIndex(
+        bytes: Array[Byte],
+        offset: Int,
+        length: Int,
+        symCount: Int
+    ): Map[SymbolId, Chunk[SymbolId]] =
+        val end     = offset + length
+        val count   = SnapshotFormat.readInt32LE(bytes, offset)
+        var pos     = offset + 4
+        var i       = 0
+        val builder = scala.collection.mutable.HashMap.empty[SymbolId, Chunk[SymbolId]]
+        while i < count && pos + 8 <= end do
+            val parentIdx  = SnapshotFormat.readInt32LE(bytes, pos)
+            val childCount = SnapshotFormat.readInt32LE(bytes, pos + 4)
+            pos += 8
+            val children = new Array[SymbolId](childCount)
+            var j        = 0
+            while j < childCount && pos + 4 <= end do
+                children(j) = SymbolId(SnapshotFormat.readInt32LE(bytes, pos))
+                pos += 4
+                j += 1
+            end while
+            if parentIdx >= 0 && parentIdx < symCount then
+                val validChildren = Chunk.from(children.take(j).filter(cid => cid.value >= 0 && cid.value < symCount))
+                if validChildren.nonEmpty then
+                    builder(SymbolId(parentIdx)) = validChildren
+            end if
+            i += 1
+        end while
+        builder.toMap
+    end deserializeSubclassIndex
+
+    /** Deserialize companionIndex from the COMPIDX_ section (Phase 5.02 F-W2-31).
+      *
+      * Layout: [4-byte count LE] then count entries each
+      *   [4-byte symIdx LE][4-byte companionSymIdx LE].
+      * Returns a Map[SymbolId, SymbolId] keyed by the SymbolId at snapshot position symIdx.
+      * Entries with out-of-range indices are silently skipped.
+      */
+    private def deserializeCompanionIndex(
+        bytes: Array[Byte],
+        offset: Int,
+        length: Int,
+        symCount: Int
+    ): Map[SymbolId, SymbolId] =
+        val end     = offset + length
+        val count   = SnapshotFormat.readInt32LE(bytes, offset)
+        var pos     = offset + 4
+        var i       = 0
+        val builder = scala.collection.mutable.HashMap.empty[SymbolId, SymbolId]
+        while i < count && pos + 8 <= end do
+            val symIdx       = SnapshotFormat.readInt32LE(bytes, pos)
+            val companionIdx = SnapshotFormat.readInt32LE(bytes, pos + 4)
+            pos += 8
+            if symIdx >= 0 && symIdx < symCount && companionIdx >= 0 && companionIdx < symCount then
+                builder(SymbolId(symIdx)) = SymbolId(companionIdx)
+            end if
+            i += 1
+        end while
+        builder.toMap
+    end deserializeCompanionIndex
 
     /** Read the name pool from the NAMES section. */
     private def readNamePool(bytes: Array[Byte], offset: Int, length: Int): Array[String] =

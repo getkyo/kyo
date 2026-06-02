@@ -11,9 +11,10 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
   */
 class SnapshotFormatTest extends Test:
 
-    // Test 1 (INV-023): minorVersion reflects the Phase 5.01b ERRORS typed-format bump.
-    "SnapshotFormat.minorVersion is 6 after Phase 2.13 FQNMAP__ section addition" in run {
-        assert(SnapshotFormat.minorVersion == 7)
+    // Test 1 (INV-023, updated Phase 5.02): minorVersion reflects the Phase 5.02 SUBCIDX_/COMPIDX_ bump.
+    // Phase 5.01b set minorVersion to 7 for ERRORS typed-format; Phase 5.02 sets it to 8 for index sections.
+    "SnapshotFormat.minorVersion is 8 after Phase 5.02 SUBCIDX_/COMPIDX_ section addition" in run {
+        assert(SnapshotFormat.minorVersion == 8)
         succeed
     }
 
