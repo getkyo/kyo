@@ -459,13 +459,29 @@ age: 30
         "renders a CST stream and parses all its documents" in {
             val stream =
                 Yaml.cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
+            val nodes =
+                Yaml.pipeline.parseAll(stream).getOrThrow
 
-            assertResult((rendered = "---\nname: Alice\n---\nname: Bob\n", nodeCount = 2)) {
+            assertResult((rendered = "---\nname: Alice\n---\nname: Bob\n", nodeCount = 2, node0IsMapping = true, node1IsMapping = true)) {
                 (
                     rendered = Yaml.pipeline.render(stream).getOrThrow,
-                    nodeCount = Yaml.pipeline.parseAll(stream).getOrThrow.size
+                    nodeCount = nodes.size,
+                    node0IsMapping = nodes(0).isInstanceOf[Yaml.Node.Mapping],
+                    node1IsMapping = nodes(1).isInstanceOf[Yaml.Node.Mapping]
                 )
             }
+        }
+
+        "renders a source-less CST stream with StartAndEnd markers" in {
+            // A processor-backed cstAll produces source-less documents, exercising the marker path.
+            val stream =
+                Yaml.pipeline.through(identityProcessor).cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+
+            val rendered = Yaml.pipeline.writer(config).render(stream).getOrThrow
+
+            assert(rendered.startsWith("---\n") && rendered.endsWith("...\n"))
         }
     }
 

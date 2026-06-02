@@ -847,7 +847,11 @@ object Yaml:
             }
         end visit
 
-        /** Visits a CST document through this pipeline's processors and the supplied handler. */
+        /** Visits a CST document through this pipeline's processors and the supplied handler.
+          *
+          * With no processors the handler receives events directly from the document. With processors each event passes through the processor
+          * chain before reaching the handler.
+          */
         def visit[Ctx, Err2](
             document: Cst.Document,
             context: Ctx
@@ -858,7 +862,11 @@ object Yaml:
             end match
         end visit
 
-        /** Visits a CST stream through this pipeline's processors and the supplied handler. */
+        /** Visits a CST stream through this pipeline's processors and the supplied handler.
+          *
+          * With no processors the handler receives events directly from the stream. With processors each event passes through the processor
+          * chain before reaching the handler.
+          */
         def visit[Ctx, Err2](
             stream: Cst.Stream,
             context: Ctx
@@ -878,28 +886,36 @@ object Yaml:
         /** Renders a CST stream after routing its events through this pipeline's processors.
           *
           * If the stream has an original source and no processors, that source is returned unchanged. Otherwise, each document is rendered
-          * individually (without per-document markers) and joined with `---` separators.
+          * individually and joined with `---` separators. A single `visit(stream)(Renderer)` call would not insert `---` separators between
+          * documents because the default `WriterConfig.documentMarkers` is `None`, so the per-document render-and-join approach mirrors
+          * `YamlCstRenderer.stream`.
           */
         def render(stream: Cst.Stream)(using Frame): Result[Err | DecodeException, String] =
             stream.originalSource match
                 case Present(source) if processor.isEmpty =>
                     Result.succeed(source)
                 case _ =>
-                    val childConfig =
-                        if stream.documents.size > 1
-                        then writerConfig.copy(documentMarkers = WriterConfig.DocumentMarkers.None)
-                        else writerConfig
-                    val childPipeline = new Pipeline(readerConfig, childConfig, processor)
+                    val multiDoc = stream.documents.size > 1
+                    val childPipeline =
+                        if multiDoc
+                        then new Pipeline(readerConfig, writerConfig.copy(documentMarkers = WriterConfig.DocumentMarkers.None), processor)
+                        else this
 
                     @tailrec def loop(
                         index: Int,
                         acc: StringBuilder
                     ): Result[Err | DecodeException, String] =
-                        if index >= stream.documents.size then Result.succeed(acc.toString)
+                        if index >= stream.documents.size then
+                            if multiDoc && writerConfig.documentMarkers == WriterConfig.DocumentMarkers.StartAndEnd then
+                                if acc.nonEmpty && acc.charAt(acc.length - 1) != '\n' then
+                                    val _ = acc.append('\n')
+                                val _ = acc.append("...\n")
+                            end if
+                            Result.succeed(acc.toString)
                         else
                             childPipeline.render(stream.documents(index)) match
                                 case Result.Success(rendered) =>
-                                    if stream.documents.size > 1 then
+                                    if multiDoc then
                                         if acc.nonEmpty && acc.charAt(acc.length - 1) != '\n' then
                                             val _ = acc.append('\n')
                                         val _ = acc.append("---\n")
