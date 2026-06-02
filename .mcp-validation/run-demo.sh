@@ -24,19 +24,29 @@ WORKTREE="$(cd "$(dirname "$0")/.." && pwd)"
 CACHE_DIR="$WORKTREE/.mcp-validation"
 CP_FILE="$CACHE_DIR/${MODULE}.classpath"
 
-if [[ ! -s "$CP_FILE" ]]; then
+if [[ ! -s "$CP_FILE" ]] || ! grep -q ':' "$CP_FILE"; then
     {
-        echo "  classpath cache missing or empty, exporting via sbt"
+        echo "  classpath cache missing / empty / not-a-classpath, exporting via sbt"
         echo "  cache : $CP_FILE"
     } >> "$LAUNCH_LOG"
     cd "$WORKTREE"
     export JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8"
-    sbt -error "export ${MODULE}/Test/fullClasspath" 2>>"$LAUNCH_LOG" | tail -1 > "$CP_FILE"
+    # Capture sbt output to a tmp file so we can validate before overwriting the cache.
+    TMP_CP="${CP_FILE}.tmp"
+    if sbt -error "export ${MODULE}/Test/fullClasspath" >"$TMP_CP" 2>>"$LAUNCH_LOG" && grep -q ':' "$TMP_CP"; then
+        # Take only the last line (the classpath) since sbt occasionally prefixes diagnostics.
+        tail -1 "$TMP_CP" > "$CP_FILE"
+        rm -f "$TMP_CP"
+    else
+        echo "  FATAL: sbt classpath export failed or produced no classpath" >> "$LAUNCH_LOG"
+        rm -f "$TMP_CP" "$CP_FILE"
+        exit 2
+    fi
 fi
 
 CP="$(cat "$CP_FILE" 2>/dev/null || true)"
-if [[ -z "$CP" ]]; then
-    echo "  FATAL: empty classpath after attempted export" >> "$LAUNCH_LOG"
+if [[ -z "$CP" ]] || [[ "$CP" != *:* ]]; then
+    echo "  FATAL: classpath looks invalid: ${CP:0:80}" >> "$LAUNCH_LOG"
     exit 2
 fi
 
