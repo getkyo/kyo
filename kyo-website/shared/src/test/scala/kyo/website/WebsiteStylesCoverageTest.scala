@@ -68,15 +68,30 @@ class WebsiteStylesCoverageTest extends Test:
 
     private val versions = Chunk(WebsiteVersion("v1.0.0", "1.0.0", true))
 
+    // A populated heading index whose entries cover a title hit AND a heading hit, so the populated
+    // .search-results dropdown renders search-result / search-result-active / search-result-sub /
+    // search-result-title rows for the coverage harvest.
+    private val searchModules = Chunk(
+        WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
+    )
+    private val searchHeadings = Map("kyo-core" -> Chunk(DocsSearch.Heading("Channels and queues", "channels-and-queues")))
+    private val searchIndex    = DocsSearch.headingIndex("latest", searchModules, s => searchHeadings.getOrElse(s, Chunk.empty))
+
     // Wrap a content body in the unified SiteApp shell so the merged header chrome is harvested too.
+    // A NON-empty query against the populated index forces the search-results dropdown to render its
+    // rows, so the search-result* classes are covered (otherwise the empty dropdown emits none).
     private def shell(home: String, body: UI)(using Frame): UI < Sync =
         for
-            queryRef <- Signal.initRef("")
+            // "channels" matches the kyo-core heading "Channels and queues" (a heading hit), so the
+            // dropdown renders search-result + search-result-title + search-result-sub rows.
+            queryRef <- Signal.initRef("channels")
             view <- SiteApp.view(
                 versions,
                 home,
-                Signal.initConst(DocsSearch.Index(Chunk.empty)),
+                Signal.initConst(searchIndex),
                 queryRef,
+                (_: String) => Kyo.unit,
+                Kyo.unit,
                 Signal.initConst(body)
             )
         yield view
@@ -171,6 +186,19 @@ class WebsiteStylesCoverageTest extends Test:
             assert(emitted.contains("blockquote"), "fixture must emit blockquote")
             assert(emitted.contains("md-strong"), "fixture must emit md-strong")
             assert(emitted.exists(_.startsWith("tok-")), "fixture must emit at least one tok-* span")
+        }
+    }
+
+    "the populated search-results dropdown emits the search-result* classes (coverage is non-vacuous)" in run {
+        landingHtml.map { html =>
+            // The shell renders a non-empty query against the populated index, so the dropdown rows
+            // are present: this confirms the search-result* classes the coverage assertion checks are
+            // actually emitted (otherwise the empty dropdown would emit none and pass vacuously).
+            val emitted = emittedClasses(html)
+            assert(emitted.contains("search-results"), s"populated dropdown must emit search-results: ${emitted.toList.sorted}")
+            assert(emitted.contains("search-result"), "populated dropdown must emit search-result rows")
+            assert(emitted.contains("search-result-title"), "populated dropdown must emit search-result-title")
+            assert(emitted.contains("search-result-sub"), "a heading hit must emit search-result-sub")
         }
     }
 

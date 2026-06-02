@@ -91,6 +91,42 @@ class DocsSearchTest extends Test:
         assert(blank == Chunk.empty, s"Blank query should yield no hits, got: $blank")
     }
 
+    // headingIndex: title matches rank before heading matches, and a heading hit carries the
+    // #<heading-slug> anchor route plus the heading text as the sub-label.
+    "headingIndex ranks title matches before heading matches and builds anchor routes" in run {
+        val modules = Chunk(
+            mkModule("kyo-core", "Effects", "kyo-core", ""),
+            mkModule("kyo-stream", "Effects", "kyo-stream", "")
+        )
+        val headings = Map(
+            // kyo-core has a "stream" heading; "stream" also matches the kyo-stream TITLE.
+            "kyo-core"   -> Chunk(DocsSearch.Heading("Streaming results", "streaming-results")),
+            "kyo-stream" -> Chunk(DocsSearch.Heading("Backpressure", "backpressure"))
+        )
+        val idx  = DocsSearch.headingIndex("latest", modules, s => headings.getOrElse(s, Chunk.empty))
+        val hits = DocsSearch.filter(idx, "stream")
+        assert(hits.size == 2, s"expected a title hit and a heading hit for 'stream', got: $hits")
+        // Title hit (kyo-stream) ranks first, with a bare module route and no sub-label.
+        assert(hits(0).slug == "kyo-stream", s"title match must rank first, got: ${hits(0).slug}")
+        assert(hits(0).route == "/latest/kyo-stream/", s"title hit route: ${hits(0).route}")
+        assert(hits(0).sub == Absent, s"title hit must have no sub-label, got: ${hits(0).sub}")
+        // Heading hit (kyo-core's "Streaming results") ranks second, with an anchor route + sub-label.
+        assert(hits(1).slug == "kyo-core", s"heading match must rank second, got: ${hits(1).slug}")
+        assert(hits(1).route == "/latest/kyo-core/#streaming-results", s"heading hit route: ${hits(1).route}")
+        assert(hits(1).sub == Present("Streaming results"), s"heading hit sub-label: ${hits(1).sub}")
+    }
+
+    // headingIndex matches a heading even when the title does not, with the right prefix in the route.
+    "headingIndex matches a heading-only query and respects the prefix" in run {
+        val modules  = Chunk(mkModule("kyo-core", "Effects", "kyo-core", ""))
+        val headings = Map("kyo-core" -> Chunk(DocsSearch.Heading("Fibers and forks", "fibers-and-forks")))
+        val idx      = DocsSearch.headingIndex("v0.9.0", modules, s => headings.getOrElse(s, Chunk.empty))
+        val hits     = DocsSearch.filter(idx, "fibers")
+        assert(hits.size == 1, s"expected 1 heading hit for 'fibers', got: $hits")
+        assert(hits(0).route == "/v0.9.0/kyo-core/#fibers-and-forks", s"prefix must thread into the route: ${hits(0).route}")
+        assert(hits(0).sub == Present("Fibers and forks"), s"sub-label: ${hits(0).sub}")
+    }
+
     // Leaf 18: filter searches stripped plaintext, not code
     "filter does not match terms inside fenced code blocks (leaf 18)" in run {
         val codeOnlyReadme =

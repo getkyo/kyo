@@ -73,6 +73,38 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
+    // routeTable exposes per-module section headings parsed from the manifest `toc` for the search
+    // index. Each module slug maps to its headings (text + anchor slug); `level` is dropped (the
+    // search index does not use it), and a module with no `toc` maps to an empty Chunk.
+    "routeTable parses per-module toc headings into headingsBySlug" in run {
+        val versionsJson = """[{"tag":"v1.0.0","label":"1.0.0","latest":true}]"""
+        val manifestJson =
+            """[""" +
+                """{"slug":"kyo-core","group":"Effects","title":"kyo-core","prev":null,"next":"kyo-data",""" +
+                """"toc":[{"level":1,"text":"kyo-core","slug":"kyo-core"},{"level":2,"text":"Channels and queues","slug":"channels-and-queues"}]},""" +
+                """{"slug":"kyo-data","group":"Foundation","title":"kyo-data","prev":"kyo-core","next":null,"toc":[]}""" +
+                """]"""
+        withFetch(Map(
+            "/versions.json"        -> versionsJson,
+            "/v1.0.0/manifest.json" -> manifestJson
+        )) {
+            for
+                table <- DocsClient.routeTable
+            yield
+                val coreHeadings = table.headingsBySlug.getOrElse("kyo-core", Chunk.empty)
+                assert(coreHeadings.size == 2, s"kyo-core must have 2 headings, got: $coreHeadings")
+                assert(
+                    coreHeadings(1) == DocsSearch.Heading("Channels and queues", "channels-and-queues"),
+                    s"second heading must carry text + anchor slug, got: ${coreHeadings(1)}"
+                )
+                assert(
+                    table.headingsBySlug.getOrElse("kyo-data", Chunk(DocsSearch.Heading("x", "x"))) == Chunk.empty,
+                    s"a module with an empty toc must map to an empty Chunk, got: ${table.headingsBySlug.get("kyo-data")}"
+                )
+            end for
+        }
+    }
+
     // Leaf 21: unknown route surfaces as failure (edge case)
     "fetchMarkdown fails for a route that throws (leaf 21)" in run {
         // Install via withFetch (empty map) so the stub is restored after the async completes; a

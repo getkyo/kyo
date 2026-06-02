@@ -187,8 +187,10 @@ private[kyo] object CssStyleRenderer:
         case CursorProp(v)       => s"cursor: ${cursor(v)};"
         case TranslateProp(x, y) => s"transform: translate(${size(x)}, ${size(y)});"
         case PositionProp(v) => v match
-                case Position.flow    => "position: static;"
-                case Position.overlay => "position: fixed; top: 0; left: 0; width: 100%; height: 100%;"
+                case Position.flow     => "position: static;"
+                case Position.overlay  => "position: fixed; top: 0; left: 0; width: 100%; height: 100%;"
+                case Position.relative => "position: relative;"
+                case Position.dropdown => "position: absolute; top: 100%; right: 0; z-index: 50;"
         case HiddenProp        => "display: none;"
         case FlexGrowProp(v)   => s"flex-grow: ${fmt(v)};"
         case FlexShrinkProp(v) => s"flex-shrink: ${fmt(v)};"

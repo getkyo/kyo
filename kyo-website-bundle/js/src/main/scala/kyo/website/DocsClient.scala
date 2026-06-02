@@ -31,8 +31,15 @@ object DocsClient:
       *   All available documentation versions (for the dropdown).
       * @param modules
       *   All modules in the current version (for sidebar nav and prev/next).
+      * @param headingsBySlug
+      *   Each module slug mapped to its section headings (from the manifest `toc`), used to build
+      *   the heading-aware search index. A slug with no `toc` entries maps to an empty `Chunk`.
       */
-    final case class RouteTable(versions: Chunk[WebsiteVersion], modules: Chunk[WebsiteModule]) derives CanEqual
+    final case class RouteTable(
+        versions: Chunk[WebsiteVersion],
+        modules: Chunk[WebsiteModule],
+        headingsBySlug: Map[String, Chunk[DocsSearch.Heading]]
+    ) derives CanEqual
 
     /** Production-default sentinel for `fetchFn`.
       *
@@ -77,7 +84,8 @@ object DocsClient:
             currentVersion = versions.headMaybe.map(_.tag).getOrElse("latest")
             manifestJson <- fetch(s"/$currentVersion/manifest.json")
             modules      <- parseManifest(manifestJson)
-        yield RouteTable(versions, modules)
+            headings     <- parseHeadings(manifestJson)
+        yield RouteTable(versions, modules, headings)
     end routeTable
 
     private def markdownUrl(route: String): String =
@@ -219,6 +227,34 @@ object DocsClient:
             Chunk.from(modules)
         }
     end parseManifest
+
+    /** Parse the per-module section headings from a `manifest.json` body for the search index.
+      *
+      * Each manifest element carries a `toc` array of `{"level": N, "text": "...", "slug": "..."}`
+      * objects (written by `WebsiteGenerator.manifestEntry`). This reads each element's `slug` and
+      * its `toc`, mapping the slug to its headings (text + anchor slug, dropping `level`, which the
+      * search index does not use). A module with no `toc` maps to an empty `Chunk`. Exposed
+      * `private[website]` so the bundle can build the heading index and a test can assert the parse.
+      */
+    private[website] def parseHeadings(json: String)(using Frame): Map[String, Chunk[DocsSearch.Heading]] < Sync =
+        Sync.defer {
+            val items = splitJsonArray(json)
+            items.flatMap { obj =>
+                extractString(obj, "slug").map { slug =>
+                    val tocArray = extractArray(obj, "toc").getOrElse("[]")
+                    val headings = splitJsonArray(tocArray).flatMap(parseHeading)
+                    slug -> Chunk.from(headings)
+                }
+            }.toMap
+        }
+    end parseHeadings
+
+    private def parseHeading(obj: String): Maybe[DocsSearch.Heading] =
+        for
+            text <- extractString(obj, "text")
+            slug <- extractString(obj, "slug")
+        yield DocsSearch.Heading(text, slug)
+    end parseHeading
 
     private def parseModule(obj: String): Maybe[WebsiteModule] =
         for

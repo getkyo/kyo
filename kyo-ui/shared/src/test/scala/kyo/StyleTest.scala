@@ -647,8 +647,20 @@ class StyleTest extends Test:
             assert(s.props(0) == Style.Prop.PositionProp(Position.overlay))
         }
 
+        "relative" in {
+            val s = Style.position(Position.relative)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.relative))
+        }
+
+        "dropdown" in {
+            val s = Style.position(Position.dropdown)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.dropdown))
+        }
+
         "enum values" in {
             assert(Position.flow != Position.overlay)
+            assert(Position.relative != Position.dropdown)
+            assert(Position.overlay != Position.dropdown)
         }
     }
 

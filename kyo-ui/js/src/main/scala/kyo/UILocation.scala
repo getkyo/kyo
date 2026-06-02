@@ -61,7 +61,12 @@ object UILocation:
                         a.pathname == dom.window.location.pathname && a.search == dom.window.location.search
                     if sameOrigin && noModifier && notBlank && !sameDocument then
                         me.preventDefault()
-                        dom.window.history.pushState(null, "", a.pathname + a.search)
+                        // Preserve the anchor's hash so a cross-document link that targets a heading
+                        // (e.g. /docs/mod/#section from a search result) keeps the fragment in the URL.
+                        // The route signal stays pathname+search (readWindowPath drops the hash), so
+                        // route-keyed logic is unaffected; the app scrolls to the fragment after it
+                        // renders the new document's content.
+                        dom.window.history.pushState(null, "", a.pathname + a.search + a.hash)
                         currentRef.unsafe.set(readWindowPath())
                     end if
                 }

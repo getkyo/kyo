@@ -698,9 +698,18 @@ object Style:
     enum Cursor derives CanEqual:
         case defaultCursor, pointer, text, move, notAllowed, crosshair, help, wait_, grab, grabbing
 
-    /** Maps to the CSS `position` property: `flow` for normal layout, `overlay` for an absolutely positioned overlay. */
+    /** Maps to the CSS `position` property.
+      *
+      *   - `flow`: normal layout (`position: static`).
+      *   - `overlay`: a full-viewport fixed overlay (`position: fixed` pinned to all four edges).
+      *   - `relative`: a positioned containing block (`position: relative`) for absolutely-positioned
+      *     descendants, without shifting the element itself.
+      *   - `dropdown`: an absolutely-positioned panel anchored under the right edge of its nearest
+      *     positioned ancestor (`position: absolute; top: 100%; right: 0`), layered above sibling
+      *     content. Used for menus and result panels that drop below a trigger.
+      */
     enum Position derives CanEqual:
-        case flow, overlay
+        case flow, overlay, relative, dropdown
 
     /** Direction of a background gradient (the `to ...` keyword of a CSS `linear-gradient`). */
     enum GradientDirection derives CanEqual:

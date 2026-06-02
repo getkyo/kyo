@@ -209,6 +209,11 @@ object WebsiteGenerator:
                 docsHome,
                 Signal.initConst(DocsSearch.Index(Chunk.empty)),
                 queryRef,
+                // The SSG renders one static route: there is no client-side navigation at build time,
+                // so search Enter-selection and the lazy heading-index fetch are both no-ops. The
+                // bundle supplies the live UILocation.push + the manifest fetch.
+                (_: String) => Kyo.unit,
+                Kyo.unit,
                 Signal.initConst(body)
             )
         yield view

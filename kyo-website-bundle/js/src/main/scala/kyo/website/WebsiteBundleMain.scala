@@ -49,6 +49,11 @@ object WebsiteBundleMain:
     private def seedMarkdownCache(route: String, markdown: String): Unit =
         markdownCache(route) = markdown
 
+    // Guards the one-shot heading-index fetch: the manifest `toc` is fetched at most once, on the
+    // first search-box focus, and cached into `searchIndex`. Re-focus reuses the loaded index.
+    // Unsafe: mutable module-level flag in a JS bundle; the single-threaded JS event loop is safe.
+    private var searchIndexLoaded: Boolean = false
+
     /** Read the SSG-seeded docs island from the DOM.
       *
       * The SSG writes a `<script id="docs-island" type="application/json">` element whose text
@@ -132,17 +137,61 @@ object WebsiteBundleMain:
             landingBody <- LandingApp.body(versions, home)
             content     <- Signal.initRef[UI](if isRootRoute(initialRoute) then landingBody else docsBody)
             queryRef    <- Signal.initRef("")
+            // Seed the search index with a title-only index built synchronously from the boot island
+            // (titles/slugs/groups), so the very first keystroke already matches module titles without
+            // waiting on a fetch. The heading-aware index loads lazily on first focus (onSearchFocus).
+            searchIndex <- Signal.initRef(titleIndex(island.content, prefix))
             _           <- navFiber(route, knownPrefixes, island, content, articleRef, tocRef, landingBody, docsBody)
             view <- SiteApp.view(
                 versions,
                 home,
-                Signal.initConst(DocsSearch.Index(Chunk.empty)),
+                searchIndex,
                 queryRef,
+                // Enter-driven result selection routes client-side through the History API; the plain
+                // <a> rows route via the UILocation click interceptor on their own. After the push,
+                // scroll to the hash so an Enter on a heading hit lands on the section even when the
+                // module page is already loaded (the nav fiber does not re-fire for a same-route push).
+                target => UILocation.push(target).andThen(scrollToHash()),
+                loadSearchIndex(island.content, prefix, searchIndex),
                 content
             )
         yield view
         end for
     end build
+
+    /** Build a title-only search index synchronously from the boot island: one entry per module
+      * (title/slug/group) under `prefix`, with no headings yet. Used as the immediate index so search
+      * works on the first keystroke; [[loadSearchIndex]] upgrades it with section headings on focus.
+      */
+    private def titleIndex(content: WebsiteContent, prefix: String): DocsSearch.Index =
+        val modules = content.groups.flatMap(_.modules)
+        DocsSearch.headingIndex(prefix, modules, _ => Chunk.empty)
+    end titleIndex
+
+    /** Lazily fetch the version manifest `toc` once (on the first search focus) and upgrade
+      * `searchIndex` to the heading-aware index, so heading matches surface a `#<slug>` anchor. The
+      * fetch runs inside the search fiber (it never blocks initial load), is guarded by
+      * `searchIndexLoaded` so it runs at most once, and degrades gracefully: a fetch failure leaves
+      * the title-only index in place rather than throwing into the console.
+      */
+    private def loadSearchIndex(
+        content: WebsiteContent,
+        prefix: String,
+        searchIndex: SignalRef[DocsSearch.Index]
+    )(using Frame): Unit < Async =
+        if searchIndexLoaded then Kyo.unit
+        else
+            searchIndexLoaded = true
+            val modules = content.groups.flatMap(_.modules)
+            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.routeTable)).map {
+                case Result.Success(table) =>
+                    searchIndex.set(DocsSearch.headingIndex(prefix, modules, s => table.headingsBySlug.getOrElse(s, Chunk.empty)))
+                case Result.Failure(_) | Result.Panic(_) =>
+                    // Leave the title-only index in place; search still works on titles.
+                    Kyo.unit
+            }
+        end if
+    end loadSearchIndex
 
     /** The single nav fiber. On each new route it picks one of four branches:
       *   - root `/` (zero path segments): swap `content` to the landing body, no reload (D1).
@@ -193,6 +242,10 @@ object WebsiteBundleMain:
                                 _        <- tocRef.set(rendered.headings)
                                 _        <- content.set(docsBody)
                                 _        <- updateHead(nextRoute, island)
+                                // After the article re-renders, scroll to the URL hash if present (a
+                                // heading-hit search result navigates to /<prefix>/<slug>/#<heading>;
+                                // the anchor element only exists once this branch renders the article).
+                                _ <- scrollToHash()
                             yield ()
                         else if knownPrefixes.contains(segments(0)) then
                             // Intro `/<knownPrefix>/`: empty-article docs shell, no content.md fetch.
@@ -243,6 +296,33 @@ object WebsiteBundleMain:
             if link != null then link.setAttribute("href", canonical)
         }
     end updateHead
+
+    /** Scroll the element named by the current URL hash into view, if any.
+      *
+      * A heading-hit search result navigates to `/<prefix>/<slug>/#<heading-slug>`: the browser does
+      * not auto-scroll because the article (and so the `#<heading-slug>` element) only renders after
+      * the route changes and this fiber swaps the content. This reads `window.location.hash` and
+      * scrolls the matching element into view once the article has rendered. The short settle yields
+      * to the reactive article patch (which applies on the event loop after `content.set`) so the
+      * anchor element is in the DOM before the lookup; a missing hash or missing element is a no-op.
+      */
+    private def scrollToHash()(using Frame): Unit < Async =
+        for
+            // Yield to the event loop so the reactive article patch has applied before we look up the
+            // anchor element.
+            _ <- Async.sleep(60.millis)
+            _ <- Sync.defer {
+                val hash = dom.window.location.hash
+                if hash.length > 1 then
+                    // Unsafe: DOM bridge to scroll to the fragment target. Plain DOM reads/calls on the
+                    // single-threaded JS event loop; no Kyo state involved.
+                    val id = hash.substring(1)
+                    val el = dom.document.getElementById(id)
+                    if el != null then el.scrollIntoView()
+                end if
+            }
+        yield ()
+    end scrollToHash
 
     private def isRootRoute(path: String): Boolean =
         path.split('/').count(_.nonEmpty) == 0

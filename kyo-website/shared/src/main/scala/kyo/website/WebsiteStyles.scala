@@ -145,12 +145,40 @@ object WebsiteStyles:
                     .maxWidth(1500.px).margin(0.px, Length.Auto).width(Length.Pct(100))
                     .padding(0.px, 24.px)
             )
-            // The inert search-results region (always present for SSG<->bundle hydration parity).
-            // Empty at the empty query; the populated dropdown styling lands in the search-wiring
-            // phase. Kept off the normal flow so an empty container does not reserve header height.
+            // The search-results dropdown: an absolutely-positioned panel anchored under the right
+            // edge of the .right cluster (which is position: relative below). Always present for
+            // SSG<->bundle hydration parity; empty at the empty query (no rows), so it reserves no
+            // visible height. When populated it floats above the page content as a card.
             .rule(
                 "search-results",
-                Style.column.position(_.overlay)
+                Style.column.position(_.dropdown).gap(2.px)
+                    .minWidth(320.px).maxHeight(420.px).overflow(_.auto)
+                    .margin(8.px, 0.px, 0.px, 0.px)
+                    .bg(_.variable("surface")).border(1.px, _.variable("line")).rounded(12.px)
+                    .padding(6.px)
+                    .shadow(0.px, 12.px, 32.px, 0.px, Color.rgba(20, 20, 15, 0.14))
+            )
+            .rule(
+                "search-result",
+                Style.column.gap(2.px)
+                    .padding(8.px, 10.px).rounded(8.px).cursor(_.pointer)
+                    .color(_.variable("ink")).textDecoration(_.none)
+                    .hover(_.bg(_.variable("accent-ghost")))
+            )
+            // The keyboard-highlighted row (Arrow Up/Down): same affordance as a hover.
+            .rule(
+                "search-result-active",
+                Style.bg(_.variable("accent-ghost"))
+            )
+            .rule(
+                "search-result-title",
+                Style.fontSize(14.px).fontWeight(_.w600).color(_.variable("ink"))
+            )
+            // The heading sub-label shown on a heading hit (the matched section under the module).
+            .rule(
+                "search-result-sub",
+                Style.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(11.5.px)
+                    .color(_.variable("dim"))
             )
             .rule(
                 "brand",
@@ -170,7 +198,10 @@ object WebsiteStyles:
             )
             .rule(
                 "right",
+                // position: relative so the absolutely-positioned .search-results dropdown anchors to
+                // this cluster (under the search input) rather than the viewport.
                 Style.row.align(_.center).gap(10.px).margin(0.px, 0.px, 0.px, Length.Auto)
+                    .position(_.relative)
             )
             // buttons
             .rule(

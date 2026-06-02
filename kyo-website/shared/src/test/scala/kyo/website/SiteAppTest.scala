@@ -33,10 +33,43 @@ class SiteAppTest extends Test:
                 docsHome,
                 Signal.initConst(DocsSearch.Index(Chunk.empty)),
                 queryRef,
+                (_: String) => Kyo.unit,
+                Kyo.unit,
                 Signal.initConst(body)
             )
             html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
+
+    /** Render `SiteApp.view` with a NON-empty query against a populated heading index, so the
+      * `search-results` dropdown renders real `search-result` rows (plus a `search-result-sub` label
+      * on a heading hit). Confirms the populated dropdown structure, hrefs, and sub-labels.
+      */
+    private def renderWithQuery(query: String)(using Frame): String < Async =
+        val modules = Chunk(
+            WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)),
+            WebsiteModule("kyo-stream", "Effects", "kyo-stream", "", WebsiteModule.Platforms(true, true, true))
+        )
+        val headings = Map(
+            "kyo-core"   -> Chunk(DocsSearch.Heading("Channels and queues", "channels-and-queues")),
+            "kyo-stream" -> Chunk.empty[DocsSearch.Heading]
+        )
+        val index = DocsSearch.headingIndex("latest", modules, s => headings.getOrElse(s, Chunk.empty))
+        for
+            queryRef <- Signal.initRef(query)
+            body = UI.div.id("content-marker")
+            view <- SiteApp.view(
+                versions2,
+                home,
+                Signal.initConst(index),
+                queryRef,
+                (_: String) => Kyo.unit,
+                Kyo.unit,
+                Signal.initConst(body)
+            )
+            html <- UI.runRender(view).take(1).run
+        yield html.headMaybe.getOrElse("")
+        end for
+    end renderWithQuery
 
     "header carries the unified site-header chrome with the brand linking to /" in run {
         render(versions2, home).map { html =>
@@ -110,6 +143,32 @@ class SiteAppTest extends Test:
         render(versions2, home).map { html =>
             assert(html.contains("data-kyo-reactive"), s"content slot must be a reactive boundary: $html")
             assert(html.contains("content-marker"), s"content slot must render the caller's body: $html")
+        }
+    }
+
+    "a title query renders one search-result row per hit with the module route href" in run {
+        renderWithQuery("kyo").map { html =>
+            // Both module titles contain "kyo": two title hits, each a search-result row.
+            val rowCount = countOccurrences(html, "class=\"search-result\"")
+            assert(rowCount == 2, s"expected 2 search-result rows for 'kyo', got $rowCount: $html")
+            assert(html.contains("href=\"/latest/kyo-core/\""), s"kyo-core row must link to its module route: $html")
+            assert(html.contains("href=\"/latest/kyo-stream/\""), s"kyo-stream row must link to its module route: $html")
+            // Title-only hits carry no heading sub-label.
+            assert(!html.contains("search-result-sub"), s"title hits must not render a heading sub-label: $html")
+        }
+    }
+
+    "a heading query renders a heading hit with a #anchor href and a sub-label" in run {
+        // "channels" matches the kyo-core heading text "Channels and queues" but no module title.
+        renderWithQuery("channels").map { html =>
+            val rowCount = countOccurrences(html, "class=\"search-result\"")
+            assert(rowCount == 1, s"expected 1 heading hit for 'channels', got $rowCount: $html")
+            assert(
+                html.contains("href=\"/latest/kyo-core/#channels-and-queues\""),
+                s"heading hit href must include the #<heading-slug> anchor: $html"
+            )
+            assert(html.contains("search-result-sub"), s"heading hit must render a search-result-sub label: $html")
+            assert(html.contains("Channels and queues"), s"heading hit sub-label must carry the heading text: $html")
         }
     }
 

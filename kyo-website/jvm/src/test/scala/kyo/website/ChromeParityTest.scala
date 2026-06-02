@@ -45,6 +45,8 @@ class ChromeParityTest extends Test:
                 docsHome,
                 Signal.initConst(DocsSearch.Index(Chunk.empty)),
                 queryRef,
+                (_: String) => Kyo.unit,
+                Kyo.unit,
                 Signal.initConst(body)
             )
         yield view
