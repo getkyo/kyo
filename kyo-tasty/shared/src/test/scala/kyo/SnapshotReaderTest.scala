@@ -119,10 +119,13 @@ class SnapshotReaderTest extends Test:
             case Result.Failure(e: TastyError.SnapshotVersionMismatch) =>
                 // Phase 2.13: minor < 6 snapshots are rejected to force cold re-decode.
                 assert(e.found.minor == 2, s"Expected found.minor == 2, got ${e.found.minor}")
-                assert(e.supported.minor == 6, s"Expected supported.minor == 6, got ${e.supported.minor}")
+                assert(
+                    e.supported.minor == SnapshotFormat.minorVersion,
+                    s"Expected supported.minor == ${SnapshotFormat.minorVersion}, got ${e.supported.minor}"
+                )
                 succeed
             case Result.Success(_) =>
-                fail("Expected SnapshotVersionMismatch for minor=2 snapshot (below Phase 2.13 minimum of 6)")
+                fail(s"Expected SnapshotVersionMismatch for minor=2 snapshot (below minimum of ${SnapshotFormat.minorVersion})")
             case Result.Failure(e) =>
                 fail(s"Expected SnapshotVersionMismatch but got unexpected failure: $e")
             case Result.Panic(t) =>

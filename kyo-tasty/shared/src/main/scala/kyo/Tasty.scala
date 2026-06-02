@@ -2562,6 +2562,9 @@ object Tasty:
                                         Left(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
                                     case _: ArrayIndexOutOfBoundsException =>
                                         Left(TastyError.MalformedSection("ASTs", "truncated body", 0L))
+                                    case _: IllegalStateException =>
+                                        // F-W2-2: mmap arena closed before decodeBody ran; documented contract is ClasspathClosed.
+                                        Left(TastyError.ClasspathClosed)
                             bodyMemo.put(sym.id, result)
                             result match
                                 case Right(t) => Maybe(t)
@@ -2721,22 +2724,49 @@ object Tasty:
         def initCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
             initCachedImpl(roots, cacheDir)
 
-        /** Create a classpath from pre-parsed in-memory pickles. */
-        def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < Sync =
-            Sync.defer:
-                Classpath(
-                    symbols = Chunk.empty,
-                    rootSymbolId = SymbolId(-1),
-                    topLevelClassIds = Chunk.empty,
-                    packageIds = Chunk.empty,
-                    fqnIndex = Map.empty,
-                    packageIndex = Map.empty,
-                    subclassIndex = Map.empty,
-                    companionIndex = Map.empty,
-                    moduleIndex = Map.empty,
-                    errors = Chunk.empty,
-                    canonical = TypeArena.canonical()
-                )
+        /** Create a classpath from pre-parsed in-memory pickles.
+          *
+          * Each `Pickle`'s `.bytes` are treated as a TASTy file. Pickles are decoded sequentially using the same pipeline as `init`, but
+          * without filesystem access. The effect row matches `init` because decoding uses the same parallel pipeline.
+          *
+          * An empty `pickles` sequence returns an empty `Classpath` with no symbols and no errors.
+          *
+          * F-W2-3 fix: previous implementation silently returned an empty `Classpath` regardless of the `pickles` argument. Now each
+          * pickle's bytes are decoded and merged into the returned classpath.
+          */
+        def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
+            if pickles.isEmpty then
+                // Empty pickles: build an empty Classpath without touching the orchestrator pipeline.
+                ClasspathOrchestrator.init(Seq.empty, ErrorMode.SoftFail, PlatformFileSource.get, concurrency = 1)
+            else
+                // Build synthetic paths for each pickle so ClasspathOrchestrator can route them.
+                val indexed: Seq[(String, Array[Byte])] =
+                    pickles.zipWithIndex.map: (p, i) =>
+                        (s"pickle://${p.uuid.replace(':', '_')}/$i.tasty", p.bytes.toArray)
+                val roots                              = indexed.map(_._1)
+                val bytesMap: Map[String, Array[Byte]] = indexed.toMap
+                // In-memory FileSource backed by the pickle byte arrays.
+                val source = new kyo.internal.tasty.query.FileSource:
+                    def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
+                        bytesMap.get(path) match
+                            case Some(b) => Sync.defer(b)
+                            case None    => Abort.fail(TastyError.FileNotFound(path))
+                    def write(path: String, bytes: Array[Byte])(using Frame): Unit < (Sync & Abort[TastyError]) =
+                        Abort.fail(TastyError.SnapshotIoError("fromPickles source is read-only"))
+                    def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+                        Abort.fail(TastyError.SnapshotIoError("fromPickles source is read-only"))
+                    def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+                        Abort.fail(TastyError.SnapshotIoError("fromPickles source is read-only"))
+                    def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+                        // Each pickle path is itself the "root" so list is not used by the orchestrator in single-file mode.
+                        Sync.defer(Chunk.empty[String])
+                    def exists(path: String)(using Frame): Boolean < Sync =
+                        Sync.defer(bytesMap.contains(path))
+                    def stat(path: String)(using Frame): kyo.internal.tasty.query.FileSource.FileStat < (Sync & Abort[TastyError]) =
+                        bytesMap.get(path) match
+                            case Some(b) => Sync.defer(kyo.internal.tasty.query.FileSource.FileStat(mtimeMs = 0L, size = b.length.toLong))
+                            case None    => Abort.fail(TastyError.FileNotFound(path))
+                ClasspathOrchestrator.init(roots, ErrorMode.SoftFail, source, concurrency = 1)
 
         /** Create a test-only classpath from a pre-built symbols array.
           *

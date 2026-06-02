@@ -83,21 +83,81 @@ class TastyErrorMaybeTest extends Test:
         buf
     end buildSnapshotWithErrors
 
-    /** Encode an ERRORS section with the given list of error strings. */
-    private def makeErrorsPayload(msgs: Seq[String]): Array[Byte] =
-        val encoded = msgs.map(SnapshotFormat.encodeString)
-        val size    = 4 + encoded.map(b => 4 + b.length).sum
-        val buf     = new Array[Byte](size)
-        SnapshotFormat.writeInt32LE(buf, 0, msgs.length)
-        var pos = 4
-        for bytes <- encoded do
-            SnapshotFormat.writeInt32LE(buf, pos, bytes.length)
-            pos += 4
-            java.lang.System.arraycopy(bytes, 0, buf, pos, bytes.length)
-            pos += bytes.length
+    /** Encode an ERRORS section using the minor=7 typed format for the given TastyError list.
+      *
+      * Each entry: [1-byte tag == TastyError.ordinal] [variant-specific fields].
+      * String fields: [4-byte len LE][UTF-8 bytes].
+      */
+    private def makeErrorsPayload(errors: Seq[TastyError]): Array[Byte] =
+        val baos = new java.io.ByteArrayOutputStream()
+        val tmp4 = new Array[Byte](4)
+        val tmp8 = new Array[Byte](8)
+        SnapshotFormat.writeInt32LE(tmp4, 0, errors.size)
+        baos.write(tmp4)
+
+        def writeStr(s: String): Unit =
+            val bytes = SnapshotFormat.encodeString(s)
+            SnapshotFormat.writeInt32LE(tmp4, 0, bytes.length)
+            baos.write(tmp4)
+            baos.write(bytes)
+        end writeStr
+
+        def writeLong(v: Long): Unit =
+            SnapshotFormat.writeInt64LE(tmp8, 0, v)
+            baos.write(tmp8)
+
+        def writeInt(v: Int): Unit =
+            SnapshotFormat.writeInt32LE(tmp4, 0, v)
+            baos.write(tmp4)
+
+        def writeVersion(v: Tasty.Version): Unit =
+            writeInt(v.major)
+            writeInt(v.minor)
+
+        def writeUUID(u: java.util.UUID): Unit =
+            writeLong(u.getMostSignificantBits)
+            writeLong(u.getLeastSignificantBits)
+
+        for err <- errors do
+            baos.write(err.ordinal)
+            err match
+                case TastyError.FileNotFound(path)              => writeStr(path)
+                case TastyError.CorruptedFile(path, at, reason) => writeStr(path); writeLong(at); writeStr(reason)
+                case TastyError.UnsupportedVersion(f, s)        => writeVersion(f); writeVersion(s)
+                case TastyError.InconsistentClasspath(file, e, fd) =>
+                    writeStr(file); writeUUID(e); writeUUID(fd)
+                case TastyError.MalformedSection(n, r, at)     => writeStr(n); writeStr(r); writeLong(at)
+                case TastyError.SymbolNotFound(fqn)            => writeStr(fqn)
+                case TastyError.NotFound(fqn)                  => writeStr(fqn)
+                case TastyError.ClassfileFormatError(p, r, at) => writeStr(p); writeStr(r); writeLong(at)
+                case TastyError.ClasspathClosed                => ()
+                case TastyError.ClasspathBuilding              => ()
+                case TastyError.SnapshotFormatError(p, r, at)  => writeStr(p); writeStr(r); writeLong(at)
+                case TastyError.SnapshotVersionMismatch(f, s)  => writeVersion(f); writeVersion(s)
+                case TastyError.SnapshotIoError(cause)         => writeStr(cause)
+                case TastyError.NotImplemented(feature)        => writeStr(feature)
+                case TastyError.UnsupportedPlatform(feature)   => writeStr(feature)
+                case TastyError.UnknownTagInPosition(t, p)     => writeInt(t); writeStr(p)
+            end match
         end for
-        buf
+        baos.toByteArray
     end makeErrorsPayload
+
+    /** Encode a raw ERRORS section payload containing a single entry with an unknown tag byte and a UTF-8 string body.
+      *
+      * Used to test forward-compat: a snapshot written by a future kyo-tasty version may contain error tags not known to this reader. The
+      * reader should map unknown tags to TastyError.NotImplemented.
+      */
+    private def makeUnknownTagErrorsPayload(unknownTagByte: Int, description: String): Array[Byte] =
+        val descBytes = SnapshotFormat.encodeString(description)
+        val size      = 4 + 1 + 4 + descBytes.length
+        val buf       = new Array[Byte](size)
+        SnapshotFormat.writeInt32LE(buf, 0, 1) // 1 entry
+        buf(4) = unknownTagByte.toByte         // unknown tag
+        SnapshotFormat.writeInt32LE(buf, 5, descBytes.length)
+        java.lang.System.arraycopy(descBytes, 0, buf, 9, descBytes.length)
+        buf
+    end makeUnknownTagErrorsPayload
 
     // ── In-memory FileSource (minimal) ──────────────────────────────────────
 
@@ -131,10 +191,25 @@ class TastyErrorMaybeTest extends Test:
     // any hypothetical misuse.
 
     "INV-007 leaf-1: recognized error prefix round-trips without NotImplemented; unrecognized yields NotImplemented" in run {
-        val recognized   = "FileNotFound(/some/path.tasty)"
-        val unrecognized = "FutureError(some unknown future error kind)"
+        val recognized = TastyError.FileNotFound("/some/path.tasty")
+        // Forward-compat: an unknown tag byte (200) in the typed format maps to NotImplemented.
+        val unknownTagByte = 200
 
-        val errorsPayload = makeErrorsPayload(Seq(recognized, unrecognized))
+        // Build ERRORS payload: first entry is the recognized FileNotFound (typed format),
+        // second entry uses an unknown tag byte (forward-compat scenario).
+        val baos = new java.io.ByteArrayOutputStream()
+        val tmp4 = new Array[Byte](4)
+        SnapshotFormat.writeInt32LE(tmp4, 0, 2) // 2 entries
+        baos.write(tmp4)
+        // Entry 1: FileNotFound(path) = tag 0 + len-prefixed path
+        val pathBytes = SnapshotFormat.encodeString("/some/path.tasty")
+        baos.write(0) // tag = FileNotFound.ordinal = 0
+        SnapshotFormat.writeInt32LE(tmp4, 0, pathBytes.length)
+        baos.write(tmp4)
+        baos.write(pathBytes)
+        // Entry 2: unknown tag 200 + empty payload (forward-compat)
+        baos.write(unknownTagByte)
+        val errorsPayload = baos.toByteArray
         val snapshotBytes = buildSnapshotWithErrors(errorsPayload)
 
         val src = MemoryFileSource()
@@ -143,7 +218,7 @@ class TastyErrorMaybeTest extends Test:
         Abort.run[TastyError]:
             SnapshotReader.read("cache/test.krfl", src).map: loadedCp =>
                 val errors = loadedCp.errors
-                // Recognized string must map to the concrete variant, not NotImplemented.
+                // Recognized typed entry must map to the concrete variant, not NotImplemented.
                 val fileNotFoundEntries = errors.filter:
                     case TastyError.FileNotFound(_) => true
                     case _                          => false
@@ -151,7 +226,7 @@ class TastyErrorMaybeTest extends Test:
                     fileNotFoundEntries.length == 1,
                     s"Expected exactly one FileNotFound entry; got: $errors"
                 )
-                // Unrecognized string must map to NotImplemented.
+                // Unknown tag must map to NotImplemented.
                 val notImplEntries = errors.filter:
                     case TastyError.NotImplemented(_) => true
                     case _                            => false
@@ -159,15 +234,6 @@ class TastyErrorMaybeTest extends Test:
                     notImplEntries.length == 1,
                     s"Expected exactly one NotImplemented entry; got: $errors"
                 )
-                // Verify the NotImplemented feature string contains "deserialized: " prefix.
-                notImplEntries.head match
-                    case TastyError.NotImplemented(feature) =>
-                        assert(
-                            feature.startsWith("deserialized: "),
-                            s"NotImplemented feature should start with 'deserialized: ' but got: $feature"
-                        )
-                    case _ => ()
-                end match
                 succeed
         .map:
             case Result.Success(r) => r
@@ -236,9 +302,12 @@ class TastyErrorMaybeTest extends Test:
     // returns NotImplemented so that callers can inspect accumulated errors without losing them.
 
     "INV-007 leaf-3: ERRORS section with unrecognized error string produces TastyError.NotImplemented" in run {
-        val futureErrorMsg = "QuantumEntanglementError(qubit-17 decoherence during classpath scan)"
-        val errorsPayload  = makeErrorsPayload(Seq(futureErrorMsg))
-        val snapshotBytes  = buildSnapshotWithErrors(errorsPayload)
+        // Forward-compat scenario: a future kyo-tasty version adds a new TastyError variant (tag=200).
+        // The current reader does not know tag=200 and must map it to NotImplemented.
+        val futureTagByte = 200
+        val futureFeature = "QuantumEntanglementError qubit-17 decoherence during classpath scan"
+        val errorsPayload = makeUnknownTagErrorsPayload(futureTagByte, futureFeature)
+        val snapshotBytes = buildSnapshotWithErrors(errorsPayload)
 
         val src = MemoryFileSource()
         src.add("cache/forward.krfl", snapshotBytes)
@@ -250,8 +319,8 @@ class TastyErrorMaybeTest extends Test:
                 errors.head match
                     case TastyError.NotImplemented(feature) =>
                         assert(
-                            feature.contains("QuantumEntanglementError"),
-                            s"Expected feature string to contain the original message but got: $feature"
+                            feature.contains("unknown error tag=200"),
+                            s"Expected feature string to contain 'unknown error tag=200' but got: $feature"
                         )
                         succeed
                     case other =>

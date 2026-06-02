@@ -193,13 +193,13 @@ class SnapshotFidelityTest extends Test:
     // Wire-format leaf 5 (Phase 12, updated Phase 2.13): format-version-bumped
     // Given: a snapshot file written with the Phase 2.13 code
     // When: reading the format version constant
-    // Then: version is 6 (Phase 2.13 added FQNMAP__ section for unresolvedFqnByNegId persistence)
-    // Pins: snapshot wire-format bump (FQNMAP__ section, Target 3 Phase 2.13)
+    // Then: version is 7 (Phase 5.01b bumped to 7 for ERRORS typed-format change, F-W2-5)
+    // Pins: snapshot wire-format bump (ERRORS typed format, Phase 5.01b)
     // Cross-platform: SnapshotFormat.minorVersion is a compile-time constant, no filesystem needed.
     "Phase 2.13: SnapshotFormat.FORMAT_VERSION is 6 after Phase 2.13 FQNMAP__ section addition" in {
         assert(
-            SnapshotFormat.minorVersion == 6,
-            s"Expected SnapshotFormat.minorVersion == 6 but got ${SnapshotFormat.minorVersion}"
+            SnapshotFormat.minorVersion == 7,
+            s"Expected SnapshotFormat.minorVersion == 7 but got ${SnapshotFormat.minorVersion}"
         )
     }
 
@@ -221,7 +221,7 @@ class SnapshotFidelityTest extends Test:
     // New leaf (Phase 12, migrated Phase 2.13): old-snapshot-triggers-cold-decode
     // Given: a synthetic snapshot byte stream with magic KRFL, major=1, minor=3 (old format)
     // When: writing it to a MemoryFileSource and calling SnapshotReader.read
-    // Then: result is Failure(TastyError.SnapshotVersionMismatch) where found.minor == 3 and supported.minor == 6
+    // Then: result is Failure(TastyError.SnapshotVersionMismatch) where found.minor == 3 and supported.minor == current
     // Pins: minor-version rejection decision (Option A from Phase 12 prep)
     // Cross-platform (Phase 2.13): migrated from jvmOnly to use MemoryFileSource.
     "old-snapshot-triggers-cold-decode" in run {
@@ -232,7 +232,7 @@ class SnapshotFidelityTest extends Test:
             fakeOld(2) = 'F'.toByte
             fakeOld(3) = 'L'.toByte
             fakeOld(4) = 1.toByte // majorVersion = 1
-            fakeOld(5) = 3.toByte // minorVersion = 3 (below current 6)
+            fakeOld(5) = 3.toByte // minorVersion = 3 (below current)
             // flags(8), digest(8), reserved(8), sectionCount(4) remain zero
             val mem  = MemoryFileSource()
             val path = "mem/old.krfl"
@@ -248,8 +248,8 @@ class SnapshotFidelityTest extends Test:
                         s"Expected found.minor == 3 but got ${e.found.minor}"
                     )
                     assert(
-                        e.supported.minor == 6,
-                        s"Expected supported.minor == 6 but got ${e.supported.minor}"
+                        e.supported.minor == SnapshotFormat.minorVersion,
+                        s"Expected supported.minor == ${SnapshotFormat.minorVersion} but got ${e.supported.minor}"
                     )
                     succeed
                 case Result.Failure(other) =>

@@ -124,6 +124,8 @@ object SnapshotReader:
                             Abort.fail(TastyError.SnapshotFormatError(path, s"truncated snapshot: ${ex.getMessage}", 0L))
                         case ex: NegativeArraySizeException =>
                             Abort.fail(TastyError.SnapshotFormatError(path, s"corrupt section length: ${ex.getMessage}", 0L))
+                        case ex: java.io.IOException =>
+                            Abort.fail(TastyError.SnapshotFormatError(path, s"corrupt header: ${ex.getMessage}", 0L))
                 end if
 
     /** Deserialize section payloads into a new Tasty.Classpath. */
@@ -135,13 +137,21 @@ object SnapshotReader:
         import AllowUnsafe.embrace.danger
         // Parse section index (starts at offset 32)
         val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
-        val sectionMap   = mutable.HashMap.empty[String, (Int, Int)]
-        var idxPos       = 36
-        var i            = 0
+        // F-W2-29: cap sectionCount before allocating / iterating to prevent OOM from a corrupt header.
+        if sectionCount < 0 || sectionCount > SnapshotFormat.maxSectionCount then
+            throw new java.io.IOException(
+                s"corrupt section count: $sectionCount (max=${SnapshotFormat.maxSectionCount})"
+            )
+        end if
+        val sectionMap = mutable.HashMap.empty[String, (Int, Int)]
+        var idxPos     = 36
+        var i          = 0
         while i < sectionCount do
             val name   = SnapshotFormat.readSectionName(bytes, idxPos)
             val offset = SnapshotFormat.readInt64LE(bytes, idxPos + 8).toInt
             val length = SnapshotFormat.readInt64LE(bytes, idxPos + 16).toInt
+            // F-W2-1: bounds-check the section range before any copy.
+            SectionValidator.validateRange(name, offset, length, bytes.length)
             sectionMap(name) = (offset, length)
             idxPos += SnapshotFormat.sectionIndexEntrySize
             i += 1
@@ -573,7 +583,15 @@ object SnapshotReader:
         // Read section count from offset 32, then copy all index entries.
         val sectionCountOffset = 32
         val sectionCount       = readInt32LEFromView(view, sectionCountOffset)
-        val indexEnd           = 36 + sectionCount * SnapshotFormat.sectionIndexEntrySize
+        // F-W2-29: cap sectionCount before iterating to prevent OOM from a corrupt header.
+        if sectionCount < 0 || sectionCount > SnapshotFormat.maxSectionCount then
+            throw new java.io.IOException(
+                s"corrupt section count: $sectionCount (max=${SnapshotFormat.maxSectionCount})"
+            )
+        end if
+        // Total mapped file size; used for F-W2-1 range validation below.
+        val totalLen = (view.position + view.remaining).toInt
+        val indexEnd = 36 + sectionCount * SnapshotFormat.sectionIndexEntrySize
         // Copy the section index to a small heap array for parsing with existing SnapshotFormat helpers.
         val indexBytes = copyViewRange(view, sectionCountOffset, indexEnd)
 
@@ -584,6 +602,8 @@ object SnapshotReader:
             val name   = SnapshotFormat.readSectionName(indexBytes, idxPos)
             val offset = SnapshotFormat.readInt64LE(indexBytes, idxPos + 8).toInt
             val length = SnapshotFormat.readInt64LE(indexBytes, idxPos + 16).toInt
+            // F-W2-1: bounds-check the section range before any copy.
+            SectionValidator.validateRange(name, offset, length, totalLen)
             sectionMap(name) = (offset, length)
             idxPos += SnapshotFormat.sectionIndexEntrySize
             i += 1
@@ -1245,7 +1265,19 @@ object SnapshotReader:
         )
     end readSymbols
 
-    /** Read errors from the ERRORS section. */
+    /** Read errors from the ERRORS section (minor=7 typed format).
+      *
+      * Layout: [4-byte count LE] followed by count typed entries. Each entry:
+      *   [1-byte tag == TastyError.ordinal] [variant-specific fields]
+      *
+      * String fields: [4-byte len LE][UTF-8 bytes].
+      * Long fields:   [8-byte Int64 LE].
+      * Version:       [4-byte major LE][4-byte minor LE].
+      * UUID:          [8-byte MSB LE][8-byte LSB LE].
+      * Int fields:    [4-byte Int32 LE].
+      *
+      * Unknown tags are decoded as TastyError.NotImplemented carrying the tag ordinal (forward-compat fallback).
+      */
     private def readErrors(bytes: Array[Byte], offset: Int, length: Int): Chunk[TastyError] =
         val count = SnapshotFormat.readInt32LE(bytes, offset)
         if count <= 0 then Chunk.empty
@@ -1253,33 +1285,66 @@ object SnapshotReader:
             var pos = offset + 4
             val buf = mutable.ArrayBuffer.empty[TastyError]
             var i   = 0
-            while i < count do
-                val msgLen = SnapshotFormat.readInt32LE(bytes, pos)
+
+            def readStr(): String =
+                val len = SnapshotFormat.readInt32LE(bytes, pos)
                 pos += 4
-                val msg = SnapshotFormat.decodeString(bytes, pos, msgLen)
-                pos += msgLen
-                // Parse enough to reconstruct common errors; use NotImplemented for unrecognized
-                buf += parseErrorString(msg)
+                val s = SnapshotFormat.decodeString(bytes, pos, len)
+                pos += len
+                s
+            end readStr
+
+            def readLong(): Long =
+                val v = SnapshotFormat.readInt64LE(bytes, pos)
+                pos += 8
+                v
+            end readLong
+
+            def readInt(): Int =
+                val v = SnapshotFormat.readInt32LE(bytes, pos)
+                pos += 4
+                v
+            end readInt
+
+            def readVersion(): Tasty.Version =
+                val major = readInt()
+                val minor = readInt()
+                Tasty.Version(major, minor, 0)
+            end readVersion
+
+            def readUUID(): java.util.UUID =
+                val msb = readLong()
+                val lsb = readLong()
+                new java.util.UUID(msb, lsb)
+            end readUUID
+
+            while i < count do
+                val tag = bytes(pos) & 0xff
+                pos += 1
+                val err: TastyError = tag match
+                    case 0  => TastyError.FileNotFound(readStr())
+                    case 1  => val p = readStr(); val at = readLong(); val r = readStr(); TastyError.CorruptedFile(p, at, r)
+                    case 2  => val f = readVersion(); val s = readVersion(); TastyError.UnsupportedVersion(f, s)
+                    case 3  => val f = readStr(); val e = readUUID(); val fd = readUUID(); TastyError.InconsistentClasspath(f, e, fd)
+                    case 4  => val n = readStr(); val r = readStr(); val at = readLong(); TastyError.MalformedSection(n, r, at)
+                    case 5  => TastyError.SymbolNotFound(readStr())
+                    case 6  => TastyError.NotFound(readStr())
+                    case 7  => val p = readStr(); val r = readStr(); val at = readLong(); TastyError.ClassfileFormatError(p, r, at)
+                    case 8  => TastyError.ClasspathClosed
+                    case 9  => TastyError.ClasspathBuilding
+                    case 10 => val p = readStr(); val r = readStr(); val at = readLong(); TastyError.SnapshotFormatError(p, r, at)
+                    case 11 => val f = readVersion(); val s = readVersion(); TastyError.SnapshotVersionMismatch(f, s)
+                    case 12 => TastyError.SnapshotIoError(readStr())
+                    case 13 => TastyError.NotImplemented(readStr())
+                    case 14 => TastyError.UnsupportedPlatform(readStr())
+                    case 15 => val t = readInt(); val p = readStr(); TastyError.UnknownTagInPosition(t, p)
+                    case _  => TastyError.NotImplemented(s"unknown error tag=$tag in snapshot")
+                buf += err
                 i += 1
             end while
             Chunk.from(buf.toSeq)
         end if
     end readErrors
-
-    /** Best-effort reconstruction of a TastyError from its toString representation. */
-    private def parseErrorString(msg: String): TastyError =
-        if msg.startsWith("FileNotFound(") then TastyError.FileNotFound(extractParenContent(msg))
-        else if msg.startsWith("CorruptedFile(") then
-            val parts = extractParenContent(msg).split(",", 3)
-            if parts.length >= 3 then
-                val at =
-                    try parts(1).trim.toLong
-                    catch case _: NumberFormatException => 0L
-                TastyError.CorruptedFile(parts(0), at, parts(2).trim)
-            else TastyError.NotImplemented(msg)
-            end if
-        else if msg.startsWith("SnapshotIoError(") then TastyError.SnapshotIoError(extractParenContent(msg))
-        else TastyError.NotImplemented(s"deserialized: $msg")
 
     private def extractParenContent(s: String): String =
         val start = s.indexOf('(')

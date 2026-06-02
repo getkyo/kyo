@@ -36,6 +36,31 @@ private[snapshot] object SectionValidator:
         case VariableLength
     end SectionLayout
 
+    /** Assert that the slice `[offset, offset + length)` falls entirely within `[0, totalLen)`.
+      *
+      * Called before every `System.arraycopy` or `Arrays.copyOfRange` in `SnapshotReader.deserialize` and `SnapshotReader.deserializeMapped`
+      * so that a corrupt section-index entry cannot cause an `ArrayIndexOutOfBoundsException`. When the check fails it throws
+      * `SectionValidationException` carrying a `TastyError.MalformedSection`; the caller converts it to `Abort.fail`.
+      *
+      * @param section
+      *   Human-readable section name used in the error message (e.g. "SYMBOLS").
+      * @param offset
+      *   Start byte offset within the snapshot byte array.
+      * @param length
+      *   Byte length of the slice.
+      * @param totalLen
+      *   Total length of the snapshot byte array.
+      */
+    def validateRange(section: String, offset: Int, length: Int, totalLen: Int): Unit =
+        if offset < 0 || length < 0 || (offset.toLong + length.toLong) > totalLen.toLong then
+            throw new SectionValidationException(
+                TastyError.MalformedSection(
+                    section,
+                    s"section index entry out of bounds: offset=$offset, length=$length, totalLen=$totalLen",
+                    0L
+                )
+            )
+
     /** Assert that `bytes` of section `section` satisfy the expected `layout`.
       *
       * Throws `SectionValidationException` if the assertion fails. Returns normally when the invariant holds.

@@ -5,14 +5,15 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
 
 /** Tests for SnapshotFormat version and section-name constants.
   *
-  * INV-023: minorVersion == 6 after the Phase 2.13 FQNMAP__ section addition (unresolvedFqnByNegId persistence).
+  * INV-023: minorVersion == 7 after the Phase 5.01b ERRORS typed-format bump (F-W2-5).
+  * INV-023-prev: Phase 2.13 set minorVersion to 6 for FQNMAP__ section addition.
   * INV-003: sectionNames is add-only (TPARAMS_ present, existing names preserved).
   */
 class SnapshotFormatTest extends Test:
 
-    // Test 1 (INV-023): minorVersion reflects the Phase 2.13 FQNMAP__ section addition.
+    // Test 1 (INV-023): minorVersion reflects the Phase 5.01b ERRORS typed-format bump.
     "SnapshotFormat.minorVersion is 6 after Phase 2.13 FQNMAP__ section addition" in run {
-        assert(SnapshotFormat.minorVersion == 6)
+        assert(SnapshotFormat.minorVersion == 7)
         succeed
     }
 

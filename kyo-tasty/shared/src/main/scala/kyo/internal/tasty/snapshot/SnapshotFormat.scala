@@ -43,6 +43,8 @@ package kyo.internal.tasty.snapshot
   *   - `JAVAMETA`: javaMetadata accessFlags per symbol (added in minor=4).
   *   - `FQNIDX__`: full fqnIndex (all keys including dual-index aliases) per symbol (added in minor=5).
   *   - `FQNMAP__`: unresolvedFqnByNegId map (negId to FQN string for external annotation types) (added in minor=6).
+  *   - `ERRORS` (re-encoded in minor=7): typed tagged format; each error written as 1-byte tag + UTF-8-length-prefixed fields, replacing the
+  *     previous flat `err.toString` encoding.
   *
   * Versioning policy:
   *   - Major bump: invalidates all old snapshots (full re-decode + fresh write). Reader emits `TastyError.SnapshotVersionMismatch`.
@@ -64,7 +66,14 @@ object SnapshotFormat:
 
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
-    val minorVersion: Int = 6
+    val minorVersion: Int = 7
+
+    /** Maximum number of sections allowed in a snapshot header (F-W2-29 guard).
+      *
+      * A snapshot with more than this many sections is treated as corrupt. The value (256) is well above the current 15 defined sections and
+      * leaves room for future additions without risking OOM from a maliciously large `sectionCount` field.
+      */
+    val maxSectionCount: Int = 256
 
     /** Size of the fixed-length file header in bytes (magic + version + flags + digest + reserved). */
     val headerSize: Int = 4 + 4 + 8 + 8 + 8
@@ -127,6 +136,12 @@ object SnapshotFormat:
       * Added in minor=6 (non-breaking add; absent in minor=5 snapshots, which fall back to an empty map).
       */
     val sectionFQNMAP: String = "FQNMAP__"
+
+    /** minor=7 (breaking bump): ERRORS section re-encoded as typed tagged format instead of flat strings.
+      *
+      * Old snapshots (minor=6 and below) are already rejected by the existing minor-version guard; this constant documents the intent.
+      */
+    val minorVersion7ErrorsTyped: Int = 7
 
     /** Write a little-endian 32-bit int at position `pos` in `buf`. */
     def writeInt32LE(buf: Array[Byte], pos: Int, value: Int): Unit =

@@ -436,19 +436,71 @@ object SnapshotWriter:
         buf
     end serializeSymbols
 
-    /** Serialize errors as: [4-byte count] followed by [4-byte len, UTF-8 error message bytes] per error. */
+    /** Serialize errors as: [4-byte count LE] followed by count typed entries.
+      *
+      * Each entry (minor=7 typed format):
+      *   [1-byte tag == TastyError ordinal] [variant-specific fields]
+      *
+      * String fields: [4-byte len LE][UTF-8 bytes].
+      * Long fields:   [8-byte Int64 LE].
+      * Version:       [4-byte major LE][4-byte minor LE].
+      * UUID:          [8-byte MSB LE][8-byte LSB LE].
+      * Int fields:    [4-byte Int32 LE].
+      *
+      * Zero-field variants (ClasspathClosed, ClasspathBuilding): only the 1-byte tag, no body.
+      */
     private def serializeErrors(errors: Chunk[TastyError]): Array[Byte] =
         // Pre-size to 4 KB: errors are rare (decode failures, file-not-found, etc.) and messages are short.
         val baos = new ByteArrayOutputStream(4 * 1024)
-        val tmp  = new Array[Byte](4)
-        SnapshotFormat.writeInt32LE(tmp, 0, errors.size)
-        baos.write(tmp)
-        for err <- errors do
-            val msg   = err.toString
-            val bytes = SnapshotFormat.encodeString(msg)
-            SnapshotFormat.writeInt32LE(tmp, 0, bytes.length)
-            baos.write(tmp)
+        val tmp4 = new Array[Byte](4)
+        val tmp8 = new Array[Byte](8)
+        SnapshotFormat.writeInt32LE(tmp4, 0, errors.size)
+        baos.write(tmp4)
+
+        def writeStr(s: String): Unit =
+            val bytes = SnapshotFormat.encodeString(s)
+            SnapshotFormat.writeInt32LE(tmp4, 0, bytes.length)
+            baos.write(tmp4)
             baos.write(bytes)
+        end writeStr
+
+        def writeLong(v: Long): Unit =
+            SnapshotFormat.writeInt64LE(tmp8, 0, v)
+            baos.write(tmp8)
+
+        def writeInt(v: Int): Unit =
+            SnapshotFormat.writeInt32LE(tmp4, 0, v)
+            baos.write(tmp4)
+
+        def writeVersion(v: Tasty.Version): Unit =
+            writeInt(v.major)
+            writeInt(v.minor)
+
+        def writeUUID(u: java.util.UUID): Unit =
+            writeLong(u.getMostSignificantBits)
+            writeLong(u.getLeastSignificantBits)
+
+        for err <- errors do
+            baos.write(err.ordinal)
+            err match
+                case TastyError.FileNotFound(path)              => writeStr(path)
+                case TastyError.CorruptedFile(path, at, reason) => writeStr(path); writeLong(at); writeStr(reason)
+                case TastyError.UnsupportedVersion(found, sup)  => writeVersion(found); writeVersion(sup)
+                case TastyError.InconsistentClasspath(file, exp, fnd) =>
+                    writeStr(file); writeUUID(exp); writeUUID(fnd)
+                case TastyError.MalformedSection(name, reason, at)     => writeStr(name); writeStr(reason); writeLong(at)
+                case TastyError.SymbolNotFound(fqn)                    => writeStr(fqn)
+                case TastyError.NotFound(fqn)                          => writeStr(fqn)
+                case TastyError.ClassfileFormatError(path, reason, at) => writeStr(path); writeStr(reason); writeLong(at)
+                case TastyError.ClasspathClosed                        => () // tag only
+                case TastyError.ClasspathBuilding                      => () // tag only
+                case TastyError.SnapshotFormatError(path, reason, at)  => writeStr(path); writeStr(reason); writeLong(at)
+                case TastyError.SnapshotVersionMismatch(found, sup)    => writeVersion(found); writeVersion(sup)
+                case TastyError.SnapshotIoError(cause)                 => writeStr(cause)
+                case TastyError.NotImplemented(feature)                => writeStr(feature)
+                case TastyError.UnsupportedPlatform(feature)           => writeStr(feature)
+                case TastyError.UnknownTagInPosition(tag, pos)         => writeInt(tag); writeStr(pos)
+            end match
         end for
         baos.toByteArray
     end serializeErrors
