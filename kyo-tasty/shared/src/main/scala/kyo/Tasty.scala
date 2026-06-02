@@ -1080,6 +1080,16 @@ object Tasty:
         def isJava: Boolean          = flags.contains(Flag.JavaDefined)
         def isInline: Boolean        = flags.contains(Flag.Inline)
 
+        /** Symbol is both `inline` and `transparent`.
+          *
+          * F-A2-003 fix: Scala 3 TASTy sets both Flag.Inline and Flag.Transparent on
+          * `transparent inline` methods. The previous `isTransparent` predicate only checked
+          * Flag.Transparent, missing inline-only transparent methods; `isInline` only checked
+          * Flag.Inline, missing the transparent qualification. Combining both flags gives the
+          * correct predicate for the user-visible `transparent inline def` construct.
+          */
+        def isTransparentInline: Boolean = flags.contains(Flag.Inline) && flags.contains(Flag.Transparent)
+
         /** Symbol marked as a `given` instance.
           *
           * F-E-004 fix: using-clause parameters also carry Flag.Given but are NOT `given` instances in the user-facing sense. Excluding
@@ -1738,6 +1748,16 @@ object Tasty:
             def isConstructor: Boolean =
                 import Name.asString
                 name.asString == "<init>"
+
+            /** True when this method is a macro AND transparent.
+              *
+              * F-A2-003 (Phase 2.09): transparent macros carry both Flag.Macro and Flag.Transparent.
+              * This is a strict subset of isMacro (which only requires Flag.Macro without Flag.Synthetic).
+              * Use `isTransparentInline` for all transparent inline methods; use this for the subset that
+              * are also macros (i.e., implemented via quotes/splices).
+              */
+            def isMacroTransparent: Boolean =
+                flags.contains(Flag.Macro) && !flags.contains(Flag.Synthetic) && flags.contains(Flag.Transparent)
 
             /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
             def bodyTree(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =

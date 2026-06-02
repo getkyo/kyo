@@ -30,6 +30,12 @@ object TypeOps:
     private val TuplePrefix           = "scala.Tuple"
     private val ArrayFqn              = "scala.Array"
     private val SingletonFqn          = "scala.Singleton"
+    // F-A2-006 / F-A2-009: scala.& and scala.| are the internal FQNs for intersection and union type
+    // constructors in Scala 3 TASTy. APPLIEDtype(scala.&, [A, B]) collapses to AndType(A, B) and
+    // APPLIEDtype(scala.|, [A, B]) collapses to OrType(A, B). With args.size != 2 the Applied form is
+    // preserved unchanged.
+    val AndFqn = "scala.&"
+    val OrFqn  = "scala.|"
     // F-A2-013: varargs parameters in Scala 3 TASTy are encoded as ANNOTATEDtpt wrapping the element
     // type with annotation @scala.annotation.internal.Repeated. TreeUnpickler.decodeTptAsType detects
     // this annotation by checking the FQN against RepeatedAnnotationFqn and returns Type.Repeated(elem).
@@ -78,6 +84,14 @@ object TypeOps:
                 // F-A2-013: scala.<repeated>[T] is the internal type of varargs parameters.
                 // Collapse APPLIEDtype(Named(negId: scala.<repeated>), [T]) to Type.Repeated(T).
                 Tasty.Type.Repeated(args.head)
+            else if fqn == AndFqn && args.size == 2 then
+                // F-A2-006: scala.&[A, B] is the APPLIEDtype form of intersection types.
+                // Collapse to AndType(A, B) for structural parity with the ANDtype tag path.
+                Tasty.Type.AndType(args(0), args(1))
+            else if fqn == OrFqn && args.size == 2 then
+                // F-A2-009: scala.|[A, B] is the APPLIEDtype form of union types.
+                // Collapse to OrType(A, B) for structural parity with the ORtype tag path.
+                Tasty.Type.OrType(args(0), args(1))
             else
                 Tasty.Type.Applied(base, args)
         else

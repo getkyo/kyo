@@ -715,8 +715,22 @@ object ClasspathOrchestrator:
                                 Tasty.Type.Applied(newBase, newArgs)
                             // F-A-001 fix: recurse into TypeLambda so that cross-file Named refs
                             // inside the body (result type, param type) get resolved by Phase C.
+                            // F-A2-008 fix: also remap paramIds: each SymbolId in paramIds may be a
+                            // Phase-B temporary id if the TypeParam is declared in a different file.
+                            // OpaqueType underlying types use TypeLambda with cross-file TypeParam refs.
                             case Tasty.Type.TypeLambda(paramIds, body) =>
-                                Tasty.Type.TypeLambda(paramIds, remapType(body, fr))
+                                val newParamIds = paramIds.map: id =>
+                                    val v = id.value
+                                    if v >= phaseBOffset then
+                                        val addr     = v - phaseBOffset
+                                        val finalIdx = fr.addrToFinal.getOrDefault(addr, -1)
+                                        if finalIdx >= 0 then SymbolId(finalIdx) else id
+                                    else if v < -1 then
+                                        val finalIdx = fr.negIdToFinal.getOrDefault(v, -1)
+                                        if finalIdx >= 0 then SymbolId(finalIdx) else id
+                                    else id
+                                    end if
+                                Tasty.Type.TypeLambda(newParamIds, remapType(body, fr))
                             case Tasty.Type.Function(params, result, isCtx) =>
                                 Tasty.Type.Function(params.map(remapType(_, fr)), remapType(result, fr), isCtx)
                             case Tasty.Type.ContextFunction(params, result) =>
@@ -808,6 +822,38 @@ object ClasspathOrchestrator:
                                 descs(idx).declaredType = Maybe(remapType(t, frRemap3))
                         end for
                         frIdx3 += 1
+                    end for
+
+                    // F-A2-008 fix: patch OpaqueType TypeLambda.paramIds that are still SymbolId(-1).
+                    //
+                    // TypeUnpickler.readTypeLambdaParams creates placeholder symbols (SymbolId=-1) when
+                    // the addrMap lookup for a TypeLambda parameter fails. This happens for OpaqueType
+                    // type parameters that were decoded before their owner OpaqueType was registered.
+                    // The remapType pass handles Phase-B temporaries (>= phaseBOffset) and negIds (< -1)
+                    // but not the -1 placeholder. Fix: after typeParamIds are set, replace each
+                    // TypeLambda.paramId=-1 with the corresponding positional entry from typeParamIds.
+                    i = 0
+                    for sym <- allPartial do
+                        val d = descs(i)
+                        if sym.kind == Tasty.SymbolKind.OpaqueType && d.typeParamIds.nonEmpty then
+                            d.declaredType match
+                                case Maybe.Present(tl: Tasty.Type.TypeLambda) =>
+                                    val tpIds     = d.typeParamIds
+                                    val oldParams = tl.paramIds
+                                    val n         = oldParams.size
+                                    var hasNeg    = false
+                                    var pos       = 0
+                                    while pos < n && !hasNeg do
+                                        if oldParams(pos).value == -1 then hasNeg = true
+                                        pos += 1
+                                    if hasNeg then
+                                        val newParams = oldParams.zipWithIndex.map: (id, p) =>
+                                            if id.value == -1 && p < tpIds.size then SymbolId(tpIds(p)) else id
+                                        d.declaredType = Maybe(Tasty.Type.TypeLambda(newParams, tl.body))
+                                    end if
+                                case _ => ()
+                        end if
+                        i += 1
                     end for
 
                     // Default declaredType for Class/Trait/Object/EnumCase: Type.Named(SymbolId(i)).
@@ -1125,8 +1171,15 @@ object ClasspathOrchestrator:
                             case Tasty.Type.Named(_) => t
                             case Tasty.Type.Applied(base, args) =>
                                 Tasty.Type.Applied(rewriteCrossFile(base), args.map(rewriteCrossFile))
+                            // F-A2-008 fix: remap TypeLambda.paramIds for cross-file TypeParam refs.
                             case Tasty.Type.TypeLambda(paramIds, body) =>
-                                Tasty.Type.TypeLambda(paramIds, rewriteCrossFile(body))
+                                val newParamIds = paramIds.map: id =>
+                                    if id.value >= phaseBOffset then
+                                        val addr     = id.value - phaseBOffset
+                                        val finalIdx = globalAddrToFinal.getOrDefault(addr, -1)
+                                        if finalIdx >= 0 then SymbolId(finalIdx) else id
+                                    else id
+                                Tasty.Type.TypeLambda(newParamIds, rewriteCrossFile(body))
                             case Tasty.Type.Wildcard(lo, hi) =>
                                 Tasty.Type.Wildcard(rewriteCrossFile(lo), rewriteCrossFile(hi))
                             case Tasty.Type.Bounds(lo, hi) =>

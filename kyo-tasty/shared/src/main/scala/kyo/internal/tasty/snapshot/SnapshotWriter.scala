@@ -67,9 +67,14 @@ object SnapshotWriter:
         // entries (e.g. both "scala.Predef$" and "scala.Predef"), so we apply canonicalSourceFqn before
         // storing. Multiple binary FQNs that canonicalize to the same source form produce the same put,
         // which is deterministic and correct (the canonical source FQN is the user-facing name).
+        // F-A4-005 determinism: sort fqnIndex before building fqnBySymbol so that when a symbol
+        // has multiple FQN aliases (e.g. "scala.Predef$" and "scala.Predef"), the LAST overwrite
+        // in alphabetical order wins deterministically across JVM invocations. Without sorting,
+        // HashMap.foreach iteration order may differ between invocations, causing different canonical
+        // FQNs to be stored in fqnBySymbol for symbols with multiple aliases.
         val fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String] =
             val rev = new java.util.IdentityHashMap[Tasty.Symbol, String]()
-            cp.fqnIndex.foreach { case (fqn, id) =>
+            cp.fqnIndex.toSeq.sortBy(_._1).foreach { case (fqn, id) =>
                 val sym       = cp.symbol(id)
                 val canonical = FqnNormalizer.canonicalSourceFqn(fqn)
                 rev.put(sym, canonical)

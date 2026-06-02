@@ -1,0 +1,15 @@
+# Untested coverage table for decoder-fidelity-2 campaign
+# Per HARD RULE 11: every axis from the HARD RULE 11 matrix that was UNTESTED in Stage 1
+# exploration must appear here with an explicit resolution.
+#
+# Format: <finding-id> | <resolution>
+#
+# 7 of 8 rows resolved; 1 row (OQ-007 capture-checking) DEFERRED
+
+F-A1-OPEN-MULTI    | RESOLVED in Phase 2.09 UntestedFidelity2Test multi-version-stdlib-failfast-aborts
+F-A3-OPEN-AP       | RESOLVED in Phase 2.09 UntestedFidelity2Test annotation-processor-output-resolves
+F-A4-OPEN-RW       | RESOLVED in Phase 2.09 UntestedFidelity2Test concurrent-reader-writer-no-corruption
+F-A4-OPEN-VER      | RESOLVED in Phase 2.09 UntestedFidelity2Test snapshot-version-downgrade-falls-back
+F-A4-OPEN-IDEMPOTENT | RESOLVED in Phase 2.09 UntestedFidelity2Test two-cold-writes-byte-equal-cross-jvm
+F-A2-OPEN-DEP      | RESOLVED in Phase 2.09 UntestedFidelity2Test dependent-function-type-decodes
+F-A2-OPEN-CAPS     | DEFERRED per OQ-007: capture sets / capture checking requires -Ycc experimental flag not enabled on standard library; no real classpath exercises this feature; full support deferred to a future kyo-tasty release when -Ycc becomes stable

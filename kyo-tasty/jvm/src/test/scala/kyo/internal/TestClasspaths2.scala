@@ -312,4 +312,140 @@ private[kyo] object TestClasspaths2:
         writeTempFile("MidStream.tasty", bytes)
     end corruptedMidStreamTastyPath
 
+    /** Return the path to a directory containing a single minimal Java-only .class file.
+      *
+      * The classfile encodes a trivially-valid JVM class `test.JavaOnlyClass` with no methods. This exercises the Java classfile decoder
+      * path (which is the same whether the class was produced by javac or an annotation processor). Used by
+      * ConfirmationFidelity2Test leaf 9 (java-only-jar-resolves).
+      *
+      * Minimal JVM classfile layout (class format version 55.0 = Java 11):
+      *   - magic: 0xCAFEBABE
+      *   - minor version: 0
+      *   - major version: 55 (Java 11)
+      *   - constant pool count: 7 (6 entries)
+      *   - constant pool: [1=Utf8 "test/JavaOnlyClass", 2=Utf8 "java/lang/Object", 3=Utf8 "<init>", 4=Utf8 "()V",
+      *     5=Class(#1), 6=Class(#2)]
+      *   - access flags: ACC_PUBLIC (0x0001) | ACC_SUPER (0x0020) = 0x0021
+      *   - this class: #5
+      *   - super class: #6
+      *   - interfaces count: 0
+      *   - fields count: 0
+      *   - methods count: 0
+      *   - attributes count: 0
+      */
+    def javaOnlyClassDir: String =
+        val dir    = java.nio.file.Files.createTempDirectory("kyo-df2-java-only")
+        val pkgDir = dir.resolve("test")
+        java.nio.file.Files.createDirectories(pkgDir)
+        val classFile = pkgDir.resolve("JavaOnlyClass.class")
+        // Build a minimal valid classfile for test.JavaOnlyClass extends Object
+        val out                   = new java.io.ByteArrayOutputStream()
+        def writeU1(v: Int): Unit = out.write(v & 0xff)
+        def writeU2(v: Int): Unit =
+            writeU1(v >> 8); writeU1(v)
+        def writeU4(v: Int): Unit =
+            writeU2(v >> 16); writeU2(v)
+        // Magic
+        writeU4(0xcafebabe)
+        // Minor version
+        writeU2(0)
+        // Major version: 55 (Java 11)
+        writeU2(55)
+        // Constant pool count: 7 (entries 1..6)
+        writeU2(7)
+        // #1: Utf8 "test/JavaOnlyClass"
+        val nameBytes = "test/JavaOnlyClass".getBytes("UTF-8")
+        writeU1(1); writeU2(nameBytes.length); out.write(nameBytes)
+        // #2: Utf8 "java/lang/Object"
+        val objBytes = "java/lang/Object".getBytes("UTF-8")
+        writeU1(1); writeU2(objBytes.length); out.write(objBytes)
+        // #3: Utf8 "<init>" (unused but referenced in standard class file)
+        val initBytes = "<init>".getBytes("UTF-8")
+        writeU1(1); writeU2(initBytes.length); out.write(initBytes)
+        // #4: Utf8 "()V"
+        val descBytes = "()V".getBytes("UTF-8")
+        writeU1(1); writeU2(descBytes.length); out.write(descBytes)
+        // #5: Class ref -> #1
+        writeU1(7); writeU2(1)
+        // #6: Class ref -> #2
+        writeU1(7); writeU2(2)
+        // Access flags: public + super
+        writeU2(0x0021)
+        // This class: #5
+        writeU2(5)
+        // Super class: #6
+        writeU2(6)
+        // Interfaces, fields, methods, attributes: all 0
+        writeU2(0); writeU2(0); writeU2(0); writeU2(0)
+        java.nio.file.Files.write(classFile, out.toByteArray)
+        dir.toString
+    end javaOnlyClassDir
+
+    /** Return a path to a directory containing a minimal AP-generated class file for test.ApGenerated.
+      *
+      * The file is byte-for-byte equivalent to a hand-written Java class compiled with javac. The annotation processor output path is the
+      * same as any other Java class output directory; the classfile decoder makes no distinction. Used by UntestedFidelity2Test leaf 13
+      * (annotation-processor-output-resolves).
+      */
+    def apOutputClassDir: String =
+        val dir    = java.nio.file.Files.createTempDirectory("kyo-df2-ap-output")
+        val pkgDir = dir.resolve("test")
+        java.nio.file.Files.createDirectories(pkgDir)
+        val classFile             = pkgDir.resolve("ApGenerated.class")
+        val out                   = new java.io.ByteArrayOutputStream()
+        def writeU1(v: Int): Unit = out.write(v & 0xff)
+        def writeU2(v: Int): Unit =
+            writeU1(v >> 8); writeU1(v)
+        def writeU4(v: Int): Unit =
+            writeU2(v >> 16); writeU2(v)
+        writeU4(0xcafebabe)
+        writeU2(0)
+        writeU2(55)
+        writeU2(5)
+        val nameBytes = "test/ApGenerated".getBytes("UTF-8")
+        writeU1(1); writeU2(nameBytes.length); out.write(nameBytes)
+        val objBytes = "java/lang/Object".getBytes("UTF-8")
+        writeU1(1); writeU2(objBytes.length); out.write(objBytes)
+        writeU1(7); writeU2(1)
+        writeU1(7); writeU2(2)
+        writeU2(0x0021)
+        writeU2(3)
+        writeU2(4)
+        writeU2(0); writeU2(0); writeU2(0); writeU2(0)
+        java.nio.file.Files.write(classFile, out.toByteArray)
+        dir.toString
+    end apOutputClassDir
+
+    /** Return roots that simulate two Scala library versions on the same classpath.
+      *
+      * Uses the kyo-tasty classes directory twice (collisionRoots) as a proxy for two-version collision. The important property is that
+      * both roots define overlapping FQNs, causing the collision detection path to fire. Under ErrorMode.FailFast, this aborts with
+      * TastyError.InconsistentClasspath. Used by UntestedFidelity2Test leaf 12 (multi-version-stdlib-failfast-aborts).
+      */
+    def multiVersionStdlibRoots: Seq[String] = collisionRoots
+
+    /** Build the bytes for a KRFL file with minorVersion=3 (old format).
+      *
+      * The SnapshotReader rejects fileMinor < minorVersion (currently 5) with TastyError.SnapshotVersionMismatch. The caller is responsible
+      * for writing these bytes to a file named `<hexDigest>.krfl` in a temp cache directory and then calling `initCached(roots, cacheDir)`.
+      * The initCached path reads the digest from the roots, finds the file by name, attempts to read it, receives SnapshotVersionMismatch,
+      * and falls back to a fresh cold decode. Used by UntestedFidelity2Test leaf 15 (snapshot-version-downgrade-falls-back).
+      */
+    def v3FormatKrflBytes: Array[Byte] =
+        val out = new java.io.ByteArrayOutputStream()
+        // Magic: "KRFL"
+        out.write('K'); out.write('R'); out.write('F'); out.write('L')
+        // Version: major=1, minor=3, 0, 0 (minor=3 < current minor=5)
+        out.write(1); out.write(3); out.write(0); out.write(0)
+        // Flags: 8 bytes (0 = LE byte order)
+        for _ <- 1 to 8 do out.write(0)
+        // Input digest placeholder: 8 bytes (arbitrary)
+        for _ <- 1 to 8 do out.write(0)
+        // Reserved: 8 bytes
+        for _ <- 1 to 8 do out.write(0)
+        // Section count: 0 (no sections)
+        out.write(0); out.write(0); out.write(0); out.write(0)
+        out.toByteArray
+    end v3FormatKrflBytes
+
 end TestClasspaths2
