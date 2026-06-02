@@ -36,7 +36,8 @@ object Tasty:
 
     // A module-level interner used by Name.apply(String) so the public API stays unchanged.
     private val globalInterner: Interner =
-        // §839 case 3: module-load Interner construction (single global value at class init)
+        // Unsafe: module-level initializer; Interner.init has side effects (allocating shards)
+        // that must run exactly once at class load time (§839 case 3).
         import AllowUnsafe.embrace.danger
         Interner.init(numShards = 32, initialShardCapacity = 512)
     end globalInterner
@@ -58,7 +59,9 @@ object Tasty:
           * }}}
           */
         def apply(s: String): Name =
-            // §839 case 3 -- monotone interner; same input produces the same Name forever.
+            // Unsafe: Interner.intern mutates shard state; safe here because the interner is
+            // monotone (same input always produces the same interned entry) and thread-safe
+            // internally (§839 case 3).
             import AllowUnsafe.embrace.danger
             val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
             globalInterner.intern(bytes, 0, bytes.length)
@@ -1010,6 +1013,8 @@ object Tasty:
         // Name is opaque over Interner.Entry which uses reference equality; cross-classpath
         // comparisons require string-level comparison via Name.asString.
         private def namesEqual(a: Span[Name], b: Span[Name]): Boolean =
+            // Unsafe: Name.asString is an opaque-type extension that requires AllowUnsafe;
+            // safe to use here because this is a private helper called only during equals/hashCode.
             import AllowUnsafe.embrace.danger
             import Name.asString
             val len = a.size
@@ -1025,6 +1030,8 @@ object Tasty:
         end namesEqual
 
         override def hashCode(): Int =
+            // Unsafe: Name.asString requires AllowUnsafe; safe here because this is a pure
+            // read of interned byte content with no side effects.
             import AllowUnsafe.embrace.danger
             import Name.asString
             var h = 1
