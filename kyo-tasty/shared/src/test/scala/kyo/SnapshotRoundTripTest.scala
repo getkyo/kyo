@@ -857,6 +857,74 @@ class SnapshotRoundTripTest extends Test:
                     throw t
     }
 
+    // T-J1-im: in-memory root digest is deterministic across two calls (mirrors T-J1 in SnapshotRoundTripJvmTest)
+    // Given: a MemoryFileSource with a single .tasty file
+    // When: DigestComputer.compute called twice on the same root
+    // Then: both digests are equal (deterministic for in-memory sources)
+    // Cross-platform: MemoryFileSource stat is stable.
+    "DigestComputer.compute on in-memory root returns same digest for two successive calls" in run {
+        val src = MemoryFileSource()
+        src.add("root/A.tasty", Array[Byte](1, 2, 3))
+        src.add("root/B.tasty", Array[Byte](4, 5, 6))
+        Abort.run[TastyError]:
+            DigestComputer.compute(Seq("root"), src).flatMap: d1 =>
+                DigestComputer.compute(Seq("root"), src).map: d2 =>
+                    (d1, d2)
+        .map:
+            case Result.Success((d1, d2)) =>
+                assert(d1.sameElements(d2), s"in-memory root digest must be deterministic: ${d1.toSeq} vs ${d2.toSeq}")
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // T-J4-im: adding an extra file (size change) produces a different digest (mirrors T-J4 in SnapshotRoundTripJvmTest)
+    // Given: a MemoryFileSource with one file; then a second MemoryFileSource with the same file plus an extra file
+    // When: DigestComputer.compute called on each
+    // Then: digests differ (different file set = different digest)
+    // Cross-platform: MemoryFileSource stat uses file size; adding a file changes the stat set.
+    "DigestComputer.compute detects additional file in root (different digest)" in run {
+        val src1 = MemoryFileSource()
+        src1.add("root/A.tasty", Array[Byte](1, 2, 3))
+        val src2 = MemoryFileSource()
+        src2.add("root/A.tasty", Array[Byte](1, 2, 3))
+        src2.add("root/B.tasty", Array[Byte](4, 5, 6, 7, 8))
+        Abort.run[TastyError]:
+            DigestComputer.compute(Seq("root"), src1).flatMap: d1 =>
+                DigestComputer.compute(Seq("root"), src2).map: d2 =>
+                    (d1, d2)
+        .map:
+            case Result.Success((d1, d2)) =>
+                assert(!d1.sameElements(d2), "Adding a file must produce a different digest")
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // T-J5-im: mixed roots produce the same digest regardless of root order (mirrors T-J5 in SnapshotRoundTripJvmTest)
+    // Given: two MemoryFileSources each containing the same two roots in different order
+    // When: DigestComputer.compute called with [root1, root2] vs [root2, root1]
+    // Then: digests are equal (root order does not affect the digest)
+    // Cross-platform: uses MemoryFileSource with deterministic stats.
+    "DigestComputer.compute on two in-memory roots is root-order independent" in run {
+        val src = MemoryFileSource()
+        src.add("root1/X.tasty", Array[Byte](10, 20, 30))
+        src.add("root2/Y.tasty", kyo.fixtures.Embedded.plainClassTasty)
+        Abort.run[TastyError]:
+            DigestComputer.compute(Seq("root1", "root2"), src).flatMap: d1 =>
+                DigestComputer.compute(Seq("root2", "root1"), src).map: d2 =>
+                    (d1, d2)
+        .map:
+            case Result.Success((d1, d2)) =>
+                assert(d1.sameElements(d2), s"root order must not affect digest: ${d1.toSeq} vs ${d2.toSeq}")
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
     // T-J2: directory-root digest is deterministic across two calls
     "DigestComputer.compute on directory root returns same digest for two successive calls" in run {
         val src = fixtureSource()

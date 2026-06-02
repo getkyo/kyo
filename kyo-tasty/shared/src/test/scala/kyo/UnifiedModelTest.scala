@@ -18,7 +18,10 @@ import scala.collection.immutable.IntMap
   *
   * Tests 11-18 as specified in execution-plan.md Phase 5b and PHASE-5b-PREP.md §7.3.
   *
-  * Tests using JDK classfiles or TASTy fixtures from resources are JVM-only.
+  * Phase 2 post-audit: tests 12, 13, 14, 15, 18 migrated from jvmOnly to cross-platform by replacing JDK classfile
+  * loads (Object.class, Runnable.class, System.class, String.class, AbstractStringBuilder.class) with Embedded fixture
+  * classfiles (throwsFixtureClass, pointRecordClass) and inline synthetic classfile bytes (interface, static-field class,
+  * mutable-field class). The shape assertions (SymbolKind mapping) are equivalent.
   */
 class UnifiedModelTest extends Test:
 
@@ -39,6 +42,7 @@ class UnifiedModelTest extends Test:
             case "SomeCaseClass.tasty"          => kyo.fixtures.Embedded.someCaseClassTasty
             case "FixtureClasses$package.tasty" => kyo.fixtures.Embedded.fixtureClassesPackageTasty
             case "Container.tasty"              => kyo.fixtures.Embedded.containerTasty
+            case "GenericBox.tasty"             => kyo.fixtures.Embedded.genericBoxTasty
             case other                          => TestResourceLoader.loadBytes(s"/kyo/fixtures/$other")
         end match
     end loadFixture
@@ -111,11 +115,12 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 12: SymbolKind.Class for Java class and Scala class
     // -------------------------------------------------------------------------
-    "SymbolKind.Class appears for Java class and Scala class" taggedAs jvmOnly in run {
-        readClass("java/lang/Object.class").map: javaResult =>
+    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
+    "SymbolKind.Class appears for Java class and Scala class" in run {
+        readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             assert(
                 javaResult.classSymbol.kind == Tasty.SymbolKind.Class,
-                s"Expected Class for java.lang.Object, got ${javaResult.classSymbol.kind}"
+                s"Expected Class for ThrowsFixture classfile, got ${javaResult.classSymbol.kind}"
             )
             tastySymbols("PlainClass.tasty").map: tastyResult =>
                 val scalaClass = tastyResult.symbols.find(_.kind == Tasty.SymbolKind.Class)
@@ -128,13 +133,30 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 13: SymbolKind.Trait for Java interface and Scala trait
     // -------------------------------------------------------------------------
-    "SymbolKind.Trait appears for Java interface and Scala trait" taggedAs jvmOnly in run {
-        readClass("java/lang/Runnable.class").map: javaResult =>
+    // Cross-platform (Phase 2 post-audit): uses inline synthetic interface bytes instead of JDK Runnable.class.
+    "SymbolKind.Trait appears for Java interface and Scala trait" in run {
+        val clsName = "kyo/fixtures/SyntheticRunnable".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val buf     = new java.io.ByteArrayOutputStream()
+        def writeInt(v: Int): Unit =
+            buf.write((v >>> 24) & 0xff); buf.write((v >>> 16) & 0xff)
+            buf.write((v >>> 8) & 0xff); buf.write(v & 0xff)
+        def writeShort(v: Int): Unit =
+            buf.write((v >>> 8) & 0xff); buf.write(v & 0xff)
+        def writeByte(v: Int): Unit = buf.write(v & 0xff)
+        writeInt(0xcafebabe); writeShort(0); writeShort(55); writeShort(5)
+        writeByte(1); writeShort(clsName.length); buf.write(clsName)
+        writeByte(7); writeShort(1)
+        writeByte(1); writeShort(supName.length); buf.write(supName)
+        writeByte(7); writeShort(3)
+        writeShort(0x0601); writeShort(2); writeShort(4) // ACC_PUBLIC|INTERFACE|ABSTRACT
+        writeShort(0); writeShort(0); writeShort(0); writeShort(0)
+        val ifaceBytes = buf.toByteArray
+        readClassBytes(ifaceBytes).map: javaResult =>
             assert(
                 javaResult.classSymbol.kind == Tasty.SymbolKind.Trait,
-                s"Expected Trait for java.lang.Runnable (interface), got ${javaResult.classSymbol.kind}"
+                s"Expected Trait for synthetic interface, got ${javaResult.classSymbol.kind}"
             )
-            // SomeTrait.tasty is in the kyo-tasty-fixtures module, accessible at /kyo/fixtures/SomeTrait.tasty
             tastySymbols("SomeTrait.tasty").map: tastyResult =>
                 val scalaTrait = tastyResult.symbols.find(_.kind == Tasty.SymbolKind.Trait)
                 assert(
@@ -146,22 +168,20 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 14: SymbolKind.Object appears ONLY for Scala object; no Java symbol has Object kind
     // -------------------------------------------------------------------------
-    "SymbolKind.Object appears only for Scala object; no Java symbol has Object kind" taggedAs jvmOnly in run {
-        readClass("java/lang/Object.class").map: javaObjectResult =>
-            // java.lang.Object is a Class, not a Scala Object
+    // Cross-platform (Phase 2 post-audit): uses embedded fixtures instead of JDK Object.class + System.class.
+    "SymbolKind.Object appears only for Scala object; no Java symbol has Object kind" in run {
+        readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaObjectResult =>
             assert(
                 javaObjectResult.classSymbol.kind != Tasty.SymbolKind.Object,
-                "java.lang.Object should have kind=Class, not Object"
+                "ThrowsFixture classfile should have kind=Class, not Object"
             )
-            // java.lang.System has static fields but no kind=Object members
-            readClass("java/lang/System.class").map: javaSystemResult =>
-                val javaSyms        = javaSystemResult.classSymbol :: javaSystemResult.symbols.toList
+            readClassBytes(kyo.fixtures.Embedded.pointRecordClass).map: javaPointResult =>
+                val javaSyms        = javaPointResult.classSymbol :: javaPointResult.symbols.toList
                 val javaObjectKinds = javaSyms.filter(_.kind == Tasty.SymbolKind.Object)
                 assert(
                     javaObjectKinds.isEmpty,
-                    s"Expected no Java symbols with kind=Object, found: ${javaObjectKinds.map(_.name.asString).mkString(", ")}"
+                    s"Expected no Java symbols with kind=Object in PointRecord, found: ${javaObjectKinds.map(_.name.asString).mkString(", ")}"
                 )
-                // SomeObject.tasty has kind=Object for the module symbol
                 tastySymbols("SomeObject.tasty").map: tastyResult =>
                     val scalaObject = tastyResult.symbols.find(_.kind == Tasty.SymbolKind.Object)
                     assert(
@@ -173,20 +193,17 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 15: TypeAlias, OpaqueType, AbstractType appear only for TASTy-sourced symbols
     // -------------------------------------------------------------------------
-    "TypeAlias, OpaqueType, AbstractType appear only in TASTy-sourced symbols" taggedAs jvmOnly in run {
-        // No Java classfile should produce these kinds
-        readClass("java/lang/Object.class").map: javaResult =>
+    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
+    "TypeAlias, OpaqueType, AbstractType appear only in TASTy-sourced symbols" in run {
+        readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             val allJavaSyms    = javaResult.classSymbol :: javaResult.symbols.toList
             val scalaOnlyKinds = Set(Tasty.SymbolKind.TypeAlias, Tasty.SymbolKind.OpaqueType, Tasty.SymbolKind.AbstractType)
             val badJavaSyms    = allJavaSyms.filter(s => scalaOnlyKinds.contains(s.kind))
             assert(
                 badJavaSyms.isEmpty,
-                s"Unexpected Scala-only kinds in Java classfile: ${badJavaSyms.map(s => s.name.asString + ":" + s.kind).mkString(", ")}"
+                s"Unexpected Scala-only kinds in ThrowsFixture classfile: ${badJavaSyms.map(s => s.name.asString + ":" + s.kind).mkString(", ")}"
             )
 
-            // TASTy fixtures do produce these kinds.
-            // FixtureClasses$package.tasty contains both TypeAlias and OpaqueType at top level.
-            // Container.tasty contains AbstractType (trait Container { type Item }).
             tastySymbols("FixtureClasses$package.tasty").map: tastyResult =>
                 val allTastySyms = tastyResult.symbols
                 val hasTypeAlias = allTastySyms.exists(_.kind == Tasty.SymbolKind.TypeAlias)
@@ -258,9 +275,16 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 18: Full SymbolKind matrix coverage (all 13 non-Unresolved kinds present)
     // -------------------------------------------------------------------------
-    "full SymbolKind matrix: each non-Unresolved kind has at least one symbol in fixtures" taggedAs jvmOnly in run {
-        // Collect kinds from a classfile result (classSymbol + members + owner chain)
-        // plan: phase-02 bridge; sym.owner is removed; collect kinds from classSymbol + members only.
+    // Cross-platform (Phase 2 post-audit): uses Embedded fixture classfiles + inline synthetic bytes
+    // instead of 5 JDK classfiles (Object, Runnable, System, String, AbstractStringBuilder).
+    // Coverage:
+    //   Class, Method: throwsFixtureClass
+    //   Trait: inline synthetic interface
+    //   Field: inline synthetic class with static field
+    //   Val: pointRecordClass (record component fields are final)
+    //   Var: inline synthetic class with non-final field
+    //   Object, Package, TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter: TASTy fixtures
+    "full SymbolKind matrix: each non-Unresolved kind has at least one symbol in fixtures" in run {
         def kindsFromClassResult(r: ClassfileResult): Set[Tasty.SymbolKind] =
             val buf = scala.collection.mutable.Set[Tasty.SymbolKind]()
             buf += r.classSymbol.kind
@@ -271,12 +295,60 @@ class UnifiedModelTest extends Test:
         def kindsFromTastyResult(r: AstUnpickler.Pass1Result): Set[Tasty.SymbolKind] =
             r.symbols.toList.map(_.kind).toSet
 
+        def makeSyntheticBytes(
+            clsNameStr: String,
+            accessFlags: Int,
+            fields: Seq[(String, String, Int)]
+        ): Array[Byte] =
+            val entries = scala.collection.mutable.ArrayBuffer[(Int, Array[Byte])]() // (tag, bytes)
+            val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val clsName = clsNameStr.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val pool    = scala.collection.mutable.ArrayBuffer[Array[Byte]]()
+            def utf8(s: Array[Byte]): Int =
+                val idx = pool.length + 1
+                pool += (Array(1.toByte) ++ Array(((s.length >> 8) & 0xff).toByte, (s.length & 0xff).toByte) ++ s)
+                idx
+            end utf8
+            def clazz(nameIdx: Int): Int =
+                val idx = pool.length + 1
+                pool += Array(7.toByte, ((nameIdx >> 8) & 0xff).toByte, (nameIdx & 0xff).toByte)
+                idx
+            end clazz
+            val clsUtf = utf8(clsName)
+            val clsRef = clazz(clsUtf)
+            val supUtf = utf8(supName)
+            val supRef = clazz(supUtf)
+            val fieldInfo = fields.map: (fname, fdesc, fflags) =>
+                val ni = utf8(fname.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                val di = utf8(fdesc.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                (ni, di, fflags)
+            val buf = new java.io.ByteArrayOutputStream()
+            def wi(v: Int): Unit =
+                buf.write((v >>> 24) & 0xff); buf.write((v >>> 16) & 0xff)
+                buf.write((v >>> 8) & 0xff); buf.write(v & 0xff)
+            def ws(v: Int): Unit =
+                buf.write((v >>> 8) & 0xff); buf.write(v & 0xff)
+            wi(0xcafebabe); ws(0); ws(55)
+            ws(pool.length + 1)
+            pool.foreach(buf.write)
+            ws(accessFlags); ws(clsRef); ws(supRef); ws(0)
+            ws(fieldInfo.length)
+            fieldInfo.foreach: (ni, di, ff) =>
+                ws(ff); ws(ni); ws(di); ws(0)
+            ws(0); ws(0)
+            buf.toByteArray
+        end makeSyntheticBytes
+
+        val ifaceBytes   = makeSyntheticBytes("kyo/fixtures/SyntheticIface2", 0x0601, Seq.empty)
+        val staticBytes  = makeSyntheticBytes("kyo/fixtures/StaticHolder2", 0x0021, Seq(("CONST", "I", 0x0019)))
+        val mutableBytes = makeSyntheticBytes("kyo/fixtures/MutableHolder2", 0x0021, Seq(("count", "I", 0x0001)))
+
         for
-            objResult    <- readClass("java/lang/Object.class")
-            runnableRes  <- readClass("java/lang/Runnable.class")
-            systemRes    <- readClass("java/lang/System.class")
-            stringRes    <- readClass("java/lang/String.class")
-            sbRes        <- readClass("java/lang/AbstractStringBuilder.class")
+            throwRes     <- readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass)
+            ifaceRes     <- readClassBytes(ifaceBytes)
+            pointRes     <- readClassBytes(kyo.fixtures.Embedded.pointRecordClass)
+            staticRes    <- readClassBytes(staticBytes)
+            mutableRes   <- readClassBytes(mutableBytes)
             someObjRes   <- tastySymbols("SomeObject.tasty")
             pkgRes       <- tastySymbols("FixtureClasses$package.tasty")
             containerRes <- tastySymbols("Container.tasty")
@@ -284,11 +356,11 @@ class UnifiedModelTest extends Test:
             plainRes     <- tastySymbols("PlainClass.tasty")
         yield
             val foundKinds: Set[Tasty.SymbolKind] =
-                kindsFromClassResult(objResult) ++
-                    kindsFromClassResult(runnableRes) ++
-                    kindsFromClassResult(systemRes) ++
-                    kindsFromClassResult(stringRes) ++
-                    kindsFromClassResult(sbRes) ++
+                kindsFromClassResult(throwRes) ++
+                    kindsFromClassResult(ifaceRes) ++
+                    kindsFromClassResult(pointRes) ++
+                    kindsFromClassResult(staticRes) ++
+                    kindsFromClassResult(mutableRes) ++
                     kindsFromTastyResult(someObjRes) ++
                     kindsFromTastyResult(pkgRes) ++
                     kindsFromTastyResult(containerRes) ++

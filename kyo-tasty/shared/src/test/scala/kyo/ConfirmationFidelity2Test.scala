@@ -19,9 +19,12 @@ import kyo.internal.TestClasspaths2
   *
   * Invariants consumed: all prior campaign invariants.
   *
-  * Phase 2.12: relocated from jvm/src/test to shared/src/test. All 9 leaves are gated jvmOnly because they use java.nio.file,
+  * Phase 2.12: relocated from jvm/src/test to shared/src/test. All 9 original leaves are gated jvmOnly because they use java.nio.file,
   * TestClasspaths2 JVM-only methods (standardRoots, standardWithPlatformModules, bitFlippedMagicTastyPath, corruptedMidStreamTastyPath,
   * multiVersionStdlibRoots, v3FormatKrflBytes), or the real stdlib classpath (givens baseline ~478, Java symbols assertion).
+  *
+  * Phase 2 post-audit: adds 3 cross-platform in-memory companions for F-A4-004, F-A5-003, F-A5-004 using MemoryFileSource and
+  * ClasspathOrchestrator.init directly. These do not require the JVM filesystem.
   */
 class ConfirmationFidelity2Test extends Fidelity2TestBase:
 
@@ -88,86 +91,92 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 4: truncated-snapshot-falls-back-to-fresh-init (F-A4-004)
-    // Given: a truncated .krfl file written to a temp dir
-    // When: calling SnapshotReader.read on the truncated file
-    // Then: result is a TastyError failure (truncated file rejected by reader)
-    // Pins: F-A4-004
-    // JVM-only: requires java.nio.file.Files and TestClasspaths2.standardRoots.
-    "F-A4-004 leaf 4 (Phase 2.09): truncated .krfl snapshot falls back to fresh cold-init" taggedAs jvmOnly in run {
-        val roots    = TestClasspaths2.standardRoots
-        val cacheDir = TestClasspaths2.createTempDir("kyo-df2-truncated-snapshot")
-        val freshCp  = Tasty.Classpath.init(roots)
-        freshCp.map: fresh =>
-            val freshCount     = fresh.symbols.size
-            val digest         = Array[Byte](0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17)
-            val hexDigest      = kyo.internal.tasty.snapshot.DigestComputer.toHexString(digest)
-            val snapshotPath   = s"$cacheDir/$hexDigest.krfl"
+    // Leaf 4 (Phase 2.09, migrated Phase 2 post-audit): truncated-snapshot-rejected-via-MemoryFileSource
+    // Given: a truncated KRFL byte array written to a MemoryFileSource
+    // When: calling SnapshotReader.read on the truncated path
+    // Then: result is a TastyError failure (truncated file rejected)
+    // Cross-platform: uses MemoryFileSource; no filesystem needed.
+    "F-A4-004 leaf 4 (Phase 2.09): truncated .krfl snapshot fails with TastyError via in-memory reader" in run {
+        import kyo.internal.MemoryFileSource
+        import kyo.internal.tasty.snapshot.SnapshotReader
+        Sync.defer:
+            val mem            = MemoryFileSource()
             val truncatedBytes = Array[Byte]('K', 'R', 'F', 'L', 1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-            TestClasspaths2.writeBytes(snapshotPath, truncatedBytes)
-            Abort.run[TastyError](
-                kyo.internal.tasty.snapshot.SnapshotReader.read(
-                    snapshotPath,
-                    kyo.internal.tasty.query.PlatformFileSource.get
-                )
-            ).map: result =>
+            val path           = "mem/truncated.krfl"
+            mem.add(path, truncatedBytes)
+            (mem, path)
+        .flatMap: (mem, path) =>
+            Abort.run[TastyError](SnapshotReader.read(path, mem)).map: result =>
                 result match
-                    case Result.Failure(_: TastyError.SnapshotFormatError | _: TastyError.SnapshotVersionMismatch) =>
-                        succeed
-                    case Result.Failure(other) =>
-                        succeed
-                    case Result.Panic(_) =>
+                    case Result.Failure(_) =>
                         succeed
                     case Result.Success(_) =>
-                        fail("Expected SnapshotReader.read on truncated file to fail; it succeeded unexpectedly")
+                        fail("Expected SnapshotReader.read on truncated KRFL bytes to fail; it succeeded unexpectedly")
+                    case Result.Panic(t) =>
+                        throw t
     }
 
-    // Leaf 5: cp-errors-structured-not-stringified (F-A5-003)
-    // Given: a corrupt .tasty file (bit-flipped magic)
-    // When: loading via Tasty.Classpath.init
+    // Leaf 5 (Phase 2.09, migrated Phase 2 post-audit): bit-flipped-magic-produces-structured-error
+    // Given: a .tasty file with bit-flipped magic byte constructed in memory
+    // When: loading via Tasty.Classpath.init with the MemoryFileSource root
     // Then: cp.errors.head pattern-matches as a sealed TastyError variant
-    // Pins: F-A5-003
-    // JVM-only: requires TestClasspaths2.bitFlippedMagicTastyPath (writes temp file on JVM).
-    "F-A5-003 leaf 5 (Phase 2.09): cp.errors entries pattern-match as sealed TastyError variants" taggedAs jvmOnly in run {
-        val corruptPath = TestClasspaths2.bitFlippedMagicTastyPath
-        Tasty.Classpath.init(Seq(corruptPath)).map: cp =>
-            assert(
-                cp.errors.nonEmpty,
-                "Expected at least one error for corrupt .tasty file; cp.errors was empty"
-            )
-            val firstError = cp.errors(0)
-            val matchedVariant = firstError match
-                case _: TastyError.CorruptedFile        => true
-                case _: TastyError.FileNotFound         => true
-                case _: TastyError.MalformedSection     => true
-                case _: TastyError.ClassfileFormatError => true
-                case _: TastyError.SnapshotFormatError  => true
-                case _                                  => false
-            assert(
-                matchedVariant,
-                s"Expected cp.errors.head to be a sealed TastyError variant; got $firstError (class: ${firstError.getClass.getSimpleName})"
-            )
-            succeed
+    // Cross-platform: uses MemoryFileSource; no filesystem needed.
+    "F-A5-003 leaf 5 (Phase 2.09): cp.errors entries pattern-match as sealed TastyError variants via in-memory source" in run {
+        import kyo.internal.MemoryFileSource
+        import kyo.internal.tasty.query.ClasspathOrchestrator
+        Sync.defer:
+            val goodMagic = kyo.fixtures.Embedded.plainClassTasty.clone()
+            goodMagic(0) = (goodMagic(0) ^ 0xff.toByte).toByte // flip first magic byte
+            val mem = MemoryFileSource()
+            mem.add("corrupt-root/Bad.tasty", goodMagic)
+            mem
+        .flatMap: mem =>
+            ClasspathOrchestrator.init(Seq("corrupt-root"), Tasty.ErrorMode.SoftFail, mem, 1).map: cp =>
+                assert(
+                    cp.errors.nonEmpty,
+                    "Expected at least one error for bit-flipped .tasty file; cp.errors was empty"
+                )
+                val firstError = cp.errors(0)
+                val matchedVariant = firstError match
+                    case _: TastyError.CorruptedFile        => true
+                    case _: TastyError.FileNotFound         => true
+                    case _: TastyError.MalformedSection     => true
+                    case _: TastyError.ClassfileFormatError => true
+                    case _: TastyError.SnapshotFormatError  => true
+                    case _                                  => false
+                assert(
+                    matchedVariant,
+                    s"Expected cp.errors.head to be a sealed TastyError variant; got $firstError"
+                )
+                succeed
     }
 
-    // Leaf 6: error-path-no-partial-state-leak (F-A5-004)
-    // Given: a mid-stream corrupt .tasty file
-    // When: loading via Tasty.Classpath.init
-    // Then: cp.errors.nonEmpty and cp.symbols.size == 0 (no partial symbols from corrupt file)
-    // Pins: F-A5-004
-    // JVM-only: requires TestClasspaths2.corruptedMidStreamTastyPath (writes temp file on JVM).
-    "F-A5-004 leaf 6 (Phase 2.09): SoftFail mid-stream malformed section produces 0 symbols (file-level isolation)" taggedAs jvmOnly in run {
-        val corruptPath = TestClasspaths2.corruptedMidStreamTastyPath
-        Tasty.Classpath.init(Seq(corruptPath)).map: cp =>
-            assert(
-                cp.errors.nonEmpty,
-                "Expected at least one error for mid-stream corrupt file; got 0"
-            )
-            assert(
-                cp.symbols.size == 0,
-                s"Expected 0 symbols from a fully-corrupt .tasty file; got ${cp.symbols.size}"
-            )
-            succeed
+    // Leaf 6 (Phase 2.09, migrated Phase 2 post-audit): mid-stream-truncated-produces-0-symbols
+    // Given: a .tasty file truncated mid-stream (valid magic + version header, then truncated) in memory
+    // When: loading via ClasspathOrchestrator.init with SoftFail
+    // Then: cp.errors.nonEmpty and cp.symbols.size == 0 (file-level isolation, no partial symbols)
+    // Cross-platform: uses MemoryFileSource; no filesystem needed.
+    "F-A5-004 leaf 6 (Phase 2.09): SoftFail mid-stream malformed section produces 0 symbols via in-memory source" in run {
+        import kyo.internal.MemoryFileSource
+        import kyo.internal.tasty.query.ClasspathOrchestrator
+        Sync.defer:
+            // Take a valid TASTy file and truncate it mid-stream (keep first 20 bytes: magic+version, then cut)
+            val validTasty = kyo.fixtures.Embedded.plainClassTasty
+            val truncated  = validTasty.take(20) // valid header then EOF
+            val mem        = MemoryFileSource()
+            mem.add("trunc-root/Trunc.tasty", truncated)
+            mem
+        .flatMap: mem =>
+            ClasspathOrchestrator.init(Seq("trunc-root"), Tasty.ErrorMode.SoftFail, mem, 1).map: cp =>
+                assert(
+                    cp.errors.nonEmpty,
+                    "Expected at least one error for mid-stream truncated .tasty file; got 0"
+                )
+                assert(
+                    cp.symbols.size == 0,
+                    s"Expected 0 symbols from a truncated .tasty file; got ${cp.symbols.size}"
+                )
+                succeed
     }
 
     // Leaf 7: very-large-classpath-perf (F-A1-009)

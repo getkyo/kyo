@@ -192,14 +192,13 @@ class Scala2PickleTest extends Test:
     // Test 5: classfile without ScalaSig -> no Flag.Scala2
     // -------------------------------------------------------------------------
 
-    "Test 5: Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" taggedAs jvmOnly in run {
-        // Read a real JDK classfile that has no ScalaSig attribute (java/lang/Object.class)
-        val bytes  = TestResourceLoader.loadBytes("java/lang/Object.class")
-        val result = ClassfileUnpickler.read(bytes, interner, new TypeArena)
+    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
+    // Any Java classfile without ScalaSig works; the shape assertion (no Scala2 flag) is fixture-independent.
+    "Test 5: Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" in run {
+        val result = ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, interner, new TypeArena)
         result.map: r =>
             val sym = r.classSymbol
             assert(!sym.flags.contains(Tasty.Flag.Scala2), s"Expected no Flag.Scala2 on Java classfile; got flags=${sym.flags.bits}")
-            // Also verify the member symbols don't have Scala2 flag
             val scala2Members = r.symbols.filter(_.flags.contains(Tasty.Flag.Scala2))
             assert(
                 scala2Members.isEmpty,

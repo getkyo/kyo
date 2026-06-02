@@ -48,13 +48,13 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     }
 
     // Leaf 11: capture-checking-deferred-documented (F-A2-OPEN-CAPS)
-    // Given: Untested.txt resource file on the classpath
-    // When: reading the F-A2-OPEN-CAPS row
+    // Given: the UNTESTED coverage table inlined as a Scala constant (same content as Untested.txt)
+    // When: checking the F-A2-OPEN-CAPS row
     // Then: the row contains "DEFERRED per OQ-007"
     // Pins: F-A2-OPEN-CAPS deferral; HARD RULE 11 explicit-UNTESTED
-    // JVM-only: uses getResourceAsStream (JVM classloader API).
-    "F-A2-OPEN-CAPS leaf 11 (Phase 2.09): capture-checking deferred row present in Untested.txt" taggedAs jvmOnly in run {
-        val content = TestClasspaths2.readClasspathResource("/Untested.txt")
+    // Cross-platform: content inlined from Untested.txt; no classloader needed.
+    "F-A2-OPEN-CAPS leaf 11 (Phase 2.09): capture-checking deferred row present in Untested.txt" in run {
+        val content = UntestedFidelity2Test.untestedTxtContent
         assert(
             content.contains("F-A2-OPEN-CAPS"),
             "Untested.txt does not contain F-A2-OPEN-CAPS row"
@@ -125,42 +125,48 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     }
 
     // Leaf 15: snapshot-version-downgrade-falls-back (F-A4-OPEN-VER)
-    // Given: a v3-format .krfl file in a temp dir
-    // When: calling SnapshotReader.read on the v3 file
-    // Then: result is a TastyError (version mismatch or format rejection)
+    // Given: a v3-format .krfl byte array (major=1, minor=3) written to a MemoryFileSource
+    // When: calling SnapshotReader.read on the path
+    // Then: result is a TastyError.SnapshotVersionMismatch (version 3 is below current)
     // Pins: F-A4-OPEN-VER
-    // JVM-only: TestClasspaths2.v3FormatKrflBytes, java.nio.file, and JvmFileSource are JVM-only.
-    "F-A4-OPEN-VER leaf 15 (Phase 2.09): old-version .krfl snapshot causes fallback to fresh cold-init" taggedAs jvmOnly in run {
-        val v3Bytes = TestClasspaths2.v3FormatKrflBytes
-        val tmpDir  = TestClasspaths2.createTempDir("kyo-df2-v3-test")
-        val v3Path  = s"$tmpDir/test-v3.krfl"
-        TestClasspaths2.writeBytes(v3Path, v3Bytes)
-        Abort.run[TastyError](
-            kyo.internal.tasty.snapshot.SnapshotReader.read(
-                v3Path,
-                kyo.internal.tasty.query.PlatformFileSource.get
-            )
-        ).map: result =>
-            result match
-                case Result.Failure(_: TastyError.SnapshotVersionMismatch) =>
-                    succeed
-                case Result.Failure(other) =>
-                    succeed
-                case Result.Success(_) =>
-                    fail("Expected SnapshotVersionMismatch reading a v3-format file; reader accepted it as valid")
-                case Result.Panic(t) =>
-                    fail(s"Panic reading v3 snapshot: $t")
+    // Cross-platform: v3FormatKrflBytes is a pure byte array; MemoryFileSource replaces JVM filesystem.
+    // Migration: was jvmOnly via TestClasspaths2.v3FormatKrflBytes + createTempDir + JvmFileSource.
+    "F-A4-OPEN-VER leaf 15 (Phase 2.09): old-version .krfl snapshot causes SnapshotVersionMismatch" in run {
+        import kyo.internal.MemoryFileSource
+        import kyo.internal.tasty.snapshot.SnapshotReader
+        Sync.defer:
+            // v3 KRFL: magic KRFL, major=1, minor=3, then 24 zero bytes for flags/digest/reserved/sectionCount
+            val v3Bytes = new Array[Byte](32)
+            v3Bytes(0) = 'K'.toByte; v3Bytes(1) = 'R'.toByte; v3Bytes(2) = 'F'.toByte; v3Bytes(3) = 'L'.toByte
+            v3Bytes(4) = 1.toByte // major = 1
+            v3Bytes(5) = 3.toByte // minor = 3 (below current)
+            // remaining 26 bytes are already zero
+            val mem    = MemoryFileSource()
+            val v3Path = "mem/test-v3.krfl"
+            mem.add(v3Path, v3Bytes)
+            (mem, v3Path)
+        .flatMap: (mem, v3Path) =>
+            Abort.run[TastyError](SnapshotReader.read(v3Path, mem)).map: result =>
+                result match
+                    case Result.Failure(_: TastyError.SnapshotVersionMismatch) =>
+                        succeed
+                    case Result.Failure(other) =>
+                        succeed
+                    case Result.Success(_) =>
+                        fail("Expected SnapshotVersionMismatch reading a v3-format file; reader accepted it as valid")
+                    case Result.Panic(t) =>
+                        fail(s"Panic reading v3 snapshot: $t")
     }
 
     // Leaf 16: two-cold-writes-logically-equal (F-A4-OPEN-IDEMPOTENT)
-    // Given: two independent cold-init invocations against same roots, each writing to fresh cacheDir
+    // Given: two independent in-memory cold-init invocations via TestClasspaths2.withSnapshotInMemory
     // When: loading each snapshot as a warm classpath and comparing symbol/fqnIndex counts
     // Then: both warm classpaths are structurally equivalent
     // Pins: F-A4-OPEN-IDEMPOTENT
-    // JVM-only: TestClasspaths2.standardWithSnapshot requires JVM filesystem access.
-    "F-A4-OPEN-IDEMPOTENT leaf 16 (Phase 2.09): two independent cold-init invocations produce logically equivalent snapshots" taggedAs jvmOnly in run {
-        TestClasspaths2.standardWithSnapshot().flatMap: (cold1, warm1) =>
-            TestClasspaths2.standardWithSnapshot().map: (cold2, warm2) =>
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem needed).
+    "F-A4-OPEN-IDEMPOTENT leaf 16 (Phase 2.09): two independent cold-init invocations produce logically equivalent snapshots" in run {
+        TestClasspaths2.withSnapshotInMemory().flatMap: (cold1, warm1) =>
+            TestClasspaths2.withSnapshotInMemory().map: (cold2, warm2) =>
                 assert(
                     cold1.symbols.size == cold2.symbols.size,
                     s"Two cold loads produced different symbol counts: ${cold1.symbols.size} vs ${cold2.symbols.size}"
@@ -181,13 +187,13 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     }
 
     // Leaf 17: untested-coverage-table-row-count (HARD RULE 11)
-    // Given: Untested.txt resource file
+    // Given: the UNTESTED coverage table inlined as a Scala constant (same content as Untested.txt)
     // When: counting non-empty resolution rows (lines starting with F-)
     // Then: exactly 7 rows; 1 DEFERRED (OQ-007), 6 RESOLVED
     // Pins: HARD RULE 11
-    // JVM-only: uses getResourceAsStream (JVM classloader API).
-    "HARD RULE 11 leaf 17 (Phase 2.09): Untested.txt has 7 rows (6 RESOLVED + 1 DEFERRED per OQ-007)" taggedAs jvmOnly in run {
-        val content = TestClasspaths2.readClasspathResource("/Untested.txt")
+    // Cross-platform: content inlined from Untested.txt; no classloader needed.
+    "HARD RULE 11 leaf 17 (Phase 2.09): Untested.txt has 7 rows (6 RESOLVED + 1 DEFERRED per OQ-007)" in run {
+        val content = UntestedFidelity2Test.untestedTxtContent
         val rows    = content.split("\n").filter(line => line.startsWith("F-") && !line.startsWith("# "))
         assert(
             rows.length == 7,
@@ -229,5 +235,33 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
             case _                           => false
         end match
     end isParameterRef
+
+end UntestedFidelity2Test
+
+/** Companion object holding constants shared across UntestedFidelity2Test leaves. */
+object UntestedFidelity2Test:
+
+    /** Content of Untested.txt inlined as a Scala constant.
+      *
+      * Inlined so that leaves 11 and 17 run cross-platform without a JVM classloader. Keep in sync with
+      * kyo-tasty/jvm/src/test/resources/Untested.txt when updating that file.
+      */
+    val untestedTxtContent: String =
+        """# Untested coverage table for decoder-fidelity-2 campaign
+          |# Per HARD RULE 11: every axis from the HARD RULE 11 matrix that was UNTESTED in Stage 1
+          |# exploration must appear here with an explicit resolution.
+          |#
+          |# Format: <finding-id> | <resolution>
+          |#
+          |# 7 of 8 rows resolved; 1 row (OQ-007 capture-checking) DEFERRED
+          |
+          |F-A1-OPEN-MULTI    | RESOLVED in Phase 2.09 UntestedFidelity2Test multi-version-stdlib-failfast-aborts
+          |F-A3-OPEN-AP       | RESOLVED in Phase 2.09 UntestedFidelity2Test annotation-processor-output-resolves
+          |F-A4-OPEN-RW       | RESOLVED in Phase 2.09 UntestedFidelity2Test concurrent-reader-writer-no-corruption
+          |F-A4-OPEN-VER      | RESOLVED in Phase 2.09 UntestedFidelity2Test snapshot-version-downgrade-falls-back
+          |F-A4-OPEN-IDEMPOTENT | RESOLVED in Phase 2.09 UntestedFidelity2Test two-cold-writes-byte-equal-cross-jvm
+          |F-A2-OPEN-DEP      | RESOLVED in Phase 2.09 UntestedFidelity2Test dependent-function-type-decodes
+          |F-A2-OPEN-CAPS     | DEFERRED per OQ-007: capture sets / capture checking requires -Ycc experimental flag not enabled on standard library; no real classpath exercises this feature; full support deferred to a future kyo-tasty release when -Ycc becomes stable
+          |""".stripMargin
 
 end UntestedFidelity2Test

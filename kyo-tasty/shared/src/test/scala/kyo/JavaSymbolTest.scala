@@ -16,8 +16,9 @@ import kyo.internal.tasty.type_.TypeArena
   *
   * Tests 1-10 as specified in execution-plan.md Phase 5b and PHASE-5b-PREP.md §7.3.
   *
-  * Tests that load JDK classfiles (tests 1, 2, 4, 5, 7, 9) are JVM-only. Tests that load compiled fixture classfiles from resources (tests
-  * 6, 8, 10) are JVM-only. Tests that use synthetic classfile bytes (test 3) run on all platforms.
+  * Tests that load JDK classfiles (test 9: java.lang.Deprecated) remain JVM-only. Tests 4, 5, 6, 7, 8, 10 were migrated in Phase 2
+  * post-audit to use Embedded fixture classfiles (throwsFixtureClass, arrayRecordClass, pointRecordClass, anonymousFixture1Class). Test 3
+  * uses synthetic classfile bytes (cross-platform). Tests 1, 2 use the existing arrayRecordClass fixture (cross-platform).
   */
 class JavaSymbolTest extends Test:
 
@@ -250,8 +251,9 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 4: isJava is true for Java classfile symbols, false for TASTy symbols
     // -------------------------------------------------------------------------
-    "sym.isJava: true for Java classfile, false for TASTy" taggedAs jvmOnly in run {
-        val bytes = loadJdkClass("java/lang/Object.class")
+    // Cross-platform: uses Embedded.throwsFixtureClass (fixture classfile) instead of JDK Object.class.
+    "sym.isJava: true for Java classfile, false for TASTy" in run {
+        val bytes = kyo.fixtures.Embedded.throwsFixtureClass
         for
             javaResult <- readClass(bytes)
             tastySym   <- firstClassSymbolFromTasty("PlainClass.tasty")
@@ -259,7 +261,7 @@ class JavaSymbolTest extends Test:
             // plan: phase-02 inline; sym.isJava removed; use flags.contains(JavaDefined) instead.
             assert(
                 javaResult.classSymbol.flags.contains(Tasty.Flag.JavaDefined),
-                s"Expected JavaDefined flag for java.lang.Object, flags=${javaResult.classSymbol.flags.bits}"
+                s"Expected JavaDefined flag for ThrowsFixture classfile, flags=${javaResult.classSymbol.flags.bits}"
             )
             assert(
                 !tastySym.flags.contains(Tasty.Flag.JavaDefined),
@@ -271,15 +273,16 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 5: javaMetadata is Present for Java symbols, Absent for TASTy symbols
     // -------------------------------------------------------------------------
-    "symJavaMetadata(sym): Present for Java, Absent for TASTy" taggedAs jvmOnly in run {
-        val bytes = loadJdkClass("java/lang/String.class")
+    // Cross-platform: uses Embedded.arrayRecordClass (fixture classfile) instead of JDK String.class.
+    "symJavaMetadata(sym): Present for Java, Absent for TASTy" in run {
+        val bytes = kyo.fixtures.Embedded.arrayRecordClass
         for
             javaResult <- readClass(bytes)
             tastySym   <- firstClassSymbolFromTasty("PlainClass.tasty")
         yield
             assert(
                 symJavaMetadata(javaResult.classSymbol).isDefined,
-                "Expected javaMetadata Present for java.lang.String"
+                "Expected javaMetadata Present for ArrayRecord classfile"
             )
             assert(
                 symJavaMetadata(tastySym).isEmpty,
@@ -291,8 +294,9 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 6: throwsTypes is non-empty for a method declared throws Exception
     // -------------------------------------------------------------------------
-    "JavaMetadata.throwsTypes is non-empty for a method declared throws Exception" taggedAs jvmOnly in run {
-        val bytes = loadFixture("ThrowsFixture.class")
+    // Cross-platform: uses Embedded.throwsFixtureClass instead of loadFixture("ThrowsFixture.class").
+    "JavaMetadata.throwsTypes is non-empty for a method declared throws Exception" in run {
+        val bytes = kyo.fixtures.Embedded.throwsFixtureClass
         readClass(bytes).map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
                 sym.kind == Tasty.SymbolKind.Method &&
@@ -308,26 +312,28 @@ class JavaSymbolTest extends Test:
     }
 
     // -------------------------------------------------------------------------
-    // Test 7: accessFlags for java.lang.String has ACC_FINAL bit set
+    // Test 7: accessFlags for a final class has ACC_FINAL bit set
     // -------------------------------------------------------------------------
-    "JavaMetadata.accessFlags for java.lang.String has ACC_FINAL bit set" taggedAs jvmOnly in run {
-        val bytes = loadJdkClass("java/lang/String.class")
+    // Cross-platform: uses Embedded.pointRecordClass (Java records are automatically final) instead of JDK String.class.
+    "JavaMetadata.accessFlags has ACC_FINAL bit set for a final class" in run {
+        val bytes = kyo.fixtures.Embedded.pointRecordClass
         readClass(bytes).map: result =>
             val sym = result.classSymbol
-            assert(sym.flags.contains(Tasty.Flag.Final), "Expected Flag.Final for java.lang.String")
+            assert(sym.flags.contains(Tasty.Flag.Final), "Expected Flag.Final for PointRecord (records are final)")
             val meta = symJavaMetadata(sym)
-            assert(meta.isDefined, "Expected javaMetadata Present for java.lang.String")
+            assert(meta.isDefined, "Expected javaMetadata Present for PointRecord")
             assert(
                 (meta.get.accessFlags & 0x0010) != 0,
-                s"Expected accessFlags to have ACC_FINAL (0x0010) set, got 0x${meta.get.accessFlags.toHexString}"
+                s"Expected accessFlags to have ACC_FINAL (0x0010) set for PointRecord, got 0x${meta.get.accessFlags.toHexString}"
             )
     }
 
     // -------------------------------------------------------------------------
     // Test 8: Java record produces Flag.JavaRecord and non-empty recordComponents
     // -------------------------------------------------------------------------
-    "Java record class produces Flag.JavaRecord and non-empty recordComponents" taggedAs jvmOnly in run {
-        val bytes = loadFixture("PointRecord.class")
+    // Cross-platform: uses Embedded.pointRecordClass instead of loadFixture("PointRecord.class").
+    "Java record class produces Flag.JavaRecord and non-empty recordComponents" in run {
+        val bytes = kyo.fixtures.Embedded.pointRecordClass
         readClass(bytes).map: result =>
             val sym = result.classSymbol
             assert(
@@ -375,9 +381,10 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 10: enclosingMethod is Present for an anonymous class
     // -------------------------------------------------------------------------
-    "JavaMetadata.enclosingMethod is Present for an anonymous class inside enclosingMethodFixture" taggedAs jvmOnly in run {
+    // Cross-platform: uses Embedded.anonymousFixture1Class instead of loadFixture("AnonymousFixture$1.class").
+    "JavaMetadata.enclosingMethod is Present for an anonymous class inside enclosingMethodFixture" in run {
         // AnonymousFixture$1.class is the anonymous Runnable inside enclosingMethodFixture()
-        val bytes = loadFixture("AnonymousFixture$1.class")
+        val bytes = kyo.fixtures.Embedded.anonymousFixture1Class
         readClass(bytes).map: result =>
             val sym  = result.classSymbol
             val meta = symJavaMetadata(sym)

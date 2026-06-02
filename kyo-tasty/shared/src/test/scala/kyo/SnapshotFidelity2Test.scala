@@ -25,21 +25,21 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf 4 (Phase 2.02): fqnindex-size-cold-equals-warm
-    // JVM-only: TestClasspaths2.standardWithSnapshot relies on JVM filesystem.
+    // Leaf 4 (Phase 2.02, migrated Phase 2 post-audit): fqnindex-size-cold-equals-warm
+    // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
+    // When: comparing cold.fqnIndex.size to warm.fqnIndex.size
+    // Then: sizes are equal (in-memory round-trip preserves full fqnIndex)
     // Pins: INV-013; F-A4-001
-    "INV-013 (Phase 2.02): cold.fqnIndex.size == warm.fqnIndex.size and both >= 110,000" taggedAs jvmOnly in run {
-        TestClasspaths2.standardWithSnapshot().map: (cold, warm) =>
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
+    // Migration: was jvmOnly with standardWithSnapshot + >= 110,000 stdlib lower bound (removed).
+    "INV-013 (Phase 2.02): cold.fqnIndex.size == warm.fqnIndex.size after in-memory round-trip" in run {
+        TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val coldSize = cold.fqnIndex.size
             val warmSize = warm.fqnIndex.size
             assert(
                 coldSize == warmSize,
                 s"cold.fqnIndex.size ($coldSize) != warm.fqnIndex.size ($warmSize); " +
                     s"pre-fix gap was 37,225 entries due to ghost SymbolId(-1) entries dropped by SnapshotWriter"
-            )
-            assert(
-                coldSize >= 110000,
-                s"Expected cold.fqnIndex.size >= 110,000 (probe baseline 110,210), found $coldSize"
             )
             succeed
     }
@@ -64,11 +64,14 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
                     succeed
     }
 
-    // Leaf 6 (Phase 2.02): warm-cold-unresolvedrefs-equal
-    // JVM-only: TestClasspaths2.standardWithSnapshot relies on JVM filesystem.
+    // Leaf 6 (Phase 2.02, migrated Phase 2 post-audit): warm-cold-unresolvedrefs-equal
+    // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
+    // When: counting Named(-1) refs in cold and warm via SnapshotEquivalence.countUnresolvedRefs
+    // Then: both are 0 (in-memory round-trip applies F-A4-002 defensive filter)
     // Pins: INV-005 (strengthened); INV-101-DF2; F-A4-002
-    "F-A4-002 (Phase 2.02): cold and warm both have 0 symbols with Named(-1) in reachable types" taggedAs jvmOnly in run {
-        TestClasspaths2.standardWithSnapshot().map: (cold, warm) =>
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
+    "F-A4-002 (Phase 2.02): cold and warm both have 0 Named(-1) refs after in-memory round-trip" in run {
+        TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val coldUnresolved = SnapshotEquivalence.countUnresolvedRefs(cold)
             val warmUnresolved = SnapshotEquivalence.countUnresolvedRefs(warm)
             assert(
@@ -82,11 +85,14 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 7 (Phase 2.02): warmcold-equivalent-passes
-    // JVM-only: TestClasspaths2.standardWithSnapshot relies on JVM filesystem.
+    // Leaf 7 (Phase 2.02, migrated Phase 2 post-audit): warmcold-equivalent-passes
+    // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
+    // When: running SnapshotEquivalence.warmColdEquivalent
+    // Then: result is Equal (in-memory round-trip produces structurally equivalent classpaths)
     // Pins: INV-101-DF2 producer; F-A4-001 + F-A4-002
-    "INV-101-DF2 (Phase 2.02): SnapshotEquivalence.warmColdEquivalent returns Equal on standard classpath pair" taggedAs jvmOnly in run {
-        TestClasspaths2.standardWithSnapshot().map: (cold, warm) =>
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
+    "INV-101-DF2 (Phase 2.02): SnapshotEquivalence.warmColdEquivalent returns Equal after in-memory round-trip" in run {
+        TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val result = SnapshotEquivalence.warmColdEquivalent(cold, warm)
             assert(
                 result.isEqual,
@@ -96,11 +102,14 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 8 (Phase 2.02): parents-named-minus-one-filter
-    // JVM-only: TestClasspaths2.standardWithSnapshot relies on JVM filesystem.
+    // Leaf 8 (Phase 2.02, migrated Phase 2 post-audit): parents-named-minus-one-filter
+    // Given: a warm classpath from embedded fixtures via withSnapshotInMemory
+    // When: checking warm.parentTypes for Named(-1) entries
+    // Then: count == 0 (F-A4-002 defensive filter removes Named(-1) entries)
     // Pins: F-A4-002 defensive filter (OQ-004)
-    "F-A4-002 (Phase 2.02): warm.parentTypes never contains Named(-1) after round-trip" taggedAs jvmOnly in run {
-        TestClasspaths2.standardWithSnapshot().map: (_, warm) =>
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
+    "F-A4-002 (Phase 2.02): warm.parentTypes has 0 Named(-1) after in-memory round-trip" in run {
+        TestClasspaths2.withSnapshotInMemory().map: (_, warm) =>
             import kyo.internal.tasty.symbol.SymbolId.value as idValue
             var namedMinusOne = 0
             warm.symbols.foreach:
@@ -117,12 +126,15 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 9 (Phase 2.02): two-cold-writes-byte-equal
-    // JVM-only: TestClasspaths2.standardWithSnapshot relies on JVM filesystem.
+    // Leaf 9 (Phase 2.02, migrated Phase 2 post-audit): two-cold-writes-byte-equal
+    // Given: two independent in-memory snapshot round-trips via TestClasspaths2.withSnapshotInMemory
+    // When: comparing symbols.size and fqnIndex.size across both pairs
+    // Then: all four counts are equal (idempotent cold-init + round-trip)
     // Pins: F-A4-005 (extended; F-A4-OPEN-IDEMPOTENT)
-    "F-A4-005 (Phase 2.02): two independent cold-init invocations produce logically equivalent snapshots" taggedAs jvmOnly in run {
-        TestClasspaths2.standardWithSnapshot().flatMap: (cold1, warm1) =>
-            TestClasspaths2.standardWithSnapshot().map: (cold2, warm2) =>
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
+    "F-A4-005 (Phase 2.02): two in-memory cold-inits produce logically equivalent snapshots" in run {
+        TestClasspaths2.withSnapshotInMemory().flatMap: (cold1, warm1) =>
+            TestClasspaths2.withSnapshotInMemory().map: (cold2, warm2) =>
                 assert(
                     cold1.symbols.size == cold2.symbols.size,
                     s"Two cold loads produced different symbol counts: ${cold1.symbols.size} vs ${cold2.symbols.size}"

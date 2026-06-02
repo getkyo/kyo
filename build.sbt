@@ -676,7 +676,17 @@ lazy val `kyo-tasty` =
                 }
             }.taskValue
         )
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(
+            mimaCheck(false),
+            // Track C: scoverage threshold for kyo-tasty JVM.
+            // Baseline measured 2026-06-02; gate at 70% to enforce coverage discipline.
+            // Run: sbt 'kyo-tasty/coverage; kyo-tasty/test; kyo-tasty/coverageReport'
+            coverageMinimumStmtTotal := 70,
+            coverageFailOnMinimum    := true,
+            // Track A: differential testing against tasty-query 1.7.0.
+            // tasty-query is JVM-only (ClasspathLoaders uses java.nio); test lives in jvm/src/test.
+            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0" % Test
+        )
         .nativeSettings(
             `native-settings`,
             Test / sourceGenerators += kyoTastyEmbeddedTextGenerator("Native").taskValue
