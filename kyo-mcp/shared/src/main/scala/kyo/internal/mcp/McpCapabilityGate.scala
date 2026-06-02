@@ -6,17 +6,15 @@ import kyo.*
   *
   * The gate is stateless: `serverCaps` is passed at construction time and reflects the capabilities
   * computed by the engine from registered routes or `McpConfig.declaredCapabilities`. The engine
-  * in Phase 5 chains this gate after the handshake gate.
+  * chains this gate after the handshake gate.
   *
   * Three modes (per `McpConfig.CapabilityGateMode`):
   *   - `RejectUnsupported`: rejects inbound requests whose required capability was not advertised.
-  *   - `LogOnly`: admits all requests (log-sink wired by Phase 5 engine).
+  *   - `LogOnly`: admits all requests (log-sink wired by the engine).
   *   - `Off`: admits all requests unconditionally (dev/test mode).
   *
   * Only `JsonRpcRequest` messages are capability-checked; notifications and responses always Allow.
   * Methods not in the capability map are always admitted (unknown-method handling is separate).
-  *
-  * Design ref: design/02-design.md §9:1820-1855.
   */
 private[kyo] object McpCapabilityGate:
 
@@ -34,8 +32,7 @@ private[kyo] object McpCapabilityGate:
                 JsonRpcMessageGate.noop
 
             case McpConfig.CapabilityGateMode.LogOnly =>
-                // Phase 5 engine replaces this with a gate that logs before admitting.
-                // In Phase 4 the log-sink is not available, so simply admit.
+                // The engine replaces this with a gate that logs before admitting once the log-sink is available.
                 JsonRpcMessageGate.noop
 
             case McpConfig.CapabilityGateMode.RejectUnsupported =>

@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: capability gate rejects tool call when tools capability is not advertised (T-015, INV-015, INV-019). */
+/** Integration test: capability gate rejects tool call when tools capability is not advertised. */
 class McpCapabilityAdvertisementTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
@@ -11,7 +11,7 @@ class McpCapabilityAdvertisementTest extends Test:
         McpContent.Text(s"${in.a + in.b}")
     }
 
-    "tool call aborts with McpCapabilityNotAdvertisedException when tools capability is absent (T-015, INV-015)" in run {
+    "tool call aborts with McpCapabilityNotAdvertisedException when tools capability is absent" in run {
         // McpCapabilities.Server() has all fields Absent, so tools capability is not advertised.
         val cfg = McpConfig.default.declaredCapabilities(McpCapabilities.Server())
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
@@ -33,7 +33,7 @@ class McpCapabilityAdvertisementTest extends Test:
         }
     }
 
-    "server advertises tools capability when route is registered and declaredCapabilities is Absent (T-015, INV-019)" in run {
+    "server advertises tools capability when route is registered and declaredCapabilities is Absent" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, toolRoute),

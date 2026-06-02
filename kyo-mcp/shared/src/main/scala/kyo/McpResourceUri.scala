@@ -4,7 +4,7 @@ package kyo
   *
   * Use `parse` for user-supplied URIs that require validation (rejects blank / whitespace-only
   * strings). Use `apply` at trusted call sites within the library where the value is known valid.
-  * INV-022: all public surface carrying resource identifiers uses this type, never raw `String`.
+  * All public surface carrying resource identifiers uses this type, never raw `String`.
   *
   * @see [[McpResourceUri.parse]]
   */
@@ -24,7 +24,7 @@ object McpResourceUri:
         def asString: String = u
 
     // Uses `apply` (total constructor) so the codec accepts any wire-received string.
-    // Blank-rejection is at the user `parse` callsite, not at the codec level (INV-022).
+    // Blank-rejection is at the user `parse` callsite, not at the codec level.
     given Schema[McpResourceUri] = Schema.stringSchema.transform[McpResourceUri](apply)(_.asString)
 
     given CanEqual[McpResourceUri, McpResourceUri] = CanEqual.derived
@@ -33,8 +33,8 @@ object McpResourceUri:
       *
       * `parse` enforces two minimal constraints: the string must be non-empty and must contain
       * at least one `{` character (the RFC 6570 template expression open-brace). Use `apply`
-      * at trusted call sites.
-      * INV-022: all public surface carrying URI templates uses this type, never raw `String`.
+      * at trusted call sites. All public surface carrying URI templates uses this type, never
+      * raw `String`.
       *
       * @see [[McpResourceUri.Template.parse]]
       */
@@ -85,7 +85,7 @@ object McpResourceUri:
             end extract
         end extension
 
-        // Uses `apply` (total constructor) so the codec accepts any wire-received string (INV-022).
+        // Uses `apply` (total constructor) so the codec accepts any wire-received string.
         given Schema[Template] = Schema.stringSchema.transform[Template](apply)(_.asString)
 
         given CanEqual[Template, Template] = CanEqual.derived

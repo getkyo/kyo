@@ -6,8 +6,8 @@ package kyo
   * Use the companion factory methods `text`, `image`, `audio`, `resource` to construct values.
   *
   * The on-wire discriminator key is `"type"` with values `"text"` / `"image"` / `"audio"` /
-  * `"resource"` / `"resource_link"` (INV-006). The `given Schema[McpContent]` hand-rolls the
-  * discriminator schema in `kyo/internal/McpContentSchema.scala`.
+  * `"resource"` / `"resource_link"`. The `given Schema[McpContent]` hand-rolls the discriminator
+  * schema in `kyo/internal/McpContentSchema.scala`.
   *
   * Optional record-typed fields (notably `annotations`) follow the noop pattern: the parameter
   * type is the concrete record and `Annotations.noop` is the default; the wire encoder omits
@@ -27,7 +27,7 @@ object McpContent:
 
     object Role:
 
-        // Wire strings: "user" | "assistant" | "system" (INV-010).
+        // Wire strings: "user" | "assistant" | "system".
         // capitalize maps lowercase wire string to Scala case name: "user" -> "User".
         given Schema[Role] = Schema.stringSchema.transform(s => Role.valueOf(s.capitalize))(
             _.toString.toLowerCase
@@ -61,9 +61,7 @@ object McpContent:
         annotations: Annotations = Annotations.noop
     ) extends McpContent
 
-    /** A link to a resource that the client can retrieve.
-      * INV-022: `uri` is typed `McpResourceUri`, not raw `String`.
-      */
+    /** A link to a resource that the client can retrieve. */
     final case class ResourceLink(
         uri: McpResourceUri,
         name: String,
@@ -104,7 +102,7 @@ object McpContent:
         EmbeddedResource(resource, annotations)
 
     // Hand-rolled discriminator ("type") schema. Implementation in kyo/internal/McpContentSchema.scala.
-    // Wire discriminator key: "type"; tags: "text" | "image" | "audio" | "resource" (INV-006).
+    // Wire discriminator key: "type"; tags: "text" | "image" | "audio" | "resource".
     given Schema[McpContent] = internal.McpContentSchema.contentSchema
 
 end McpContent

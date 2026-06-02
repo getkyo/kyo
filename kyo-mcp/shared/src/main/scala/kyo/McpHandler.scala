@@ -66,9 +66,9 @@ object McpHandler:
 
     /** Sealed union of MCP resource content types returned from `resources/read`.
       *
-      * Both leaves carry a typed `uri: McpResourceUri` field per INV-022 / Audit-A2.
-      * `mimeType` is the opaque `McpMimeType` so all media-type-carrying surface stays typed.
-      * Use the companion factory methods `text` and `blob` to construct values.
+      * Both leaves carry a typed `uri: McpResourceUri` field. `mimeType` is the opaque
+      * `McpMimeType` so all media-type-carrying surface stays typed. Use the companion factory
+      * methods `text` and `blob` to construct values.
       *
       * The `given Schema[ResourceContents]` hand-rolls a tagged-union schema discriminating on
       * `"type"` in `kyo/internal/McpContentSchema.scala`.
@@ -94,7 +94,7 @@ object McpHandler:
             Blob(uri, mimeType, blob)
 
         // Hand-rolled tagged-union schema. Implementation in kyo/internal/McpContentSchema.scala.
-        // Wire discriminator key: "type"; tags: "text" | "blob" (INV-006).
+        // Wire discriminator key: "type"; tags: "text" | "blob".
         given Schema[ResourceContents] = internal.McpContentSchema.resourceContentsSchema
 
     end ResourceContents
@@ -131,24 +131,20 @@ object McpHandler:
 
     /** The outcome of a `tools/call` request.
       *
-      * `structuredContent` is an INV-021 allowlist pass-through: the MCP spec defines
-      * `structuredContent` as an open JSON object for typed tool output (Audit-A9).
-      * `meta` is an INV-021 allowlist pass-through for the MCP spec `_meta` advisory field (§3.7).
+      * `structuredContent` carries typed tool output: the MCP spec defines it as an open JSON
+      * object, so the field is surfaced as `Maybe[Structure.Value]`. `meta` carries the optional
+      * `_meta` advisory field from the MCP spec (§3.7); same open-object treatment applies.
       */
     final case class ToolOutcome(
         content: Chunk[McpContent],
         isError: Boolean,
-        // flow-allow: Structure carve-out per §11a / INV-021
         structuredContent: Maybe[Structure.Value],
-        // flow-allow: Structure carve-out per §11a / INV-021
         meta: Maybe[Structure.Value] = Absent
     ) derives Schema, CanEqual
 
     // --- Resource -------------------------------------------------------------
 
-    /** Metadata returned by `McpClient.listResources`.
-      * INV-022: `uri` is typed `McpResourceUri`, not raw `String`.
-      */
+    /** Metadata returned by `McpClient.listResources`. */
     final case class ResourceMeta(
         uri: McpResourceUri,
         name: String,
@@ -160,9 +156,7 @@ object McpHandler:
         size: Maybe[Long] = Absent
     ) derives Schema, CanEqual
 
-    /** Metadata returned by `McpClient.listResourceTemplates`.
-      * INV-022: `uriTemplate` is typed `McpResourceUri.Template`, not raw `String`.
-      */
+    /** Metadata returned by `McpClient.listResourceTemplates`. */
     final case class ResourceTemplateMeta(
         uriTemplate: McpResourceUri.Template,
         name: String,
@@ -209,12 +203,12 @@ object McpHandler:
 
     /** The outcome of a `prompts/get` request.
       *
-      * `meta` is an INV-021 allowlist pass-through for the MCP spec `_meta` advisory field (§3.7).
+      * `meta` carries the optional `_meta` advisory field from the MCP spec (§3.7); the MCP spec
+      * leaves it as an open JSON object, so the field is surfaced as `Maybe[Structure.Value]`.
       */
     final case class PromptOutcome(
         description: Maybe[String],
         messages: Chunk[PromptMessage],
-        // flow-allow: Structure carve-out per §11a / INV-021
         meta: Maybe[Structure.Value] = Absent
     ) derives Schema, CanEqual
 
@@ -224,7 +218,7 @@ object McpHandler:
     // --- Completion -----------------------------------------------------------
 
     /** Identifies the target of a completion request.
-      * INV-022: `Resource.uri` is typed `McpResourceUri`.
+      *
       * The on-wire discriminator key is `"type"` with values `"ref/prompt"` and `"ref/resource"`.
       * The hand-rolled Schema lives in `kyo/internal/McpCompletionRefSchema.scala`.
       */
@@ -235,7 +229,7 @@ object McpHandler:
     object CompletionRef:
         given Schema[CompletionRef] = internal.McpCompletionRefSchema.schema
 
-    /** Named argument descriptor for a completion request (Audit-A8 / INV-026). */
+    /** Named argument descriptor for a completion request. */
     final case class CompletionArg(name: String, value: String) derives Schema, CanEqual
 
     object CompletionArg:
@@ -262,8 +256,8 @@ object McpHandler:
     /** Constructs a single-content tool handler.
       *
       * The handler returns a single `Out <: McpContent` leaf; the engine wraps it in a
-      * [[ToolOutcome]] with `content = Chunk(out)`. INV-020 distinguishes this from
-      * [[toolMulti]], which returns a full `ToolOutcome` directly.
+      * [[ToolOutcome]] with `content = Chunk(out)`. Use [[toolMulti]] when the handler needs to
+      * return a full `ToolOutcome` directly (multiple content leaves, structured content, etc.).
       *
       * Call sites annotate `[In]` and the compiler infers `[Out]` from the handler's return
       * type via clause interleaving.
@@ -277,9 +271,9 @@ object McpHandler:
     )[Out <: McpContent, E](
         handler: In => Out < (Async & Abort[McpException | JsonRpcResponse.Halt | E])
     )(using outSchema: Schema[Out], frame: Frame): McpHandler[In, Out, McpException | E] =
-        // `inline` so `Json.jsonSchema[In]` expands at the user's call site where `In` is concrete — otherwise
-        // `Structure.of[In]` is invoked against an abstract type parameter and yields an empty Product, leaving
-        // `inputSchema` without its properties/required fields on the wire.
+        // `inline` so `Json.jsonSchema[In]` expands at the user's call site where `In` is concrete.
+        // Without inline, `Structure.of[In]` is invoked against an abstract type parameter and yields
+        // an empty Product, leaving `inputSchema` without its properties/required fields on the wire.
         val meta = ToolMeta(
             name = name,
             description = if description.isEmpty then Absent else Present(description),
@@ -290,7 +284,7 @@ object McpHandler:
         new ToolHandler[In, Out, McpException | E](meta, inSchema, outSchema, handler, Chunk.empty)
     end tool
 
-    /** Constructs a multi-content tool handler that returns a full [[ToolOutcome]] directly. INV-020. */
+    /** Constructs a multi-content tool handler that returns a full [[ToolOutcome]] directly. */
     inline def toolMulti[In](
         name: String,
         description: String = "",
@@ -318,7 +312,7 @@ object McpHandler:
       * `uri` val from the surrounding scope if the body needs it in the produced `ResourceContents`.
       * For URI-template resources where the URI is dynamic per request, use [[resourceTemplate]].
       *
-      * @param subscribe when `true`, this resource opts into the subscription protocol (§3.4 / Q9).
+      * @param subscribe when `true`, this resource opts into the subscription protocol (§3.4).
       *                  The server advertises `resources.subscribe = true` when any resource handler
       *                  sets this flag. Clients may then call `subscribeResource` / `unsubscribeResource`.
       */

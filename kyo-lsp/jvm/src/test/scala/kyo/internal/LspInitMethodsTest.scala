@@ -2,14 +2,14 @@ package kyo.internal
 
 import kyo.*
 
-/** Verifies LspServer has exactly 10 init methods. INV-095.
+/** Verifies LspServer has exactly 10 init methods.
   *
   * The 10 methods are: init (x3) + initWith (x2) + initUnscoped (x3) + initUnscopedWith (x2).
   * This test reflects the LspServer companion and counts the matching overloads.
   */
 class LspInitMethodsTest extends Test:
 
-    "LspServer has exactly 10 init-family methods (INV-095)" in run {
+    "LspServer has exactly 10 init-family methods" in run {
         val companionMethods = classOf[LspServer.type].getMethods.toSeq
         val initMethods      = companionMethods.filter(m => m.getName.startsWith("init"))
         // Count by name.
@@ -25,7 +25,7 @@ class LspInitMethodsTest extends Test:
         assert(total == 10, s"Expected 10 init-family methods total, got $total")
     }
 
-    "Every LspServer init method name is in the allowed set (INV-095)" in run {
+    "Every LspServer init method name is in the allowed set" in run {
         val allowed          = Set("init", "initWith", "initUnscoped", "initUnscopedWith")
         val companionMethods = classOf[LspServer.type].getMethods.map(_.getName).toSet
         // Filter out Scala-generated default-parameter accessors (e.g. init$default$3).

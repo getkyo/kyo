@@ -7,9 +7,8 @@ import kyo.*
 
 final private[kyo] class UdsWireTransport(server: ServerSocketChannel) extends JsonRpcWireTransport:
 
-    // Single client-at-a-time MVP: the first accepted connection wires send/incoming;
-    // subsequent accepts are dropped. Multi-client requires a per-conn map, deferred to
-    // the consumer-module roadmap.
+    // Single client-at-a-time: the first accepted connection wires send/incoming;
+    // subsequent accepts are dropped. Multi-client support would require a per-connection map.
     // class construction is always wrapped in Sync.defer at the call site
     // (UdsBackend.connect), so Unsafe.init runs inside a deferred block.
     private val activeChannelRef: AtomicRef.Unsafe[Maybe[SocketChannel]] =

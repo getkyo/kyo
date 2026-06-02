@@ -5,13 +5,13 @@ import kyo.*
 /** Frozen handler index built once at `LspEngine.initServer` time.
   *
   * `LspCatalog.fromHandlers` partitions handlers by `LspHandler.Direction`, rejects wrong-direction
-  * registrations with `LspException.Dispatch.WrongDirection` (INV-006), rejects duplicate
-  * non-Custom Kinds with `LspException.Dispatch.DuplicateHandler` (INV-047), and rejects
-  * reserved-method `CustomHandler` registrations with `LspException.Dispatch.ReservedMethod`
-  * (INV-039, INV-082). No mutation is possible after construction.
+  * registrations with `LspException.Dispatch.WrongDirection`, rejects duplicate non-Custom Kinds
+  * with `LspException.Dispatch.DuplicateHandler`, and rejects reserved-method `CustomHandler`
+  * registrations with `LspException.Dispatch.ReservedMethod`. No mutation is possible after
+  * construction.
   *
   * `autoDeriveServerCapabilities` walks the registered Kinds and builds a `LspCapabilities.Server`
-  * matching the handler set when `config.declaredServerCapabilities` is `Absent` (INV-041).
+  * matching the handler set when `config.declaredServerCapabilities` is `Absent`.
   */
 final private[kyo] class LspCatalog private (val handlers: Seq[LspHandler[?, ?, ?]]):
 
@@ -34,8 +34,8 @@ final private[kyo] class LspCatalog private (val handlers: Seq[LspHandler[?, ?, 
 
     /** Auto-derives server capabilities from registered handler Kinds.
       *
-      * When `declaredServerCapabilities` is `Present`, returns it verbatim (INV-041).
-      * Otherwise walks registered Kinds and builds the capability tree.
+      * When `declaredServerCapabilities` is `Present`, returns it verbatim. Otherwise walks
+      * registered Kinds and builds the capability tree.
       */
     def autoDeriveServerCapabilities(config: LspConfig): LspCapabilities.Server =
         config.declaredServerCapabilities match
@@ -98,7 +98,7 @@ private[kyo] object LspCatalog:
         new LspCatalog(handlers)
     end fromHandlers
 
-    /** Derives `LspCapabilities.Server` from the set of registered Kinds (INV-041). */
+    /** Derives `LspCapabilities.Server` from the set of registered Kinds. */
     private[lsp] def deriveFromKinds(kinds: Set[LspHandler.Kind]): LspCapabilities.Server =
         val K  = LspHandler.Kind
         val H  = LspHandler

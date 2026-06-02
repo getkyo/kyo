@@ -71,7 +71,6 @@ object JsonRpcId:
                 case s: String => writer.string(s),
         readFn = reader =>
             if reader.isNil() then
-                // word in string literal describes the JSON absent-value type, not a reference
                 throw TypeMismatchException(Seq.empty, "number or string", "null")(using reader.frame)
             else
                 try JsonRpcId(reader.long())

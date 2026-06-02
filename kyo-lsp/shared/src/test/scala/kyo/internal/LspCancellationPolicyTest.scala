@@ -11,7 +11,7 @@ class LspCancellationPolicyTest extends Test:
             assert(LspCancellationPolicy.default.cancelMethod == "$/cancelRequest")
         }
 
-        "INV-031: expectReplyForCancelledRequest is true" in {
+        "expectReplyForCancelledRequest is true" in {
             assert(LspCancellationPolicy.default.expectReplyForCancelledRequest)
         }
 

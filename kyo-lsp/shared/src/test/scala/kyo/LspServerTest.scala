@@ -1,6 +1,6 @@
 package kyo
 
-/** Tests for LspServer init quartet, lifecycle, and accessor behaviour. INV-009, INV-028, INV-068, INV-095, INV-096. */
+/** Tests for LspServer init quartet, lifecycle, and accessor behaviour. */
 class LspServerTest extends Test:
 
     // =========================================================================
@@ -52,7 +52,7 @@ class LspServerTest extends Test:
     }
 
     // =========================================================================
-    // Scoped init quartet (INV-009)
+    // Scoped init quartet
     // =========================================================================
 
     "init (scoped) releases server when Scope exits" in run {
@@ -103,7 +103,7 @@ class LspServerTest extends Test:
     // Accessors before handshake
     // =========================================================================
 
-    "specVersion returns 3.17 before handshake (INV-036)" in run {
+    "specVersion returns 3.17 before handshake" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val ver = server.specVersion
@@ -167,7 +167,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "unsafe returns the Unsafe handle (opaque identity, INV-012)" in run {
+    "unsafe returns the Unsafe handle (opaque identity)" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val unsafe = server.unsafe
@@ -181,10 +181,10 @@ class LspServerTest extends Test:
     }
 
     // =========================================================================
-    // close / closeNow / awaitDrain (INV-068)
+    // close / closeNow / awaitDrain
     // =========================================================================
 
-    "close(using Frame) completes without error (30-second grace, INV-068)" in run {
+    "close(using Frame) completes without error (30-second grace)" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 server.close.andThen(succeed)
@@ -192,7 +192,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "closeNow completes without error (Duration.Zero grace, INV-068)" in run {
+    "closeNow completes without error (Duration.Zero grace)" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 server.closeNow.andThen(succeed)
@@ -217,10 +217,10 @@ class LspServerTest extends Test:
     }
 
     // =========================================================================
-    // LspConfig.require fires before transport (INV-096)
+    // LspConfig.require fires before transport
     // =========================================================================
 
-    "init aborts when positionEncodings is empty (INV-096)" in run {
+    "init aborts when positionEncodings is empty" in run {
         val badConfig = LspConfig.default.withPositionEncodings(Chunk.empty)
         val result    = scala.util.Try(LspConfig.require(badConfig))
         assert(result.isFailure)
@@ -228,10 +228,10 @@ class LspServerTest extends Test:
     }
 
     // =========================================================================
-    // Direction filtering at init time (INV-006)
+    // Direction filtering at init time
     // =========================================================================
 
-    "initUnscoped rejects a ClientHandled handler at init time (INV-006)" in run {
+    "initUnscoped rejects a ClientHandled handler at init time" in run {
         val wrongHandler = LspHandler.initNotification[LspHandler.ShowMessageParams, Nothing](
             "window/showMessage",
             LspHandler.Kind.ShowMessage,
@@ -247,7 +247,7 @@ class LspServerTest extends Test:
     }
 
     // =========================================================================
-    // Reverse-direction extension method types (INV-079)
+    // Reverse-direction extension method types
     // =========================================================================
 
     "showMessage return type is Unit < (Async & Abort[Closed])" in run {
@@ -300,7 +300,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "applyEdit return type compiles as ApplyWorkspaceEditResult < (Async & Abort[LspException | Closed]) (INV-079)" in run {
+    "applyEdit return type compiles as ApplyWorkspaceEditResult < (Async & Abort[LspException | Closed])" in run {
         // Compile-time type check only; the method signature must accept the return type annotation.
         // Not awaited: reverse-direction requests need a connected client peer.
         JsonRpcTransport.inMemory.map { (ta, _) =>
@@ -313,7 +313,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "showMessageRequest return type compiles as Maybe[MessageActionItem] < (Async & Abort[LspException | Closed]) (INV-079)" in run {
+    "showMessageRequest return type compiles as Maybe[MessageActionItem] < (Async & Abort[LspException | Closed])" in run {
         // Compile-time type check only; not awaited (needs a connected client peer).
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>

@@ -6,17 +6,17 @@ import scala.annotation.publicInBinary
 /** Hand-rolled Schemas for numeric-keyed and string-keyed LSP 3.17 enums, plus the
   * parameterized BooleanOr[T] and StringOr[T] discriminator schemas.
   *
-  * Numeric enums use `Schema.intSchema.transform` (INV-051). String enums use
-  * `Schema.stringSchema.transform` (INV-052). Every instance is a `val` singleton
-  * (INV-053 exception: BooleanOr / StringOr are `given [T: Schema]` because they
-  * are parameterized). None of these enums use `derives Schema`.
+  * Numeric enums use `Schema.intSchema.transform`. String enums use
+  * `Schema.stringSchema.transform`. Every instance is a `val` singleton (BooleanOr / StringOr
+  * are `given [T: Schema]` because they are parameterized). None of these enums use
+  * `derives Schema`.
   *
   * All numeric wire values are taken verbatim from the LSP 3.17 specification.
   * `TextDocumentSyncKind.None` is the only case with wire value 0.
   */
 private[kyo] object LspWireEnumSchemas:
 
-    // MARK: -- Numeric-keyed enum schemas (INV-051)
+    // MARK: -- Numeric-keyed enum schemas
 
     /** Schema[DocumentHighlightKind]: Text=1, Read=2, Write=3. */
     @publicInBinary val documentHighlightKindSchema: Schema[LspHandler.DocumentHighlightKind] =
@@ -237,7 +237,7 @@ private[kyo] object LspWireEnumSchemas:
             _.ordinal + 1
         )
 
-    // MARK: -- String-keyed enum schemas (INV-052)
+    // MARK: -- String-keyed enum schemas
 
     /** Schema[MarkupKind]: PlainText="plaintext", Markdown="markdown". */
     @publicInBinary val markupKindSchema: Schema[LspHandler.MarkupKind] =
@@ -387,7 +387,7 @@ private[kyo] object LspWireEnumSchemas:
                     case other =>
                         summon[Schema[T]].fromStructureValue(other).map(t => LspHandler.StringOr.Options(t))
 
-    // MARK: -- LspCapabilities.Name string schema (INV-052)
+    // MARK: -- LspCapabilities.Name string schema
 
     /** Schema[LspCapabilities.Name]: every case maps to its LSP 3.17 spec-canonical string. */
     @publicInBinary val lspCapabilityNameSchema: Schema[LspCapabilities.Name] =

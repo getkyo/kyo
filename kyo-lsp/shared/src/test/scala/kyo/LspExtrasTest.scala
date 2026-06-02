@@ -30,7 +30,7 @@ class LspExtrasTest extends Test:
         assert(info.title == Present("Server Display"))
     }
 
-    "LspConfig.SpecVersion is the literal string 3.17 (INV-036)" in run {
+    "LspConfig.SpecVersion is the literal string 3.17" in run {
         assert(LspConfig.SpecVersion == "3.17")
     }
 

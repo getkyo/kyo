@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: FR-008 — `Sync.defer { javaCallThatThrows() }` semantics.
+/** Integration test for `Sync.defer { javaCallThatThrows() }` semantics.
   *
   * Validates that an uncaught Java throwable inside `Sync.defer` propagates as a panic at the
   * dispatch boundary, surfacing on the wire as `JsonRpcInternalError` (-32603). The fix-pattern

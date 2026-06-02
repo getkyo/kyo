@@ -4,7 +4,7 @@ import kyo.*
 
 /** Composes all MCP engine components into a live `McpServer.Unsafe` instance.
   *
-  * Wiring order (Decision 10):
+  * Wiring order:
   *   1. Build `McpCatalog` from user handlers.
   *   2. Auto-derive or use declared `McpCapabilities.Server`.
   *   3. Build `McpHandshakeGate` and `McpCapabilityGate`; compose them.
@@ -28,7 +28,6 @@ private[kyo] object McpEngine:
         config: McpConfig
     )(using Frame): McpServer.Unsafe < Async =
         // AllowUnsafe: AtomicRef for post-handshake state shared across handler fibers.
-        // Pattern mirrors JsonRpcMessageGate.server.requireHandshake:77 and McpHandshakeGate.
         val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpConfig.ProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe
         val clientCapabilitiesRef = AtomicRef.Unsafe.init[Maybe[McpCapabilities.Client]](Absent)(using AllowUnsafe.embrace.danger).safe
         val clientInfoRef         = AtomicRef.Unsafe.init[Maybe[McpInfo]](Absent)(using AllowUnsafe.embrace.danger).safe

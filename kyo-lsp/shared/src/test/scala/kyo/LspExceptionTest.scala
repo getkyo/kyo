@@ -1,6 +1,6 @@
 package kyo
 
-/** Tests for the LspException sealed hierarchy (Phase 01).
+/** Tests for the LspException sealed hierarchy.
   *
   * Verifies the four stage bases and 22 concrete leaves are properly nested inside
   * `object LspException` and carry the correct JSON-RPC error codes.
@@ -177,7 +177,7 @@ class LspExceptionTest extends Test:
         assert(notInit.isInstanceOf[LspException.Handshake])
     }
 
-    "No ProtocolVersionMismatch leaf exists; only three Handshake leaves (RI-015)" in run {
+    "No ProtocolVersionMismatch leaf exists; only three Handshake leaves" in run {
         // LSP 3.17 has no runtime version handshake.
         // Verify the three Handshake leaves all exist and are accessible.
         val notInit     = LspException.Handshake.NotInitialized("test")
@@ -186,7 +186,7 @@ class LspExceptionTest extends Test:
         assert(notInit.isInstanceOf[LspException.Handshake])
         assert(alreadyInit.isInstanceOf[LspException.Handshake])
         assert(shutdown.isInstanceOf[LspException.Handshake])
-        // Verify distinct error codes (all three are the complete Handshake leaf set per INV-014).
+        // Verify distinct error codes (all three are the complete Handshake leaf set).
         assert(notInit.code == -32002)
         assert(alreadyInit.code == -32002)
         assert(shutdown.code == -32600)

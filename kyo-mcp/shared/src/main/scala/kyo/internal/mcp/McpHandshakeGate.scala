@@ -9,10 +9,10 @@ import kyo.*
   * notification must also arrive before general traffic is admitted.
   *
   * Extends the single-stage pattern in `JsonRpcMessageGate.server.requireHandshake` with a
-  * second `AtomicBoolean` flag for the initialized notification. INV-005.
+  * second `AtomicBoolean` flag for the initialized notification.
   *
   * Rejection responses are built per-request from the inbound envelope's id so the client
-  * receives a correctly correlated error response. (prep.md concern 1).
+  * receives a correctly correlated error response.
   */
 private[kyo] object McpHandshakeGate:
 
@@ -23,8 +23,6 @@ private[kyo] object McpHandshakeGate:
       */
     def server(order: McpConfig.HandshakeOrder): JsonRpcMessageGate =
         // AllowUnsafe: AtomicBoolean for thread-safe flags shared across handler fibers.
-        // Pattern mirrors JsonRpcMessageGate.server.requireHandshake at
-        // kyo-jsonrpc/.../JsonRpcMessageGate.scala:77.
         val initRequestSeen = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger).safe
         val initNotifSeen   = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger).safe
         new JsonRpcMessageGate:

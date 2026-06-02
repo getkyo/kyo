@@ -9,8 +9,6 @@ import kyo.*
   * Page size is 100 items per page. Because the catalog is immutable, offset-based cursors
   * are stable for the lifetime of the server instance.
   *
-  * Decision 3: cursor-as-decimal-offset pagination.
-  *
   * Dispatchers wrap each invocation of a user handler closure in `Mcp.local.let(Present(ctx))`
   * so the handler can reach the per-request context via `Mcp.*` accessors.
   *
@@ -40,17 +38,14 @@ private[kyo] object McpBuiltInRoutes:
     final private case class PromptsListResult(prompts: Chunk[McpHandler.PromptMeta], nextCursor: Maybe[String] = Absent) derives Schema
 
     // Wire shapes for tools/call dispatcher.
-    // flow-allow: Structure carve-out per §11a / INV-021
     final private case class ToolCallParams(
         name: String,
         arguments: Structure.Value = Structure.Value.Record(Chunk.empty),
-        // flow-allow: Structure carve-out per §11a / INV-021
         meta: Maybe[Structure.Value] = Absent
     ) derives Schema
     final private case class ToolCallResponse(
         content: Chunk[McpContent],
         isError: Boolean = false,
-        // flow-allow: Structure carve-out per §11a / INV-021
         structuredContent: Maybe[Structure.Value] = Absent
     ) derives Schema
 
@@ -81,7 +76,7 @@ private[kyo] object McpBuiltInRoutes:
         serverRef: AtomicRef[Maybe[McpServer.Unsafe]],
         method: String
     )(body: => A < S)(using Frame): A < S =
-        // AllowUnsafe: synchronous read of forward server reference (Decision 2 carryover).
+        // AllowUnsafe: synchronous read of forward server reference.
         serverRef.unsafe.get()(using AllowUnsafe.embrace.danger) match
             case Present(srv) =>
                 Mcp.local.let(Present(Mcp.RequestContext(jrCtx, srv.safe)))(body)

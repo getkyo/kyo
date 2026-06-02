@@ -21,7 +21,7 @@ class LspCatalogTest extends Test:
 
     "LspCatalogTest" - {
 
-        "INV-006: WrongDirection - ClientHandled handler on server init throws WrongDirection" in {
+        "ClientHandled handler on server init throws WrongDirection" in {
             val h = showMessageHandler
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
@@ -30,7 +30,7 @@ class LspCatalogTest extends Test:
             assert(result.failed.get.isInstanceOf[LspException.Dispatch.WrongDirection])
         }
 
-        "INV-006: Direction.Either handler is accepted on server" in {
+        "Direction.Either handler is accepted on server" in {
             val h = LspHandler.initNotification[Unit, Nothing]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
@@ -38,7 +38,7 @@ class LspCatalogTest extends Test:
             assert(result.isSuccess)
         }
 
-        "INV-006: Direction.Either handler is accepted on client" in {
+        "Direction.Either handler is accepted on client" in {
             val h = LspHandler.initNotification[Unit, Nothing]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ClientHandled)
@@ -46,7 +46,7 @@ class LspCatalogTest extends Test:
             assert(result.isSuccess)
         }
 
-        "INV-039/INV-082: Reserved method in CustomHandler throws ReservedMethod" in {
+        "Reserved method in CustomHandler throws ReservedMethod" in {
             val h = LspHandler.custom[Unit]("initialize")(_ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
@@ -55,7 +55,7 @@ class LspCatalogTest extends Test:
             assert(result.failed.get.isInstanceOf[LspException.Dispatch.ReservedMethod])
         }
 
-        "INV-039: All reserved method names are blocked" in {
+        "All reserved method names are blocked" in {
             val reserved = Seq("initialize", "initialized", "shutdown", "exit", "$/cancelRequest", "$/progress", "$/setTrace")
             reserved.foreach { name =>
                 val h = LspHandler.custom[Unit](name)(_ => ())
@@ -68,7 +68,7 @@ class LspCatalogTest extends Test:
             succeed
         }
 
-        "INV-047: Duplicate Kind (non-Custom) throws DuplicateHandler" in {
+        "Duplicate Kind (non-Custom) throws DuplicateHandler" in {
             val h1 = serverHandler(LspHandler.Kind.Completion, "textDocument/completion")
             val h2 = serverHandler(LspHandler.Kind.Completion, "textDocument/completion")
             val result = scala.util.Try(
@@ -78,7 +78,7 @@ class LspCatalogTest extends Test:
             assert(result.failed.get.isInstanceOf[LspException.Dispatch.DuplicateHandler])
         }
 
-        "INV-047: Duplicate Custom name throws DuplicateHandler" in {
+        "Duplicate Custom name throws DuplicateHandler" in {
             val h1 = LspHandler.custom[Unit]("vendor/foo")(_ => ())
             val h2 = LspHandler.custom[Unit]("vendor/foo")(_ => ())
             val result = scala.util.Try(
@@ -88,7 +88,7 @@ class LspCatalogTest extends Test:
             assert(result.failed.get.isInstanceOf[LspException.Dispatch.DuplicateHandler])
         }
 
-        "INV-041: Auto-derive capabilities when declaredServerCapabilities = Absent" in {
+        "Auto-derive capabilities when declaredServerCapabilities = Absent" in {
             val h1      = serverHandler(LspHandler.Kind.Completion, "textDocument/completion")
             val h2      = serverHandler(LspHandler.Kind.Definition, "textDocument/definition")
             val catalog = LspCatalog.fromHandlers(Seq(h1, h2), LspHandler.Direction.ServerHandled)
@@ -99,7 +99,7 @@ class LspCatalogTest extends Test:
             assert(!caps.hoverProvider.isDefined)
         }
 
-        "INV-041: Declared capabilities returned verbatim when Present" in {
+        "Declared capabilities returned verbatim when Present" in {
             val declared = LspCapabilities.Server.empty
             val config   = LspConfig.default.withDeclaredServerCapabilities(declared)
             val catalog  = LspCatalog.fromHandlers(Seq.empty, LspHandler.Direction.ServerHandled)

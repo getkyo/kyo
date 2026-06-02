@@ -211,8 +211,8 @@ class JsonRpcRouteTest extends JsonRpcTest:
         }
     }
 
-    // STEER-2: Halt short-circuit propagates the wrapped response instead of panicking.
-    "JsonRpcResponse.Halt aborts with the wrapped response directly (STEER-2)" in run {
+    // Halt short-circuit propagates the wrapped response instead of panicking.
+    "JsonRpcResponse.Halt aborts with the wrapped response directly" in run {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val id       = JsonRpcId(1L)
             val response = JsonRpcResponse.success(id, Structure.Value.Str("early"))

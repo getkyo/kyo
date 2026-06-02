@@ -23,7 +23,6 @@ object JsonRpcExtrasEncoder:
     def const(extras: Structure.Value): JsonRpcExtrasEncoder =
         (_: JsonRpcId) => Present(extras)
 
-    // opaque-type companion carve-out (FLOW Decision #30 (b))
     extension (self: JsonRpcExtrasEncoder)
         def resolve(id: JsonRpcId)(using Frame): Maybe[Structure.Value] < Sync = self(id)
 end JsonRpcExtrasEncoder

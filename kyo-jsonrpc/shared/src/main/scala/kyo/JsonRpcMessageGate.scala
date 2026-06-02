@@ -31,8 +31,7 @@ object JsonRpcMessageGate:
       *
       * [[Allow]]: forward the message to the registered handler.
       * [[Reject]]: send the supplied [[JsonRpcResponse]] back to the caller and skip the handler.
-      *   Gates that previously returned `Reject(error: JsonRpcError)` must now construct a full
-      *   response via [[JsonRpcResponse.failure]]:
+      *   Construct the response via [[JsonRpcResponse.failure]]:
       *   {{{
       *   Decision.Reject(JsonRpcResponse.failure(id, JsonRpcImplementationError(-32002, "Not ready")))
       *   }}}
@@ -98,8 +97,7 @@ object JsonRpcMessageGate:
       * Mirrors [[kyo.HttpFilter.client]] at kyo-http/shared/src/main/scala/kyo/HttpFilter.scala:324.
       */
     object client:
-        // Intentionally empty for now. Client-side gate use-cases are expected to be added in
-        // Phase G when outbound gating is introduced.
+        // Intentionally empty for now. Reserved for future client-side gate patterns.
     end client
 
 end JsonRpcMessageGate

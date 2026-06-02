@@ -4,18 +4,16 @@ import kyo.*
 
 /** Composes all LSP engine components into a live `LspServer.Unsafe` instance.
   *
-  * Wiring order (mirrors McpEngine.initServer):
+  * Wiring order:
   *   1. Build `LspCatalog` from user handlers (throws synchronously for direction/duplicate errors).
   *   2. Auto-derive or use declared `LspCapabilities.Server`.
   *   3. Create `LspDocumentRegistryImpl` with the initial encoding (UTF-16; updated after handshake).
-  *   4. Build gate chain (handshake -> shutdown -> capability) per INV-059.
-  *   5. Install LSP policies on `config.jsonRpc` (cancellation, progress, unknownMethod) per INV-030.
+  *   4. Build gate chain (handshake -> shutdown -> capability).
+  *   5. Install LSP policies on `config.jsonRpc` (cancellation, progress, unknownMethod).
   *   6. Build built-in routes (initialize, initialized, shutdown, exit, setTrace, sync routes).
   *   7. Lift user handlers via `LspHandlerLift.liftServer`.
   *   8. Call `JsonRpcHandler.initUnscoped` with all routes.
   *   9. Return the concrete `LspServer.Unsafe` anonymous implementation.
-  *
-  * Per INV-030, INV-031, INV-049, INV-059, INV-091.
   */
 private[kyo] object LspEngine:
 
@@ -64,7 +62,7 @@ private[kyo] object LspEngine:
         val capabilityGate = LspCapabilityGate.server(serverCaps, config.enforceCapabilities)
         val composedGate   = LspGate.compose(handshakeGate, shutdownGate, capabilityGate)
 
-        // --- Config with policies installed (INV-030) ---
+        // --- Config with policies installed ---
         val jsonRpcConfig = config.jsonRpc
             .cancellation(LspCancellationPolicy.default)
             .progress(LspProgressPolicy.default)

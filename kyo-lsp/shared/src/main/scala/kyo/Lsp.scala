@@ -20,7 +20,7 @@ package kyo
   * is added to the signature.
   *
   * [[DocumentRegistry]] is the public read-interface for the document registry. Only `get`,
-  * `version`, `listOpen`, `listOpenUris`, and `isOpen` are exposed; subscriptions are v1 deferred.
+  * `version`, `listOpen`, `listOpenUris`, and `isOpen` are exposed.
   */
 object Lsp:
 
@@ -246,11 +246,11 @@ end Lsp
   * Must live in the same source file as `Lsp` because `Lsp.DocumentRegistry` is a sealed trait.
   * Used exclusively by the internal engine; `private[kyo]` visibility prevents external construction.
   *
-  * Edge-case policies (INV-033 / RI-012): unknown-URI mutator calls are no-ops (log-and-skip);
+  * Edge-case policies: unknown-URI mutator calls are no-ops (log-and-skip);
   * duplicate didOpen is an overwrite. The encoding ref is read on every insert so the registry
-  * always stamps the post-handshake negotiated encoding.
+  * always stamps the negotiated session encoding.
   *
-  * Per INV-048 all mutators are `private[kyo]`.
+  * All mutators are `private[kyo]`.
   */
 final private[kyo] class LspDocumentRegistryImpl(
     encodingRef: AtomicRef[LspHandler.PositionEncodingKind]
@@ -282,11 +282,11 @@ final private[kyo] class LspDocumentRegistryImpl(
         mapRef.get.map(m => m.contains(uri))
 
     // =========================================================================
-    // Private[kyo] mutators (INV-048)
+    // Private[kyo] mutators
     // =========================================================================
 
-    /** Inserts a text document, stamping the current session encoding (INV-010 / INV-035).
-      * Duplicate didOpen (same URI) is treated as implicit re-open per RI-012 case d.
+    /** Inserts a text document, stamping the current session encoding.
+      * Duplicate didOpen (same URI) is treated as implicit re-open.
       */
     private[kyo] def insert(item: LspHandler.TextDocumentItem)(using Frame): Unit < Sync =
         val enc = currentEncoding
@@ -300,7 +300,7 @@ final private[kyo] class LspDocumentRegistryImpl(
         mapRef.updateAndGet(m => m.updated(doc.uri, doc)).andThen(())
     end insert
 
-    /** Applies incremental or full changes; silently skips if URI is unknown (RI-012 a/b/c). */
+    /** Applies incremental or full changes; silently skips if URI is unknown. */
     private[kyo] def applyChanges(
         uri: LspHandler.LspDocument.Uri,
         version: Int,
@@ -314,15 +314,15 @@ final private[kyo] class LspDocumentRegistryImpl(
         }.andThen(())
     end applyChanges
 
-    /** Marks as saved; no-op for unknown URI (RI-012 case e). */
+    /** Marks as saved; no-op for unknown URI. */
     private[kyo] def setSaved(uri: LspHandler.LspDocument.Uri)(using Frame): Unit < Sync =
         Sync.defer(())
 
-    /** Removes the document; no-op for unknown URI (RI-012 case e). */
+    /** Removes the document; no-op for unknown URI. */
     private[kyo] def remove(uri: LspHandler.LspDocument.Uri)(using Frame): Unit < Sync =
         mapRef.updateAndGet(m => m.removed(uri)).andThen(())
 
-    /** Inserts a notebook cell document with session encoding (INV-092). */
+    /** Inserts a notebook cell document with session encoding. */
     private[kyo] def insertNotebookCell(
         uri: LspHandler.LspDocument.Uri,
         languageId: String,

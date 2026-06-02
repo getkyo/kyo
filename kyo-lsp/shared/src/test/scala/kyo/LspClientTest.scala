@@ -2,10 +2,8 @@ package kyo
 
 /** Tests for LspClient init quartet, argument order, handshake correctness, and typed method surface.
   *
-  * INV-009: Scope-managed init is the default.
-  * INV-060: init argument order is (transport, clientInfo, capabilities, handlers*).
-  * INV-061: init performs the initialize/initialized handshake eagerly.
-  * INV-064: executeCommand[T] is typed-only.
+  * Covers scope-managed init defaulting, the (transport, clientInfo, capabilities, handlers*) argument
+  * order, eager initialize/initialized handshake, and the typed-only executeCommand[T] surface.
   */
 class LspClientTest extends Test:
 
@@ -13,7 +11,7 @@ class LspClientTest extends Test:
     private val clientCaps = LspCapabilities.Client.empty
 
     // =========================================================================
-    // Init quartet smoke tests (INV-009, INV-060)
+    // Init quartet smoke tests
     // =========================================================================
 
     "initUnscoped with no handlers requires a connected server to complete handshake" in run {
@@ -84,7 +82,7 @@ class LspClientTest extends Test:
         }
     }
 
-    "init (scoped) releases client when Scope exits (INV-009)" in run {
+    "init (scoped) releases client when Scope exits" in run {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 Abort.run[LspException](
@@ -145,10 +143,10 @@ class LspClientTest extends Test:
     }
 
     // =========================================================================
-    // Argument order locked per INV-060
+    // Argument order locked
     // =========================================================================
 
-    "init argument order is (transport, clientInfo, capabilities, handlers*) (INV-060)" in run {
+    "init argument order is (transport, clientInfo, capabilities, handlers*)" in run {
         // Compile-time check: the signature must accept arguments in this exact order.
         // If the order changes, this test fails to compile.
         JsonRpcTransport.inMemory.flatMap { (_, tb) =>
@@ -165,10 +163,10 @@ class LspClientTest extends Test:
     }
 
     // =========================================================================
-    // Eager handshake (INV-061)
+    // Eager handshake
     // =========================================================================
 
-    "serverCapabilities is Present immediately after init (INV-061)" in run {
+    "serverCapabilities is Present immediately after init" in run {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 Abort.run[LspException](LspClient.initUnscoped(tb, clientInfo, clientCaps)).flatMap {
@@ -186,7 +184,7 @@ class LspClientTest extends Test:
         }
     }
 
-    "serverInfo is Present immediately after init when server advertises info (INV-061)" in run {
+    "serverInfo is Present immediately after init when server advertises info" in run {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 Abort.run[LspException](LspClient.initUnscoped(tb, clientInfo, clientCaps)).flatMap {
@@ -205,7 +203,7 @@ class LspClientTest extends Test:
         }
     }
 
-    "positionEncoding defaults to UTF16 when server does not advertise encoding (INV-061)" in run {
+    "positionEncoding defaults to UTF16 when server does not advertise encoding" in run {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 Abort.run[LspException](LspClient.initUnscoped(tb, clientInfo, clientCaps)).flatMap {
@@ -223,7 +221,7 @@ class LspClientTest extends Test:
         }
     }
 
-    "specVersion returns 3.17 after handshake (INV-036, INV-061)" in run {
+    "specVersion returns 3.17 after handshake" in run {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 Abort.run[LspException](LspClient.initUnscoped(tb, clientInfo, clientCaps)).flatMap {
@@ -242,15 +240,14 @@ class LspClientTest extends Test:
     }
 
     // =========================================================================
-    // Typed-only executeCommand[T] (INV-064)
+    // Typed-only executeCommand[T]
     // =========================================================================
 
-    "executeCommand[T] is the only variant and is typed-only (INV-064)" in run {
+    "executeCommand[T] is the only variant and is typed-only" in run {
         // Compile-time check: the extension method exists with the typed signature.
         // The type parameter [T] proves it is typed-only; no untyped alias exists
         // because that would have a different name (executeCommandUntyped, etc.).
-        // If an executeCommandUntyped variant were added, the grep in INV-064 would
-        // catch it. Here we verify via the safe-tier extension call site.
+        // Here we verify via the safe-tier extension call site.
         case class TestOut(value: String) derives Schema
         val params = LspHandler.ExecuteCommandParams("test")
         // This compile-time annotation is the assertion: only one executeCommand variant exists.
@@ -259,7 +256,7 @@ class LspClientTest extends Test:
         assert(typedOnly != null, "executeCommand extension method must exist and be callable")
     }
 
-    "executeCommand[T] return type is Maybe[T] < (Async & Abort[LspException | Closed]) (INV-064)" in run {
+    "executeCommand[T] return type is Maybe[T] < (Async & Abort[LspException | Closed])" in run {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 Abort.run[LspException](LspClient.initUnscoped(tb, clientInfo, clientCaps)).flatMap {
@@ -299,7 +296,7 @@ class LspClientTest extends Test:
         }
     }
 
-    "unsafe accessor returns LspClient.Unsafe (INV-012, INV-069)" in run {
+    "unsafe accessor returns LspClient.Unsafe" in run {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 Abort.run[LspException](LspClient.initUnscoped(tb, clientInfo, clientCaps)).flatMap {
@@ -319,7 +316,7 @@ class LspClientTest extends Test:
     }
 
     // =========================================================================
-    // Close / closeNow / awaitDrain (INV-068)
+    // Close / closeNow / awaitDrain
     // =========================================================================
 
     "close(using Frame) completes without error" in run {
@@ -368,10 +365,10 @@ class LspClientTest extends Test:
     }
 
     // =========================================================================
-    // Direction filtering at init time (INV-006)
+    // Direction filtering at init time
     // =========================================================================
 
-    "initUnscoped rejects a ServerHandled handler at init time (INV-006)" in run {
+    "initUnscoped rejects a ServerHandled handler at init time" in run {
         // A server-handled handler (completion) passed to client init must throw WrongDirection.
         val serverHandler = LspHandler.TextDocument.completion { _ =>
             LspHandler.CompletionResult.Items(Chunk.empty)
@@ -386,7 +383,7 @@ class LspClientTest extends Test:
     }
 
     // =========================================================================
-    // Typed request effect rows (compile-time, INV-079)
+    // Typed request effect rows (compile-time)
     // =========================================================================
 
     "hover return type is Maybe[Hover] < (Async & Abort[LspException | Closed])" in run {

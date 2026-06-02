@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Verifies that no handler-mutation methods exist on LspServer. INV-042.
+/** Verifies that no handler-mutation methods exist on LspServer.
   *
   * The server catalog is frozen at init time. No add/remove/set handler methods must appear
   * on the LspServer extension surface. This test reflects LspServer companion methods and
@@ -12,13 +12,13 @@ class LspServerFrozenCatalogTest extends Test:
 
     private val mutationPattern = "(?i)(add|remove|set)(handler|route|catalog)".r
 
-    "LspServer companion has no add/remove/set handler methods (INV-042)" in run {
+    "LspServer companion has no add/remove/set handler methods" in run {
         val companionMethods = classOf[LspServer.type].getMethods.map(_.getName).toSet
         val mutations        = companionMethods.filter(name => mutationPattern.findFirstIn(name).isDefined)
         assert(mutations.isEmpty, s"Found mutation methods on LspServer: ${mutations.mkString(", ")}")
     }
 
-    "LspServer.Unsafe has no add/remove/set handler methods (INV-042)" in run {
+    "LspServer.Unsafe has no add/remove/set handler methods" in run {
         val unsafeMethods = classOf[LspServer.Unsafe].getMethods.map(_.getName).toSet
         val mutations     = unsafeMethods.filter(name => mutationPattern.findFirstIn(name).isDefined)
         assert(mutations.isEmpty, s"Found mutation methods on LspServer.Unsafe: ${mutations.mkString(", ")}")

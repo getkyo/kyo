@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: progress notifications travel the wire without error (T-019, INV-007).
+/** Integration test: progress notifications travel the wire without error.
   *
   * The unit-level monotonic flag is pinned by McpProgressMonotonicTest. This integration test
   * verifies that the full wire path (server-side tool handler emitting progress updates via
@@ -13,7 +13,7 @@ class McpProgressMonotonicityTest extends Test:
 
     case class WorkReq(n: Int) derives Schema, CanEqual
 
-    "progress notifications emitted from tool handler complete without error (T-019, INV-007)" in run {
+    "progress notifications emitted from tool handler complete without error" in run {
         // AllowUnsafe: AtomicInt.Unsafe.init for thread-safe invocation counter across fibers.
         val invocationCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
@@ -48,7 +48,7 @@ class McpProgressMonotonicityTest extends Test:
         }
     }
 
-    "McpProgressPolicy.default enforceMonotonic is pinned by McpProgressMonotonicTest (INV-007)" in run {
+    "progress policy monotonic flag verified at integration level" in run {
         // The unit-level pin of enforceMonotonic=true lives in McpProgressMonotonicTest.
         // This integration test verifies the wire-level behavior; no direct access to internals.
         succeed

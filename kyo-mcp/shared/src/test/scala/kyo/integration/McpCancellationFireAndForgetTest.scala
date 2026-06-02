@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: cancellation fire-and-forget (T-020, INV-007).
+/** Integration test: cancellation fire-and-forget.
   *
   * Verifies that interrupting a client-side in-flight tool call (which triggers
   * notifications/cancelled to the server) completes without hanging and that the
@@ -12,7 +12,7 @@ class McpCancellationFireAndForgetTest extends Test:
 
     case class SlowReq(n: Int) derives Schema, CanEqual
 
-    "interrupting in-flight tool call completes without error (T-020, INV-007)" in run {
+    "interrupting in-flight tool call completes without error" in run {
         // AllowUnsafe: AtomicBoolean used as a signal flag to detect when the handler has started.
         val handlerReady = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
@@ -41,7 +41,7 @@ class McpCancellationFireAndForgetTest extends Test:
         }
     }
 
-    "McpCancellationPolicy.default expectReplyForCancelledRequest is pinned by McpCancellationPolicyTest (INV-007)" in run {
+    "cancellation policy wire behavior verified at integration level" in run {
         // The unit-level pin of expectReplyForCancelledRequest=false lives in McpCancellationPolicyTest.
         // This integration test verifies the wire-level behavior; no direct access to internals.
         succeed

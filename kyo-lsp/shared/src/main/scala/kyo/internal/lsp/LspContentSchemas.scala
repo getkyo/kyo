@@ -6,9 +6,9 @@ import scala.annotation.publicInBinary
 
 /** Hand-rolled discriminator Schemas for LSP 3.17 sealed-union types.
   *
-  * Each val is a singleton per INV-053. The discriminator strategy varies per type and mirrors
-  * the LSP 3.17 wire format exactly (no extra `_type` wrapping). Precedent:
-  * `McpContentSchema` at kyo/internal/McpContentSchema.scala.
+  * Each val is a singleton. The discriminator strategy varies per type and mirrors the LSP 3.17
+  * wire format exactly (no extra `_type` wrapping). Precedent: `McpContentSchema` at
+  * kyo/internal/McpContentSchema.scala.
   *
   * Strategies used:
   *   - `TextDocumentContentChangeEvent`: field presence (`range` present -> Incremental, absent -> Full)

@@ -5,17 +5,13 @@ package kyo
   * `Server` is sent in the `initialize` response; `Client` is sent in the `initialize` request.
   * The `experimental` field in both records is typed as `Map[String, Structure.Value]` because
   * the MCP spec defines experimental capabilities as an open JSON object.
-  *
-  * INV-021 allowlist: `experimental: Map[String, Structure.Value]` on both `Server` and `Client`
-  * are documented pass-throughs per §11a.
   */
-// flow-allow: Structure carve-out per §11a / INV-021
 object McpCapabilities:
 
     /** Server capability advertisement sent in the `initialize` response.
       *
       * Fields default to `Absent`; the engine auto-derives from registered routes when
-      * `McpConfig.declaredCapabilities` is `Absent` (Q-004 / INV-019).
+      * `McpConfig.declaredCapabilities` is `Absent`.
       */
     final case class Server(
         tools: Maybe[ToolsCapability] = Absent,
@@ -23,7 +19,6 @@ object McpCapabilities:
         prompts: Maybe[PromptsCapability] = Absent,
         logging: Maybe[LoggingCapability] = Absent,
         completions: Maybe[CompletionsCapability] = Absent,
-        // flow-allow: Structure carve-out per §11a / INV-021
         experimental: Map[String, Structure.Value] = Map.empty
     ) derives Schema, CanEqual
 
@@ -32,7 +27,6 @@ object McpCapabilities:
         sampling: Maybe[SamplingCapability] = Absent,
         roots: Maybe[RootsCapability] = Absent,
         elicitation: Maybe[ElicitationCapability] = Absent,
-        // flow-allow: Structure carve-out per §11a / INV-021
         experimental: Map[String, Structure.Value] = Map.empty
     ) derives Schema, CanEqual
 
@@ -48,8 +42,8 @@ object McpCapabilities:
     /** Closed set of MCP capability names exchanged during handshake advertisement.
       *
       * Wire strings are lowercase Scala case-name spellings (`"tools"`, `"resources"`, `"prompts"`,
-      * `"sampling"`, `"roots"`, `"logging"`, `"completions"`, `"elicitation"`). Per Q-006 / INV-010
-      * the Schema is hand-rolled via `Schema.stringSchema.transform` (not `derives Schema`).
+      * `"sampling"`, `"roots"`, `"logging"`, `"completions"`, `"elicitation"`). The Schema is
+      * hand-rolled via `Schema.stringSchema.transform` (not `derives Schema`).
       *
       * Used by [[McpCapabilityNotAdvertisedException.requiredCapability]] and internal capability gating
       * so the public surface never carries a raw `String` for these closed-set values.
@@ -59,7 +53,6 @@ object McpCapabilities:
 
     object Name:
 
-        // Wire strings: lowercase Scala case-name spellings (Q-006 / INV-010).
         // capitalize maps the lowercase wire string to the Scala case name: "tools" -> "Tools".
         given Schema[Name] =
             Schema.stringSchema.transform(s => Name.valueOf(s.capitalize))(_.toString.toLowerCase)

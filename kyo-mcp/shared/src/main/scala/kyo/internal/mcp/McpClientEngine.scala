@@ -14,32 +14,32 @@ import kyo.*
   *   6. Return the concrete [[McpClient.Unsafe]] wrapping the live handler.
   *
   * The returned [[McpClient.Unsafe]] is safe to use immediately: all `AtomicRef` holders are
-  * populated before the instance is yielded (Decision 1, prep.md edge-case 1).
+  * populated before the instance is yielded.
   */
 private[kyo] object McpClientEngine:
 
     // Wire type for the notifications/initialized outbound notification.
-    // Empty case class encodes as {} per kyo-schema, matching MCP spec. (Decision 4)
+    // Empty case class encodes as {} per kyo-schema, matching MCP spec.
     final private case class InitializedParams() derives Schema
 
     // Wire type for client-to-server outbound notifications that carry no params.
     final private case class NotifyEmptyParams() derives Schema
 
-    // Wire types for tools/call request (Decision 5).
+    // Wire types for tools/call request.
     final private case class ToolCallRequest(name: String, arguments: Structure.Value) derives Schema
 
-    // Wire types for resources/read request (Decision 8).
+    // Wire types for resources/read request.
     final private case class ReadResourceRequest(uri: String) derives Schema
     final private case class ReadResourceResponse(contents: Chunk[McpHandler.ResourceContents]) derives Schema
 
-    // Wire types for prompts/get request (Decision 9).
+    // Wire types for prompts/get request.
     final private case class GetPromptRequest(name: String, arguments: Map[String, String] = Map.empty) derives Schema
 
-    // Wire type for logging/setLevel request (Decision 10).
+    // Wire type for logging/setLevel request.
     final private case class SetLogLevelRequest(level: String) derives Schema
     final private case class SetLogLevelResponse() derives Schema
 
-    // Wire types for list methods (Decision 7).
+    // Wire types for list methods.
     final private case class ListRequest(cursor: Maybe[String] = Absent) derives Schema
     final private case class ToolsListResponse(tools: Chunk[McpHandler.ToolMeta], nextCursor: Maybe[String] = Absent)
         derives Schema
@@ -52,7 +52,7 @@ private[kyo] object McpClientEngine:
     final private case class PromptsListResponse(prompts: Chunk[McpHandler.PromptMeta], nextCursor: Maybe[String] = Absent)
         derives Schema
 
-    // Wire types for completion/complete (Decision 11).
+    // Wire types for completion/complete.
     final private case class CompleteRequest(ref: McpHandler.CompletionRef, argument: McpHandler.CompletionArg) derives Schema
     final private case class CompleteResponse(completion: McpHandler.CompletionOutcome) derives Schema
 
@@ -82,7 +82,6 @@ private[kyo] object McpClientEngine:
         config: McpConfig
     )(using Frame): McpClient.Unsafe < (Async & Abort[McpException | Closed]) =
         // AllowUnsafe: three AtomicRef for negotiated state shared across handler fibers.
-        // Pattern mirrors McpEngine.scala AtomicRef usage (Phase 5 precedent).
         val serverCapabilitiesRef = AtomicRef.Unsafe.init[Maybe[McpCapabilities.Server]](Absent)(using AllowUnsafe.embrace.danger).safe
         val serverInfoRef         = AtomicRef.Unsafe.init[Maybe[McpInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
         val negotiatedVersionRef  = AtomicRef.Unsafe.init[Maybe[McpConfig.ProtocolVersion]](Absent)(using AllowUnsafe.embrace.danger).safe

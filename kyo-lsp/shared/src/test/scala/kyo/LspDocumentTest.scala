@@ -1,6 +1,6 @@
 package kyo
 
-/** Tests for LspHandler.LspDocument and LspDocument.Uri (Phase 01). */
+/** Tests for LspHandler.LspDocument and LspDocument.Uri. */
 class LspDocumentTest extends Test:
 
     import LspHandler.*

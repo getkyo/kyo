@@ -5,7 +5,7 @@ import kyo.*
 private[kyo] object RateLimitEngine:
 
     /** Wraps eff in meter.run if meter is Present, else passes through.
-      * Used for call/callWithProgress/callPartialResults only; notify bypasses (DESIGN §11, §20 invariant 4).
+      * Used for call/callWithProgress/callPartialResults only; notify bypasses the meter.
       *
       * Meter.run wraps eff via Sync.ensure(release())(eff). Sync.ensure fires cleanup inline only when eff
       * produces a pure value; if Abort.fail escapes eff, cleanup is deferred to IOTask termination. To ensure

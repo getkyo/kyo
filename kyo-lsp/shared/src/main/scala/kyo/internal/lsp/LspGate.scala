@@ -4,7 +4,7 @@ import kyo.*
 
 /** Composed LSP gate chain: handshake gate, shutdown gate, and capability gate.
   *
-  * Per INV-059 the three gates are always composed in fixed order:
+  * The three gates are always composed in fixed order:
   *   1. `LspHandshakeGate` - admits only `initialize` before the handshake completes.
   *   2. `LspShutdownGate` - admits only `exit` after `shutdown` is received.
   *   3. `LspCapabilityGate` - rejects methods whose capability is not advertised.
@@ -18,7 +18,7 @@ import kyo.*
   */
 private[kyo] object LspGate:
 
-    /** Composes three gates in the fixed INV-059 order: handshake -> shutdown -> capability. */
+    /** Composes three gates in the fixed order: handshake -> shutdown -> capability. */
     def compose(
         handshake: JsonRpcMessageGate,
         shutdown: JsonRpcMessageGate,
@@ -47,8 +47,6 @@ end LspGate
   * requests before `Initialized` are rejected with `LspException.Handshake.NotInitialized`.
   * Notifications (other than `initialized`) are admitted unconditionally to avoid breaking
   * the fire-and-forget notification contract.
-  *
-  * Per INV-057.
   */
 private[kyo] object LspHandshakeGate:
 
@@ -95,8 +93,6 @@ end LspHandshakeGate
   *
   * The `handlerRef` forward reference is populated after the engine constructs the
   * `JsonRpcHandler`; the shutdown gate stores it to trigger `handler.close`.
-  *
-  * Per INV-058.
   */
 private[kyo] object LspShutdownGate:
 
@@ -144,8 +140,6 @@ end LspShutdownGate
   *
   * Only applies when `LspConfig.enforceCapabilities = true`. Methods not covered by any standard
   * capability are always admitted (the gate does not know about custom extensions).
-  *
-  * Per INV-007.
   */
 private[kyo] object LspCapabilityGate:
 

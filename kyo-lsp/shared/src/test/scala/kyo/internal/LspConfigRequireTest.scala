@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Validates LspConfig.require cross-field constraint behaviour. INV-096.
+/** Validates LspConfig.require cross-field constraint behaviour.
   *
   * LspConfig.require must fire synchronously before any transport is touched. Invalid
   * configurations cause an IllegalArgumentException before the engine starts.
@@ -30,7 +30,7 @@ class LspConfigRequireTest extends Test:
     // Invalid configurations
     // =========================================================================
 
-    "require fails when positionEncodings is empty (INV-096)" in run {
+    "require fails when positionEncodings is empty" in run {
         val badConfig = LspConfig.default.withPositionEncodings(Chunk.empty)
         val result    = scala.util.Try(LspConfig.require(badConfig))
         assert(result.isFailure)
@@ -42,7 +42,7 @@ class LspConfigRequireTest extends Test:
     // require fires before transport in init
     // =========================================================================
 
-    "LspConfig.require fires before transport bytes are consumed (INV-096)" in run {
+    "LspConfig.require fires before transport bytes are consumed" in run {
         // Use an invalid config and confirm the error precedes any server init work.
         val badConfig = LspConfig.default.withPositionEncodings(Chunk.empty)
         // The require() call inside initUnscoped must throw before LspEngine.initServer is called.
@@ -51,11 +51,11 @@ class LspConfigRequireTest extends Test:
         assert(result.failed.get.getMessage.contains("positionEncodings"))
     }
 
-    "LspConfig.SpecVersion is 3.17 (INV-036)" in run {
+    "LspConfig.SpecVersion is 3.17" in run {
         assert(LspConfig.SpecVersion == "3.17")
     }
 
-    "LspConfig.default.enforceCapabilities is true (INV-087)" in run {
+    "LspConfig.default.enforceCapabilities is true" in run {
         assert(LspConfig.default.enforceCapabilities)
     }
 

@@ -7,14 +7,12 @@ import scala.annotation.publicInBinary
 /** Hand-rolled discriminator-key Schemas for `McpContent` and `McpHandler.ResourceContents`.
   *
   * Both schemas use the `"type"` field as the discriminator key. The `contentSchema` and
-  * `resourceContentsSchema` vals are singletons (INV-013): every `summon[Schema[McpContent]]`
+  * `resourceContentsSchema` vals are singletons: every `summon[Schema[McpContent]]`
   * resolves to the same reference.
   *
   * The `annotations` field uses the noop pattern: the wire encoder omits the field when the
   * runtime value equals `McpContent.Annotations.noop`. The wire decoder restores `noop` when
   * the field is absent on the incoming payload.
-  *
-  * Precedent: `Schema[JsonRpcError]` at kyo-jsonrpc/.../JsonRpcError.scala:63-116.
   */
 private[kyo] object McpContentSchema:
 

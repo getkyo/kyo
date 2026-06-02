@@ -7,7 +7,7 @@ class LspCapabilitiesTest extends Test:
     private def roundtrip[A: Schema](value: A): A = Json.decode[A](Json.encode(value)).getOrThrow
 
     // =========================================================================
-    // Type alias correctness (A7 fix)
+    // Type alias correctness
     // =========================================================================
 
     "type aliases" - {

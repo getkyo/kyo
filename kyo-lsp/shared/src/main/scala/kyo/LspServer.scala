@@ -7,11 +7,9 @@ package kyo
   * class `LspServer.Unsafe` with a safety wrapper; use the extension methods in the companion
   * for all interactions.
   *
-  * INV-012: `LspServer = LspServer.Unsafe` (opaque identity).
-  *
   * Reverse-direction request types (`ShowMessageParams`, `ApplyWorkspaceEditParams`, etc.)
-  * live inside `object LspHandler` per steering A5. This companion holds only the init quartet,
-  * extension methods, and the `Unsafe` abstract class.
+  * live inside `object LspHandler`. This companion holds only the init quartet, extension
+  * methods, and the `Unsafe` abstract class.
   *
   * @see [[LspServer.init]]
   * @see [[LspServer.initUnscoped]]
@@ -206,13 +204,13 @@ object LspServer:
         /** Waits for all in-flight requests to complete. */
         def awaitDrain(using Frame): Unit < Async = Sync.Unsafe.defer(self.awaitDrain.safe.get)
 
-        /** Closes the server gracefully with the default 30-second grace period. INV-068. */
+        /** Closes the server gracefully with the default 30-second grace period. */
         def close(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(30.seconds).safe.get)
 
         /** Closes the server gracefully with the specified grace period. */
         def close(gracePeriod: Duration)(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(gracePeriod).safe.get)
 
-        /** Closes the server immediately (Duration.Zero grace period). INV-068. */
+        /** Closes the server immediately (Duration.Zero grace period). */
         def closeNow(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(Duration.Zero).safe.get)
 
         /** The raw unsafe handle. */
@@ -228,7 +226,7 @@ object LspServer:
       *
       * All methods return `Fiber.Unsafe` (non-effect-typed futures). Bridge to safe tier
       * through the extension methods declared above. Concrete implementations are produced
-      * by the engine in Phase 06.
+      * by the engine.
       */
     abstract class Unsafe:
         def showMessage(params: LspHandler.ShowMessageParams)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]

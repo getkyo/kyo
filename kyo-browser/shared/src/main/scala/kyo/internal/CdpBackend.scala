@@ -520,7 +520,7 @@ private[kyo] object CdpBackend:
         dialogHandlers: AtomicRef[Dict[String, (Boolean, String)]],
         dialogQueue: Channel[(Boolean, String, Maybe[SessionId])],
         dialogRecorders: AtomicRef[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]]
-    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+    )(using Frame): JsonRpcRoute[?, ?, JsonRpcError] < Sync =
         Sync.defer(JsonRpcRoute.notification[JavascriptDialogOpeningParams](
             "Page.javascriptDialogOpening"
         ) { (params, ctx) =>
@@ -533,7 +533,7 @@ private[kyo] object CdpBackend:
       */
     private def buildFrameCreatedMethod(
         frameEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
-    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+    )(using Frame): JsonRpcRoute[?, ?, JsonRpcError] < Sync =
         Sync.defer(JsonRpcRoute.notification[ExecutionContextCreatedParams](
             "Runtime.executionContextCreated"
         ) { (params, ctx) =>
@@ -545,7 +545,7 @@ private[kyo] object CdpBackend:
     /** Runtime.executionContextDestroyed: typed params decoded, then dispatched via dispatchFrameEvent. */
     private def buildFrameDestroyedMethod(
         frameEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
-    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+    )(using Frame): JsonRpcRoute[?, ?, JsonRpcError] < Sync =
         Sync.defer(JsonRpcRoute.notification[ExecutionContextDestroyedParams](
             "Runtime.executionContextDestroyed"
         ) { (params, ctx) =>
@@ -557,7 +557,7 @@ private[kyo] object CdpBackend:
     /** Page.downloadWillBegin notification. */
     private def buildDownloadWillMethod(
         downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
-    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+    )(using Frame): JsonRpcRoute[?, ?, JsonRpcError] < Sync =
         Sync.defer(JsonRpcRoute.notification[PageDownload.DownloadWillBeginWire](
             "Page.downloadWillBegin"
         ) { (params, ctx) =>
@@ -568,7 +568,7 @@ private[kyo] object CdpBackend:
     /** Page.downloadProgress notification. */
     private def buildDownloadProgressMethod(
         downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
-    )(using Frame): JsonRpcRoute[?, ?, Nothing] < Sync =
+    )(using Frame): JsonRpcRoute[?, ?, JsonRpcError] < Sync =
         Sync.defer(JsonRpcRoute.notification[PageDownload.DownloadProgressWire](
             "Page.downloadProgress"
         ) { (params, ctx) =>

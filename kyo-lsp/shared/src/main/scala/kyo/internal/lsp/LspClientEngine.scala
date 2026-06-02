@@ -4,20 +4,17 @@ import kyo.*
 
 /** Composes all LSP engine components into a live `LspClient.Unsafe` instance.
   *
-  * Mirrors `LspEngine.initServer` but for the client side. Wiring order:
+  * Client-side composition. Wiring order:
   *   1. Build `LspCatalog` from user handlers (throws synchronously for direction/duplicate errors).
   *   2. Create `LspDocumentRegistryImpl` with initial UTF-16 encoding.
   *   3. Install LSP policies on `config.jsonRpc` (cancellation, progress, unknownMethod).
   *   4. Lift user (client-direction) handlers via `LspHandlerLift.liftClient`.
   *   5. Call `JsonRpcHandler.initUnscoped` with all routes.
-  *   6. Perform eager `initialize` / `initialized` handshake per INV-061.
+  *   6. Perform eager `initialize` / `initialized` handshake.
   *   7. Store negotiated server caps and encoding from `InitializeResult`.
   *   8. Return the concrete `LspClient.Unsafe` anonymous implementation.
   *
-  * Per INV-060 the argument order for all public variants is
-  * `(transport, clientInfo, capabilities, handlers)`.
-  *
-  * Per INV-030, INV-031, INV-061.
+  * The argument order for all public variants is `(transport, clientInfo, capabilities, handlers)`.
   */
 private[kyo] object LspClientEngine:
 
@@ -80,7 +77,7 @@ private[kyo] object LspClientEngine:
 
         JsonRpcHandler.initUnscoped(transport, userRoutes, jsonRpcConfig).map { handler =>
 
-            // Perform the eager initialize / initialized handshake (INV-061).
+            // Perform the eager initialize / initialized handshake.
             // Build params with the client's position encoding preferences.
             val clientEncodings: Chunk[LspHandler.PositionEncodingKind] =
                 capabilities.general.fold(Chunk.empty[LspHandler.PositionEncodingKind])(_.positionEncodings)
@@ -124,7 +121,7 @@ private[kyo] object LspClientEngine:
                     }
                     .andThen(handler.notify[EmptyParams]("initialized", EmptyParams()))
 
-            // Run the handshake. On failure, abort the client construction with the error (INV-061).
+            // Run the handshake. On failure, abort the client construction with the error.
             val handshakeRun: Unit < (Async & Abort[LspException]) =
                 handshakeEffect
                     .handle(Abort.recover[Closed] { _ =>

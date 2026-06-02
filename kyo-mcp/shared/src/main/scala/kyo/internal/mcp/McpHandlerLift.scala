@@ -45,7 +45,7 @@ private[kyo] object McpHandlerLift:
     // Reads the live server from the forward reference. Returns Absent before init completes (impossible
     // during a real dispatch because the engine writes the ref before any handler runs).
     private def readServer(serverRef: AtomicRef[Maybe[McpServer.Unsafe]]): Maybe[McpServer.Unsafe] =
-        // AllowUnsafe: synchronous read of forward server reference (Decision 2 carryover).
+        // AllowUnsafe: synchronous read of forward server reference.
         serverRef.unsafe.get()(using AllowUnsafe.embrace.danger)
 
     private def withCtx[A, S](

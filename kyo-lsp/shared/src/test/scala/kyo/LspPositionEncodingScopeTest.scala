@@ -1,13 +1,13 @@
 package kyo
 
-/** Tests that Lsp.DocumentRegistry does not expose a public encoding accessor (INV-035).
+/** Tests that Lsp.DocumentRegistry does not expose a public encoding accessor.
   *
   * The position encoding lives at session level via `Lsp.positionEncoding`, not per-document.
   * This test verifies the API shape is correct.
   */
 class LspPositionEncodingScopeTest extends Test:
 
-    "Lsp.DocumentRegistry compile-time API shape (INV-035)" in run {
+    "Lsp.DocumentRegistry compile-time API shape" in run {
         // Verify the DocumentRegistry API shape at compile time:
         // the trait must define get, version, listOpen, listOpenUris, isOpen
         // and must NOT define a public encoding accessor.
@@ -15,7 +15,7 @@ class LspPositionEncodingScopeTest extends Test:
         // fails to compile. If 'encoding' is added, it would pass (false negative)
         // since we can only use positive assertions here.
         //
-        // The negative check (no 'encoding') is enforced by INV-035 lint (grep over source)
+        // The negative check (no 'encoding') is enforced via source-level lint
         // and by the absence of an 'encoding' overload in the trait's explicit definition.
         def checkApiShape(r: Lsp.DocumentRegistry)(using Frame): Boolean < Sync =
             val uri = LspHandler.LspDocument.Uri.parse("file:///x.scala").get

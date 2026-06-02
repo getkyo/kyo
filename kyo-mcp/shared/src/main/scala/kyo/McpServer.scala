@@ -6,8 +6,6 @@ package kyo
   * Mirrors `JsonRpcHandler` at kyo-jsonrpc/.../JsonRpcHandler.scala:30 and
   * `HttpServer` at kyo-http/.../HttpServer.scala:37.
   *
-  * INV-012: `McpServer = McpServer.Unsafe` (opaque identity).
-  *
   * Reverse-direction request/response records (`SamplingRequest`, `SamplingResponse`,
   * `ElicitationRequest`, `ElicitationResponse`) and the `Root` record live inside this
   * companion because every consumer (`requestSampling`, `requestElicitation`, `requestRoots`)
@@ -22,9 +20,8 @@ object McpServer:
 
     /** Parameters for the `sampling/createMessage` reverse-direction request.
       *
-      * The `metadata` field is an INV-021 allowlist pass-through: the MCP spec defines
-      * `_meta` as an open JSON object, so the user receives it as `Structure.Value` rather
-      * than a typed shape.
+      * The `metadata` field carries the spec-defined open `_meta` JSON object, surfaced as
+      * `Maybe[Structure.Value]` rather than a typed shape.
       *
       * @param messages          the conversation turns to continue
       * @param modelPreferences  optional model selection hints and cost/speed/intelligence weights
@@ -33,9 +30,8 @@ object McpServer:
       * @param temperature       sampling temperature hint
       * @param maxTokens         maximum tokens for the sampled response
       * @param stopSequences     sequences that halt generation early
-      * @param metadata          spec-defined open `_meta` field (INV-021 allowlist pass-through per §11a)
+      * @param metadata          spec-defined open `_meta` field
       */
-    // flow-allow: Structure carve-out per §11a / INV-021
     final case class SamplingRequest(
         messages: Chunk[SamplingRequest.Message],
         modelPreferences: Maybe[SamplingRequest.ModelPreferences] = Absent,
@@ -44,7 +40,6 @@ object McpServer:
         temperature: Maybe[Double] = Absent,
         maxTokens: Int,
         stopSequences: Chunk[String] = Chunk.empty,
-        // flow-allow: Structure carve-out per §11a / INV-021
         metadata: Maybe[Structure.Value] = Absent
     ) derives Schema, CanEqual
 
@@ -69,7 +64,7 @@ object McpServer:
             case None, ThisServer, AllServers
 
         object IncludeContext:
-            // Wire strings use camelCase and do not match toString.toLowerCase (INV-010).
+            // Wire strings use camelCase and do not match toString.toLowerCase.
             // None is qualified as IncludeContext.None to avoid shadowing scala.None.
             given Schema[IncludeContext] = Schema.stringSchema.transform[IncludeContext] {
                 case "none"       => IncludeContext.None
@@ -87,7 +82,7 @@ object McpServer:
     /** Content type for `sampling/createMessage` request messages.
       *
       * A subset of [[McpContent]] restricted to Text, Image, and Audio only.
-      * EmbeddedResource and ResourceLink are excluded per §3.10 (Option A typed subset, Q2).
+      * EmbeddedResource and ResourceLink are excluded per MCP spec §3.10.
       * Use `toMcpContent` to convert to the broader [[McpContent]] type.
       */
     sealed trait SamplingContent derives CanEqual:
@@ -121,7 +116,6 @@ object McpServer:
         end Audio
 
         // Hand-rolled Schema using "type" discriminator for wire compatibility.
-        // flow-allow: Structure carve-out per §11a / INV-021 (hand-rolled Schema body)
         given Schema[SamplingContent] = internal.McpSamplingContentSchema.schema
 
     end SamplingContent
@@ -145,7 +139,7 @@ object McpServer:
         /** Typed stop reason for `sampling/createMessage` responses.
           *
           * Wire strings: `"endTurn"` | `"stopSequence"` | `"maxTokens"`.
-          * Unknown wire strings decode tolerantly to `EndTurn` per Q8 decision.
+          * Unknown wire strings decode tolerantly to `EndTurn`.
           */
         enum StopReason derives CanEqual:
             case EndTurn, StopSequence, MaxTokens
@@ -186,17 +180,14 @@ object McpServer:
 
     /** Result of the `elicitation/create` reverse-direction request.
       *
-      * The `content` field is an INV-021 allowlist pass-through: the MCP spec leaves the
-      * elicitation response payload as an open JSON object, so it is surfaced as
-      * `Maybe[Structure.Value]`.
+      * The MCP spec leaves the elicitation response payload as an open JSON object, so
+      * `content` is surfaced as `Maybe[Structure.Value]`.
       *
       * @param action  whether the user accepted, declined, or cancelled the elicitation
-      * @param content the user-supplied content when action is Accept (INV-021 allowlist per §11a)
+      * @param content the user-supplied content when action is Accept
       */
-    // flow-allow: Structure carve-out per §11a / INV-021
     final case class ElicitationResponse(
         action: ElicitationResponse.Action,
-        // flow-allow: Structure carve-out per §11a / INV-021
         content: Maybe[Structure.Value] = Absent
     ) derives Schema, CanEqual
 
@@ -207,7 +198,7 @@ object McpServer:
             case Accept, Decline, Cancel
 
         object Action:
-            // Wire strings: "accept" | "decline" | "cancel" (INV-010).
+            // Wire strings: "accept" | "decline" | "cancel".
             // capitalize maps lowercase wire string to Scala case name: "accept" -> "Accept".
             given Schema[Action] = Schema.stringSchema.transform(s => Action.valueOf(s.capitalize))(
                 _.toString.toLowerCase
@@ -218,8 +209,6 @@ object McpServer:
 
     /** A root entry returned by the client in response to a `roots/list` request.
       *
-      * INV-022: `uri` is typed `McpResourceUri`, not raw `String`, per Audit-A2.
-      *
       * @param uri  the root URI
       * @param name optional human-readable name for the root
       */
@@ -229,7 +218,6 @@ object McpServer:
       *
       * Wire strings are lowercase and match the Scala case name lowercase: `"debug"` | `"info"` |
       * `"notice"` | `"warning"` | `"error"` | `"critical"` | `"alert"` | `"emergency"`.
-      * Phase 3 replaces the Schema stub with `Schema.stringSchema.transform` per Q-006 / INV-010.
       * Do NOT add `Schema` to the `derives` clause.
       */
     enum LogLevel derives CanEqual:
@@ -237,7 +225,7 @@ object McpServer:
 
     object LogLevel:
 
-        // Wire strings: "debug"|"info"|"notice"|"warning"|"error"|"critical"|"alert"|"emergency" (INV-010).
+        // Wire strings: "debug"|"info"|"notice"|"warning"|"error"|"critical"|"alert"|"emergency".
         // capitalize maps lowercase wire string to Scala case name: "debug" -> "Debug".
         given Schema[LogLevel] = Schema.stringSchema.transform(s => LogLevel.valueOf(s.capitalize))(
             _.toString.toLowerCase
@@ -267,9 +255,7 @@ object McpServer:
         def notifyResourcesListChanged(using Frame): Unit < (Async & Abort[Closed]) =
             Sync.Unsafe.defer(self.notifyResourcesListChanged.safe.get)
 
-        /** Sends `notifications/resources/updated` for one URI.
-          * Audit-A2: `uri` is typed `McpResourceUri`, not raw `String`.
-          */
+        /** Sends `notifications/resources/updated` for one URI. */
         def notifyResourceUpdated(uri: McpResourceUri)(using Frame): Unit < (Async & Abort[Closed]) =
             Sync.Unsafe.defer(self.notifyResourceUpdated(uri).safe.get)
 
@@ -277,9 +263,7 @@ object McpServer:
         def notifyPromptsListChanged(using Frame): Unit < (Async & Abort[Closed]) =
             Sync.Unsafe.defer(self.notifyPromptsListChanged.safe.get)
 
-        /** Sends `notifications/message` (server-to-client structured log).
-          * Audit-C1: `using` clause order is `(Frame, Schema[T])` per CONTRIBUTING.md:349-351.
-          */
+        /** Sends `notifications/message` (server-to-client structured log). */
         def notifyLog[T](level: LogLevel, data: T, logger: Maybe[String] = Absent)(using
             Frame,
             Schema[T]
@@ -301,9 +285,7 @@ object McpServer:
         /** Awaits until all in-flight requests have drained. */
         def awaitDrain(using Frame): Unit < Async = Sync.Unsafe.defer(self.awaitDrain.safe.get)
 
-        /** Closes the server with a default 30-second grace period.
-          * Audit-B1: matches `HttpServer.close(using Frame)` at kyo-http/.../HttpServer.scala:56.
-          */
+        /** Closes the server with a default 30-second grace period. */
         def close(using Frame): Unit < Async = Sync.Unsafe.defer(self.close(30.seconds).safe.get)
 
         /** Closes the server with an explicit grace period. */

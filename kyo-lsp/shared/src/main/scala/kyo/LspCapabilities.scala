@@ -19,14 +19,14 @@ package kyo
   */
 object LspCapabilities:
 
-    /** Type alias resolving `LspCapabilities.Server` to the inner case class (A7 fix).
+    /** Type alias resolving `LspCapabilities.Server` to the inner case class.
       *
       * External code writes `LspCapabilities.Server` and gets the case class directly.
       * The inner `object Server` is still the namespace for all nested option records.
       */
     type Server = Server.Server
 
-    /** Type alias resolving `LspCapabilities.Client` to the inner case class (A7 fix).
+    /** Type alias resolving `LspCapabilities.Client` to the inner case class.
       *
       * External code writes `LspCapabilities.Client` and gets the case class directly.
       * The inner `object Client` is still the namespace for all nested option records.

@@ -4,8 +4,6 @@ import kyo.*
 
 /** Tests §3.8 MCP 2025-06-18: `client.ping` dispatches a `ping` request and the server handles
   * it by returning an empty response, confirming liveness.
-  *
-  * Pins acceptance criterion 5 of Phase 05 and INV-300.
   */
 class McpPingTest extends Test:
 

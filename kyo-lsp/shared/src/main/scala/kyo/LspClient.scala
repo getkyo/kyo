@@ -4,13 +4,13 @@ package kyo
   *
   * Obtain via `LspClient.init` (Scope-managed) or `LspClient.initUnscoped` (manual close).
   * The client eagerly performs the LSP `initialize` / `initialized` handshake during `init`
-  * before returning the handle (INV-061). The locked argument order for all `init` overloads is
-  * `(transport, clientInfo, capabilities, handlers*)` per INV-060.
+  * before returning the handle. The argument order for all `init` overloads is
+  * `(transport, clientInfo, capabilities, handlers*)`.
   *
-  * INV-012: `LspClient = LspClient.Unsafe` (opaque identity).
+  * `LspClient` is an opaque alias for `LspClient.Unsafe`.
   *
   * Typed methods for every server-handled request and notification are exposed as extension
-  * methods. The `executeCommand[T]` method is typed-only per INV-064: no untyped variant exists.
+  * methods. The `executeCommand[T]` method is typed-only; no untyped variant exists.
   * The `getConfiguration[T]` method is on `LspServer` (the server issues it to the client);
   * the client sends `workspace/executeCommand` to the server instead.
   *
@@ -388,7 +388,7 @@ object LspClient:
     /** The underlying unsafe implementation contract for the LSP client.
       *
       * All methods return `Fiber.Unsafe`. Bridge to safe tier through the extension methods
-      * declared above. Concrete implementations are produced by the engine in Phase 07.
+      * declared above. Concrete implementations are produced by the engine.
       */
     abstract class Unsafe:
         // textDocument requests

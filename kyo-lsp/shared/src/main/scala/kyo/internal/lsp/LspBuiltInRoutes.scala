@@ -4,21 +4,19 @@ import kyo.*
 
 /** Engine-owned `JsonRpcRoute` instances for the LSP lifecycle and text-document sync.
   *
-  * Built-in routes (registered ahead of user routes per INV-038):
+  * Built-in routes (registered ahead of user routes):
   *   - `initialize` + `initialized` handshake
   *   - `shutdown` + `exit` graceful teardown
   *   - `$/setTrace` trace level update
   *   - 5 textDocument sync routes that auto-feed `LspDocumentRegistryImpl` BEFORE invoking
-  *     the user-registered handler (if any), per INV-049
+  *     the user-registered handler (if any)
   *   - 4 notebookDocument sync routes that insert cell documents into the same registry
-  *     per INV-034 and INV-092
   *
-  * The initialize handler performs encoding negotiation per INV-010 / RI-014, populates the
-  * client-capabilities and client-info refs, and returns the server's `InitializeResult`
-  * with spec version "3.17" per INV-091.
+  * The initialize handler performs encoding negotiation, populates the client-capabilities
+  * and client-info refs, and returns the server's `InitializeResult` with spec version "3.17".
   *
-  * Sync edge-case policies per INV-033 / RI-012 live in `LspDocumentRegistryImpl` mutators;
-  * the routes here call those mutators unconditionally.
+  * Sync edge-case policies live in `LspDocumentRegistryImpl` mutators; the routes here call
+  * those mutators unconditionally.
   */
 private[kyo] object LspBuiltInRoutes:
 
@@ -109,7 +107,7 @@ private[kyo] object LspBuiltInRoutes:
             clientCapabilitiesRef.unsafe.set(Present(params.capabilities))(using AllowUnsafe.embrace.danger)
             clientInfoRef.unsafe.set(params.clientInfo)(using AllowUnsafe.embrace.danger)
             workspaceFoldersRef.unsafe.set(params.workspaceFolders)(using AllowUnsafe.embrace.danger)
-            // Return InitializeResult with spec version 3.17 embedded in serverInfo (INV-091).
+            // Return InitializeResult with spec version 3.17 embedded in serverInfo.
             val serverInfo = config.serverInfo.copy(version = LspConfig.SpecVersion)
             InitializeResult(capabilities = serverCaps, serverInfo = serverInfo)
         }
@@ -139,7 +137,7 @@ private[kyo] object LspBuiltInRoutes:
         }
 
     // =========================================================================
-    // textDocument sync routes (INV-049: registry update BEFORE user handler)
+    // textDocument sync routes (registry update BEFORE user handler)
     // =========================================================================
 
     def textDocumentDidOpen(
@@ -304,7 +302,7 @@ private[kyo] object LspBuiltInRoutes:
     end textDocumentWillSave
 
     // =========================================================================
-    // notebookDocument sync routes (INV-034, INV-092)
+    // notebookDocument sync routes
     // =========================================================================
 
     def notebookDocumentDidOpen(
@@ -332,8 +330,8 @@ private[kyo] object LspBuiltInRoutes:
         registry: LspDocumentRegistryImpl
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.notification[DidChangeNotebookParams]("notebookDocument/didChange") { (params, _) =>
-            // Process cell structural changes per INV-034 / RI-013.
-            // Silent log-and-skip for missing-doc cases per RI-012.
+            // Process cell structural changes.
+            // Silent log-and-skip for missing-doc cases.
             val cellChanges: Unit < Sync =
                 params.change.cells match
                     case Absent      => ()

@@ -4,17 +4,16 @@ import kyo.*
 
 /** Verifies that LspClient.Unsafe exposes all server-handled request and notification methods.
   *
-  * INV-063: For every Direction.ServerHandled request method (textDocument language features,
-  * workspace commands), there is a corresponding method on LspClient.Unsafe and a safe extension
-  * method on LspClient. Notification methods (didOpen/didChange/etc.) also have client-side senders.
-  * INV-028: Every safe extension method has an Unsafe mirror.
+  * For every server-handled request method (textDocument language features, workspace commands),
+  * there is a corresponding method on LspClient.Unsafe and a safe extension method on LspClient.
+  * Notification methods (didOpen/didChange/etc.) also have client-side senders.
   */
 class LspClientServerMethodsTest extends Test:
 
     private val unsafeMethods: Set[String] =
         classOf[LspClient.Unsafe].getDeclaredMethods.map(_.getName).toSet
 
-    // textDocument request methods (INV-063)
+    // textDocument request methods
 
     "Unsafe has completion" in run {
         assert(unsafeMethods.contains("completion"))
@@ -212,7 +211,7 @@ class LspClientServerMethodsTest extends Test:
         assert(unsafeMethods.contains("workspaceSymbol"))
     }
 
-    "Unsafe has executeCommand (typed-only, INV-064)" in run {
+    "Unsafe has executeCommand (typed-only)" in run {
         assert(unsafeMethods.contains("executeCommand"))
     }
 
@@ -270,9 +269,9 @@ class LspClientServerMethodsTest extends Test:
         assert(finalMethods.contains("safe"))
     }
 
-    // Verify no untyped executeCommand sibling exists (INV-064).
+    // Verify no untyped executeCommand sibling exists.
     // The typed [T] variant is the only one; no raw Structure.Value overload.
-    "executeCommand has no untyped sibling returning Structure.Value (INV-064)" in run {
+    "executeCommand has no untyped sibling returning Structure.Value" in run {
         val execMethods = classOf[LspClient.Unsafe].getDeclaredMethods.toSeq
             .filter(_.getName == "executeCommand")
         // All overloads of executeCommand must have a Schema type param (i.e. take Schema in context).

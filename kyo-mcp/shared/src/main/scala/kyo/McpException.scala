@@ -27,11 +27,9 @@ import kyo.*
   * @see [[McpExecutionException]]
   * @see [[McpApplicationException]]
   */
-// flow-allow: Structure carve-out per §11a / INV-021 (forwarded to JsonRpcApplicationError)
 sealed abstract class McpException(
     code: Int,
     message: Text,
-    // flow-allow: Structure carve-out per §11a / INV-021 (forwarded to JsonRpcApplicationError)
     data: Maybe[Structure.Value] = Absent,
     cause: Text | Throwable = ""
 )(using Frame)
@@ -75,7 +73,6 @@ sealed abstract class McpApplicationException(
     code: Int,
     message: Text,
     cause: Text | Throwable = "",
-    // flow-allow: Structure carve-out per §11a / INV-021 (forwarded to McpException)
     data: Maybe[Structure.Value] = Absent
 )(using Frame)
     extends McpException(code, message, data, cause)
@@ -347,7 +344,6 @@ case class McpPromptRenderException(name: String, reason: String, cause: Throwab
   * @param message the JSON-RPC error message from the wire response
   * @param data    the Schema-encoded `data` payload (Absent when the peer did not include one)
   */
-// flow-allow: Structure carve-out per §11a / INV-021 (passes wire data through to JsonRpcApplicationError)
 case class McpRemoteApplicationException(
     remoteCode: Int,
     remoteMessage: String,

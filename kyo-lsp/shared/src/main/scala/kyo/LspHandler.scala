@@ -24,8 +24,8 @@ import scala.annotation.nowarn
   * Domain-error mappings are added with `.error[E2](code, message)`, mirroring `JsonRpcRoute.error`.
   *
   * Every feature-specific LSP 3.17 ADT (Position, Range, Location, CompletionItem, CodeAction,
-  * Diagnostic, WorkspaceEdit, SemanticTokens, etc.) is nested inside `object LspHandler` per
-  * steering A5. Import `kyo.LspHandler.*` at the use site to bring all ADTs into scope.
+  * Diagnostic, WorkspaceEdit, SemanticTokens, etc.) is nested inside `object LspHandler`.
+  * Import `kyo.LspHandler.*` at the use site to bring all ADTs into scope.
   *
   * @tparam In  the request parameter type
   * @tparam Out the response payload type
@@ -379,7 +379,7 @@ object LspHandler:
     /** Parameters for the `$/progress` notification. The value type T is application-defined: servers emit work-done
       * progress shapes (WorkDoneProgressBegin, WorkDoneProgressReport, WorkDoneProgressEnd) and clients emit
       * partial-result chunks whose shape is specific to the originating request. The Schema constraint is enforced at
-      * factory and encode sites in Phase 05.
+      * factory and encode sites.
       */
     final case class ProgressParams[T](token: ProgressToken, value: T) derives CanEqual
 
@@ -2556,10 +2556,10 @@ object LspHandler:
 
     /** Namespaced factories for `$/X` bidirectional general LSP endpoints.
       *
-      * The engine ALWAYS handles `$/cancelRequest` and `$/progress` at the substrate level (per
-      * OPEN-2 / OPEN-7). Factories in this namespace register USER observers that run AFTER the
-      * engine's built-in handling, enabling logging and instrumentation. `$/setTrace` (server-side
-      * from client) and `$/logTrace` (client-side from server) are similarly user-registerable.
+      * The engine ALWAYS handles `$/cancelRequest` and `$/progress` at the substrate level.
+      * Factories in this namespace register USER observers that run AFTER the engine's built-in
+      * handling, enabling logging and instrumentation. `$/setTrace` (server-side from client)
+      * and `$/logTrace` (client-side from server) are similarly user-registerable.
       *
       * Engine-reserved methods (`initialize`, `shutdown`, `exit`, `initialized`) are NOT in this
       * namespace; they are engine-owned and never user-registerable.

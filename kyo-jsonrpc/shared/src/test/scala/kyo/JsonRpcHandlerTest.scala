@@ -693,8 +693,8 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    // STEER-1: .error[E2] wire-up - domain errors registered with .error produce the declared code and message on the wire.
-    "STEER-1: route .error[E2] maps domain error abort to declared wire code and message" in run {
+    // Domain errors registered with .error produce the declared code and message on the wire.
+    "route .error[E2] maps domain error abort to declared wire code and message" in run {
         // JsonRpcCustomError is the concrete catchall application error type.
         // We provide an explicit Schema[JsonRpcCustomError] by delegating to the Schema[JsonRpcError] since
         // JsonRpcCustomError extends JsonRpcError and the hand-rolled schema projects to (code, message, data).
@@ -703,7 +703,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         val originalError = JsonRpcCustomError(-31999, "original domain message")
 
         // Register a mapping: any JsonRpcCustomError abort is remapped to code -32099 with message "My error".
-        // The engine uses ErrorMapping.matches() to detect the abort type at runtime (STEER-1).
+        // The engine uses ErrorMapping.matches() to detect the abort type at runtime.
         val route = JsonRpcRoute.request[AddReq, AddResp]("failWith") { (_, _) =>
             Abort.fail(originalError)
         }.error[JsonRpcCustomError](-32099, "My error")
@@ -720,8 +720,8 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    // STEER-2: JsonRpcResponse.Halt short-circuit - the wire response IS the wrapped response.
-    "STEER-2: handler Abort.fail(JsonRpcResponse.halt(resp)) sends resp directly over the wire" in run {
+    // JsonRpcResponse.Halt short-circuit: the wire response IS the wrapped response.
+    "handler Abort.fail(JsonRpcResponse.halt(resp)) sends resp directly over the wire" in run {
         val haltError = JsonRpcCustomError(-32777, "short-circuited")
         val route = JsonRpcRoute.request[AddReq, AddResp]("haltMethod") { (_, ctx) =>
             ctx.requestId match

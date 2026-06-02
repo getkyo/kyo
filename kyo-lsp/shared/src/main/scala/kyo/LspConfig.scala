@@ -54,7 +54,7 @@ final case class LspConfig(
       *
       * The value is encoded via `Json.encode[X]` into a wire-level JSON string stored in
       * `_rawExperimental`. The engine reads it back via `Lsp.serverExperimentalCapabilities[X]`
-      * which decodes with `Json.decode[X]`. Per INV-055.
+      * which decodes with `Json.decode[X]`.
       */
     def experimentalServerCapabilities[X](x: X)(using Schema[X], Frame): LspConfig =
         copy(_rawExperimental = Present(Json.encode(x)))
@@ -63,15 +63,15 @@ end LspConfig
 
 object LspConfig:
 
-    /** The LSP specification version implemented by this library. INV-036. */
+    /** The LSP specification version implemented by this library. */
     val SpecVersion: String = "3.17"
 
     /** JSON-RPC handler config used by `default`.
       *
       * The three LSP-specific policy slots (cancellation, progress, unknownMethod) are
-      * installed by the engine (Phase 05) after this default is constructed. The gate slot
-      * is also set by the engine after computing or reading the capability tree. This value
-      * provides a safe baseline; overriding `jsonRpc` directly is an escape hatch.
+      * installed by the engine after this default is constructed. The gate slot is also set
+      * by the engine after computing or reading the capability tree. This value provides a
+      * safe baseline; overriding `jsonRpc` directly is an escape hatch.
       */
     val defaultJsonRpcConfig: JsonRpcHandler.Config = JsonRpcHandler.Config.default
 
@@ -79,7 +79,7 @@ object LspConfig:
       *
       * - positionEncodings: UTF-16 only (matches LSP 3.17 default)
       * - documentSync: Incremental
-      * - enforceCapabilities: true (INV-087)
+      * - enforceCapabilities: true
       * - All other optional fields: Absent / empty
       */
     val default: LspConfig = LspConfig()
@@ -94,8 +94,6 @@ object LspConfig:
       * Cross-field semantic validations (e.g. onTypeFormattingTriggers required when the
       * corresponding handler is registered) are performed by the engine catalog at init time,
       * not here.
-      *
-      * INV-096.
       */
     def require(c: LspConfig): Unit =
         if c.positionEncodings.isEmpty then

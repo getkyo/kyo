@@ -4,7 +4,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import kyo.Maybe.Absent
 
-/** Tests for [[JsonRpcTransport.contentLengthStdio]] (INV-070).
+/** Tests for [[JsonRpcTransport.contentLengthStdio]].
   *
   * Uses `ByteArrayInputStream` for reading (pre-built frames) and `ByteArrayOutputStream`
   * for capturing output. This avoids blocking I/O on a piped stream from a single fiber

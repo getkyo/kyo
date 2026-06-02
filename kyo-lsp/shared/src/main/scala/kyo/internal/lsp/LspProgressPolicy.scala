@@ -15,8 +15,6 @@ import kyo.*
   *
   * `enforceMonotonic = false` because the LSP spec does not mandate monotonically increasing
   * percentage values.
-  *
-  * Per INV-030 and INV-032.
   */
 private[kyo] object LspProgressPolicy:
 

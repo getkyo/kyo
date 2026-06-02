@@ -1,6 +1,6 @@
 package kyo
 
-/** Tests for BooleanOr[T] and StringOr[T] parameterized schemas (INV-050).
+/** Tests for BooleanOr[T] and StringOr[T] parameterized schemas.
   *
   * Verifies that boolean JSON nodes decode to Bool(v), object JSON nodes decode to Options(T),
   * and that round-trips preserve value identity. Also confirms the fromStructureValue path

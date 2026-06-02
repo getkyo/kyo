@@ -18,8 +18,9 @@ object Confirm extends KyoApp:
     case class DestructiveOp(target: String) derives Schema, CanEqual
 
     /** Response schema the host renders the elicitation form for. A real schema (with at least one
-      * property) is required by spec-compliant hosts ; the earlier `Json.JsonSchema.from[Unit]` emitted
-      * an empty-property object that Claude Code rejected as `requestedSchema.properties: undefined`.
+      * property) is required by spec-compliant hosts; `Json.JsonSchema.from[Unit]` would emit an
+      * empty-property object, which hosts such as Claude Code reject as
+      * `requestedSchema.properties: undefined`.
       */
     case class ConfirmResponse(confirm: Boolean) derives Schema, CanEqual
 

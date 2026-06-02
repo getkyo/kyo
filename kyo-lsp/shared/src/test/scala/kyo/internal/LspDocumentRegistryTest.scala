@@ -20,7 +20,7 @@ class LspDocumentRegistryTest extends Test:
 
     "LspDocumentRegistryTest" - {
 
-        "INV-035: insert stamps session encoding on document" in run {
+        "insert stamps session encoding on document" in run {
             val reg = mkRegistry(LspHandler.PositionEncodingKind.UTF8)
             reg.insert(item("file:///a.txt")).flatMap { _ =>
                 reg.get(uri("file:///a.txt")).map {
@@ -45,7 +45,7 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "INV-033 case a: applyChanges for unknown URI is a no-op" in run {
+        "applyChanges for unknown URI is a no-op" in run {
             val reg = mkRegistry()
             reg.applyChanges(
                 uri("file:///unknown.txt"),
@@ -59,7 +59,7 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "INV-033 case d: duplicate didOpen (same URI) replaces document" in run {
+        "duplicate didOpen (same URI) replaces document" in run {
             val reg = mkRegistry()
             reg.insert(item("file:///c.txt", "original")).flatMap { _ =>
                 reg.insert(item("file:///c.txt", "re-opened")).flatMap { _ =>
@@ -92,7 +92,7 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "INV-033 case e: remove for unknown URI is a no-op" in run {
+        "remove for unknown URI is a no-op" in run {
             val reg = mkRegistry()
             reg.remove(uri("file:///nonexistent.txt")).flatMap { _ =>
                 reg.get(uri("file:///nonexistent.txt")).map {
@@ -148,7 +148,7 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "INV-092: insertNotebookCell stamps session encoding" in run {
+        "insertNotebookCell stamps session encoding" in run {
             val reg = mkRegistry(LspHandler.PositionEncodingKind.UTF8)
             reg.insertNotebookCell(uri("file:///cell1.py"), "python", "print('hello')", 1).flatMap { _ =>
                 reg.get(uri("file:///cell1.py")).map {

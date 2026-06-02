@@ -8,7 +8,6 @@ import scala.annotation.publicInBinary
   *
   * Uses the `"type"` field as the discriminator with values `"text"` | `"image"` | `"audio"`.
   * EmbeddedResource and ResourceLink are not valid sampling content per MCP §3.10.
-  * Follows the [[McpContentSchema]] precedent for hand-rolled tagged-union schemas.
   */
 private[kyo] object McpSamplingContentSchema:
 

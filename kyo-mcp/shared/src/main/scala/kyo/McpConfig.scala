@@ -8,7 +8,7 @@ package kyo
   *
   * The `jsonRpc` field is pre-populated by `McpConfig.defaultJsonRpcConfig` with MCP-specific policy
   * adapters for cancellation, progress, and unknown-method handling. The capability gate slot is left
-  * `Absent` here; `McpEngine.initServer` (Phase 5) sets it after computing the server's advertised
+  * `Absent` here; the engine sets it during `initServer` after computing the server's advertised
   * capabilities from registered routes.
   *
   * @param serverInfo                 identification advertised in the `initialize` response
@@ -63,7 +63,7 @@ object McpConfig:
       *
       * Users construct values via `parse`, which validates the version against the supported set.
       * The engine uses `fromWire` (private[kyo]) to decode versions without validation during
-      * the handshake response path. No public `apply` exists per INV-025 / Audit-A5.
+      * the handshake response path. No public `apply` exists.
       *
       * @see [[McpConfig.ProtocolVersion.parse]]
       * @see [[McpConfig.ProtocolVersion.supported]]
@@ -94,7 +94,6 @@ object McpConfig:
 
         // Uses `fromWire` (private[kyo] total constructor) so the codec accepts any wire-received string.
         // Client-side validation (supported set check) happens at the handshake gate, not at the codec.
-        // Note: design/02-design.md:993 used `imap` which does not exist on Schema; `transform` is correct.
         given Schema[ProtocolVersion] = Schema.stringSchema.transform[ProtocolVersion](fromWire)(_.asString)
 
         given CanEqual[ProtocolVersion, ProtocolVersion] = CanEqual.derived
@@ -103,13 +102,13 @@ object McpConfig:
 
     /** JSON-RPC handler config used by `default`.
       *
-      * Populates three MCP-specific policy slots (INV-002):
+      * Populates three MCP-specific policy slots:
       *   - `cancellation`: MCP `notifications/cancelled` cancellation protocol
-      *   - `progress`: MCP `notifications/progress` with `_meta.progressToken` extraction (INV-007)
-      *   - `unknownMethod`: strict preset (reject unknown notifications) per Q-016
+      *   - `progress`: MCP `notifications/progress` with `_meta.progressToken` extraction
+      *   - `unknownMethod`: strict preset (reject unknown notifications)
       *
-      * The `gate` slot is `Absent` here. `McpEngine.initServer` (Phase 5) sets it after computing
-      * the server's advertised capabilities from registered routes or `McpConfig.declaredCapabilities`.
+      * The `gate` slot is `Absent` here. `McpEngine.initServer` sets it after computing the server's
+      * advertised capabilities from registered routes or `McpConfig.declaredCapabilities`.
       *
       * Declared before `default` to avoid Scala object initialization order issues: `default` uses
       * `McpConfig.defaultJsonRpcConfig` as a default parameter value, which must be initialized first.

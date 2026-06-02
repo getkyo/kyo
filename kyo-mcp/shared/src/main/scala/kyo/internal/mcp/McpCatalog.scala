@@ -5,10 +5,10 @@ import kyo.*
 /** Frozen snapshot of user-registered handlers built once at `McpServer.init` time.
   *
   * Partitions handlers by `McpHandler.Kind` for engine dispatch and for the built-in
-  * list endpoints. No mutation is possible after construction (INV-018).
+  * list endpoints. No mutation is possible after construction.
   *
   * Auto-derives `McpCapabilities.Server` when `McpConfig.declaredCapabilities` is
-  * `Absent`, using registered handler counts and `config.autoNotifyListChanged` (INV-019).
+  * `Absent`, using registered handler counts and `config.autoNotifyListChanged`.
   */
 final private[kyo] class McpCatalog(val handlers: Seq[McpHandler[?, ?, ?]]):
 
@@ -25,7 +25,7 @@ final private[kyo] class McpCatalog(val handlers: Seq[McpHandler[?, ?, ?]]):
     val promptHandlers: Seq[McpHandler[?, ?, ?]] =
         handlers.filter(_.kind == McpHandler.Kind.Prompt)
 
-    // Completion handlers use Kind.Custom per Decision 13.
+    // Completion handlers are carried as Kind.Custom; collect them by type.
     val completionHandlers: Seq[McpHandler[?, ?, ?]] =
         handlers.collect { case h: McpHandler.CompletionHandler[?] => h }
 
@@ -56,7 +56,7 @@ final private[kyo] class McpCatalog(val handlers: Seq[McpHandler[?, ?, ?]]):
 
     /** Auto-derives `McpCapabilities.Server` from registered handlers and `config`.
       *
-      * When `config.declaredCapabilities` is `Present(c)`, returns `c` verbatim (INV-019).
+      * When `config.declaredCapabilities` is `Present(c)`, returns `c` verbatim.
       * Otherwise derives from registered handler kinds and `config.autoNotifyListChanged`.
       */
     def autoDeriveServerCapabilities(config: McpConfig): McpCapabilities.Server =

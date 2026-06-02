@@ -588,7 +588,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         }
     }
 
-    "cancel notification carries extras from original call (C1 extras propagation)" in run {
+    "cancel notification carries extras from original call" in run {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val echoOnB = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
@@ -635,7 +635,6 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     }
 
     "cancel-during-encode race: encoded request still sent but caller observes abort immediately" in run {
-        // Test 64 (H2 cancel-during-encode race):
         // The idSignal fires inside the encode callback. endpoint.cancel can find callerRegistry[id]
         // while encoding is still in progress (e.g. if we slow down the transport.send step).
         // The caller should observe Abort.fail(cancelled) via the abortSignal race.

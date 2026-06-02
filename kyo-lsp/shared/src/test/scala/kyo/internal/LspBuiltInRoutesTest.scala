@@ -21,31 +21,31 @@ class LspBuiltInRoutesTest extends Test:
 
     "LspBuiltInRoutesTest" - {
 
-        "INV-049: textDocumentDidOpen route is named textDocument/didOpen" in {
+        "textDocumentDidOpen route is named textDocument/didOpen" in {
             val registry = new LspDocumentRegistryImpl(encRef())
             val route    = LspBuiltInRoutes.textDocumentDidOpen(registry, Absent, noServerRef, encRef())
             assert(route.name == "textDocument/didOpen")
         }
 
-        "INV-049: textDocumentDidChange route is named textDocument/didChange" in {
+        "textDocumentDidChange route is named textDocument/didChange" in {
             val registry = new LspDocumentRegistryImpl(encRef())
             val route    = LspBuiltInRoutes.textDocumentDidChange(registry, Absent, noServerRef, encRef())
             assert(route.name == "textDocument/didChange")
         }
 
-        "INV-049: textDocumentDidSave route is named textDocument/didSave" in {
+        "textDocumentDidSave route is named textDocument/didSave" in {
             val registry = new LspDocumentRegistryImpl(encRef())
             val route    = LspBuiltInRoutes.textDocumentDidSave(registry, Absent, noServerRef, encRef())
             assert(route.name == "textDocument/didSave")
         }
 
-        "INV-049: textDocumentDidClose route is named textDocument/didClose" in {
+        "textDocumentDidClose route is named textDocument/didClose" in {
             val registry = new LspDocumentRegistryImpl(encRef())
             val route    = LspBuiltInRoutes.textDocumentDidClose(registry, Absent, noServerRef, encRef())
             assert(route.name == "textDocument/didClose")
         }
 
-        "INV-049: textDocumentWillSave route is named textDocument/willSave" in {
+        "textDocumentWillSave route is named textDocument/willSave" in {
             val registry = new LspDocumentRegistryImpl(encRef())
             val route    = LspBuiltInRoutes.textDocumentWillSave(Absent, noServerRef, registry, encRef())
             assert(route.name == "textDocument/willSave")
@@ -83,25 +83,25 @@ class LspBuiltInRoutesTest extends Test:
             assert(route.name == "$/setTrace")
         }
 
-        "INV-034: notebookDocument/didOpen route is named correctly" in {
+        "notebookDocument/didOpen route is named correctly" in {
             val registry = new LspDocumentRegistryImpl(encRef())
             val route    = LspBuiltInRoutes.notebookDocumentDidOpen(registry, Absent, noServerRef, encRef())
             assert(route.name == "notebookDocument/didOpen")
         }
 
-        "INV-034: notebookDocument/didClose route is named correctly" in {
+        "notebookDocument/didClose route is named correctly" in {
             val registry = new LspDocumentRegistryImpl(encRef())
             val route    = LspBuiltInRoutes.notebookDocumentDidClose(registry)
             assert(route.name == "notebookDocument/didClose")
         }
 
-        "INV-034: notebookDocumentDidChange route is named correctly" in {
+        "notebookDocumentDidChange route is named correctly" in {
             val registry = new LspDocumentRegistryImpl(encRef())
             val route    = LspBuiltInRoutes.notebookDocumentDidChange(registry)
             assert(route.name == "notebookDocument/didChange")
         }
 
-        "INV-034: notebookDocumentDidChange inserts newly opened cells into registry" in run {
+        "notebookDocumentDidChange inserts newly opened cells into registry" in run {
             val registry = mkRegistry()
             val route    = LspBuiltInRoutes.notebookDocumentDidChange(registry)
             makeTestCtx.flatMap { ctx =>
@@ -133,7 +133,7 @@ class LspBuiltInRoutesTest extends Test:
             }
         }
 
-        "INV-034: notebookDocumentDidChange removes closed cells from registry" in run {
+        "notebookDocumentDidChange removes closed cells from registry" in run {
             val registry = mkRegistry()
             val cellUri  = uri("notebook-cell:///nb.ipynb#cell2")
             val cellItem = LspHandler.TextDocumentItem(cellUri, "scala", 1, "val x = 1")
@@ -147,7 +147,7 @@ class LspBuiltInRoutesTest extends Test:
             }
         }
 
-        "INV-034: notebookDocumentDidChange applies text content changes to existing cells" in run {
+        "notebookDocumentDidChange applies text content changes to existing cells" in run {
             val registry = mkRegistry()
             val cellUri  = uri("notebook-cell:///nb.ipynb#cell3")
             val cellItem = LspHandler.TextDocumentItem(cellUri, "python", 1, "x = 1")

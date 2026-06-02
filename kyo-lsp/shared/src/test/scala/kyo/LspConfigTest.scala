@@ -11,14 +11,13 @@ class LspConfigTest extends Test:
             assert(LspConfig.SpecVersion == "3.17")
         }
         "no ProtocolVersionMismatch reference" in {
-            // INV-036: the library uses SpecVersion "3.17"; no LspProtocolVersionMismatchException exists (RI-015)
+            // The library uses SpecVersion "3.17"; no LspProtocolVersionMismatchException exists.
             assert(LspConfig.SpecVersion == "3.17")
         }
     }
 
     "LspConfig.default" - {
         "enforceCapabilities is true" in {
-            // INV-087
             assert(LspConfig.default.enforceCapabilities)
         }
         "positionEncodings contains UTF16" in {

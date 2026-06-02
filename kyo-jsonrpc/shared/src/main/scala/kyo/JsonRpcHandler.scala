@@ -21,12 +21,9 @@ import kyo.Sync
   *
   * The handler is `Scope`-managed; it closes automatically when the enclosing `Scope` exits.
   *
-  * Mirrors `HttpServer` at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:37.
-  *
   * @see [[JsonRpcHandler.init]]
   * @see [[JsonRpcTransport]]
   */
-// HttpServer.scala:37 opaque-type pattern; init through JsonRpcHandler.init
 opaque type JsonRpcHandler = JsonRpcHandler.Unsafe
 
 object JsonRpcHandler:
@@ -166,7 +163,6 @@ object JsonRpcHandler:
       *  - `progress`: a `Stream` of progress `Structure.Value` notifications from the peer.
       *  - `cancel`: cancels the in-flight request by sending a cancellation notification.
       */
-    // Hub.scala:22 smart-constructor pattern; Pending built only by JsonRpcEndpointImpl.callWithProgress
     final class Pending[+Out] private[kyo] (
         val id: JsonRpcId,
         val result: Out < (Async & Abort[JsonRpcError | Closed]),
@@ -222,7 +218,6 @@ object JsonRpcHandler:
     end Config
 
     // --- Scoped init methods (Scope-managed; handler closes when Scope exits) ---
-    // Mirrors HttpServer.init at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:71-91.
 
     /** Initialises a handler using `routes` and `Config.default`, releasing it when the `Scope` exits. */
     def init(transport: JsonRpcTransport, routes: JsonRpcRoute[?, ?, ?]*)(using Frame): JsonRpcHandler < (Async & Scope) =
@@ -247,9 +242,7 @@ object JsonRpcHandler:
         )(_.closeNow)
     end init
 
-    /** Initialises a handler and immediately applies `f` to it, releasing the handler when the `Scope` exits.
-      * Mirrors `HttpServer.initWith` at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:80-91.
-      */
+    /** Initialises a handler and immediately applies `f` to it, releasing the handler when the `Scope` exits. */
     def initWith[A, S](transport: JsonRpcTransport, routes: JsonRpcRoute[?, ?, ?]*)(f: JsonRpcHandler => A < S)(using
         Frame
     ): A < (S & Async & Scope) =
@@ -262,7 +255,6 @@ object JsonRpcHandler:
         init(transport, config)(routes*).map(f)
 
     // --- Unscoped init methods (caller is responsible for closing) ---
-    // Mirrors HttpServer.initUnscoped at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:95-140.
 
     /** Initialises a handler using `routes` and `Config.default` without a managed `Scope`. */
     def initUnscoped(transport: JsonRpcTransport, routes: JsonRpcRoute[?, ?, ?]*)(using Frame): JsonRpcHandler < Async =
@@ -285,9 +277,7 @@ object JsonRpcHandler:
         internal.engine.JsonRpcEndpointImpl.initEngine(transport, methods, config).map(_.safe)
     end initUnscoped
 
-    /** Initialises an unscoped handler and immediately applies `f`.
-      * Mirrors `HttpServer.initUnscopedWith` at kyo-http/shared/src/main/scala/kyo/HttpServer.scala:129-140.
-      */
+    /** Initialises an unscoped handler and immediately applies `f`. */
     def initUnscopedWith[A, S](transport: JsonRpcTransport, routes: JsonRpcRoute[?, ?, ?]*)(f: JsonRpcHandler => A < S)(using
         Frame
     ): A < (S & Async) =

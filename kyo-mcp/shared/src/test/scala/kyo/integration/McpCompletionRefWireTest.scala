@@ -4,8 +4,6 @@ import kyo.*
 
 /** Tests §3.3 MCP 2025-06-18: `CompletionRef` encodes with the correct `"type"` discriminator
   * key (`"ref/prompt"` or `"ref/resource"`) and round-trips through the hand-rolled Schema.
-  *
-  * Pins acceptance criterion 3 of Phase 05 and INV-300.
   */
 class McpCompletionRefWireTest extends Test:
 
@@ -47,7 +45,7 @@ class McpCompletionRefWireTest extends Test:
         assert(json.contains("\"type\":\"ref/prompt\""))
     }
 
-    "Schema singleton reference is stable (INV-013)" in {
+    "Schema singleton reference is stable" in {
         val s1 = summon[Schema[McpHandler.CompletionRef]]
         val s2 = summon[Schema[McpHandler.CompletionRef]]
         assert(s1 eq s2)

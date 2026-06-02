@@ -47,17 +47,14 @@ sealed trait JsonRpcRoute[In, Out, +E]:
       * framework encodes the error with the given `code` and `message` and sends it as a
       * JSON-RPC error response. Multiple error types accumulate via union: the returned route
       * has type `JsonRpcRoute[In, Out, E | E2]`.
-      *
-      * Mirrors `HttpRoute.error[E2]` at kyo-http/shared/src/main/scala/kyo/HttpRoute.scala:82.
       */
     def error[E2](using schema: Schema[E2], tag: ConcreteTag[E2])(code: Int, message: String): JsonRpcRoute[In, Out, E | E2]
     // Sealed-protocol members consumed by the framework; not part of the public API.
     private[kyo] def schemaIn: Schema[In]
     private[kyo] def schemaOut: Schema[?]
     private[kyo] def errorMappings: Chunk[JsonRpcRoute.ErrorMapping[?]]
-    // Stream.scala:48 sealed-protocol with framework-only abstract members
     // Returns Abort[JsonRpcError | JsonRpcResponse.Halt] so the engine can detect Halt short-circuits
-    // and send the wrapped response directly (STEER-2).
+    // and send the wrapped response directly.
     private[kyo] def handle(params: Structure.Value, ctx: JsonRpcRoute.Context)(using
         Frame
     ): Structure.Value < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt])
@@ -91,7 +88,7 @@ object JsonRpcRoute:
       * @see [[JsonRpcRoute]]
       * @see [[JsonRpcProgressPolicy]]
       */
-    // Hub.scala:22 smart-constructor pattern; framework creates instances via forTest or JsonRpcEndpointImpl
+    // Smart-constructor pattern; framework creates instances via forTest or JsonRpcEndpointImpl.
     final class Context private[kyo] (
         val cancelled: Fiber.Promise[Unit, Sync],
         val requestId: Maybe[JsonRpcId],
@@ -114,22 +111,15 @@ object JsonRpcRoute:
         ): Context = new Context(cancelled, requestId, extras, progressSink)
     end Context
 
-    /** Factory for request/response routes. The handler effect row is fixed to
-      * `Async & Abort[JsonRpcError | JsonRpcResponse.Halt]`. Domain errors are registered
-      * separately via `.error[E2](code, message)` and are tracked in the `E` type parameter.
-      *
-      * Mirrors the `HttpRoute.handler` approach at
-      * kyo-http/shared/src/main/scala/kyo/HttpRoute.scala:95.
-      *
-      * Symmetric with [[notification]].
-      */
     /** Constructs a request route whose closure aborts only with user-domain errors `E` or with
       * `JsonRpcResponse.Halt` for short-circuit. Framework wire errors (`JsonRpcError` family) are
-      * raised by the engine itself — user closures stay free of them. Domain errors are wire-encoded
+      * raised by the engine itself; user closures stay free of them. Domain errors are wire-encoded
       * via the `.error[E2](code, message)` mappings registered on the returned route.
       *
-      * Mirrors kyo-http's `HttpRoute.handler[E]` signature: tight closure types in the user-facing
-      * factory, type erasure deliberately confined to the engine dispatch edge.
+      * The factory keeps tight closure types on the user-facing surface; type erasure is confined
+      * to the engine dispatch edge.
+      *
+      * Symmetric with [[notification]].
       */
     def request[In: Schema, Out: Schema](name: String)[E](
         handler: (In, JsonRpcRoute.Context) => Out < (Async & Abort[E | JsonRpcResponse.Halt])
@@ -248,14 +238,13 @@ object JsonRpcRoute:
                         case Result.Success(result) =>
                             Structure.encode[Out](result)(using out, fr)
                         case Result.Failure(halt: JsonRpcResponse.Halt) =>
-                            // STEER-2: propagate Halt so the engine emits the wrapped response directly.
+                            // Propagate Halt so the engine emits the wrapped response directly.
                             Abort.fail(halt)
                         case Result.Failure(err) =>
-                            // STEER-1: dispatch via registered ErrorMappings first. Each `.error[E2]`
+                            // Dispatch via registered ErrorMappings first. Each `.error[E2]`
                             // registers a ConcreteTag matcher and a Schema. If the matcher accepts
                             // the abort value, encode the value via the registered Schema into the
-                            // JsonRpcCustomError.data slot ; same pattern as kyo-http's RouteUtil
-                            // .encodeError (RouteUtil.scala:360 — Json.encode via mapping.schema).
+                            // JsonRpcCustomError.data slot.
                             errorMappings.iterator.find(_.matches(err)) match
                                 case Some(mapping) =>
                                     Abort.fail(JsonRpcCustomError(

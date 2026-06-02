@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: McpException propagates across the wire to the client (T-021, INV-003, INV-005).
+/** Integration test: McpException propagates across the wire to the client.
   *
   * Server-side handler errors reach the client as McpException failures. JsonRpcError responses
   * from the wire are preserved as McpRemoteApplicationException with the original code/message/data
@@ -14,7 +14,7 @@ class McpErrorRoundtripTest extends Test:
 
     private val failUri = McpResourceUri.parse("file:///fail").get
 
-    "tool call aborts with McpException when server handler fails (T-021, INV-003)" in run {
+    "tool call aborts with McpException when server handler fails" in run {
         val errRoute = McpHandler.tool[FailReq]("fail") { _ =>
             Abort.fail(McpToolExecutionException(tool = "fail", reason = "intentional", cause = ""))
         }
@@ -40,7 +40,7 @@ class McpErrorRoundtripTest extends Test:
         }
     }
 
-    "resource read aborts with McpException when server handler fails (T-021, INV-003)" in run {
+    "resource read aborts with McpException when server handler fails" in run {
         val resRoute = McpHandler.resource(failUri, "fail-resource") {
             Abort.fail(McpResourceReadException(uri = failUri, reason = "read error", cause = ""))
         }
@@ -66,7 +66,7 @@ class McpErrorRoundtripTest extends Test:
         }
     }
 
-    "tool call for non-existent tool aborts with McpException code -32601 (T-021, INV-003)" in run {
+    "tool call for non-existent tool aborts with McpException code -32601" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),

@@ -10,12 +10,10 @@ import kyo.*
   * completes; the wrapped closure reads them lazily on every invocation.
   *
   * Error mappings are folded onto the produced `JsonRpcRoute` via `.error[E2]` for each
-  * registered `LspHandler.ErrorMapping`, mirroring `McpHandlerLift.applyErrors`.
+  * registered `LspHandler.ErrorMapping`.
   *
   * Token extraction reads `workDoneToken` and `partialResultToken` from the encoded
   * `Structure.Value` representation of the params, then threads them into `Lsp.RequestContext`.
-  *
-  * Non-inline per INV-027.
   */
 private[kyo] object LspHandlerLift:
 
@@ -46,7 +44,7 @@ private[kyo] object LspHandlerLift:
     end liftClient
 
     // =========================================================================
-    // Error mapping fold (mirrors McpHandlerLift)
+    // Error mapping fold
     // =========================================================================
 
     private def applyErrors(base: JsonRpcRoute[?, ?, ?], mappings: Chunk[ErrorMapping[?]]): JsonRpcRoute[?, ?, ?] =

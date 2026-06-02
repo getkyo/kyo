@@ -63,14 +63,11 @@ private[kyo] object JsonRpcCodecImpl:
                             Maybe.fromOption(fieldMap.get(key).collect { case Structure.Value.Str(s) => s })
 
                         def getValue(key: String): Maybe[Structure.Value] =
-                            // stdlib Map.get() returns scala.Option; match arms are interop, not kyo code
+                            // stdlib Map.get returns scala.Option; match arms are interop, not kyo code
                             fieldMap.get(key) match
-                                // scala.Option arm; interop with stdlib Map.get (covered by line above)
                                 case Some(Structure.Value.Null) => Absent
-                                // scala.Option arm; interop with stdlib Map.get (covered by comment above match)
-                                case Some(v) => Present(v)
-                                // scala.Option arm; interop with stdlib Map.get (covered by comment above match)
-                                case None => Absent
+                                case Some(v)                    => Present(v)
+                                case None                       => Absent
 
                         def decodeId(v: Structure.Value): Maybe[JsonRpcId] =
                             v match
@@ -165,12 +162,10 @@ private[kyo] object JsonRpcCodecImpl:
                     Sync.defer(Structure.Value.Record(base))
                 case Present(Structure.Value.Record(extraFields)) =>
                     val badKey = extraFields.iterator.map(_._1).find(reservedKeys.contains)
-                    // Iterator.find() returns scala.Option; match arms are interop, not kyo code
+                    // Iterator.find returns scala.Option; match arms are interop, not kyo code
                     badKey match
-                        // scala.Option arm; interop with Iterator.find (covered by comment above match)
                         case Some(key) =>
                             Abort.fail(JsonRpcInvalidRequestError(Structure.Value.Str(s"extras key '$key' is reserved"), Chunk.empty))
-                        // scala.Option arm; interop with Iterator.find (covered by comment above match)
                         case None =>
                             Sync.defer(Structure.Value.Record(base ++ extraFields))
                     end match

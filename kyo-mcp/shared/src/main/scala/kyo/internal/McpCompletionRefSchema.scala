@@ -10,10 +10,8 @@ import scala.annotation.publicInBinary
   * `{"type":"ref/prompt","name":"..."}` and `Resource` encodes as
   * `{"type":"ref/resource","uri":"..."}`.
   *
-  * The schema is a singleton (INV-013): every `summon[Schema[McpHandler.CompletionRef]]`
+  * The schema is a singleton: every `summon[Schema[McpHandler.CompletionRef]]`
   * resolves to the same reference via the given in `McpHandler.CompletionRef`'s companion.
-  *
-  * Precedent: `McpContentSchema` at kyo/internal/McpContentSchema.scala.
   */
 private[kyo] object McpCompletionRefSchema:
 

@@ -33,7 +33,7 @@ object HttpFetch extends KyoApp:
 
     run {
         // Map kyo-http's typed exception hierarchy to the demo's typed error variants so the
-        // wire response is differentiated per failure mode (closes QUIRK-E from the QA pass).
+        // wire response is differentiated per failure mode.
         def liftHttpException(ex: HttpException, url: String): HttpBadUrl | HttpDnsError | HttpConnectError |
             HttpTimeoutError | HttpStatusError | HttpOtherError =
             ex match

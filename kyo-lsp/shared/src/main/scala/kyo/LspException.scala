@@ -32,11 +32,10 @@ package kyo
   * @see [[LspException.Execution]]
   * @see [[LspException.Application]]
   */
-// flow-allow: Structure carve-out per INV-029 (data forwarded to JsonRpcApplicationError)
 sealed abstract class LspException private[kyo] (
     code: Int,
     message: Text,
-    // flow-allow: Structure carve-out per INV-029 (forwarded to JsonRpcApplicationError)
+    // Structure carve-out: data forwarded to JsonRpcApplicationError
     data: Maybe[Structure.Value] = Absent,
     cause: Text | Throwable = ""
 )(using Frame)
@@ -76,7 +75,7 @@ object LspException:
         code: Int,
         message: Text,
         cause: Text | Throwable = "",
-        // flow-allow: Structure carve-out per INV-029 (forwarded to LspException)
+        // Structure carve-out: data forwarded to LspException
         data: Maybe[Structure.Value] = Absent
     )(using Frame)
         extends LspException(code, message, data, cause)
@@ -204,7 +203,7 @@ object LspException:
           * @param message the JSON-RPC error message from the wire response
           * @param data    the Schema-encoded `data` payload (Absent when the peer did not include one)
           */
-        // flow-allow: Structure carve-out per INV-029 (passes wire data through to LspException)
+        // Structure carve-out: passes wire data through to LspException
         final case class Remote(
             remoteCode: Int,
             remoteMessage: String,

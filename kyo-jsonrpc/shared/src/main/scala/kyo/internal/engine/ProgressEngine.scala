@@ -1,6 +1,5 @@
 package kyo.internal.engine
 
-// ConcurrentHashMap is the structural concurrent pending-map; no Kyo-safe equivalent for CAS-based inbound tracking
 import java.util.concurrent.ConcurrentHashMap
 import kyo.*
 import kyo.Maybe.Absent

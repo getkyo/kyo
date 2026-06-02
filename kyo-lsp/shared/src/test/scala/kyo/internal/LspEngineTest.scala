@@ -8,20 +8,20 @@ class LspEngineTest extends Test:
 
     "LspEngineTest" - {
 
-        "INV-030: cancellation policy is installed (cancelMethod = $/cancelRequest)" in {
+        "cancellation policy is installed (cancelMethod = $/cancelRequest)" in {
             // Verify the policy constant independently (no need for full engine init).
             assert(LspCancellationPolicy.default.cancelMethod == "$/cancelRequest")
         }
 
-        "INV-030: progress policy is installed (progressMethod = $/progress)" in {
+        "progress policy is installed (progressMethod = $/progress)" in {
             assert(LspProgressPolicy.default.progressMethod == "$/progress")
         }
 
-        "INV-031: expectReplyForCancelledRequest is true (LSP diverges from MCP)" in {
+        "expectReplyForCancelledRequest is true (LSP diverges from MCP)" in {
             assert(LspCancellationPolicy.default.expectReplyForCancelledRequest)
         }
 
-        "INV-059: gate compose order is handshake -> shutdown -> capability" in {
+        "gate compose order is handshake -> shutdown -> capability" in {
             // Compose with a handshake gate that is not yet initialized.
             // Send a non-initialize request; should be rejected by handshake, not reached by capability.
             val caps       = LspCapabilities.Server.empty.copy(completionProvider = Present(LspHandler.CompletionOptions()))

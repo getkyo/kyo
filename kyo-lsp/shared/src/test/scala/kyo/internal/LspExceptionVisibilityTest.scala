@@ -1,21 +1,18 @@
 package kyo
 
-/** Verifies that `LspException` leaves can be constructed from within the kyo package (INV-029).
+/** Verifies that `LspException` leaves can be constructed from within the kyo package.
   *
   * This test lives in `package kyo` intentionally. The `private[kyo]` constructor qualifier
   * on `LspException` and its stage bases means they are accessible HERE (inside the kyo package)
   * and invisible to code OUTSIDE the kyo package. The proof that code outside `package kyo`
   * cannot invoke `new LspException(...)` directly rests on Scala 3's access-modifier enforcement:
   * any test file in a package OTHER than `kyo` attempting `new LspException(...)` would fail to
-  * compile. Since we do not have a neg-compile framework available, INV-029 is enforced by the
-  * Scala type system at the package boundary.
+  * compile. The package boundary is enforced by the Scala type system.
   *
   * What this test does verify:
   *   - Concrete leaf classes can be constructed via their factory `apply` methods from within kyo.
   *   - The hierarchy is sealed: instanceof checks confirm stage membership.
   *   - Leaf values extend the correct stage base class.
-  *
-  * @see INV-029 in 04-invariants.md
   */
 class LspExceptionVisibilityTest extends Test:
 

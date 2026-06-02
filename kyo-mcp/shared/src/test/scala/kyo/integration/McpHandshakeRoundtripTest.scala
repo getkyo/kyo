@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: handshake protocol-version negotiation roundtrip (T-014, INV-002, INV-005). */
+/** Integration test: handshake protocol-version negotiation roundtrip. */
 class McpHandshakeRoundtripTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
@@ -16,7 +16,7 @@ class McpHandshakeRoundtripTest extends Test:
     private val clientInfo = McpInfo("calc")
     private val clientCaps = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
 
-    "server.protocolVersion is Present(current) and clientInfo matches after handshake (T-014, INV-002)" in run {
+    "server.protocolVersion is Present(current) and clientInfo matches after handshake" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, route1, route2),
@@ -35,7 +35,7 @@ class McpHandshakeRoundtripTest extends Test:
         }
     }
 
-    "client.serverInfo and protocolVersion are Present after handshake (T-014, INV-005)" in run {
+    "client.serverInfo and protocolVersion are Present after handshake" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, route1, route2),

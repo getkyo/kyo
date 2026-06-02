@@ -2,7 +2,7 @@ package kyo.internal.mcp
 
 import kyo.*
 
-/** Engine-owned `initialize` `JsonRpcRoute` registered at position 0 in the handler (INV-004).
+/** Engine-owned `initialize` `JsonRpcRoute` registered at position 0 in the handler.
   *
   * Decodes `McpInitializeRequest`, negotiates the protocol version against the server's supported
   * set, writes negotiated state into the provided `AtomicRef`s, and returns `McpInitializeResult`

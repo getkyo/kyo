@@ -137,7 +137,7 @@ object Filesystem extends KyoApp:
                             .collect { file =>
                                 // confinedTo(root) follows symlinks via realPath and rejects targets outside
                                 // the configured root. Filters out symlink-escapes that would otherwise leak
-                                // content from system files (the BUG-D fix path).
+                                // content from system files.
                                 file.confinedTo(root)
                                     .map(Present(_))
                                     .handle(Abort.recover[FileException](_ => Absent: Maybe[Path]))

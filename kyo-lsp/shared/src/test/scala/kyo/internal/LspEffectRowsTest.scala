@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Compile-time effect-row assertions for LspServer methods. INV-079.
+/** Compile-time effect-row assertions for LspServer methods.
   *
   * Notification methods return `Fiber.Unsafe[Unit, Abort[Closed]]`.
   * Request methods return `Fiber.Unsafe[T, Abort[LspException | Closed]]`.

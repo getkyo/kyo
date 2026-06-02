@@ -1,6 +1,6 @@
 package kyo
 
-/** Tests for LspInfo Schema round-trip and default values (Phase 01). */
+/** Tests for LspInfo Schema round-trip and default values. */
 class LspInfoTest extends Test:
 
     "LspInfo default version" in run {

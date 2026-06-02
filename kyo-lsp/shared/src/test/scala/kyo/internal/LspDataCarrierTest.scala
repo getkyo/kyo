@@ -1,7 +1,7 @@
 package kyo
 
-/** Verifies that every public record listed in INV-054 carries a `private[kyo] _rawData: Maybe[String]`
-  * field and typed `withData[X]` / `dataAs[X]` accessor pair (INV-054).
+/** Verifies that every public LSP data-carrier record carries a `private[kyo] _rawData: Maybe[String]`
+  * field and a typed `withData[X]` / `dataAs[X]` accessor pair.
   */
 class LspDataCarrierTest extends Test:
 

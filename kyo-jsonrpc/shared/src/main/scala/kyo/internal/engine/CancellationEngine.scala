@@ -1,6 +1,5 @@
 package kyo.internal.engine
 
-// ConcurrentHashMap is the structural concurrent pending-map; no Kyo-safe equivalent for CAS-based inbound tracking
 import java.util.concurrent.ConcurrentHashMap
 import kyo.*
 import kyo.Maybe.Absent
@@ -25,7 +24,8 @@ private[kyo] object CancellationEngine:
 
     /** Handles an incoming cancel notification from the remote peer.
       * Called from the reader fiber's decode callback (Sync-only context).
-      * Implements the CAS sequence from DESIGN §6.5.
+      * Uses CAS on `pendingInbound` to transition Running -> Cancelled and interrupts the
+      * handler fiber when the policy does not expect a reply for cancelled requests.
       */
     def handleInboundCancel(
         env: JsonRpcNotification,
@@ -74,8 +74,8 @@ private[kyo] object CancellationEngine:
         }
 
     /** Builds and enqueues the outbound cancel notification for a call we issued.
-      * Steps 3-4 of DESIGN §7 outbound flow.
-      * The caller is responsible for the absent-check (step 2) and protectedMethods check (also step 2).
+      * The caller is responsible for the absent-check on `callerRegistry` and the
+      * `protectedMethods` check before invoking this helper.
       */
     def buildAndEnqueueOutboundCancel(
         id: JsonRpcId,
@@ -89,9 +89,7 @@ private[kyo] object CancellationEngine:
             writerChannel.put(WriterMsg.SendEnvelope(cancelEnv))
         }
 
-    /** Handles timeout auto-fire: fires the cancel notification (if policy present) and completes the abortSignal.
-      * DESIGN §7 "Timeout -> cancellation auto-fire".
-      */
+    /** Handles timeout auto-fire: fires the cancel notification (if policy present) and completes the abortSignal. */
     def handleTimeout(
         id: JsonRpcId,
         reason: Maybe[String],

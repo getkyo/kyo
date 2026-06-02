@@ -6,9 +6,6 @@ package kyo
   * The client issues the `initialize` handshake and then exposes typed methods for all
   * standard MCP operations.
   *
-  * INV-012: `McpClient = McpClient.Unsafe` (opaque identity).
-  * INV-014: parameter order on `init` is `(transport, clientInfo, capabilities, handlers*)`.
-  *
   * @see [[McpClient.init]]
   * @see [[McpClient.initUnscoped]]
   */
@@ -18,13 +15,11 @@ object McpClient:
 
     /** Named-record paginated list result.
       *
-      * Replaces the tuple `(Chunk[A], Maybe[String])` pattern per Audit-A3 / INV-023.
       * `nextCursor` is `Absent` on the last page. `meta` carries the optional `_meta`
       * advisory field from the MCP spec (§3.7); it is omitted from the wire when `Absent`.
       *
       * @tparam A the item type
       */
-    // flow-allow: Structure carve-out per §11a / INV-021
     final case class Page[+A](items: Chunk[A], nextCursor: Maybe[String], meta: Maybe[Structure.Value] = Absent) derives CanEqual:
         /** Returns `true` when there are no further pages. */
         def isLast: Boolean = nextCursor.isEmpty
@@ -42,13 +37,11 @@ object McpClient:
 
     extension (self: McpClient)
 
-        /** Lists the server's tools. Returns a named `Page` record (Audit-A3 / INV-023). */
+        /** Lists the server's tools. Returns a named `Page` record. */
         def listTools(cursor: Maybe[String] = Absent)(using Frame): Page[McpHandler.ToolMeta] < (Async & Abort[McpException | Closed]) =
             Sync.Unsafe.defer(self.listTools(cursor).safe.get)
 
-        /** Calls a tool with a typed argument; returns the raw `ToolOutcome`.
-          * Audit-C2: `using` clause order is `(Frame, Schema[In])` per CONTRIBUTING.md:349-351.
-          */
+        /** Calls a tool with a typed argument; returns the raw `ToolOutcome`. */
         def callTool[In](name: String, arguments: In)(using
             Frame,
             Schema[In]
@@ -56,11 +49,8 @@ object McpClient:
             Sync.Unsafe.defer(self.callTool[In](name, arguments).safe.get)
 
         /** Calls a tool with typed argument and typed output; aborts with `McpToolStructuredMissingException`
-          * when `structuredContent` is `Absent` (Audit-A9 / INV-027).
-          * Audit-C2: `using` clause order is `(Frame, Schema[In], Schema[Out])`.
-          * STEER-3: renamed from `callTool[In, Out]` to `callToolTyped[In, Out]` because Scala 3
-          * cannot disambiguate two same-named extension methods that differ only in type-parameter count;
-          * see phase-08/decisions.md § STEER-3.
+          * when `structuredContent` is `Absent`. Named `callToolTyped` (not `callTool`) because Scala 3
+          * cannot disambiguate two same-named extension methods that differ only in type-parameter count.
           */
         def callToolTyped[In, Out](name: String, arguments: In)(using
             Frame,
@@ -69,7 +59,7 @@ object McpClient:
         ): Out < (Async & Abort[McpException | Closed]) =
             Sync.Unsafe.defer(self.callToolTyped[In, Out](name, arguments).safe.get)
 
-        /** Lists the server's resources. Returns a named `Page` record (Audit-A3). */
+        /** Lists the server's resources. Returns a named `Page` record. */
         def listResources(cursor: Maybe[String] = Absent)(using
             Frame
         ): Page[McpHandler.ResourceMeta] < (Async & Abort[McpException | Closed]) =
@@ -81,13 +71,11 @@ object McpClient:
         ): Page[McpHandler.ResourceTemplateMeta] < (Async & Abort[McpException | Closed]) =
             Sync.Unsafe.defer(self.listResourceTemplates(cursor).safe.get)
 
-        /** Reads a resource by URI.
-          * INV-022: `uri` is typed `McpResourceUri`, not raw `String`.
-          */
+        /** Reads a resource by URI. */
         def readResource(uri: McpResourceUri)(using Frame): Chunk[McpHandler.ResourceContents] < (Async & Abort[McpException | Closed]) =
             Sync.Unsafe.defer(self.readResource(uri).safe.get)
 
-        /** Lists the server's prompts. Returns a named `Page` record (Audit-A3). */
+        /** Lists the server's prompts. Returns a named `Page` record. */
         def listPrompts(cursor: Maybe[String] = Absent)(using
             Frame
         ): Page[McpHandler.PromptMeta] < (Async & Abort[McpException | Closed]) =
@@ -204,7 +192,7 @@ object McpClient:
         final def safe: McpClient = this
     end Unsafe
 
-    // --- Scoped init quartet (INV-014: parameter order = transport, clientInfo, capabilities, handlers*) ---
+    // --- Scoped init quartet (parameter order = transport, clientInfo, capabilities, handlers*) ---
 
     /** Initialises a client using `handlers` and `McpConfig.default`, releasing it when the `Scope` exits. */
     def init(transport: JsonRpcTransport, clientInfo: McpInfo, capabilities: McpCapabilities.Client, handlers: McpHandler[?, ?, ?]*)(using

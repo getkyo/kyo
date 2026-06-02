@@ -5,7 +5,7 @@ import kyo.*
 /** MCP-specific progress policy adapter for kyo-jsonrpc.
   *
   * MCP uses `notifications/progress` as the progress notification method. The progress token lives
-  * at `params._meta.progressToken` on the request side (INV-007), and at top-level
+  * at `params._meta.progressToken` on the request side, and at top-level
   * `params.progressToken` on the inbound progress notification side. Monotonic enforcement is
   * enabled so regressing progress values are silently dropped.
   */
@@ -47,7 +47,7 @@ private[kyo] object McpProgressPolicy:
             // Progress notification: token is at top-level params.progressToken
             extractInboundToken = paramsValue =>
                 JsonRpcProgressPolicy.field(paramsValue, "progressToken"),
-            // Request: token is at params._meta.progressToken (INV-007)
+            // Request: token is at params._meta.progressToken
             extractRequestToken = paramsValue =>
                 JsonRpcProgressPolicy.field(paramsValue, "_meta")
                     .flatMap(meta => JsonRpcProgressPolicy.field(meta, "progressToken")),

@@ -2,11 +2,11 @@ package kyo.internal
 
 import kyo.*
 
-/** Verifies that LspServer.Unsafe method-name set equals the LspServer extension-method set. INV-028.
+/** Verifies that LspServer.Unsafe method-name set equals the LspServer extension-method set.
   *
-  * The plan requires every safe extension method to have a corresponding Unsafe mirror. This test
-  * samples critical method names via reflection to confirm the contract holds. The full mirror is
-  * enforced at compile time by the abstract class definition.
+  * Every safe extension method has a corresponding Unsafe mirror. This test samples critical
+  * method names via reflection to confirm the contract holds. The full mirror is enforced at
+  * compile time by the abstract class definition.
   */
 class UnsafeMirrorTest extends Test:
 
