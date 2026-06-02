@@ -711,17 +711,19 @@ object Yaml:
     final class Pipeline[Err] private[Yaml] (
         private val readerConfig: ReaderConfig,
         private val writerConfig: WriterConfig,
-        private val processor: Maybe[Events.Processor[Err]]
+        private val processor: Maybe[Events.Processor[Err]],
+        private val cstTransform: Maybe[Cst.Document => Result[Err, Cst.Document]] = Absent,
+        private val cstStreamTransform: Maybe[Cst.Stream => Result[Err, Cst.Stream]] = Absent
     ):
 
         /** Uses the supplied reader configuration for decode, parse, render, and visit source selection. */
         def reader(config: ReaderConfig): Pipeline[Err] =
-            new Pipeline(config, writerConfig, processor)
+            new Pipeline(config, writerConfig, processor, cstTransform, cstStreamTransform)
         end reader
 
         /** Uses the supplied writer configuration for encode, write, and render output. */
         def writer(config: WriterConfig): Pipeline[Err] =
-            new Pipeline(readerConfig, config, processor)
+            new Pipeline(readerConfig, config, processor, cstTransform, cstStreamTransform)
         end writer
 
         /** Adds an event processor to this pipeline. Processors run in the order they are added. */
@@ -730,8 +732,67 @@ object Yaml:
                 processor match
                     case Present(current) => current.andThen(next)
                     case Absent           => widenProcessor(next)
-            new Pipeline(readerConfig, writerConfig, Maybe(combined))
+            new Pipeline(
+                readerConfig,
+                writerConfig,
+                Maybe(combined),
+                cstTransform.map(documentTransformWiden[Err, Err2]),
+                cstStreamTransform.map(streamTransformWiden[Err, Err2])
+            )
         end through
+
+        /** Adds a per-document CST transform stage. When set, the String read terminals build a source-backed CST, apply this transform
+          * (after any stream transform), emit events, and continue through event processors. The transform sees the document's comments and
+          * trivia intact.
+          */
+        def throughCst[Err2](f: Cst.Document => Result[Err2, Cst.Document]): Pipeline[Err | Err2] =
+            val widenedF: Cst.Document => Result[Err | Err2, Cst.Document] =
+                document => f(document)
+            val combined: Cst.Document => Result[Err | Err2, Cst.Document] =
+                cstTransform match
+                    case Present(existing) =>
+                        val widenedExisting: Cst.Document => Result[Err | Err2, Cst.Document] =
+                            document => existing(document)
+                        document => widenedExisting(document).flatMap(widenedF)
+                    case Absent => widenedF
+            new Pipeline[Err | Err2](
+                readerConfig,
+                writerConfig,
+                processor.map(widenProcessor[Err2, Err]),
+                Maybe(combined),
+                cstStreamTransform.map(streamTransformWiden[Err, Err2])
+            )
+        end throughCst
+
+        /** Adds a whole-stream CST transform stage, applied before any per-document transform. */
+        def throughCstStream[Err2](f: Cst.Stream => Result[Err2, Cst.Stream]): Pipeline[Err | Err2] =
+            val widenedF: Cst.Stream => Result[Err | Err2, Cst.Stream] =
+                stream => f(stream)
+            val combined: Cst.Stream => Result[Err | Err2, Cst.Stream] =
+                cstStreamTransform match
+                    case Present(existing) =>
+                        val widenedExisting: Cst.Stream => Result[Err | Err2, Cst.Stream] =
+                            stream => existing(stream)
+                        stream => widenedExisting(stream).flatMap(widenedF)
+                    case Absent => widenedF
+            new Pipeline[Err | Err2](
+                readerConfig,
+                writerConfig,
+                processor.map(widenProcessor[Err2, Err]),
+                cstTransform.map(documentTransformWiden[Err, Err2]),
+                Maybe(combined)
+            )
+        end throughCstStream
+
+        private def documentTransformWiden[E1, E2](
+            f: Cst.Document => Result[E1, Cst.Document]
+        ): Cst.Document => Result[E1 | E2, Cst.Document] =
+            document => f(document)
+
+        private def streamTransformWiden[E1, E2](
+            f: Cst.Stream => Result[E1, Cst.Stream]
+        ): Cst.Stream => Result[E1 | E2, Cst.Stream] =
+            stream => f(stream)
 
         /** Decodes YAML into a schema value.
           *
@@ -741,19 +802,21 @@ object Yaml:
         def decode[A](
             input: String
         )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
-            processor match
-                case Absent => Yaml.decode[A](input, readerConfig)
-                case Present(current) =>
-                    decodeSource(input).flatMap { source =>
-                        internal.yaml.YamlEventScanner.collect(source, current).flatMap { events =>
-                            Result.catching[DecodeException] {
-                                val reader = internal.yaml.YamlEventReader(events, readerConfig.yamlVersion)
-                                reader.resetLimits(readerConfig.maxDepth, readerConfig.maxCollectionSize)
-                                schema.readFrom(reader)
+            if cstStaged then stagedDocument(input).flatMap(decode[A](_))
+            else
+                processor match
+                    case Absent => Yaml.decode[A](input, readerConfig)
+                    case Present(current) =>
+                        decodeSource(input).flatMap { source =>
+                            internal.yaml.YamlEventScanner.collect(source, current).flatMap { events =>
+                                Result.catching[DecodeException] {
+                                    val reader = internal.yaml.YamlEventReader(events, readerConfig.yamlVersion)
+                                    reader.resetLimits(readerConfig.maxDepth, readerConfig.maxCollectionSize)
+                                    schema.readFrom(reader)
+                                }
                             }
                         }
-                    }
-            end match
+                end match
         end decode
 
         /** Decodes UTF-8 YAML bytes into a schema value. */
@@ -765,14 +828,23 @@ object Yaml:
 
         /** Renders a YAML source after routing its events through this pipeline's processors. */
         def render(input: String)(using Frame): Result[Err | DecodeException, String] =
-            val renderer = Events.Renderer(writerConfig)
-            visit(input, ())(renderer).map(_ => renderer.resultString)
+            if cstStaged then
+                cstStreamTransform match
+                    case Present(_) =>
+                        stagedStream(input).map(stream => stream.render(using writerConfig))
+                    case Absent =>
+                        stagedDocument(input).map(doc => doc.render(using writerConfig))
+            else
+                val renderer = Events.Renderer(writerConfig)
+                visit(input, ())(renderer).map(_ => renderer.resultString)
         end render
 
         /** Parses a YAML source into a [[Node]] after routing its events through this pipeline's processors. */
         def parse(input: String)(using Frame): Result[Err | DecodeException, Node] =
-            val builder = NodeBuilder()
-            visit(input, ())(builder).flatMap(_ => builder.result)
+            if cstStaged then stagedDocument(input).flatMap(parse)
+            else
+                val builder = NodeBuilder()
+                visit(input, ())(builder).flatMap(_ => builder.result)
         end parse
 
         /** Parses a YAML source into a CST after routing events through this pipeline's processors.
@@ -898,7 +970,14 @@ object Yaml:
                     val multiDoc = stream.documents.size > 1
                     val childPipeline =
                         if multiDoc
-                        then new Pipeline(readerConfig, writerConfig.copy(documentMarkers = WriterConfig.DocumentMarkers.None), processor)
+                        then
+                            new Pipeline(
+                                readerConfig,
+                                writerConfig.copy(documentMarkers = WriterConfig.DocumentMarkers.None),
+                                processor,
+                                cstTransform,
+                                cstStreamTransform
+                            )
                         else this
 
                     @tailrec def loop(
@@ -1016,6 +1095,53 @@ object Yaml:
                     Events.write(value, context)(current.andThen(handler))(using schema, writerConfig, frame)
             end match
         end write
+
+        private def cstStaged: Boolean =
+            cstTransform.isDefined || cstStreamTransform.isDefined
+
+        private def applyDocumentTransform(document: Cst.Document)(using Frame): Result[Err | DecodeException, Cst.Document] =
+            cstTransform match
+                case Present(transform) => transform(document)
+                case Absent             => Result.succeed(document)
+
+        private def stagedDocument(input: String)(using Frame): Result[Err | DecodeException, Cst.Document] =
+            cstStreamTransform match
+                case Present(streamTransform) =>
+                    Yaml.cstAll(input).flatMap(streamTransform).flatMap(reduceStream).flatMap(applyDocumentTransform)
+                case Absent =>
+                    selectedSource(input).flatMap(Yaml.cst).flatMap(applyDocumentTransform)
+
+        private def stagedStream(input: String)(using Frame): Result[Err | DecodeException, Cst.Stream] =
+            val base: Result[Err | DecodeException, Cst.Stream] =
+                cstStreamTransform match
+                    case Present(streamTransform) =>
+                        Yaml.cstAll(input).flatMap(streamTransform).map(_.copy(originalSource = Absent))
+                    case Absent => Yaml.cstAll(input)
+            cstTransform match
+                case Present(transform) =>
+                    base.flatMap(stream =>
+                        mapDocuments(stream.documents, 0, Chunk.empty, transform).map(docs =>
+                            stream.copy(documents = docs, originalSource = Absent)
+                        )
+                    )
+                case Absent => base
+            end match
+        end stagedStream
+
+        @tailrec private def mapDocuments(
+            documents: Chunk[Cst.Document],
+            index: Int,
+            acc: Chunk[Cst.Document],
+            transform: Cst.Document => Result[Err, Cst.Document]
+        ): Result[Err | DecodeException, Chunk[Cst.Document]] =
+            if index >= documents.size then Result.succeed(acc)
+            else
+                transform(documents(index)) match
+                    case Result.Success(doc) => mapDocuments(documents, index + 1, acc :+ doc, transform)
+                    case Result.Failure(e)   => Result.fail(e)
+                    case Result.Panic(e)     => Result.panic(e)
+                end match
+        end mapDocuments
 
         private def selectedSource(input: String)(using Frame): Result[DecodeException, String] =
             readerConfig.documentIndex match

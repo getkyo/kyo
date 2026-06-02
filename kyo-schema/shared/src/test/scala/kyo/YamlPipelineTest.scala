@@ -548,6 +548,71 @@ age: 30
 
             assert(rendered.startsWith("---\n") && rendered.endsWith("...\n"))
         }
+
+        def cstScalar(value: String): Yaml.Cst.Node =
+            val mark = Yaml.Mark(0, 1, 1)
+            Yaml.Cst.Node.Scalar(
+                value,
+                Yaml.Cst.ScalarSyntax.Canonical,
+                Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                Yaml.Cst.SourceSpan(mark, mark),
+                Absent
+            )
+        end cstScalar
+
+        "decodes through a per-document CST transform stage" in {
+            val yaml = "name: Alice\nage: 30\n"
+            val rename =
+                Yaml.pipeline.throughCst(_.replace(Yaml.Cst.Path.root / "name", cstScalar("Alicia")))
+
+            assert(rename.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alicia", 30)))
+        }
+
+        "preserves comments for the CST transform while feeding edited values to decode" in {
+            val yaml = "# owner\nname: Alice\nage: 30\n"
+            val edit =
+                Yaml.pipeline.throughCst(_.replace(Yaml.Cst.Path.root / "age", cstScalar("31")))
+
+            assertResult((comment = true, decoded = Result.succeed(MTPerson("Alice", 31)))) {
+                (
+                    comment = edit.render(yaml).getOrThrow.contains("# owner"),
+                    decoded = edit.decode[MTPerson](yaml)
+                )
+            }
+        }
+
+        "runs the CST transform before event processors" in {
+            val yaml = "name: placeholder\nage: 30\n"
+            val pipeline =
+                Yaml.pipeline
+                    .throughCst(_.replace(Yaml.Cst.Path.root / "name", cstScalar("Alice")))
+                    .through(scalarRewrite("Alice", "Alicia"))
+
+            assert(pipeline.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alicia", 30)))
+        }
+
+        "applies a stream transform before per-document handling" in {
+            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+            val dropFirst =
+                Yaml.pipeline.throughCstStream(stream => Result.succeed(stream.copy(documents = stream.documents.drop(1))))
+
+            assertResult((hasBob = true, hasAlice = false)) {
+                val rendered = dropFirst.render(yaml).getOrThrow
+                (hasBob = rendered.contains("Bob"), hasAlice = rendered.contains("Alice"))
+            }
+        }
+
+        "leaves String decode and render unchanged when no CST transform is set" in {
+            val yaml = "name: Alice\nage: 30\n"
+
+            assertResult((decoded = Result.succeed(MTPerson("Alice", 30)), rendered = Result.succeed(yaml), sameAsTopLevel = true)) {
+                (
+                    decoded = Yaml.pipeline.decode[MTPerson](yaml),
+                    rendered = Yaml.pipeline.render(yaml),
+                    sameAsTopLevel = Yaml.pipeline.decode[MTPerson](yaml) == Yaml.decode[MTPerson](yaml)
+                )
+            }
+        }
     }
 
     private val identityProcessor: Yaml.Events.Processor[Nothing] =
