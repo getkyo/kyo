@@ -221,4 +221,79 @@ class TastyPropertyBasedTest extends Test:
             succeed
     }
 
+    // PROP-PB-005: TagKind structural-defense -- each position's throwFor produces a clean
+    // RuntimeException whose message encodes TastyError.UnknownTagInPosition, not a silent
+    // sentinel or unexpected exception class. Tag value 0 is not a valid tag in any position
+    // so it exercises the unknown-tag path. Pins the invariant that corrupt/future-format
+    // bytes produce clean errors (Phase 2.04-strict, HARD RULE 13).
+    "PROP-PB-005: TagKind throwFor produces TastyError.UnknownTagInPosition for unknown tag 0" in {
+        import kyo.internal.tasty.reader.TagKind
+        val invalidTag = 0
+        val positions = Seq(
+            (TagKind.TypePositionTag.position, () => TagKind.TypePositionTag.throwFor(invalidTag)),
+            (TagKind.TreePositionTag.position, () => TagKind.TreePositionTag.throwFor(invalidTag)),
+            (TagKind.TptPositionTag.position, () => TagKind.TptPositionTag.throwFor(invalidTag)),
+            (TagKind.ConstantTag.position, () => TagKind.ConstantTag.throwFor(invalidTag)),
+            (TagKind.ModifierTag.position, () => TagKind.ModifierTag.throwFor(invalidTag))
+        )
+        for (posLabel, throwFn) <- positions do
+            val ex = intercept[RuntimeException](throwFn())
+            // TastyErrorException wraps TastyError.UnknownTagInPosition; its message is the
+            // TastyError toString which includes the position label.
+            assert(
+                ex.getMessage.contains(posLabel),
+                s"expected exception message to contain position '$posLabel' for position $posLabel, got: ${ex.getMessage}"
+            )
+            assert(
+                ex.getMessage.contains(invalidTag.toString),
+                s"expected exception message to contain tag '$invalidTag' for position $posLabel, got: ${ex.getMessage}"
+            )
+        end for
+        succeed
+    }
+
+    // PROP-PB-006: TagKind.from() round-trips for all known tags in each position.
+    // For each enum value, from(value.raw) returns the same enum case.
+    // Verifies the byRawMap is correctly populated from the enum values.
+    "PROP-PB-006: TagKind from() round-trips for all known tags in each position" in {
+        import kyo.internal.tasty.reader.TagKind
+
+        for tag <- TagKind.TypePositionTag.values do
+            assert(
+                TagKind.TypePositionTag.from(tag.raw) == tag,
+                s"TypePositionTag.from(${tag.raw}) did not return $tag"
+            )
+        end for
+
+        for tag <- TagKind.TreePositionTag.values do
+            assert(
+                TagKind.TreePositionTag.from(tag.raw) == tag,
+                s"TreePositionTag.from(${tag.raw}) did not return $tag"
+            )
+        end for
+
+        for tag <- TagKind.TptPositionTag.values do
+            assert(
+                TagKind.TptPositionTag.from(tag.raw) == tag,
+                s"TptPositionTag.from(${tag.raw}) did not return $tag"
+            )
+        end for
+
+        for tag <- TagKind.ConstantTag.values do
+            assert(
+                TagKind.ConstantTag.from(tag.raw) == tag,
+                s"ConstantTag.from(${tag.raw}) did not return $tag"
+            )
+        end for
+
+        for tag <- TagKind.ModifierTag.values do
+            assert(
+                TagKind.ModifierTag.from(tag.raw) == tag,
+                s"ModifierTag.from(${tag.raw}) did not return $tag"
+            )
+        end for
+
+        succeed
+    }
+
 end TastyPropertyBasedTest

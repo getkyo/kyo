@@ -118,6 +118,12 @@ private[kyo] object TagKind:
                 raw,
                 throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
             )
+
+        /** Throw `TastyErrorException(UnknownTagInPosition)` for `raw`; returns `Nothing` so callers can write
+          * `case other => TagKind.TypePositionTag.throwFor(other)` in a match that returns any type.
+          */
+        def throwFor(raw: Int): Nothing =
+            throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
     end TypePositionTag
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -197,6 +203,12 @@ private[kyo] object TagKind:
                 raw,
                 throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
             )
+
+        /** Throw `TastyErrorException(UnknownTagInPosition)` for `raw`; returns `Nothing` so callers can write
+          * `case other => TagKind.TreePositionTag.throwFor(other)` in a match that returns any type.
+          */
+        def throwFor(raw: Int): Nothing =
+            throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
     end TreePositionTag
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -237,6 +249,12 @@ private[kyo] object TagKind:
                 raw,
                 throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
             )
+
+        /** Throw `TastyErrorException(UnknownTagInPosition)` for `raw`; returns `Nothing` so callers can write
+          * `case other => TagKind.TptPositionTag.throwFor(other)` in a match that returns any type.
+          */
+        def throwFor(raw: Int): Nothing =
+            throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
     end TptPositionTag
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -272,6 +290,12 @@ private[kyo] object TagKind:
                 raw,
                 throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
             )
+
+        /** Throw `TastyErrorException(UnknownTagInPosition)` for `raw`; returns `Nothing` so callers can write
+          * `case other => TagKind.ConstantTag.throwFor(other)` in a match that returns any type.
+          */
+        def throwFor(raw: Int): Nothing =
+            throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
     end ConstantTag
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -342,6 +366,12 @@ private[kyo] object TagKind:
                 raw,
                 throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
             )
+
+        /** Throw `TastyErrorException(UnknownTagInPosition)` for `raw`; returns `Nothing` so callers can write
+          * `case other => TagKind.ModifierTag.throwFor(other)` in a match that returns any type.
+          */
+        def throwFor(raw: Int): Nothing =
+            throw new TastyErrorException(TastyError.UnknownTagInPosition(raw, position))
     end ModifierTag
 
 end TagKind

@@ -1074,15 +1074,15 @@ object TypeUnpickler:
 
             case other if other >= TastyFormat.firstLengthTreeTag =>
                 // Phase 2.04-strict: any cat-5 tag not handled above is a genuinely unrecognised
-                // TASTy format extension. Throw TastyErrorException(UnknownTagInPosition) so the
-                // error propagates to cp.errors rather than silently producing a sentinel Named(-1)
-                // symbol. The previous warn+sentinel pattern is eliminated here.
-                throw new TastyErrorException(TastyError.UnknownTagInPosition(other, "type"))
+                // TASTy format extension. TagKind.TypePositionTag.throwFor propagates
+                // TastyErrorException(UnknownTagInPosition) to cp.errors rather than producing
+                // a silent sentinel Named(-1) symbol.
+                TagKind.TypePositionTag.throwFor(other)
 
             case other =>
                 // Phase 2.04-strict: same rationale as the cat-5 branch above.
                 // Any cat-1..4 tag not handled above is genuinely unrecognised.
-                throw new TastyErrorException(TastyError.UnknownTagInPosition(other, "type"))
+                TagKind.TypePositionTag.throwFor(other)
 
         end match
     end decodeTag
