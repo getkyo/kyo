@@ -558,6 +558,7 @@ final private[kyo] class NodeCommandUnsafe(
                                             stdinSource match
                                                 case Process.Input.FromStream(is) => feedInputStream(is, child.stdin)
                                                 case Process.Input.Inherit        => ()
+                                                case Process.Input.Pipe           => ()
                                             end match
                                     end match
 
@@ -623,6 +624,7 @@ final private[kyo] class NodeCommandUnsafe(
                                             firstCmd.stdinSource match
                                                 case Process.Input.FromStream(is) => feedInputStream(is, children.head.stdin)
                                                 case Process.Input.Inherit        => ()
+                                                case Process.Input.Pipe           => ()
                                             end match
                                     end match
 

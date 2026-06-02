@@ -14,6 +14,7 @@ import scala.scalajs.js.typedarray.Uint8Array
 @JSImport("node:fs", JSImport.Namespace)
 private[kyo] object NodeFs extends js.Object:
     def existsSync(path: String): Boolean                                                       = js.native
+    def realpathSync(path: String): String                                                      = js.native
     def statSync(path: String): NodeStats                                                       = js.native
     def lstatSync(path: String): NodeStats                                                      = js.native
     def readFileSync(path: String, encoding: String): String                                    = js.native
@@ -165,6 +166,12 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     def isSymbolicLink()(using AllowUnsafe): Boolean =
         try NodeFs.lstatSync(pathStr).isSymbolicLink()
         catch case _: js.JavaScriptException => false
+
+    def realPath()(using AllowUnsafe, Frame): Result[FileException, Path] =
+        try Result.succeed(Path(NodeFs.realpathSync(pathStr)))
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(safe, e))
+            case e: Throwable              => Result.panic(e)
 
     // --- Read ---
 
@@ -654,6 +661,9 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
 
     private[kyo] def homePath: Path =
         make(Chunk(NodeOs.homedir()))
+
+    private[kyo] def cwdPath: Path =
+        make(Chunk(js.Dynamic.global.process.applyDynamic("cwd")().asInstanceOf[String]))
 
     private[kyo] def osPlatform: String =
         NodeOs.platform() match
