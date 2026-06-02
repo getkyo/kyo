@@ -424,6 +424,49 @@ age: 30
                     Result.fail(LimitExceededException("Collection size", 2, 1))
             )
         }
+
+        "visits a CST document through the event API" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+
+            val scalars = new Yaml.Events.Handler[Chunk[String], Nothing]:
+                override def scalar(
+                    context: Chunk[String],
+                    value: String,
+                    meta: Yaml.ScalarMeta
+                ): Result[Nothing, Chunk[String]] =
+                    Result.succeed(context :+ value)
+            end scalars
+
+            assert(
+                Yaml.pipeline.visit(document, Chunk.empty[String])(scalars) ==
+                    Result.succeed(Chunk("name", "Alice", "age", "30"))
+            )
+        }
+
+        "renders and parses a CST document" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+
+            assertResult((rendered = "name: Alice\nage: 30\n", parsedIsMapping = true)) {
+                (
+                    rendered = Yaml.pipeline.render(document).getOrThrow,
+                    parsedIsMapping = Yaml.pipeline.parse(document).getOrThrow.isInstanceOf[Yaml.Node.Mapping]
+                )
+            }
+        }
+
+        "renders a CST stream and parses all its documents" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
+
+            assertResult((rendered = "---\nname: Alice\n---\nname: Bob\n", nodeCount = 2)) {
+                (
+                    rendered = Yaml.pipeline.render(stream).getOrThrow,
+                    nodeCount = Yaml.pipeline.parseAll(stream).getOrThrow.size
+                )
+            }
+        }
     }
 
     private val identityProcessor: Yaml.Events.Processor[Nothing] =

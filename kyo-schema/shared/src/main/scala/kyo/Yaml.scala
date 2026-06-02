@@ -847,6 +847,93 @@ object Yaml:
             }
         end visit
 
+        /** Visits a CST document through this pipeline's processors and the supplied handler. */
+        def visit[Ctx, Err2](
+            document: Cst.Document,
+            context: Ctx
+        )(handler: Events.Handler[Ctx, Err2])(using Frame): Result[Err | Err2 | DecodeException, Ctx] =
+            processor match
+                case Absent           => internal.yaml.YamlCstBuilder.emitDocument(document, context)(handler)
+                case Present(current) => internal.yaml.YamlCstBuilder.emitDocument(document, context)(current.andThen(handler))
+            end match
+        end visit
+
+        /** Visits a CST stream through this pipeline's processors and the supplied handler. */
+        def visit[Ctx, Err2](
+            stream: Cst.Stream,
+            context: Ctx
+        )(handler: Events.Handler[Ctx, Err2])(using Frame): Result[Err | Err2 | DecodeException, Ctx] =
+            processor match
+                case Absent           => internal.yaml.YamlCstBuilder.emitStream(stream, context)(handler)
+                case Present(current) => internal.yaml.YamlCstBuilder.emitStream(stream, context)(current.andThen(handler))
+            end match
+        end visit
+
+        /** Renders a CST document after routing its events through this pipeline's processors. */
+        def render(document: Cst.Document)(using Frame): Result[Err | DecodeException, String] =
+            val renderer = Events.Renderer(writerConfig)
+            visit(document, ())(renderer).map(_ => renderer.resultString)
+        end render
+
+        /** Renders a CST stream after routing its events through this pipeline's processors.
+          *
+          * If the stream has an original source and no processors, that source is returned unchanged. Otherwise, each document is rendered
+          * individually (without per-document markers) and joined with `---` separators.
+          */
+        def render(stream: Cst.Stream)(using Frame): Result[Err | DecodeException, String] =
+            stream.originalSource match
+                case Present(source) if processor.isEmpty =>
+                    Result.succeed(source)
+                case _ =>
+                    val childConfig =
+                        if stream.documents.size > 1
+                        then writerConfig.copy(documentMarkers = WriterConfig.DocumentMarkers.None)
+                        else writerConfig
+                    val childPipeline = new Pipeline(readerConfig, childConfig, processor)
+
+                    @tailrec def loop(
+                        index: Int,
+                        acc: StringBuilder
+                    ): Result[Err | DecodeException, String] =
+                        if index >= stream.documents.size then Result.succeed(acc.toString)
+                        else
+                            childPipeline.render(stream.documents(index)) match
+                                case Result.Success(rendered) =>
+                                    if stream.documents.size > 1 then
+                                        if acc.nonEmpty && acc.charAt(acc.length - 1) != '\n' then
+                                            val _ = acc.append('\n')
+                                        val _ = acc.append("---\n")
+                                    end if
+                                    val _ = acc.append(rendered)
+                                    loop(index + 1, acc)
+                                case Result.Failure(e) => Result.fail(e)
+                                case Result.Panic(e)   => Result.panic(e)
+                            end match
+                    end loop
+
+                    loop(0, StringBuilder())
+            end match
+        end render
+
+        /** Parses a CST document into a [[Node]] after routing its events through this pipeline's processors. */
+        def parse(document: Cst.Document)(using Frame): Result[Err | DecodeException, Node] =
+            val builder = NodeBuilder()
+            visit(document, ())(builder).flatMap(_ => builder.result)
+        end parse
+
+        /** Parses every document of a CST stream into a [[Node]]. */
+        def parseAll(stream: Cst.Stream)(using Frame): Result[Err | DecodeException, Chunk[Node]] =
+            @tailrec def loop(index: Int, acc: Chunk[Node]): Result[Err | DecodeException, Chunk[Node]] =
+                if index >= stream.documents.size then Result.succeed(acc)
+                else
+                    parse(stream.documents(index)) match
+                        case Result.Success(node) => loop(index + 1, acc :+ node)
+                        case Result.Failure(e)    => Result.fail(e)
+                        case Result.Panic(e)      => Result.panic(e)
+                    end match
+            loop(0, Chunk.empty)
+        end parseAll
+
         /** Encodes a schema value to YAML.
           *
           * Pipelines with no processors delegate to [[Yaml.encode]]. Processor-backed encode emits schema events through the configured
