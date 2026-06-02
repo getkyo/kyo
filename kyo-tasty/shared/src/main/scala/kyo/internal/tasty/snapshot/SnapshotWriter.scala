@@ -73,7 +73,7 @@ object SnapshotWriter:
     private def serialize(cp: Tasty.Classpath, digest: Array[Byte]): Array[Byte] =
         // Direct field reads from the immutable case class; no AllowUnsafe needed.
         val allSymbols = cp.symbols
-        // Build a reverse map Symbol->fqn from the classpath's fqnIndex so snapshot FQNs are
+        // Build a reverse map SymbolId.value->fqn from the classpath's fqnIndex so snapshot FQNs are
         // the real registered FQNs (e.g. "test.Foo"), not just simple names ("Foo").
         // Symbols without an fqnIndex entry get an empty FQN (they will not be findClass-lookup-able).
         // HARD RULE 10: store only the canonical source FQN per symbol. The fqnIndex contains dual-index
@@ -85,12 +85,15 @@ object SnapshotWriter:
         // in alphabetical order wins deterministically across JVM invocations. Without sorting,
         // HashMap.foreach iteration order may differ between invocations, causing different canonical
         // FQNs to be stored in fqnBySymbol for symbols with multiple aliases.
-        val fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String] =
-            val rev = new java.util.IdentityHashMap[Tasty.Symbol, String]()
+        // CARRY-1 fix: keyed by SymbolId.value (Int) instead of Symbol object identity so that warm-loaded
+        // classpaths (which create fresh Symbol instances with the same id.value) produce the same FQN
+        // lookup result as a cold load. IdentityHashMap caused lookup misses on warm-load symbols because
+        // their object identities differ from the cold-load symbols used to populate the map.
+        val fqnBySymbol: mutable.HashMap[Int, String] =
+            val rev = mutable.HashMap.empty[Int, String]
             cp.fqnIndex.toSeq.sortBy(_._1).foreach { case (fqn, id) =>
-                val sym       = cp.symbol(id)
                 val canonical = FqnNormalizer.canonicalSourceFqn(fqn)
-                rev.put(sym, canonical)
+                rev(id.value) = canonical
             }
             rev
         end fqnBySymbol
@@ -120,9 +123,9 @@ object SnapshotWriter:
             internName(nameToStr(sym.name))
 
         val symFqns = symbolList.map: sym =>
-            val fqn = fqnBySymbol.get(sym)
-            if fqn != null && fqn.nonEmpty then internName(fqn)
-            else internName(nameToStr(sym.name)) // fallback: simple name for non-indexed symbols
+            fqnBySymbol.get(sym.id.value) match
+                case Some(fqn) if fqn.nonEmpty => internName(fqn)
+                case _                         => internName(nameToStr(sym.name)) // fallback: simple name for non-indexed symbols
 
         // Collect body byte slices from Symbol.body: Maybe[SymbolBody].
         val bodyBytesBuffer = new java.io.ByteArrayOutputStream(128 * 1024 * 1024)
@@ -139,7 +142,11 @@ object SnapshotWriter:
                 case w: Tasty.Symbol.Var    => w.body
                 case _                      => kyo.Maybe.Absent
             ) match
-                case kyo.Maybe.Present(b) if b.bodyStart > 0 && b.bodyEnd > b.bodyStart && b.sectionBytes.nonEmpty =>
+                // CARRY-1 body-offset fix: drop the bodyStart > 0 guard. For cold TASTy bodies,
+                // bodyStart is an absolute TASTy section offset (never 0 in practice). For warm
+                // bodies read from a BODY_BYTES section, bodyStart == 0 is the valid start of the
+                // first slice. Using bodyEnd > bodyStart is the correct "has body" sentinel.
+                case kyo.Maybe.Present(b) if b.bodyEnd > b.bodyStart && b.sectionBytes.nonEmpty =>
                     val sliceLen = b.bodyEnd - b.bodyStart
                     bodyBytesBuffer.write(b.sectionBytes, b.bodyStart, sliceLen)
                     symBodyStarts(idx) = runningOffset
@@ -493,7 +500,7 @@ object SnapshotWriter:
         symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
         internFqn: String => Int,
         symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
-        fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String],
+        fqnBySymbol: mutable.HashMap[Int, String],
         unresolvedFqnByNegId: Map[Int, String]
     ): Array[Byte] =
         import Tasty.Name.asString
@@ -675,18 +682,17 @@ object SnapshotWriter:
     private def tyconFqn(
         t: Tasty.Type,
         symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
-        fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String]
+        fqnBySymbol: mutable.HashMap[Int, String]
     ): String =
         import Tasty.Name.asString
         t match
             case Tasty.Type.Named(annSymId) =>
-                val annSym = symbolById.getOrElse(annSymId.value, null)
-                if annSym != null then
-                    val fqn = fqnBySymbol.get(annSym)
-                    if fqn != null && fqn.nonEmpty then fqn
-                    else nameToStr(annSym.name)
-                else ""
-                end if
+                fqnBySymbol.get(annSymId.value) match
+                    case Some(fqn) if fqn.nonEmpty => fqn
+                    case _ =>
+                        val annSym = symbolById.getOrElse(annSymId.value, null)
+                        if annSym != null then nameToStr(annSym.name) else ""
+                end match
             case Tasty.Type.TermRef(qual, name) =>
                 val q = tyconFqn(qual, symbolById, fqnBySymbol)
                 if q.nonEmpty then q + "." + name.asString else name.asString

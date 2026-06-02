@@ -920,8 +920,10 @@ object SnapshotReader:
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
             // For mmap path: body bytes are accessed via bodyView sub-view.
             // Phase 02: SymbolBody carries bodyView support via sectionBytes (empty) + addrMap.
+            // CARRY-1 body-offset fix: use bodyEnd > bodyStart (not bodyStart > 0). Same rationale as
+            // readSymbols above: the first body slice in BODY_BYTES starts at offset 0.
             val bodyMaybe: kyo.Maybe[Tasty.SymbolBody] =
-                if raw.bodyStart > 0 && raw.bodyEnd > raw.bodyStart && (bodyViewOpt ne null) then
+                if raw.bodyEnd > raw.bodyStart && (bodyViewOpt ne null) then
                     kyo.Maybe(Tasty.SymbolBody(
                         bodyStart = raw.bodyStart,
                         bodyEnd = raw.bodyEnd,
@@ -1160,8 +1162,13 @@ object SnapshotReader:
             val ownerIdInt = raw.ownerId
             // ownerId: use index directly; -1 means self-referential (root sentinel).
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
+            // CARRY-1 body-offset fix: use bodyEnd > bodyStart (not bodyStart > 0) as the presence
+            // sentinel. In the BODY_BYTES section, body slices are concatenated starting at offset 0;
+            // the first slice has bodyStart == 0 which is a valid non-empty body. Using bodyStart > 0
+            // incorrectly discards the first slice, causing warm-reserialize to emit a shorter
+            // BODY_BYTES section than the original cold snapshot.
             val bodyMaybe: kyo.Maybe[Tasty.SymbolBody] =
-                if raw.bodyStart > 0 && raw.bodyEnd > raw.bodyStart && bodyBytesArray.nonEmpty
+                if raw.bodyEnd > raw.bodyStart && bodyBytesArray.nonEmpty
                     && raw.bodyEnd <= bodyBytesArray.length
                 then
                     kyo.Maybe(Tasty.SymbolBody(
