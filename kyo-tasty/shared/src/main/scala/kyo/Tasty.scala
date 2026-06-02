@@ -2301,15 +2301,42 @@ object Tasty:
 
         /** Look up an object symbol by fully-qualified dotted name.
           *
-          * Returns `Absent` when the FQN resolves to a non-Object symbol.
+          * Accepts both source-form names (e.g. `"foo.Bar"`) and binary names with a trailing `$`
+          * (e.g. `"foo.Bar$"`). When the source-form FQN resolves to a non-Object symbol (for example,
+          * a case class whose companion Object is stored under the binary `"foo.Bar$"` key because
+          * the source-form key is taken by the class), the method automatically falls back to looking
+          * up `fqn + "$"`. This handles the Scala 3 case-class companion pattern where both the class
+          * and its companion object share the same source-form name but the object is indexed under the
+          * `$`-suffixed binary name.
+          *
+          * Returns `Absent` when neither key resolves to an Object symbol.
           */
         def findObject(fqn: String): Maybe[Symbol.Object] =
             fqnIndex.get(fqn) match
                 case Some(id) =>
                     symbol(id) match
                         case o: Symbol.Object => Maybe(o)
-                        case _                => Maybe.Absent
-                case None => Maybe.Absent
+                        case _                =>
+                            // Source-form FQN is taken by a non-Object (e.g. the case class itself).
+                            // Fall back to the binary $-suffixed key where the companion Object lives.
+                            if fqn.endsWith("$") then Maybe.Absent
+                            else
+                                fqnIndex.get(fqn + "$") match
+                                    case Some(id2) =>
+                                        symbol(id2) match
+                                            case o: Symbol.Object => Maybe(o)
+                                            case _                => Maybe.Absent
+                                    case None => Maybe.Absent
+                case None =>
+                    // No entry at the source-form key; try the binary $-suffixed key directly.
+                    if fqn.endsWith("$") then Maybe.Absent
+                    else
+                        fqnIndex.get(fqn + "$") match
+                            case Some(id2) =>
+                                symbol(id2) match
+                                    case o: Symbol.Object => Maybe(o)
+                                    case _                => Maybe.Absent
+                            case None => Maybe.Absent
 
         /** Look up a class-like symbol (Class, Trait, or Object) by fully-qualified dotted name.
           *
