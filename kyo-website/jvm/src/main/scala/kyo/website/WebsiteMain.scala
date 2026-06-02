@@ -4,15 +4,18 @@ import kyo.*
 
 /** CLI entry point for the kyo website static-site generator.
   *
-  * Usage:
+  * Usage (the deploy workflow invocation, after `fullLinkJS` has produced the bundle):
   * {{{
-  *   sbt 'kyo-websiteJVM/run --out <output-dir> --bundle-dir <js-bundle-dir> --repo-root <repo-root>'
+  *   sbt 'kyo-websiteJVM/run --out site --content content'
   * }}}
   *
   * Arguments:
   *   - `--out <dir>`        Output directory (required). Created if absent.
-  *   - `--bundle-dir <dir>` Directory containing the compiled `main.js` bundle (required).
-  *   - `--repo-root <dir>`  Repo root for locating `kyo.png` and `docs/kyo.ico`.
+  *   - `--bundle-dir <dir>` Directory containing the compiled `main.js` bundle. Optional: when absent,
+  *                          the directory is discovered under
+  *                          `<repo-root>/kyo-website-bundle/js/target/scala-<version>/` (the `fullLinkJS`
+  *                          `-opt` output holding `main.js`), so the deploy workflow needs no path flag.
+  *   - `--repo-root <dir>`  Repo root for locating `kyo.png` and `kyo-website/assets/kyo.ico`.
   *                          Defaults to the current working directory.
   *   - `--content <dir>`    Directory with one `<tag>/` subdirectory per version, each an extracted
   *                          tag tree (root `README.md` + `<slug>/README.md`). Each subdirectory is
@@ -32,8 +35,8 @@ object WebsiteMain extends KyoApp:
     private def program(using Frame): Unit < (Async & Scope & Abort[Any]) =
         val theArgs   = args
         val outDir    = parseOut(theArgs)
-        val bundleDir = parseBundleDir(theArgs)
         val repoRoot  = parseRepoRoot(theArgs)
+        val bundleDir = parseBundleDir(theArgs, repoRoot)
         for
             _ <- Console.printLine(
                 s"WebsiteMain: out=$outDir bundleDir=$bundleDir repoRoot=$repoRoot"
@@ -104,8 +107,46 @@ object WebsiteMain extends KyoApp:
     private[website] def parseOut(theArgs: Chunk[String]): String =
         flagValue(theArgs, "--out").getOrElse("/tmp/kyo-site")
 
-    private def parseBundleDir(theArgs: Chunk[String]): String =
-        flagValue(theArgs, "--bundle-dir").getOrElse("/tmp/kyo-bundle")
+    /** Resolve the directory holding the linked `main.js` bundle.
+      *
+      * When `--bundle-dir <dir>` is supplied (tests, manual runs), that path wins. When it is absent,
+      * the deploy workflow has already produced the bundle via
+      * `sbt 'kyo-website-bundleJS/Compile/fullLinkJS'` and the directory is discovered under
+      * `<repoRoot>/kyo-website-bundle/js/target/scala-<version>/`: the Scala.js linker writes the
+      * full-optimized output to a sibling whose name ends in `-opt` (the `fullLinkJS` convention,
+      * distinct from the `-fastopt` and `-test-fastopt` siblings). The first such directory that
+      * actually contains a `main.js` is returned, so a stale `-fastopt` directory never wins.
+      *
+      * When neither the flag nor a discovered directory is present, falls back to
+      * `<repoRoot>/kyo-website-bundle/js/target/scala-3.8.3/kyo-website-bundle-opt`, the path the
+      * current build (`build.sbt` `scala3Version`, ESModule bundle) writes to. `copyAssets` then
+      * reports a `WebsiteEmitException` if that path holds no `main.js`, so a missing bundle fails
+      * loud rather than emitting a site with a broken script reference.
+      */
+    private def parseBundleDir(theArgs: Chunk[String], repoRoot: String): String =
+        flagValue(theArgs, "--bundle-dir").getOrElse(discoverBundleDir(repoRoot))
+
+    private def discoverBundleDir(repoRoot: String): String =
+        import java.nio.file.Files
+        import java.nio.file.Path as JPath
+        import scala.jdk.CollectionConverters.*
+        import scala.util.Using
+        val fallback  = JPath.of(repoRoot, "kyo-website-bundle", "js", "target", "scala-3.8.3", "kyo-website-bundle-opt")
+        val targetDir = JPath.of(repoRoot, "kyo-website-bundle", "js", "target")
+        if !Files.isDirectory(targetDir) then fallback.toString
+        else
+            // Using closes each directory stream after the iterator is drained to a list.
+            val scalaDirs = Using.resource(Files.list(targetDir))(s =>
+                s.iterator().asScala.toList.filter(p => Files.isDirectory(p) && p.getFileName.toString.startsWith("scala-"))
+            )
+            val optDirs = scalaDirs.flatMap(scalaDir =>
+                Using.resource(Files.list(scalaDir))(s =>
+                    s.iterator().asScala.toList.filter(p => Files.isDirectory(p) && p.getFileName.toString.endsWith("-opt"))
+                )
+            )
+            optDirs.find(p => Files.isRegularFile(p.resolve("main.js"))).map(_.toString).getOrElse(fallback.toString)
+        end if
+    end discoverBundleDir
 
     private def parseRepoRoot(theArgs: Chunk[String]): String =
         flagValue(theArgs, "--repo-root")

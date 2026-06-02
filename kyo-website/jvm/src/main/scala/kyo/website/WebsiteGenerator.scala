@@ -27,7 +27,7 @@ import kyo.*
   *   <outDir>/CNAME           -- exactly "getkyo.io" (INV-011)
   *   <outDir>/.nojekyll       -- empty (INV-011)
   *   <outDir>/kyo.png         -- logo (copied from repo root)
-  *   <outDir>/kyo.ico         -- favicon (copied from docs/)
+  *   <outDir>/kyo.ico         -- favicon (copied from kyo-website/assets/)
   *   <outDir>/main.js         -- bundle (copied from bundleDir)
   *   <outDir>/main.js.map     -- bundle source map (copied from bundleDir)
   * }}}
@@ -42,7 +42,8 @@ object WebsiteGenerator:
       * arguments that vary per call while still naming the extra paths.
       *
       * @param repoRoot
-      *   Absolute path to the repository root, used to locate `kyo.png` and `docs/kyo.ico`.
+      *   Absolute path to the repository root, used to locate `kyo.png` and
+      *   `kyo-website/assets/kyo.ico`.
       * @param bundleDir
       *   Directory containing the compiled JS bundle (`main.js` and `main.js.map`). Passed in so
       *   the deploy workflow can supply the real `fullLinkJS` path; tests use a temp stub.
@@ -361,7 +362,7 @@ object WebsiteGenerator:
     )(using Frame): Unit < (Sync & Abort[WebsiteException]) =
         for
             _ <- copyFile("kyo.png", repoRoot / "kyo.png", outDir / "kyo.png")
-            _ <- copyFile("kyo.ico", repoRoot / "docs" / "kyo.ico", outDir / "kyo.ico")
+            _ <- copyFile("kyo.ico", repoRoot / "kyo-website" / "assets" / "kyo.ico", outDir / "kyo.ico")
             _ <- copyFile("main.js", bundleDir / "main.js", outDir / "main.js")
             _ <- copyFile("main.js.map", bundleDir / "main.js.map", outDir / "main.js.map")
         yield ()

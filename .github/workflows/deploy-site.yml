@@ -1,0 +1,67 @@
+name: deploy-site
+# Builds and deploys getkyo.io to GitHub Pages "from Actions". Renders every release tag's README
+# content with the renderer from `main` (renderer from main, content from tags), assembles latest +
+# /vX/ + versions.json, and deploys one Pages artifact. SEPARATE from release.yml (not coupled into
+# the release job). The one-time manual prerequisite (flip repo Pages "Source" to "GitHub Actions")
+# is the user's action, documented in design/03b-user-escalations.md (Q-007); the workflow emits
+# CNAME + .nojekyll so getkyo.io survives the cutover (INV-011).
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JAVA_OPTS: -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
+      JVM_OPTS:  -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: coursier/cache-action@v8.1.1
+      - uses: coursier/setup-action@v3.0.0
+        with:
+          jvm: corretto:24
+          apps: sbt
+      - name: Link the browser bundle (fullLinkJS)
+        run: sbt 'kyo-website-bundleJS/Compile/fullLinkJS'
+      - name: Extract README content per tag
+        run: |
+          for tag in $(git tag -l 'v*' | sort -V); do
+            mkdir -p "content/$tag"
+            git archive "$tag" README.md '*/README.md' | tar -x -C "content/$tag" || true
+          done
+      - name: Render and assemble the site
+        run: sbt 'kyo-websiteJVM/run --out site --content content'
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+# Action version pins (@v3/@v4, checkout @v6.0.2, coursier versions) mirror release.yml lines 25 to
+# 37 and the verified upload-pages-artifact + deploy-pages pair. The `|| true` on the archive loop is
+# the degrade-not-fail step half: a tag with no module READMEs still extracts the root README, and
+# WebsiteContent.fromRepo then yields intro-only (INV-007). The render step omits --bundle-dir: when
+# the flag is absent, WebsiteMain discovers the fullLinkJS output directory under
+# kyo-website-bundle/js/target/scala-<version>/ (the -opt sibling holding main.js). Nothing here writes
+# the generated output back to the repo with git; the site ships only as the Pages artifact (INV-011).
