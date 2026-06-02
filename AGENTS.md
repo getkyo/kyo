@@ -26,6 +26,29 @@ The phrase **"shall I take the smaller fix?"** is structurally an offer to be in
 
 The phrase **"this is good enough for now"** has no place in a kyo change. Either it is correct and done, or it is not done.
 
+### The "pending issue" / "known issue" stop-pattern is banned
+
+If a campaign goal is "X works end-to-end" and validation surfaces multiple bugs, fixing 4 of 5 and writing the 5th up as a "known issue requiring deeper investigation" does NOT meet the goal. The campaign is half-done. The 5th bug IS the work.
+
+Forbidden phrasings, structurally — when you catch yourself drafting one, treat it as a flag that you are about to commit the anti-pattern:
+
+- "Known issue: …" / "Documented as a known limitation."
+- "This requires sustained X-internals investigation beyond a validation session."
+- "Fix path: either … or … . That work is substantially larger than this session."
+- "We've surfaced enough; let's pause and assess."
+- "Documenting in FINDINGS for follow-up."
+- "Out of scope for this session."
+
+Re-scope instead: the unfixed bug is the next concrete task. Pick the fix path, execute it. Validation isn't done when the diagnostic writeup is comprehensive; it is done when the demonstrable end-state is true (host connects, tool calls succeed, response shape matches the spec, …).
+
+The only legitimate stops within an in-flight campaign are:
+
+1. The user explicitly says stop / pivot / park.
+2. The next step requires a destructive or scope-affecting action that policy requires confirmation for (push, force-reset, schema-breaking change with downstream impact).
+3. A genuine block: 3 attempts have failed AND each failure mode was novel AND there is no information you could gather independently to make a 4th attempt better.
+
+"This is hard," "this touches a layer I haven't worked in yet," and "this needs deeper investigation" are not blocks. They are work.
+
 ## Core Rules
 
 ### Fix the Code, Not the Test
