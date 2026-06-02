@@ -662,6 +662,9 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
     private[kyo] def homePath: Path =
         make(Chunk(NodeOs.homedir()))
 
+    private[kyo] def cwdPath: Path =
+        make(Chunk(js.Dynamic.global.process.applyDynamic("cwd")().asInstanceOf[String]))
+
     private[kyo] def osPlatform: String =
         NodeOs.platform() match
             case "darwin" => "mac"

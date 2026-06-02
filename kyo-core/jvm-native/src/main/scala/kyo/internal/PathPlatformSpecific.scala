@@ -534,6 +534,12 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         else make(Chunk(h))
     end homePath
 
+    private[kyo] def cwdPath: Path =
+        val d = java.lang.System.getProperty("user.dir")
+        if d == null || d.isEmpty then make(Chunk(""))
+        else make(Chunk(d))
+    end cwdPath
+
     private[kyo] def osPlatform: String =
         val os = java.lang.System.getProperty("os.name", "").toLowerCase
         if os.contains("mac") then "mac"

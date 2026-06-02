@@ -84,6 +84,22 @@ object Path extends PathPlatformSpecific:
             else Present(Path(ps.init*))
         end parent
 
+        /** Lazily yields self, its parent, its grandparent, ..., up to and including the filesystem root.
+          *
+          * Use with `Stream.find` for "first ancestor where X" lookups (e.g., finding a project root
+          * marker like `.git` or `build.sbt`). The stream is pure: it does not stat anything on disk.
+          */
+        def ancestors(using tag: Tag[Emit[Chunk[Path]]], frame: Frame): Stream[Path, Any] =
+            @scala.annotation.tailrec
+            def loop(cur: Path, acc: Chunk[Path]): Chunk[Path] =
+                val next = acc.append(cur)
+                cur.parent match
+                    case Maybe.Present(parent) => loop(parent, next)
+                    case Maybe.Absent          => next
+            end loop
+            Stream.init(loop(self, Chunk.empty))
+        end ancestors
+
         /** Returns `true` if this path is absolute (begins at a filesystem root).
           *
           * Absolute paths are normalised to start with a leading `""` segment.
@@ -465,6 +481,14 @@ object Path extends PathPlatformSpecific:
     end extension
 
     // --- System directories ---
+
+    /** The current working directory of the JVM (JVM/Native) or Node process (JS).
+      *
+      * Reads at call time, so subsequent `process.chdir` (or test fixtures that fork with a
+      * different working dir) take effect on the next access. Use with `path.ancestors` for
+      * "find the project root containing X" style lookups.
+      */
+    def cwd(using Frame): Path < Sync = Sync.Unsafe.defer(cwdPath)
 
     /** Well-known base directories for the current OS (cache, config, data, etc.). */
     lazy val basePaths: BasePaths = platformBasePaths

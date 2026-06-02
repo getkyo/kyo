@@ -141,6 +141,47 @@ class PathTest extends Test:
         end for
     }
 
+    "Path.cwd returns a non-empty path" in run {
+        Path.cwd.map { cwd =>
+            assert(cwd.parts.nonEmpty, s"expected non-empty cwd, got parts=${cwd.parts.mkString(",")}")
+        }
+    }
+
+    "Path.parent terminates after finite steps" in run {
+        Path.cwd.map { cwd =>
+            @scala.annotation.tailrec
+            def loop(cur: Path, depth: Int): Int =
+                if depth > 64 then depth
+                else
+                    cur.parent match
+                        case Maybe.Present(p) => loop(p, depth + 1)
+                        case Maybe.Absent     => depth
+            val depth = loop(cwd, 0)
+            assert(depth < 64, s"parent walk should terminate quickly, but reached depth $depth (cwd=${cwd.toString})")
+        }
+    }
+
+    "ancestors yields self -> parent -> ... -> root and terminates" in run {
+        for
+            cwd <- Path.cwd
+            all <- cwd.ancestors.run
+        yield
+            assert(all.size >= 1)
+            assert(all.headOption.exists(_.parts == cwd.parts))
+            assert(all.size <= 50, s"ancestors should be small + finite, got ${all.size}")
+            assert(all.lastOption.exists(_.parts.size <= 1))
+        end for
+    }
+
+    "Stream.find on ancestors finds a matching ancestor and short-circuits" in run {
+        for
+            cwd <- Path.cwd
+            // Find the cwd itself (trivial predicate, must match first).
+            hit <- cwd.ancestors.find(p => (p.parts == cwd.parts))
+        yield assert(hit.isDefined)
+        end for
+    }
+
     "realPath canonicalizes an existing file path" in run {
         for
             dir <- Path.tempDir("kyo-test")

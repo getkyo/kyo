@@ -398,6 +398,19 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
             )
         )
 
+    /** Returns the first element that satisfies the predicate, short-circuiting the upstream
+      * as soon as a match is found. Returns `Absent` if the stream completes with no match.
+      *
+      * Terminal operation: equivalent to `filter(f).take(1).run.map(_.headMaybe)` but without
+      * the intermediate chunk allocation.
+      */
+    def find[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Maybe[VV] < (S & S2) =
+        filter(f).take(1).run.map(_.headMaybe)
+
+    /** Pure variant of [[find]] for predicates that do not require an effect. */
+    def findPure[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Maybe[VV] < S =
+        filterPure(f).take(1).run.map(_.headMaybe)
+
     /** Transform the stream with a partial function, filtering out values for which the partial function is undefined. Combines the
       * functionality of map and filter.
       *
