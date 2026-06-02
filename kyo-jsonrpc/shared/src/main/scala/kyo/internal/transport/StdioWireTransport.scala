@@ -12,7 +12,12 @@ final private[kyo] class StdioWireTransport extends JsonRpcWireTransport:
     end send
 
     def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
-        Stream.unfold[Unit, Chunk[Byte], Async & Abort[Closed]](()) { _ =>
+        // chunkSize = 1 so each readLine emits a chunk immediately. Without this the default
+        // chunkSize batches reads, which blocks the MCP/LSP handshake against any
+        // spec-compliant host that holds stdin open across the session (Claude Code,
+        // VS Code, Cursor, etc.); the first response only flushes once enough requests
+        // accumulate to fill the default chunk, or stdin closes.
+        Stream.unfold[Unit, Chunk[Byte], Async & Abort[Closed]]((), chunkSize = 1) { _ =>
             // EOFException from Console.readLine signals stream end; absorbed into Absent to close the stream
             Abort.run[java.io.IOException](Console.readLine).map {
                 case Result.Failure(_) => Maybe.Absent

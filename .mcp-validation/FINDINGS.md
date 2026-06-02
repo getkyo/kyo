@@ -33,7 +33,7 @@ empty, or lacks a colon. sbt output goes to a temp file and only replaces the
 live cache if sbt exits 0 AND the output contains a colon. A guard at exec
 time rejects launches with non-classpath-shaped cache contents.
 
-## Known issue: kyo stdio transport stalls until stdin EOF
+## Fixed: kyo stdio transport stalled until stdin EOF
 
 After both fixes above, the demos still hang for Claude Code's MCP host.
 Reproducer below; confirmed against the head of this branch.
@@ -81,13 +81,18 @@ fiber starts, but the chain of `Stream.unfold` / `mapChunk` doesn't pull from
 the source until something else triggers (most likely the pipe-EOF signal
 propagating through some downstream gate).
 
-The fix is most likely either:
-- Replace the `Stream.unfold` source with a daemon-thread → Channel pump that
-  emits per-line immediately; or
-- Trace the `mapChunk` / `Exchange.readerLoop` pull semantics in kyo's
-  Stream implementation and remove the start-time gate.
+Root cause: `Stream.unfold` defaults to a chunk size > 1, so the upstream pull
+batches that many `readLine` invocations into one downstream emission. With
+stdin held open, the second pull blocks indefinitely, and the first pull's
+result never propagates downstream because the chunk is not yet full.
 
-Both require sustained kyo-internals investigation beyond a validation session.
+Fix: pass `chunkSize = 1` to `Stream.unfold` in `StdioWireTransport.incoming`,
+matching the pattern already used by the writer loop in
+`JsonRpcEndpointImpl.scala:1326`. Now each read flushes a single-element chunk
+immediately, the handshake completes the moment the client's initialize arrives,
+and the server stays responsive for the duration of the session.
+
+All 202 + 364 + 765 = 1331 JVM tests still pass.
 
 ## Artifacts left in the repo
 
