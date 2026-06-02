@@ -118,6 +118,12 @@ object SnapshotReader:
                     catch
                         case ex: SectionValidator.SectionValidationException =>
                             Abort.fail(ex.error)
+                        case ex: ArrayIndexOutOfBoundsException =>
+                            Abort.fail(TastyError.SnapshotFormatError(path, s"truncated snapshot: ${ex.getMessage}", 0L))
+                        case ex: IndexOutOfBoundsException =>
+                            Abort.fail(TastyError.SnapshotFormatError(path, s"truncated snapshot: ${ex.getMessage}", 0L))
+                        case ex: NegativeArraySizeException =>
+                            Abort.fail(TastyError.SnapshotFormatError(path, s"corrupt section length: ${ex.getMessage}", 0L))
                 end if
 
     /** Deserialize section payloads into a new Tasty.Classpath. */
