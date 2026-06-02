@@ -51,6 +51,34 @@ The handler sees a typed `AddIn` value; the engine decoded it from the JSON-RPC 
 
 `McpServer.initWith(transport, handlers*)(f)` is the common shape: get the server, run `f(server)`, release at scope exit. `McpServer.init(transport, handlers*)` returns the bare `McpServer < (Async & Scope)` for callers that need to thread the server through more complex flow. Both have curried `(transport, config)(handlers*)` overloads when a non-default `McpConfig` is required, and unscoped `initUnscoped` / `initUnscopedWith` variants for handlers whose lifetime exceeds any single scope (the caller is responsible for `close`).
 
+### Running a server as a process
+
+The `val program: Unit < (Async & Scope)` above is an effect description, not a running process. Wrap it in a `KyoApp` to produce a `main`-method-bearing object that the JVM can launch:
+
+```scala
+import kyo.*
+
+object AddServer extends KyoApp:
+
+    case class AddIn(a: Int, b: Int) derives Schema, CanEqual
+
+    run {
+        val addTool: McpHandler[AddIn, McpContent, McpException] =
+            McpHandler.tool[AddIn](name = "add", description = "Adds two integers") { in =>
+                McpContent.text(s"${in.a + in.b}")
+            }
+        JsonRpcTransport.stdio().map { transport =>
+            McpServer.initWith(transport, addTool) { _ =>
+                Async.never
+            }
+        }
+    }
+
+end AddServer
+```
+
+`KyoApp.run { ... }` accepts any `Any < (Async & Scope & ...)`, runs the effect, and releases the scope when the body completes. `Async.never` parks the body forever ; the inbound stdio dispatch fiber drives all work, so the main fiber has nothing to do besides hold the scope open until the JVM is killed (Ctrl-C, parent process exit, etc.). For a server that should exit after some condition, replace `Async.never` with a `Fiber.Promise[Unit, Sync]` that the handler closures complete when ready.
+
 Handshake plumbing is invisible: the engine owns the `initialize` request and the `notifications/initialized` follow-up. User handlers never see those methods, and a `Schema`-less route name like `"initialize"` cannot collide with a registered tool name because the engine intercepts it first.
 
 ## Building a client
