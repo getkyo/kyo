@@ -494,13 +494,14 @@ When you need every symbol of a kind, the `all*` accessors do a linear
 scan and return a typed `Chunk`:
 
 ```scala
-cp.allClasses // Chunk[Symbol.Class]
+cp.allClasses // Chunk[Symbol.ClassLike] (Class + Trait + Object + EnumCase)
 cp.allTraits  // Chunk[Symbol.Trait]
 cp.allObjects // Chunk[Symbol.Object]
 cp.allMethods // Chunk[Symbol.Method]
 // ... plus allVals, allVars, allFields, allTypeAliases,
 //     allOpaqueTypes, allAbstractTypes, allTypeParams,
-//     allParameters, allPackages, allClassLike, allUnresolved
+//     allParameters, allPackages, allUnresolved.
+// allClassLike is an alias for allClasses.
 ```
 
 `cp.topLevelClasses` and `cp.packages` are O(1) accessors of pre-built

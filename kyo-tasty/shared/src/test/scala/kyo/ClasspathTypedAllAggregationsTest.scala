@@ -264,6 +264,17 @@ class ClasspathTypedAllAggregationsTest extends Test:
             succeed
     }
 
+    // ── DF6-02: allClassLike-is-alias-of-allClasses ──────────────────────────
+    // DF6 final-probe finding: allClassLike and allClasses had byte-identical
+    // implementations. After deduplication, allClassLike is a 1-line alias.
+    // Pin the alias relationship so any future drift (e.g. one widens but the
+    // other does not) is caught immediately.
+    "DF6-02: allClassLike returns the same Chunk as allClasses (alias relationship)" in run {
+        buildFixture.map: cp =>
+            assert(cp.allClassLike == cp.allClasses, "allClassLike must equal allClasses (intentional alias)")
+            succeed
+    }
+
     // ── Leaf 122: allMethods-typed ────────────────────────────────────────────
     // Given: fixture with 5 methods.
     // When: cp.allMethods

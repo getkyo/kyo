@@ -2203,6 +2203,11 @@ object Tasty:
         /** O(1) Symbol lookup by SymbolId. Returns the Symbol at index `id.value`. Returns a sentinel Unresolved symbol for out-of-range or
           * unassigned ids.
           *
+          * SymbolIds are only valid within the Classpath that produced them. Passing a SymbolId from one classpath into another classpath's
+          * `symbol(id)` returns whatever Symbol happens to sit at that index in the receiving classpath (usually an unrelated symbol),
+          * not the originating one. Cross-classpath operations should resolve by FQN via `findSymbol` / `findClass` / `findObject`, not
+          * by SymbolId.
+          *
           * Sentinel cases (F-W2-19, F-W2-22):
           *   - `id.value == -1`: the canonical sentinel value (SymbolId.sentinel); returns `sentinelUnresolved`.
           *   - `id.value < 0` (including `Int.MinValue`): any negative index is treated identically to -1 and returns `sentinelUnresolved`.
@@ -2543,9 +2548,8 @@ object Tasty:
         def allObjects: Chunk[Symbol.Object] =
             symbols.flatMap { case o: Symbol.Object => Chunk(o); case _ => Chunk.empty }
 
-        /** All ClassLike symbols (Class, Trait, Object) in the classpath. Linear scan. */
-        def allClassLike: Chunk[Symbol.ClassLike] =
-            symbols.flatMap { case c: Symbol.ClassLike => Chunk(c); case _ => Chunk.empty }
+        /** Alias for `allClasses`: all ClassLike symbols (Class, Trait, Object, EnumCase) at any nesting depth. Linear scan. */
+        def allClassLike: Chunk[Symbol.ClassLike] = allClasses
 
         /** All Method symbols in the classpath. Linear scan. */
         def allMethods: Chunk[Symbol.Method] =
