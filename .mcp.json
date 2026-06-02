@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "kyo-filesystem": {
+      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+      "args": [
+        "kyo-mcp",
+        "demo.Filesystem",
+        "/tmp/mcp-validation/root"
+      ]
+    },
+    "kyo-notes": {
+      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+      "args": [
+        "kyo-mcp",
+        "demo.Notes"
+      ]
+    }
+  }
+}
