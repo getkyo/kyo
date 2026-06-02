@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC browser bundle entry
+// PUBLIC browser bundle entry
 package kyo.website
 
 import kyo.*

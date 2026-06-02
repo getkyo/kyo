@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC landing app view
+// PUBLIC landing app view
 package kyo.website
 
 import kyo.*

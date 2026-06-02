@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC docs SPA fetch client
+// PUBLIC docs SPA fetch client
 package kyo.website
 
 import kyo.*

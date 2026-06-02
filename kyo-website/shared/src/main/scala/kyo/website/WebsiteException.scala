@@ -8,7 +8,7 @@ import kyo.*
   * how the kyo substrate organizes its exception hierarchies ([[kyo.FileException]],
   * [[kyo.HttpException]], [[kyo.BrowserException]]).
   */
-abstract class WebsiteException(message: => String = "", cause: String | Throwable = "")(using Frame)
+sealed abstract class WebsiteException(message: => String = "", cause: String | Throwable = "")(using Frame)
     extends KyoException(message, cause)
 
 /** Raised when a README cannot be read or fails to parse into the content model. The `detail` field

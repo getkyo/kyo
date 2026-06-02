@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC client search index
+// PUBLIC client search index
 package kyo.website
 
 import kyo.*

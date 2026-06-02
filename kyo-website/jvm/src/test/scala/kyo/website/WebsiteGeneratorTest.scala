@@ -224,7 +224,7 @@ class WebsiteGeneratorTest extends Test:
             result <- Abort.run[WebsiteException](emit(oneVersion, tmp, bundleDir))
         yield
             result match
-                // flow-allow: negative-path test 8; Failure(WebsiteEmitException) is the expected pass, all other arms fail()
+                // negative-path test 8; Failure(WebsiteEmitException) is the expected pass, all other arms fail()
                 case Result.Failure(e: WebsiteEmitException) =>
                     // NOTE-3: the typed failure must carry a non-empty route so the caller can locate it.
                     assert(e.route.nonEmpty, "WebsiteEmitException.route must be non-empty")

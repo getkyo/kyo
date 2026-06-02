@@ -29,7 +29,7 @@ object WebsiteMain extends KyoApp:
     // inside package kyo.website. The run block uses Frame for effectful calls;
     // Frame.internal is the sanctioned escape hatch for library-level entrypoints in
     // sub-packages of kyo that cannot use user-propagated Frame.
-    // flow-allow: KyoApp entrypoint in kyo sub-package; Frame auto-derivation rejected, Frame.internal is the sanctioned hatch (D4-2, convention_sweep)
+    // KyoApp entrypoint in kyo sub-package; Frame auto-derivation rejected, Frame.internal is the sanctioned hatch (D4-2, convention_sweep)
     run(program(using Frame.internal))(using Frame.internal, summon[Render[Unit]])
 
     private def program(using Frame): Unit < (Async & Scope & Abort[Any]) =

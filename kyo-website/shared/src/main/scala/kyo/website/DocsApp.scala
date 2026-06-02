@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC docs app view
+// PUBLIC docs app view
 package kyo.website
 
 import kyo.*

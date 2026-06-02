@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC site stylesheet
+// PUBLIC site stylesheet
 package kyo.website
 
 import kyo.*

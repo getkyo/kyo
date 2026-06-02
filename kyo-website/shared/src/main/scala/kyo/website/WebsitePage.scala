@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC page wrapper
+// PUBLIC page wrapper
 package kyo.website
 
 import kyo.*
