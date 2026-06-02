@@ -140,6 +140,19 @@ object Codec:
           * After this call, the parent Reader's position is advanced past the value (as if `skip()` had been called).
           */
         def captureValue(): Reader
+
+        /** Read the next value as a shape-agnostic [[Structure.Value]] tree.
+          *
+          * The default implementation throws [[SchemaNotSerializableException]] so codecs that cannot introspect shape fail fast with a
+          * clear message rather than the cryptic [[UnknownVariantException]] that arises from treating a raw record as a discriminated
+          * union. Implementations that can detect shape (StructureValueReader, JsonReader) override this to materialize the next value as a
+          * Structure.Value directly. Used by the identity [[Schema]] for Structure.Value so that wire formats which carry plain records
+          * (standard JSON-RPC arguments, MCP tool inputs) round-trip without forcing a kyo-schema-tagged variant wrapper.
+          */
+        def captureStructure(): Structure.Value =
+            throw SchemaNotSerializableException(
+                "captureStructure not supported by this Reader; decode Structure.Value from a JSON or Structure source instead."
+            )(using frame)
     end Reader
 
     /** Abstract base for codec-specific serialization output.

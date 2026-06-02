@@ -626,6 +626,51 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         new JsonReader(input.slice(start, end), _frame)
     end captureValue
 
+    override def captureStructure(): Structure.Value =
+        skipWhitespace()
+        if pos >= input.size then error("Unexpected end of input while reading Structure.Value")
+        peek() match
+            case '{' =>
+                val size = objectStart()
+                val n    = if size >= 0 then size else 4
+                val acc  = scala.collection.mutable.ArrayBuffer.empty[(String, Structure.Value)]
+                @tailrec def loop(): Unit =
+                    if hasNextField() then
+                        val name  = field()
+                        val value = captureStructure()
+                        discard(acc.addOne((name, value)))
+                        loop()
+                loop()
+                discard(n)
+                objectEnd()
+                Structure.Value.Record(Chunk.from(acc.toSeq))
+            case '[' =>
+                val size = arrayStart()
+                val n    = if size >= 0 then size else 4
+                val acc  = scala.collection.mutable.ArrayBuffer.empty[Structure.Value]
+                @tailrec def loop(): Unit =
+                    if hasNextElement() then
+                        discard(acc.addOne(captureStructure()))
+                        loop()
+                loop()
+                discard(n)
+                arrayEnd()
+                Structure.Value.Sequence(Chunk.from(acc.toSeq))
+            case '"'       => Structure.Value.Str(string())
+            case 't' | 'f' => Structure.Value.Bool(boolean())
+            case 'n' =>
+                if !isNil() then error("Expected 'null'")
+                Structure.Value.Null
+            case _ =>
+                val numStr = readNumber()
+                if numStr.indexOf('.') >= 0 || numStr.indexOf('e') >= 0 || numStr.indexOf('E') >= 0 then
+                    Structure.Value.Decimal(numStr.toDouble)
+                else
+                    Structure.Value.Integer(numStr.toLong)
+                end if
+        end match
+    end captureStructure
+
     // Release this reader back to the thread-local pool
     override def release(): Unit =
         this.input = Span.empty[Byte]

@@ -192,6 +192,8 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
         new StructureValueReader(v)
     end captureValue
 
+    override def captureStructure(): Structure.Value = currentValue
+
     def mapStart(): Int         = objectStart()
     def mapEnd(): Unit          = objectEnd()
     def hasNextEntry(): Boolean = hasNextField()
