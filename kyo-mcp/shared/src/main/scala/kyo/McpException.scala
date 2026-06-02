@@ -152,18 +152,26 @@ case class McpUnknownToolException(name: String, registered: Chunk[String])(usin
 
 /** Unknown resource URI dispatched by the client (-32002).
   *
-  * Raised when a `resources/read` request names a resource URI that has no registered handler.
+  * Raised when a `resources/read` request names a resource URI that matches neither
+  * a registered concrete resource nor any registered resource-template pattern.
   *
   * @param uri        the resource URI that was not found
-  * @param registered the resource URIs currently registered on this server
+  * @param registered the concrete resource URIs registered on this server
+  * @param templates  the resource-template URI patterns registered on this server
   */
-case class McpUnknownResourceException(uri: McpResourceUri, registered: Chunk[McpResourceUri])(using Frame)
+case class McpUnknownResourceException(
+    uri: McpResourceUri,
+    registered: Chunk[McpResourceUri],
+    templates: Chunk[McpResourceUri.Template] = Chunk.empty
+)(using Frame)
     extends McpDispatchException(
         code = -32002,
         message =
+            val concretePart  = if registered.isEmpty then "(none)" else registered.iterator.map(_.asString).mkString(", ")
+            val templatesPart = if templates.isEmpty then "" else s"\n  Templates: ${templates.iterator.map(_.asString).mkString(", ")}"
             s"""Unknown resource '${uri.asString}'.
 
-  Registered: ${if registered.isEmpty then "(none)" else registered.iterator.map(_.asString).mkString(", ")}"""
+  Registered: $concretePart$templatesPart"""
     )
 
 /** Unknown prompt name dispatched by the client (-32602).

@@ -156,10 +156,10 @@ private[kyo] object McpBuiltInRoutes:
                 case Absent =>
                     Abort.fail(McpInvalidArgumentException("resources/read", "uri", s"invalid URI: ${params.uri}"))
                 case Present(uri) =>
-                    val matched = catalog.resourceHandlers.collectFirst {
+                    val concrete = catalog.resourceHandlers.collectFirst {
                         case c: McpHandler.ResourceHandler[?] if c.resourceMeta.uri == uri => c
                     }
-                    matched match
+                    concrete match
                         case Some(carrier) =>
                             JsonRpcRoute.applyMappingsAtBoundary(
                                 "resources/read",
@@ -169,8 +169,28 @@ private[kyo] object McpBuiltInRoutes:
                                 carrier.errorMappings
                             )
                         case None =>
-                            val registeredUris = Chunk.from(catalog.resourceHandlers.map(h => catalog.resourceMetaOf(h).uri))
-                            Abort.fail(McpUnknownResourceException(uri, registeredUris))
+                            // Fall back to registered resource templates: a template matches when its
+                            // RFC 6570 Level-1 pattern binds against the request URI.
+                            val template = catalog.resourceTemplateHandlers.collectFirst {
+                                case c: McpHandler.ResourceTemplateHandler[?]
+                                    if c.resourceTemplateMeta.uriTemplate.extract(uri).isDefined => c
+                            }
+                            template match
+                                case Some(carrier) =>
+                                    JsonRpcRoute.applyMappingsAtBoundary(
+                                        "resources/read",
+                                        withCtx(jrCtx, serverRef, "resources/read") {
+                                            carrier.resourceTemplateHandler(uri).map(contents => ResourceReadResponse(contents))
+                                        },
+                                        carrier.errorMappings
+                                    )
+                                case None =>
+                                    val registeredUris = Chunk.from(catalog.resourceHandlers.map(h => catalog.resourceMetaOf(h).uri))
+                                    val templates = Chunk.from(
+                                        catalog.resourceTemplateHandlers.map(h => catalog.resourceTemplateMetaOf(h).uriTemplate)
+                                    )
+                                    Abort.fail(McpUnknownResourceException(uri, registeredUris, templates))
+                            end match
                     end match
             end match
         }
