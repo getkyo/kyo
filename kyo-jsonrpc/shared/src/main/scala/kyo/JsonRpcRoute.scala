@@ -229,7 +229,15 @@ object JsonRpcRoute:
         private[kyo] def handle(params: Structure.Value, ctx: JsonRpcRoute.Context)(using
             fr: Frame
         ): Structure.Value < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt]) =
-            Structure.decode[In](params)(using schemaIn, fr) match
+            // JSON-RPC 2.0 + MCP spec: `params` is optional. A request without a `params` field
+            // (or with `params: null`) must be accepted, and the handler's typed `In` is expected
+            // to be constructible from the empty payload (case classes with all default values,
+            // or singleton-like records). Coerce Null -> empty Record so kyo-schema's decoder
+            // can use default field values rather than failing with a type-mismatch.
+            val normalised = params match
+                case Structure.Value.Null => Structure.Value.Record(Chunk.empty)
+                case other                => other
+            Structure.decode[In](normalised)(using schemaIn, fr) match
                 case Result.Success(decoded) =>
                     // Engine dispatch boundary: Abort.run[Any] captures the closure's E aborts and
                     // Halt short-circuits without needing a ConcreteTag for the abstract E. Mirrors
@@ -279,6 +287,8 @@ object JsonRpcRoute:
                     )(using fr))
                 case Result.Panic(t) =>
                     Abort.fail(JsonRpcHandlerPanicError(name, t)(using fr))
+            end match
+        end handle
     end RequestRoute
 
     final private class NotificationRoute[In, +E](
@@ -297,7 +307,11 @@ object JsonRpcRoute:
         private[kyo] def handle(params: Structure.Value, ctx: JsonRpcRoute.Context)(using
             fr: Frame
         ): Structure.Value < (Async & Abort[JsonRpcError | JsonRpcResponse.Halt]) =
-            Structure.decode[In](params)(using in, fr) match
+            // Null params -> empty Record, same rationale as RequestRoute.handle.
+            val normalised = params match
+                case Structure.Value.Null => Structure.Value.Record(Chunk.empty)
+                case other                => other
+            Structure.decode[In](normalised)(using in, fr) match
                 case Result.Success(decoded) =>
                     Abort.run[Any](handler(decoded, ctx)).map:
                         case Result.Success(_) =>
@@ -334,5 +348,7 @@ object JsonRpcRoute:
                     )(using fr))
                 case Result.Panic(t) =>
                     Abort.fail(JsonRpcHandlerPanicError(name, t)(using fr))
+            end match
+        end handle
     end NotificationRoute
 end JsonRpcRoute
