@@ -6,7 +6,7 @@ class YamlCstBuilderTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    private def collect[Ctx](
+    private def collect(
         run: Yaml.Events.Handler[Chunk[Yaml.Events.Event], DecodeException] => Result[DecodeException, Chunk[Yaml.Events.Event]]
     ): Chunk[Yaml.Events.Event] =
         val handler = new Yaml.Events.EventHandler[Chunk[Yaml.Events.Event], DecodeException]:
@@ -45,8 +45,11 @@ class YamlCstBuilderTest extends Test:
                 )
             }
         }
+    }
 
-        "emitDocument frames a single document with one stream boundary" in {
+    "YamlCstBuilder.emitDocument" - {
+
+        "frames a single document with one stream boundary" in {
             val document =
                 Yaml.cst("name: Alice\n").getOrThrow
 

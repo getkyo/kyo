@@ -41,29 +41,30 @@ private[kyo] object YamlCstBuilder:
         }
     end emitDocument
 
+    /** Emits documentStart, the document body, and documentEnd to the handler. Does not emit stream boundaries. */
     def emitDocumentBody[Ctx, Err](
         document: Cst.Document,
         context: Ctx
     )(handler: Yaml.Events.Handler[Ctx, Err]): Result[Err, Ctx] =
         handler.documentStart(context, document.span.start).flatMap { c1 =>
-            val body =
-                document.root match
-                    case Present(root) => emitNode(root, c1)(handler)
-                    case Absent        => Result.succeed(c1)
-            body.flatMap { c2 =>
+            (document.root match
+                case Present(root) => emitNode(root, c1)(handler)
+                case Absent        => Result.succeed(c1)
+            ).flatMap { c2 =>
                 handler.documentEnd(c2, document.span.end)
             }
         }
     end emitDocumentBody
 
+    /** Emits one streamStart, then documentStart/body/documentEnd for each document in the stream, then one streamEnd. */
     def emitStream[Ctx, Err](
         stream: Cst.Stream,
         context: Ctx
     )(handler: Yaml.Events.Handler[Ctx, Err]): Result[Err, Ctx] =
         handler.streamStart(context, stream.span.start).flatMap { c1 =>
-            emitStreamDocuments(stream, handler, 0, c1)
-        }.flatMap { last =>
-            handler.streamEnd(last, stream.span.end)
+            emitStreamDocuments(stream, handler, 0, c1).flatMap { last =>
+                handler.streamEnd(last, stream.span.end)
+            }
         }
     end emitStream
 
@@ -77,7 +78,8 @@ private[kyo] object YamlCstBuilder:
         else
             emitDocumentBody(stream.documents(index), context)(handler) match
                 case Result.Success(next) => emitStreamDocuments(stream, handler, index + 1, next)
-                case failure              => failure
+                case Result.Failure(e)    => Result.fail(e)
+                case Result.Panic(e)      => Result.panic(e)
             end match
     end emitStreamDocuments
 
