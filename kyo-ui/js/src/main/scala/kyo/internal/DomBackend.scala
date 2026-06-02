@@ -43,11 +43,12 @@ private[kyo] object DomBackend:
     private class LocalExchange extends UIExchange:
         def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
             HtmlRenderer.render(ui, path).map { html =>
-                val finalHtml =
-                    if html.isEmpty then
-                        s"""<span data-kyo-path="${path.mkString(".")}" data-kyo-reactive></span>"""
-                    else html
-                val pathAttr = path.mkString(".")
+                // Always wrap in the reactive boundary span so the element with data-kyo-path=path
+                // survives subsequent replacements. Mirrors UISession.ChannelExchange: a Fragment,
+                // Text, or RawHtml value renders without a path-carrying root, so an unwrapped replace
+                // would drop the marker and the next update could not locate the node.
+                val pathAttr  = path.mkString(".")
+                val finalHtml = s"""<span data-kyo-path="$pathAttr" data-kyo-reactive>$html</span>"""
                 Sync.defer {
                     val el = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
                     if el != null && el.outerHTML != finalHtml then
@@ -77,19 +78,17 @@ private[kyo] object DomBackend:
         Sync.defer(applyJsPropsSync(root))
 
     private def applyJsPropsSync(root: dom.Element): Unit =
-        val propPrefix = "data-kyo-prop-"
-        val elements   = root.querySelectorAll(s"[$propPrefix*]")
-        val self =
-            if root.hasAttribute(s"${propPrefix}indeterminate") || hasAnyKyoProp(root) then
-                Seq(root)
-            else
-                Seq.empty
-        (self ++ (0 until elements.length).map(elements(_).asInstanceOf[dom.Element])).foreach { el =>
+        // CSS has no attribute-name-prefix selector, so collect the root plus every descendant and
+        // keep those carrying any data-kyo-prop-* attribute. The apply loop below reads the prop name
+        // off each attribute, so this stays general for every UI.jsProp without enumerating names here.
+        val descendants = root.querySelectorAll("*")
+        val candidates  = root +: (0 until descendants.length).map(i => descendants(i).asInstanceOf[dom.Element])
+        candidates.filter(hasAnyKyoProp).foreach { el =>
             val toRemove  = scala.collection.mutable.ArrayBuffer.empty[String]
             val attrNames = (0 until el.attributes.length).map(el.attributes(_).name)
             attrNames.foreach { attrName =>
-                if attrName.startsWith(propPrefix) then
-                    val propName = attrName.stripPrefix(propPrefix)
+                if attrName.startsWith("data-kyo-prop-") then
+                    val propName = attrName.stripPrefix("data-kyo-prop-")
                     val value    = el.getAttribute(attrName)
                     el.asInstanceOf[scalajs.js.Dynamic].updateDynamic(propName)(value)
                     toRemove += attrName
