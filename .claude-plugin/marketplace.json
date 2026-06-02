@@ -1,6 +1,10 @@
 {
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "kyo-validation",
   "description": "Local marketplace for kyo-lsp / kyo-mcp validation demos.",
+  "owner": {
+    "name": "kyo-validation"
+  },
   "plugins": [
     {
       "name": "kyo-todo-lsp",
@@ -8,7 +12,6 @@
       "version": "0.1.0",
       "source": "./kyo-todo-lsp",
       "category": "development",
-      "strict": false,
       "lspServers": {
         "kyo-todo-lsp": {
           "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
