@@ -64,11 +64,17 @@ object DocsApp:
     )(using Frame): UI < Sync =
         Sync.defer {
             val allModules = content.groups.flatMap(_.modules)
-            UI.div.cssClass("docs-shell")(
+            // The header is a full-width bar above the centered 3-column row. It must NOT be a child of
+            // docs-shell: docs-shell is flex-direction:row, so a header sibling there steals a column's
+            // width and squishes the content. The bare wrapper is a flex column (base div rule), so the
+            // header stacks above the shell; docs-shell holds only the three panes.
+            UI.div(
                 docsHeader(versions),
-                sidebar(content, route, prefix),
-                contentArea(article, allModules, route, prefix),
-                tocPane(toc)
+                UI.div.cssClass("docs-shell")(
+                    sidebar(content, route, prefix),
+                    contentArea(article, allModules, route, prefix),
+                    tocPane(toc)
+                )
             )
         }
     end view
