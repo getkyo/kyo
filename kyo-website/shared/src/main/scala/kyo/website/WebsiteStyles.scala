@@ -135,6 +135,106 @@ object WebsiteStyles:
                 "nav-item-active",
                 Style.color(_.variable("accent")).bg(_.variable("accent-ghost"))
             )
+            // Docs header (top bar carrying logo, nav, search, version dropdown)
+            .rule(
+                "docs-header",
+                Style.row.align(_.center).justify(_.spaceBetween)
+                    .height(60.px)
+                    .bg(_.variable("surface"))
+                    .borderBottom(1.px, _.variable("line"))
+            )
+            .rule(
+                "docs-header-right",
+                Style.row.align(_.center).gap(12.px)
+            )
+            .rule(
+                "docs-nav",
+                Style.row.align(_.center).gap(20.px)
+                    .color(_.variable("dim"))
+            )
+            .rule(
+                "brand",
+                Style.color(_.variable("ink")).fontWeight(_.bold)
+                    .textDecoration(_.none)
+            )
+            .rule(
+                "search-input",
+                Style.padding(7.px, 12.px)
+                    .border(1.px, _.variable("line"))
+                    .bg(_.variable("surface"))
+                    .color(_.variable("ink"))
+            )
+            .rule(
+                "ver",
+                Style.padding(6.px, 10.px)
+                    .border(1.px, _.variable("line"))
+                    .bg(_.variable("surface"))
+                    .color(_.variable("ink"))
+            )
+            // Version banner (shown on non-latest pages)
+            .rule(
+                "version-banner",
+                Style.row.align(_.center).padding(10.px, 16.px)
+                    .bg(Style.Color.hex("#FFFBEB").getOrElse(Style.Color.transparent))
+                    .color(_.variable("amber"))
+            )
+            // Sidebar navigation structure
+            .rule(
+                "sidebar-nav",
+                Style.column.padding(16.px, 12.px).gap(4.px)
+            )
+            .rule(
+                "sidebar-group",
+                Style.column.padding(8.px, 0.px).gap(2.px)
+            )
+            .rule(
+                "sidebar-group-name",
+                Style.padding(6.px, 10.px)
+                    .color(_.variable("faint"))
+                    .fontWeight(_.w600)
+            )
+            // Previous/next navigation footer
+            .rule(
+                "prev-next",
+                Style.row.align(_.center).justify(_.spaceBetween)
+                    .padding(24.px, 0.px).gap(16.px)
+                    .borderTop(1.px, _.variable("line"))
+            )
+            .rule(
+                "prev-next-disabled",
+                Style.color(_.variable("faint"))
+            )
+            // Table of contents structure (per-level indentation)
+            .rule(
+                "toc-nav",
+                Style.column.gap(4.px)
+            )
+            .rule(
+                "toc-item",
+                Style.row.align(_.center).padding(3.px, 8.px)
+                    .color(_.variable("dim"))
+                    .hover(_.color(_.variable("ink")))
+            )
+            .rule(
+                "toc-h1",
+                Style.padding(3.px, 8.px).color(_.variable("ink")).fontWeight(_.w600)
+            )
+            .rule(
+                "toc-h2",
+                Style.padding(3.px, 8.px, 3.px, 16.px)
+            )
+            .rule(
+                "toc-h3",
+                Style.padding(3.px, 8.px, 3.px, 28.px)
+            )
+            .rule(
+                "toc-h4",
+                Style.padding(3.px, 8.px, 3.px, 40.px)
+            )
+            .rule(
+                "sub",
+                Style.color(_.variable("faint"))
+            )
             // Callout boxes
             .rule(
                 "callout-note",

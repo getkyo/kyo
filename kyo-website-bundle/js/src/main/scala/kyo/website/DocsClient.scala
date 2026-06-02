@@ -121,17 +121,79 @@ object DocsClient:
         end if
     end fetch
 
+    /** The parsed `#docs-island` payload the SSG seeds into each docs page.
+      *
+      * Carries the current route's `WebsiteContent` (intro + grouped modules + version record), the
+      * full version list for the dropdown, and the route's raw Markdown for first-paint reconciliation.
+      *
+      * @param content
+      *   The current page's content (intro, groups, version).
+      * @param versions
+      *   All available versions (for the dropdown).
+      * @param markdown
+      *   The current route's raw README Markdown (seeds the cache; transpiled for first render).
+      */
+    final case class DocsIsland(content: WebsiteContent, versions: Chunk[WebsiteVersion], markdown: String) derives CanEqual
+
     /** Parse a JSON array of version objects from an SSG-seeded DOM island.
       *
-      * The input is a JSON array of `{"tag":"...","label":"...","latest":true/false}` objects,
-      * as written by the SSG into the `#versions-island` script element. Returns an empty
-      * `Chunk` when the input is empty or not a valid JSON array.
+      * The input is a JSON array of `{"tag": "...", "label": "...", "latest": true/false}` objects,
+      * as written by the SSG into the `#versions-island` script element. Returns an empty `Chunk`
+      * when the input is empty, not a valid JSON array, or has no parseable entries (an empty parse
+      * result, distinct from the absent-element case the DOM reader handles before calling this).
       *
       * Exposed as `private[website]` so `WebsiteBundleMain.readVersions` can call it
       * synchronously at bundle entry without going through the async `routeTable` path.
       */
     private[website] def parseVersionsIsland(json: String)(using Frame): Chunk[WebsiteVersion] < Sync =
         parseVersions(json)
+
+    /** Parse the `#docs-island` JSON object the SSG seeds into a docs page.
+      *
+      * The object schema, written by `WebsiteGenerator.docsIsland`, is
+      * `{"version": {...}, "intro": "...", "groups": [{"name": "...", "modules": [...]}],
+      * "versions": [...], "markdown": "..."}`. Returns a `DocsIsland` whose `content` carries the
+      * parsed intro/groups/version. When `json` is empty or not a JSON object, returns an empty
+      * island (empty groups, a `latest` placeholder version, empty markdown); this empty-parse case
+      * is distinct from the absent-`#docs-island`-element case the caller handles before parsing.
+      *
+      * Exposed as `private[website]` so `WebsiteBundleMain` can call it synchronously at bundle entry.
+      */
+    private[website] def parseDocsIsland(json: String)(using Frame): DocsIsland < Sync =
+        Sync.defer {
+            val trimmed = json.trim
+            if !trimmed.startsWith("{") || !trimmed.endsWith("}") then emptyIsland
+            else
+                val versionObj  = extractObject(trimmed, "version")
+                val version     = versionObj.flatMap(parseVersion).getOrElse(WebsiteVersion("latest", "latest", true))
+                val intro       = extractString(trimmed, "intro").getOrElse("")
+                val markdown    = extractString(trimmed, "markdown").getOrElse("")
+                val groupsArray = extractArray(trimmed, "groups").getOrElse("[]")
+                val groups      = Chunk.from(splitJsonArray(groupsArray).flatMap(parseGroup))
+                val versions    = extractArray(trimmed, "versions").map(splitJsonArray).getOrElse(Seq.empty).flatMap(parseVersion)
+                DocsIsland(
+                    WebsiteContent(intro, groups, version),
+                    Chunk.from(versions),
+                    markdown
+                )
+            end if
+        }
+    end parseDocsIsland
+
+    private def emptyIsland: DocsIsland =
+        DocsIsland(
+            WebsiteContent("", Chunk.empty, WebsiteVersion("latest", "latest", true)),
+            Chunk.empty,
+            ""
+        )
+
+    private def parseGroup(obj: String): Maybe[WebsiteContent.Group] =
+        extractString(obj, "name").map { name =>
+            val modulesArray = extractArray(obj, "modules").getOrElse("[]")
+            val modules      = Chunk.from(splitJsonArray(modulesArray).flatMap(parseModule))
+            WebsiteContent.Group(name, modules)
+        }
+    end parseGroup
 
     private def parseVersions(json: String)(using Frame): Chunk[WebsiteVersion] < Sync =
         Sync.defer {
@@ -145,7 +207,8 @@ object DocsClient:
         for
             tag   <- extractString(obj, "tag")
             label <- extractString(obj, "label")
-            latest = obj.contains("\"latest\":true")
+            // Whitespace-tolerant: the SSG emits `"latest": true`, the route table `"latest":true`.
+            latest = obj.replaceAll("\\s", "").contains("\"latest\":true")
         yield WebsiteVersion(tag, label, latest)
     end parseVersion
 
@@ -195,8 +258,10 @@ object DocsClient:
 
     /** Extract the string value for `key` from a flat JSON object fragment.
       *
-      * Handles escaped double-quotes (`\"`) inside the value. Returns `Absent` when
-      * the key is not found or the value cannot be parsed.
+      * Handles escaped double-quotes (`\"`) inside the value and unescapes the standard JSON escape
+      * sequences (`\"`, `\\`, `\/`, `\n`, `\t`, `\r`, `\uXXXX`) so the returned `String` is the
+      * original text the SSG escaped (so re-transpiled Markdown matches the source byte for byte).
+      * Returns `Absent` when the key is not found or the value cannot be parsed.
       */
     private def extractString(obj: String, key: String): Maybe[String] =
         // Match "key" : "value" where value may contain \" escaped quotes.
@@ -204,7 +269,82 @@ object DocsClient:
         //   (?:[^"\\]|\\.)* matches either a non-quote/non-backslash char, or a
         //   backslash followed by any character (the escape sequence).
         val pattern = s""""$key"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"""".r
-        Maybe.fromOption(pattern.findFirstMatchIn(obj).map(_.group(1)))
+        Maybe.fromOption(pattern.findFirstMatchIn(obj).map(m => unescapeJson(m.group(1))))
     end extractString
+
+    /** Unescape the standard JSON string escape sequences. */
+    private def unescapeJson(s: String): String =
+        if !s.contains("\\") then s
+        else
+            val sb = new StringBuilder(s.length)
+            var i  = 0
+            while i < s.length do
+                val c = s.charAt(i)
+                if c == '\\' && i + 1 < s.length then
+                    s.charAt(i + 1) match
+                        case '"'  => sb.append('"'); i += 2
+                        case '\\' => sb.append('\\'); i += 2
+                        case '/'  => sb.append('/'); i += 2
+                        case 'n'  => sb.append('\n'); i += 2
+                        case 't'  => sb.append('\t'); i += 2
+                        case 'r'  => sb.append('\r'); i += 2
+                        case 'b'  => sb.append('\b'); i += 2
+                        case 'f'  => sb.append('\f'); i += 2
+                        case 'u' if i + 5 < s.length =>
+                            val hex = s.substring(i + 2, i + 6)
+                            sb.append(Integer.parseInt(hex, 16).toChar)
+                            i += 6
+                        case other => sb.append(other); i += 2
+                    end match
+                else
+                    sb.append(c)
+                    i += 1
+                end if
+            end while
+            sb.toString
+        end if
+    end unescapeJson
+
+    /** Extract a nested JSON object value (`"key": {...}`) by depth-balanced scan, returning the
+      * `{...}` substring including its braces, or `Absent` when the key or a balanced object is absent.
+      */
+    private def extractObject(obj: String, key: String): Maybe[String] =
+        extractBracketed(obj, key, '{', '}')
+
+    /** Extract a nested JSON array value (`"key": [...]`) by depth-balanced scan, returning the
+      * `[...]` substring including its brackets, or `Absent` when the key or a balanced array is absent.
+      */
+    private def extractArray(obj: String, key: String): Maybe[String] =
+        extractBracketed(obj, key, '[', ']')
+
+    private def extractBracketed(obj: String, key: String, open: Char, close: Char): Maybe[String] =
+        val marker = s""""$key""""
+        val keyIdx = obj.indexOf(marker)
+        if keyIdx < 0 then Absent
+        else
+            val openIdx = obj.indexOf(open, keyIdx + marker.length)
+            if openIdx < 0 then Absent
+            else
+                var depth   = 0
+                var i       = openIdx
+                var endIdx  = -1
+                var inStr   = false
+                var escaped = false
+                while i < obj.length && endIdx < 0 do
+                    val c = obj.charAt(i)
+                    if escaped then escaped = false
+                    else if c == '\\' then escaped = true
+                    else if c == '"' then inStr = !inStr
+                    else if !inStr && c == open then depth += 1
+                    else if !inStr && c == close then
+                        depth -= 1
+                        if depth == 0 then endIdx = i
+                    end if
+                    i += 1
+                end while
+                if endIdx < 0 then Absent else Present(obj.substring(openIdx, endIdx + 1))
+            end if
+        end if
+    end extractBracketed
 
 end DocsClient

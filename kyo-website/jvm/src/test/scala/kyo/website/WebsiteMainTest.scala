@@ -75,4 +75,14 @@ class WebsiteMainTest extends Test:
         end for
     }
 
+    // ---- Test 13 (Phase-4 WARN-1): parseOut / flagValue parse directly, no emit ----
+
+    "parseOut parses --out flag directly" in {
+        assert(WebsiteMain.parseOut(Chunk("--out", "/x")) == "/x")
+        assert(WebsiteMain.parseOut(Chunk("--bundle-dir", "/b")) == "/tmp/kyo-site")
+        assert(WebsiteMain.flagValue(Chunk("--out", "/x"), "--out") == Present("/x"))
+        assert(WebsiteMain.flagValue(Chunk("--out", "/x"), "--missing") == Absent)
+        assert(WebsiteMain.flagValue(Chunk("--content", "/c"), "--content") == Present("/c"))
+    }
+
 end WebsiteMainTest

@@ -101,19 +101,31 @@ class DocsAppTest extends Test:
         end for
     }
 
-    // Leaf 4: TOC indents by heading level (level-2 and level-3 have cssClass "sub")
-    "TOC indents by heading level (leaf 4)" in run {
+    // Leaf 4: TOC entries carry distinct per-level hooks (toc-h1 / toc-h2 / toc-h3), WARN-2
+    "TOC entries carry distinct per-level hooks (leaf 4)" in run {
         val toc = Chunk(
             DocsMarkdown.Heading(1, "Top", "top"),
-            DocsMarkdown.Heading(2, "Sub", "sub"),
-            DocsMarkdown.Heading(3, "Sub2", "sub2")
+            DocsMarkdown.Heading(2, "Mid", "mid"),
+            DocsMarkdown.Heading(3, "Deep", "deep")
         )
         for
             route <- fixedRoute("/latest/kyo-core/")
             html  <- rendered(emptyContent(), Chunk.empty, route, toc, UI.empty)
         yield
-            // Level 2 and 3 entries carry CSS class "sub"
-            assert(html.contains("sub"), s"sub class not found for sub-headings: $html")
+            // Each level gets its own indentation hook; the three are structurally distinguishable.
+            assert(html.contains("toc-h1"), s"level-1 hook (toc-h1) missing: $html")
+            assert(html.contains("toc-h2"), s"level-2 hook (toc-h2) missing: $html")
+            assert(html.contains("toc-h3"), s"level-3 hook (toc-h3) missing: $html")
+            // The level-2 entry must NOT carry the level-1 or level-3 hook, and vice versa: locate the
+            // anchor for each slug and check the class on its enclosing div precedes it distinctly.
+            val h1Idx = html.indexOf("toc-h1")
+            val h2Idx = html.indexOf("toc-h2")
+            val h3Idx = html.indexOf("toc-h3")
+            assert(h1Idx < h2Idx && h2Idx < h3Idx, s"per-level hooks must appear in level order: h1=$h1Idx h2=$h2Idx h3=$h3Idx")
+            // Only level-3+ carries the `sub` indentation marker; level-2 does not.
+            val subIdx = html.indexOf("toc-h3 sub")
+            assert(subIdx >= 0, s"level-3 must carry the `sub` marker: $html")
+            assert(!html.contains("toc-h2 sub"), s"level-2 must NOT carry the `sub` marker: $html")
         end for
     }
 
@@ -221,6 +233,31 @@ class DocsAppTest extends Test:
             // Shell renders (has sidebar-nav), no module links present
             assert(html.contains("sidebar-nav"), s"sidebar-nav not found: $html")
             assert(!html.contains("/latest/kyo-"), s"unexpected module links in empty-groups render: $html")
+        end for
+    }
+
+    // Leaf 13 (Phase-6 BLOCKER-1 regression): a non-latest version's sidebar + prev/next links use
+    // the version prefix `/v<X>/...`, not `/latest/...`.
+    "non-latest version links use the version prefix not latest (BLOCKER-1 regression)" in run {
+        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
+        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
+        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
+        val content = WebsiteContent(
+            intro = "",
+            groups = Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB, modC))),
+            version = WebsiteVersion("v0.9.3", "0.9.3", false)
+        )
+        for
+            route <- fixedRoute("/v0.9.3/mod-b/")
+            html  <- rendered(content, Chunk.empty, route, Chunk.empty, UI.empty)
+        yield
+            // Sidebar links resolve within v0.9.3.
+            assert(html.contains("/v0.9.3/mod-a/"), s"sidebar must link within v0.9.3: $html")
+            assert(html.contains("/v0.9.3/mod-b/"), s"sidebar must link within v0.9.3: $html")
+            assert(html.contains("/v0.9.3/mod-c/"), s"sidebar must link within v0.9.3: $html")
+            // Prev/next reflect position within v0.9.3 (prev = mod-a, next = mod-c).
+            // No link must jump to /latest/.
+            assert(!html.contains("/latest/mod-"), s"no link must point to /latest/ on a v0.9.3 page: $html")
         end for
     }
 

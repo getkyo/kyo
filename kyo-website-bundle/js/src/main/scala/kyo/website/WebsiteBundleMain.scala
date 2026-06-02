@@ -34,26 +34,20 @@ object WebsiteBundleMain:
     private def seedMarkdownCache(route: String, markdown: String): Unit =
         markdownCache(route) = markdown
 
-    private case class DocsIsland(
-        content: WebsiteContent,
-        versions: Chunk[WebsiteVersion],
-        markdown: String
-    )
-
     /** Read the SSG-seeded docs island from the DOM.
       *
-      * The SSG (Phase 7) writes a `<script id="docs-island" type="application/json">` element
-      * whose text content is a JSON object with the current route's content metadata, version
-      * list, and pre-rendered Markdown source. This method queries that element and returns its
-      * payload parsed into a `DocsIsland`.
-      *
-      * When the element is absent (e.g. in test harness or pre-Phase-7 environments) a safe
-      * empty island is returned; the SPA still mounts but starts with no pre-seeded content.
+      * The SSG writes a `<script id="docs-island" type="application/json">` element whose text
+      * content is the JSON object `WebsiteGenerator.docsIsland` produced (the current route's content
+      * metadata, version list, and raw Markdown source). When the element is PRESENT, its payload is
+      * parsed via `DocsClient.parseDocsIsland`. When the element is ABSENT (a non-docs page or a test
+      * harness without the SSG island), a safe empty island is returned and the SPA still mounts with
+      * no pre-seeded content. The absent-element branch (here) and the empty-parse branch (inside
+      * `parseDocsIsland`) are distinct: this method decides absence, the parser decides malformedness.
       */
-    private def readDocsIsland(): DocsIsland =
+    private def readDocsIsland(): DocsClient.DocsIsland =
         val el = dom.document.querySelector("#docs-island")
         if el == null then
-            DocsIsland(
+            DocsClient.DocsIsland(
                 content = WebsiteContent(
                     intro = "",
                     groups = Chunk.empty,
@@ -63,30 +57,12 @@ object WebsiteBundleMain:
                 markdown = ""
             )
         else
-            parseDocsIsland(el.textContent)
+            // Unsafe: synchronous parse at JS entry; the event loop is single-threaded and this is
+            // called before any Kyo fiber is running. parseDocsIsland is Sync-only.
+            import AllowUnsafe.embrace.danger
+            Sync.Unsafe.evalOrThrow(DocsClient.parseDocsIsland(el.textContent))
         end if
     end readDocsIsland
-
-    /** Parse a JSON island payload into a `DocsIsland`.
-      *
-      * The SSG writes the full JSON schema into the island element. Until the SSG is wired
-      * (the island element is absent), this parser returns an empty island so the SPA mounts
-      * with no pre-seeded content rather than crashing on a missing field.
-      */
-    private def parseDocsIsland(json: String): DocsIsland =
-        // The SSG island element is written when the docs page is generated. When absent, an
-        // empty island is the correct runtime behavior: the SPA starts with an empty article
-        // and no cache seed; navigation fetches populate the content via DocsClient.
-        DocsIsland(
-            content = WebsiteContent(
-                intro = "",
-                groups = Chunk.empty,
-                version = WebsiteVersion("latest", "latest", true)
-            ),
-            versions = Chunk.empty,
-            markdown = ""
-        )
-    end parseDocsIsland
 
     def main(args: Array[String]): Unit =
         // Unsafe: browser entry-point bridge; single controlled crossing from JS main into the

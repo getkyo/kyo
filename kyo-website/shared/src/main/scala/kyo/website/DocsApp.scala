@@ -57,16 +57,24 @@ object DocsApp:
     )(using Frame): UI < Sync =
         Sync.defer {
             val allModules = content.groups.flatMap(_.modules)
+            val prefix     = routePrefix(content.version)
             UI.div.cssClass("docs-shell")(
                 docsHeader(versions),
-                sidebar(content, route),
-                contentArea(article, allModules, route),
+                sidebar(content, route, prefix),
+                contentArea(article, allModules, route, prefix),
                 tocPane(toc)
             )
         }
     end view
 
     // ---- Private helpers ----
+
+    /** The URL route prefix for a version: `latest` for the version served as latest, else the
+      * version's own tag (e.g. `v1.2.0`). All intra-page links (sidebar, prev/next) use this prefix
+      * so a `v<X>` page links within `v<X>`, never jumping the reader to `latest` (Phase-6 BLOCKER-1).
+      */
+    private def routePrefix(version: WebsiteVersion): String =
+        if version.latest then "latest" else version.tag
 
     private def docsHeader(versions: Chunk[WebsiteVersion])(using Frame): UI =
         val versionOptions: Seq[(String, String)] = versions.toSeq.map(v => v.tag -> v.label)
@@ -97,8 +105,8 @@ object DocsApp:
         end if
     end versionBanner
 
-    private def sidebar(content: WebsiteContent, route: Signal[String])(using Frame): UI =
-        UI.div.cssClass("sidebar")(
+    private def sidebar(content: WebsiteContent, route: Signal[String], prefix: String)(using Frame): UI =
+        UI.div.cssClass("docs-sidebar")(
             versionBanner(content.version),
             UI.nav.cssClass("sidebar-nav")(
                 content.groups.toSeq.map { group =>
@@ -106,7 +114,7 @@ object DocsApp:
                         UI.div.cssClass("sidebar-group-name")(UI.span(group.name)),
                         UI.ul(
                             group.modules.toSeq.map { mod =>
-                                val href         = s"/latest/${mod.slug}/"
+                                val href         = s"/$prefix/${mod.slug}/"
                                 val activeSignal = route.map(r => r.endsWith(s"/${mod.slug}/") || r == href)
                                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
                                 UI.Ast.Reactive(activeSignal.map { isActive =>
@@ -127,21 +135,25 @@ object DocsApp:
         )
     end sidebar
 
-    private def contentArea(article: UI, modules: Chunk[WebsiteModule], route: Signal[String])(using Frame): UI =
+    private def contentArea(article: UI, modules: Chunk[WebsiteModule], route: Signal[String], prefix: String)(using Frame): UI =
         UI.main.cssClass("docs-content")(
             article,
             // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
-            UI.Ast.Reactive(route.map(r => prevNextNav(modules, r)))
+            UI.Ast.Reactive(route.map(r => prevNextNav(modules, r, prefix)))
         )
     end contentArea
 
     private def tocPane(toc: Chunk[DocsMarkdown.Heading])(using Frame): UI =
-        UI.div.cssClass("toc")(
+        UI.div.cssClass("docs-toc")(
             UI.nav.cssClass("toc-nav")(
                 toc.toSeq.map { heading =>
-                    val levelClass = if heading.level == 1 then "toc-h1"
-                    else if heading.level >= 3 then "toc-item sub"
-                    else "toc-item"
+                    // Each entry carries a distinct per-level hook (toc-h1 / toc-h2 / toc-h3) so the
+                    // stylesheet can indent levels independently; level-3+ also carries the `sub` hook.
+                    val levelClass = heading.level match
+                        case 1 => "toc-item toc-h1"
+                        case 2 => "toc-item toc-h2"
+                        case 3 => "toc-item toc-h3 sub"
+                        case _ => "toc-item toc-h4 sub"
                     UI.div.cssClass(levelClass)(
                         UI.a(heading.text).href(Href.Fragment(heading.slug))
                     )
@@ -150,21 +162,21 @@ object DocsApp:
         )
     end tocPane
 
-    private def prevNextNav(modules: Chunk[WebsiteModule], currentRoute: String)(using Frame): UI =
+    private def prevNextNav(modules: Chunk[WebsiteModule], currentRoute: String, prefix: String)(using Frame): UI =
         val (prev, next) = prevNext(modules, currentRoute)
         val prevLink = prev match
-            case Present(m) => UI.a(s"← ${m.title}").href(Href.Path(s"/latest/${m.slug}/"))
-            case Absent     => UI.span.cssClass("prev-next-disabled")("←")
+            case Present(m) => UI.a(s"< ${m.title}").href(Href.Path(s"/$prefix/${m.slug}/"))
+            case Absent     => UI.span.cssClass("prev-next-disabled")("<")
         val nextLink = next match
-            case Present(m) => UI.a(s"${m.title} →").href(Href.Path(s"/latest/${m.slug}/"))
-            case Absent     => UI.span.cssClass("prev-next-disabled")("→")
+            case Present(m) => UI.a(s"${m.title} >").href(Href.Path(s"/$prefix/${m.slug}/"))
+            case Absent     => UI.span.cssClass("prev-next-disabled")(">")
         UI.nav.cssClass("prev-next")(prevLink, nextLink)
     end prevNextNav
 
     private def prevNext(modules: Chunk[WebsiteModule], currentRoute: String): (Maybe[WebsiteModule], Maybe[WebsiteModule]) =
-        val idx = modules.indexWhere { m =>
-            currentRoute.endsWith(s"/${m.slug}/") || currentRoute == s"/latest/${m.slug}/"
-        }
+        // Version-agnostic match: any `/<prefix>/<slug>/` route ends with `/<slug>/`, so the same
+        // check locates the current module under `latest/` and any `v<X>/` prefix.
+        val idx = modules.indexWhere(m => currentRoute.endsWith(s"/${m.slug}/"))
         if idx < 0 then (Absent, Absent)
         else
             val prev = if idx > 0 then Present(modules(idx - 1)) else Absent

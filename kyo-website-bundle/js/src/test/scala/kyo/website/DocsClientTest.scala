@@ -21,13 +21,23 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
 
     override given executionContext: ExecutionContext = Platform.executionContext
 
-    private def withFetch(responses: Map[String, String])(block: => Any < Async): Any < Async =
-        val saved = DocsClient.fetchFn
-        DocsClient.fetchFn = url =>
-            responses.getOrElse(url, throw new RuntimeException(s"Unexpected fetch: $url"))
-        val result = block
-        DocsClient.fetchFn = saved
-        result
+    private def withFetch[A](responses: Map[String, String])(block: => A < Async)(using Frame): A < Async =
+        // Install the stub, run the block to completion, then restore. The restore must run AFTER the
+        // suspended Async finishes, so it is sequenced inside the effect (a plain try/finally around
+        // the suspension would restore before the async fetches execute, leaking the stub).
+        Sync.defer {
+            val saved = DocsClient.fetchFn
+            DocsClient.fetchFn = url =>
+                responses.getOrElse(url, throw new RuntimeException(s"Unexpected fetch: $url"))
+            Abort.run[Throwable](Abort.catching[Throwable](block)).map { result =>
+                DocsClient.fetchFn = saved
+                result match
+                    case Result.Success(a) => a
+                    case Result.Failure(e) => throw e
+                    case Result.Panic(e)   => throw e
+                end match
+            }
+        }
     end withFetch
 
     // Leaf 19: fetchMarkdown returns route content.md body
@@ -65,16 +75,19 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
 
     // Leaf 21: unknown route surfaces as failure (edge case)
     "fetchMarkdown fails for a route that throws (leaf 21)" in run {
-        DocsClient.fetchFn = url => throw new RuntimeException(s"Not found: $url")
-        Abort.run[Throwable](
-            Abort.catching[Throwable](DocsClient.fetchMarkdown("/unknown/route/"))
-        ).map { result =>
-            result match
-                case Result.Fail(_) | Result.Panic(_) =>
-                    succeed
-                case Result.Success(body) =>
-                    fail(s"Expected failure for unknown route, got: $body")
-            end match
+        // Install via withFetch (empty map) so the stub is restored after the async completes; a
+        // map miss throws "Unexpected fetch", which is the failure this leaf verifies surfaces.
+        withFetch[Assertion](Map.empty) {
+            Abort.run[Throwable](
+                Abort.catching[Throwable](DocsClient.fetchMarkdown("/unknown/route/"))
+            ).map { result =>
+                result match
+                    case Result.Failure(_) | Result.Panic(_) =>
+                        succeed
+                    case Result.Success(body) =>
+                        fail(s"Expected failure for unknown route, got: $body")
+                end match
+            }
         }
     }
 
@@ -96,6 +109,47 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
                 )
             end for
         }
+    }
+
+    // Island round-trip: the exact JSON shape WebsiteGenerator.docsIsland emits parses back to the
+    // seeded content (version, grouped modules, full version list, raw Markdown). This is the parse
+    // half of the emit -> parse boot-island round-trip (emit half asserted in WebsiteGeneratorTest).
+    "parseDocsIsland parses the generator's docs-island JSON back to seeded content" in run {
+        // Mirrors WebsiteGenerator.docsIsland output (note the `"latest": true` space the SSG emits).
+        val islandJson =
+            """{"version": {"tag": "v1.0.0-RC2", "label": "1.0.0-RC2", "latest": true}, """ +
+                """"intro": "intro text", """ +
+                """"groups": [{"name": "Foundation", "modules": [{"slug": "kyo-data", "group": "Foundation", "title": "kyo-data"}, {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel"}]}], """ +
+                """"versions": [{"tag": "v1.0.0-RC2", "label": "1.0.0-RC2", "latest": true}, {"tag": "v0.9.3", "label": "0.9.3", "latest": false}], """ +
+                """"markdown": "# kyo-data\n## Overview\nData types.\n"}"""
+        for
+            island <- DocsClient.parseDocsIsland(islandJson)
+        yield
+            assert(island.content.version.tag == "v1.0.0-RC2", s"version tag: ${island.content.version.tag}")
+            assert(island.content.version.latest, "version.latest must round-trip true through the spaced JSON")
+            assert(island.content.intro == "intro text", s"intro: ${island.content.intro}")
+            assert(island.content.groups.size == 1, s"groups: ${island.content.groups.size}")
+            assert(island.content.groups.head.name == "Foundation", s"group name: ${island.content.groups.head.name}")
+            assert(
+                island.content.groups.head.modules.map(_.slug) == Chunk("kyo-data", "kyo-kernel"),
+                s"module slugs: ${island.content.groups.head.modules.map(_.slug)}"
+            )
+            assert(island.versions.size == 2, s"versions: ${island.versions.size}")
+            assert(island.versions(1).tag == "v0.9.3", s"second version: ${island.versions(1).tag}")
+            assert(island.markdown == "# kyo-data\n## Overview\nData types.\n", s"markdown must unescape \\n, got: ${island.markdown}")
+        end for
+    }
+
+    // Empty-parse vs absent: a non-object payload parses to an empty island (the SPA mounts empty),
+    // distinct from the absent-#docs-island-element case the DOM reader handles before parsing.
+    "parseDocsIsland returns an empty island for a non-object payload" in run {
+        for
+            island <- DocsClient.parseDocsIsland("")
+        yield
+            assert(island.content.groups == Chunk.empty, "empty payload yields empty groups")
+            assert(island.content.version.tag == "latest", "empty payload yields the latest placeholder version")
+            assert(island.markdown.isEmpty, "empty payload yields empty markdown")
+        end for
     }
 
 end DocsClientTest
