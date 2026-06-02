@@ -778,6 +778,10 @@ object DocsMarkdown:
                 do
                     pos += 1
                 end while
+                // Forward-progress guard: a stop char that no specific branch consumed (a lone `/`,
+                // a `:`/`+`/`%` that is not a full sbt operator) would leave `pos` unmoved and loop
+                // forever. Emit it as one literal char and advance.
+                if pos == start then pos += 1
                 tokens += Ast.Text(src.substring(start, pos))
             end if
         end while
@@ -856,6 +860,8 @@ object DocsMarkdown:
                 do
                     pos += 1
                 end while
+                // Forward-progress guard: never leave `pos` unmoved on a stop char no branch consumed.
+                if pos == start then pos += 1
                 tokens += Ast.Text(src.substring(start, pos))
             end if
         end while

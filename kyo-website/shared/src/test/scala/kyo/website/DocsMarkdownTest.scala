@@ -323,4 +323,80 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
+    // ---- Tokenizer forward-progress (regression for the lone-`/` infinite loop) ----
+
+    "scala fence with a lone `/` operator transpiles without hanging" in run {
+        // `Path / "etc"` contains a `/` that is not `//` or `/*` and not an sbt operator, so no
+        // tokenizer branch consumed it; the loop used to stall on it and allocate forever (OOM).
+        val source =
+            "```scala\n" +
+                "val config: Path = Path / \"etc\" / \"myapp\"\n" +
+                "val ratio = total / count\n" +
+                "```\n"
+        for html <- transpileHtml(source)
+        yield
+            assert(html.contains("Path"), s"Expected Path token: $html")
+            assert(html.contains("etc"), s"Expected the path literal: $html")
+            assert(html.contains("count"), s"Expected the division operand: $html")
+            // The `/` operator must survive in the output, not be dropped or duplicated into a hang.
+            assert(html.contains("/"), s"Expected the slash to render: $html")
+        end for
+    }
+
+    "bash fence with a lone special char transpiles without hanging" in run {
+        val source =
+            "```bash\n" +
+                "ls / | wc -l\n" +
+                "```\n"
+        for html <- transpileHtml(source)
+        yield
+            assert(html.contains("ls"), s"Expected ls keyword/word: $html")
+            assert(html.contains("wc"), s"Expected wc: $html")
+        end for
+    }
+
+    // ---- Perf guard: a large README must transpile + render in bounded time ----
+
+    "large synthetic README transpiles and renders in bounded time" in run {
+        // Mixed prose + code fences (with lone-`/` operators) + a table + lists, sized ~128 KB.
+        // Pre-fix this either hangs in the tokenizer (lone `/`) or runs O(n^2) in the inline parser;
+        // post-fix it is linear and completes well under the 30s budget on every platform runner.
+        val sb = new StringBuilder()
+        sb.append("# Large synthetic module\n\n")
+        var i = 0
+        while i < 220 do
+            sb.append(s"## Section $i\n\n")
+            sb.append("This is a paragraph with some `inline code` and a [link](https://example.com/page) ")
+            sb.append("and **bold** and *italic* spread across a moderately long line of ordinary prose. ")
+            sb.append("It repeats enough plain words to exercise the inline text-run path at scale.\n\n")
+            sb.append("```scala\n")
+            sb.append("val config: Path = Path / \"etc\" / \"app\"\n")
+            sb.append("def ratio(a: Int, b: Int): Int = a / b // integer division\n")
+            sb.append("val xs = List(1, 2, 3).map(_ * 2)\n")
+            sb.append("```\n\n")
+            sb.append("| Name | Type | Note |\n")
+            sb.append("| ---- | ---- | ---- |\n")
+            sb.append(s"| Foo$i | Int | a / b |\n")
+            sb.append(s"| Bar$i | String | x / y |\n\n")
+            sb.append("- first item with `code`\n")
+            sb.append("- second item with a [ref](#section-0)\n")
+            sb.append("  - nested item\n\n")
+            i += 1
+        end while
+        val source = sb.toString
+        assert(source.length > 100000, s"fixture too small: ${source.length}")
+
+        val start = java.lang.System.nanoTime()
+        for
+            rendered <- DocsMarkdown.transpile(source)
+            html     <- renderHtml(rendered.article)
+        yield
+            val elapsed = (java.lang.System.nanoTime() - start) / 1000000L
+            assert(rendered.headings.nonEmpty, "expected headings")
+            assert(html.contains("Large synthetic module"), "expected title in output")
+            assert(html.contains("<table"), "expected a table in output")
+            assert(elapsed < 30000L, s"transpile+render took ${elapsed}ms (budget 30000ms): not linear")
+        end for
+    }
+
 end DocsMarkdownTest
