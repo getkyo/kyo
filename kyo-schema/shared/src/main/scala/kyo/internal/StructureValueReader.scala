@@ -117,13 +117,13 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
     end hasNextElement
 
     def string(): String =
+        // Strict: only Str decodes as String. JSON-RPC / MCP / LSP schemas declare typed fields and the wire must
+        // respect them — an integer or boolean where a string is expected is a client bug, not a coercion to absorb.
+        // Coercing `Integer(42)` to `"42"` silently accepted a malformed `{"path": 42}` against a `path: String`
+        // tool argument and let the server treat it as a real path; that's the correctness gap this rejects.
         currentValue match
-            case Structure.Value.Str(s)     => s
-            case Structure.Value.Integer(l) => l.toString
-            case Structure.Value.Decimal(d) => d.toString
-            case Structure.Value.Bool(b)    => b.toString
-            case Structure.Value.BigNum(bd) => bd.toString
-            case other                      => throw TypeMismatchException(Seq.empty, "String", other.toString)
+            case Structure.Value.Str(s) => s
+            case other                  => throw TypeMismatchException(Seq.empty, "String", other.toString)
 
     def int(): Int =
         currentValue match

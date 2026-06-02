@@ -751,6 +751,9 @@ lazy val `kyo-mcp` =
         .crossType(CrossType.Full)
         .in(file("kyo-mcp"))
         .dependsOn(`kyo-jsonrpc`)
+        // Test-only dep so `demo.HttpFetch` (under jvm/src/test) can drive `HttpClient.getText`.
+        // Keeping it test-scoped avoids leaking kyo-http into kyo-mcp's runtime artifact.
+        .dependsOn(`kyo-http` % "test->compile")
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)

@@ -38,7 +38,9 @@ object Notes extends KyoApp:
                     .map(_ => McpContent.text(s"stored note '${req.title}' (${req.body.length} chars)"))
             }
 
-        // -- search_notes: toolMulti, one Text block per match plus an isError indicator
+        // -- search_notes: toolMulti, one Text block per match; an empty result set is a successful
+        // empty search, not an error. The MCP `isError` flag is reserved for genuine failure paths
+        // (e.g. tool-internal exceptions that the engine catches and surfaces back to the host).
         val searchNotesTool =
             McpHandler.toolMulti[SearchNotes](
                 name = "search_notes",
@@ -50,9 +52,12 @@ object Notes extends KyoApp:
                         .filter(e => e.getKey.contains(req.query) || e.getValue.contains(req.query))
                         .map(e => McpContent.text(s"${e.getKey}: ${e.getValue}"))
                         .toList
+                    val content =
+                        if matches.isEmpty then Chunk(McpContent.text(s"No notes matching '${req.query}'."))
+                        else Chunk.from(matches)
                     McpHandler.ToolOutcome(
-                        content = Chunk.from(matches),
-                        isError = matches.isEmpty,
+                        content = content,
+                        isError = false,
                         structuredContent = Absent
                     )
                 }

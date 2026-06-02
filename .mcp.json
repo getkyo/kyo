@@ -14,6 +14,21 @@
         "kyo-mcp",
         "demo.Notes"
       ]
+    },
+    "kyo-git": {
+      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+      "args": [
+        "kyo-mcp",
+        "demo.GitInsight",
+        "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur"
+      ]
+    },
+    "kyo-http-fetch": {
+      "command": "/Users/fwbrasil/workspace/kyo/.claude/worktrees/crispy-swinging-lemur/.mcp-validation/run-demo.sh",
+      "args": [
+        "kyo-mcp",
+        "demo.HttpFetch"
+      ]
     }
   }
 }

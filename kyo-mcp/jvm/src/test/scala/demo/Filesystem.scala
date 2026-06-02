@@ -3,6 +3,7 @@ package demo
 import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
+import kyo.Path as KPath
 
 /** MCP server exposing a configured filesystem root.
   *
@@ -32,14 +33,34 @@ object Filesystem extends KyoApp:
 
     run {
         val rootArg = args.headOption.getOrElse(".")
-        val root    = java.nio.file.Paths.get(rootArg).toAbsolutePath.normalize()
+        // One-time bridge: turn the CLI argument string into a kyo `Path`. `Path.of` normalises the wrapped nio path.
+        // All subsequent filesystem work goes through kyo's `Path` API and typed `FileException`s.
+        val root = KPath.of(java.nio.file.Paths.get(rootArg).toAbsolutePath.normalize())
 
-        // Resolve a user-supplied path against the root, rejecting escapes.
-        def resolve(input: String): java.nio.file.Path < Abort[FsError] =
-            val candidate = root.resolve(input).normalize()
-            if candidate.startsWith(root) then candidate
-            else Abort.fail(FsError(reason = "path resolves outside root", path = input))
+        // Resolve a user-supplied relative path against the root. Rejects absolute paths and any `..` segment so the
+        // result is statically guaranteed to live under `root` — no path-startsWith comparison or post-normalize
+        // re-check is needed.
+        def resolve(input: String): KPath < Abort[FsError] =
+            val candidate = KPath(input)
+            val parts     = candidate.parts
+            if candidate.isAbsolute || parts.exists(p => p == ".." || p == ".") then
+                Abort.fail(FsError(reason = "path resolves outside root", path = input))
+            else
+                root / candidate
+            end if
         end resolve
+
+        // Map kyo's typed `FileException` hierarchy to a short human-readable reason for the wire. Avoids the JDK's
+        // `getMessage` quirk where `NoSuchFileException` and `NotDirectoryException` put the offending path in the
+        // message string itself.
+        def reasonFor(ex: FileException): String = ex match
+            case _: FileNotFoundException          => "no such file or directory"
+            case _: FileNotADirectoryException     => "not a directory"
+            case _: FileIsADirectoryException      => "is a directory"
+            case _: FileAccessDeniedException      => "permission denied"
+            case _: FileAlreadyExistsException     => "already exists"
+            case _: FileDirectoryNotEmptyException => "directory not empty"
+            case _: FileIOException                => "i/o error"
 
         // -- read_file
         val readFileTool =
@@ -50,10 +71,8 @@ object Filesystem extends KyoApp:
                 ) { req =>
                     for
                         p <- resolve(req.path)
-                        content <- Abort.catching[java.io.IOException](
-                            Sync.defer(java.nio.file.Files.readString(p))
-                        ).handle(Abort.recover[java.io.IOException] { ex =>
-                            Abort.fail(FsError(reason = ex.getMessage, path = req.path))
+                        content <- p.read.handle(Abort.recover[FileReadException] { ex =>
+                            Abort.fail(FsError(reason = reasonFor(ex), path = req.path))
                         })
                     yield McpContent.text(content)
                 }
@@ -68,45 +87,39 @@ object Filesystem extends KyoApp:
                 ) { req =>
                     for
                         p <- resolve(req.path)
-                        entries <- Abort.catching[java.io.IOException](
-                            Sync.defer {
-                                import scala.jdk.CollectionConverters.*
-                                val stream = java.nio.file.Files.list(p)
-                                try Chunk.from(stream.iterator.asScala.toList.map(_.getFileName.toString))
-                                finally stream.close()
-                            }
-                        ).handle(Abort.recover[java.io.IOException] { ex =>
-                            Abort.fail(FsError(reason = ex.getMessage, path = req.path))
+                        entries <- p.list.handle(Abort.recover[FileFsException] { ex =>
+                            Abort.fail(FsError(reason = reasonFor(ex), path = req.path))
                         })
-                    yield McpContent.text(entries.mkString("\n"))
+                    yield McpContent.text(entries.flatMap(_.name.toChunk).mkString("\n"))
                 }
                 .error[FsError](code = -32001, message = "filesystem-error")
 
-        // -- search_files (fixed-string contains across all files under root)
+        // -- search_files (fixed-string contains across all files under root). Walks the tree streaming, reads each
+        // regular file, drops unreadable entries, and returns the names that contain `pattern`.
         val searchTool =
             McpHandler
                 .tool[SearchFiles](
                     name = "search_files",
                     description = "Find files containing a fixed substring"
                 ) { req =>
-                    Sync.defer {
-                        import scala.jdk.CollectionConverters.*
-                        val stream = java.nio.file.Files.walk(root)
-                        try
-                            val hits = stream
-                                .iterator
-                                .asScala
-                                .filter(java.nio.file.Files.isRegularFile(_))
-                                .filter(p =>
-                                    try java.nio.file.Files.readString(p).contains(req.pattern)
-                                    catch case _: Throwable => false
-                                )
-                                .map(root.relativize(_).toString)
-                                .toList
-                            McpContent.text(hits.mkString("\n"))
-                        finally stream.close()
-                        end try
-                    }
+                    val rootParts = root.parts
+                    root.walk
+                        .filter(_.isRegularFile)
+                        .collect { file =>
+                            // Read each file but swallow per-file read errors so unreadable entries don't fail the
+                            // whole search. `collect` keeps only files whose contents contain the pattern.
+                            file.read
+                                .handle(Abort.recover[FileReadException](_ => ""))
+                                .map { contents =>
+                                    if contents.contains(req.pattern) then
+                                        // Relative-to-root: drop the leading root parts and rejoin.
+                                        Present(file.parts.drop(rootParts.size).mkString("/"))
+                                    else Absent
+                                }
+                        }
+                        .run
+                        .map(hits => McpContent.text(hits.mkString("\n")))
+                        .handle(Scope.run)
                 }
 
         // -- file:///{path} resource template
@@ -116,29 +129,27 @@ object Filesystem extends KyoApp:
                 uriTemplate = fileTemplateUri,
                 name = "file"
             ) { uri =>
-                // Extract the {path} variable from the inbound URI; reject paths that escape the
-                // configured root.
                 fileTemplateUri.extract(uri) match
                     case Absent =>
                         Chunk.empty[McpHandler.ResourceContents]
                     case Present(bindings) =>
                         val raw = bindings.getOrElse("path", "")
-                        Abort.catching[java.io.IOException](
-                            Sync.defer {
-                                val p = root.resolve(raw).normalize()
-                                if !p.startsWith(root) then
-                                    Chunk.empty[McpHandler.ResourceContents]
-                                else
-                                    Chunk(McpHandler.ResourceContents.text(
-                                        uri = uri,
-                                        text = java.nio.file.Files.readString(p),
-                                        mimeType = Present(McpMimeType("text/plain"))
-                                    ))
-                                end if
+                        Abort.run[FsError] {
+                            resolve(raw).map { p =>
+                                p.read.handle(Abort.recover[FileReadException](_ => "")).map { text =>
+                                    if text.isEmpty then Chunk.empty[McpHandler.ResourceContents]
+                                    else
+                                        Chunk(McpHandler.ResourceContents.text(
+                                            uri = uri,
+                                            text = text,
+                                            mimeType = Present(McpMimeType("text/plain"))
+                                        ))
+                                }
                             }
-                        ).handle(Abort.recover[java.io.IOException] { _ =>
-                            Chunk.empty[McpHandler.ResourceContents]
-                        })
+                        }.map {
+                            case Result.Success(v) => v
+                            case _                 => Chunk.empty[McpHandler.ResourceContents]
+                        }
                 end match
             }
 
