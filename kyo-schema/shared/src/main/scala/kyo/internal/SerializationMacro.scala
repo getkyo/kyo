@@ -835,12 +835,40 @@ private[internal] object SerializationMacro:
             val isMaybe                       = maybeFields.contains(idx)
             val isOption                      = optionFields.contains(idx)
             if isMaybe then
-                // Maybe[T]: wrap the inner serializeRead result in kyo.Present.
+                // Maybe[T]: `subSchemas[idx]` is `Schema[T]` (the inner type — the macro strips the Maybe wrapper to
+                // avoid double-wrapping the read result, see `summonFieldSchemaResolvers` in FocusMacro), so we add the
+                // null dispatch here. Without it, an explicit JSON null bypasses `Schema[Maybe[T]]`'s `if isNil then
+                // Absent else Present(...)` branch and reaches the non-nullable inner schema, which throws "expected
+                // T but got Null" — that's what made the LSP-spec `processId: null` and `rootUri: null` decode-fail.
+                // When the inner is itself nullable (Maybe[Maybe[T]] / Maybe[Option[T]]), defer to the inner schema's
+                // own nil handling so `Present(Maybe.empty)` round-trips correctly instead of collapsing to
+                // `Maybe.empty`.
+                val innerIsNullable: Boolean = ft match
+                    case AppliedType(_, List(inner)) =>
+                        inner <:< TypeRepr.of[kyo.Maybe[Any]] || inner <:< TypeRepr.of[Option[Any]]
+                    case _ => false
                 ft.asType match
                     case '[t] =>
-                        '{ kyo.Present(kyo.internal.SchemaSerializer.readFrom($schemaExpr, $reader)(using $reader.frame)).asInstanceOf[t] }
+                        if innerIsNullable then
+                            '{
+                                kyo.Present(kyo.internal.SchemaSerializer.readFrom(
+                                    $schemaExpr,
+                                    $reader
+                                )(using $reader.frame)).asInstanceOf[t]
+                            }
+                        else
+                            '{
+                                if $reader.isNil() then kyo.Maybe.empty.asInstanceOf[t]
+                                else
+                                    kyo.Present(kyo.internal.SchemaSerializer.readFrom(
+                                        $schemaExpr,
+                                        $reader
+                                    )(using $reader.frame)).asInstanceOf[t]
+                            }
+                end match
             else if isOption then
-                // Option[T]: the Option schema's serializeRead already yields Option[T].
+                // Option[T]: `subSchemas[idx]` is `Schema[Option[T]]` (the full type), so `Schema.optionSchema` already
+                // handles `isNil -> None`. Pass through unchanged.
                 ft.asType match
                     case '[t] => '{ kyo.internal.SchemaSerializer.readFrom($schemaExpr, $reader)(using $reader.frame).asInstanceOf[t] }
             else if fieldIsPrimitive(idx) then

@@ -30,7 +30,11 @@ final private[kyo] class ContentLengthStdioWireTransport(
         }
 
     def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
-        Stream.unfold[Unit, Chunk[Byte], Async & Abort[Closed]](()) { _ =>
+        // chunkSize = 1 so each read flushes a single element downstream immediately. With the default chunkSize,
+        // Stream.unfold batches multiple emissions before pushing to subscribers, and a held-open stdin (the LSP-spec
+        // session lifecycle) never produces enough data to fill a batch — the framer parses nothing, the handshake
+        // stalls, and the host TERM-kills the server. Matches StdioWireTransport's symmetric fix.
+        Stream.unfold[Unit, Chunk[Byte], Async & Abort[Closed]]((), chunkSize = 1) { _ =>
             Sync.defer {
                 val buf = new Array[Byte](bufSize)
                 val n   = in.read(buf)
