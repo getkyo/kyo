@@ -27,7 +27,10 @@ class FragmentTest extends UITest:
     }
 
     "nested fragment" in run {
-        withUI(UI.div(UI.fragment(UI.fragment(UI.span("a").id("a"), UI.span("b").id("b")), UI.span("c").id("c"))).id("d")) {
+        // A nested fragment is transparent: a fragment nested inside another fragment renders all
+        // children as siblings in the parent div. The inner fragment(a, b) produces Fragment[SpanElement];
+        // nesting it as fragment(fragment(a, b)) keeps a, b at the div level, and sibling c renders alongside.
+        withUI(UI.div(UI.fragment(UI.fragment(UI.span("a").id("a"), UI.span("b").id("b"))), UI.span("c").id("c")).id("d")) {
             for
                 _ <- Browser.assertText(Selector.id("a"), "a")
                 _ <- Browser.assertText(Selector.id("b"), "b")

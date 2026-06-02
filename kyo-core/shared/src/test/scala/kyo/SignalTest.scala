@@ -628,12 +628,12 @@ class SignalTest extends Test:
                 // Arm the waiter
                 f <- Fiber.initUnscoped(z.next)
                 _ <- untilTrue(r0.waiters.map(_ == 1))
-                // Change r1 and r2 but NOT r0 — emit must not fire yet
+                // Change r1 and r2 but NOT r0: emit must not fire yet
                 _ <- r1.set(1)
                 _ <- r2.set(1)
                 // Check non-blocking: the fiber is still pending
                 done <- f.done
-                // Now change r0 — all 3 have changed, emit must fire
+                // Now change r0: all 3 have changed, emit must fire
                 _ <- r0.set(1)
                 v <- f.get
             yield assert(!done && v == Chunk(1, 1, 1))

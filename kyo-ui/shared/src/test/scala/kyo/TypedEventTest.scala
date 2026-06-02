@@ -7,7 +7,7 @@ import kyo.internal.UIEvent
 import kyo.internal.UIExchange
 import scala.language.implicitConversions
 
-/** Phase 2: Typed event payloads. Unit tests dispatching UIEvents directly through ReactiveUI.
+/** Typed event payloads. Unit tests dispatching UIEvents directly through ReactiveUI.
   *
   * These tests do NOT use a browser. They normalize a UI tree, subscribe it, dispatch UIEvents directly through the
   * handler returned by ReactiveUI.subscribe, and assert on AtomicRef values set by the typed handlers. This exercises
@@ -28,7 +28,7 @@ class TypedEventTest extends Test:
             subscription <- ReactiveUI.subscribe(root, new NoopExchange)
         yield subscription.handle
 
-    // ---- Test 1: typed onClick fires with Modifiers.none ----
+    // ---- typed onClick fires with Modifiers.none ----
 
     "typed onClick fires with modifiers.none when Click dispatched with Modifiers.none" in run {
         for
@@ -42,7 +42,7 @@ class TypedEventTest extends Test:
         yield assert(result)
     }
 
-    // ---- Test 2: typed onClick handler observes shift=true ----
+    // ---- typed onClick handler observes shift=true ----
 
     "typed onClick observes mouse.modifiers.shift == true when wire payload shift is true" in run {
         for
@@ -57,7 +57,7 @@ class TypedEventTest extends Test:
         yield assert(result)
     }
 
-    // ---- Test 3: typed onClick handler observes targetId ----
+    // ---- typed onClick handler observes targetId ----
 
     "typed onClick handler observes mouse.targetId == Present(id) when wire payload sets targetId" in run {
         for
@@ -72,7 +72,7 @@ class TypedEventTest extends Test:
         yield assert(result == Present("my-button"))
     }
 
-    // ---- Test 4: both by-name onClick and typed onClick(f) fire ----
+    // ---- both by-name onClick and typed onClick(f) fire ----
 
     "both onClick(action) and onClick(f) fire on dispatch; typed fires first, then by-name" in run {
         for
@@ -88,7 +88,7 @@ class TypedEventTest extends Test:
         yield assert(result == Chunk("typed", "byname"))
     }
 
-    // ---- Test 5: bubbling. Parent onClick still fires after child ----
+    // ---- bubbling. Parent onClick still fires after child ----
 
     "bubbling: parent onClick fires after child typed onClick when child does not stop propagation" in run {
         for
@@ -104,7 +104,7 @@ class TypedEventTest extends Test:
         yield assert(result == Chunk("child", "parent"))
     }
 
-    // ---- Test 6: renamed KeyboardEvent carries key and Modifiers ----
+    // ---- renamed KeyboardEvent carries key and Modifiers ----
 
     "renamed KeyboardEvent: onKeyDown fires correctly for KeyDown with ctrl=true" in run {
         for
@@ -119,7 +119,7 @@ class TypedEventTest extends Test:
         yield assert(result == Present((UI.Keyboard.Enter, true)))
     }
 
-    // ---- Test 7: handler that throws does not prevent bubbling ----
+    // ---- handler that throws does not prevent bubbling ----
 
     "a handler that throws does not prevent the bubble chain from continuing" in run {
         for
@@ -134,7 +134,7 @@ class TypedEventTest extends Test:
         yield assert(result)
     }
 
-    // ---- Test 8: UIEvent.Click CanEqual end-to-end ----
+    // ---- UIEvent.Click CanEqual end-to-end ----
 
     "UIEvent.Click with structurally equal MouseEventData equals another Click" in {
         val a = UIEvent.Click(Seq("0"), MouseEventData(UI.Modifiers.none, Absent))
@@ -142,7 +142,7 @@ class TypedEventTest extends Test:
         assert(a == b)
     }
 
-    // ---- Test 9: typed overload typechecks ----
+    // ---- typed overload typechecks ----
 
     "typed onClick overload: UI.button.onClick { (mouse: MouseEvent) => ... } typechecks" in {
         val check: UI =
@@ -152,7 +152,7 @@ class TypedEventTest extends Test:
         assert(check.isInstanceOf[UI])
     }
 
-    // ---- Test 10: Form typed onSubmit ----
+    // ---- Form typed onSubmit ----
 
     "Form.onSubmit(f) typed overload fires with correct MouseEvent" in run {
         for
@@ -170,7 +170,7 @@ class TypedEventTest extends Test:
             assert(result.get.targetId == Present("login"))
     }
 
-    // ---- Test 11: typed onFocus overload ----
+    // ---- typed onFocus overload ----
 
     "typed onFocus overload fires with correct MouseEvent on UIEvent.Focus dispatch" in run {
         for
@@ -187,7 +187,7 @@ class TypedEventTest extends Test:
             assert(result.get.targetId == Present("my-input"))
     }
 
-    // ---- Test 12: typed onBlur overload ----
+    // ---- typed onBlur overload ----
 
     "typed onBlur overload fires with correct MouseEvent on UIEvent.Blur dispatch" in run {
         for
@@ -204,7 +204,7 @@ class TypedEventTest extends Test:
             assert(result.get.targetId == Present("my-input"))
     }
 
-    // ---- Tests 13-15: dispatch resolves the click target through a Reactive boundary ----
+    // ---- dispatch resolves the click target through a Reactive boundary ----
     //
     // A signal-typed setter such as `.disabled(Signal)` wraps its element in a `Reactive`. The
     // server-side dispatch must still recognise the wrapped element by its concrete type (Button) and

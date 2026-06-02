@@ -29,7 +29,7 @@ private[kyo] enum UIEvent derives CanEqual, Schema:
     case KeyUp(path: Seq[String], keyboard: KeyboardEventData)
     case Focus(path: Seq[String], mouse: MouseEventData)
     case Blur(path: Seq[String], mouse: MouseEventData)
-    case Scroll(path: Seq[String], deltaRows: Int)
-    case Hover(path: Seq[String])
-    case Unhover(path: Seq[String])
+    case Scroll(path: Seq[String], deltaX: Double, deltaY: Double, modifiers: UI.Modifiers, targetId: Maybe[String])
+    case Hover(path: Seq[String], mouse: MouseEventData)
+    case Unhover(path: Seq[String], mouse: MouseEventData)
 end UIEvent

@@ -40,17 +40,14 @@ class IndeterminateTest extends Test:
         for
             ref <- Signal.initRef(true)
             reactive = UI.checkbox.indeterminate(ref: Signal[Boolean])
-            result <- reactive match
-                case r: Reactive =>
-                    r.signal.current.map { inner =>
-                        inner match
-                            case cb: Checkbox =>
-                                assert(cb.attrs.jsProps == Map("indeterminate" -> "true"))
-                            case other =>
-                                fail(s"Expected Checkbox, got $other")
-                    }
-                case other =>
-                    fail(s"Expected Reactive, got $other")
+            r        = reactive.asInstanceOf[Reactive[?]]
+            result <- r.signal.current.map { inner =>
+                inner match
+                    case cb: Checkbox =>
+                        assert(cb.attrs.jsProps == Map("indeterminate" -> "true"))
+                    case other =>
+                        fail(s"Expected Checkbox, got $other")
+            }
         yield result
     }
 
@@ -58,18 +55,13 @@ class IndeterminateTest extends Test:
         for
             ref <- Signal.initRef(true)
             reactive = UI.checkbox.indeterminate(ref: Signal[Boolean])
-            result <- reactive match
-                case r: Reactive =>
-                    for
-                        htmlTrue  <- r.signal.current.flatMap(ui => renderHtml(ui))
-                        _         <- ref.set(false)
-                        htmlFalse <- r.signal.current.flatMap(ui => renderHtml(ui))
-                    yield
-                        assert(htmlTrue.contains("""data-kyo-prop-indeterminate="true""""))
-                        assert(!htmlFalse.contains("data-kyo-prop-indeterminate"))
-                case other =>
-                    fail(s"Expected Reactive, got $other")
-        yield result
+            r        = reactive.asInstanceOf[Reactive[?]]
+            htmlTrue  <- r.signal.current.flatMap(ui => renderHtml(ui))
+            _         <- ref.set(false)
+            htmlFalse <- r.signal.current.flatMap(ui => renderHtml(ui))
+        yield
+            assert(htmlTrue.contains("""data-kyo-prop-indeterminate="true""""))
+            assert(!htmlFalse.contains("data-kyo-prop-indeterminate"))
     }
 
 end IndeterminateTest

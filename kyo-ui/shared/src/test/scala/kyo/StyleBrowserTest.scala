@@ -136,10 +136,7 @@ class StyleBrowserTest extends UITest:
             for show <- Signal.initRef(true)
             yield UI.div(
                 UI.button("Hide").id("hide").onClick(show.set(false)),
-                show.map { s =>
-                    if s then UI.span("target").id("target")
-                    else UI.empty
-                }
+                UI.when(show)(UI.span("target").id("target"))
             )
         withUI(app) {
             for

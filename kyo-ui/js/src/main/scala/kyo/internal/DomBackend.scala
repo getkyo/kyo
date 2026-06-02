@@ -3,6 +3,7 @@ package kyo.internal
 import kyo.*
 import org.scalajs.dom
 import org.scalajs.dom.document
+import scala.scalajs.js
 
 /** Scala.js UI backend. Mounts a UI into the browser DOM. */
 private[kyo] object DomBackend:
@@ -27,7 +28,7 @@ private[kyo] object DomBackend:
             html <- HtmlRenderer.render(ui, Seq.empty)
             _    <- Sync.defer(container.innerHTML = html)
             _    <- applyJsProps(container)
-            exchange = LocalExchange()
+            exchange = LocalExchange(root)
             dispatch <- ReactiveUI.subscribe(root, exchange)
             _        <- setupEventDelegation(dispatch.handle)
             _        <- Async.never
@@ -36,12 +37,18 @@ private[kyo] object DomBackend:
     end mountInto
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
-    private class LocalExchange extends UIExchange:
+    private class LocalExchange(root: ReactiveUI) extends UIExchange:
+        private def svgContextAt(path: Seq[String]): Boolean =
+            ReactiveUI.findNode(root, path).map(_.svgContext).getOrElse(false)
+
         def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
             HtmlRenderer.render(ui, path).map { html =>
+                // In SVG context an empty reactive zone needs a <g> placeholder (a <span> is invalid
+                // inside <svg>); the non-empty branch already carries the correct tags from HtmlRenderer.
+                val tag = if svgContextAt(path) then "g" else "span"
                 val finalHtml =
                     if html.isEmpty then
-                        s"""<span data-kyo-path="${path.mkString(".")}" data-kyo-reactive></span>"""
+                        s"""<$tag data-kyo-path="${path.mkString(".")}" data-kyo-reactive></$tag>"""
                     else html
                 val pathAttr = path.mkString(".")
                 Sync.defer {
@@ -81,14 +88,12 @@ private[kyo] object DomBackend:
             else
                 Seq.empty
         (self ++ (0 until elements.length).map(elements(_).asInstanceOf[dom.Element])).foreach { el =>
-            val toRemove  = scala.collection.mutable.ArrayBuffer.empty[String]
             val attrNames = (0 until el.attributes.length).map(el.attributes(_).name)
-            attrNames.foreach { attrName =>
-                if attrName.startsWith(propPrefix) then
-                    val propName = attrName.stripPrefix(propPrefix)
-                    val value    = el.getAttribute(attrName)
-                    el.asInstanceOf[scalajs.js.Dynamic].updateDynamic(propName)(value)
-                    toRemove += attrName
+            val toRemove  = attrNames.filter(_.startsWith(propPrefix))
+            toRemove.foreach { attrName =>
+                val propName = attrName.stripPrefix(propPrefix)
+                val value    = el.getAttribute(attrName)
+                el.asInstanceOf[scalajs.js.Dynamic].updateDynamic(propName)(value)
             }
             toRemove.foreach(el.removeAttribute)
         }
@@ -108,11 +113,11 @@ private[kyo] object DomBackend:
 
                 val event: Maybe[UIEvent] =
                     if t == "click" then
-                        val targetId = Option(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                        val targetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
                         val me       = e.asInstanceOf[dom.MouseEvent]
                         val mouse = MouseEventData(
                             modifiers = UI.Modifiers(me.ctrlKey, me.altKey, me.shiftKey, me.metaKey),
-                            targetId = targetId.fold(Absent: Maybe[String])(Present(_))
+                            targetId = targetId
                         )
                         // Speculatively prevent navigation on anchor elements with a kyo handler
                         if target.tagName.toLowerCase == "a" then e.preventDefault()
@@ -142,44 +147,74 @@ private[kyo] object DomBackend:
                         end if
                     else if t == "submit" && evTypes.contains("submit") then
                         e.preventDefault()
-                        val submitTargetId = Option(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                        val submitTargetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
                         val submitMouse = MouseEventData(
                             modifiers = UI.Modifiers.none,
-                            targetId = submitTargetId.fold(Absent: Maybe[String])(Present(_))
+                            targetId = submitTargetId
                         )
                         Present(UIEvent.Submit(path, submitMouse))
                     else if t == "keydown" && evTypes.contains("keydown") then
                         val ke         = e.asInstanceOf[dom.KeyboardEvent]
-                        val kdTargetId = Option(ke.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                        val kdTargetId = Maybe(ke.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
                         Present(UIEvent.KeyDown(
                             path,
                             KeyboardEventData(
                                 key = ke.key,
                                 modifiers = UI.Modifiers(ke.ctrlKey, ke.altKey, ke.shiftKey, ke.metaKey),
-                                targetId = kdTargetId.fold(Absent: Maybe[String])(Present(_))
+                                targetId = kdTargetId
                             )
                         ))
                     else if t == "keyup" && evTypes.contains("keyup") then
                         val ke         = e.asInstanceOf[dom.KeyboardEvent]
-                        val kuTargetId = Option(ke.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                        val kuTargetId = Maybe(ke.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
                         Present(UIEvent.KeyUp(
                             path,
                             KeyboardEventData(
                                 key = ke.key,
                                 modifiers = UI.Modifiers(ke.ctrlKey, ke.altKey, ke.shiftKey, ke.metaKey),
-                                targetId = kuTargetId.fold(Absent: Maybe[String])(Present(_))
+                                targetId = kuTargetId
                             )
                         ))
                     else if t == "focus" && evTypes.contains("focus") then
-                        val focusTargetId = Option(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                        val focusTargetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
                         // FocusEvent does not carry modifier keys (not a MouseEvent); use Modifiers.none
                         Present(UIEvent.Focus(
                             path,
-                            MouseEventData(UI.Modifiers.none, focusTargetId.fold(Absent: Maybe[String])(Present(_)))
+                            MouseEventData(UI.Modifiers.none, focusTargetId)
                         ))
                     else if t == "blur" && evTypes.contains("blur") then
-                        val blurTargetId = Option(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
-                        Present(UIEvent.Blur(path, MouseEventData(UI.Modifiers.none, blurTargetId.fold(Absent: Maybe[String])(Present(_)))))
+                        val blurTargetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                        Present(UIEvent.Blur(path, MouseEventData(UI.Modifiers.none, blurTargetId)))
+                    else if t == "mouseover" && evTypes.contains("mouseover") then
+                        val hoverTargetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                        val me            = e.asInstanceOf[dom.MouseEvent]
+                        Present(UIEvent.Hover(
+                            path,
+                            MouseEventData(
+                                modifiers = UI.Modifiers(me.ctrlKey, me.altKey, me.shiftKey, me.metaKey),
+                                targetId = hoverTargetId
+                            )
+                        ))
+                    else if t == "mouseout" && evTypes.contains("mouseout") then
+                        val unhoverTargetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                        val me              = e.asInstanceOf[dom.MouseEvent]
+                        Present(UIEvent.Unhover(
+                            path,
+                            MouseEventData(
+                                modifiers = UI.Modifiers(me.ctrlKey, me.altKey, me.shiftKey, me.metaKey),
+                                targetId = unhoverTargetId
+                            )
+                        ))
+                    else if t == "wheel" && evTypes.contains("wheel") then
+                        val wheelTargetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                        val we            = e.asInstanceOf[dom.WheelEvent]
+                        Present(UIEvent.Scroll(
+                            path,
+                            deltaX = we.deltaX,
+                            deltaY = we.deltaY,
+                            modifiers = UI.Modifiers(we.ctrlKey, we.altKey, we.shiftKey, we.metaKey),
+                            targetId = wheelTargetId
+                        ))
                     else
                         Absent
 
@@ -189,9 +224,14 @@ private[kyo] object DomBackend:
             }
         end handler
 
-        Seq("click", "input", "change", "submit", "keydown", "keyup", "focus", "blur").foreach { t =>
+        Seq("click", "input", "change", "submit", "keydown", "keyup", "focus", "blur", "mouseover", "mouseout").foreach { t =>
             document.body.addEventListener(t, handler, true)
         }
+        document.body.addEventListener(
+            "wheel",
+            handler,
+            js.Dynamic.literal(capture = true, passive = false).asInstanceOf[dom.EventListenerOptions]
+        )
     }
     end setupEventDelegation
 

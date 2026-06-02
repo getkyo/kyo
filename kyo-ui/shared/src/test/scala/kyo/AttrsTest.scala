@@ -223,10 +223,7 @@ class AttrsTest extends UITest:
                 counter <- Signal.initRef(0)
             yield UI.div(
                 UI.button("Show").id("show").onClick(hidden.set(false)),
-                hidden.map { h =>
-                    if h then UI.empty
-                    else UI.button("Click").id("btn").onClick(counter.getAndUpdate(_ + 1).unit)
-                },
+                UI.when(hidden.map(!_))(UI.button("Click").id("btn").onClick(counter.getAndUpdate(_ + 1).unit)),
                 counter.map(n => UI.span(n.toString).id("v"))
             )
         withUI(app) {

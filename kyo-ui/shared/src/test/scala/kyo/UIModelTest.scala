@@ -237,12 +237,12 @@ class UIModelTest extends Test:
 
         "fragment factory" in {
             val f = UI.fragment(UI.div, UI.span)
-            assert(f.isInstanceOf[Fragment])
+            assert(f.isInstanceOf[Fragment[?]])
         }
 
         "empty" in {
             given Frame = Frame.derive
-            assert(UI.empty.isInstanceOf[Fragment])
+            assert(UI.empty.isInstanceOf[Fragment[?]])
         }
     }
 

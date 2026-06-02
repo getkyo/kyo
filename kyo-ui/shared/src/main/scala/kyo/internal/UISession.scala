@@ -19,10 +19,11 @@ private[kyo] object UISession:
     def create(ui: UI)(using Frame): Session < Async =
         for
             channel        <- Channel.initUnscoped[HtmlOp](256)
-            lastChangeTime <- AtomicRef.init(Instant.fromJava(java.time.Instant.now))
+            now            <- Clock.now
+            lastChangeTime <- AtomicRef.init(now)
             root           <- ReactiveUI.normalize(ui, Seq.empty)
             html           <- HtmlRenderer.render(ui, Seq.empty)
-            exchange = ChannelExchange(channel, lastChangeTime)
+            exchange = ChannelExchange(root, channel, lastChangeTime)
             sub <- ReactiveUI.subscribe(root, exchange)
         yield Session(
             id = java.util.UUID.randomUUID().toString,
@@ -38,13 +39,18 @@ private[kyo] object UISession:
     def handleEvent(session: Session, event: UIEvent)(using Frame): Unit < Async =
         session.dispatch(event.path, event).unit
 
-    private class ChannelExchange(channel: Channel[HtmlOp], lastChangeTime: AtomicRef[Instant]) extends UIExchange:
+    private class ChannelExchange(root: ReactiveUI, channel: Channel[HtmlOp], lastChangeTime: AtomicRef[Instant]) extends UIExchange:
+        private def svgContextAt(path: Seq[String]): Boolean =
+            ReactiveUI.findNode(root, path).map(_.svgContext).getOrElse(false)
+
         def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
             HtmlRenderer.render(ui, path).map { html =>
                 // Always wrap in a boundary marker so the element with data-kyo-path=path survives
                 // subsequent SSE Replaces (Fragments and direct child rendering would otherwise lose the marker).
+                // In SVG context use a <g> wrapper (a <span> is invalid inside <svg>).
                 val pathStr   = path.mkString(".")
-                val finalHtml = s"""<span data-kyo-path="$pathStr" data-kyo-reactive>$html</span>"""
+                val tag       = if svgContextAt(path) then "g" else "span"
+                val finalHtml = s"""<$tag data-kyo-path="$pathStr" data-kyo-reactive>$html</$tag>"""
                 Abort.run[Closed](channel.put(HtmlOp.Replace(path, finalHtml))).unit
             }.andThen(Clock.now.map(now => lastChangeTime.set(now)))
         end onChange

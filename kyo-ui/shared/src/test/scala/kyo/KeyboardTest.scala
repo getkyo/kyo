@@ -498,10 +498,7 @@ class KeyboardTest extends UITest:
             for show <- Signal.initRef(false)
             yield UI.div(
                 UI.button("Show").id("show").onClick(show.set(true)),
-                show.map { s =>
-                    if s then UI.button("Target").id("target")
-                    else UI.empty
-                }
+                UI.when(show)(UI.button("Target").id("target"))
             )
         withUI(app) {
             for
@@ -733,7 +730,7 @@ class KeyboardTest extends UITest:
 
     "pressKey multiple chars into input" in run {
         // Browser.fill is the canonical way to type a string. Multi-press resets cursor each time
-        // (kyo-browser limitation, see BROWSER-FEEDBACK).
+        // (kyo-browser limitation).
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(

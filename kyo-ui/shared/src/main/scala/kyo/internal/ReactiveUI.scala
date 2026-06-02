@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.Svg
 import kyo.UI.*
 
 /** Normalized reactive UI node. */
@@ -9,7 +10,8 @@ private[kyo] case class ReactiveUI(
     signal: Signal[UI],
     isConst: Boolean,
     children: Seq[ReactiveUI],
-    handle: (Seq[String], UIEvent) => Boolean < Async
+    handle: (Seq[String], UIEvent) => Boolean < Async,
+    svgContext: Boolean = false
 )
 
 private[kyo] object ReactiveUI:
@@ -20,46 +22,57 @@ private[kyo] object ReactiveUI:
         path: Seq[String],
         signal: Signal[UI],
         isConst: Boolean,
-        children: Seq[ReactiveUI]
+        children: Seq[ReactiveUI],
+        svgContext: Boolean = false
     )(
         handle: (Seq[String], UIEvent) => Boolean < Async
     ): ReactiveUI =
-        ReactiveUI(path, signal, isConst, children, handle)
+        ReactiveUI(path, signal, isConst, children, handle, svgContext)
 
-    def normalize(ui: UI, path: Seq[String]): ReactiveUI < Sync =
+    /** Locate the ReactiveUI node at `path` in the resolved tree. Used by the exchanges to look up the
+      * recorded svgContext flag so an empty placeholder uses the correct (<g> vs <span>) tag.
+      */
+    private[kyo] def findNode(root: ReactiveUI, path: Seq[String]): Maybe[ReactiveUI] =
+        if root.path == path then Present(root)
+        else
+            root.children.foldLeft(Absent: Maybe[ReactiveUI]) { (acc, child) =>
+                if acc.nonEmpty then acc else findNode(child, path)
+            }
+
+    def normalize(ui: UI, path: Seq[String], svg: Boolean = false): ReactiveUI < Sync =
         given Frame = ui.frame
         ui match
-            case ui: Reactive =>
+            case ui: Reactive[?] =>
                 for
                     current   <- ui.signal.current
-                    (kids, _) <- walkStatic(current, path)
-                yield init(path, ui.signal, isConst = false, kids) {
+                    (kids, _) <- walkStatic(current, path, svg)
+                yield init(path, ui.signal, isConst = false, kids, svgContext = svg) {
                     (targetPath, event) =>
                         for
                             currentUI     <- ui.signal.current
-                            (_, freshHdl) <- walkStatic(currentUI, path)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
                 end for
 
-            case ui: Foreach[Any] @unchecked =>
+            case ui: Foreach[?, ?] @unchecked =>
                 val sig =
                     ui.signal.map { items =>
                         val arr = items.toSeq.zipWithIndex.map { (item, i) =>
                             val key = if ui.key.nonEmpty then ui.key.get(item) else i.toString
-                            KeyedChild(key, ui.render(i, item))
+                            KeyedChild[UI](key, ui.render(i, item))
                         }
-                        Fragment(Chunk.from(arr)): UI
+                        Fragment[UI](Chunk.from(arr)): UI
                     }
                 for
                     current   <- sig.current
-                    (kids, _) <- walkStatic(current, path)
-                yield init(path, sig, isConst = false, kids) {
+                    (kids, _) <- walkStatic(current, path, svg)
+                yield init(path, sig, isConst = false, kids, svgContext = svg) {
                     (targetPath, event) =>
                         for
                             currentUI     <- sig.current
-                            (_, freshHdl) <- walkStatic(currentUI, path)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
@@ -72,15 +85,15 @@ private[kyo] object ReactiveUI:
                 // afresh, so the new HTML reflects the updated signal state.
                 val refs = collectSignalRefs(ui)
                 if refs.isEmpty then
-                    for (kids, hdl) <- walkStatic(ui, path)
-                    yield ReactiveUI(path, Signal.initConst(ui), isConst = true, kids, hdl)
+                    for (kids, hdl) <- walkStatic(ui, path, svg)
+                    yield ReactiveUI(path, Signal.initConst(ui), isConst = true, kids, hdl, svgContext = svg)
                 else
                     val elementSignal = Signal.initRaw[UI](
                         currentWith = [B, S] => g => g(ui),
                         nextWith = [B, S] => g => Signal.awaitAny(refs).andThen(g(ui))
                     )
-                    for (kids, hdl) <- walkStatic(ui, path)
-                    yield ReactiveUI(path, elementSignal, isConst = false, kids, hdl)
+                    for (kids, hdl) <- walkStatic(ui, path, svg)
+                    yield ReactiveUI(path, elementSignal, isConst = false, kids, hdl, svgContext = svg)
                 end if
 
             case ui =>
@@ -89,7 +102,7 @@ private[kyo] object ReactiveUI:
                 // Reactive or Foreach (also handled above). If a new UI subtype is added, the
                 // exhaustiveness checker will NOT warn here; any new type that is interactive must
                 // be added as an explicit case above before this catch-all.
-                ReactiveUI(path, Signal.initConst(ui), isConst = true, Seq.empty, (_, _) => true)
+                ReactiveUI(path, Signal.initConst(ui), isConst = true, Seq.empty, (_, _) => true, svgContext = svg)
         end match
     end normalize
 
@@ -115,22 +128,28 @@ private[kyo] object ReactiveUI:
     private type Handler = (Seq[String], UIEvent) => Boolean < Async
 
     /** Walk a static UI tree. Collect reactive children, build handle. */
-    private def walkStatic(ui: UI, basePath: Seq[String])(using Frame): (Seq[ReactiveUI], Handler) < Sync =
+    private def walkStatic(ui: UI, basePath: Seq[String], svg: Boolean = false)(using Frame): (Seq[ReactiveUI], Handler) < Sync =
         ui match
             case elem: Element =>
+                // ForeignObject bridges back to HTML, so reset svg context to false. It MUST be matched
+                // before SvgElement (ForeignObject IS an SvgElement).
+                val childSvg = elem match
+                    case _: Svg.ForeignObject => false
+                    case _: Svg.SvgElement    => true
+                    case _                    => svg
                 for childWalks <- Kyo.foreach(elem.children.toSeq.zipWithIndex) { (child, i) =>
                         val childPath = basePath :+ i.toString
                         child match
-                            case _: Reactive | _: Foreach[?] =>
-                                for rui <- normalize(child, childPath)
+                            case _: Reactive[?] | _: Foreach[?, ?] =>
+                                for rui <- normalize(child, childPath, childSvg)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case childElem: Element if collectSignalRefs(childElem).nonEmpty =>
                                 // Element with SignalRef-bound attributes is reactive over those signals;
                                 // normalize it so subscribeNode wires updates.
-                                for rui <- normalize(childElem, childPath)
+                                for rui <- normalize(childElem, childPath, childSvg)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case _ =>
-                                for (innerKids, innerHandle) <- walkStatic(child, childPath)
+                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg)
                                 yield (innerKids, Seq((i, innerHandle)))
                         end match
                     }
@@ -140,39 +159,39 @@ private[kyo] object ReactiveUI:
                     val handle: Handler = (targetPath, event) =>
                         dispatch(elem, basePath, targetPath, event, reactiveChildren, staticHandlers)
                     (reactiveChildren, handle)
+                end for
 
             case Fragment(children) =>
                 for childWalks <- Kyo.foreach(children.toSeq.zipWithIndex) { (child, i) =>
                         val childPath = child match
-                            case kc: KeyedChild => basePath :+ kc.key
-                            case _              => basePath :+ i.toString
+                            case kc: KeyedChild[?] => basePath :+ kc.key
+                            case _                 => basePath :+ i.toString
                         val inner = child match
-                            case kc: KeyedChild => kc.child
-                            case _              => child
-                        walkStatic(inner, childPath)
+                            case kc: KeyedChild[?] => kc.child
+                            case _                 => child
+                        walkStatic(inner, childPath, svg)
                     }
                 yield
                     val allKids    = childWalks.flatMap(_._1)
                     val allHandles = childWalks.zipWithIndex.map { case ((_, h), i) => (i, h) }
                     val keyMap = children.toSeq.zipWithIndex.collect {
-                        case (kc: KeyedChild, i) => kc.key -> i
+                        case (kc: KeyedChild[?], i) => kc.key -> i
                     }.toMap
                     val handle: Handler = (targetPath, event) =>
                         if targetPath.size > basePath.size then
                             val segment = targetPath(basePath.size)
-                            val idx     = keyMap.get(segment).orElse(segment.toIntOption)
-                            idx.flatMap(i => allHandles.lift(i).map(_._2)) match
-                                case Some(h) => h(targetPath, event)
-                                case None    => true
+                            val idx     = Maybe.fromOption(keyMap.get(segment)).orElse(Maybe.fromOption(segment.toIntOption))
+                            idx.flatMap(i => Maybe.fromOption(allHandles.lift(i)).map(_._2))
+                                .fold(true: Boolean < Async)(h => h(targetPath, event))
                         else true
                     (allKids, handle)
 
-            case _: Reactive | _: Foreach[?] =>
+            case _: Reactive[?] | _: Foreach[?, ?] =>
                 // When walkStatic is called with a Reactive or Foreach as the top-level node
                 // (not as a child of an Element), normalize it at basePath so subscribeNode
                 // sets up a subscription for it. This handles the case where an outer reactive's
                 // signal value is itself a Reactive or Foreach (e.g. outer.map { _ => inner.map(UI.span(_)) }).
-                for rui <- normalize(ui, basePath)
+                for rui <- normalize(ui, basePath, svg)
                 yield (Seq(rui), rui.handle)
 
             case _ =>
@@ -221,15 +240,14 @@ private[kyo] object ReactiveUI:
                     submitOrigin = targetIsButton,
                     selectTarget = targetIsSelect
                 )
-                result <- reactiveChild match
-                    case Some(child) =>
+                result <- Maybe.fromOption(reactiveChild) match
+                    case Present(child) =>
                         safeDispatch(child.handle, targetPath, event).map(keep => if keep then bubble else false)
-                    case None =>
-                        childIdx.flatMap(i => staticHandlers.find(_._1 == i).map(_._2)) match
-                            case Some(childHandle) =>
+                    case Absent =>
+                        Maybe.fromOption(childIdx).flatMap(i => Maybe.fromOption(staticHandlers.find(_._1 == i)).map(_._2))
+                            .fold(bubble)(childHandle =>
                                 safeDispatch(childHandle, targetPath, event).map(keep => if keep then bubble else false)
-                            case None =>
-                                bubble
+                            )
             yield result
             end for
         else
@@ -324,21 +342,21 @@ private[kyo] object ReactiveUI:
         Frame
     ): Boolean < Sync =
         node match
-            case kc: KeyedChild =>
+            case kc: KeyedChild[?] =>
                 targetSatisfies(kc.child, nodePath, targetPath, predicate)
-            case r: Reactive =>
+            case r: Reactive[?] =>
                 // A Reactive's rendered content occupies the same path as the boundary, so re-test at nodePath.
                 r.signal.current(using r.frame).map(cur => targetSatisfies(cur, nodePath, targetPath, predicate))
             case Fragment(children) =>
                 if targetPath.size <= nodePath.size then false
                 else
                     val seg = targetPath(nodePath.size)
-                    seg.toIntOption match
-                        case Some(i) if i >= 0 && i < children.size =>
+                    Maybe.fromOption(seg.toIntOption) match
+                        case Present(i) if i >= 0 && i < children.size =>
                             targetSatisfies(children(i), nodePath :+ seg, targetPath, predicate)
                         case _ => false
                     end match
-            case fe: Foreach[?] @unchecked =>
+            case fe: Foreach[?, ?] @unchecked =>
                 if targetPath.size <= nodePath.size then false
                 else
                     val seg = targetPath(nodePath.size)
@@ -348,7 +366,7 @@ private[kyo] object ReactiveUI:
                                 signal.current(using fe.frame).map { items =>
                                     val idx = keyFn match
                                         case Present(f) => items.indexWhere(it => f(it) == seg)
-                                        case Absent     => seg.toIntOption.getOrElse(-1)
+                                        case Absent     => Maybe.fromOption(seg.toIntOption).getOrElse(-1)
                                     if idx >= 0 && idx < items.size then
                                         targetSatisfies(renderFn(idx, items(idx)), nodePath :+ seg, targetPath, predicate)
                                     else false
@@ -358,8 +376,8 @@ private[kyo] object ReactiveUI:
                 if targetPath.size <= nodePath.size then predicate(e)
                 else
                     val seg = targetPath(nodePath.size)
-                    seg.toIntOption match
-                        case Some(i) if i >= 0 && i < e.children.size =>
+                    Maybe.fromOption(seg.toIntOption) match
+                        case Present(i) if i >= 0 && i < e.children.size =>
                             targetSatisfies(e.children(i), nodePath :+ seg, targetPath, predicate)
                         case _ => false
                     end match
@@ -540,10 +558,16 @@ private[kyo] object ReactiveUI:
                         val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
                         invoke(f.onSubmit).andThen(invokeWith(f.onSubmitEvt, mouse)).andThen(true)
                     case _ => true
-            case _: UIEvent.Scroll  => true
-            case _: UIEvent.Hover   => true
-            case _: UIEvent.Unhover => true
-            case _                  => true
+            case ev: UIEvent.Hover =>
+                val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
+                invoke(attrs.onHover).andThen(invokeWith(attrs.onHoverEvt, mouse)).andThen(true)
+            case ev: UIEvent.Unhover =>
+                val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
+                invoke(attrs.onUnhover).andThen(invokeWith(attrs.onUnhoverEvt, mouse)).andThen(true)
+            case ev: UIEvent.Scroll =>
+                val wheel = UI.WheelEvent(ev.deltaX, ev.deltaY, ev.targetId, ev.modifiers)
+                invoke(attrs.onScroll).andThen(invokeWith(attrs.onScrollEvt, wheel)).andThen(true)
+            case _ => true
         end match
     end dispatchToElement
 
@@ -581,10 +605,11 @@ private[kyo] object ReactiveUI:
                     Abort.run[Throwable] {
                         val emitAndResubscribe: Unit < Async =
                             for
-                                _            <- signalChangeTime.set(Instant.fromJava(java.time.Instant.now))
+                                now          <- Clock.now
+                                _            <- signalChangeTime.set(now)
                                 current      <- rui.signal.current
                                 _            <- exchange.onChange(rui.path, current)
-                                (newKids, _) <- walkStatic(current, rui.path)
+                                (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
                                 oldFibers    <- childFibersRef.get
                                 _            <- Kyo.foreachDiscard(oldFibers)(_.interrupt)
                                 newFibers    <- Kyo.foreach(newKids)(subscribeNode(_, exchange, signalChangeTime))
@@ -605,12 +630,10 @@ private[kyo] object ReactiveUI:
                             yield Loop.continue(())
                         }
                     }.map { result =>
-                        if result.isFailure then
-                            val sw = new java.io.StringWriter()
-                            result.foldError(_ => (), err => err.exception.printStackTrace(new java.io.PrintWriter(sw)))
-                            val msg =
-                                s"[${java.lang.System.currentTimeMillis()}] [${Thread.currentThread().getName}] SUBSCRIPTION FIBER DIED path=${rui.path} result=$result\n$sw"
-                            java.lang.System.err.println(msg)
+                        result.foldError(
+                            _ => (),
+                            err => Log.error(s"Reactive subscription fiber failed at path=${rui.path.mkString(".")}", err.exception)
+                        )
                     }
                 }
             yield Seq(selfFiber)
@@ -622,12 +645,12 @@ private[kyo] object ReactiveUI:
     /** Resolve all reactive signals in a UI tree, returning a static snapshot. */
     def resolveReactives(ui: UI)(using Frame): UI < Sync =
         ui match
-            case r: Reactive =>
+            case r: Reactive[?] =>
                 for
                     current  <- r.signal.current(using r.frame)
                     resolved <- resolveReactives(current)
                 yield resolved
-            case fe: Foreach[?] @unchecked =>
+            case fe: Foreach[?, ?] @unchecked =>
                 fe.applyTyped {
                     [T] =>
                         (signal, keyFn, renderFn) =>
@@ -637,10 +660,10 @@ private[kyo] object ReactiveUI:
                                     val key = keyFn match
                                         case Present(f) => f(item)
                                         case Absent     => i.toString
-                                    KeyedChild(key, renderFn(i, item))
+                                    KeyedChild[UI](key, renderFn(i, item))
                                 }
                                 resolved <- Kyo.foreach(children)(resolveReactives)
-                            yield Fragment(Chunk.from(resolved))
+                            yield Fragment[UI](Chunk.from(resolved))
                             end for
                 }
             case elem: Element =>
@@ -650,46 +673,106 @@ private[kyo] object ReactiveUI:
                     else rebuildElement(elem, resolvedChunk)
                 }
             case Fragment(children) =>
-                Kyo.foreach(children.toSeq)(resolveReactives).map(r => Fragment(Chunk.from(r)))
+                Kyo.foreach(children.toSeq)(resolveReactives).map(r => Fragment[UI](Chunk.from(r)))
             case KeyedChild(key, child) =>
-                resolveReactives(child).map(r => KeyedChild(key, r))
+                resolveReactives(child).map(r => KeyedChild[UI](key, r))
             case _ => ui
 
     private[kyo] def rebuildElement(elem: Element, newChildren: Chunk[UI]): UI =
         given Frame = elem.frame
         elem match
-            case e: Div         => e.copy(children = newChildren)
-            case e: SpanElement => e.copy(children = newChildren)
-            case e: P           => e.copy(children = newChildren)
-            case e: Section     => e.copy(children = newChildren)
-            case e: Main        => e.copy(children = newChildren)
-            case e: Header      => e.copy(children = newChildren)
-            case e: Footer      => e.copy(children = newChildren)
-            case e: Pre         => e.copy(children = newChildren)
-            case e: Code        => e.copy(children = newChildren)
-            case e: Ul          => e.copy(children = newChildren)
-            case e: Ol          => e.copy(children = newChildren)
-            case e: Table       => e.copy(children = newChildren)
-            case e: H1          => e.copy(children = newChildren)
-            case e: H2          => e.copy(children = newChildren)
-            case e: H3          => e.copy(children = newChildren)
-            case e: H4          => e.copy(children = newChildren)
-            case e: H5          => e.copy(children = newChildren)
-            case e: H6          => e.copy(children = newChildren)
-            case e: Nav         => e.copy(children = newChildren)
-            case e: Li          => e.copy(children = newChildren)
-            case e: Tr          => e.copy(children = newChildren)
-            case e: Form        => e.copy(children = newChildren)
-            case e: Label       => e.copy(children = newChildren)
-            case e: Button      => e.copy(children = newChildren)
-            case e: Td          => e.copy(children = newChildren)
-            case e: Th          => e.copy(children = newChildren)
-            case e: Select      => e.copy(children = newChildren)
-            case e: Opt         => e.copy(children = newChildren)
-            case e: Anchor      => e.copy(children = newChildren)
-            case _              => elem
+            case e: Div            => e.copy(children = newChildren)
+            case e: SpanElement    => e.copy(children = newChildren)
+            case e: P              => e.copy(children = newChildren)
+            case e: Section        => e.copy(children = newChildren)
+            case e: Main           => e.copy(children = newChildren)
+            case e: Header         => e.copy(children = newChildren)
+            case e: Footer         => e.copy(children = newChildren)
+            case e: Pre            => e.copy(children = newChildren)
+            case e: Code           => e.copy(children = newChildren)
+            case e: Ul             => e.copy(children = newChildren)
+            case e: Ol             => e.copy(children = newChildren)
+            case e: Table          => e.copy(children = newChildren)
+            case e: H1             => e.copy(children = newChildren)
+            case e: H2             => e.copy(children = newChildren)
+            case e: H3             => e.copy(children = newChildren)
+            case e: H4             => e.copy(children = newChildren)
+            case e: H5             => e.copy(children = newChildren)
+            case e: H6             => e.copy(children = newChildren)
+            case e: Nav            => e.copy(children = newChildren)
+            case e: Li             => e.copy(children = newChildren)
+            case e: Tr             => e.copy(children = newChildren)
+            case e: Form           => e.copy(children = newChildren)
+            case e: Label          => e.copy(children = newChildren)
+            case e: Button         => e.copy(children = newChildren)
+            case e: Td             => e.copy(children = newChildren)
+            case e: Th             => e.copy(children = newChildren)
+            case e: Select         => e.copy(children = newChildren)
+            case e: Opt            => e.copy(children = newChildren)
+            case e: Anchor         => e.copy(children = newChildren)
+            case e: Svg.SvgElement => rebuildSvgElement(e, newChildren)
+            case _                 => elem
         end match
     end rebuildElement
+
+    /** Exhaustive match over all SvgElement concrete classes. NO case _ fallback: a missing arm is
+      * a compile error (the kyo-ui build escalates the non-exhaustive-match warning to an error for
+      * this file; see build.sbt).
+      */
+    private def rebuildSvgElement(elem: Svg.SvgElement, newChildren: Chunk[UI]): UI =
+        given Frame = elem.frame
+        elem match
+            case e: Svg.Root           => e.copy(children = newChildren)
+            case e: Svg.G              => e.copy(children = newChildren)
+            case e: Svg.Defs           => e.copy(children = newChildren)
+            case e: Svg.Symbol         => e.copy(children = newChildren)
+            case e: Svg.Switch         => e.copy(children = newChildren)
+            case e: Svg.SvgAnchor      => e.copy(children = newChildren)
+            case e: Svg.Use            => e.copy(children = newChildren)
+            case e: Svg.Rect           => e.copy(children = newChildren)
+            case e: Svg.Circle         => e.copy(children = newChildren)
+            case e: Svg.Ellipse        => e.copy(children = newChildren)
+            case e: Svg.Line           => e.copy(children = newChildren)
+            case e: Svg.Polyline       => e.copy(children = newChildren)
+            case e: Svg.Polygon        => e.copy(children = newChildren)
+            case e: Svg.Path           => e.copy(children = newChildren)
+            case e: Svg.Text           => e.copy(children = newChildren)
+            case e: Svg.TSpan          => e.copy(children = newChildren)
+            case e: Svg.TextPath       => e.copy(children = newChildren)
+            case e: Svg.LinearGradient => e.copy(children = newChildren)
+            case e: Svg.RadialGradient => e.copy(children = newChildren)
+            case e: Svg.Stop           => e.copy(children = newChildren)
+            case e: Svg.Pattern        => e.copy(children = newChildren)
+            case e: Svg.ClipPath       => e.copy(children = newChildren)
+            case e: Svg.Mask           => e.copy(children = newChildren)
+            case e: Svg.Image          => e.copy(children = newChildren)
+            case e: Svg.ForeignObject  => e.copy(children = newChildren)
+            case e: Svg.Marker         => e.copy(children = newChildren)
+            case e: Svg.Title          => e.copy(children = newChildren)
+            case e: Svg.Desc           => e.copy(children = newChildren)
+            case e: Svg.Metadata       => e.copy(children = newChildren)
+            // filter family: only Filter and FeMerge carry reactive children; the rest are leaves.
+            case e: Svg.Filter            => e.copy(children = newChildren)
+            case e: Svg.FeGaussianBlur    => e
+            case e: Svg.FeOffset          => e
+            case e: Svg.FeBlend           => e
+            case e: Svg.FeColorMatrix     => e
+            case e: Svg.FeFlood           => e
+            case e: Svg.FeComposite       => e
+            case e: Svg.FeMerge           => e.copy(children = newChildren)
+            case e: Svg.FeMergeNode       => e
+            case e: Svg.FeImage           => e
+            case e: Svg.FeTile            => e
+            case e: Svg.FeMorphology      => e
+            case e: Svg.FeTurbulence      => e
+            case e: Svg.FeDisplacementMap => e
+            // SMIL family: all leaves.
+            case e: Svg.Animate          => e
+            case e: Svg.AnimateTransform => e
+            case e: Svg.AnimateMotion    => e
+            case e: Svg.SetAnim          => e
+        end match
+    end rebuildSvgElement
 
     /** Find the path to an element by ID in a resolved UI tree. Returns the dot-separated path string. */
     def findPathById(ui: UI, id: String, currentPath: String = ""): Maybe[String] =
@@ -700,8 +783,8 @@ private[kyo] object ReactiveUI:
                 else
                     val childPath = if currentPath.isEmpty then i.toString else s"$currentPath.$i"
                     val child = children(i) match
-                        case kc: KeyedChild => kc.child
-                        case c              => c
+                        case kc: KeyedChild[?] => kc.child
+                        case c                 => c
                     findPathById(child, id, childPath) match
                         case Absent  => loop(i + 1)
                         case present => present
@@ -776,24 +859,24 @@ private[kyo] object ReactiveUI:
     private def childAt(ui: UI, segment: String): Maybe[UI] =
         ui match
             case elem: Element =>
-                segment.toIntOption match
-                    case Some(i) if i >= 0 && i < elem.children.size =>
+                Maybe.fromOption(segment.toIntOption) match
+                    case Present(i) if i >= 0 && i < elem.children.size =>
                         elem.children(i) match
-                            case kc: KeyedChild => Present(kc.child)
-                            case child          => Present(child)
+                            case kc: KeyedChild[?] => Present(kc.child)
+                            case child             => Present(child)
                     case _ => Absent
             case Fragment(children) =>
-                val keyIdx = children.toSeq.zipWithIndex.collectFirst {
-                    case (kc: KeyedChild, _) if kc.key == segment => kc.child
-                }
+                val keyIdx = Maybe.fromOption(children.toSeq.zipWithIndex.collectFirst {
+                    case (kc: KeyedChild[?], _) if kc.key == segment => kc.child
+                })
                 keyIdx match
-                    case Some(child) => Present(child)
-                    case None =>
-                        segment.toIntOption match
-                            case Some(i) if i >= 0 && i < children.size =>
+                    case Present(child) => Present(child)
+                    case Absent =>
+                        Maybe.fromOption(segment.toIntOption) match
+                            case Present(i) if i >= 0 && i < children.size =>
                                 children(i) match
-                                    case kc: KeyedChild => Present(kc.child)
-                                    case child          => Present(child)
+                                    case kc: KeyedChild[?] => Present(kc.child)
+                                    case child             => Present(child)
                             case _ => Absent
                 end match
             case _ => Absent

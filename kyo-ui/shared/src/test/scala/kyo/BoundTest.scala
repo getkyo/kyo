@@ -204,7 +204,7 @@ class BoundTest extends UITest:
     "rapid typing with signalRef final value correct" in run {
         // Use Browser.fill (CDP Input.insertText, single batched insertion) instead of
         // 20 separate Browser.press calls. The latter re-focuses before each press,
-        // resetting cursor to start and reversing char order (see BROWSER-FEEDBACK.md).
+        // resetting cursor to start and reversing char order.
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(

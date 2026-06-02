@@ -263,7 +263,7 @@ class FormDemoQaItTest extends UITest:
         }
     }
 
-    // PENDING: requires native Tab focus traversal verification (TODO in BROWSER-FEEDBACK)
+    // PENDING: requires native Tab focus traversal verification
     /*
     "B6: tab through all fields preserves values" in run {
         val app: UI < Async =
@@ -549,7 +549,7 @@ class FormDemoQaItTest extends UITest:
     "G2: content exceeding viewport is in DOM" in run {
         // In a browser, all DOM nodes exist regardless of viewport; visibility ≠ existence.
         val rows = (1 to 60).map(i => UI.span(s"r$i").id(s"r$i"))
-        withUI(UI.div(rows*).id("root")) {
+        withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.assertText(Selector.id("r1"), "r1")
                 _ <- Browser.assertText(Selector.id("r60"), "r60")
@@ -559,7 +559,7 @@ class FormDemoQaItTest extends UITest:
 
     "G3-G5: scroll down reveals bottom content" in run {
         val rows = (1 to 60).map(i => UI.span(s"r$i").id(s"r$i"))
-        withUI(UI.div(rows*).id("root")) {
+        withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.scrollTo(Selector.id("r60"))
                 _ <- Browser.assertText(Selector.id("r60"), "r60")
@@ -569,7 +569,7 @@ class FormDemoQaItTest extends UITest:
 
     "G6: scrollToBottom reaches end" in run {
         val rows = (1 to 10).map(i => UI.span(s"r$i").id(s"r$i"))
-        withUI(UI.div(rows*).id("root")) {
+        withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.scrollToBottom
                 _ <- Browser.assertText(Selector.id("r10"), "r10")
@@ -579,7 +579,7 @@ class FormDemoQaItTest extends UITest:
 
     "G7: scrollToTop reaches start" in run {
         val rows = (1 to 10).map(i => UI.span(s"r$i").id(s"r$i"))
-        withUI(UI.div(rows*).id("root")) {
+        withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.scrollToBottom
                 _ <- Browser.scrollToTop
@@ -953,7 +953,7 @@ class FormDemoQaItTest extends UITest:
 
     "T11: scroll reveals content below viewport" in run {
         val rows = (1 to 60).map(i => UI.span(s"line$i").id(s"l$i"))
-        withUI(UI.div(rows*).id("root")) {
+        withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.scrollTo(Selector.id("l60"))
                 _ <- Browser.assertText(Selector.id("l60"), "line60")
