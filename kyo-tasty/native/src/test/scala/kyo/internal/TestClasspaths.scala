@@ -58,6 +58,10 @@ private[kyo] object TestClasspaths:
         src.add("root/SealedBase.tasty", kyo.fixtures.Embedded.sealedBaseTasty)
         src.add("root/ConcreteA.tasty", kyo.fixtures.Embedded.concreteATasty)
         src.add("root/ConcreteB.tasty", kyo.fixtures.Embedded.concreteBTasty)
+        src.add("root/ContextFunctionFixture$package.tasty", kyo.fixtures.Embedded.contextFunctionFixturePackageTasty)
+        src.add("root/ContextFunctionFixture.tasty", kyo.fixtures.Embedded.contextFunctionFixtureTasty)
+        src.add("root/Logger.tasty", kyo.fixtures.Embedded.loggerFixtureTasty)
+        src.add("root/Config.tasty", kyo.fixtures.Embedded.configFixtureTasty)
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end withClasspath
 

@@ -8,9 +8,9 @@ import kyo.*
   * asserting that the results are structurally equal. This makes every participating test leaf sensitive to cold/warm divergence, catching the
   * F-A4-001 bug class at any leaf rather than only the dedicated INV-013 leaf.
   *
-  * On JVM the `coldWarmEquiv` leaf loads the standard classpath twice (once for cold, once for the snapshot round-trip) and asserts
-  * equality. On JS and Native the leaf is skipped via the `jvmOnly` tag because `TestClasspaths2.standardWithSnapshot` relies on JVM
-  * filesystem access (java.nio.file.Files, JvmFileSource) which is not available on those platforms.
+  * The `coldWarmEquiv` leaf uses `TestClasspaths2.withSnapshotInMemory` which works on all three platforms (JVM, JS, Native). On JVM, JS,
+  * and Native the cold load uses the embedded fixture set; the in-memory MemoryFileSource round-trip verifies snapshot serialization and
+  * deserialization without requiring filesystem access.
   *
   * Subclasses live in shared/src/test and run on JVM, JS, and Native.
   *
@@ -20,8 +20,8 @@ abstract class Fidelity2TestBase extends Test:
 
     /** Run `body` against both a cold classpath and a warm snapshot-loaded classpath.
       *
-      * Asserts that `body(cold) == body(warm)`. On JVM: loads the standard classpath twice (cold and warm snapshot round-trip) and asserts
-      * structural equality. On JS/Native: the leaf is skipped via the `jvmOnly` tag.
+      * Asserts that `body(cold) == body(warm)`. Uses `TestClasspaths2.withSnapshotInMemory` which works cross-platform (JVM, JS, Native)
+      * via a MemoryFileSource. Both cold and warm classpaths are built from the embedded fixture set on all platforms.
       *
       * @param name
       *   The test leaf name.
@@ -31,9 +31,8 @@ abstract class Fidelity2TestBase extends Test:
     protected def coldWarmEquiv[A](
         name: String
     )(body: Tasty.Classpath => A)(using CanEqual[A, A], Frame): Unit =
-        name taggedAs jvmOnly in run {
-            import AllowUnsafe.embrace.danger
-            TestClasspaths2.standardWithSnapshot().map: (cold, warm) =>
+        name in run {
+            TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
                 val coldResult = body(cold)
                 val warmResult = body(warm)
                 assert(

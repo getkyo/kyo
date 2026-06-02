@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.MemoryFileSource
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 import kyo.internal.tasty.query.PlatformFileSource
@@ -17,6 +18,9 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
   * Phase 2.12: relocated from jvm/src/test to shared/src/test. All leaves that perform filesystem snapshot round-trips (F-C-002, F-C-003,
   * F-G-002, INV-010, v3-snapshot) are gated jvmOnly because they require java.nio.file and JvmFileSource. The pure format-version leaf
   * (SnapshotFormat.minorVersion) runs cross-platform.
+  *
+  * Phase 2.13: adds FQNMAP__ section for unresolvedFqnByNegId persistence (Target 3), bumps FORMAT_VERSION to 6, and adds in-memory
+  * snapshot round-trip leaves (Target 1) that run cross-platform via TestClasspaths2.withSnapshotInMemory.
   */
 class SnapshotFidelityTest extends Test:
 
@@ -186,62 +190,74 @@ class SnapshotFidelityTest extends Test:
             end match
     }
 
-    // Wire-format leaf 5 (Phase 12): format-version-bumped
-    // Given: a snapshot file written with the Phase 12 code
-    // When: reading the first 4 bytes of the format header
-    // Then: post-fix version is 5 (Phase 12 dual-FQN fix added FQNIDX__ section, non-breaking bump)
-    // Pins: snapshot wire-format bump
+    // Wire-format leaf 5 (Phase 12, updated Phase 2.13): format-version-bumped
+    // Given: a snapshot file written with the Phase 2.13 code
+    // When: reading the format version constant
+    // Then: version is 6 (Phase 2.13 added FQNMAP__ section for unresolvedFqnByNegId persistence)
+    // Pins: snapshot wire-format bump (FQNMAP__ section, Target 3 Phase 2.13)
     // Cross-platform: SnapshotFormat.minorVersion is a compile-time constant, no filesystem needed.
-    "Phase 12: SnapshotFormat.FORMAT_VERSION is 5 after Phase 12 dual-FQN fix" in {
+    "Phase 2.13: SnapshotFormat.FORMAT_VERSION is 6 after Phase 2.13 FQNMAP__ section addition" in {
         assert(
-            SnapshotFormat.minorVersion == 5,
-            s"Expected SnapshotFormat.minorVersion == 5 but got ${SnapshotFormat.minorVersion}"
+            SnapshotFormat.minorVersion == 6,
+            s"Expected SnapshotFormat.minorVersion == 6 but got ${SnapshotFormat.minorVersion}"
         )
     }
 
-    // New leaf (Phase 12): v3-snapshot-triggers-cold-decode
-    // Given: a synthetic snapshot byte stream with magic KRFL, major=1, minor=3 (v3 format)
-    // When: writing it to a temp file and calling SnapshotReader.read
-    // Then: result is Failure(TastyError.SnapshotVersionMismatch) where found.minor == 3
+    // New leaf (Phase 2.13): in-memory-roundtrip-preserves-symbols
+    // Given: a cold classpath from embedded fixtures and a warm in-memory snapshot round-trip
+    // When: comparing symbols.size between cold and warm
+    // Then: symbol count is preserved end-to-end via MemoryFileSource (no disk needed)
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; works on JVM, JS, Native.
+    // Pins: Target 1 (in-memory snapshot writer) Phase 2.13
+    "Phase 2.13: in-memory snapshot round-trip preserves symbols count" in run {
+        TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
+            assert(
+                cold.symbols.size == warm.symbols.size,
+                s"Expected cold.symbols.size == warm.symbols.size; cold=${cold.symbols.size} warm=${warm.symbols.size}"
+            )
+            succeed
+    }
+
+    // New leaf (Phase 12, migrated Phase 2.13): old-snapshot-triggers-cold-decode
+    // Given: a synthetic snapshot byte stream with magic KRFL, major=1, minor=3 (old format)
+    // When: writing it to a MemoryFileSource and calling SnapshotReader.read
+    // Then: result is Failure(TastyError.SnapshotVersionMismatch) where found.minor == 3 and supported.minor == 6
     // Pins: minor-version rejection decision (Option A from Phase 12 prep)
-    // JVM-only: requires java.nio.file.Files.createTempFile and JvmFileSource.
-    "v3-snapshot-triggers-cold-decode" taggedAs jvmOnly in run {
+    // Cross-platform (Phase 2.13): migrated from jvmOnly to use MemoryFileSource.
+    "old-snapshot-triggers-cold-decode" in run {
         Sync.defer:
-            val fakeV3 = new Array[Byte](36)
-            fakeV3(0) = 'K'.toByte
-            fakeV3(1) = 'R'.toByte
-            fakeV3(2) = 'F'.toByte
-            fakeV3(3) = 'L'.toByte
-            fakeV3(4) = 1.toByte // majorVersion = 1
-            fakeV3(5) = 3.toByte // minorVersion = 3 (below current 5)
+            val fakeOld = new Array[Byte](36)
+            fakeOld(0) = 'K'.toByte
+            fakeOld(1) = 'R'.toByte
+            fakeOld(2) = 'F'.toByte
+            fakeOld(3) = 'L'.toByte
+            fakeOld(4) = 1.toByte // majorVersion = 1
+            fakeOld(5) = 3.toByte // minorVersion = 3 (below current 6)
             // flags(8), digest(8), reserved(8), sectionCount(4) remain zero
-            fakeV3
-        .flatMap: fakeV3 =>
-            Sync.defer:
-                val tmpDir  = TestClasspaths2.createTempDir("kyo-fidelity-v3")
-                val tmpPath = s"$tmpDir/snapshot.krfl"
-                TestClasspaths2.writeBytes(tmpPath, fakeV3)
-                tmpPath
-            .flatMap: tmpPath =>
-                Abort.run[TastyError](
-                    SnapshotReader.read(tmpPath, PlatformFileSource.get)
-                ).map:
-                    case Result.Failure(e: TastyError.SnapshotVersionMismatch) =>
-                        assert(
-                            e.found.minor == 3,
-                            s"Expected found.minor == 3 but got ${e.found.minor}"
-                        )
-                        assert(
-                            e.supported.minor == 5,
-                            s"Expected supported.minor == 5 but got ${e.supported.minor}"
-                        )
-                        succeed
-                    case Result.Failure(other) =>
-                        fail(s"Expected SnapshotVersionMismatch but got: $other")
-                    case Result.Success(_) =>
-                        fail("Expected SnapshotVersionMismatch but read succeeded for a v3 snapshot")
-                    case Result.Panic(t) =>
-                        throw t
+            val mem  = MemoryFileSource()
+            val path = "mem/old.krfl"
+            mem.add(path, fakeOld)
+            (mem, path)
+        .flatMap: (mem, path) =>
+            Abort.run[TastyError](
+                SnapshotReader.read(path, mem)
+            ).map:
+                case Result.Failure(e: TastyError.SnapshotVersionMismatch) =>
+                    assert(
+                        e.found.minor == 3,
+                        s"Expected found.minor == 3 but got ${e.found.minor}"
+                    )
+                    assert(
+                        e.supported.minor == 6,
+                        s"Expected supported.minor == 6 but got ${e.supported.minor}"
+                    )
+                    succeed
+                case Result.Failure(other) =>
+                    fail(s"Expected SnapshotVersionMismatch but got: $other")
+                case Result.Success(_) =>
+                    fail("Expected SnapshotVersionMismatch but read succeeded for an old snapshot")
+                case Result.Panic(t) =>
+                    throw t
     }
 
 end SnapshotFidelityTest

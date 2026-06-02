@@ -68,7 +68,8 @@ object SnapshotReader:
                 Tasty.Version(SnapshotFormat.majorVersion, SnapshotFormat.minorVersion, 0)
             )
         else if fileMinor < SnapshotFormat.minorVersion then
-            // minor=4 is a breaking bump: reject old snapshots to force cold re-decode.
+            // minor=4 is a breaking bump (PERMITS2/ANNOTS_/JAVAMETA).
+            // minor=6 is a breaking bump (FQNMAP__): reject to force cold re-decode.
             throw new VersionMismatchException(
                 Tasty.Version(fileMajor, fileMinor, 0),
                 Tasty.Version(SnapshotFormat.majorVersion, SnapshotFormat.minorVersion, 0)
@@ -102,8 +103,10 @@ object SnapshotReader:
                         )
                     )
                 else if fileMinor < SnapshotFormat.minorVersion then
-                    // minor=4 is a breaking bump: the PERMITS2 / ANNOTS_ / JAVAMETA sections were
-                    // added and old minor=3 snapshots lack them. Reject to force cold re-decode.
+                    // minor=4 is a breaking bump: the PERMITS2 / ANNOTS_ / JAVAMETA sections were added.
+                    // minor=6 is a breaking bump: the FQNMAP__ section was added for unresolvedFqnByNegId
+                    // persistence. Old snapshots lack this section and lose annotation FQN resolution on
+                    // JS/Native warm loads. Reject to force cold re-decode.
                     Abort.fail(
                         TastyError.SnapshotVersionMismatch(
                             Tasty.Version(fileMajor, fileMinor, 0),
@@ -373,6 +376,14 @@ object SnapshotReader:
             case _ =>
                 finalFqnIndex.map { case (k, v) => k -> v.id }.toMap
 
+        // FQNMAP__ section (Phase 2.13 unresolvedFqnByNegId persistence): if present, reconstruct the
+        // negId -> FQN string map so warm-loaded classpaths resolve annotation FQNs on JS/Native.
+        val unresolvedFqnByNegId: Map[Int, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
+            case Some((off, len)) if len > 0 =>
+                deserializeFqnMap(bytes, off, len, namePool)
+            case _ =>
+                Map.empty
+
         val canonical = TypeArena.canonical()
         val symsChunk = Chunk.from(finalSymbols)
         val pkgIdIdx  = finalPackageIndex.map { case (k, v) => k -> v.id }.toMap
@@ -391,7 +402,8 @@ object SnapshotReader:
             moduleIndex = Map.empty,
             errors = errors,
             canonical = canonical,
-            diagnostics = Chunk.empty
+            diagnostics = Chunk.empty,
+            unresolvedFqnByNegId = unresolvedFqnByNegId
         )
     end deserialize
 
@@ -788,6 +800,14 @@ object SnapshotReader:
             case _ =>
                 newFqnIndex.map { case (k, v) => k -> v.id }.toMap
 
+        // FQNMAP__ section (Phase 2.13): reconstruct unresolvedFqnByNegId for warm loads.
+        val unresolvedFqnByNegId2: Map[Int, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
+            case Some((off, len)) if len > 0 =>
+                val secBytes = copyViewRange(view, off, off + len)
+                deserializeFqnMap(secBytes, 0, len, namePool)
+            case _ =>
+                Map.empty
+
         val canonical  = TypeArena.canonical()
         val symsChunk2 = Chunk.from(finalSymbols)
         val pkgIdIdx2  = newPackageIndex.map { case (k, v) => k -> v.id }.toMap
@@ -805,7 +825,8 @@ object SnapshotReader:
             companionIndex = Map.empty,
             moduleIndex = Map.empty,
             errors = errors,
-            canonical = canonical
+            canonical = canonical,
+            unresolvedFqnByNegId = unresolvedFqnByNegId2
         )
     end deserializeMapped
 
@@ -1003,6 +1024,35 @@ object SnapshotReader:
         end while
         builder.toMap
     end deserializeFqnIndex
+
+    /** Deserialize the FQNMAP__ section into a Map[Int, String] (negId -> FQN string).
+      *
+      * Layout: [4-byte count LE] then count entries each [4-byte negId LE][4-byte namePoolId LE]. Each entry maps a negative SymbolId to
+      * the FQN string of the external annotation type. Entries with an out-of-range namePoolId or an empty FQN string are skipped.
+      */
+    private def deserializeFqnMap(
+        bytes: Array[Byte],
+        offset: Int,
+        length: Int,
+        namePool: Array[String]
+    ): Map[Int, String] =
+        val end     = offset + length
+        val count   = SnapshotFormat.readInt32LE(bytes, offset)
+        var pos     = offset + 4
+        var i       = 0
+        val builder = scala.collection.mutable.HashMap.empty[Int, String]
+        while i < count && pos + 8 <= end do
+            val negId      = SnapshotFormat.readInt32LE(bytes, pos)
+            val namePoolId = SnapshotFormat.readInt32LE(bytes, pos + 4)
+            pos += 8
+            if namePoolId >= 0 && namePoolId < namePool.length then
+                val fqn = namePool(namePoolId)
+                if fqn.nonEmpty then builder(negId) = fqn
+            end if
+            i += 1
+        end while
+        builder.toMap
+    end deserializeFqnMap
 
     /** Read the name pool from the NAMES section. */
     private def readNamePool(bytes: Array[Byte], offset: Int, length: Int): Array[String] =

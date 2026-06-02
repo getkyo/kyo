@@ -144,9 +144,42 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
 
     // ─────────────────────────────────────────────────────────────────────────
     // Fidelity2TestBase.coldWarmEquiv assertions (Phase 2.04-strict Proposal 4)
-    // JVM-only: coldWarmEquiv uses TestClasspaths2.standardWithSnapshot.
+    // Phase 2.13: coldWarmEquiv uses TestClasspaths2.withSnapshotInMemory (cross-platform).
     // ─────────────────────────────────────────────────────────────────────────
 
-    coldWarmEquiv("INV-013-cw: fqnIndex.size is equal on cold and warm")(_.fqnIndex.size)
+    coldWarmEquiv("INV-013-cw (Phase 2.13): fqnIndex.size is equal on cold and warm after in-memory round-trip")(_.fqnIndex.size)
+
+    // Leaf 10 (Phase 2.13): in-memory-snapshot-symbols-size-equal
+    // Given: a cold classpath from embedded fixtures and a warm classpath from in-memory snapshot round-trip
+    // When: comparing cp.symbols.size between cold and warm
+    // Then: both symbol counts are equal (round-trip preserves all symbols)
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem).
+    // Pins: in-memory snapshot fidelity (Target 1 Phase 2.13)
+    "Phase 2.13: in-memory snapshot round-trip preserves symbols.size" in run {
+        TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
+            assert(
+                cold.symbols.size == warm.symbols.size,
+                s"In-memory snapshot round-trip changed symbols.size: cold=${cold.symbols.size} warm=${warm.symbols.size}"
+            )
+            succeed
+    }
+
+    // Leaf 11 (Phase 2.13): unresolvedFqnByNegId-persisted-via-fqnmap
+    // Given: a cold classpath from embedded fixtures with unresolvedFqnByNegId entries and a warm in-memory snapshot load
+    // When: comparing unresolvedFqnByNegId.size between cold and warm
+    // Then: warm size equals cold size (FQNMAP__ section persists the map correctly)
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory.
+    // Pins: Target 3 (unresolvedFqnByNegId snapshot persistence), FQNMAP__ section
+    "Phase 2.13: in-memory snapshot round-trip persists unresolvedFqnByNegId via FQNMAP__ section" in run {
+        TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
+            val coldSize = cold.unresolvedFqnByNegId.size
+            val warmSize = warm.unresolvedFqnByNegId.size
+            assert(
+                warmSize == coldSize,
+                s"In-memory snapshot lost unresolvedFqnByNegId entries: cold=$coldSize warm=$warmSize. " +
+                    s"Check that FQNMAP__ section is written and read correctly."
+            )
+            succeed
+    }
 
 end SnapshotFidelity2Test

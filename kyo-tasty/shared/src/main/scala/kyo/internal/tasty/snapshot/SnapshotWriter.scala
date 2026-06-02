@@ -23,6 +23,19 @@ import scala.collection.mutable
   */
 object SnapshotWriter:
 
+    /** Serialize a Classpath to KRFL bytes without writing to disk.
+      *
+      * Exposed as a package-private helper so tests can perform in-memory snapshot round-trips on all platforms (JVM, JS, Native) without
+      * requiring a real filesystem. The returned array is identical to what `write` would persist on disk.
+      *
+      * @param cp
+      *   the fully-loaded classpath to snapshot
+      * @param digest
+      *   8-byte FNV-1a digest of the inputs (from DigestComputer)
+      */
+    private[kyo] def serializeToBytes(cp: Tasty.Classpath, digest: Array[Byte]): Array[Byte] =
+        serialize(cp, digest)
+
     /** Write a snapshot of `cp` to `cacheDir` using the given input `digest`.
       *
       * @param cp
@@ -239,7 +252,9 @@ object SnapshotWriter:
         // ANNOTS_ section: annotation tycon FQN name-pool IDs per symbol.
         // Layout: [4-byte count] then entries [4-byte symIdx][4-byte annCount][annCount x 4-byte tyconFqnNameId].
         // Non-Named annotation tycons are omitted (skipped during collection).
-        val annotsBytes = serializeAnnotations(symbolList, symbolId, internName, symbolById, fqnBySymbol)
+        // Phase 2.13: pass unresolvedFqnByNegId so that annotations with negative SymbolIds (unresolved
+        // external annotation types like scala.deprecated on JS/Native) are serialized by FQN string.
+        val annotsBytes = serializeAnnotations(symbolList, symbolId, internName, symbolById, fqnBySymbol, cp.unresolvedFqnByNegId)
 
         // JAVAMETA section: accessFlags per symbol with javaMetadata present.
         // Layout: [4-byte count] then entries [4-byte symIdx][4-byte accessFlags].
@@ -256,11 +271,17 @@ object SnapshotWriter:
         // fqnIndex.size gap fixed by this phase).
         val fqnIdxBytes = serializeFqnIndex(cp.fqnIndex, symbolList, symbolId, internName)
 
+        // FQNMAP__ section: unresolvedFqnByNegId map (negId -> FQN string for external annotation types).
+        // Per Phase 2.13: name pool must be populated (internName calls for FQN strings) BEFORE
+        // serializeNamePool is called, so fqnMapBytes must call internName here, and namesBytes is
+        // built after this call.
+        val fqnMapBytes = serializeFqnMap(cp.unresolvedFqnByNegId, internName)
+
         // NAMES section: length-prefixed UTF-8 strings.
-        // Built AFTER all internName calls (symNames, symFqns, annotsBytes, fqnIdxBytes) so the pool
-        // is complete before serialization. Earlier placement caused FQNIDX__ name IDs to reference
-        // entries beyond the serialized pool length, silently dropping 47,256 fqnIndex entries on
-        // warm load.
+        // Built AFTER all internName calls (symNames, symFqns, annotsBytes, fqnIdxBytes, fqnMapBytes) so
+        // the pool is complete before serialization. Earlier placement caused FQNIDX__ name IDs to
+        // reference entries beyond the serialized pool length, silently dropping 47,256 fqnIndex entries
+        // on warm load.
         val namesBytes = serializeNamePool(namePool.toSeq)
 
         val sections = Seq(
@@ -277,7 +298,8 @@ object SnapshotWriter:
             (SnapshotFormat.sectionPERMITS2, permits2Bytes),
             (SnapshotFormat.sectionANNOTS, annotsBytes),
             (SnapshotFormat.sectionJAVAMETA, javaMetaBytes),
-            (SnapshotFormat.sectionFQNIDX, fqnIdxBytes)
+            (SnapshotFormat.sectionFQNIDX, fqnIdxBytes),
+            (SnapshotFormat.sectionFQNMAP, fqnMapBytes)
         )
 
         assembleSections(sections, digest)
@@ -471,7 +493,8 @@ object SnapshotWriter:
         symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
         internFqn: String => Int,
         symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
-        fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String]
+        fqnBySymbol: java.util.IdentityHashMap[Tasty.Symbol, String],
+        unresolvedFqnByNegId: Map[Int, String]
     ): Array[Byte] =
         import Tasty.Name.asString
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
@@ -492,9 +515,16 @@ object SnapshotWriter:
             // Extract the tycon FQN name-pool ID for Named and TermRef types.
             // F-G-001: @deprecated and most Scala annotations arrive as TermRef tycons; Named is
             // less common but handled for completeness. Applied tycons are unwrapped to their base.
+            // Phase 2.13: for annotations with negative SymbolIds (unresolved external annotation
+            // types like scala.deprecated on JS/Native), fall back to unresolvedFqnByNegId.
             // Unknown tycon forms produce an empty FQN and are omitted.
             val tyconIds: Seq[Int] = annotations.toSeq.flatMap: ann =>
-                val fqn = tyconFqn(ann.annotationType, symbolById, fqnBySymbol)
+                val fqn = ann.annotationType match
+                    case Tasty.Type.Named(sid) if sid.value < -1 =>
+                        // Negative ID: annotation type not on classpath. Look up in unresolvedFqnByNegId.
+                        unresolvedFqnByNegId.getOrElse(sid.value, "")
+                    case other =>
+                        tyconFqn(other, symbolById, fqnBySymbol)
                 if fqn.nonEmpty then Some(internFqn(fqn)) else None
             if tyconIds.isEmpty then None else Some((idx, tyconIds))
 
@@ -604,6 +634,31 @@ object SnapshotWriter:
         end for
         baos.toByteArray
     end serializeFqnIndex
+
+    /** Serialize the unresolvedFqnByNegId map into a flat byte block.
+      *
+      * Layout: [4-byte count LE] then count entries each [4-byte negId LE][4-byte namePoolId LE].
+      * The FQN strings are interned into the shared name pool via `internName` (same instance as other sections).
+      * Entries are sorted by negId for determinism (F-A4-005 pattern).
+      */
+    private def serializeFqnMap(
+        unresolvedFqnByNegId: Map[Int, String],
+        internName: String => Int
+    ): Array[Byte] =
+        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
+        val tmp  = new Array[Byte](4)
+        // Sort by negId for deterministic output.
+        val entries = unresolvedFqnByNegId.toSeq.sortBy(_._1).filter { case (_, fqn) => fqn.nonEmpty }
+        SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
+        baos.write(tmp)
+        for (negId, fqn) <- entries do
+            SnapshotFormat.writeInt32LE(tmp, 0, negId)
+            baos.write(tmp)
+            SnapshotFormat.writeInt32LE(tmp, 0, internName(fqn))
+            baos.write(tmp)
+        end for
+        baos.toByteArray
+    end serializeFqnMap
 
     /** Convert a Name (opaque Interner.Entry) to a String. */
     private def nameToStr(n: Tasty.Name): String =

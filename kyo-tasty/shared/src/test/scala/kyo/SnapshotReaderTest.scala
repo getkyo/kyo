@@ -7,7 +7,8 @@ import scala.collection.mutable
 /** Tests for SnapshotReader version handling with old (minor=2) snapshots.
   *
   * Phase 12 breaking change: minor=4 is a breaking bump (PERMITS2/ANNOTS_/JAVAMETA sections added).
-  * Snapshots with minor < 4 are rejected with SnapshotVersionMismatch to force cold re-decode.
+  * Phase 2.13 breaking change: minor=6 is a breaking bump (FQNMAP__ section added).
+  * Snapshots with minor < 6 are rejected with SnapshotVersionMismatch to force cold re-decode.
   */
 class SnapshotReaderTest extends Test:
 
@@ -116,12 +117,12 @@ class SnapshotReaderTest extends Test:
             SnapshotReader.read("cache/minor2.krfl", src)
         .map:
             case Result.Failure(e: TastyError.SnapshotVersionMismatch) =>
-                // Phase 12: minor < 5 snapshots are rejected to force cold re-decode.
+                // Phase 2.13: minor < 6 snapshots are rejected to force cold re-decode.
                 assert(e.found.minor == 2, s"Expected found.minor == 2, got ${e.found.minor}")
-                assert(e.supported.minor == 5, s"Expected supported.minor == 5, got ${e.supported.minor}")
+                assert(e.supported.minor == 6, s"Expected supported.minor == 6, got ${e.supported.minor}")
                 succeed
             case Result.Success(_) =>
-                fail("Expected SnapshotVersionMismatch for minor=2 snapshot (below Phase 12 minimum of 5)")
+                fail("Expected SnapshotVersionMismatch for minor=2 snapshot (below Phase 2.13 minimum of 6)")
             case Result.Failure(e) =>
                 fail(s"Expected SnapshotVersionMismatch but got unexpected failure: $e")
             case Result.Panic(t) =>

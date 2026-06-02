@@ -42,6 +42,7 @@ package kyo.internal.tasty.snapshot
   *   - `ANNOTS_`: annotation tycon FQN ids per symbol (added in minor=4).
   *   - `JAVAMETA`: javaMetadata accessFlags per symbol (added in minor=4).
   *   - `FQNIDX__`: full fqnIndex (all keys including dual-index aliases) per symbol (added in minor=5).
+  *   - `FQNMAP__`: unresolvedFqnByNegId map (negId to FQN string for external annotation types) (added in minor=6).
   *
   * Versioning policy:
   *   - Major bump: invalidates all old snapshots (full re-decode + fresh write). Reader emits `TastyError.SnapshotVersionMismatch`.
@@ -63,7 +64,7 @@ object SnapshotFormat:
 
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
-    val minorVersion: Int = 5
+    val minorVersion: Int = 6
 
     /** Size of the fixed-length file header in bytes (magic + version + flags + digest + reserved). */
     val headerSize: Int = 4 + 4 + 8 + 8 + 8
@@ -87,7 +88,8 @@ object SnapshotFormat:
             "PERMITS2",
             "ANNOTS_",
             "JAVAMETA",
-            "FQNIDX__"
+            "FQNIDX__",
+            "FQNMAP__"
         )
 
     val sectionNAMES: String     = "NAMES"
@@ -114,6 +116,17 @@ object SnapshotFormat:
       * Added in minor=5 (non-breaking add; absent in minor=4 snapshots, which are rejected anyway).
       */
     val sectionFQNIDX: String = "FQNIDX__"
+
+    /** Phase 2.13 unresolved-FQN section: unresolvedFqnByNegId map serialization.
+      *
+      * Stores the negId -> FQN string map accumulated during cold decoding. On warm load this map is reconstructed so that
+      * `typeFqnString` can fall back to FQN strings for annotation types (e.g. `scala.deprecated`) that reference external libraries not on
+      * the classpath. Without this section the warm-loaded classpath loses annotation FQN resolution for embedded-fixture loads on JS/Native.
+      *
+      * Layout: [4-byte count LE] then count entries each [4-byte negId LE][4-byte namePoolId LE].
+      * Added in minor=6 (non-breaking add; absent in minor=5 snapshots, which fall back to an empty map).
+      */
+    val sectionFQNMAP: String = "FQNMAP__"
 
     /** Write a little-endian 32-bit int at position `pos` in `buf`. */
     def writeInt32LE(buf: Array[Byte], pos: Int, value: Int): Unit =

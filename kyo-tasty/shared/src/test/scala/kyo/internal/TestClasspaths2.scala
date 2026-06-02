@@ -1,6 +1,9 @@
 package kyo.internal
 
 import kyo.*
+import kyo.internal.tasty.snapshot.DigestComputer
+import kyo.internal.tasty.snapshot.SnapshotReader
+import kyo.internal.tasty.snapshot.SnapshotWriter
 
 /** Cross-platform facade for decoder-fidelity-2 test infrastructure.
   *
@@ -108,6 +111,26 @@ private[kyo] object TestClasspaths2:
         tmpDir: String
     )(using Frame): Boolean < (Async & Scope & Abort[TastyError]) =
         TestClasspaths2Platform.runConcurrentReaderWriterTest(cp, digest, tmpDir)
+
+    /** Perform a cold load then write a snapshot to a MemoryFileSource and read it back, returning (cold, warm).
+      *
+      * Cross-platform: uses `SnapshotWriter.serializeToBytes` and `SnapshotReader.readBytes` via a MemoryFileSource. Works on JVM, JS, and
+      * Native. On JVM the cold load uses the embedded fixture set from `TestClasspaths.withClasspath()` (same as JS/Native). This helper is
+      * suitable for testing snapshot round-trip correctness on any platform; for tests requiring the full real stdlib classpath use
+      * `TestClasspaths2.standardWithSnapshot` (JVM only).
+      */
+    def withSnapshotInMemory()(using Frame): (Tasty.Classpath, Tasty.Classpath) < (Sync & Async & Scope & Abort[TastyError]) =
+        TestClasspaths.withClasspath().flatMap: coldCp =>
+            Sync.defer:
+                val digest       = Array[Byte](0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37)
+                val snapshotPath = "mem-snapshot/snapshot.krfl"
+                val mem          = MemoryFileSource()
+                val bytes        = SnapshotWriter.serializeToBytes(coldCp, digest)
+                mem.add(snapshotPath, bytes)
+                (mem, snapshotPath, coldCp)
+            .flatMap: (mem, snapshotPath, coldCp) =>
+                SnapshotReader.read(snapshotPath, mem).map: warmCp =>
+                    (coldCp, warmCp)
 
     /** Create a temporary directory and return its absolute path (JVM only).
       *
