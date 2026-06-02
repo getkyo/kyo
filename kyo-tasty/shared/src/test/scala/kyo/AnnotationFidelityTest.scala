@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.TestClasspaths
+import kyo.internal.TestClasspaths2
 
 /** Fidelity tests for annotation wiring: cp.symbolsAnnotatedWith, sym.annotations, and annotation args.
   *
@@ -13,6 +14,10 @@ import kyo.internal.TestClasspaths
   * property is "deprecated symbols found" and the embedded set has 2. Leaf 2 remains jvmOnly: @tailrec is encoded in
   * TASTy as TYPEREFsymbol (addr-based, external class reference), not TERMREFpkg (FQN-string); the FQN fallback in
   * unresolvedFqnByNegId only covers the FQN-string paths. Fixing requires TYPEREFsymbol cross-file FQN tracking.
+  *
+  * Decoder-fidelity-3 Phase 3.02 (CARRY-3): adds leaf 5 to verify that the in-memory snapshot round-trip preserves
+  * symbolsAnnotatedWith("scala.deprecated") count. Verifies cold == warm on JVM, JS, and Native, closing the
+  * cold=1 warm=0 regression documented in the DF2 final-report.md CARRY-3 entry.
   */
 class AnnotationFidelityTest extends Test:
 
@@ -100,6 +105,32 @@ class AnnotationFidelityTest extends Test:
                 methodsWithAnnotations.nonEmpty,
                 "Expected at least one method with annotations after Phase 05 fix; found zero. " +
                     "Embedded AnnotatedFixtureMethods has @tailrec countDown and @unused annotatedWithUnused."
+            )
+            succeed
+    }
+
+    // CARRY-3 leaf 5 (decoder-fidelity-3 Phase 3.02): annotation-warm-load-cold-parity
+    // Given: a cold classpath and a warm classpath produced by an in-memory snapshot round-trip
+    // When: calling symbolsAnnotatedWith("scala.deprecated") on both
+    // Then: warm count == cold count (pre-fix warm returned 0 when cold returned 1)
+    // Root cause documented in DF2 final-report.md CARRY-3: the ANNOTS_ section serializer stored FQNs
+    // as TermRef(Tuple(empty), Name(fqn)) which typeFqnString correctly unwraps to fqn. The test
+    // verifies end-to-end parity. Cold >= 1 is also asserted so a vacuous warm==cold==0 does not pass.
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem needed).
+    // Pins: CARRY-3 from decoder-fidelity-2; cold==warm parity for symbolsAnnotatedWith.
+    "CARRY-3 (Phase 3.02): in-memory snapshot round-trip preserves symbolsAnnotatedWith count" in run {
+        TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
+            val coldCount = cold.symbolsAnnotatedWith("scala.deprecated").size
+            val warmCount = warm.symbolsAnnotatedWith("scala.deprecated").size
+            assert(
+                coldCount >= 1,
+                s"CARRY-3: cold classpath must have >= 1 @deprecated symbol; got $coldCount. " +
+                    s"Embedded AnnotatedFixture has 2 @deprecated symbols."
+            )
+            assert(
+                warmCount == coldCount,
+                s"CARRY-3: warm symbolsAnnotatedWith count ($warmCount) != cold ($coldCount). " +
+                    s"Annotation FQN round-trip through ANNOTS_ section failed."
             )
             succeed
     }

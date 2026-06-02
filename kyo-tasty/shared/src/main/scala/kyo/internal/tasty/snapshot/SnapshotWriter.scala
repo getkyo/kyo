@@ -531,7 +531,7 @@ object SnapshotWriter:
                         // Negative ID: annotation type not on classpath. Look up in unresolvedFqnByNegId.
                         unresolvedFqnByNegId.getOrElse(sid.value, "")
                     case other =>
-                        tyconFqn(other, symbolById, fqnBySymbol)
+                        tyconFqn(other, symbolById, fqnBySymbol, unresolvedFqnByNegId)
                 if fqn.nonEmpty then Some(internFqn(fqn)) else None
             if tyconIds.isEmpty then None else Some((idx, tyconIds))
 
@@ -675,14 +675,21 @@ object SnapshotWriter:
 
     /** Extract a dotted FQN string from an annotation tycon type without needing a Classpath.
       *
-      * Handles Type.Named (looks up FQN via fqnBySymbol), Type.TermRef (recursively builds prefix.name),
-      * and Type.Applied (delegates to the unapplied base). Returns empty string for unrecognised types.
+      * Handles Type.Named (looks up FQN via fqnBySymbol; falls back to unresolvedFqnByNegId for negative ids),
+      * Type.TermRef (recursively builds prefix.name), and Type.Applied (delegates to the unapplied base).
+      * Returns empty string for unrecognised types.
       * Called from serializeAnnotations to cover both Named and TermRef tycon forms.
+      *
+      * CARRY-3 fix: pass unresolvedFqnByNegId so that nested Named(negId) references (e.g. the "scala" package
+      * qualifier in TermRef(Named(-X_scala), Name("deprecated"))) can be resolved to their FQN strings. Without
+      * this, the qualifier resolves to "" and the outer TermRef returns only the simple name "deprecated" instead
+      * of the full FQN "scala.deprecated".
       */
     private def tyconFqn(
         t: Tasty.Type,
         symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
-        fqnBySymbol: mutable.HashMap[Int, String]
+        fqnBySymbol: mutable.HashMap[Int, String],
+        unresolvedFqnByNegId: Map[Int, String]
     ): String =
         import Tasty.Name.asString
         t match
@@ -690,18 +697,23 @@ object SnapshotWriter:
                 fqnBySymbol.get(annSymId.value) match
                     case Some(fqn) if fqn.nonEmpty => fqn
                     case _ =>
-                        val annSym = symbolById.getOrElse(annSymId.value, null)
-                        if annSym != null then nameToStr(annSym.name) else ""
+                        if annSymId.value < -1 then
+                            // Negative id: look up via unresolvedFqnByNegId (cross-file external reference).
+                            unresolvedFqnByNegId.getOrElse(annSymId.value, "")
+                        else
+                            val annSym = symbolById.getOrElse(annSymId.value, null)
+                            if annSym != null then nameToStr(annSym.name) else ""
+                        end if
                 end match
             case Tasty.Type.TermRef(qual, name) =>
-                val q = tyconFqn(qual, symbolById, fqnBySymbol)
+                val q = tyconFqn(qual, symbolById, fqnBySymbol, unresolvedFqnByNegId)
                 if q.nonEmpty then q + "." + name.asString else name.asString
             case Tasty.Type.TypeRef(qual, name) =>
                 // F-A-009: TYPEREF now emits TypeRef; serialize the same way as TermRef.
-                val q = tyconFqn(qual, symbolById, fqnBySymbol)
+                val q = tyconFqn(qual, symbolById, fqnBySymbol, unresolvedFqnByNegId)
                 if q.nonEmpty then q + "." + name.asString else name.asString
             case Tasty.Type.Applied(base, _) =>
-                tyconFqn(base, symbolById, fqnBySymbol)
+                tyconFqn(base, symbolById, fqnBySymbol, unresolvedFqnByNegId)
             case _ => ""
         end match
     end tyconFqn

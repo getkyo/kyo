@@ -15,7 +15,18 @@ import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for ClassfileUnpickler using JDK classfiles loaded via getResourceAsStream.
   *
-  * Tests 1-12 are JVM-only (use classloader resource loading). JavaSignaturesTest (tests 13-20) is separate and cross-platform.
+  * Leaf classification (decoder-fidelity-3 Phase 3.04 CARRY-4 audit):
+  *   - Tests 1-12 (jvmOnly): load JDK classfiles via the JVM classloader (TestResourceLoader). The JVM classloader's
+  *     `getResourceAsStream("java/lang/Object.class")` returns the real JDK bytecode. JS/Native have no equivalent
+  *     mechanism for loading JDK class bytes at runtime; these leaves are legitimately JVM-only.
+  *   - Test 10 (cross-platform): constructs a bad-magic byte array inline; no classloader needed.
+  *   - Tests 13-17 (jvmOnly): load JDK classfiles (BootstrapMethods, NestHost, NestMembers, PermittedSubclasses,
+  *     MethodParameters). Same rationale as 1-12.
+  *   - Test 18 (cross-platform, migrated from jvmOnly): constructs a synthetic classfile from raw bytes using
+  *     ByteArrayOutputStream (cross-platform). DataOutputStream dependency removed in decoder-fidelity-3 Phase 3.04.
+  *
+  * Remaining jvmOnly count: 16 (tests 1-9, 11-12, 13-17). These cannot be migrated without JDK classfile byte
+  * embedding (a substantial fixture engineering task beyond this campaign's scope).
   */
 class ClassfileReaderTest extends Test:
 
@@ -314,7 +325,10 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 18 (M8/INV-008): RuntimeTypeAnnotations attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: RuntimeVisibleTypeAnnotations attribute is decoded into metadata.runtimeTypeAnnotations" taggedAs jvmOnly in run {
+    // Test 18: cross-platform (migrated from jvmOnly in decoder-fidelity-3 Phase 3.04).
+    // The synthetic classfile is constructed via ByteArrayOutputStream (cross-platform)
+    // without requiring DataOutputStream (JVM-specific), using inline big-endian helpers.
+    "M8: RuntimeVisibleTypeAnnotations attribute is decoded into metadata.runtimeTypeAnnotations" in run {
         // Build a synthetic classfile with RuntimeVisibleTypeAnnotations attribute on the class.
         // Classfile structure: magic, version, minimal pool, flags, this/super, 0 interfaces,
         // 0 fields, 0 methods, 1 attribute (RuntimeVisibleTypeAnnotations).
@@ -335,53 +349,63 @@ class ClassfileReaderTest extends Test:
         val clsName  = "SyntheticTypeAnn".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val supName  = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val annDesc  = "Ljava/lang/Deprecated;".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        import java.io.ByteArrayOutputStream
-        import java.io.DataOutputStream
-        val buf = new ByteArrayOutputStream()
-        val out = new DataOutputStream(buf)
+        // Cross-platform byte builder: uses ByteArrayOutputStream with inline big-endian helpers.
+        // ByteArrayOutputStream is cross-platform (shared main already uses it in SnapshotWriter).
+        // This avoids DataOutputStream which is not emulated on JS/Native.
+        val buf = new java.io.ByteArrayOutputStream()
+        def writeInt(v: Int): Unit =
+            buf.write((v >>> 24) & 0xff)
+            buf.write((v >>> 16) & 0xff)
+            buf.write((v >>> 8) & 0xff)
+            buf.write(v & 0xff)
+        end writeInt
+        def writeShort(v: Int): Unit =
+            buf.write((v >>> 8) & 0xff)
+            buf.write(v & 0xff)
+        def writeByte(v: Int): Unit = buf.write(v & 0xff)
         // magic
-        out.writeInt(0xcafebabe)
+        writeInt(0xcafebabe)
         // minor=0, major=65 (Java 21)
-        out.writeShort(0)
-        out.writeShort(65)
+        writeShort(0)
+        writeShort(65)
         // constant_pool_count = 7 (entries 1..6)
-        out.writeShort(7)
+        writeShort(7)
         // #1 Utf8 "SyntheticTypeAnn"
-        out.writeByte(1)
-        out.writeShort(clsName.length)
-        out.write(clsName)
+        writeByte(1)
+        writeShort(clsName.length)
+        buf.write(clsName)
         // #2 Class -> #1
-        out.writeByte(7)
-        out.writeShort(1)
+        writeByte(7)
+        writeShort(1)
         // #3 Utf8 "java/lang/Object"
-        out.writeByte(1)
-        out.writeShort(supName.length)
-        out.write(supName)
+        writeByte(1)
+        writeShort(supName.length)
+        buf.write(supName)
         // #4 Class -> #3
-        out.writeByte(7)
-        out.writeShort(3)
+        writeByte(7)
+        writeShort(3)
         // #5 Utf8 "RuntimeVisibleTypeAnnotations"
-        out.writeByte(1)
-        out.writeShort(attrName.length)
-        out.write(attrName)
+        writeByte(1)
+        writeShort(attrName.length)
+        buf.write(attrName)
         // #6 Utf8 "Ljava/lang/Deprecated;"
-        out.writeByte(1)
-        out.writeShort(annDesc.length)
-        out.write(annDesc)
+        writeByte(1)
+        writeShort(annDesc.length)
+        buf.write(annDesc)
         // access_flags = ACC_PUBLIC (0x0001)
-        out.writeShort(0x0001)
+        writeShort(0x0001)
         // this_class = #2
-        out.writeShort(2)
+        writeShort(2)
         // super_class = #4
-        out.writeShort(4)
+        writeShort(4)
         // interfaces_count = 0
-        out.writeShort(0)
+        writeShort(0)
         // fields_count = 0
-        out.writeShort(0)
+        writeShort(0)
         // methods_count = 0
-        out.writeShort(0)
+        writeShort(0)
         // attributes_count = 1
-        out.writeShort(1)
+        writeShort(1)
         // Attribute: name_index=#5, length=?
         // RuntimeVisibleTypeAnnotations body:
         //   u2 num_annotations=1,
@@ -399,10 +423,9 @@ class ClassfileReaderTest extends Test:
             0x00,
             0x00 // num_element_value_pairs=0
         )
-        out.writeShort(5) // attribute_name_index=#5
-        out.writeInt(typeAnnBody.length)
-        out.write(typeAnnBody)
-        out.flush()
+        writeShort(5) // attribute_name_index=#5
+        writeInt(typeAnnBody.length)
+        buf.write(typeAnnBody)
         val bytes = buf.toByteArray
         ClassfileUnpickler.read(bytes, interner, new TypeArena).map: result =>
             val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
