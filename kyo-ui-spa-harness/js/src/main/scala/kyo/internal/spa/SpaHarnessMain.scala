@@ -329,8 +329,68 @@ object SpaHarnessMain:
                     yield if v == initial then "unchanged" else s"changed:$v"
                 }
         )
+
+        // 8. Client runMount reactive update with a Fragment value. Guards the two DomBackend bugs
+        // that the server (runHandlers) path never exercises: (a) applyJsProps's invalid
+        // querySelectorAll selector that killed the mount before subscribe, and (b) onChange dropping
+        // the data-kyo-path boundary span for values (Fragment/Text/RawHtml) that render without a
+        // path-carrying root, which left the second update unable to find the node. The reactive
+        // value is a Fragment, and two successive sets are applied: with bug (a) no update lands at
+        // all (stuck at "A"); with bug (b) only the first lands (stuck at "B"); the fix reaches "C".
+        UITestEntry.register(
+            "runmount.reactive.fragment",
+            () =>
+                bridge {
+                    val target = "kyo-spa-runmount-target"
+                    for
+                        ref <- Signal.initRef[String]("A")
+                        // UI.Ast.Reactive directly, not Signal.render, to avoid ambiguity with StringContext.render.
+                        ui = UI.div(
+                            UI.Ast.Reactive(ref.map(s => UI.fragment(UI.span(s).id("frag-a"), UI.span(s).id("frag-b"))))
+                        )
+                        _ <- Sync.defer {
+                            val existing = dom.document.getElementById(target)
+                            if existing != null && existing.parentNode != null then
+                                val _ = existing.parentNode.removeChild(existing)
+                            val c = dom.document.createElement("div")
+                            c.setAttribute("id", target)
+                            val _ = dom.document.body.appendChild(c)
+                        }
+                        // runMount parks on Async.never, so fork it like the real browser boot.
+                        _ <- Fiber.initUnscoped(Scope.run(UI.runMount(ui, s"#$target")))
+                        _ <- pollText("frag-a", "A", 100)
+                        _ <- ref.set("B")
+                        _ <- pollText("frag-a", "B", 100)
+                        _ <- ref.set("C")
+                        _ <- pollText("frag-a", "C", 100)
+                        out <- Sync.defer {
+                            val el = dom.document.getElementById("frag-a")
+                            if el != null then el.textContent else "MISSING"
+                        }
+                    yield out
+                    end for
+                }
+        )
         ()
     end main
+
+    /** Poll `getElementById(id).textContent` until it equals `expected` or `attempts` 20ms ticks elapse, whichever comes first.
+      * Returning on exhaustion (rather than failing) lets the scenario hand the final observed value back to the driver, so a stuck
+      * update surfaces as a wrong-value assertion in the test rather than an opaque timeout.
+      */
+    private def pollText(id: String, expected: String, attempts: Int)(using Frame): Unit < Async =
+        Loop(0) { n =>
+            if n >= attempts then Loop.done(())
+            else
+                Sync.defer {
+                    val el = dom.document.getElementById(id)
+                    if el != null then el.textContent else ""
+                }.map { text =>
+                    if text == expected then Loop.done(())
+                    else Async.sleep(20.millis).andThen(Loop.continue(n + 1))
+                }
+        }
+    end pollText
 
     /** Insert an `<a href={href}>label</a>` into `document.body` and return it. The href is set via JS-property assignment so the
       * browser parses it into `pathname`/`search` etc.
