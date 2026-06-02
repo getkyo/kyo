@@ -228,6 +228,15 @@ object DocsClient:
         yield WebsiteModule(slug, group, title, "", WebsiteModule.Platforms(true, true, true))
     end parseModule
 
+    /** Split a JSON array's top-level elements, respecting string literals.
+      *
+      * Scans the array body tracking bracket/brace depth, but counts `{ } [ ]` and the element-
+      * separating `,` only OUTSIDE string literals. A `"..."` literal is detected by an unescaped
+      * `"`; a `\` escapes the next character (so `\"` does not close the string). This mirrors
+      * `extractBracketed`'s `inStr`/`escaped` scan, so a heading or label whose text contains an
+      * unbalanced `]`/`}`/`[`/`{` inside a JSON string value (e.g. a toc entry `"Layout[A] and ]weird["`)
+      * does not desync the depth counter and split an element wrongly (WARN-2).
+      */
     private def splitJsonArray(json: String): Seq[String] =
         val trimmed = json.trim
         if !trimmed.startsWith("[") || !trimmed.endsWith("]") then Seq.empty
@@ -235,19 +244,27 @@ object DocsClient:
             val inner = trimmed.substring(1, trimmed.length - 1).trim
             if inner.isEmpty then Seq.empty
             else
-                val items = scala.collection.mutable.ArrayBuffer.empty[String]
-                var depth = 0
-                var start = 0
-                var i     = 0
+                val items   = scala.collection.mutable.ArrayBuffer.empty[String]
+                var depth   = 0
+                var start   = 0
+                var i       = 0
+                var inStr   = false
+                var escaped = false
                 while i < inner.length do
-                    inner(i) match
-                        case '{' | '[' => depth += 1
-                        case '}' | ']' => depth -= 1
-                        case ',' if depth == 0 =>
-                            items += inner.substring(start, i).trim
-                            start = i + 1
-                        case _ =>
-                    end match
+                    val c = inner(i)
+                    if escaped then escaped = false
+                    else if c == '\\' then escaped = true
+                    else if c == '"' then inStr = !inStr
+                    else if !inStr then
+                        c match
+                            case '{' | '[' => depth += 1
+                            case '}' | ']' => depth -= 1
+                            case ',' if depth == 0 =>
+                                items += inner.substring(start, i).trim
+                                start = i + 1
+                            case _ =>
+                        end match
+                    end if
                     i += 1
                 end while
                 if start < inner.length then items += inner.substring(start).trim

@@ -530,6 +530,46 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
+    // ---- Test WARN-1: the latest version's own v<X>/ pages link within v<X>/, not latest/ ----
+
+    "latest version's own v<X> tree links within v<X> not latest (WARN-1 regression)" in run {
+        // The single version is flagged latest=true, so emit writes it under BOTH v1.0.0/ (emitVersion)
+        // and latest/ (emitLatest). The v1.0.0/ copy must link within /v1.0.0/, not /latest/.
+        val readme  = "# kyo-data\n## Overview\nData types.\n"
+        val readmeB = "# kyo-core\n## Effects\nCore.\n"
+        val modA    = WebsiteModule("kyo-data", "Foundation", "kyo-data", readme, WebsiteModule.Platforms(true, true, true))
+        val modB    = WebsiteModule("kyo-core", "Foundation", "kyo-core", readmeB, WebsiteModule.Platforms(true, true, true))
+        val content = WebsiteContent(
+            "intro",
+            Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB))),
+            WebsiteVersion("v1.0.0", "1.0.0", true)
+        )
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            // The latest version's OWN versioned tree.
+            vHtml <- readFile(out / "v1.0.0" / "kyo-data" / "index.html")
+            // The mirrored latest tree.
+            latestHtml <- readFile(out / "latest" / "kyo-data" / "index.html")
+        yield
+            // The v1.0.0/ page links within /v1.0.0/, never to /latest/.
+            assert(vHtml.contains("/v1.0.0/kyo-data/"), s"v1.0.0 page must link within v1.0.0: $vHtml")
+            assert(vHtml.contains("/v1.0.0/kyo-core/"), s"v1.0.0 page must link within v1.0.0: $vHtml")
+            assert(
+                !vHtml.contains("/latest/kyo-data/") && !vHtml.contains("/latest/kyo-core/"),
+                s"latest version's v1.0.0 page must NOT link to /latest/: $vHtml"
+            )
+            // The latest/ page links within /latest/.
+            assert(latestHtml.contains("/latest/kyo-data/"), s"latest page must link within latest: $latestHtml")
+            assert(latestHtml.contains("/latest/kyo-core/"), s"latest page must link within latest: $latestHtml")
+            assert(
+                !latestHtml.contains("/v1.0.0/kyo-data/") && !latestHtml.contains("/v1.0.0/kyo-core/"),
+                s"latest page must NOT link to /v1.0.0/: $latestHtml"
+            )
+        end for
+    }
+
     // ---- Helpers ----
 
     private def extractIsland(html: String, id: String): String =

@@ -7,18 +7,25 @@ class DocsAppTest extends Test:
 
     private val testHead = PageHead(title = "t")
 
-    // Helper: render DocsApp.view to the first HTML emission.
+    // Helper: render DocsApp.view to the first HTML emission. The default `prefix` mirrors the
+    // version's own canonical tree (`latest` when the version is flagged latest, else its tag); the
+    // WARN-1 regression leaves pass an explicit prefix to assert the physical-tree decoupling.
     private def rendered(
         content: WebsiteContent,
         versions: Chunk[WebsiteVersion],
         route: Signal[String],
         toc: Chunk[DocsMarkdown.Heading],
-        article: UI
+        article: UI,
+        prefix: String = ""
     )(using Frame): String < Async =
+        val resolvedPrefix = if prefix.nonEmpty then prefix
+        else if content.version.latest then "latest"
+        else content.version.tag
         for
-            view <- DocsApp.view(content, versions, route, toc, article)
+            view <- DocsApp.view(content, versions, resolvedPrefix, route, toc, article)
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield html
+        end for
     end rendered
 
     private def fixedRoute(path: String)(using Frame): Signal[String] < Sync =
@@ -258,6 +265,43 @@ class DocsAppTest extends Test:
             // Prev/next reflect position within v0.9.3 (prev = mod-a, next = mod-c).
             // No link must jump to /latest/.
             assert(!html.contains("/latest/mod-"), s"no link must point to /latest/ on a v0.9.3 page: $html")
+        end for
+    }
+
+    // Leaf 14 (Phase-7 WARN-1 regression): the latest version is emitted under BOTH `latest/` and its
+    // own `v<X>/` tree. The physical tree decides the link prefix, NOT `version.latest`: the same
+    // latest-flagged version links within `/v<X>/...` when served under `v<X>/`, and within `/latest/...`
+    // when served under `latest/`.
+    "latest version under its own v<X> tree links within v<X> not latest (WARN-1 regression)" in run {
+        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
+        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
+        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
+        // The version IS latest (latest=true), exactly the case emitVersion renders under v1.2.0/.
+        val latestVersion = WebsiteVersion("v1.2.0", "1.2.0", true)
+        val content = WebsiteContent(
+            intro = "",
+            groups = Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB, modC))),
+            version = latestVersion
+        )
+        for
+            // Served under the version's own v1.2.0/ tree: the reader is at /v1.2.0/mod-b/.
+            vRoute <- fixedRoute("/v1.2.0/mod-b/")
+            vHtml  <- rendered(content, Chunk.empty, vRoute, Chunk.empty, UI.empty, prefix = "v1.2.0")
+            // Served under latest/ tree: the reader is at /latest/mod-b/.
+            latestRoute <- fixedRoute("/latest/mod-b/")
+            latestHtml  <- rendered(content, Chunk.empty, latestRoute, Chunk.empty, UI.empty, prefix = "latest")
+        yield
+            // v<X> tree: sidebar links resolve within v1.2.0, and NO link jumps to /latest/.
+            assert(vHtml.contains("/v1.2.0/mod-a/"), s"v-tree sidebar must link within v1.2.0: $vHtml")
+            assert(vHtml.contains("/v1.2.0/mod-b/"), s"v-tree sidebar must link within v1.2.0: $vHtml")
+            assert(vHtml.contains("/v1.2.0/mod-c/"), s"v-tree sidebar must link within v1.2.0: $vHtml")
+            // prev/next on /v1.2.0/mod-b/ resolve to /v1.2.0/mod-a/ and /v1.2.0/mod-c/.
+            assert(!vHtml.contains("/latest/mod-"), s"latest version's v1.2.0 page must NOT link to /latest/: $vHtml")
+            // latest/ tree: the SAME version links within /latest/.
+            assert(latestHtml.contains("/latest/mod-a/"), s"latest-tree sidebar must link within latest: $latestHtml")
+            assert(latestHtml.contains("/latest/mod-b/"), s"latest-tree sidebar must link within latest: $latestHtml")
+            assert(latestHtml.contains("/latest/mod-c/"), s"latest-tree sidebar must link within latest: $latestHtml")
+            assert(!latestHtml.contains("/v1.2.0/mod-"), s"latest tree must NOT link to /v1.2.0/: $latestHtml")
         end for
     }
 

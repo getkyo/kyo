@@ -140,6 +140,68 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
+    // WARN-2 regression: a manifest whose string VALUES carry unbalanced structural brackets
+    // (`[`, `]`, `{`, `}`) and an escaped `\"` must still split into the correct number of elements
+    // with each bracket-laden value intact. Before the fix, splitJsonArray counted brackets inside
+    // string literals, so a lone `]` in a title desynced the depth counter and merged elements.
+    "parseManifest splits correctly when titles contain unbalanced brackets and escaped quotes (WARN-2)" in run {
+        // title 0 has a lone `]` then a lone `[` (unbalanced); title 1 has `{`/`}` plus an escaped `\"`.
+        val manifestJson =
+            """[""" +
+                """{"slug":"kyo-data","group":"Foundation","title":"Layout[A] and ]weird["},""" +
+                """{"slug":"kyo-core","group":"Effects","title":"Map{K} say \"hi\" }now{"},""" +
+                """{"slug":"kyo-http","group":"Apps","title":"plain"}""" +
+                """]"""
+        withFetch(Map(
+            "/versions.json"        -> """[{"tag":"v1.0.0","label":"1.0.0","latest":true}]""",
+            "/v1.0.0/manifest.json" -> manifestJson
+        )) {
+            for
+                table <- DocsClient.routeTable
+            yield
+                assert(table.modules.size == 3, s"unbalanced brackets must not change the element count, got: ${table.modules.size}")
+                assert(table.modules(0).slug == "kyo-data", s"first slug: ${table.modules(0).slug}")
+                assert(
+                    table.modules(0).title == "Layout[A] and ]weird[",
+                    s"bracket-laden title must survive intact, got: ${table.modules(0).title}"
+                )
+                assert(table.modules(1).slug == "kyo-core", s"second slug: ${table.modules(1).slug}")
+                assert(
+                    table.modules(1).title == """Map{K} say "hi" }now{""",
+                    s"brace+escaped-quote title must survive intact, got: ${table.modules(1).title}"
+                )
+                assert(table.modules(2).slug == "kyo-http", s"third slug: ${table.modules(2).slug}")
+                assert(table.modules(2).title == "plain", s"third title: ${table.modules(2).title}")
+            end for
+        }
+    }
+
+    // WARN-2 regression (versions side): a versions array whose label values carry unbalanced
+    // brackets must split into the correct number of versions with labels intact.
+    "parseVersions splits correctly when labels contain unbalanced brackets (WARN-2)" in run {
+        val versionsJson =
+            """[""" +
+                """{"tag":"v1.0.0","label":"1.0.0 ]edge[","latest":true},""" +
+                """{"tag":"v0.9.3","label":"0.9.3 }brace{","latest":false}""" +
+                """]"""
+        withFetch(Map(
+            "/versions.json"        -> versionsJson,
+            "/v1.0.0/manifest.json" -> "[]"
+        )) {
+            for
+                table <- DocsClient.routeTable
+            yield
+                assert(table.versions.size == 2, s"unbalanced brackets must not change the version count, got: ${table.versions.size}")
+                assert(table.versions(0).tag == "v1.0.0", s"first tag: ${table.versions(0).tag}")
+                assert(table.versions(0).label == "1.0.0 ]edge[", s"first label must survive intact, got: ${table.versions(0).label}")
+                assert(table.versions(0).latest, "first version must be latest=true")
+                assert(table.versions(1).tag == "v0.9.3", s"second tag: ${table.versions(1).tag}")
+                assert(table.versions(1).label == "0.9.3 }brace{", s"second label must survive intact, got: ${table.versions(1).label}")
+                assert(!table.versions(1).latest, "second version must be latest=false")
+            end for
+        }
+    }
+
     // Empty-parse vs absent: a non-object payload parses to an empty island (the SPA mounts empty),
     // distinct from the absent-#docs-island-element case the DOM reader handles before parsing.
     "parseDocsIsland returns an empty island for a non-object payload" in run {

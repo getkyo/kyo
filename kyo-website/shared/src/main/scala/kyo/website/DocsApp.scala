@@ -39,6 +39,12 @@ object DocsApp:
       *   The versioned documentation content (groups, modules, version record).
       * @param versions
       *   All available versions for the dropdown (INV-010).
+      * @param prefix
+      *   The physical route tree the page is served under (`latest` or the version's own tag, e.g.
+      *   `v1.2.0`). All intra-page links (sidebar, prev/next) use this prefix so a page links within
+      *   its own tree (Phase-6 BLOCKER-1, Phase-7 WARN-1). The caller knows which physical tree it is
+      *   emitting; the prefix is NOT re-derived from `content.version.latest` here, because the latest
+      *   version is also emitted under its own `v<X>/` tree where its links must stay `/v<X>/...`.
       * @param route
       *   Signal tracking the current pathname, used to compute active sidebar state and prev/next.
       * @param toc
@@ -51,13 +57,13 @@ object DocsApp:
     def view(
         content: WebsiteContent,
         versions: Chunk[WebsiteVersion],
+        prefix: String,
         route: Signal[String],
         toc: Chunk[DocsMarkdown.Heading],
         article: UI
     )(using Frame): UI < Sync =
         Sync.defer {
             val allModules = content.groups.flatMap(_.modules)
-            val prefix     = routePrefix(content.version)
             UI.div.cssClass("docs-shell")(
                 docsHeader(versions),
                 sidebar(content, route, prefix),
@@ -68,13 +74,6 @@ object DocsApp:
     end view
 
     // ---- Private helpers ----
-
-    /** The URL route prefix for a version: `latest` for the version served as latest, else the
-      * version's own tag (e.g. `v1.2.0`). All intra-page links (sidebar, prev/next) use this prefix
-      * so a `v<X>` page links within `v<X>`, never jumping the reader to `latest` (Phase-6 BLOCKER-1).
-      */
-    private def routePrefix(version: WebsiteVersion): String =
-        if version.latest then "latest" else version.tag
 
     private def docsHeader(versions: Chunk[WebsiteVersion])(using Frame): UI =
         val versionOptions: Seq[(String, String)] = versions.toSeq.map(v => v.tag -> v.label)

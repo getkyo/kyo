@@ -91,6 +91,12 @@ object WebsiteBundleMain:
         val initialRoute: String =
             import AllowUnsafe.embrace.danger
             Sync.Unsafe.evalOrThrow(route.current)
+        // The link prefix is the physical tree the page is served under (its first path segment:
+        // `latest` or `v<X>`), NOT a re-derivation from `version.latest`. A reader who landed on
+        // `/v1.2.0/...` (the latest version's own versioned tree) must keep navigating within
+        // `/v1.2.0/...`, never jumping to `/latest/` (WARN-1). Fall back to the seeded version's tag
+        // when the route has no leading segment.
+        val prefix = routePrefix(initialRoute, island.content.version.tag)
         seedMarkdownCache(initialRoute, island.markdown)
         for
             initialRendered <- DocsMarkdown.transpile(island.markdown)
@@ -116,6 +122,7 @@ object WebsiteBundleMain:
             view <- DocsApp.view(
                 island.content,
                 island.versions,
+                prefix,
                 route,
                 initialRendered.headings,
                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
@@ -124,6 +131,16 @@ object WebsiteBundleMain:
         yield view
         end for
     end buildDocs
+
+    /** The physical route-tree prefix for a docs path: the path's first non-empty segment (`latest`
+      * or `v<X>`). This is the directory the SSG served the page from, so all intra-page links stay
+      * within that tree, including the latest version's own `v<X>/` copy (WARN-1). Falls back to
+      * `versionTag` when the path has no leading segment (e.g. `/`).
+      */
+    private def routePrefix(path: String, versionTag: String): String =
+        val segments = path.split('/').filter(_.nonEmpty)
+        if segments.isEmpty then versionTag else segments(0)
+    end routePrefix
 
     /** Read the available versions list from the SSG-seeded DOM island.
       *

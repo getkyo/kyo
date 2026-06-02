@@ -161,7 +161,7 @@ object WebsiteGenerator:
         val route = s"/$prefix/"
         for
             fixedRoute <- Signal.initRef(route)
-            view       <- DocsApp.view(c, versions, fixedRoute, Chunk.empty, UI.empty)
+            view       <- DocsApp.view(c, versions, prefix, fixedRoute, Chunk.empty, UI.empty)
             html       <- wrapFirst(docOpts(c, prefix, "", route), view)
             island = docsIsland(c, versions, "")
             _ <- writeRoute(outDir / prefix / "index.html", injectIslands(html, island, versions))
@@ -180,7 +180,7 @@ object WebsiteGenerator:
         for
             rendered   <- DocsMarkdown.transpile(module.readme)
             fixedRoute <- Signal.initRef(route)
-            view       <- DocsApp.view(c, versions, fixedRoute, rendered.headings, rendered.article)
+            view       <- DocsApp.view(c, versions, prefix, fixedRoute, rendered.headings, rendered.article)
             html       <- wrapFirst(docOpts(c, prefix, module.slug, route), view)
             island = docsIsland(c, versions, module.readme)
             _ <- writeRoute(outDir / prefix / module.slug / "index.html", injectIslands(html, island, versions))
