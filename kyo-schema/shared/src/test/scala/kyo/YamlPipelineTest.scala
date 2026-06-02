@@ -615,6 +615,22 @@ age: 30
             }
         }
 
+        "preserves a surviving document's comment when a stream transform drops another" in {
+            val yaml = "---\nname: Alice\n---\n# keep\nname: Bob\nage: 25\n"
+            val dropFirst =
+                Yaml.pipeline.throughCstStream(stream => Result.succeed(stream.copy(documents = stream.documents.drop(1))))
+            val rendered = dropFirst.render(yaml).getOrThrow
+
+            assertResult((keepsComment = true, keepsBob = true, keepsAge = true, dropsAlice = true)) {
+                (
+                    keepsComment = rendered.contains("# keep"),
+                    keepsBob = rendered.contains("name: Bob"),
+                    keepsAge = rendered.contains("age: 25"),
+                    dropsAlice = !rendered.contains("Alice")
+                )
+            }
+        }
+
         "leaves String decode and render unchanged when no CST transform is set" in {
             val yaml = "name: Alice\nage: 30\n"
 
