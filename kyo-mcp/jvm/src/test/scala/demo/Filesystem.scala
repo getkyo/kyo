@@ -109,27 +109,37 @@ object Filesystem extends KyoApp:
                     }
                 }
 
-        // -- file:///{absolutePath} resource template
+        // -- file:///{path} resource template
+        val fileTemplateUri = McpResourceUri.Template("file:///{path}")
         val fileTemplate =
             McpHandler.resourceTemplate(
-                uriTemplate = McpResourceUri.Template("file:///{path}"),
+                uriTemplate = fileTemplateUri,
                 name = "file"
             ) { uri =>
-                // The matched URI string is what the client requested.
-                // Extract the {path} segment, resolve it, read the file.
-                val raw = uri.asString.stripPrefix("file:///")
-                Sync.defer {
-                    val p = root.resolve(raw).normalize()
-                    if !p.startsWith(root) then
+                // Extract the {path} variable from the inbound URI; reject paths that escape the
+                // configured root.
+                fileTemplateUri.extract(uri) match
+                    case Absent =>
                         Chunk.empty[McpHandler.ResourceContents]
-                    else
-                        Chunk(McpHandler.ResourceContents.text(
-                            uri = uri,
-                            text = java.nio.file.Files.readString(p),
-                            mimeType = Present(McpMimeType("text/plain"))
-                        ))
-                    end if
-                }
+                    case Present(bindings) =>
+                        val raw = bindings.getOrElse("path", "")
+                        Abort.catching[java.io.IOException](
+                            Sync.defer {
+                                val p = root.resolve(raw).normalize()
+                                if !p.startsWith(root) then
+                                    Chunk.empty[McpHandler.ResourceContents]
+                                else
+                                    Chunk(McpHandler.ResourceContents.text(
+                                        uri = uri,
+                                        text = java.nio.file.Files.readString(p),
+                                        mimeType = Present(McpMimeType("text/plain"))
+                                    ))
+                                end if
+                            }
+                        ).handle(Abort.recover[java.io.IOException] { _ =>
+                            Chunk.empty[McpHandler.ResourceContents]
+                        })
+                end match
             }
 
         // -- start the server

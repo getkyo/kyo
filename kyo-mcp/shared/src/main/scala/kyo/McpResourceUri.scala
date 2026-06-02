@@ -53,6 +53,38 @@ object McpResourceUri:
             /** Returns the underlying string value. */
             def asString: String = t
 
+            /** Extracts the variable bindings from a concrete URI that matches this template.
+              *
+              * Each `{name}` placeholder in the template captures non-empty text in the URI; the
+              * returned `Map[String, String]` carries each `name -> captured-value`. Returns
+              * `Absent` if the URI does not match the template's shape. Supports RFC 6570 Level 1
+              * (`{var}`) syntax. Captured values include reserved characters like `/`, so
+              * `Template("file:///{path}").extract(McpResourceUri("file:///foo/bar.txt"))` returns
+              * `Present(Map("path" -> "foo/bar.txt"))`.
+              */
+            def extract(uri: McpResourceUri): Maybe[Map[String, String]] =
+                val tmpl        = t.asString
+                val placeholder = """\{([^}]+)\}""".r
+                val varNames    = scala.collection.mutable.ListBuffer.empty[String]
+                val builder     = new StringBuilder("^")
+                var pos         = 0
+                for m <- placeholder.findAllMatchIn(tmpl) do
+                    builder.append(java.util.regex.Pattern.quote(tmpl.substring(pos, m.start)))
+                    builder.append("(.+?)")
+                    varNames += m.group(1)
+                    pos = m.end
+                end for
+                builder.append(java.util.regex.Pattern.quote(tmpl.substring(pos)))
+                builder.append("$")
+                val regex = builder.toString.r
+                regex.findFirstMatchIn(uri.asString) match
+                    case Some(m) =>
+                        Present(varNames.iterator.zip((1 to m.groupCount).iterator.map(m.group)).toMap)
+                    case None => Absent
+                end match
+            end extract
+        end extension
+
         // Uses `apply` (total constructor) so the codec accepts any wire-received string (INV-022).
         given Schema[Template] = Schema.stringSchema.transform[Template](apply)(_.asString)
 

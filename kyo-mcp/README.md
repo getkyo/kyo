@@ -163,9 +163,13 @@ The handler is a by-name effectful value; it takes no parameter because the URI 
 val tmpl = McpResourceUri.Template("file:///{path}")
 val fileTemplate: McpHandler[McpResourceUri, Chunk[McpHandler.ResourceContents], McpException] =
     McpHandler.resourceTemplate(uriTemplate = tmpl, name = "file") { uri =>
-        Chunk(McpHandler.ResourceContents.text(uri, s"contents for $uri", Absent))
+        val bindings: Maybe[Map[String, String]] = tmpl.extract(uri)
+        val path = bindings.flatMap(b => Maybe.fromOption(b.get("path"))).getOrElse("")
+        Chunk(McpHandler.ResourceContents.text(uri, s"contents for $path", Absent))
     }
 ```
+
+`McpResourceUri.Template.extract(uri)` resolves the inbound URI against the template's `{name}` placeholders and returns `Present(Map(name -> value))` on a match, `Absent` otherwise. RFC 6570 Level 1 (`{var}`) is supported; captured values include reserved characters like `/`, so `{path}` against `file:///foo/bar.txt` binds `path -> "foo/bar.txt"`.
 
 `McpHandler.ResourceContents.text(uri, text, mimeType)` and `McpHandler.ResourceContents.blob(uri, blob, mimeType)` are the two factories for resource read results; pick `text` for UTF-8 payloads and `blob` for base64-encoded binary.
 

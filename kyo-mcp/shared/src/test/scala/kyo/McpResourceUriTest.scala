@@ -59,4 +59,36 @@ class McpResourceUriTest extends Test:
         assert(uri.asString == "file:///x")
     }
 
+    // Template.extract — FR-007 (RFC 6570 Level 1 variable extraction)
+
+    "Template.extract: single placeholder binds to suffix" in {
+        val tmpl = McpResourceUri.Template("file:///{path}")
+        val uri  = McpResourceUri("file:///foo/bar.txt")
+        assert(tmpl.extract(uri) == Present(Map("path" -> "foo/bar.txt")))
+    }
+
+    "Template.extract: multiple placeholders bind in order" in {
+        val tmpl = McpResourceUri.Template("users/{id}/posts/{postId}")
+        val uri  = McpResourceUri("users/42/posts/7")
+        assert(tmpl.extract(uri) == Present(Map("id" -> "42", "postId" -> "7")))
+    }
+
+    "Template.extract: returns Absent when literal prefix mismatches" in {
+        val tmpl = McpResourceUri.Template("file:///{path}")
+        val uri  = McpResourceUri("http://example.com/foo")
+        assert(tmpl.extract(uri) == Absent)
+    }
+
+    "Template.extract: returns Absent when placeholder cannot match empty" in {
+        val tmpl = McpResourceUri.Template("file:///{path}")
+        val uri  = McpResourceUri("file:///")
+        assert(tmpl.extract(uri) == Absent)
+    }
+
+    "Template.extract: escapes literal regex metacharacters in the template" in {
+        val tmpl = McpResourceUri.Template("api+v2://{op}")
+        val uri  = McpResourceUri("api+v2://get/all")
+        assert(tmpl.extract(uri) == Present(Map("op" -> "get/all")))
+    }
+
 end McpResourceUriTest
