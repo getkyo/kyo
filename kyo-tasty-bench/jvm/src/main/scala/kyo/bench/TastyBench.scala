@@ -5,11 +5,8 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.jar.JarFile
 import kyo.*
-import kyo.internal.tasty.query.Classpath as InternalClasspath
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import kyo.internal.tasty.query.ClasspathTestHelpers
 import kyo.internal.tasty.query.FileSource
-import kyo.internal.tasty.query.JvmFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
@@ -132,23 +129,7 @@ object TastyBench:
     private def openClasspath(
         src: FileSource
     )(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
-        InternalClasspath.allocate.flatMap: rawCp =>
-            // Unsafe: §839 case 2 bench-harness boundary; close is unsafe-tier, embraced at Sync.defer site
-            Scope.ensure(Sync.defer { import AllowUnsafe.embrace.danger; InternalClasspath.close(rawCp) }).andThen:
-                ClasspathOrchestrator.openInto(Seq("fixtures"), strict = false, src, concurrency = 1, rawCp).map: _ =>
-                    val cp = Tasty.Classpath.wrap(rawCp)
-                    ClasspathTestHelpers.assignHomesForTest(rawCp)
-                    cp
-
-    /** Open a classpath that the caller is responsible for closing via InternalClasspath.close. No Scope finalizer registered. */
-    private def openClasspathManual(
-        src: FileSource
-    )(using Frame): (Tasty.Classpath, InternalClasspath) < (Sync & Async & Scope & Abort[TastyError]) =
-        InternalClasspath.allocate.flatMap: rawCp =>
-            ClasspathOrchestrator.openInto(Seq("fixtures"), strict = false, src, concurrency = 1, rawCp).map: _ =>
-                val cp = Tasty.Classpath.wrap(rawCp)
-                ClasspathTestHelpers.assignHomesForTest(rawCp)
-                (cp, rawCp)
+        ClasspathOrchestrator.init(Seq("fixtures"), Tasty.ErrorMode.SoftFail, src, concurrency = 1)
 
     /** Write a snapshot and return the snapshot path. */
     private def writeSnapshot(
@@ -156,7 +137,7 @@ object TastyBench:
         cacheSrc: MemoryFileSource
     )(using Frame): String < (Sync & Async & Scope & Abort[TastyError]) =
         openClasspath(src).flatMap: cp =>
-            SnapshotWriter.write(Tasty.Classpath.unwrap(cp), cacheDir, benchDigest, cacheSrc).map: _ =>
+            SnapshotWriter.write(cp, cacheDir, benchDigest, cacheSrc).map: _ =>
                 s"$cacheDir/${DigestComputer.toHexString(benchDigest)}.krfl"
 
     /** Run an effect from the bench main, blocking until completion. Panics on failure. */
@@ -192,8 +173,6 @@ object TastyBench:
 
     /** Recursively count the number of tree nodes that reference `targetName` via Ident, Select, or Apply. */
     private def countTreeRefs(tree: Tasty.Tree, targetName: String): Int =
-        // Unsafe: §839 case 2 bench-harness boundary; Name.asString is unsafe-tier, embraced inside bench-only helper
-        import AllowUnsafe.embrace.danger
         import Tasty.Name.asString
         tree match
             case Tasty.Tree.Ident(name, _) =>
@@ -207,42 +186,8 @@ object TastyBench:
             case Tasty.Tree.Block(stats, expr) =>
                 stats.map(countTreeRefs(_, targetName)).sum + countTreeRefs(expr, targetName)
             case Tasty.Tree.If(cond, thenp, elsep) =>
-                countTreeRefs(cond, targetName) + countTreeRefs(thenp, targetName) + countTreeRefs(elsep, targetName)
-            case Tasty.Tree.Match(selector, cases) =>
-                countTreeRefs(selector, targetName) + cases.map: c =>
-                    countTreeRefs(c.pattern, targetName) +
-                        c.guard.map(countTreeRefs(_, targetName)).getOrElse(0) +
-                        countTreeRefs(c.body, targetName)
-                .sum
-            case Tasty.Tree.Assign(lhs, rhs) =>
-                countTreeRefs(lhs, targetName) + countTreeRefs(rhs, targetName)
-            case Tasty.Tree.Typed(expr, _) =>
-                countTreeRefs(expr, targetName)
-            case Tasty.Tree.Inlined(call, bindings, body) =>
-                call.map(countTreeRefs(_, targetName)).getOrElse(0) +
-                    bindings.map(countTreeRefs(_, targetName)).sum +
-                    countTreeRefs(body, targetName)
-            case Tasty.Tree.Lambda(method, _) =>
-                countTreeRefs(method, targetName)
-            case Tasty.Tree.Try(expr, cases, finalizer) =>
-                countTreeRefs(expr, targetName) +
-                    cases.map(c => countTreeRefs(c.body, targetName)).sum +
-                    finalizer.map(countTreeRefs(_, targetName)).getOrElse(0)
-            case Tasty.Tree.While(cond, body) =>
-                countTreeRefs(cond, targetName) + countTreeRefs(body, targetName)
-            case Tasty.Tree.Throw(expr) =>
-                countTreeRefs(expr, targetName)
-            case Tasty.Tree.Return(expr, _) =>
-                expr.map(countTreeRefs(_, targetName)).getOrElse(0)
-            case Tasty.Tree.ValDef(_, _, rhs) =>
-                rhs.map(countTreeRefs(_, targetName)).getOrElse(0)
-            case Tasty.Tree.DefDef(_, paramss, _, rhs) =>
-                paramss.flatMap(_.map(countTreeRefs(_, targetName))).sum +
-                    rhs.map(countTreeRefs(_, targetName)).getOrElse(0)
-            case Tasty.Tree.ClassDef(_, template) =>
-                template.body.map(countTreeRefs(_, targetName)).sum
-            case Tasty.Tree.PackageDef(_, stats) =>
-                stats.map(countTreeRefs(_, targetName)).sum
+                countTreeRefs(cond, targetName) + countTreeRefs(thenp, targetName) +
+                    countTreeRefs(elsep, targetName)
             case _ =>
                 0
         end match
@@ -296,10 +241,7 @@ object TastyBench:
         bench("W3 warm-load snapshot cache hit (heap read)", warmupIter, measureIter):
             val _ = runSync:
                 Scope.run:
-                    InternalClasspath.allocate.flatMap: rawCp =>
-                        Scope.ensure(Sync.defer(InternalClasspath.close(rawCp))).andThen:
-                            SnapshotReader.read(snapshotPath, snapshotCacheSrc, rawCp).flatMap: _ =>
-                                rawCp.allTopLevelClasses.map(_.size)
+                    SnapshotReader.read(snapshotPath, snapshotCacheSrc).map(_.topLevelClasses.size)
 
         java.lang.System.out.println()
 
@@ -316,89 +258,88 @@ object TastyBench:
             "kyo.fixtures.BaseClass"
         )
 
-        // Open a warm classpath that stays live across W4, W5, W8. Caller closes it manually after benchmarks.
-        val (warmCp, warmRawCp): (Tasty.Classpath, InternalClasspath) =
+        // Open a warm classpath that stays live across W4, W5, W8, W9, W10.
+        val warmCp: Tasty.Classpath =
             runSync:
                 Scope.run:
-                    openClasspathManual(fixtureSrc)
+                    openClasspath(fixtureSrc)
 
-        try
-            bench("W4 per-FQN lookup warm cache", warmupIter, measureIter):
-                var hits = 0
-                for fqn <- fqnsToLookup do
-                    warmCp.findClass(fqn) match
-                        case Present(_) => hits += 1
-                        case Absent     => ()
-                end for
+        given Tasty.Classpath = warmCp
 
-            java.lang.System.out.println(s"  (${fqnsToLookup.size} lookups per run)")
-            java.lang.System.out.println()
+        bench("W4 per-FQN lookup warm cache", warmupIter, measureIter):
+            var hits = 0
+            for fqn <- fqnsToLookup do
+                warmCp.findClass(fqn) match
+                    case Present(_) => hits += 1
+                    case Absent     => ()
+            end for
 
-            // Workload 5: declarations enumeration on a class with declared members.
-            bench("W5 declarations enumeration (PlainClass)", warmupIter, measureIter):
-                val count = warmCp.findClass("kyo.fixtures.PlainClass") match
-                    case Present(sym) => sym.declarations.size
-                    case Absent       => 0
-                val _ = count
+        java.lang.System.out.println(s"  (${fqnsToLookup.size} lookups per run)")
+        java.lang.System.out.println()
 
-            java.lang.System.out.println()
+        // Workload 5: declarations enumeration on a class with declared members.
+        bench("W5 declarations enumeration (PlainClass)", warmupIter, measureIter):
+            val count = warmCp.findClass("kyo.fixtures.PlainClass") match
+                case Present(sym) => sym.declarations.size
+                case Absent       => 0
+            val _ = count
 
-            // Workload 8: plain iteration over all top-level classes and their declarations.
-            bench("W8 plain iteration (pure accessor for-comp)", warmupIter, measureIter):
-                val tops  = warmCp.topLevelClasses
-                var total = 0
-                for cls <- tops do
-                    val decls = cls.declarations
-                    total += decls.count(_.kind == Tasty.SymbolKind.Method)
-                    if cls.kind == Tasty.SymbolKind.Method then total += 1
-                end for
+        java.lang.System.out.println()
 
-            java.lang.System.out.println(s"  (pure for-comp over Symbol accessors, no effect threading)")
-            java.lang.System.out.println()
+        // Workload 8: plain iteration over all top-level classes and their declarations.
+        bench("W8 plain iteration (pure accessor for-comp)", warmupIter, measureIter):
+            val tops  = warmCp.topLevelClasses
+            var total = 0
+            for cls <- tops do
+                val decls = cls.declarations
+                total += decls.count(_.kind == Tasty.SymbolKind.Method)
+                if cls.kind == Tasty.SymbolKind.Method then total += 1
+            end for
 
-            // Workload 9: hover-shaped query (pure, sub-ms target).
-            // Walk topLevelClasses, find the first Method symbol, return name + scaladoc + kind string.
-            bench("W9 hover-shaped query (pure accessors)", warmupIter, measureIter):
-                val tops   = warmCp.topLevelClasses
-                var result = ""
-                var found  = false
-                for cls <- tops if !found do
-                    for sym <- cls.declarations if !found do
-                        if sym.kind == Tasty.SymbolKind.Method then
-                            val sig  = sym.name.asString
-                            val doc  = sym.scaladoc.getOrElse("")
-                            val kind = sym.kind.toString
-                            result = s"$sig $doc $kind"
-                            found = true
-                end for
-                val _ = result
+        java.lang.System.out.println(s"  (pure for-comp over Symbol accessors, no effect threading)")
+        java.lang.System.out.println()
 
-            java.lang.System.out.println(s"  (pure walk: topLevelClasses -> declarations -> name/scaladoc/kind)")
-            java.lang.System.out.println()
+        // Workload 9: hover-shaped query (pure, sub-ms target).
+        // Walk topLevelClasses, find the first Method symbol, return name + scaladoc + kind string.
+        bench("W9 hover-shaped query (pure accessors)", warmupIter, measureIter):
+            val tops   = warmCp.topLevelClasses
+            var result = ""
+            var found  = false
+            for cls <- tops if !found do
+                for sym <- cls.declarations if !found do
+                    if sym.kind == Tasty.SymbolKind.Method then
+                        val sig  = sym.name.asString
+                        val doc  = sym.scaladoc.getOrElse("")
+                        val kind = sym.kind.toString
+                        result = s"$sig $doc $kind"
+                        found = true
+            end for
+            val _ = result
 
-            // Workload 10: find-references-shaped query.
-            // For target name "apply", walk all Method symbols, decode each body, count tree nodes that
-            // reference that name via Apply/Select/Ident. Uses Kyo.foreach to iterate body decodes.
-            bench("W10 find-references-shaped (body decode + tree walk)", warmupIter, measureIter):
-                val targetName = "apply"
-                val total = runSync:
-                    val tops    = warmCp.topLevelClasses
-                    val methods = tops.flatMap(_.declarations.filter(_.kind == Tasty.SymbolKind.Method))
-                    val counts: Chunk[Int] < Sync =
-                        Kyo.foreach(methods): (sym: Tasty.Symbol) =>
-                            Abort.run[TastyError](sym.body.map((tree: Tasty.Tree) => countTreeRefs(tree, targetName)))
-                                .map:
-                                    case Result.Success(n) => n
-                                    case _                 => 0
-                    counts.map(_.foldLeft(0)(_ + _))
-                val _ = total
+        java.lang.System.out.println(s"  (pure walk: topLevelClasses -> declarations -> name/scaladoc/kind)")
+        java.lang.System.out.println()
 
-            java.lang.System.out.println(s"  (body decode + recursive Tree walk for name references)")
-            java.lang.System.out.println()
-            java.lang.System.out.println("=== done ===")
-        finally
-            InternalClasspath.close(warmRawCp)
-        end try
+        // Workload 10: find-references-shaped query.
+        // For target name "apply", walk all Method symbols, decode each body, count tree nodes that
+        // reference that name via Apply/Select/Ident. Uses Kyo.foreach to iterate body decodes.
+        bench("W10 find-references-shaped (body decode + tree walk)", warmupIter, measureIter):
+            val targetName = "apply"
+            val total = runSync:
+                val tops = warmCp.topLevelClasses
+                val methods: Chunk[Tasty.Symbol.Method] =
+                    tops.flatMap(_.declarations).collect:
+                        case m: Tasty.Symbol.Method => m
+                val counts: Chunk[Int] < Sync =
+                    Kyo.foreach(methods): (m: Tasty.Symbol.Method) =>
+                        Abort.run[TastyError](m.bodyTree).map:
+                            case Result.Success(Maybe.Present(tree)) => countTreeRefs(tree, targetName)
+                            case _                                   => 0
+                counts.map(_.foldLeft(0)(_ + _))
+            val _ = total
+
+        java.lang.System.out.println(s"  (body decode + recursive Tree walk for name references)")
+        java.lang.System.out.println()
+        java.lang.System.out.println("=== done ===")
     end main
 
 end TastyBench

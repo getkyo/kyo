@@ -23,7 +23,7 @@ object IdeHoverExample:
 
     /** Find the symbol at (file, line) across all top-level classes in the classpath.
       *
-      * Walks topLevelClasses -> declarations -> position in a plain for-comprehension. All accessor calls are pure; only openCached
+      * Walks topLevelClasses -> declarations -> position in a plain for-comprehension. All accessor calls are pure; only initCached
       * produces effects (Sync & Async & Scope & Abort[TastyError]).
       */
     def hover(
@@ -33,10 +33,11 @@ object IdeHoverExample:
         // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
         for
-            cp <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            cp <- Tasty.Classpath.initCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            given Classpath = cp
         yield
             // Pure walk: no flatMap, no Sync.defer, no effect threading on accessors.
-            // topLevelClasses, declarations, position, scaladoc, declaredType are all pure values.
+            // topLevelClasses, declarations, position, scaladoc are all pure values.
             val classes                  = cp.topLevelClasses
             var result: Maybe[HoverInfo] = Absent
             var i                        = 0
@@ -46,12 +47,12 @@ object IdeHoverExample:
                 var j     = 0
                 while j < decls.size && result.isEmpty do
                     val sym = decls(j)
-                    sym.position match
+                    sym.sourcePosition match
                         case Present(pos) if pos.sourceFile.contains(file) && pos.line == line =>
                             result = Present(HoverInfo(
                                 symbolName = sym.name.asString,
                                 kind = sym.kind,
-                                signature = s"${sym.name.asString}: ${sym.declaredType.show}",
+                                signature = symbolSignature(sym),
                                 doc = sym.scaladoc
                             ))
                         case _ =>
@@ -69,13 +70,15 @@ object IdeHoverExample:
         // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
         for
-            cp <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            cp <- Tasty.Classpath.initCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            given Classpath = cp
         yield cp.findClass(fqn) match
             case Absent => Absent
             case Present(cls) =>
-                Maybe.fromOption(cls.declarations.find(_.name.asString == member)) match
-                    case Absent     => Absent
-                    case Present(s) => Present(s"${s.name.asString}: ${s.declaredType.show}")
+                cls.declarations.find(_.name.asString == member) match
+                    case None    => Absent
+                    case Some(s) => Present(s"${s.name.asString}: ${symbolSignature(s)}")
+        end for
     end hoverByName
 
     /** "Find all sealed classes in this classpath" composed query. Pure filter over topLevelClasses. */
@@ -83,8 +86,25 @@ object IdeHoverExample:
         // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
         for
-            cp <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            cp <- Tasty.Classpath.initCached(Seq("."), cacheDir = ".kyo-tasty-cache")
         yield cp.topLevelClasses.filter(_.flags.contains(Tasty.Flag.Sealed))
     end findSealed
+
+    /** Produce a human-readable type signature for any symbol. */
+    private def symbolSignature(sym: Tasty.Symbol)(using cp: Tasty.Classpath): String =
+        import AllowUnsafe.embrace.danger
+        sym match
+            case m: Tasty.Symbol.Method =>
+                m.declaredType match
+                    case Maybe.Present(t) => t.show
+                    case Maybe.Absent     => m.name.asString
+            case v: Tasty.Symbol.Val =>
+                v.declaredType match
+                    case Maybe.Present(t) => t.show
+                    case Maybe.Absent     => v.name.asString
+            case other =>
+                other.name.asString
+        end match
+    end symbolSignature
 
 end IdeHoverExample

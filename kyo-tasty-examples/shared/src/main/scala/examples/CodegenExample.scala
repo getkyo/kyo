@@ -30,7 +30,7 @@ object CodegenExample:
         // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
         for
-            cp <- Tasty.Classpath.openCached(roots, cacheDir = ".kyo-tasty-cache")
+            cp <- Tasty.Classpath.initCached(roots, cacheDir = ".kyo-tasty-cache")
             given Classpath = cp
             facades         = cp.topLevelClasses.map(buildFacadeType)
             _ <- Kyo.foreach(facades)(f => Sync.defer(println(renderFacade(f))))
@@ -38,24 +38,33 @@ object CodegenExample:
         end for
     end run
 
-    private def buildFacadeType(sym: Tasty.Symbol): FacadeType =
+    private def buildFacadeType(sym: Tasty.Symbol)(using cp: Tasty.Classpath): FacadeType =
         // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
-        val parents = sym.parents
+        val parents = sym match
+            case cl: Tasty.Symbol.ClassLike => cl.parentTypes
+            case _                          => Chunk.empty[Tasty.Type]
         val decls   = sym.declarations
-        val methods = decls.filter(_.kind == Tasty.SymbolKind.Method).map(buildFacadeMethod)
+        val methods = decls.collect { case m: Tasty.Symbol.Method => buildFacadeMethod(m) }
         FacadeType(sym.name, sym.flags, parents, methods)
     end buildFacadeType
 
-    private def buildFacadeMethod(sym: Tasty.Symbol): FacadeMethod =
-        // Unsafe: Symbol.declaredType requires AllowUnsafe; embraced here at the example app boundary (§839 case 3).
+    private def buildFacadeMethod(m: Tasty.Symbol.Method)(using cp: Tasty.Classpath): FacadeMethod =
+        // Unsafe: Symbol.Method.declaredType requires AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
-        sym.declaredType match
-            case f: Tasty.Type.Function => FacadeMethod(sym.name, sym.flags, f.result, f.params)
-            case other                  => FacadeMethod(sym.name, sym.flags, other, Chunk.empty)
+        m.declaredType match
+            case Maybe.Present(t: Tasty.Type.Function) =>
+                FacadeMethod(m.name, m.flags, t.result, t.params)
+            case Maybe.Present(t: Tasty.Type.ContextFunction) =>
+                FacadeMethod(m.name, m.flags, t.result, t.params)
+            case Maybe.Present(other) =>
+                FacadeMethod(m.name, m.flags, other, Chunk.empty)
+            case Maybe.Absent =>
+                FacadeMethod(m.name, m.flags, Tasty.Type.Unknown, Chunk.empty)
+        end match
     end buildFacadeMethod
 
-    private def renderFacade(f: FacadeType): String =
+    private def renderFacade(f: FacadeType)(using cp: Tasty.Classpath): String =
         // Unsafe: Name.asString requires AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
         val methodLines = f.methods.map(m => s"  ${m.name.asString}: ${m.returnType.show}").mkString("\n")

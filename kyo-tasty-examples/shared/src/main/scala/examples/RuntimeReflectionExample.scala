@@ -18,12 +18,13 @@ object RuntimeReflectionExample:
         import AllowUnsafe.embrace.danger
         val fqn = Tasty.classFqn[A]
         for
-            cp  <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            cp <- Tasty.Classpath.initCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            given Classpath = cp
             cls <- requireFound(cp.findClass(fqn), fqn)
         yield
             val decls = cls.declarations
-            val vals  = decls.filter(_.kind == Tasty.SymbolKind.Val)
-            vals.map(f => (f.name.asString, f.declaredType))
+            val vals  = decls.collect { case v: Tasty.Symbol.Val => v }
+            vals.map(f => (f.name.asString, f.declaredType.getOrElse(Tasty.Type.Unknown)))
         end for
     end fieldsOf
 
@@ -33,7 +34,8 @@ object RuntimeReflectionExample:
         import AllowUnsafe.embrace.danger
         val fqn = Tasty.classFqn[A]
         for
-            cp  <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            cp <- Tasty.Classpath.initCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            given Classpath = cp
             cls <- requireFound(cp.findClass(fqn), fqn)
         yield
             val parents = cls.parents

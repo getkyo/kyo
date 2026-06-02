@@ -147,7 +147,7 @@ object ColdLoadFullBench:
         val times = bench("W11-full cold-load (full classpath)", warmupIter, measureIter):
             val _ = runSync:
                 Scope.run:
-                    Tasty.Classpath.open(allRoots).map(_.topLevelClasses.size)
+                    Tasty.Classpath.init(allRoots).map(_.topLevelClasses.size)
 
         java.lang.System.out.println()
 
@@ -157,7 +157,7 @@ object ColdLoadFullBench:
         val snapshotTimes = bench("W11b-full cold-load + snapshot (full classpath)", warmupIter, measureIter):
             val _ = runSync:
                 Scope.run:
-                    Tasty.Classpath.openCached(allRoots, tmpDir).map(_.topLevelClasses.size)
+                    Tasty.Classpath.initCached(allRoots, tmpDir).map(_.topLevelClasses.size)
 
         java.lang.System.out.println()
         java.lang.System.out.println("=== Summary ===")

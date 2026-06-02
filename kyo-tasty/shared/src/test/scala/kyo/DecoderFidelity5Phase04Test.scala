@@ -18,15 +18,15 @@ import scala.collection.mutable
   * F-W2-13 : copyWithErrors/copyWithPreErrors stale scaladoc: DOCUMENTED-CONTRACT; pinned P04.3
   * F-W2-15 : findClassByBinary nested-class canonicalization: FIXED; pinned P04.4
   * F-W2-16 : derives CanEqual semantics: DOCUMENTED-CONTRACT; pinned P04.5
-  * F-W2-17 : findClass("") vs requireClass("") consistency: DOCUMENTED-CONTRACT; pinned P04.6
+  * F-W2-17 : findClass("") vs requireClass("") consistency: FIXED (InvalidFqn on empty input); pinned P04.6
   * F-W2-18 : section name 8-byte zero-pad check: FIXED (CI-style validation); pinned P04.7
   * F-W2-19 : SymbolId(MIN_INT) sentinel scaladoc: DOCUMENTED-CONTRACT; pinned P04.8
   * F-W2-20 : 8 sequential SnapshotReader.read calls on in-memory source: TESTED; pinned P04.9
-  * F-W2-21 : SnapshotReader.read digest non-verification: DOCUMENTED-CONTRACT; pinned P04.10
+  * F-W2-21 : SnapshotReader.read digest verification: FIXED (optional expectedDigest param + DigestMismatch); pinned P04.10
   * F-W2-22 : cp.symbol(rootSymbolId) sentinel on empty cp: DOCUMENTED-CONTRACT; pinned P04.11
   * F-W2-23 : SymbolBody.toString identity-hash fix: FIXED; pinned P04.12
   * F-W2-24 : findClassByName O(1) via nameIndex: FIXED; pinned P04.13
-  * F-W2-25 : evictOlderThan O(N) cost documented: DOCUMENTED-CONTRACT; pinned P04.14
+  * F-W2-25 : evictOlderThan sort+early-exit optimization: FIXED; pinned P04.14
   * F-W2-26 : stale SnapshotFormat home comment removed: FIXED; pinned P04.15
   * F-W2-32 : evictOlderThan units clarification: DOCUMENTED-CONTRACT; pinned P04.16
   */
@@ -228,10 +228,11 @@ class DecoderFidelity5Phase04Test extends Test:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.6: F-W2-17 -- findClass("") returns Absent; requireClass("") raises NotFound("").
+    // P04.6: F-W2-17 fix -- findClass("") returns Absent; requireClass("") raises InvalidFqn("", ...) not NotFound.
     //
-    // Pins the documented consistency contract.
-    "P04.6 F-W2-17: findClass(empty) returns Absent; requireClass(empty) raises NotFound(empty)" in run {
+    // An empty FQN is a caller programming error: raise InvalidFqn (distinct from a genuine not-found result) so
+    // callers can distinguish "I asked for the wrong thing" from "the classpath does not contain this class".
+    "P04.6 F-W2-17: findClass(empty) returns Absent; requireClass(empty) raises InvalidFqn(empty)" in run {
         Abort.run[TastyError]:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -241,13 +242,16 @@ class DecoderFidelity5Phase04Test extends Test:
                     assert(findResult == Maybe.Absent, s"findClass(\"\") must return Absent; got $findResult")
                     Abort.run[TastyError](cp.requireClass("")).map: reqResult =>
                         reqResult match
-                            case Result.Failure(TastyError.NotFound(fqn)) =>
-                                assert(fqn == "", s"NotFound must carry empty fqn; got '$fqn'")
+                            case Result.Failure(TastyError.InvalidFqn(fqn, reason)) =>
+                                assert(fqn == "", s"InvalidFqn must carry empty fqn; got '$fqn'")
+                                assert(reason.contains("non-empty"), s"reason must mention 'non-empty'; got '$reason'")
                                 succeed
+                            case Result.Failure(TastyError.NotFound("")) =>
+                                fail("requireClass(\"\") should raise InvalidFqn not NotFound; the fix was not applied")
                             case Result.Success(_) =>
-                                fail("requireClass(\"\") must fail with NotFound, not succeed")
+                                fail("requireClass(\"\") must fail, not succeed")
                             case other =>
-                                fail(s"Expected NotFound but got: $other")
+                                fail(s"Expected InvalidFqn but got: $other")
         .map:
             case Result.Success(r) => r
             case Result.Failure(e) => fail(s"Unexpected error: $e")
@@ -381,8 +385,8 @@ class DecoderFidelity5Phase04Test extends Test:
         val body = Tasty.SymbolBody(
             bodyStart = 10,
             bodyEnd = 20,
-            sectionBytes = new Array[Byte](42),
-            names = new Array[Tasty.Name](3),
+            sectionBytes = Span.fromUnsafe(new Array[Byte](42)),
+            names = Span.fromUnsafe(new Array[Tasty.Name](3)),
             sectionOffset = 0,
             addrMap = scala.collection.immutable.IntMap.empty
         )
@@ -474,6 +478,47 @@ class DecoderFidelity5Phase04Test extends Test:
                     // Snapshot.evictOlderThan Duration overload; evictOlderThanWithSource has no Duration version
                     // so we verify the toMillis conversion inline.
                     Kyo.unit.map(_ => succeed)
+        .map:
+            case Result.Success(r) => r
+            case Result.Failure(e) => fail(s"Unexpected error: $e")
+            case Result.Panic(t)   => throw t
+    }
+
+    // P04.17: SymbolBody structural equality (Phase 5.04b Span migration regression guard).
+    //
+    // Pre-fix: SymbolBody.equals used default case-class equality, which compared sectionBytes and
+    // names by Array reference identity. Loading the same fixture twice produced two distinct
+    // Array instances, so body1 == body2 returned false even though the content was identical.
+    //
+    // Post-fix: SymbolBody overrides equals/hashCode using Span.is (structural) for sectionBytes
+    // and names. Two SymbolBody values built from the same bytes at the same offsets must compare equal.
+    "P04.17 SymbolBody structural equality: two loads of the same fixture produce equal bodies" in run {
+        Abort.run[TastyError]:
+            val src = MemSrc()
+            src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
+            Scope.run:
+                ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).flatMap: cp1 =>
+                    ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp2 =>
+                        val bodies1 = cp1.allClasses.toSeq.flatMap(c => c.body.toChunk.toSeq)
+                        val bodies2 = cp2.allClasses.toSeq.flatMap(c => c.body.toChunk.toSeq)
+                        assert(
+                            bodies1.nonEmpty,
+                            "Expected at least one SymbolBody from PlainClass.tasty fixture"
+                        )
+                        assert(
+                            bodies1.length == bodies2.length,
+                            s"Body count mismatch: cp1=${bodies1.length} cp2=${bodies2.length}"
+                        )
+                        bodies1.zip(bodies2).foreach: (b1, b2) =>
+                            assert(
+                                b1.equals(b2),
+                                s"SymbolBody equality failed (Span migration regression): b1=$b1 b2=$b2"
+                            )
+                            assert(
+                                b1.hashCode == b2.hashCode,
+                                s"SymbolBody hashCode mismatch: ${b1.hashCode} != ${b2.hashCode}"
+                            )
+                        succeed
         .map:
             case Result.Success(r) => r
             case Result.Failure(e) => fail(s"Unexpected error: $e")

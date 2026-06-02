@@ -977,9 +977,12 @@ object Tasty:
       * @param bodyEnd
       *   Absolute byte offset into `sectionBytes` where this symbol's body payload ends.
       * @param sectionBytes
-      *   The raw AST section bytes for this file. Shared (not copied) across all symbols from the same file.
+      *   The raw AST section bytes for this file. Shared (not copied) across all symbols from the same file. Stored as Span[Byte] for
+      *   structural equality and zero-overhead immutable-view semantics (no boxing; Span[Byte] is opaque over Array[Byte]).
       * @param names
-      *   The name table for this file, as decoded by NameUnpickler. Shared across all symbols from the same file.
+      *   The name table for this file, as decoded by NameUnpickler. Shared across all symbols from the same file. Stored as Span[Name]
+      *   for structural equality (default case-class equality used reference identity on Array, which made two loads of the same file
+      *   compare unequal).
       * @param sectionOffset
       *   Absolute byte offset where the AST section starts in the original TASTy file. Used to convert section-relative addrs to absolute.
       * @param addrMap
@@ -988,11 +991,57 @@ object Tasty:
     final case class SymbolBody(
         bodyStart: Int,
         bodyEnd: Int,
-        sectionBytes: Array[Byte],
-        names: Array[Name],
+        sectionBytes: Span[Byte],
+        names: Span[Name],
         sectionOffset: Int,
         addrMap: IntMap[SymbolId]
     ):
+        override def equals(other: Any): Boolean = other match
+            case that: SymbolBody =>
+                bodyStart == that.bodyStart &&
+                bodyEnd == that.bodyEnd &&
+                sectionOffset == that.sectionOffset &&
+                addrMap == that.addrMap &&
+                sectionBytes.is(that.sectionBytes) &&
+                namesEqual(names, that.names)
+            case _ => false
+
+        // Compare two Span[Name] structurally by decoded string content.
+        // Name is opaque over Interner.Entry which uses reference equality; cross-classpath
+        // comparisons require string-level comparison via Name.asString.
+        private def namesEqual(a: Span[Name], b: Span[Name]): Boolean =
+            import AllowUnsafe.embrace.danger
+            import Name.asString
+            val len = a.size
+            if len != b.size then false
+            else
+                var i  = 0
+                var ok = true
+                while i < len && ok do
+                    if a(i).asString != b(i).asString then ok = false
+                    i += 1
+                ok
+            end if
+        end namesEqual
+
+        override def hashCode(): Int =
+            import AllowUnsafe.embrace.danger
+            import Name.asString
+            var h = 1
+            h = 31 * h + bodyStart
+            h = 31 * h + bodyEnd
+            h = 31 * h + sectionOffset
+            h = 31 * h + addrMap.hashCode
+            h = 31 * h + sectionBytes.hash
+            // Hash names by string content for cross-classpath consistency.
+            val namesLen = names.size
+            var i        = 0
+            while i < namesLen do
+                h = 31 * h + names(i).asString.hashCode
+                i += 1
+            h
+        end hashCode
+
         /** Render this SymbolBody without leaking array identity hashes.
           *
           * F-W2-23 fix: the default case-class toString prints `sectionBytes` and `names` as `[B@<hash>` and
@@ -1001,8 +1050,8 @@ object Tasty:
           * debug logs contain actionable information.
           */
         override def toString: String =
-            s"SymbolBody(bodyStart=$bodyStart, bodyEnd=$bodyEnd, sectionBytes=len=${sectionBytes.length}, " +
-                s"names=[${names.length} entries], sectionOffset=$sectionOffset, addrMap=${addrMap.size} entries)"
+            s"SymbolBody(bodyStart=$bodyStart, bodyEnd=$bodyEnd, sectionBytes=len=${sectionBytes.size}, " +
+                s"names=[${names.size} entries], sectionOffset=$sectionOffset, addrMap=${addrMap.size} entries)"
     end SymbolBody
 
     // ── Symbol ──────────────────────────────────────────────────────────────
@@ -2355,48 +2404,64 @@ object Tasty:
 
         // ── require* throwing variants (INV-010: sole new effect-row additions in this phase) ──
 
-        /** Require a class by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a Class.
+        /** Require a class by FQN; fails with `TastyError.InvalidFqn` when `fqn` is empty, or `TastyError.NotFound` when absent.
           *
-          * Empty-string behavior (F-W2-17): `requireClass("")` raises `TastyError.NotFound("")` because `findClass("")` returns `Absent`
-          * (no symbol is registered under the empty key). The error carries an empty-string FQN, which is internally consistent but may look
-          * unusual. If an empty FQN indicates a caller-side programming error, validate the input before calling this method.
+          * Empty-string behavior (F-W2-17 fix): an empty `fqn` is a caller-side programming error. Rather than returning
+          * `TastyError.NotFound("")` (which looks like a normal lookup miss), this method now raises
+          * `TastyError.InvalidFqn("", "fqn must be non-empty")` so the caller can distinguish a bad input from a genuine
+          * not-found result.
           */
         def requireClass(fqn: String)(using Frame): Symbol.Class < Abort[TastyError] =
-            findClass(fqn) match
-                case Maybe.Present(c) => c
-                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+            if fqn.isEmpty then Abort.fail(TastyError.InvalidFqn(fqn, "fqn must be non-empty"))
+            else
+                findClass(fqn) match
+                    case Maybe.Present(c) => c
+                    case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
-        /** Require a trait by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a Trait. */
+        /** Require a trait by FQN; fails with `TastyError.InvalidFqn` when `fqn` is empty, or `TastyError.NotFound` when absent. */
         def requireTrait(fqn: String)(using Frame): Symbol.Trait < Abort[TastyError] =
-            findTrait(fqn) match
-                case Maybe.Present(t) => t
-                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+            if fqn.isEmpty then Abort.fail(TastyError.InvalidFqn(fqn, "fqn must be non-empty"))
+            else
+                findTrait(fqn) match
+                    case Maybe.Present(t) => t
+                    case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
-        /** Require an object by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not an Object. */
+        /** Require an object by FQN; fails with `TastyError.InvalidFqn` when `fqn` is empty, or `TastyError.NotFound` when absent. */
         def requireObject(fqn: String)(using Frame): Symbol.Object < Abort[TastyError] =
-            findObject(fqn) match
-                case Maybe.Present(o) => o
-                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+            if fqn.isEmpty then Abort.fail(TastyError.InvalidFqn(fqn, "fqn must be non-empty"))
+            else
+                findObject(fqn) match
+                    case Maybe.Present(o) => o
+                    case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
-        /** Require a class-like by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a ClassLike. */
+        /** Require a class-like by FQN; fails with `TastyError.InvalidFqn` when `fqn` is empty, or `TastyError.NotFound` when absent. */
         def requireClassLike(fqn: String)(using Frame): Symbol.ClassLike < Abort[TastyError] =
-            findClassLike(fqn) match
-                case Maybe.Present(c) => c
-                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+            if fqn.isEmpty then Abort.fail(TastyError.InvalidFqn(fqn, "fqn must be non-empty"))
+            else
+                findClassLike(fqn) match
+                    case Maybe.Present(c) => c
+                    case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
-        /** Require a package by FQN; fails with `TastyError.NotFound` when absent or when the symbol is not a Package. */
+        /** Require a package by FQN; fails with `TastyError.InvalidFqn` when `fqn` is empty, or `TastyError.NotFound` when absent. */
         def requirePackage(fqn: String)(using Frame): Symbol.Package < Abort[TastyError] =
-            findPackage(fqn) match
-                case Maybe.Present(p) => p
-                case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+            if fqn.isEmpty then Abort.fail(TastyError.InvalidFqn(fqn, "fqn must be non-empty"))
+            else
+                findPackage(fqn) match
+                    case Maybe.Present(p) => p
+                    case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
-        /** Require a JPMS module descriptor by name; fails with `TastyError.NotFound` when absent. */
+        /** Require a JPMS module descriptor by name; fails with `TastyError.InvalidFqn` when `name` is empty, or `TastyError.NotFound`
+          * when absent.
+          */
         def requireModule(name: String)(using Frame): ModuleDescriptor < Abort[TastyError] =
-            findModule(name) match
-                case Maybe.Present(m) => m
-                case Maybe.Absent     => Abort.fail(TastyError.NotFound(name))
+            if name.isEmpty then Abort.fail(TastyError.InvalidFqn(name, "fqn must be non-empty"))
+            else
+                findModule(name) match
+                    case Maybe.Present(m) => m
+                    case Maybe.Absent     => Abort.fail(TastyError.NotFound(name))
 
-        /** Require any symbol by fully-qualified dotted name; fails with `TastyError.SymbolNotFound` when absent.
+        /** Require any symbol by fully-qualified dotted name; fails with `TastyError.InvalidFqn` when `fqn` is empty, or
+          * `TastyError.SymbolNotFound` when absent.
           *
           * This accessor replaces the accidental `findSymbol(fqn).get` pattern that would throw a `NoSuchElementException` at runtime.
           * Unlike `requireClass` / `requireTrait` / `requireObject`, this method does not narrow the kind: any registered symbol satisfies
@@ -2405,9 +2470,11 @@ object Tasty:
           * Raises `TastyError.SymbolNotFound(fqn)` when the FQN is not present in `fqnIndex`.
           */
         def requireSymbol(fqn: String)(using Frame): Symbol < Abort[TastyError] =
-            findSymbol(fqn) match
-                case Maybe.Present(s) => s
-                case Maybe.Absent     => Abort.fail(TastyError.SymbolNotFound(fqn))
+            if fqn.isEmpty then Abort.fail(TastyError.InvalidFqn(fqn, "fqn must be non-empty"))
+            else
+                findSymbol(fqn) match
+                    case Maybe.Present(s) => s
+                    case Maybe.Absent     => Abort.fail(TastyError.SymbolNotFound(fqn))
 
         /** Return all FQN collisions recorded during classpath initialization.
           *
@@ -2990,9 +3057,9 @@ object Tasty:
           *
           * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
           *
-          * Performance (F-W2-25): this is a maintenance operation, not a hot path. Each call lists all `.krfl` files in `cacheDir`
-          * and calls `stat` on each one. On a CI host with many snapshots this is O(N) syscalls per call. If the call site is on a
-          * hot path, rate-limit or schedule it externally.
+          * Performance (F-W2-25 fix): stats all `.krfl` files, sorts them by mtime ascending (oldest first), then deletes in order and
+          * stops at the first file whose age is within `maxAgeMs`. When most files are fresh this early-exit avoids unnecessary delete
+          * attempts on files that are clearly within the retention window.
           *
           * Units (F-W2-32): `maxAgeMs` is in *milliseconds*. To delete files older than 1 hour pass `3_600_000L`. For convenience
           * the `evictOlderThan(cacheDir, d: Duration)` overload accepts a `Duration` directly.
@@ -3004,17 +3071,7 @@ object Tasty:
           */
         def evictOlderThan(cacheDir: String, maxAgeMs: Long)(using Frame): Unit < (Sync & Abort[TastyError]) =
             val source = PlatformFileSource.get
-            source.list(cacheDir, ".krfl").flatMap: files =>
-                Kyo.foreach(files): path =>
-                    source.stat(path).flatMap: st =>
-                        val now = java.lang.System.currentTimeMillis()
-                        if now - st.mtimeMs > maxAgeMs then
-                            // Try to delete; ignore errors (concurrent writers may already have replaced the file)
-                            Abort.run[TastyError](deleteFile(source, path)).andThen(Kyo.unit)
-                        else
-                            Kyo.unit
-                        end if
-                .andThen(Kyo.unit)
+            evictOlderThanWithSource(cacheDir, maxAgeMs, source)
         end evictOlderThan
 
         /** Delete snapshot files in `cacheDir` whose modification time is older than `d`.
@@ -3029,22 +3086,31 @@ object Tasty:
         def evictOlderThan(cacheDir: String, d: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
             evictOlderThan(cacheDir, d.toMillis)
 
-        /** Internal overload that accepts a custom FileSource for testing. */
+        /** Internal overload that accepts a custom FileSource for testing.
+          *
+          * F-W2-25 fix: stats all files, sorts by mtime ascending (oldest first), deletes until the first non-stale entry, then stops.
+          * This avoids unnecessary delete calls for files within the retention window and is O(N) stat syscalls + O(N log N) sort.
+          */
         private[kyo] def evictOlderThanWithSource(
             cacheDir: String,
             maxAgeMs: Long,
             source: kyo.internal.tasty.query.FileSource
         )(using Frame): Unit < (Sync & Abort[TastyError]) =
             source.list(cacheDir, ".krfl").flatMap: files =>
-                Kyo.foreach(files): path =>
-                    source.stat(path).flatMap: st =>
-                        val now = java.lang.System.currentTimeMillis()
-                        if now - st.mtimeMs > maxAgeMs then
+                // Collect (path, mtime) for each file that can be statted; skip files with stat errors.
+                Kyo.collect(files): path =>
+                    Abort.run[TastyError](source.stat(path)).map:
+                        case Result.Success(st) => Maybe((path, st.mtimeMs))
+                        case _                  => Maybe.Absent
+                .flatMap: pairs =>
+                    // Sort by mtime ascending so oldest files come first. Convert to Seq for sortBy.
+                    val now    = java.lang.System.currentTimeMillis()
+                    val sorted = pairs.toSeq.sortBy(_._2)
+                    // Delete in order; stop at the first non-stale file (early exit).
+                    Kyo.foreachDiscard(sorted.takeWhile { case (_, mtimeMs) => now - mtimeMs > maxAgeMs }):
+                        case (path, _) =>
+                            // Ignore errors: concurrent writers may have already replaced or removed the file.
                             Abort.run[TastyError](deleteFile(source, path)).andThen(Kyo.unit)
-                        else
-                            Kyo.unit
-                        end if
-                .andThen(Kyo.unit)
         end evictOlderThanWithSource
 
         private def deleteFile(

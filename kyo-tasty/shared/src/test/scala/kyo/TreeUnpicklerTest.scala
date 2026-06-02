@@ -65,8 +65,8 @@ class TreeUnpicklerTest extends Test:
                 Maybe(Tasty.SymbolBody(
                     bodyStart = bodyStart,
                     bodyEnd = bodyEnd,
-                    sectionBytes = pass1.sectionBytes,
-                    names = pass1.names,
+                    sectionBytes = Span.fromUnsafe(pass1.sectionBytes),
+                    names = Span.fromUnsafe(pass1.names),
                     sectionOffset = pass1.sectionOffset,
                     addrMap = scala.collection.immutable.IntMap.empty
                 ))

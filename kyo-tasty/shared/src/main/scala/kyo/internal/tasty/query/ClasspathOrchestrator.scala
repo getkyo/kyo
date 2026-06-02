@@ -1285,8 +1285,8 @@ object ClasspathOrchestrator:
                                 descs(idx).body = Maybe(Tasty.SymbolBody(
                                     bodyStart = bodyStart,
                                     bodyEnd = bodyEnd,
-                                    sectionBytes = fr.sectionBytes,
-                                    names = fr.fileNames,
+                                    sectionBytes = Span.fromUnsafe(fr.sectionBytes),
+                                    names = Span.fromUnsafe(fr.fileNames),
                                     sectionOffset = fr.sectionOffset,
                                     addrMap = scala.collection.immutable.IntMap.empty
                                 ))

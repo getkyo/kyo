@@ -120,4 +120,24 @@ class TastyErrorTest extends Test:
             end match
     }
 
+    // Test 5: requireClass("") raises InvalidFqn, not NotFound
+    //
+    // Given: an empty classpath.
+    // When:  requireClass("") is called.
+    // Then:  Result.Failure(TastyError.InvalidFqn("", "fqn must be non-empty")).
+    //        This distinguishes a caller programming error (empty input) from a genuine not-found result.
+    // Pins:  F-W2-17.
+    "requireClass empty string raises InvalidFqn not NotFound" in run {
+        Tasty.Classpath.fromPickles(Seq.empty).flatMap: cp =>
+            Abort.run[TastyError](cp.requireClass("")).map: result =>
+                result match
+                    case Result.Failure(TastyError.InvalidFqn("", r)) =>
+                        assert(r.contains("non-empty"), s"Expected reason containing 'non-empty' but got: $r")
+                        succeed
+                    case Result.Failure(TastyError.NotFound("")) =>
+                        fail("requireClass(\"\") should raise InvalidFqn, not NotFound")
+                    case other =>
+                        fail(s"Expected InvalidFqn but got: $other")
+    }
+
 end TastyErrorTest

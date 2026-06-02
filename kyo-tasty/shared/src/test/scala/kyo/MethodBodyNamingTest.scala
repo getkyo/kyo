@@ -22,8 +22,8 @@ class MethodBodyNamingTest extends Test:
         val bodyRecord = Tasty.SymbolBody(
             bodyStart = 0,
             bodyEnd = 0,
-            sectionBytes = Array.empty,
-            names = Array.empty,
+            sectionBytes = Span.empty[Byte],
+            names = Span.empty[Tasty.Name],
             sectionOffset = 0,
             addrMap = IntMap.empty
         )

@@ -78,8 +78,10 @@ object TreeUnpickler:
         sym: Tasty.Symbol,
         symbolLookup: Int => Tasty.Symbol
     )(using AllowUnsafe): Tasty.Tree =
-        val names = body.names
-        val bytes = body.sectionBytes
+        // Unsafe: toArrayUnsafe returns the backing array of the Span without copying.
+        // This is safe here because the array is read-only within this decode operation.
+        val names = body.names.toArrayUnsafe
+        val bytes = body.sectionBytes.toArrayUnsafe
         if bytes == null || bytes.isEmpty then
             throw new DecodeException("body bytes not available (snapshot-loaded symbol)", 0L)
         end if

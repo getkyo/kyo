@@ -88,7 +88,7 @@ object ColdLoadProfile:
         val times = bench("W11 cold-load kyo-bench (enumerate top-level classes)", warmupIter, measureIter):
             val _ = runSync:
                 Scope.run:
-                    Tasty.Classpath.open(Seq(root)).map(_.topLevelClasses.size)
+                    Tasty.Classpath.init(Seq(root)).map(_.topLevelClasses.size)
 
         java.lang.System.out.println()
 
@@ -97,7 +97,7 @@ object ColdLoadProfile:
         val snapshotTimes = bench("W11b cold-load kyo-bench + snapshot write", warmupIter, measureIter):
             val _ = runSync:
                 Scope.run:
-                    Tasty.Classpath.openCached(Seq(root), tmpDir).map(_.topLevelClasses.size)
+                    Tasty.Classpath.initCached(Seq(root), tmpDir).map(_.topLevelClasses.size)
 
         java.lang.System.out.println()
         java.lang.System.out.println("=== Summary ===")

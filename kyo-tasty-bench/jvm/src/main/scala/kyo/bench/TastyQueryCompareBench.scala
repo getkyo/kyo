@@ -138,7 +138,7 @@ object TastyQueryCompareBench:
             val kyoStats = bench(s"kyo-tasty ${size.label}", warmupIter, measureIter):
                 val _ = runSync:
                     Scope.run:
-                        Tasty.Classpath.open(rootStrings).map(_.topLevelClasses.size)
+                        Tasty.Classpath.init(rootStrings).map(_.topLevelClasses.size)
 
             java.lang.System.out.println(s"  [tasty-query]")
             var lastCount    = 0

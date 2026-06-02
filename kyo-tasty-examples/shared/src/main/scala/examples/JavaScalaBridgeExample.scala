@@ -22,7 +22,8 @@ object JavaScalaBridgeExample:
         // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
         for
-            cp <- Tasty.Classpath.openCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            cp <- Tasty.Classpath.initCached(Seq("."), cacheDir = ".kyo-tasty-cache")
+            given Classpath = cp
         yield cp.findClass(fqn) match
             case Absent => Absent
             case Present(cls) =>
@@ -34,6 +35,7 @@ object JavaScalaBridgeExample:
                     parents = parents.map(_.show),
                     members = decls.map(_.name.asString)
                 ))
+        end for
     end summarize
 
     /** Compare a Java class and its Scala counterpart side-by-side. */

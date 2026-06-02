@@ -103,4 +103,25 @@ enum TastyError derives CanEqual:
       * `position` is a human-readable label for the decode position (e.g. "type", "tree", "modifier").
       */
     case UnknownTagInPosition(tag: Int, position: String)
+
+    /** The caller supplied a syntactically invalid fully-qualified name to a `requireX` method.
+      *
+      * Raised by `Classpath.requireClass`, `requireTrait`, `requireObject`, `requireClassLike`, `requirePackage`, `requireModule`, and
+      * `requireSymbol` when the supplied `fqn` argument fails a pre-lookup validation check. Currently the only validation is that `fqn`
+      * must be non-empty: an empty string is a caller-side programming error rather than an honest not-found result, and deserves a
+      * distinct error so the caller can distinguish "I asked for the wrong thing" from "the classpath does not contain this class".
+      *
+      * `fqn` is the offending input. `reason` is a human-readable explanation (e.g. "fqn must be non-empty").
+      */
+    case InvalidFqn(fqn: String, reason: String)
+
+    /** The embedded `inputDigest` in a KRFL snapshot file does not match the caller-supplied expected digest.
+      *
+      * Raised by `SnapshotReader.read` (and `readMapped`) when `verifyDigest = true` and the 8-byte FNV-1a hash stored at bytes 16-23 in
+      * the snapshot header does not equal `expected`. This signals that the snapshot was written for a different set of inputs than the ones
+      * the caller presented (stale cache, hash collision, or corrupt file).
+      *
+      * `expected` is the hex-encoded digest the caller expected. `actual` is the hex-encoded digest read from the snapshot.
+      */
+    case DigestMismatch(expected: String, actual: String)
 end TastyError

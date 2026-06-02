@@ -148,7 +148,9 @@ object SnapshotWriter:
                 // first slice. Using bodyEnd > bodyStart is the correct "has body" sentinel.
                 case kyo.Maybe.Present(b) if b.bodyEnd > b.bodyStart && b.sectionBytes.nonEmpty =>
                     val sliceLen = b.bodyEnd - b.bodyStart
-                    bodyBytesBuffer.write(b.sectionBytes, b.bodyStart, sliceLen)
+                    // Unsafe: toArrayUnsafe returns the backing array without copying; safe here because
+                    // we only read the bytes within [bodyStart, bodyEnd).
+                    bodyBytesBuffer.write(b.sectionBytes.toArrayUnsafe, b.bodyStart, sliceLen)
                     symBodyStarts(idx) = runningOffset
                     symBodyEnds(idx) = runningOffset + sliceLen
                     runningOffset += sliceLen
@@ -515,6 +517,8 @@ object SnapshotWriter:
                 case TastyError.NotImplemented(feature)                => writeStr(feature)
                 case TastyError.UnsupportedPlatform(feature)           => writeStr(feature)
                 case TastyError.UnknownTagInPosition(tag, pos)         => writeInt(tag); writeStr(pos)
+                case TastyError.InvalidFqn(fqn, reason)                => writeStr(fqn); writeStr(reason)
+                case TastyError.DigestMismatch(expected, actual)       => writeStr(expected); writeStr(actual)
             end match
         end for
         baos.toByteArray

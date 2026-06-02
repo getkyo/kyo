@@ -138,6 +138,8 @@ class TastyErrorMaybeTest extends Test:
                 case TastyError.NotImplemented(feature)        => writeStr(feature)
                 case TastyError.UnsupportedPlatform(feature)   => writeStr(feature)
                 case TastyError.UnknownTagInPosition(t, p)     => writeInt(t); writeStr(p)
+                case TastyError.InvalidFqn(fqn, reason)        => writeStr(fqn); writeStr(reason)
+                case TastyError.DigestMismatch(exp, act)       => writeStr(exp); writeStr(act)
             end match
         end for
         baos.toByteArray
@@ -267,8 +269,8 @@ class TastyErrorMaybeTest extends Test:
         val body = Tasty.SymbolBody(
             bodyStart = 0,
             bodyEnd = sectionBytes.length,
-            sectionBytes = sectionBytes,
-            names = Array.empty[Tasty.Name],
+            sectionBytes = Span.fromUnsafe(sectionBytes),
+            names = Span.empty[Tasty.Name],
             sectionOffset = 0,
             addrMap = IntMap.empty[SymbolId]
         )

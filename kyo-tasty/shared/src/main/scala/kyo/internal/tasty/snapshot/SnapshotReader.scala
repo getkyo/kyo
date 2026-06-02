@@ -3,6 +3,7 @@ package kyo.internal.tasty.snapshot
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolId
@@ -21,24 +22,39 @@ object SnapshotReader:
 
     /** Read a snapshot from `path` and return a fully-constructed `Tasty.Classpath`.
       *
-      * Digest non-verification (F-W2-21): this method is a low-level decode primitive. It reads the bytes at `path` and decodes
-      * whatever is there, without checking whether the snapshot's embedded `inputDigest` field matches any expected value. Callers
-      * who need digest-validated loading should use `Classpath.initCached`, which selects the snapshot file by digest (the digest
-      * is the filename component) and therefore guarantees correspondence without an in-file check. Direct callers of `read` that
-      * want additional assurance should read the embedded digest from the header (bytes at offset 16, 8 bytes little-endian) and
-      * compare it to their own computed digest before trusting the returned Classpath.
+      * Digest verification (F-W2-21 fix): when `expectedDigest` is provided, the 8-byte FNV-1a hash embedded at bytes 16-23 of the
+      * snapshot header is compared against the expected value. A mismatch raises `TastyError.DigestMismatch`. Pass `None` (the default) to
+      * skip this check (e.g., for trusted pre-warmed caches). `Classpath.initCached` already provides digest-based selection via the
+      * filename, so it does not need to pass an `expectedDigest` here.
       *
       * @param path
       *   absolute path to the `.krfl` file
       * @param source
       *   FileSource for reading the bytes
+      * @param expectedDigest
+      *   optional expected 8-byte FNV-1a digest; when Some, the embedded digest is verified before deserialization
       */
     def read(
         path: String,
-        source: FileSource
+        source: FileSource,
+        expectedDigest: Option[Array[Byte]] = None
     )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
         source.read(path).flatMap: bytes =>
-            readBytes(path, bytes)
+            expectedDigest match
+                case None =>
+                    readBytes(path, bytes)
+                case Some(expected) =>
+                    // inputDigest is at bytes [16, 24) in the header.
+                    if bytes.length < 24 then
+                        Abort.fail(TastyError.SnapshotFormatError(path, "header too short for digest check", 0L))
+                    else
+                        val actualHex   = DigestComputer.toHexString(java.util.Arrays.copyOfRange(bytes, 16, 24))
+                        val expectedHex = DigestComputer.toHexString(expected)
+                        if actualHex != expectedHex then
+                            Abort.fail(TastyError.DigestMismatch(expected = expectedHex, actual = actualHex))
+                        else
+                            readBytes(path, bytes)
+                        end if
 
     /** Read a snapshot preferring a memory-mapped path on JVM/Native; falls back to heap read on JS.
       *
@@ -1017,8 +1033,8 @@ object SnapshotReader:
                     kyo.Maybe(Tasty.SymbolBody(
                         bodyStart = raw.bodyStart,
                         bodyEnd = raw.bodyEnd,
-                        sectionBytes = Array.empty[Byte],
-                        names = Array.empty[Tasty.Name],
+                        sectionBytes = Span.empty[Byte],
+                        names = Span.empty[Tasty.Name],
                         sectionOffset = 0,
                         addrMap = scala.collection.immutable.IntMap.empty
                     ))
@@ -1333,8 +1349,8 @@ object SnapshotReader:
                     kyo.Maybe(Tasty.SymbolBody(
                         bodyStart = raw.bodyStart,
                         bodyEnd = raw.bodyEnd,
-                        sectionBytes = bodyBytesArray,
-                        names = Array.empty[Tasty.Name],
+                        sectionBytes = Span.fromUnsafe(bodyBytesArray),
+                        names = Span.empty[Tasty.Name],
                         sectionOffset = 0,
                         addrMap = scala.collection.immutable.IntMap.empty
                     ))
@@ -1471,6 +1487,8 @@ object SnapshotReader:
                     case 13 => TastyError.NotImplemented(readStr())
                     case 14 => TastyError.UnsupportedPlatform(readStr())
                     case 15 => val t = readInt(); val p = readStr(); TastyError.UnknownTagInPosition(t, p)
+                    case 16 => val fqn = readStr(); val reason = readStr(); TastyError.InvalidFqn(fqn, reason)
+                    case 17 => val exp = readStr(); val act = readStr(); TastyError.DigestMismatch(exp, act)
                     case _  => TastyError.NotImplemented(s"unknown error tag=$tag in snapshot")
                 buf += err
                 i += 1
