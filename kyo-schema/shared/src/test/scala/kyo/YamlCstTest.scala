@@ -1591,4 +1591,49 @@ class YamlCstTest extends Test:
             }
         }
     }
+
+    "Yaml.Cst as a source" - {
+
+        "decodes a CST document and stream through the top-level API" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n").getOrThrow
+
+            assertResult(
+                (
+                    decoded = Result.succeed(MTPerson("Alice", 30)),
+                    decodedAll = Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25)))
+                )
+            ) {
+                (
+                    decoded = Yaml.decode[MTPerson](document),
+                    decodedAll = Yaml.decodeAll[MTPerson](stream)
+                )
+            }
+        }
+
+        "renders and parses a CST document and stream through the top-level API" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+            val stream =
+                Yaml.cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
+
+            assertResult(
+                (
+                    rendered = Result.succeed("name: Alice\nage: 30\n"),
+                    renderedStream = Result.succeed("---\nname: Alice\n---\nname: Bob\n"),
+                    parsedIsMapping = true,
+                    nodeCount = Result.succeed(2)
+                )
+            ) {
+                (
+                    rendered = Yaml.render(document),
+                    renderedStream = Yaml.render(stream),
+                    parsedIsMapping = Yaml.parse(document).getOrThrow.isInstanceOf[Yaml.Node.Mapping],
+                    nodeCount = Yaml.parseAll(stream).map(_.size)
+                )
+            }
+        }
+    }
 end YamlCstTest

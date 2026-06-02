@@ -1571,6 +1571,45 @@ object Yaml:
     def cstAll(input: String)(using Frame): Result[DecodeException, Cst.Stream] =
         internal.yaml.YamlCstParser.stream(input)
 
+    /** Decodes a CST document into a value of type A using the default pipeline. */
+    def decode[A](document: Cst.Document)(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        pipeline.decode[A](document)
+    end decode
+
+    /** Decodes a single value from a CST stream using the default pipeline. */
+    def decode[A](stream: Cst.Stream)(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        pipeline.decode[A](stream)
+    end decode
+
+    /** Decodes every document of a CST stream into values of type A using the default pipeline. */
+    def decodeAll[A](stream: Cst.Stream)(using schema: Schema[A], frame: Frame): Result[DecodeException, Chunk[A]] =
+        pipeline.decodeAll[A](stream)
+    end decodeAll
+
+    /** Renders a CST document to YAML through the event renderer.
+      *
+      * Unlike [[Cst.Document.render]], which returns the original source byte-for-byte until the document is edited, this always emits
+      * canonically through the supplied [[WriterConfig]].
+      */
+    def render(document: Cst.Document)(using config: WriterConfig, frame: Frame): Result[DecodeException, String] =
+        pipeline.writer(config).render(document)
+    end render
+
+    /** Renders a CST stream to YAML through the event renderer. */
+    def render(stream: Cst.Stream)(using config: WriterConfig, frame: Frame): Result[DecodeException, String] =
+        pipeline.writer(config).render(stream)
+    end render
+
+    /** Parses a CST document into a [[Node]] using the default pipeline. */
+    def parse(document: Cst.Document)(using Frame): Result[DecodeException, Node] =
+        pipeline.parse(document)
+    end parse
+
+    /** Parses every document of a CST stream into [[Node]] values using the default pipeline. */
+    def parseAll(stream: Cst.Stream)(using Frame): Result[DecodeException, Chunk[Node]] =
+        pipeline.parseAll(stream)
+    end parseAll
+
     /** Encodes a value of type A as YAML. */
     inline def encode[A](value: A)(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): String =
         val w = Yaml(writerConfig).newWriter()
