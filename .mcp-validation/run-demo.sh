@@ -40,8 +40,13 @@ if [[ -z "$CP" ]]; then
     exit 2
 fi
 
-echo "  cp_chars=${#CP}, exec java -cp ... $FQCN $*" >> "$LAUNCH_LOG"
-# Route java's stderr into our log so any JVM noise (Unsafe deprecation warnings on
-# JDK 25, etc.) is captured here instead of leaking to Claude Code's MCP host — some
-# hosts treat startup stderr as fatal.
-exec java --enable-native-access=ALL-UNNAMED -cp "$CP" "$FQCN" "$@" 2>>"$LAUNCH_LOG"
+TRACE_DIR="/tmp/mcp-validation/trace"
+mkdir -p "$TRACE_DIR"
+STDIN_LOG="$TRACE_DIR/${MODULE}-${FQCN##*.}-stdin.log"
+STDOUT_LOG="$TRACE_DIR/${MODULE}-${FQCN##*.}-stdout.log"
+echo "  cp_chars=${#CP}, tee stdin->$STDIN_LOG stdout->$STDOUT_LOG" >> "$LAUNCH_LOG"
+# Tee stdin and stdout so we can see exactly what Claude Code sends and what the
+# demo replies. Java's stderr still folds into LAUNCH_LOG.
+exec tee -a "$STDIN_LOG" \
+  | java --enable-native-access=ALL-UNNAMED -cp "$CP" "$FQCN" "$@" 2>>"$LAUNCH_LOG" \
+  | tee -a "$STDOUT_LOG"
