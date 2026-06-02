@@ -1,8 +1,8 @@
 package kyo
 
-/** Tests for `McpResourceUri` smart constructor and Schema (Phase 3).
+/** Tests for the `McpResourceUri` smart constructor and Schema.
   *
-  * Pins INV-022 (typed McpResourceUri throughout public surface).
+  * Pins that `McpResourceUri` is the typed representation used throughout the public surface.
   */
 class McpResourceUriTest extends Test:
 
@@ -59,7 +59,7 @@ class McpResourceUriTest extends Test:
         assert(uri.asString == "file:///x")
     }
 
-    // Template.extract — FR-007 (RFC 6570 Level 1 variable extraction)
+    // Template.extract: RFC 6570 Level 1 variable extraction
 
     "Template.extract: single placeholder binds to suffix" in {
         val tmpl = McpResourceUri.Template("file:///{path}")

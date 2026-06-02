@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: sampling reverse-direction request (T-018, INV-014, INV-024). */
+/** Integration test: sampling reverse-direction request. */
 class McpSamplingReverseTest extends Test:
 
     // Client-side route that handles sampling/createMessage requests from the server.
@@ -19,7 +19,7 @@ class McpSamplingReverseTest extends Test:
 
     private val clientCaps = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
 
-    "server.requestSampling returns the client-provided response (T-018)" in run {
+    "server.requestSampling returns the client-provided response" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),

@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Tests that sealed-union Schemas are reference-stable singletons (INV-053).
+/** Tests that sealed-union Schemas are reference-stable singletons.
   *
   * Each `summon[Schema[T]]` call must return the same object reference as the
   * val in `LspContentSchemas`. This is the singleton guarantee: not just equal,

@@ -4,8 +4,6 @@ import kyo.*
 
 /** Tests §3.2 MCP 2025-06-18: when client and server versions do not overlap, the server returns
   * success with its highest supported version rather than failing.
-  *
-  * Pins acceptance criterion 2 of Phase 05 and INV-300.
   */
 class McpProtocolVersionFallbackTest extends Test:
 

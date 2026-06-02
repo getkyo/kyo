@@ -1,9 +1,9 @@
 package kyo
 
-/** Smoke tests for McpConfig public surface (INV-001 1:1 rule for McpConfig.scala).
+/** Smoke tests for the McpConfig public surface.
   *
-  * Focused preset and wiring tests live in McpConfigPresetTest. This file satisfies the
-  * Rule 8c requirement that every McpConfig.scala has a matching McpConfigTest.scala.
+  * Focused preset and wiring tests live in McpConfigPresetTest; this file is the matching
+  * companion for McpConfig.scala.
   */
 class McpConfigTest extends Test:
 

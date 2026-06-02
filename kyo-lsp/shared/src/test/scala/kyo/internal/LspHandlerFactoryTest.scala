@@ -38,28 +38,28 @@ class LspHandlerFactoryTest extends kyo.Test:
             succeed
         }
 
-        "declaration factory returns DeclarationResult directly (A4 fix)" in {
+        "declaration factory returns DeclarationResult directly" in {
             val h = LspHandler.TextDocument.declaration(_ => LspHandler.DeclarationResult.Many(Chunk.empty))
             assert(h.name == "textDocument/declaration")
             assert(h.kind == LspHandler.Kind.Declaration)
             succeed
         }
 
-        "definition factory returns DefinitionResult directly (A4 fix)" in {
+        "definition factory returns DefinitionResult directly" in {
             val h = LspHandler.TextDocument.definition(_ => LspHandler.DefinitionResult.Many(Chunk.empty))
             assert(h.name == "textDocument/definition")
             assert(h.kind == LspHandler.Kind.Definition)
             succeed
         }
 
-        "typeDefinition factory returns DefinitionResult directly (A4 fix)" in {
+        "typeDefinition factory returns DefinitionResult directly" in {
             val h = LspHandler.TextDocument.typeDefinition(_ => LspHandler.DefinitionResult.Many(Chunk.empty))
             assert(h.name == "textDocument/typeDefinition")
             assert(h.kind == LspHandler.Kind.TypeDefinition)
             succeed
         }
 
-        "implementation factory returns DefinitionResult directly (A4 fix)" in {
+        "implementation factory returns DefinitionResult directly" in {
             val h = LspHandler.TextDocument.implementation(_ => LspHandler.DefinitionResult.Many(Chunk.empty))
             assert(h.name == "textDocument/implementation")
             assert(h.kind == LspHandler.Kind.Implementation)
@@ -227,7 +227,7 @@ class LspHandlerFactoryTest extends kyo.Test:
             succeed
         }
 
-        "typeHierarchySupertypes factory uses renamed params type" in {
+        "typeHierarchySupertypes factory uses TypeHierarchySupertypesParams" in {
             val params = LspHandler.TypeHierarchySupertypesParams(
                 item = LspHandler.TypeHierarchyItem(
                     "SomeName",
@@ -245,7 +245,7 @@ class LspHandlerFactoryTest extends kyo.Test:
             succeed
         }
 
-        "typeHierarchySubtypes factory uses renamed params type" in {
+        "typeHierarchySubtypes factory uses TypeHierarchySubtypesParams" in {
             val h = LspHandler.TextDocument.typeHierarchySubtypes(_ => Chunk.empty)
             assert(h.name == "typeHierarchy/subtypes")
             assert(h.kind == LspHandler.Kind.TypeHierarchySubtypes)
@@ -682,7 +682,7 @@ class LspHandlerFactoryTest extends kyo.Test:
         }
     }
 
-    // MARK: -- Schema bug fix round-trip tests (A1-A3)
+    // MARK: -- Schema decode round-trip tests
 
     "CommandOrCodeAction schema decode fixes" - {
         "decodes a Command with string command field" in {
@@ -738,7 +738,7 @@ class LspHandlerFactoryTest extends kyo.Test:
         }
     }
 
-    "WorkspaceEditDocumentChange schema includes options for file operations (A3 fix)" - {
+    "WorkspaceEditDocumentChange schema includes options for file operations" - {
         "decodes CreateFile with options" in {
             val create: LspHandler.WorkspaceEditDocumentChange = LspHandler.WorkspaceEditDocumentChange.Create(
                 LspHandler.CreateFile(
@@ -811,7 +811,7 @@ class LspHandlerFactoryTest extends kyo.Test:
         }
     }
 
-    "TypeHierarchy params use corrected capitalization" - {
+    "TypeHierarchy params capitalization" - {
         "TypeHierarchySupertypesParams round-trips" in {
             val item = LspHandler.TypeHierarchyItem(
                 "MyClass",
@@ -857,7 +857,7 @@ class LspHandlerFactoryTest extends kyo.Test:
         }
     }
 
-    // MARK: -- general namespace factory tests (A1 fix)
+    // MARK: -- general namespace factory tests
 
     "general namespace factories produce valid handlers" - {
         "cancelRequest factory has correct name, kind, and direction" in {
@@ -893,7 +893,7 @@ class LspHandlerFactoryTest extends kyo.Test:
         }
     }
 
-    "completion factory returns CompletionResult directly (A6 fix)" - {
+    "completion factory returns CompletionResult directly" - {
         "completion handler type is CompletionResult not Maybe[CompletionResult]" in {
             // The factory signature should compile with a non-Maybe handler
             val h = LspHandler.TextDocument.completion(_ =>

@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: unknown method is strictly rejected with MethodNotFound code (T-022, Q-016). */
+/** Integration test: unknown method is strictly rejected with MethodNotFound code. */
 class McpUnknownMethodStrictRejectTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
@@ -19,7 +19,7 @@ class McpUnknownMethodStrictRejectTest extends Test:
         McpContent.Text("c")
     }
 
-    "unknown method foo/bar is rejected with JsonRpcError code -32601 (T-022, Q-016)" in run {
+    "unknown method foo/bar is rejected with JsonRpcError code -32601" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, tool1, tool2, tool3),

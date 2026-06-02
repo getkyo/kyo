@@ -43,7 +43,7 @@ class McpSamplingStopReasonTypedTest extends Test:
         assert(decoded == StopReason.MaxTokens)
     }
 
-    "unknown stopReason wire string decodes to EndTurn (tolerant per Q8)" in {
+    "unknown stopReason wire string decodes to EndTurn (tolerant decode)" in {
         val decoded = decode[StopReason]("\"unknownFutureValue\"")
         assert(decoded == StopReason.EndTurn)
     }

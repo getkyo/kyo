@@ -1,9 +1,9 @@
 package kyo
 
-/** Tests for `McpConfig.ProtocolVersion` smart constructor and Schema (Phase 3).
+/** Tests for the `McpConfig.ProtocolVersion` smart constructor and Schema.
   *
-  * Pins INV-025 (no public `def apply` on `McpConfig.ProtocolVersion`) and the
-  * `Schema.stringSchema.transform(fromWire)` round-trip.
+  * Pins that `McpConfig.ProtocolVersion` exposes no public `def apply` and that
+  * `Schema.stringSchema.transform(fromWire)` round-trips correctly.
   */
 class McpProtocolVersionTest extends Test:
 

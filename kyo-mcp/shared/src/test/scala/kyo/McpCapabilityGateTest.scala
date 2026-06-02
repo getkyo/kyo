@@ -2,11 +2,11 @@ package kyo
 
 import kyo.internal.mcp.McpCapabilityGate
 
-/** Tests for McpCapabilityGate.server factory (Phase 4).
+/** Tests for McpCapabilityGate.server factory.
   *
   * Verifies that the capability gate enforces method admission based on server capabilities
   * and the selected CapabilityGateMode. Only JsonRpcRequest envelopes are checked; notifications
-  * always Allow. The gate slot in McpConfig.defaultJsonRpcConfig is Absent (set by engine at Phase 5).
+  * always Allow. The gate slot in McpConfig.defaultJsonRpcConfig is Absent until the engine wires it.
   */
 class McpCapabilityGateTest extends Test:
 
@@ -28,10 +28,10 @@ class McpCapabilityGateTest extends Test:
         JsonRpcNotification(method, Absent, Absent)
 
     // -------------------------------------------------------------------------
-    // gate slot in McpConfig.defaultJsonRpcConfig is Absent (T-005 acceptance)
+    // gate slot in McpConfig.defaultJsonRpcConfig is Absent
     // -------------------------------------------------------------------------
 
-    "McpConfig.defaultJsonRpcConfig.gate is Absent (Phase 5 sets it)" in {
+    "McpConfig.defaultJsonRpcConfig.gate is Absent (engine sets it)" in {
         assert(McpConfig.defaultJsonRpcConfig.gate == Absent)
     }
 
@@ -47,7 +47,7 @@ class McpCapabilityGateTest extends Test:
     }
 
     // -------------------------------------------------------------------------
-    // Mode: LogOnly always allows (Phase 4; log-sink wired in Phase 5)
+    // Mode: LogOnly always allows
     // -------------------------------------------------------------------------
 
     "LogOnly mode: allows tools/list even with empty capabilities" in run {

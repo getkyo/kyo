@@ -2,10 +2,9 @@ package kyo
 
 import kyo.*
 
-// Phase 1 compile-spine test: asserts every §2 public type is summonable or constructable.
-// Pins INV-001 (type enumeration), INV-012 (opaque identities via safe/unsafe round-trip),
-// INV-021 (Structure.Value allowlist), INV-022 (typed resource URIs),
-// INV-023 (McpClient.Page named record), INV-024 (Context.server type), INV-025 (no public apply).
+// Verifies opaque-type identity round-trip via safe/unsafe accessors and basic constructability
+// of the public MCP type spine: each public type is summonable or constructable, opaque types
+// expose a witness round-trip, and key named records and typed URI handles behave as documented.
 //
 // File lives at kyo/internal/CompileSpineTest.scala but declares package kyo so that
 // opaque-type internal members (safe/unsafe) are accessible.
@@ -28,7 +27,7 @@ class CompileSpineTest extends Test:
         assert(v.asString == "2025-06-18")
     }
 
-    "McpConfig.ProtocolVersion has no public apply (INV-025)" in {
+    "McpConfig.ProtocolVersion parse accepts known versions and rejects malformed ones" in {
         val r = McpConfig.ProtocolVersion.parse("2025-06-18")
         assert(r.isDefined)
         val r2 = McpConfig.ProtocolVersion.parse("9999-99-99")
@@ -41,7 +40,7 @@ class CompileSpineTest extends Test:
         assert(page.nextCursor.isEmpty)
     }
 
-    "McpResourceUri.parse rejects blank (INV-022)" in {
+    "McpResourceUri.parse rejects blank strings and accepts well-formed URIs" in {
         assert(McpResourceUri.parse("").isEmpty)
         assert(McpResourceUri.parse("   ").isEmpty)
         assert(McpResourceUri.parse("file:///x").isDefined)
@@ -64,7 +63,7 @@ class CompileSpineTest extends Test:
         assert(cfg.serverInfo.name == "kyo-mcp")
     }
 
-    "McpInfo has version default 0.0.0 (Audit-B2)" in {
+    "McpInfo has version default 0.0.0" in {
         val info = McpInfo("my-server")
         assert(info.version == "0.0.0")
     }
@@ -76,35 +75,33 @@ class CompileSpineTest extends Test:
         assert(i.isInstanceOf[McpContent.Image])
     }
 
-    "McpHandler.ResourceContents uri field is McpResourceUri not String (INV-022)" in {
+    "McpHandler.ResourceContents uri field is McpResourceUri not String" in {
         val uri                             = McpResourceUri.parse("file:///x").get
         val rc: McpHandler.ResourceContents = McpHandler.ResourceContents.text(uri, "hello")
         assert(rc.uri == uri)
     }
 
-    "McpHandler.CompletionArg is a named record not positional strings (Audit-A8)" in {
+    "McpHandler.CompletionArg is a named record not positional strings" in {
         val arg = McpHandler.CompletionArg(name = "model", value = "gpt-4")
         assert(arg.name == "model")
         assert(arg.value == "gpt-4")
     }
 
-    "Mcp.server type is McpServer < Sync (INV-024 compile check)" in {
+    "Mcp.server type is McpServer < Sync (safe opaque)" in {
         // Type-level witness: compiles only if Mcp.server is typed McpServer < Sync (safe opaque).
         val witness: McpServer < Sync = Mcp.server
         succeed
     }
 
-    "INV-021 allowlist: Structure.Value appears only in the documented carve-out sites" in {
-        // Positive assertion: the carve-out types compile and Structure.Value is a valid type.
-        // The six annotated sites (all carrying flow-allow: §11a / INV-021) are:
+    "Structure.Value type is reachable and Null is a valid Structure.Value" in {
+        // Positive assertion: Structure.Value is a valid type and Null is a Structure.Value.
+        // Public flat-layer signatures restrict Structure.Value to the documented carve-out sites:
         // 1. McpServer.ElicitationResponse.content: Maybe[Structure.Value]
         // 2. McpServer.SamplingRequest.metadata: Maybe[Structure.Value]
         // 3. McpCapabilities.Server.experimental: Map[String, Structure.Value]
         // 4. McpCapabilities.Client.experimental: Map[String, Structure.Value]
         // 5. McpHandler.ToolOutcome.structuredContent: Maybe[Structure.Value]
         // 6. McpException.data: Maybe[Structure.Value] (forwarded to JsonRpcApplicationError)
-        // All other public flat-layer signatures must have zero Structure.Value occurrences.
-        // The lint regex in flow-verify enforces this; this test asserts the type is reachable.
         val _: Structure.Value = Structure.Value.Null
         assert(Structure.Value.Null.isInstanceOf[Structure.Value])
     }

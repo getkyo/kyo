@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: prompt list and get roundtrip (T-017, INV-023). */
+/** Integration test: prompt list and get roundtrip. */
 class McpPromptListGetTest extends Test:
 
     private val promptRoute = McpHandler.prompt(
@@ -16,7 +16,7 @@ class McpPromptListGetTest extends Test:
         )
     }
 
-    "listPrompts returns page with the registered prompt (T-017, INV-023)" in run {
+    "listPrompts returns page with the registered prompt" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, promptRoute),
@@ -36,7 +36,7 @@ class McpPromptListGetTest extends Test:
         }
     }
 
-    "getPrompt returns result with correct message content (T-017)" in run {
+    "getPrompt returns result with correct message content" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, promptRoute),

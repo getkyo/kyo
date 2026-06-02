@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-/** Tests for the McpException sealed hierarchy (Phase 2).
+/** Tests for the McpException sealed hierarchy.
   *
   * Each leaf test:
   *   1. Constructs the leaf with representative typed field values.
@@ -12,13 +12,12 @@ import kyo.Maybe.Present
   *   4. Roundtrips the leaf through the inherited `Schema[JsonRpcError]` codec
   *      (encodes via `Structure.encode[JsonRpcError]`, decodes via
   *      `Structure.decode[JsonRpcError]`) and asserts the decoded value's
-  *      `code` and `message` are preserved. Per the design's wire-encoding
-  *      asymmetry rule, the decoded type is a `JsonRpcError` leaf (not the
-  *      original `McpException` leaf), so the test does NOT assert decoded == original.
+  *      `code` and `message` are preserved. Per the wire-encoding asymmetry
+  *      rule, the decoded type is a `JsonRpcError` leaf (not the original
+  *      `McpException` leaf), so the test does NOT assert decoded == original.
   *
-  * Pins INV-003 (hierarchy root), INV-005 (handshake gate leaf set), INV-014
-  * (McpClient parameter order is downstream of these leaves existing), INV-022
-  * (typed McpResourceUri in leaf fields).
+  * Pins the hierarchy root, the handshake-gate leaf set, and the typed
+  * `McpResourceUri` fields on leaves that carry resource URIs.
   */
 class McpExceptionTest extends Test:
 
@@ -290,7 +289,7 @@ class McpExceptionTest extends Test:
     }
 
     // =========================================================================
-    // Category trait compile evidence (INV-003)
+    // Category trait compile evidence
     // =========================================================================
 
     "category trait compile evidence: McpHandshakeException" in run {
@@ -327,7 +326,7 @@ class McpExceptionTest extends Test:
         assert(asApp.code == -32000)
     }
 
-    "McpResourceUri fields are typed McpResourceUri not String (INV-022)" in run {
+    "McpResourceUri fields are typed McpResourceUri not String" in run {
         val uri1 = McpResourceUri.parse("file:///a").get
         val uri2 = McpResourceUri.parse("file:///b").get
         val e    = McpUnknownResourceException(uri1, Chunk(uri2))

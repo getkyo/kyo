@@ -2,11 +2,11 @@ package kyo
 
 import kyo.internal.mcp.McpUnknownMethodPolicy
 
-/** Tests for McpUnknownMethodPolicy.default (Phase 4, Rule 8c).
+/** Tests for McpUnknownMethodPolicy.default.
   *
   * Pins that the MCP unknown-method policy delegates to the strict preset,
   * which replies MethodNotFound on unknown requests and rejects unknown
-  * notifications (Q-016 rationale: unexpected notifications indicate protocol mismatch).
+  * notifications (unexpected notifications indicate a protocol mismatch).
   */
 class McpUnknownMethodPolicyTest extends Test:
 

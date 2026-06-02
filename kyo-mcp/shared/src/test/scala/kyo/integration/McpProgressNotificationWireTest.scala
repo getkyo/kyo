@@ -2,11 +2,9 @@ package kyo.integration
 
 import kyo.*
 
-/** Tests that outbound progress notifications encode the field key `"progress"` (not `"current"`).
-  *
-  * Pins the §3.1 MCP 2025-06-18 spec rename and acceptance criterion 1 of Phase 05.
-  * The test exercises the full integration path and verifies the progress field key
-  * is "progress" through direct Structure.Value field inspection and integration round-trip.
+/** Tests that outbound progress notifications encode the field key `"progress"` (not `"current"`)
+  * per §3.1 of MCP 2025-06-18. Verifies via direct Structure.Value field inspection and an
+  * integration round-trip through the in-memory transport.
   */
 class McpProgressNotificationWireTest extends Test:
 

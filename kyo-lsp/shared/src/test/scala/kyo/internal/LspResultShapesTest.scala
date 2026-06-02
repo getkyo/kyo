@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Round-trip tests for every sealed result type listed in INV-053.
+/** Round-trip tests for every sealed result type.
   *
   * Each test encodes a representative value to JSON and decodes it back, asserting
   * structural equality. Uses fromStructureValue path (Json.decode) which is the primary

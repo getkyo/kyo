@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.mcp.McpCatalog
 
-/** Tests for McpCatalog route partitioning and metadata extraction (T-008 partial, INV-018). */
+/** Tests for McpCatalog route partitioning and metadata extraction. */
 class McpCatalogTest extends Test:
 
     private val testUri = McpResourceUri.parse("file:///test").get
@@ -59,7 +59,7 @@ class McpCatalogTest extends Test:
         assert(caps.prompts.isEmpty)
     }
 
-    "autoDeriveServerCapabilities with Present(empty) returns empty verbatim (INV-019)" in run {
+    "autoDeriveServerCapabilities with Present(empty) returns empty verbatim" in run {
         val config  = McpConfig.default.declaredCapabilities(McpCapabilities.Server())
         val r       = McpHandler.tool[Unit]("t")((_) => McpContent.Text("x"))
         val catalog = McpCatalog(Seq(r))
@@ -70,7 +70,7 @@ class McpCatalogTest extends Test:
         assert(caps.prompts.isEmpty)
     }
 
-    "catalog is immutable: no mutation methods on public interface (INV-018)" in run {
+    "catalog is immutable: no mutation methods on public interface" in run {
         // Compile-time check: McpCatalog has no add/remove/set methods.
         // This test verifies the catalog's routes field is final and size-stable.
         val r       = McpHandler.tool[Unit]("t")((_) => McpContent.Text("x"))

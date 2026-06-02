@@ -1,13 +1,13 @@
 package kyo
 
-/** Tests for McpHandler factory implementations (INV-020, INV-024, INV-026). */
+/** Tests for McpHandler factory implementations. */
 class McpHandlerTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
     case class SumOut(result: Int) derives Schema, CanEqual
 
-    // INV-020: tool and toolMulti are separate factories with distinct Out types.
-    "tool factory produces a route with Kind.Tool (INV-020)" in run {
+    // tool and toolMulti are separate factories with distinct Out types.
+    "tool factory produces a route with Kind.Tool" in run {
         val r = McpHandler.tool[AddIn]("add") { in =>
             McpContent.Text(s"${in.a + in.b}")
         }
@@ -15,7 +15,7 @@ class McpHandlerTest extends Test:
         assert(r.name == "add")
     }
 
-    "toolMulti factory produces a route with Kind.Tool and ToolOutcome Out (INV-020)" in run {
+    "toolMulti factory produces a route with Kind.Tool and ToolOutcome Out" in run {
         val r = McpHandler.toolMulti[AddIn]("addMulti") { in =>
             McpHandler.ToolOutcome(Chunk(McpContent.Text(s"${in.a + in.b}")), isError = false, structuredContent = Absent)
         }
@@ -23,8 +23,8 @@ class McpHandlerTest extends Test:
         assert(r.name == "addMulti")
     }
 
-    // INV-024: Mcp.server returns the safe opaque McpServer, not McpServer.Unsafe.
-    "Mcp.server returns McpServer (INV-024)" in run {
+    // Mcp.server returns the safe opaque McpServer, not McpServer.Unsafe.
+    "Mcp.server returns McpServer" in run {
         // The compile-time assertion is: the value from Mcp.server must be assignable to McpServer.
         val r = McpHandler.tool[Unit]("probe") { _ =>
             Mcp.server.map { srv =>
@@ -40,8 +40,8 @@ class McpHandlerTest extends Test:
         }
     }
 
-    // INV-026: CompletionArg is a named record with name and value fields.
-    "CompletionArg is a named record with name and value (INV-026)" in run {
+    // CompletionArg is a named record with name and value fields.
+    "CompletionArg is a named record with name and value" in run {
         val arg = McpHandler.CompletionArg(name = "color", value = "red")
         assert(arg.name == "color")
         assert(arg.value == "red")
@@ -79,7 +79,7 @@ class McpHandlerTest extends Test:
         assert(r.name == "myTool")
     }
 
-    // Optional-field roundtrip tests (Phase 07 / INV-302)
+    // Optional-field roundtrip tests
 
     private def encode[A: Schema](value: A): String = Json.encode[A](value)
     private def decode[A: Schema](json: String): A  = Json.decode[A](json).getOrThrow

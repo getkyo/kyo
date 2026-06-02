@@ -1,8 +1,8 @@
 package kyo
 
-/** Tests for spec-divergent enum Schemas using hand-rolled `Schema.stringSchema.transform` (Phase 3).
+/** Tests for spec-divergent enum Schemas built with hand-rolled `Schema.stringSchema.transform`.
   *
-  * Pins INV-010: all four wire-divergent enums (`McpContent.Role`, `McpServer.LogLevel`,
+  * Pins that all four wire-divergent enums (`McpContent.Role`, `McpServer.LogLevel`,
   * `McpServer.ElicitationResponse.Action`, `McpServer.SamplingRequest.IncludeContext`) use `transform`,
   * not `derives Schema`. The lint assertions (JVM-only) read each source file and verify
   * zero `derives Schema` lines on the enum declaration.
@@ -159,7 +159,7 @@ class McpEnumSchemaTest extends Test:
         assert(schema.segments.isEmpty)
     }
 
-    // ---- Annotations lastModified roundtrip (Phase 07 / INV-302) ----
+    // ---- Annotations lastModified roundtrip ----
 
     "Content.Annotations lastModified Present encodes and round-trips" in {
         val ann  = McpContent.Annotations(lastModified = Present("2024-01-01T00:00:00Z"))

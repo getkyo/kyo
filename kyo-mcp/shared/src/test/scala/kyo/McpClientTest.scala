@@ -1,6 +1,6 @@
 package kyo
 
-/** Tests for McpClient engine wiring (T-011, T-012, T-013, INV-014, INV-023, INV-027). */
+/** Tests for McpClient engine wiring. */
 class McpClientTest extends Test:
 
     // Domain types for typed callTool tests.
@@ -24,9 +24,9 @@ class McpClientTest extends Test:
             }
         }
 
-    // T-011: callToolTyped[In, Out] returns the decoded Out when structuredContent = Present.
-    // INV-027: typed overload decodes structuredContent.
-    "callToolTyped[In, Out] returns typed Out when structuredContent = Present (T-011, INV-027)" in run {
+    // callToolTyped[In, Out] returns the decoded Out when structuredContent = Present;
+    // the typed overload decodes structuredContent.
+    "callToolTyped[In, Out] returns typed Out when structuredContent = Present" in run {
         val addRoute = McpHandler.toolMulti[AddIn]("add") { in =>
             McpHandler.ToolOutcome(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
@@ -41,9 +41,9 @@ class McpClientTest extends Test:
         }
     }
 
-    // T-012: callToolTyped[In, Out] aborts with McpToolStructuredMissingException when structuredContent = Absent.
-    // INV-027: typed overload must abort when structured content is absent.
-    "callToolTyped[In, Out] aborts McpToolStructuredMissingException when structuredContent = Absent (T-012, INV-027)" in run {
+    // callToolTyped[In, Out] aborts with McpToolStructuredMissingException when structuredContent = Absent;
+    // the typed overload must abort when structured content is absent.
+    "callToolTyped[In, Out] aborts McpToolStructuredMissingException when structuredContent = Absent" in run {
         val addUntypedRoute = McpHandler.toolMulti[AddIn]("add") { in =>
             McpHandler.ToolOutcome(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
@@ -63,7 +63,7 @@ class McpClientTest extends Test:
         }
     }
 
-    // T-012 untyped: untyped callTool[In] (one type param) returns raw ToolOutcome without aborting.
+    // Untyped callTool[In] (one type param) returns raw ToolOutcome without aborting.
     "callTool with one type param (untyped) returns raw ToolOutcome when structuredContent = Absent" in run {
         val addRoute = McpHandler.toolMulti[AddIn]("add") { in =>
             McpHandler.ToolOutcome(
@@ -80,9 +80,8 @@ class McpClientTest extends Test:
         }
     }
 
-    // T-013: McpClient.init positional parameter order is (transport, clientInfo, capabilities, handlers*).
-    // INV-014: parameter order locked.
-    "McpClient.init positional parameter order is (transport, clientInfo, capabilities, handlers*) (T-013, INV-014)" in run {
+    // McpClient.init positional parameter order is (transport, clientInfo, capabilities, handlers*).
+    "McpClient.init positional parameter order is (transport, clientInfo, capabilities, handlers*)" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             // The following must compile with this exact parameter order.
             // Swapping clientInfo and capabilities would fail because McpInfo != McpCapabilities.Client.
@@ -92,8 +91,8 @@ class McpClientTest extends Test:
         }
     }
 
-    // INV-023: listTools returns McpClient.Page[ToolMeta] with .items and .nextCursor fields.
-    "listTools returns McpClient.Page with .items and .nextCursor (INV-023)" in run {
+    // listTools returns McpClient.Page[ToolMeta] with .items and .nextCursor fields.
+    "listTools returns McpClient.Page with .items and .nextCursor" in run {
         val toolRoute = McpHandler.tool[AddIn]("add") { in =>
             McpContent.Text(s"${in.a + in.b}")
         }
@@ -107,8 +106,8 @@ class McpClientTest extends Test:
         }
     }
 
-    // INV-023: McpClient.Page is a named record; verify listResources also returns McpClient.Page.
-    "listResources returns McpClient.Page with .items and .nextCursor (INV-023)" in run {
+    // McpClient.Page is a named record; verify listResources also returns McpClient.Page.
+    "listResources returns McpClient.Page with .items and .nextCursor" in run {
         val uri           = McpResourceUri.parse("file:///data").get
         val resourceRoute = McpHandler.resource(uri, "data")(Chunk.empty)
         withPair(Seq(resourceRoute), Seq.empty) { (_, client) =>
@@ -180,8 +179,8 @@ class McpClientTest extends Test:
         }
     }
 
-    // W2 curried overload must compile.
-    "McpClient.initUnscoped curried overload (W2 fix) compiles" in run {
+    // Curried overload must compile.
+    "McpClient.initUnscoped curried overload compiles" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             val _: McpClient < (Async & Abort[McpException | Closed]) =
                 McpClient.initUnscoped(ta, clientInfo, clientCaps, McpConfig.default)()
@@ -189,7 +188,7 @@ class McpClientTest extends Test:
         }
     }
 
-    "McpClient.init curried overload (W2 fix) compiles" in run {
+    "McpClient.init curried overload compiles" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             val _: McpClient < (Async & Scope & Abort[McpException | Closed]) =
                 McpClient.init(ta, clientInfo, clientCaps, McpConfig.default)()

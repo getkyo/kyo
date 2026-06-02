@@ -2,10 +2,10 @@ package kyo
 
 import kyo.internal.mcp.McpProgressPolicy
 
-/** Focused tests for McpProgressPolicy.default monotonic flag and token location invariant (INV-007).
+/** Focused tests for the McpProgressPolicy.default monotonic flag and token-location invariant.
   *
-  * This test covers the monotonic enforcement flag value and the critical INV-007 invariant that
-  * progress tokens on requests live at params._meta.progressToken, not at top-level params.progressToken.
+  * Covers the monotonic enforcement flag value and the invariant that progress tokens on
+  * requests live at params._meta.progressToken, not at top-level params.progressToken.
   */
 class McpProgressMonotonicTest extends Test:
 
@@ -14,15 +14,15 @@ class McpProgressMonotonicTest extends Test:
     private val policy = McpProgressPolicy.default
 
     // -------------------------------------------------------------------------
-    // INV-007 monotonic flag pin
+    // Monotonic flag pin
     // -------------------------------------------------------------------------
 
-    "enforceMonotonic is true (INV-007 pin)" in {
+    "enforceMonotonic is true" in {
         assert(policy.enforceMonotonic)
     }
 
     // -------------------------------------------------------------------------
-    // INV-007: token location invariant
+    // Token-location invariant
     // -------------------------------------------------------------------------
 
     "extractRequestToken: accepts _meta.progressToken" in run {
@@ -35,7 +35,7 @@ class McpProgressMonotonicTest extends Test:
         }
     }
 
-    "extractRequestToken: rejects top-level progressToken (INV-007)" in run {
+    "extractRequestToken: rejects top-level progressToken" in run {
         val params = Structure.Value.Record(Chunk(
             "progressToken" -> Structure.Value.Integer(1L)
         ))

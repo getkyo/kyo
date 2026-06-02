@@ -1,9 +1,9 @@
 package kyo
 
-/** Tests for `Schema[McpContent]` hand-rolled discriminator Schema (Phase 3).
+/** Tests for the hand-rolled `Schema[McpContent]` discriminator codec.
   *
-  * Pins INV-006 (discriminator key `"type"` with exact tags) and
-  * INV-013 (Schema singleton reference equality).
+  * Pins the discriminator key `"type"` with the exact tag set, and the
+  * `Schema` singleton reference-equality contract.
   */
 class McpContentTest extends Test:
 
@@ -74,7 +74,7 @@ class McpContentTest extends Test:
         assert(roundtrip[McpContent](content) == content)
     }
 
-    "Schema singleton: summon twice yields same reference (INV-013)" in {
+    "Schema singleton: summon twice yields same reference" in {
         val s1 = summon[Schema[McpContent]]
         val s2 = summon[Schema[McpContent]]
         assert(s1 eq s2)

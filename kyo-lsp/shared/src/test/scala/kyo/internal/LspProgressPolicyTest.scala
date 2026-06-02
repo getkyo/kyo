@@ -11,7 +11,7 @@ class LspProgressPolicyTest extends Test:
             assert(LspProgressPolicy.default.progressMethod == "$/progress")
         }
 
-        "INV-032: extractInboundToken reads params.token" in run {
+        "extractInboundToken reads params.token" in run {
             val sv = Structure.Value.Record(Chunk(
                 "token" -> Structure.Value.Str("my-token"),
                 "value" -> Structure.Value.Record(Chunk.empty)
@@ -21,7 +21,7 @@ class LspProgressPolicyTest extends Test:
             }
         }
 
-        "INV-032: extractRequestToken reads workDoneToken first" in run {
+        "extractRequestToken reads workDoneToken first" in run {
             val sv = Structure.Value.Record(Chunk(
                 "textDocument"       -> Structure.Value.Record(Chunk.empty),
                 "workDoneToken"      -> Structure.Value.Str("wdt-1"),
@@ -32,7 +32,7 @@ class LspProgressPolicyTest extends Test:
             }
         }
 
-        "INV-032: extractRequestToken falls back to partialResultToken" in run {
+        "extractRequestToken falls back to partialResultToken" in run {
             val sv = Structure.Value.Record(Chunk(
                 "textDocument"       -> Structure.Value.Record(Chunk.empty),
                 "partialResultToken" -> Structure.Value.Str("prt-1")
@@ -42,7 +42,7 @@ class LspProgressPolicyTest extends Test:
             }
         }
 
-        "INV-032: extractRequestToken returns Absent when neither token present" in run {
+        "extractRequestToken returns Absent when neither token present" in run {
             val sv = Structure.Value.Record(Chunk(
                 "textDocument" -> Structure.Value.Record(Chunk.empty)
             ))

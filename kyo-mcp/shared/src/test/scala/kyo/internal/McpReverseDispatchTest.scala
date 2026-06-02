@@ -4,10 +4,9 @@ import kyo.*
 
 /** Tests for McpReverseDispatch client-side reverse-direction routing.
   *
-  * Exercises reverse-direction request methods on McpServer (server-to-client calls)
-  * and client-to-server notification methods.
-  *
-  * Decision 15: exercises McpReverseDispatch.buildRoutes via the public McpClient+McpServer surface.
+  * Exercises reverse-direction request methods on McpServer (server-to-client calls) and
+  * client-to-server notification methods, driving McpReverseDispatch.buildRoutes through the
+  * public McpClient+McpServer surface.
   */
 class McpReverseDispatchTest extends Test:
 
@@ -126,11 +125,11 @@ class McpReverseDispatchTest extends Test:
 
     // Route ordering: user-registered sampling handler must take precedence over default-reject.
     //
-    // Phase 7 fix: McpClientEngine.initClient now populates serverRef for all carrier routes with
-    // a no-op sentinel server. This means a user-registered client-side sampling handler now
-    // successfully returns its response rather than panicking with "McpServer not initialized".
-    // The test verifies the dispatch hop (user route overrides default-reject) by asserting
-    // that the response is the one returned by the user handler.
+    // McpClientEngine.initClient populates serverRef for all carrier routes with a no-op sentinel
+    // server, so a user-registered client-side sampling handler successfully returns its response
+    // rather than panicking with "McpServer not initialized". The test verifies the dispatch hop
+    // (user route overrides default-reject) by asserting that the response is the one returned by
+    // the user handler.
     "user-registered sampling route is reached instead of default reject" in run {
         val req = McpServer.SamplingRequest(
             messages = Chunk(McpServer.SamplingRequest.Message(McpContent.Role.User, McpServer.SamplingContent.Text("ping"))),

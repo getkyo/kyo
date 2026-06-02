@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: typed tool call aborts when structuredContent is absent (T-023, INV-027, Q-018). */
+/** Integration test: typed tool call aborts when structuredContent is absent. */
 class McpStructuredContentMissingTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
@@ -16,7 +16,7 @@ class McpStructuredContentMissingTest extends Test:
         )
     }
 
-    "callToolTyped[In, Out] aborts with McpToolStructuredMissingException when structuredContent is Absent (T-023, INV-027)" in run {
+    "callToolTyped[In, Out] aborts with McpToolStructuredMissingException when structuredContent is Absent" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, textOnlyRoute),
@@ -44,7 +44,7 @@ class McpStructuredContentMissingTest extends Test:
         }
     }
 
-    "callTool[In] (untyped) returns raw ToolOutcome when structuredContent is Absent (T-023, Q-018)" in run {
+    "callTool[In] (untyped) returns raw ToolOutcome when structuredContent is Absent" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, textOnlyRoute),

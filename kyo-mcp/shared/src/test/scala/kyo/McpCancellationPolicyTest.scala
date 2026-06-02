@@ -2,7 +2,7 @@ package kyo
 
 import kyo.internal.mcp.McpCancellationPolicy
 
-/** Tests for McpCancellationPolicy.default (Phase 4).
+/** Tests for McpCancellationPolicy.default.
   *
   * Verifies the MCP notifications/cancelled protocol adapter: cancelMethod field name,
   * encodeParams / decodeParams round-trip, protectedMethods set, and expectReplyForCancelledRequest.

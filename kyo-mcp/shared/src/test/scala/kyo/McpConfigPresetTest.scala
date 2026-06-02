@@ -4,17 +4,17 @@ import kyo.internal.mcp.McpCancellationPolicy
 import kyo.internal.mcp.McpProgressPolicy
 import kyo.internal.mcp.McpUnknownMethodPolicy
 
-/** Tests for McpConfig.default preset wiring and fluent setters (Phase 4, T-005).
+/** Tests for McpConfig.default preset wiring and fluent setters.
   *
-  * Pins INV-002 (three MCP policy slots non-default; gate == Absent in defaultJsonRpcConfig),
-  * INV-015 (capabilityGate == RejectUnsupported default), INV-016 (serverInfo == McpInfo("kyo-mcp", kyoMcpVersion)).
+  * Pins: three MCP policy slots non-default with gate == Absent in defaultJsonRpcConfig,
+  * capabilityGate == RejectUnsupported default, serverInfo == McpInfo("kyo-mcp", kyoMcpVersion).
   */
 class McpConfigPresetTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
     // -------------------------------------------------------------------------
-    // INV-002: three MCP policy slots are non-default; gate remains Absent
+    // Three MCP policy slots are non-default; gate remains Absent
     // -------------------------------------------------------------------------
 
     "cancellation slot is Present (non-default)" in {
@@ -53,7 +53,7 @@ class McpConfigPresetTest extends Test:
         assert(policy.progressMethod == "notifications/progress")
     }
 
-    "progress enforceMonotonic is true (INV-007)" in {
+    "progress enforceMonotonic is true" in {
         val policy = McpConfig.default.jsonRpc.progress.getOrElse(fail("progress absent"))
         assert(policy.enforceMonotonic)
     }
@@ -66,7 +66,7 @@ class McpConfigPresetTest extends Test:
         assert(McpConfig.default.jsonRpc.unknownMethod eq JsonRpcUnknownMethodPolicy.strict)
     }
 
-    "gate slot is Absent in defaultJsonRpcConfig (engine sets it at Phase 5)" in {
+    "gate slot is Absent in defaultJsonRpcConfig (engine wires it)" in {
         assert(McpConfig.default.jsonRpc.gate == Absent)
     }
 
@@ -91,22 +91,22 @@ class McpConfigPresetTest extends Test:
     }
 
     // -------------------------------------------------------------------------
-    // INV-015: capabilityGate default is RejectUnsupported
+    // capabilityGate default is RejectUnsupported
     // -------------------------------------------------------------------------
 
-    "capabilityGate default is RejectUnsupported (INV-015)" in {
+    "capabilityGate default is RejectUnsupported" in {
         assert(McpConfig.default.capabilityGate == McpConfig.CapabilityGateMode.RejectUnsupported)
     }
 
     // -------------------------------------------------------------------------
-    // INV-016: serverInfo default is McpInfo("kyo-mcp", kyoMcpVersion)
+    // serverInfo default is McpInfo("kyo-mcp", kyoMcpVersion)
     // -------------------------------------------------------------------------
 
-    "serverInfo default name is kyo-mcp (INV-016)" in {
+    "serverInfo default name is kyo-mcp" in {
         assert(McpConfig.default.serverInfo.name == "kyo-mcp")
     }
 
-    "serverInfo default version is McpConfig.ProtocolVersion.kyoMcpVersion (INV-016)" in {
+    "serverInfo default version is McpConfig.ProtocolVersion.kyoMcpVersion" in {
         assert(McpConfig.default.serverInfo.version == McpConfig.ProtocolVersion.kyoMcpVersion)
     }
 

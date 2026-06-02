@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Integration test: typed tool call happy-path roundtrip (INV-027). */
+/** Integration test: typed tool call happy-path roundtrip. */
 class McpToolCallTypedTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
@@ -16,7 +16,7 @@ class McpToolCallTypedTest extends Test:
         )
     }
 
-    "callToolTyped[In, Out] returns decoded Out when structuredContent is Present (INV-027)" in run {
+    "callToolTyped[In, Out] returns decoded Out when structuredContent is Present" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, addRoute),
@@ -33,7 +33,7 @@ class McpToolCallTypedTest extends Test:
         }
     }
 
-    "callToolTyped[In, Out] returns correct value for multiple calls (INV-027)" in run {
+    "callToolTyped[In, Out] returns correct value for multiple calls" in run {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, addRoute),

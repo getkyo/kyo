@@ -1,6 +1,6 @@
 package kyo
 
-/** Tests for McpServer engine wiring (T-009, T-010, INV-004, INV-017, INV-028). */
+/** Tests for McpServer engine wiring. */
 class McpServerTest extends Test:
 
     case class EchoReq(msg: String) derives Schema, CanEqual
@@ -13,8 +13,8 @@ class McpServerTest extends Test:
     private val resourceUri   = McpResourceUri.parse("file:///data").get
     private val resourceRoute = McpHandler.resource(resourceUri, "data")(Chunk.empty)
 
-    // T-009: McpServer.init prepends engine-owned initialize route at index 0.
-    "init with two user routes: initialize route is registered in the handler (INV-004)" in run {
+    // McpServer.init prepends engine-owned initialize route at index 0.
+    "init with two user routes: initialize route is registered in the handler" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute, resourceRoute).flatMap { server =>
                 Fiber.Promise.init[Unit, Sync].map { promise =>
@@ -28,8 +28,8 @@ class McpServerTest extends Test:
         }
     }
 
-    // T-009: close(using Frame) completes without error (behavioral test for 30s grace delegation).
-    "close completes without error on a live server (INV-028)" in run {
+    // close(using Frame) completes without error (behavioral test for 30s grace delegation).
+    "close completes without error on a live server" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute).flatMap { server =>
                 server.close.andThen(succeed)
@@ -45,8 +45,8 @@ class McpServerTest extends Test:
         }
     }
 
-    // T-010: notifyToolsListChanged with listChanged=false must not send any notification.
-    "notifyToolsListChanged with listChanged=false emits no notification (silent drop, INV-017)" in run {
+    // notifyToolsListChanged with listChanged=false must not send any notification.
+    "notifyToolsListChanged with listChanged=false emits no notification (silent drop)" in run {
         val emptyCaps = McpCapabilities.Server(tools = Present(McpCapabilities.ToolsCapability(listChanged = false)))
         val config    = McpConfig.default.declaredCapabilities(emptyCaps)
 
@@ -74,8 +74,8 @@ class McpServerTest extends Test:
         }
     }
 
-    // INV-017: notify* methods must type-check as Unit < (Async & Abort[Closed]) with no McpException.
-    "notifyToolsListChanged return type is Unit < (Async & Abort[Closed]) (INV-017)" in run {
+    // notify* methods must type-check as Unit < (Async & Abort[Closed]) with no McpException.
+    "notifyToolsListChanged return type is Unit < (Async & Abort[Closed])" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute).flatMap { server =>
                 val effect: Unit < (Async & Abort[Closed]) = server.notifyToolsListChanged

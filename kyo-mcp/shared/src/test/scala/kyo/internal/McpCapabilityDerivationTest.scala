@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.mcp.McpCatalog
 
-/** Tests for auto-derivation of McpCapabilities.Server from catalog contents (T-008, INV-019). */
+/** Tests for auto-derivation of McpCapabilities.Server from catalog contents. */
 class McpCapabilityDerivationTest extends Test:
 
     private val testUri = McpResourceUri.parse("file:///x").get
@@ -34,7 +34,7 @@ class McpCapabilityDerivationTest extends Test:
         assert(caps.tools == Present(McpCapabilities.ToolsCapability(listChanged = false)))
     }
 
-    "Case B: declaredCapabilities=Present(empty Server) yields empty verbatim (INV-019)" in run {
+    "Case B: declaredCapabilities=Present(empty Server) yields empty verbatim" in run {
         val empty   = McpCapabilities.Server()
         val config  = McpConfig.default.declaredCapabilities(empty)
         val catalog = McpCatalog(Seq(toolRoute, resourceRoute, promptRoute))

@@ -4,16 +4,15 @@ import kyo.*
 
 /** Integration test: user-defined error types declared via `.error[E2]` round-trip on the wire.
   *
-  * Validates the FR-009 fix: handler closures can `Abort.fail` with arbitrary user-defined
-  * error types, the typed mapping installs the wire code + message, and the client receives
-  * an `McpException` carrying both.
+  * Handler closures can `Abort.fail` with arbitrary user-defined error types; the typed mapping
+  * installs the wire code + message, and the client receives an `McpException` carrying both.
   */
 class McpUserDefinedErrorTest extends Test:
 
     case class FsError(reason: String, path: String) derives Schema, CanEqual
     case class ReadReq(path: String) derives Schema, CanEqual
 
-    "tool handler aborts with user-defined error type via .error[E2] (FR-009 fix)" in run {
+    "tool handler aborts with user-defined error type via .error[E2]" in run {
         val readTool = McpHandler
             .tool[ReadReq](name = "read", description = "Read a file") { req =>
                 if req.path.startsWith("/") then

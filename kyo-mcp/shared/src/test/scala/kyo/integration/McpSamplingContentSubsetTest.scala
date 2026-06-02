@@ -2,7 +2,7 @@ package kyo.integration
 
 import kyo.*
 
-/** Tests for SamplingContent typed subset (§3.10, Option A).
+/** Tests for SamplingContent typed subset (§3.10).
   *
   * SamplingContent is a sealed trait with only Text, Image, and Audio cases.
   * EmbeddedResource and ResourceLink are not present in the hierarchy; any reference to

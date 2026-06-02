@@ -1,6 +1,6 @@
 package kyo
 
-/** Opaque identity tests verifying runtime-level identity for all opaque String types (INV-012).
+/** Opaque identity tests verifying runtime-level identity for all opaque String types.
   *
   * Note: Scala 3 opaque type `=:=` proofs are only available inside the defining companion scope.
   * External code verifies identity by testing that values are accepted and round-trip as strings.
@@ -50,8 +50,7 @@ class OpaqueIdentityTest extends Test:
         assert(v.asString == "off")
     }
 
-    // Phase 06: LspServer opaque identity (INV-012).
-    "LspServer round-trips through safe/unsafe bridge (INV-012)" in run {
+    "LspServer round-trips through safe/unsafe bridge" in run {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val back = server.unsafe.safe

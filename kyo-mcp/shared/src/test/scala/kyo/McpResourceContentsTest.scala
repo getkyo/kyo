@@ -1,9 +1,9 @@
 package kyo
 
-/** Tests for `Schema[McpHandler.ResourceContents]` hand-rolled tagged-union Schema (Phase 3).
+/** Tests for the hand-rolled `Schema[McpHandler.ResourceContents]` tagged-union codec.
   *
-  * Pins INV-006 (discriminator key `"type"` with tags `"text"` and `"blob"`) and
-  * INV-022 (uri field is typed `McpResourceUri`).
+  * Pins the discriminator key `"type"` with tags `"text"` and `"blob"`, and the
+  * `uri` field's typed `McpResourceUri` representation.
   */
 class McpResourceContentsTest extends Test:
 

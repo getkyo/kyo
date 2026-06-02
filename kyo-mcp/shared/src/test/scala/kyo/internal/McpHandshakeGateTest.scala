@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.mcp.McpHandshakeGate
 
-/** Tests for the two-stage MCP handshake gate (T-007, INV-005). */
+/** Tests for the two-stage MCP handshake gate. */
 class McpHandshakeGateTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny

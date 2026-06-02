@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Verifies that LspServer extension surface covers the ClientHandled Kind set. INV-062.
+/** Verifies that LspServer extension surface covers the ClientHandled Kind set.
   *
   * Reflects the method names on the LspServer opaque type's extension block and asserts
   * the expected reverse-direction methods are present. A missing method fails this gate.

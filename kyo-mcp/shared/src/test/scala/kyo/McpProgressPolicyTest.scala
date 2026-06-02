@@ -2,9 +2,9 @@ package kyo
 
 import kyo.internal.mcp.McpProgressPolicy
 
-/** Tests for McpProgressPolicy.default (Phase 4, T-006).
+/** Tests for McpProgressPolicy.default.
   *
-  * Pins INV-007: progress tokens are extracted from params._meta.progressToken (not top-level
+  * Pins that progress tokens are extracted from params._meta.progressToken (not top-level
   * params.progressToken) on the request side. The extractInboundToken (progress notification)
   * reads from top-level params.progressToken.
   *
@@ -24,12 +24,12 @@ class McpProgressPolicyTest extends Test:
         assert(policy.progressMethod == "notifications/progress")
     }
 
-    "enforceMonotonic is true (INV-007)" in {
+    "enforceMonotonic is true" in {
         assert(policy.enforceMonotonic)
     }
 
     // -------------------------------------------------------------------------
-    // INV-007: extractRequestToken reads from _meta.progressToken only
+    // extractRequestToken reads from _meta.progressToken only
     // -------------------------------------------------------------------------
 
     "extractRequestToken: extracts token from _meta.progressToken" in run {

@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Tests for all numeric-keyed and string-keyed LSP 3.17 enum schemas (INV-051 / INV-052).
+/** Tests for all numeric-keyed and string-keyed LSP 3.17 enum schemas.
   *
   * Each enum encodes to its spec-mandated wire value (integer or string) and round-trips
   * correctly. The "segments is empty" assertion confirms each schema uses transform (not
@@ -16,7 +16,7 @@ class LspWireEnumSchemaTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
-    // ---- DocumentHighlightKind (INV-051) ----
+    // ---- DocumentHighlightKind ----
 
     "DocumentHighlightKind.Text encodes to 1" in {
         assert(encode[LspHandler.DocumentHighlightKind](LspHandler.DocumentHighlightKind.Text) == "1")
@@ -39,7 +39,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(summon[Schema[LspHandler.DocumentHighlightKind]].segments.isEmpty)
     }
 
-    // ---- TextDocumentSyncKind (INV-051; None=0 is the special case) ----
+    // ---- TextDocumentSyncKind (None=0 is the special case) ----
 
     "TextDocumentSyncKind.None encodes to 0" in {
         assert(encode[LspHandler.TextDocumentSyncKind](LspHandler.TextDocumentSyncKind.None) == "0")
@@ -59,7 +59,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(cases.forall(c => roundtrip(c) == c))
     }
 
-    // ---- TextDocumentSaveReason (INV-051) ----
+    // ---- TextDocumentSaveReason ----
 
     "TextDocumentSaveReason.Manual encodes to 1" in {
         assert(encode[LspHandler.TextDocumentSaveReason](LspHandler.TextDocumentSaveReason.Manual) == "1")
@@ -79,7 +79,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(cases.forall(c => roundtrip(c) == c))
     }
 
-    // ---- DiagnosticSeverity (INV-051) ----
+    // ---- DiagnosticSeverity ----
 
     "DiagnosticSeverity.Error encodes to 1" in {
         assert(encode[LspHandler.DiagnosticSeverity](LspHandler.DiagnosticSeverity.Error) == "1")
@@ -103,7 +103,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(cases.forall(c => roundtrip(c) == c))
     }
 
-    // ---- DiagnosticTag (INV-051) ----
+    // ---- DiagnosticTag ----
 
     "DiagnosticTag.Unnecessary encodes to 1" in {
         assert(encode[LspHandler.DiagnosticTag](LspHandler.DiagnosticTag.Unnecessary) == "1")
@@ -112,7 +112,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(encode[LspHandler.DiagnosticTag](LspHandler.DiagnosticTag.Deprecated) == "2")
     }
 
-    // ---- SymbolKind (INV-051; File=1..TypeParameter=26) ----
+    // ---- SymbolKind (File=1..TypeParameter=26) ----
 
     "SymbolKind.File encodes to 1" in {
         assert(encode[LspHandler.SymbolKind](LspHandler.SymbolKind.File) == "1")
@@ -129,7 +129,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(cases.forall(c => roundtrip(c) == c))
     }
 
-    // ---- CompletionItemKind (INV-051; Text=1..TypeParameter=25) ----
+    // ---- CompletionItemKind (Text=1..TypeParameter=25) ----
 
     "CompletionItemKind.Text encodes to 1" in {
         assert(encode[LspHandler.CompletionItemKind](LspHandler.CompletionItemKind.Text) == "1")
@@ -143,7 +143,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(cases.forall(c => roundtrip(c) == c))
     }
 
-    // ---- InsertTextFormat (INV-051) ----
+    // ---- InsertTextFormat ----
 
     "InsertTextFormat.PlainText encodes to 1" in {
         assert(encode[LspHandler.InsertTextFormat](LspHandler.InsertTextFormat.PlainText) == "1")
@@ -152,7 +152,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(encode[LspHandler.InsertTextFormat](LspHandler.InsertTextFormat.Snippet) == "2")
     }
 
-    // ---- InsertTextMode (INV-051) ----
+    // ---- InsertTextMode ----
 
     "InsertTextMode.AsIs encodes to 1" in {
         assert(encode[LspHandler.InsertTextMode](LspHandler.InsertTextMode.AsIs) == "1")
@@ -161,7 +161,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(encode[LspHandler.InsertTextMode](LspHandler.InsertTextMode.AdjustIndentation) == "2")
     }
 
-    // ---- CompletionTriggerKind (INV-051) ----
+    // ---- CompletionTriggerKind ----
 
     "CompletionTriggerKind.Invoked encodes to 1" in {
         assert(encode[LspHandler.CompletionTriggerKind](LspHandler.CompletionTriggerKind.Invoked) == "1")
@@ -170,7 +170,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(encode[LspHandler.CompletionTriggerKind](LspHandler.CompletionTriggerKind.TriggerForIncompleteCompletions) == "3")
     }
 
-    // ---- SignatureHelpTriggerKind (INV-051) ----
+    // ---- SignatureHelpTriggerKind ----
 
     "SignatureHelpTriggerKind.Invoked encodes to 1" in {
         assert(encode[LspHandler.SignatureHelpTriggerKind](LspHandler.SignatureHelpTriggerKind.Invoked) == "1")
@@ -179,7 +179,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(encode[LspHandler.SignatureHelpTriggerKind](LspHandler.SignatureHelpTriggerKind.ContentChange) == "3")
     }
 
-    // ---- CodeActionTriggerKind (INV-051) ----
+    // ---- CodeActionTriggerKind ----
 
     "CodeActionTriggerKind.Invoked encodes to 1" in {
         assert(encode[LspHandler.CodeActionTriggerKind](LspHandler.CodeActionTriggerKind.Invoked) == "1")
@@ -188,7 +188,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(encode[LspHandler.CodeActionTriggerKind](LspHandler.CodeActionTriggerKind.Automatic) == "2")
     }
 
-    // ---- InlayHintKind (INV-051) ----
+    // ---- InlayHintKind ----
 
     "InlayHintKind.Type encodes to 1" in {
         assert(encode[LspHandler.InlayHintKind](LspHandler.InlayHintKind.Type) == "1")
@@ -197,7 +197,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(encode[LspHandler.InlayHintKind](LspHandler.InlayHintKind.Parameter) == "2")
     }
 
-    // ---- NotebookCellKind (INV-051) ----
+    // ---- NotebookCellKind ----
 
     "NotebookCellKind.Markup encodes to 1" in {
         assert(encode[LspHandler.NotebookCellKind](LspHandler.NotebookCellKind.Markup) == "1")
@@ -206,7 +206,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(encode[LspHandler.NotebookCellKind](LspHandler.NotebookCellKind.Code) == "2")
     }
 
-    // ---- MessageType (INV-051) ----
+    // ---- MessageType ----
 
     "MessageType.Error encodes to 1" in {
         assert(encode[LspHandler.MessageType](LspHandler.MessageType.Error) == "1")
@@ -229,7 +229,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(cases.forall(c => roundtrip(c) == c))
     }
 
-    // ---- FileChangeType (INV-051) ----
+    // ---- FileChangeType ----
 
     "FileChangeType.Created encodes to 1" in {
         assert(encode[LspHandler.FileChangeType](LspHandler.FileChangeType.Created) == "1")
@@ -241,7 +241,7 @@ class LspWireEnumSchemaTest extends Test:
         assert(encode[LspHandler.FileChangeType](LspHandler.FileChangeType.Deleted) == "3")
     }
 
-    // ---- String-keyed enum schemas (INV-052) ----
+    // ---- String-keyed enum schemas ----
 
     "MarkupKind.PlainText encodes to \"plaintext\"" in {
         assert(encode[LspHandler.MarkupKind](LspHandler.MarkupKind.PlainText) == "\"plaintext\"")
