@@ -11,9 +11,15 @@ import scala.collection.mutable
   * paragraphs, lists, tables, fenced code with token highlighting, callout divs, inline images and
   * links) ready to embed directly into a page rendered by `UI.runRenderPage`.
   *
-  * The grammar is bounded to the construct set enumerated in RI-002. Unknown block constructs degrade
-  * gracefully to `UI.p` containing the verbatim line text; the effect row is `Sync` only (no
-  * `Abort`). The transpiler never raises an exception for malformed input.
+  * The grammar is bounded to the construct set enumerated in RI-002 and is expressed with kyo-parse
+  * `Parse[Char]` combinators (D6, "kyo all the way down"). A thin line-oriented splitter groups raw
+  * lines into block segments; the inline content of each block, and the block-level recognizers
+  * (headings, list markers, table cells, fence info-strings, badge/link/image inline tokens) are
+  * genuine kyo-parse parsers run via `Parse.runResult`.
+  *
+  * Unknown inline constructs degrade gracefully to plain text via kyo-parse `recoverWith` +
+  * `RecoverStrategy`; unknown block constructs degrade to `UI.p` containing the verbatim line text.
+  * The effect row is `Sync` only (no `Abort`): the transpiler never aborts on malformed corpus input.
   *
   * Inline HTML snippets (such as `<img>` or `<a><img></a>` tags found in the root README) are
   * emitted as [[kyo.UI.Ast.RawHtml]] leaves via `UI.rawHtml`. All other text is HTML-escaped by the
@@ -48,7 +54,8 @@ object DocsMarkdown:
     /** Transpile a single README Markdown source to a [[Rendered]] value.
       *
       * The effect row is `Sync` only. The function never aborts: unknown constructs are degraded to
-      * plain `UI.p` / `UI.text` nodes, and an empty source returns `Rendered(UI.empty, Chunk.empty)`
+      * plain `UI.p` / `UI.text` nodes (via kyo-parse `recoverWith` for inline content and a total
+      * paragraph fall-through for blocks), and an empty source returns `Rendered(UI.empty, Chunk.empty)`
       * without raising any error.
       *
       * @param source
@@ -60,17 +67,13 @@ object DocsMarkdown:
             else parseArticle(stripDoctest(source))
         }
 
-    // ---- private helpers ----
+    // ---- doctest pre-pass (string cleanup, not parsing) ----
 
     /** Remove `<!-- doctest:setup ... -->` comment blocks (and the fenced scala block they wrap)
       * and normalize fenced info-strings to the first whitespace-delimited token.
       */
     private def stripDoctest(source: String): String =
-        // Remove <!-- doctest:setup ... --> blocks, including any trailing fenced block.
-        val noComments = removeDocTestBlocks(source)
-        // Normalize fenced info-strings: "scala doctest:scope=inherited" -> "scala"
-        normalizeInfoStrings(noComments)
-    end stripDoctest
+        normalizeInfoStrings(removeDocTestBlocks(source))
 
     private def removeDocTestBlocks(source: String): String =
         val lines  = source.linesIterator.toArray
@@ -79,14 +82,12 @@ object DocsMarkdown:
         while i < lines.length do
             val line = lines(i)
             if line.trim.startsWith("<!--") && line.contains("doctest") then
-                // Skip the comment line (possibly multi-line, but RI-002 uses single-line <!-- ... -->).
                 i += 1
-                // Skip any immediately following fenced block.
                 if i < lines.length && lines(i).trim.startsWith("```") then
                     i += 1
                     while i < lines.length && !lines(i).trim.startsWith("```") do
                         i += 1
-                    if i < lines.length then i += 1 // consume closing ```
+                    if i < lines.length then i += 1
                 end if
             else
                 result += line
@@ -104,7 +105,6 @@ object DocsMarkdown:
             val line = lines(i)
             val m    = line.trim
             if m.startsWith("```") && m.length > 3 then
-                // Normalize: take only the first token of the info string.
                 val info          = m.drop(3).trim
                 val firstToken    = info.takeWhile(c => !c.isWhitespace)
                 val leadingSpaces = line.takeWhile(_ == ' ')
@@ -117,15 +117,147 @@ object DocsMarkdown:
         result.mkString("\n")
     end normalizeInfoStrings
 
+    // ---- block grouping (thin line splitter, the permitted structuring step) ----
+
+    /** A block segment grouped by the line splitter. Each segment carries the raw text that the
+      * corresponding kyo-parse block parser consumes; the splitter only groups lines, it does not
+      * interpret their inline content.
+      */
+    private enum Block:
+        case Heading(line: String)
+        case Fence(info: String, body: String)
+        case Quote(content: String)
+        case Table(lines: Seq[String])
+        case Unordered(lines: Seq[String])
+        case Ordered(lines: Seq[String])
+        case RawEmbed(snippet: String)
+        case Paragraph(text: String)
+    end Block
+
+    private def isHeadingLine(t: String): Boolean =
+        t.startsWith("# ") || t.startsWith("## ") || t.startsWith("### ") || t.startsWith("#### ")
+
+    private def isOrderedItem(t: String): Boolean =
+        t.length > 2 && t.head.isDigit && t.drop(1).startsWith(". ")
+
+    /** Group cleaned source lines into [[Block]] segments. Leading HTML comments are skipped
+      * (RI-002 trap 5). This is line-level structuring only; the content of each block is parsed
+      * by the kyo-parse block/inline parsers.
+      */
+    private def splitBlocks(cleaned: String): Seq[Block] =
+        val lines  = cleaned.linesIterator.toArray
+        val blocks = new mutable.ArrayBuffer[Block]()
+        var i      = 0
+
+        // Skip leading HTML comments (RI-002 trap 5).
+        while i < lines.length && lines(i).trim.startsWith("<!--") do
+            while i < lines.length && !lines(i).contains("-->") do i += 1
+            if i < lines.length then i += 1
+        end while
+
+        while i < lines.length do
+            val line    = lines(i)
+            val trimmed = line.trim
+
+            if trimmed.isEmpty then
+                i += 1
+            else if isHeadingLine(trimmed) then
+                blocks += Block.Heading(trimmed)
+                i += 1
+            else if trimmed.startsWith("```") then
+                val info = trimmed.drop(3).trim
+                i += 1
+                val codeLines = new mutable.ArrayBuffer[String]()
+                while i < lines.length && !lines(i).trim.startsWith("```") do
+                    codeLines += lines(i)
+                    i += 1
+                if i < lines.length then i += 1
+                blocks += Block.Fence(info, codeLines.mkString("\n"))
+            else if trimmed.startsWith("> ") || trimmed == ">" then
+                val bqLines = new mutable.ArrayBuffer[String]()
+                while i < lines.length && (lines(i).trim.startsWith("> ") || lines(i).trim == ">") do
+                    val l = lines(i).trim
+                    bqLines += (if l == ">" then "" else l.drop(2))
+                    i += 1
+                end while
+                blocks += Block.Quote(bqLines.mkString("\n"))
+            else if trimmed.startsWith("<!--") then
+                while i < lines.length && !lines(i).contains("-->") do i += 1
+                if i < lines.length then i += 1
+            else if trimmed.startsWith("|") then
+                val tableLines = new mutable.ArrayBuffer[String]()
+                while i < lines.length && lines(i).trim.startsWith("|") do
+                    tableLines += lines(i).trim
+                    i += 1
+                blocks += Block.Table(tableLines.toSeq)
+            else if trimmed.startsWith("- ") || line.startsWith("  - ") then
+                val listLines = new mutable.ArrayBuffer[String]()
+                while i < lines.length &&
+                    (lines(i).trim.startsWith("- ") || lines(i).startsWith("  - "))
+                do
+                    listLines += lines(i)
+                    i += 1
+                end while
+                blocks += Block.Unordered(listLines.toSeq)
+            else if isOrderedItem(trimmed) then
+                val listLines = new mutable.ArrayBuffer[String]()
+                while i < lines.length && isOrderedItem(lines(i).trim) do
+                    listLines += lines(i).trim
+                    i += 1
+                blocks += Block.Ordered(listLines.toSeq)
+
+            // Block-level raw HTML embed: lines starting with <img or <a only (root README corpus).
+            // <img is single line. <a may wrap <img on subsequent lines; coalesce until the closing
+            // </a>. The embed is wrapped in UI.p so the article body stays a real UI node and the
+            // <a><img></a> nesting is preserved as one unit (decision 12).
+            else if trimmed.startsWith("<img") || trimmed.startsWith("<a") then
+                if trimmed.startsWith("<img") then
+                    blocks += Block.RawEmbed(trimmed)
+                    i += 1
+                else
+                    val embedLines = new mutable.ArrayBuffer[String]()
+                    embedLines += trimmed
+                    i += 1
+                    while i < lines.length && !embedLines.last.trim.contains("</a>") do
+                        embedLines += lines(i).trim
+                        i += 1
+                    end while
+                    blocks += Block.RawEmbed(embedLines.mkString("\n"))
+                end if
+            else
+                val paraLines = new mutable.ArrayBuffer[String]()
+                while i < lines.length &&
+                    lines(i).trim.nonEmpty &&
+                    !isHeadingLine(lines(i).trim) &&
+                    !lines(i).trim.startsWith("```") &&
+                    !lines(i).trim.startsWith("> ") &&
+                    !lines(i).trim.startsWith("- ") &&
+                    !lines(i).startsWith("  - ") &&
+                    !lines(i).trim.startsWith("|") &&
+                    !lines(i).trim.startsWith("<!--") &&
+                    !isOrderedItem(lines(i).trim)
+                do
+                    paraLines += lines(i).trim
+                    i += 1
+                end while
+                blocks += Block.Paragraph(paraLines.mkString(" "))
+            end if
+        end while
+
+        blocks.toSeq
+    end splitBlocks
+
+    // ---- article assembly ----
+
     /** Parse the pre-processed Markdown string into a [[Rendered]] value.
       *
-      * Block-level grammar processes lines sequentially. Inline grammar is applied per text run.
-      * Heading slugs are tracked in a mutable map local to this call; duplicate slugs receive `-2`
-      * (then `-3`, etc.) suffixes.
+      * Lines are grouped into [[Block]] segments by [[splitBlocks]]; each segment's content is then
+      * parsed by a kyo-parse `Parse[Char]` parser. Heading slugs are tracked in a mutable map local
+      * to this call; duplicate slugs receive `-2` (then `-3`, etc.) suffixes.
       */
     private def parseArticle(cleaned: String)(using Frame): Rendered =
-        val lines      = cleaned.linesIterator.toArray
-        val blocks     = new mutable.ArrayBuffer[UI]()
+        val blocks     = splitBlocks(cleaned)
+        val uiBlocks   = new mutable.ArrayBuffer[UI]()
         val headings   = new mutable.ArrayBuffer[Heading]()
         val slugCounts = new mutable.HashMap[String, Int]()
 
@@ -145,167 +277,175 @@ object DocsMarkdown:
             uniqueSlug(base)
         end makeSlug
 
-        var i = 0
-
-        // Skip leading HTML comments (RI-002 trap 5).
-        while i < lines.length && lines(i).trim.startsWith("<!--") do
-            // Skip until comment close.
-            while i < lines.length && !lines(i).contains("-->") do i += 1
-            if i < lines.length then i += 1
-        end while
-
-        while i < lines.length do
-            val line    = lines(i)
-            val trimmed = line.trim
-
-            // Blank line: skip.
-            if trimmed.isEmpty then
-                i += 1
-
-            // ATX heading: # H1 through #### H4.
-            else if trimmed.startsWith("# ") || trimmed.startsWith("## ") ||
-                trimmed.startsWith("### ") || trimmed.startsWith("#### ")
-            then
-                val level =
-                    if trimmed.startsWith("#### ") then 4
-                    else if trimmed.startsWith("### ") then 3
-                    else if trimmed.startsWith("## ") then 2
-                    else 1
-                val hashes      = "#" * level + " "
-                val text        = trimmed.drop(hashes.length).trim
-                val slug        = makeSlug(text)
-                val inlineNodes = parseInline(text)
+        blocks.foreach {
+            case Block.Heading(line) =>
+                val (level, text) = parseHeading(line)
+                val slug          = makeSlug(text)
+                val inlineNodes   = parseInline(text)
                 val heading: UI = level match
                     case 1 => UI.h1.id(slug)(inlineNodes*)
                     case 2 => UI.h2.id(slug)(inlineNodes*)
                     case 3 => UI.h3.id(slug)(inlineNodes*)
                     case _ => UI.h4.id(slug)(inlineNodes*)
-                blocks += heading
+                uiBlocks += heading
                 headings += Heading(level, text, slug)
-                i += 1
 
-            // Fenced code block: ``` or ```lang
-            else if trimmed.startsWith("```") then
-                val lang = trimmed.drop(3).trim
-                i += 1
-                val codeLines = new mutable.ArrayBuffer[String]()
-                while i < lines.length && !lines(i).trim.startsWith("```") do
-                    codeLines += lines(i)
-                    i += 1
-                if i < lines.length then i += 1 // consume closing ```
-                val body        = codeLines.mkString("\n")
-                val codeContent = highlight(lang, body)
-                blocks += UI.pre(UI.code(codeContent))
+            case Block.Fence(info, body) =>
+                uiBlocks += UI.pre(UI.code(highlight(info, body)))
 
-            // Blockquote lines.
-            else if trimmed.startsWith("> ") || trimmed == ">" then
-                // Collect all consecutive blockquote lines.
-                val bqLines = new mutable.ArrayBuffer[String]()
-                while i < lines.length && (lines(i).trim.startsWith("> ") || lines(i).trim == ">") do
-                    val l = lines(i).trim
-                    bqLines += (if l == ">" then "" else l.drop(2))
-                    i += 1
-                end while
-                val bqContent = bqLines.mkString("\n")
-                blocks += parseBlockquote(bqContent)
+            case Block.Quote(content) =>
+                uiBlocks += parseBlockquote(content)
 
-            // HTML comment: skip.
-            else if trimmed.startsWith("<!--") then
-                while i < lines.length && !lines(i).contains("-->") do i += 1
-                if i < lines.length then i += 1
+            case Block.Table(lines) =>
+                uiBlocks += parseTable(lines)
 
-            // GFM pipe table: lines starting with |.
-            else if trimmed.startsWith("|") then
-                val tableLines = new mutable.ArrayBuffer[String]()
-                while i < lines.length && lines(i).trim.startsWith("|") do
-                    tableLines += lines(i).trim
-                    i += 1
-                blocks += parseTable(tableLines.toSeq)
+            case Block.Unordered(lines) =>
+                uiBlocks += parseUnorderedList(lines)
 
-            // Unordered list: - or  - (two-space indent for sub-items).
-            else if trimmed.startsWith("- ") || line.startsWith("  - ") then
-                val listBlock = parseUnorderedList(lines, i)
-                blocks += listBlock._1
-                i = listBlock._2
+            case Block.Ordered(lines) =>
+                val items = lines.map(l => UI.li(parseInline(parseOrderedItem(l))*))
+                uiBlocks += UI.ol(items*)
 
-            // Ordered list: N.
-            else if trimmed.length > 2 && trimmed.head.isDigit && trimmed.drop(1).startsWith(". ") then
-                val listItems = new mutable.ArrayBuffer[Ast.Li]()
-                while i < lines.length &&
-                    lines(i).trim.nonEmpty &&
-                    lines(i).trim.head.isDigit &&
-                    lines(i).trim.drop(1).startsWith(". ")
-                do
-                    val text = lines(i).trim.dropWhile(_.isDigit).drop(2)
-                    listItems += UI.li(parseInline(text)*)
-                    i += 1
-                end while
-                blocks += UI.ol(listItems.toSeq*)
+            case Block.RawEmbed(snippet) =>
+                uiBlocks += UI.p(UI.rawHtml(snippet))
 
-            // Block-level raw HTML embed: lines starting with <img or <a only (root README corpus).
-            // <img is self-contained (single line). <a may wrap <img on subsequent lines; coalesce
-            // until and including the closing </a> line. The embed is wrapped in UI.p so the article
-            // body stays a real UI node and the <a><img></a> nesting is preserved as one unit.
-            else if trimmed.startsWith("<img") || trimmed.startsWith("<a") then
-                if trimmed.startsWith("<img") then
-                    blocks += UI.p(UI.rawHtml(trimmed))
-                    i += 1
-                else
-                    // Opener is <a ...; consume lines until </a>.
-                    val embedLines = new mutable.ArrayBuffer[String]()
-                    embedLines += trimmed
-                    i += 1
-                    while i < lines.length && !embedLines.last.trim.contains("</a>") do
-                        embedLines += lines(i).trim
-                        i += 1
-                    end while
-                    blocks += UI.p(UI.rawHtml(embedLines.mkString("\n")))
-                end if
-
-            // Paragraph: accumulate non-blank lines.
-            else
-                val paraLines = new mutable.ArrayBuffer[String]()
-                while i < lines.length &&
-                    lines(i).trim.nonEmpty &&
-                    !lines(i).trim.startsWith("#") &&
-                    !lines(i).trim.startsWith("```") &&
-                    !lines(i).trim.startsWith("> ") &&
-                    !lines(i).trim.startsWith("- ") &&
-                    !lines(i).startsWith("  - ") &&
-                    !lines(i).trim.startsWith("|") &&
-                    !lines(i).trim.startsWith("<!--") &&
-                    !(lines(i).trim.nonEmpty && lines(i).trim.head.isDigit && lines(i).trim.drop(1).startsWith(". "))
-                do
-                    paraLines += lines(i).trim
-                    i += 1
-                end while
-                val text = paraLines.mkString(" ")
-                blocks += UI.p(parseInline(text)*)
-            end if
-        end while
+            case Block.Paragraph(text) =>
+                uiBlocks += UI.p(parseInline(text)*)
+        }
 
         val article: UI =
-            if blocks.isEmpty then UI.empty
-            else UI.fragment(blocks.toSeq*)
+            if uiBlocks.isEmpty then UI.empty
+            else UI.fragment(uiBlocks.toSeq*)
         Rendered(article, Chunk.from(headings.toSeq))
     end parseArticle
 
-    private def parseBlockquote(content: String)(using Frame): UI =
-        val lines = content.linesIterator.toArray
-        // Detect if it starts with a fenced code block inside the blockquote.
-        // Detect callout or generic blockquote.
-        val firstNonEmpty = content.linesIterator.find(_.trim.nonEmpty).getOrElse("")
-        if firstNonEmpty.trim.startsWith("**Note:**") then
-            val bqBlocks = parseBlockquoteContent(content)
-            UI.div.cssClass("callout callout-note")(bqBlocks*)
-        else if firstNonEmpty.trim.startsWith("**Caution:**") then
-            val bqBlocks = parseBlockquoteContent(content)
-            UI.div.cssClass("callout callout-caution")(bqBlocks*)
+    // ---- block-level kyo-parse parsers ----
+
+    /** Parse an ATX heading line via a `Parse[Char]` grammar: 1..4 `#`, a space, then the rest of
+      * the line as the heading text. Returns the level and the trimmed text.
+      */
+    private def parseHeading(line: String)(using Frame): (Int, String) =
+        val parser: (Int, String) < Parse[Char] =
+            for
+                hashes <- Parse.readWhile[Char](_ == '#')
+                _      <- Parse.literal(' ')
+                rest   <- Parse.readWhile[Char](_ => true)
+            yield (hashes.length, rest.mkString.trim)
+        runParser(line)(parser).getOrElse {
+            // Total fall-through: a leading `#` always matches one of the H1..H4 openers.
+            (1, line.dropWhile(_ == '#').trim)
+        }
+    end parseHeading
+
+    /** Strip the ordered-list marker (`N. `) from a line via a `Parse[Char]` grammar, returning the
+      * item text.
+      */
+    private def parseOrderedItem(line: String)(using Frame): String =
+        val parser: String < Parse[Char] =
+            for
+                _    <- Parse.readWhile[Char](_.isDigit)
+                _    <- Parse.literal('.')
+                _    <- Parse.literal(' ')
+                rest <- Parse.readWhile[Char](_ => true)
+            yield rest.mkString
+        runParser(line)(parser).getOrElse(line)
+    end parseOrderedItem
+
+    /** Parse a GFM pipe-table row into trimmed cell strings via a `Parse[Char]` grammar. A GFM row is
+      * `| c1 | c2 |`: a leading `|` followed by a run of `cell` then `|` pairs. A cell is a run of
+      * characters up to the next pipe, with a `\|` escape contributing a literal `|` to the cell
+      * (addressing the NOTE-1 naive-split limitation: an escaped pipe stays inside the cell rather
+      * than splitting it).
+      */
+    private def parseRowCells(line: String)(using Frame): Seq[String] =
+        val cellChar: String < Parse[Char] =
+            Parse.firstOf(
+                Parse.literal("\\|").andThen("|"),
+                Parse.anyIf[Char](c => c != '|')(c => s"Unexpected $c").map(_.toString)
+            )
+        val cell: String < Parse[Char] =
+            for
+                chars <- Parse.repeat(cellChar)
+                _     <- Parse.literal('|')
+            yield chars.mkString.trim
+        val row: Seq[String] < Parse[Char] =
+            for
+                _     <- Parse.literal('|')
+                cells <- Parse.repeat(cell)
+            yield cells.toSeq
+        runParser(line)(row).getOrElse {
+            // Total fall-through for a row that is not pipe-delimited.
+            Seq(line.stripPrefix("|").stripSuffix("|").trim)
+        }
+    end parseRowCells
+
+    /** Parse a GFM pipe table. The first row is the header; the second is the separator; remaining
+      * rows are body rows. Cell content is re-parsed with [[parseInline]].
+      */
+    private def parseTable(tableLines: Seq[String])(using Frame): UI =
+        if tableLines.length < 2 then
+            // Malformed table (missing separator): degrade to paragraph.
+            UI.p(Ast.Text(tableLines.headOption.getOrElse("")))
         else
-            // Generic blockquote: check for other **Label:** patterns.
-            val bqBlocks = parseBlockquoteContent(content)
-            UI.div.cssClass("blockquote")(bqBlocks*)
+            val headerCells = parseRowCells(tableLines.head)
+            val bodyRows    = if tableLines.length > 2 then tableLines.drop(2) else Seq.empty
+            val headerTr    = UI.tr(headerCells.map(cell => UI.th(parseInline(cell)*))*)
+            val bodyTrs = bodyRows.map { row =>
+                val cells = parseRowCells(row)
+                UI.tr(cells.map(cell => UI.td(parseInline(cell)*))*)
+            }
+            UI.table(headerTr +: bodyTrs*)
         end if
+    end parseTable
+
+    /** Parse an unordered list from its grouped lines, handling two-space sub-indented items. The
+      * `- ` / `  - ` markers are recognized with a `Parse[Char]` parser per line.
+      */
+    private def parseUnorderedList(lines: Seq[String])(using Frame): UI =
+        val arr   = lines.toArray
+        val items = new mutable.ArrayBuffer[Ast.Li]()
+        var i     = 0
+        while i < arr.length do
+            val line = arr(i)
+            if line.startsWith("  - ") then
+                // Orphan sub-item with no preceding top-level item; treat as a top-level item.
+                items += UI.li(parseInline(parseListItem(line.trim))*)
+                i += 1
+            else
+                val text = parseListItem(line.trim)
+                i += 1
+                val subItems = new mutable.ArrayBuffer[Ast.Li]()
+                while i < arr.length && arr(i).startsWith("  - ") do
+                    subItems += UI.li(parseInline(parseListItem(arr(i).trim))*)
+                    i += 1
+                end while
+                if subItems.isEmpty then items += UI.li(parseInline(text)*)
+                else items += UI.li((parseInline(text) :+ UI.ul(subItems.toSeq*))*)
+            end if
+        end while
+        UI.ul(items.toSeq*)
+    end parseUnorderedList
+
+    /** Strip the `- ` marker from a (trimmed) unordered-list line via a `Parse[Char]` grammar. */
+    private def parseListItem(trimmed: String)(using Frame): String =
+        val parser: String < Parse[Char] =
+            for
+                _    <- Parse.literal("- ")
+                rest <- Parse.readWhile[Char](_ => true)
+            yield rest.mkString
+        runParser(trimmed)(parser).getOrElse(trimmed.stripPrefix("- "))
+    end parseListItem
+
+    /** Parse a blockquote run into a callout/blockquote div. The leading `> ` is already stripped by
+      * the splitter. A `> **Note:**` opener becomes a note callout, `> **Caution:**` a caution
+      * callout, everything else a generic blockquote.
+      */
+    private def parseBlockquote(content: String)(using Frame): UI =
+        val firstNonEmpty = content.linesIterator.find(_.trim.nonEmpty).getOrElse("").trim
+        val bqBlocks      = parseBlockquoteContent(content)
+        if firstNonEmpty.startsWith("**Note:**") then UI.div.cssClass("callout callout-note")(bqBlocks*)
+        else if firstNonEmpty.startsWith("**Caution:**") then UI.div.cssClass("callout callout-caution")(bqBlocks*)
+        else UI.div.cssClass("blockquote")(bqBlocks*)
     end parseBlockquote
 
     private def parseBlockquoteContent(content: String)(using Frame): Seq[UI] =
@@ -317,96 +457,26 @@ object DocsMarkdown:
             if trimmed.isEmpty then
                 i += 1
             else if trimmed.startsWith("```") then
-                // Fenced code inside blockquote.
-                val lang = trimmed.drop(3).trim
+                val info = trimmed.drop(3).trim
                 i += 1
                 val codeLines = new mutable.ArrayBuffer[String]()
                 while i < lines.length && !lines(i).trim.startsWith("```") do
                     codeLines += lines(i)
                     i += 1
                 if i < lines.length then i += 1
-                val body = codeLines.mkString("\n")
-                result += UI.pre(UI.code(highlight(lang, body)))
+                result += UI.pre(UI.code(highlight(info, codeLines.mkString("\n"))))
             else
-                // Collect paragraph lines.
                 val paraLines = new mutable.ArrayBuffer[String]()
                 while i < lines.length && lines(i).trim.nonEmpty && !lines(i).trim.startsWith("```") do
                     paraLines += lines(i).trim
                     i += 1
-                val text = paraLines.mkString(" ")
-                result += UI.p(parseInline(text)*)
+                result += UI.p(parseInline(paraLines.mkString(" "))*)
             end if
         end while
         result.toSeq
     end parseBlockquoteContent
 
-    /** Parse a GFM pipe table. The first row is the header; the second is the separator; remaining
-      * rows are body rows. Cell content is re-parsed with parseInline.
-      */
-    private def parseTable(tableLines: Seq[String])(using Frame): UI =
-        if tableLines.length < 2 then
-            // Malformed table (missing separator): degrade to paragraph.
-            UI.p(Ast.Text(tableLines.headOption.getOrElse("")))
-        else
-            def parseCells(line: String): Seq[String] =
-                line.stripPrefix("|").stripSuffix("|").split("\\|", -1).map(_.trim).toSeq
-
-            val headerRow = tableLines.head
-            val bodyRows  = if tableLines.length > 2 then tableLines.drop(2) else Seq.empty
-
-            val headerCells = parseCells(headerRow)
-            val headerTr    = UI.tr(headerCells.map(cell => UI.th(parseInline(cell)*))*)
-
-            val bodyTrs = bodyRows.map { row =>
-                val cells = parseCells(row)
-                UI.tr(cells.map(cell => UI.td(parseInline(cell)*))*)
-            }
-
-            UI.table(headerTr +: bodyTrs*)
-        end if
-    end parseTable
-
-    /** Parse an unordered list starting at line `start`, handling two-space sub-indented items.
-      * Returns the `UI.ul` node and the index of the next unprocessed line.
-      */
-    private def parseUnorderedList(lines: Array[String], start: Int)(using Frame): (UI, Int) =
-        val items = new mutable.ArrayBuffer[Ast.Li]()
-        var i     = start
-        while i < lines.length &&
-            (lines(i).trim.startsWith("- ") || lines(i).startsWith("  - "))
-        do
-            val line = lines(i)
-            if line.startsWith("  - ") then
-                // Sub-item: skip here; handled by the parent item's sub-list collection.
-                // This branch handles lines already-matched as sub-items but not yet consumed.
-                i += 1
-            else
-                // Top-level item.
-                val text = line.trim.drop(2)
-                i += 1
-                // Collect sub-items (two-space indent).
-                val subItems = new mutable.ArrayBuffer[Ast.Li]()
-                while i < lines.length && lines(i).startsWith("  - ") do
-                    val subText = lines(i).trim.drop(2)
-                    subItems += UI.li(parseInline(subText)*)
-                    i += 1
-                end while
-                if subItems.isEmpty then
-                    items += UI.li(parseInline(text)*)
-                else
-                    items += UI.li((parseInline(text) :+ UI.ul(subItems.toSeq*))*)
-                end if
-            end if
-        end while
-        (UI.ul(items.toSeq*), i)
-    end parseUnorderedList
-
-    /** Parse inline Markdown to a sequence of UI nodes.
-      *
-      * Handles: bold (`**text**`), italic (`*text*`), inline code (`` `text` ``), links (`[text](url)`),
-      * badge images (`![alt](url)`), linked badges (`[![alt](img)](link)`), inline raw HTML (`<...>`),
-      * and plain text runs.
-      */
+    // ---- inline kyo-parse grammar ----
 
     /** Convert a raw URL string to a `Href`. Treats `#id` as Fragment, `http(s)://...` as External,
       * and everything else as Path.
@@ -418,159 +488,179 @@ object DocsMarkdown:
         else Href.Path(url)
     end toHref
 
+    /** Parse inline Markdown to a sequence of UI nodes with a kyo-parse `Parse[Char]` grammar.
+      *
+      * Handles, in PEG ordered-choice precedence: linked badges (`[![alt](img)](link)`), badge
+      * images (`![alt](url)`), links (`[text](url)`), bold (`**text**`), italic (`*text*`), inline
+      * code (`` `text` ``), inline raw HTML (`<...>`), and plain text runs. Any inline token that
+      * does not parse degrades to a single literal character via `recoverWith` +
+      * `RecoverStrategy`, so the row never aborts.
+      */
     private def parseInline(text: String)(using Frame): Seq[UI] =
         if text.isEmpty then Seq(Ast.Text(""))
-        else
-            val result = new mutable.ArrayBuffer[UI]()
-            var pos    = 0
+        else runParser(text)(inlineNodes).getOrElse(Seq(Ast.Text(text)))
 
-            while pos < text.length do
-                val ch = text.charAt(pos)
+    /** One result of the inline grammar: either a single literal character (a degrade unit, coalesced
+      * into `Ast.Text` runs) or a fully parsed inline `UI` node.
+      */
+    private enum Token:
+        case Lit(char: Char)
+        case Node(ui: UI)
 
-                // Linked badge: [![alt](img)](link)
-                if ch == '[' && pos + 1 < text.length && text.charAt(pos + 1) == '!' &&
-                    pos + 2 < text.length && text.charAt(pos + 2) == '['
-                then
-                    // Linked badge: [![alt](img-url)](link-url)
-                    // pos=0: `[`, pos+1: `!`, pos+2: `[`, alt starts at pos+3
-                    val altStart = pos + 3
-                    val altEnd   = text.indexOf(']', altStart)
-                    if altEnd > altStart && altEnd + 1 < text.length && text.charAt(altEnd + 1) == '(' then
-                        val alt      = text.substring(altStart, altEnd)
-                        val imgStart = altEnd + 2
-                        val imgEnd   = text.indexOf(')', imgStart)
-                        // After img-url ')' must come '](' for the outer link wrapper.
-                        if imgEnd > imgStart && imgEnd + 2 < text.length &&
-                            text.charAt(imgEnd + 1) == ']' && text.charAt(imgEnd + 2) == '('
-                        then
-                            val imgUrl    = text.substring(imgStart, imgEnd)
-                            val linkStart = imgEnd + 3
-                            val linkEnd   = text.indexOf(')', linkStart)
-                            if linkEnd > linkStart then
-                                val linkUrl = text.substring(linkStart, linkEnd)
-                                result += UI.a.href(toHref(linkUrl))(UI.img(ImgSrc.Path(imgUrl), alt))
-                                pos = linkEnd + 1
-                            else
-                                result += Ast.Text(ch.toString)
-                                pos += 1
-                            end if
-                        else
-                            result += Ast.Text(ch.toString)
-                            pos += 1
-                        end if
-                    else
-                        result += Ast.Text(ch.toString)
-                        pos += 1
-                    end if
+    /** The inline grammar: repeat a single inline token until end of input, then coalesce adjacent
+      * literal characters into `Ast.Text` runs.
+      */
+    private def inlineNodes(using Frame): Seq[UI] < Parse[Char] =
+        Parse.repeat(inlineToken).map(tokens => coalesceText(tokens.toSeq))
 
-                // Badge image: ![alt](url)
-                else if ch == '!' && pos + 1 < text.length && text.charAt(pos + 1) == '[' then
-                    val closeBracket = text.indexOf("](", pos + 2)
-                    if closeBracket > 0 then
-                        val alt      = text.substring(pos + 2, closeBracket)
-                        val urlStart = closeBracket + 2
-                        val urlEnd   = text.indexOf(')', urlStart)
-                        if urlEnd > 0 then
-                            val url = text.substring(urlStart, urlEnd)
-                            result += UI.img(ImgSrc.Path(url), alt)
-                            pos = urlEnd + 1
-                        else
-                            result += Ast.Text("!")
-                            pos += 1
-                        end if
-                    else
-                        result += Ast.Text("!")
-                        pos += 1
-                    end if
+    /** A single inline token, as a `Token`: `Lit(char)` is one literal character (a degrade unit);
+      * `Node(ui)` is a parsed inline node. Unknown markup degrades to one literal character via the
+      * `firstOf` last branch, and any fatal failure is recovered to one literal character via
+      * `recoverWith` + `RecoverStrategy`, so the inline row never aborts.
+      */
+    private def inlineToken(using Frame): Token < Parse[Char] =
+        def node(p: UI < Parse[Char]): Token < Parse[Char] = p.map(Token.Node(_))
+        val literalChar: Token < Parse[Char]               = Parse.any[Char].map(Token.Lit(_))
+        Parse.recoverWith(
+            Parse.firstOf(
+                node(linkedBadge),
+                node(badgeImage),
+                node(link),
+                node(bold),
+                node(italic),
+                node(inlineCode),
+                node(inlineHtml),
+                literalChar
+            ),
+            RecoverStrategy.viaParser[Char, Token](Parse.any[Char].map(Token.Lit(_)))
+        )
+    end inlineToken
 
-                // Link: [text](url)
-                else if ch == '[' then
-                    val closeBracket = text.indexOf("](", pos + 1)
-                    if closeBracket > 0 then
-                        val linkText = text.substring(pos + 1, closeBracket)
-                        val urlStart = closeBracket + 2
-                        val urlEnd   = text.indexOf(')', urlStart)
-                        if urlEnd > 0 then
-                            val url        = text.substring(urlStart, urlEnd)
-                            val innerNodes = parseInline(linkText)
-                            result += UI.a.href(toHref(url))(innerNodes*)
-                            pos = urlEnd + 1
-                        else
-                            result += Ast.Text(ch.toString)
-                            pos += 1
-                        end if
-                    else
-                        result += Ast.Text(ch.toString)
-                        pos += 1
-                    end if
+    /** Coalesce a token stream of literal-char runs and parsed nodes into a UI sequence, merging
+      * adjacent literal characters into single `Ast.Text` leaves.
+      */
+    private def coalesceText(tokens: Seq[Token])(using Frame): Seq[UI] =
+        val out = new mutable.ArrayBuffer[UI]()
+        val buf = new mutable.StringBuilder()
+        def flush(): Unit =
+            if buf.nonEmpty then
+                out += Ast.Text(buf.toString)
+                buf.clear()
+        tokens.foreach {
+            case Token.Lit(c)   => buf.append(c)
+            case Token.Node(ui) => flush(); out += ui
+        }
+        flush()
+        out.toSeq
+    end coalesceText
 
-                // Bold: **text**
-                else if ch == '*' && pos + 1 < text.length && text.charAt(pos + 1) == '*' then
-                    val closePos = text.indexOf("**", pos + 2)
-                    if closePos > pos + 2 then
-                        val inner = text.substring(pos + 2, closePos)
-                        result += UI.span.cssClass("md-strong")(Ast.Text(inner))
-                        pos = closePos + 2
-                    else
-                        result += Ast.Text("*")
-                        pos += 1
-                    end if
+    /** Read characters until (but not including) the next occurrence of `stop`, as a String. */
+    private def readUntilChar(stop: Char)(using Frame): String < Parse[Char] =
+        Parse.readWhile[Char](_ != stop).map(_.mkString)
 
-                // Italic: *text*
-                else if ch == '*' then
-                    val closePos = text.indexOf("*", pos + 1)
-                    if closePos > pos then
-                        val inner = text.substring(pos + 1, closePos)
-                        result += UI.span.style(Style.italic)(Ast.Text(inner))
-                        pos = closePos + 1
-                    else
-                        result += Ast.Text(ch.toString)
-                        pos += 1
-                    end if
+    /** Read characters until (but not including) the next occurrence of `stop`, as a String. */
+    private def readUntilString(stop: String)(using Frame): String < Parse[Char] =
+        // stop is one or two characters in the inline grammar; read char-by-char with a not-lookahead.
+        Parse.repeat(
+            for
+                _ <- Parse.not(Parse.literal(stop))
+                c <- Parse.any[Char]
+            yield c
+        ).map(_.mkString)
 
-                // Inline code: `text`
-                else if ch == '`' then
-                    val closePos = text.indexOf('`', pos + 1)
-                    if closePos > pos then
-                        val code = text.substring(pos + 1, closePos)
-                        result += UI.code(Ast.Text(code))
-                        pos = closePos + 1
-                    else
-                        result += Ast.Text(ch.toString)
-                        pos += 1
-                    end if
+    /** `[![alt](img)](link)` -> `UI.a.href(link)(UI.img(img, alt))`. */
+    private def linkedBadge(using Frame): UI < Parse[Char] =
+        for
+            _   <- Parse.literal("[![")
+            alt <- readUntilChar(']')
+            _   <- Parse.literal("](")
+            img <- readUntilChar(')')
+            _   <- Parse.literal(")](")
+            lnk <- readUntilChar(')')
+            _   <- Parse.literal(')')
+        yield UI.a.href(toHref(lnk))(UI.img(ImgSrc.Path(img), alt))
 
-                // Inline raw HTML: <...>
-                else if ch == '<' then
-                    val closePos = text.indexOf('>', pos + 1)
-                    if closePos > 0 then
-                        val snippet = text.substring(pos, closePos + 1)
-                        result += UI.rawHtml(snippet)
-                        pos = closePos + 1
-                    else
-                        result += Ast.Text(ch.toString)
-                        pos += 1
-                    end if
+    /** `![alt](url)` -> `UI.img(url, alt)`. */
+    private def badgeImage(using Frame): UI < Parse[Char] =
+        for
+            _   <- Parse.literal("![")
+            alt <- readUntilChar(']')
+            _   <- Parse.literal("](")
+            url <- readUntilChar(')')
+            _   <- Parse.literal(')')
+        yield UI.img(ImgSrc.Path(url), alt)
 
-                // Plain text: accumulate until next special character.
-                else
-                    val start = pos
-                    while pos < text.length &&
-                        text.charAt(pos) != '*' &&
-                        text.charAt(pos) != '`' &&
-                        text.charAt(pos) != '[' &&
-                        text.charAt(pos) != '!' &&
-                        text.charAt(pos) != '<'
-                    do
-                        pos += 1
-                    end while
-                    result += Ast.Text(text.substring(start, pos))
-                end if
-            end while
+    /** `[text](url)` -> `UI.a.href(url)(parseInline(text)*)`. */
+    private def link(using Frame): UI < Parse[Char] =
+        for
+            _    <- Parse.literal('[')
+            body <- readUntilString("](")
+            _    <- Parse.literal("](")
+            url  <- readUntilChar(')')
+            _    <- Parse.literal(')')
+        yield UI.a.href(toHref(url))(parseInline(body)*)
 
-            result.toSeq
-        end if
-    end parseInline
+    /** `**text**` -> a bold `md-strong` span. */
+    private def bold(using Frame): UI < Parse[Char] =
+        for
+            _     <- Parse.literal("**")
+            inner <- nonEmptyUntilString("**")
+            _     <- Parse.literal("**")
+        yield UI.span.cssClass("md-strong")(Ast.Text(inner))
+
+    /** `*text*` -> an italic span. */
+    private def italic(using Frame): UI < Parse[Char] =
+        for
+            _     <- Parse.literal('*')
+            inner <- nonEmptyUntilChar('*')
+            _     <- Parse.literal('*')
+        yield UI.span.style(Style.italic)(Ast.Text(inner))
+
+    /** `` `text` `` -> an inline `UI.code` node. */
+    private def inlineCode(using Frame): UI < Parse[Char] =
+        for
+            _     <- Parse.literal('`')
+            inner <- nonEmptyUntilChar('`')
+            _     <- Parse.literal('`')
+        yield UI.code(Ast.Text(inner))
+
+    /** `<...>` -> a verbatim `UI.rawHtml` leaf for inline HTML snippets. */
+    private def inlineHtml(using Frame): UI < Parse[Char] =
+        for
+            _     <- Parse.literal('<')
+            inner <- nonEmptyUntilChar('>')
+            _     <- Parse.literal('>')
+        yield UI.rawHtml("<" + inner + ">")
+
+    /** Read at least one character up to (not including) `stop`; drops the branch if the run is empty
+      * so an unmatched opener falls through to a literal character.
+      */
+    private def nonEmptyUntilChar(stop: Char)(using Frame): String < Parse[Char] =
+        Parse.readWhile[Char](_ != stop).map(_.mkString).map { run =>
+            if run.isEmpty then Parse.fail[Char]("empty span")
+            else run
+        }
+
+    /** Read at least one character up to (not including) the `stop` string; drops the branch on an
+      * empty run so an unmatched opener falls through to a literal character.
+      */
+    private def nonEmptyUntilString(stop: String)(using Frame): String < Parse[Char] =
+        readUntilString(stop).map { run =>
+            if run.isEmpty then Parse.fail[Char]("empty span")
+            else run
+        }
+
+    // ---- kyo-parse runner ----
+
+    /** Run a `Parse[Char]` parser over `input`, requiring it to consume the entire input, and return
+      * its result as a `Maybe`. A failed or incomplete parse yields `Absent`, which the callers turn
+      * into their total fall-through. The `Parse[Char]` effect is fully discharged here (effect row
+      * `Any`), so the pure result is evaluated synchronously.
+      */
+    private def runParser[A](input: String)(parser: A < Parse[Char])(using Frame): Maybe[A] =
+        Parse.runResult(input)(Parse.entireInput(parser)).map(_.out).eval
+
+    // ---- syntax-highlighting tokenizer ----
 
     /** Shared scala/sbt/bash tokenizer that emits `.tok-*` UI.span runs for keyword/string/comment
       * tokens and plain `UI.text` for the rest. The classes are styled by `WebsiteStyles.sheet`.
@@ -635,28 +725,21 @@ object DocsMarkdown:
         while pos < src.length do
             val ch = src.charAt(pos)
 
-            // Triple-quoted string.
             if pos + 2 < src.length && src.startsWith("\"\"\"", pos) then
                 val end      = src.indexOf("\"\"\"", pos + 3)
                 val closeEnd = if end >= 0 then end + 3 else src.length
                 tokens += UI.span.cssClass("tok-string")(Ast.Text(src.substring(pos, closeEnd)))
                 pos = closeEnd
-
-            // Line comment.
             else if pos + 1 < src.length && src.charAt(pos) == '/' && src.charAt(pos + 1) == '/' then
                 val end      = src.indexOf('\n', pos)
                 val closeEnd = if end >= 0 then end else src.length
                 tokens += UI.span.cssClass("tok-comment")(Ast.Text(src.substring(pos, closeEnd)))
                 pos = closeEnd
-
-            // Block comment.
             else if pos + 1 < src.length && src.charAt(pos) == '/' && src.charAt(pos + 1) == '*' then
                 val end      = src.indexOf("*/", pos + 2)
                 val closeEnd = if end >= 0 then end + 2 else src.length
                 tokens += UI.span.cssClass("tok-comment")(Ast.Text(src.substring(pos, closeEnd)))
                 pos = closeEnd
-
-            // Double-quoted string.
             else if ch == '"' then
                 var p2 = pos + 1
                 while p2 < src.length && src.charAt(p2) != '"' && src.charAt(p2) != '\n' do
@@ -666,14 +749,10 @@ object DocsMarkdown:
                 val closeEnd = if p2 < src.length then p2 + 1 else src.length
                 tokens += UI.span.cssClass("tok-string")(Ast.Text(src.substring(pos, closeEnd)))
                 pos = closeEnd
-
-            // SBT operators.
             else if sbtOps.exists(op => src.startsWith(op, pos)) then
                 val op = sbtOps.filter(op => src.startsWith(op, pos)).maxBy(_.length)
                 tokens += UI.span.cssClass("tok-keyword")(Ast.Text(op))
                 pos += op.length
-
-            // Identifier or keyword.
             else if ch.isLetter || ch == '_' then
                 val start = pos
                 while pos < src.length && (src.charAt(pos).isLetterOrDigit || src.charAt(pos) == '_') do
@@ -684,8 +763,6 @@ object DocsMarkdown:
                 else
                     tokens += Ast.Text(word)
                 end if
-
-            // Plain character.
             else
                 val start = pos
                 while pos < src.length &&
@@ -733,14 +810,11 @@ object DocsMarkdown:
         while pos < src.length do
             val ch = src.charAt(pos)
 
-            // Hash comment: # to end of line.
             if ch == '#' then
                 val end      = src.indexOf('\n', pos)
                 val closeEnd = if end >= 0 then end else src.length
                 tokens += UI.span.cssClass("tok-comment")(Ast.Text(src.substring(pos, closeEnd)))
                 pos = closeEnd
-
-            // Double-quoted string.
             else if ch == '"' then
                 var p2 = pos + 1
                 while p2 < src.length && src.charAt(p2) != '"' do
@@ -750,8 +824,6 @@ object DocsMarkdown:
                 val closeEnd = if p2 < src.length then p2 + 1 else src.length
                 tokens += UI.span.cssClass("tok-string")(Ast.Text(src.substring(pos, closeEnd)))
                 pos = closeEnd
-
-            // Single-quoted string.
             else if ch == '\'' then
                 var p2 = pos + 1
                 while p2 < src.length && src.charAt(p2) != '\'' do
@@ -759,8 +831,6 @@ object DocsMarkdown:
                 val closeEnd = if p2 < src.length then p2 + 1 else src.length
                 tokens += UI.span.cssClass("tok-string")(Ast.Text(src.substring(pos, closeEnd)))
                 pos = closeEnd
-
-            // Identifier or keyword.
             else if ch.isLetter || ch == '_' then
                 val start = pos
                 while pos < src.length && (src.charAt(pos).isLetterOrDigit || src.charAt(pos) == '_' || src.charAt(pos) == '-') do
@@ -771,8 +841,6 @@ object DocsMarkdown:
                 else
                     tokens += Ast.Text(word)
                 end if
-
-            // Plain character(s).
             else
                 val start = pos
                 while pos < src.length &&
