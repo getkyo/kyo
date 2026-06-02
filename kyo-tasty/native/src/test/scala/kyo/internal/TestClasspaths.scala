@@ -62,6 +62,18 @@ private[kyo] object TestClasspaths:
         src.add("root/ContextFunctionFixture.tasty", kyo.fixtures.Embedded.contextFunctionFixtureTasty)
         src.add("root/Logger.tasty", kyo.fixtures.Embedded.loggerFixtureTasty)
         src.add("root/Config.tasty", kyo.fixtures.Embedded.configFixtureTasty)
+        src.add("root/TreeVariantFixture$package.tasty", kyo.fixtures.Embedded.treeVariantFixturePackageTasty)
+        src.add("root/HasTypeDef.tasty", kyo.fixtures.Embedded.hasTypeDefTasty)
+        src.add("root/SelfDefFixture.tasty", kyo.fixtures.Embedded.selfDefFixtureTasty)
+        src.add("root/SuperFixtureBase.tasty", kyo.fixtures.Embedded.superFixtureBaseTasty)
+        src.add("root/SuperFixture.tasty", kyo.fixtures.Embedded.superFixtureTasty)
+        src.add("root/SuperTypeFixtureBase.tasty", kyo.fixtures.Embedded.superTypeFixtureBaseTasty)
+        src.add("root/SuperTypeFixture.tasty", kyo.fixtures.Embedded.superTypeFixtureTasty)
+        src.add("root/RecFixture.tasty", kyo.fixtures.Embedded.recFixtureTasty)
+        src.add("root/UseIdentTpt.tasty", kyo.fixtures.Embedded.useIdentTptTasty)
+        src.add("root/TypeRefDirectFixture.tasty", kyo.fixtures.Embedded.typeRefDirectFixtureTasty)
+        src.add("root/TypeRefSymbolFixture.tasty", kyo.fixtures.Embedded.typeRefSymbolFixtureTasty)
+        src.add("root/OuterForSelectOuter.tasty", kyo.fixtures.Embedded.outerForSelectOuterTasty)
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end withClasspath
 

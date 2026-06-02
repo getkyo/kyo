@@ -237,24 +237,34 @@ class SealedAdtCompletenessTest extends Test:
         "Unknown"
     )
 
-    // Tree variants that appear in at least one test file (42 of 70 as of 2026-06-02).
-    // Variants not listed here are noted as FINDINGS in the decisions log.
+    // Tree variants that appear in at least one test file (70 of 70 as of 2026-06-02).
+    // All 28 previously-uncovered variants were added in TreeAdtVariantCoverageTest.
     private val treeCoveredVariants: Set[String] = Set(
         "Alternative",
+        "AndType",
         "Annotated",
+        "AnnotatedType",
         "AnnotationNode",
         "AppliedType",
         "Apply",
         "Assign",
         "Bind",
         "Block",
+        "Bounded",
+        "ByNameTpt",
+        "ByNameType",
         "CaseDef",
         "ClassDef",
         "DefDef",
+        "Elided",
         "Export",
+        "ExplicitTpt",
+        "FlexibleType",
         "Ident",
+        "IdentTpt",
         "If",
         "Import",
+        "Imported",
         "Inlined",
         "Lambda",
         "Literal",
@@ -263,20 +273,38 @@ class SealedAdtCompletenessTest extends Test:
         "Modifier",
         "NamedArg",
         "New",
+        "OrType",
         "PackageDef",
+        "RecThisAddr",
+        "RecType",
+        "RefinedType",
+        "Renamed",
         "Return",
         "Select",
         "SelectIn",
+        "SelectOuter",
+        "SelectTpt",
+        "SelfDef",
         "SeqLiteral",
         "Shared",
+        "SingletonTpt",
+        "Super",
+        "SuperType",
+        "Template",
         "TermRef",
         "TermRefDirect",
         "TermRefPkg",
+        "TermRefSymbol",
         "This",
         "Throw",
         "Try",
         "TypeApply",
         "TypeBounds",
+        "TypeDef",
+        "TypeRefDirect",
+        "TypeRefPkg",
+        "TypeRefSymbol",
+        "TypeRefTree",
         "Typed",
         "Unapply",
         "Unknown",
@@ -284,42 +312,11 @@ class SealedAdtCompletenessTest extends Test:
         "While"
     )
 
-    // Tree variants with no test coverage as of 2026-06-02 (28 of 70).
-    // These are recorded as FINDINGS; they are not failures in this test (coverage gate
-    // is Track C). This test fails only if the variant count changes.
-    private val treeUncoveredVariants: List[String] = List(
-        "AndType",
-        "AnnotatedType",
-        "Bounded",
-        "ByNameTpt",
-        "ByNameType",
-        "Elided",
-        "ExplicitTpt",
-        "FlexibleType",
-        "IdentTpt",
-        "Imported",
-        "OrType",
-        "RecThisAddr",
-        "RecType",
-        "RefinedType",
-        "Renamed",
-        "SelectOuter",
-        "SelectTpt",
-        "SelfDef",
-        "SingletonTpt",
-        "Super",
-        "SuperType",
-        "Template",
-        "TermRefSymbol",
-        "TypeDef",
-        "TypeRefDirect",
-        "TypeRefPkg",
-        "TypeRefSymbol",
-        "TypeRefTree"
-    )
+    // Tree variants with no test coverage (0 of 70). All variants are now covered.
+    private val treeUncoveredVariants: List[String] = List.empty
 
-    // ADT-003: Tasty.Tree - variant count pinned; covered variants documented.
-    "ADT-003: Tasty.Tree - 70 variant count is pinned and 42 variants have test coverage" in {
+    // ADT-003: Tasty.Tree - variant count pinned; all 70 variants have test coverage.
+    "ADT-003: Tasty.Tree - 70 variant count is pinned and 70 variants have test coverage" in {
         assert(
             allTreeVariants.size == EXPECTED_TREE_COUNT,
             s"ADT-003: allTreeVariants registry has ${allTreeVariants.size} entries but EXPECTED_TREE_COUNT is $EXPECTED_TREE_COUNT. " +
@@ -424,7 +421,7 @@ class SealedAdtCompletenessTest extends Test:
             typeCoveredByTest.size == EXPECTED_TYPE_COUNT,
             s"Tasty.Type coverage map has ${typeCoveredByTest.size} entries, expected $EXPECTED_TYPE_COUNT"
         )
-        // Tasty.Tree: 70 variants (42 covered + 28 uncovered)
+        // Tasty.Tree: 70 variants (70 covered + 0 uncovered)
         assert(
             treeCoveredVariants.size + treeUncoveredVariants.size == EXPECTED_TREE_COUNT,
             s"Tree covered(${treeCoveredVariants.size}) + uncovered(${treeUncoveredVariants.size}) != $EXPECTED_TREE_COUNT"
