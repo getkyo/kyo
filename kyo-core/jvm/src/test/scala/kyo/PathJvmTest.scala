@@ -52,6 +52,42 @@ class PathJvmTest extends Test:
         end for
     }
 
+    "realPath follows a symbolic link to its underlying target" in run {
+        val tmp    = JFiles.createTempDirectory("kyo-test")
+        val target = tmp.resolve("target.txt")
+        val link   = tmp.resolve("link.txt")
+        JFiles.createFile(target)
+        JFiles.createSymbolicLink(link, target)
+        val linkPath = Path(link.toString)
+        for
+            real <- linkPath.realPath
+            _    <- Path(tmp.toString).removeAll
+        yield assert(real.parts.lastOption.contains("target.txt"))
+        end for
+    }
+
+    "confinedTo rejects a symlink inside root that escapes to outside root" in run {
+        // tmp/root contains a symlink `escape` -> tmp/outside.txt. Without realPath the
+        // syntactic check would accept it (no `..`, not absolute, no `.`), but
+        // confinedTo resolves the link and rejects.
+        val tmp     = JFiles.createTempDirectory("kyo-test")
+        val root    = tmp.resolve("root")
+        val outside = tmp.resolve("outside.txt")
+        JFiles.createDirectory(root)
+        JFiles.createFile(outside)
+        val escape = root.resolve("escape")
+        JFiles.createSymbolicLink(escape, outside)
+        val rootP   = Path(root.toString)
+        val escapeP = Path(escape.toString)
+        for
+            res <- Abort.run[FileException](escapeP.confinedTo(rootP))
+            _   <- Path(tmp.toString).removeAll
+        yield
+            assert(res.isFailure)
+            assert(res.failure.exists(_.isInstanceOf[FileAccessDeniedException]))
+        end for
+    }
+
     "exists(followLinks=false) on symlink returns true; exists(true) returns false for dangling link" in run {
         val tmp    = JFiles.createTempDirectory("kyo-test")
         val target = tmp.resolve("ghost-target.txt")

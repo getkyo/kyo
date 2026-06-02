@@ -37,16 +37,22 @@ object Filesystem extends KyoApp:
         // All subsequent filesystem work goes through kyo's `Path` API and typed `FileException`s.
         val root = KPath.of(java.nio.file.Paths.get(rootArg).toAbsolutePath.normalize())
 
-        // Resolve a user-supplied relative path against the root. Rejects absolute paths and any `..` segment so the
-        // result is statically guaranteed to live under `root` — no path-startsWith comparison or post-normalize
-        // re-check is needed.
-        def resolve(input: String): KPath < Abort[FsError] =
+        // Resolve a user-supplied relative path against the root. Rejects absolute paths and any `..` / `.`
+        // segment syntactically, then delegates to `Path.confinedTo` to verify that the symlink-resolved
+        // real path is still under root. For paths that don't exist yet (e.g. a write target) the
+        // combined path is returned unresolved ; downstream IO surfaces the FileNotFoundException as usual.
+        def resolve(input: String): KPath < (Abort[FsError] & Sync) =
             val candidate = KPath(input)
             val parts     = candidate.parts
             if candidate.isAbsolute || parts.exists(p => p == ".." || p == ".") then
                 Abort.fail(FsError(reason = "path resolves outside root", path = input))
             else
-                root / candidate
+                val combined = root / candidate
+                combined.confinedTo(root).handle(Abort.recover[FileException] {
+                    case _: FileNotFoundException     => combined
+                    case _: FileAccessDeniedException => Abort.fail(FsError(reason = "path resolves outside root", path = input))
+                    case ex                           => Abort.fail(FsError(reason = reasonFor(ex), path = input))
+                })
             end if
         end resolve
 

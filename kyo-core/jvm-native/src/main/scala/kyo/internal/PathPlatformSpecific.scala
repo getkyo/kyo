@@ -59,6 +59,14 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     def isRegularFile()(using AllowUnsafe): Boolean  = Files.isRegularFile(jpath)
     def isSymbolicLink()(using AllowUnsafe): Boolean = Files.isSymbolicLink(jpath)
 
+    def realPath()(using AllowUnsafe, Frame): Result[FileException, Path] =
+        try Result.succeed(Path.of(jpath.toRealPath()))
+        catch
+            case e: IOException if isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
+            case e: AccessDeniedException            => Result.fail(FileAccessDeniedException(safe))
+            case e: IOException                      => Result.fail(FileIOException(safe, e))
+            case e: Throwable                        => Result.panic(e)
+
     // --- Read ---
 
     def read()(using AllowUnsafe, Frame): Result[FileReadException, String] =

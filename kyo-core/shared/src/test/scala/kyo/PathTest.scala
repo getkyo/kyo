@@ -141,6 +141,63 @@ class PathTest extends Test:
         end for
     }
 
+    "realPath canonicalizes an existing file path" in run {
+        for
+            dir <- Path.tempDir("kyo-test")
+            file = dir / "file.txt"
+            _    <- file.write("hi")
+            real <- file.realPath
+            _    <- dir.removeAll
+        yield
+            assert(real.isAbsolute)
+            assert(real.parts.lastOption.contains("file.txt"))
+        end for
+    }
+
+    "realPath fails with FileNotFoundException for non-existent path" in run {
+        val ghost = Path / "kyo-test-realpath-does-not-exist-xyzzy-99"
+        Abort.run[FileException](ghost.realPath).map { r =>
+            assert(r.isFailure)
+            assert(r.failure.exists(_.isInstanceOf[FileNotFoundException]))
+        }
+    }
+
+    "confinedTo accepts a path inside root" in run {
+        for
+            dir <- Path.tempDir("kyo-test")
+            file = dir / "inside.txt"
+            _        <- file.write("ok")
+            confined <- file.confinedTo(dir)
+            _        <- dir.removeAll
+        yield assert(confined.parts.takeRight(1).headOption.contains("inside.txt"))
+        end for
+    }
+
+    "confinedTo rejects a path equal to root with success (root is contained in itself)" in run {
+        for
+            dir      <- Path.tempDir("kyo-test")
+            confined <- dir.confinedTo(dir)
+            _        <- dir.removeAll
+        yield assert(confined.parts.lastOption == dir.parts.lastOption)
+        end for
+    }
+
+    "confinedTo rejects a sibling-of-root path with FileAccessDeniedException" in run {
+        for
+            base <- Path.tempDir("kyo-test")
+            // Two siblings: `base/inside` is root; `base/outside.txt` is outside it.
+            root = base / "inside"
+            _ <- root.mkDir
+            outside = base / "outside.txt"
+            _   <- outside.write("escape")
+            res <- Abort.run[FileException](outside.confinedTo(root))
+            _   <- base.removeAll
+        yield
+            assert(res.isFailure)
+            assert(res.failure.exists(_.isInstanceOf[FileAccessDeniedException]))
+        end for
+    }
+
     // =========================================================================
     // Read
     // =========================================================================
