@@ -10,9 +10,11 @@ private[kyo] object YamlCstBuilder:
     import Yaml.Events.CollectionKind
     import Yaml.Events.Event
 
-    /** Merges the non-empty top-level mappings of a CST stream into a single document, mirroring
-      * [[YamlDocuments.mergeTopLevelMappings]] semantics for the source-backed path. Documents whose root is not a mapping
-      * are skipped. Entry order is preserved across documents.
+    /** Merges the top-level mappings of a CST stream into a single canonical mapping document.
+      *
+      * This is the structural analogue of [[YamlDocuments.mergeTopLevelMappings]], which concatenates source text. Because it
+      * operates on the parsed CST rather than bytes, only documents whose root is a mapping contribute their entries; documents
+      * with a sequence, scalar, or absent root are skipped rather than concatenated. Entry order is preserved across documents.
       */
     def mergeTopLevelMappings(stream: Cst.Stream): Cst.Document =
         val entries =

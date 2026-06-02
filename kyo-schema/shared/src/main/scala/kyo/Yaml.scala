@@ -950,7 +950,12 @@ object Yaml:
             loop(0, Chunk.empty)
         end parseAll
 
-        /** Decodes a CST document into a schema value through this pipeline's processors. */
+        /** Decodes a CST document into a schema value.
+          *
+          * The document's events are routed through this pipeline's processors, then read by the schema. [[ReaderConfig.maxDepth]],
+          * [[ReaderConfig.maxCollectionSize]], and [[ReaderConfig.yamlVersion]] apply; document selection does not, because a single
+          * document has nothing to select. The `Cst.Stream` overload decodes one value from a multi-document stream.
+          */
         def decode[A](document: Cst.Document)(using schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
             visit(document, Chunk.empty[Events.Event])(cstEventCollector).flatMap { events =>
                 Result.catching[DecodeException] {
@@ -961,7 +966,12 @@ object Yaml:
             }
         end decode
 
-        /** Decodes a single value from a CST stream, honoring [[ReaderConfig.documentIndex]] and [[ReaderConfig.documentMode]]. */
+        /** Decodes a single value from a CST stream.
+          *
+          * The stream is first reduced to one document: a present [[ReaderConfig.documentIndex]] selects that document (failing when
+          * out of range), otherwise [[ReaderConfig.documentMode]] decides, merging top-level mappings or requiring a single document.
+          * The selected document is then decoded as in the `Cst.Document` overload, so the reader limits and version apply equally.
+          */
         def decode[A](stream: Cst.Stream)(using schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
             reduceStream(stream).flatMap(decode[A](_))
         end decode
@@ -1040,6 +1050,7 @@ object Yaml:
             end match
         end decodeSource
 
+        // Buffers the full event sequence, including the StreamStart/StreamEnd boundaries, as YamlEventReader consumes them.
         private val cstEventCollector: Events.Handler[Chunk[Events.Event], Nothing] =
             new Events.EventHandler[Chunk[Events.Event], Nothing]:
                 override def event(
@@ -1068,6 +1079,8 @@ object Yaml:
                             Result.succeed(internal.yaml.YamlCstBuilder.mergeTopLevelMappings(stream))
                         case ReaderConfig.DocumentMode.SingleDocument =>
                             if stream.documents.size == 1 then Result.succeed(stream.documents(0))
+                            // An empty stream (no documents, e.g. from blank input) reduces to an empty document, mirroring how the
+                            // String path accepts blank input; decoding it then fails or succeeds per the target schema.
                             else if stream.documents.isEmpty then
                                 Result.succeed(Cst.Document(Absent, Chunk.empty, Chunk.empty, stream.span, Absent))
                             else

@@ -521,6 +521,22 @@ age: 30
             assert(Yaml.pipeline.reader(config).decode[MTPerson](stream) == Result.succeed(MTPerson("Alice", 30)))
         }
 
+        "merges CST stream mappings while skipping a non-mapping document" in {
+            val stream =
+                Yaml.cstAll("---\n- 1\n- 2\n---\nname: Alice\n---\nage: 30\n").getOrThrow
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.pipeline.reader(config).decode[MTPerson](stream) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "decodes an empty CST stream to no values" in {
+            val stream =
+                Yaml.cstAll("").getOrThrow
+
+            assert(Yaml.pipeline.decodeAll[MTPerson](stream) == Result.succeed(Chunk.empty))
+        }
+
         "renders a source-less CST stream with StartAndEnd markers" in {
             // A processor-backed cstAll produces source-less documents, exercising the marker path.
             val stream =
