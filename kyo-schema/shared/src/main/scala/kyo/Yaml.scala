@@ -950,6 +950,35 @@ object Yaml:
             loop(0, Chunk.empty)
         end parseAll
 
+        /** Decodes a CST document into a schema value through this pipeline's processors. */
+        def decode[A](document: Cst.Document)(using schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
+            visit(document, Chunk.empty[Events.Event])(cstEventCollector).flatMap { events =>
+                Result.catching[DecodeException] {
+                    val reader = internal.yaml.YamlEventReader(events, readerConfig.yamlVersion)
+                    reader.resetLimits(readerConfig.maxDepth, readerConfig.maxCollectionSize)
+                    schema.readFrom(reader)
+                }
+            }
+        end decode
+
+        /** Decodes a single value from a CST stream, honoring [[ReaderConfig.documentIndex]] and [[ReaderConfig.documentMode]]. */
+        def decode[A](stream: Cst.Stream)(using schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
+            reduceStream(stream).flatMap(decode[A](_))
+        end decode
+
+        /** Decodes every document of a CST stream into schema values. */
+        def decodeAll[A](stream: Cst.Stream)(using schema: Schema[A], frame: Frame): Result[Err | DecodeException, Chunk[A]] =
+            @tailrec def loop(index: Int, acc: Chunk[A]): Result[Err | DecodeException, Chunk[A]] =
+                if index >= stream.documents.size then Result.succeed(acc)
+                else
+                    decode[A](stream.documents(index)) match
+                        case Result.Success(value) => loop(index + 1, acc :+ value)
+                        case Result.Failure(e)     => Result.fail(e)
+                        case Result.Panic(e)       => Result.panic(e)
+                    end match
+            loop(0, Chunk.empty)
+        end decodeAll
+
         /** Encodes a schema value to YAML.
           *
           * Pipelines with no processors delegate to [[Yaml.encode]]. Processor-backed encode emits schema events through the configured
@@ -1010,6 +1039,49 @@ object Yaml:
                     end match
             end match
         end decodeSource
+
+        private val cstEventCollector: Events.Handler[Chunk[Events.Event], Nothing] =
+            new Events.EventHandler[Chunk[Events.Event], Nothing]:
+                override def event(
+                    context: Chunk[Events.Event],
+                    event: Events.Event
+                ): Result[Nothing, Chunk[Events.Event]] =
+                    Result.succeed(context :+ event)
+
+        private def reduceStream(stream: Cst.Stream)(using Frame): Result[DecodeException, Cst.Document] =
+            readerConfig.documentIndex match
+                case Present(index) =>
+                    if index >= 0 && index < stream.documents.size then
+                        Result.succeed(stream.documents(index))
+                    else
+                        Result.fail(ParseException(
+                            Yaml(),
+                            "",
+                            s"YAML document index $index is out of range; found ${stream.documents.size} document(s)",
+                            Nil,
+                            0
+                        ))
+                    end if
+                case Absent =>
+                    readerConfig.documentMode match
+                        case ReaderConfig.DocumentMode.MergeTopLevelMappings =>
+                            Result.succeed(internal.yaml.YamlCstBuilder.mergeTopLevelMappings(stream))
+                        case ReaderConfig.DocumentMode.SingleDocument =>
+                            if stream.documents.size == 1 then Result.succeed(stream.documents(0))
+                            else if stream.documents.isEmpty then
+                                Result.succeed(Cst.Document(Absent, Chunk.empty, Chunk.empty, stream.span, Absent))
+                            else
+                                Result.fail(ParseException(
+                                    Yaml(),
+                                    "",
+                                    "Unexpected content after YAML document end",
+                                    Nil,
+                                    0
+                                ))
+                            end if
+                    end match
+            end match
+        end reduceStream
 
         private def streamSpan(documents: Chunk[Cst.Document]): Cst.SourceSpan =
             if documents.isEmpty then

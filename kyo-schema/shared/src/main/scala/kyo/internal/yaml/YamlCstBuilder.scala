@@ -10,6 +10,24 @@ private[kyo] object YamlCstBuilder:
     import Yaml.Events.CollectionKind
     import Yaml.Events.Event
 
+    /** Merges the non-empty top-level mappings of a CST stream into a single document, mirroring
+      * [[YamlDocuments.mergeTopLevelMappings]] semantics for the source-backed path. Documents whose root is not a mapping
+      * are skipped. Entry order is preserved across documents.
+      */
+    def mergeTopLevelMappings(stream: Cst.Stream): Cst.Document =
+        val entries =
+            stream.documents.foldLeft(Chunk.empty[Cst.MappingEntry]) { (acc, document) =>
+                document.root match
+                    case Present(Cst.Node.Mapping(mappingEntries, _, _, _, _)) => acc ++ mappingEntries
+                    case _                                                     => acc
+            }
+        val mark = stream.span.start
+        val span = Cst.SourceSpan(mark, stream.span.end)
+        val mapping =
+            Cst.Node.Mapping(entries, Cst.MappingSyntax.Canonical, Yaml.Meta(Absent, Absent, mark), span, Absent)
+        Cst.Document(Maybe(mapping), Chunk.empty, Chunk.empty, span, Absent)
+    end mergeTopLevelMappings
+
     def fromEvents(events: Chunk[Event])(using Frame): Result[DecodeException, Cst.Document] =
         val builder = new Builder(BuilderMode.PreserveSyntax)
         replay(events, 0, builder).flatMap(_ => builder.result)

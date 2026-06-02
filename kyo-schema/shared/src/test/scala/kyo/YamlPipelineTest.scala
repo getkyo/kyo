@@ -472,6 +472,55 @@ age: 30
             }
         }
 
+        "decodes a CST document into a schema value" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+
+            assert(Yaml.pipeline.decode[MTPerson](document) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "decodes every document of a CST stream" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n").getOrThrow
+
+            assert(
+                Yaml.pipeline.decodeAll[MTPerson](stream) ==
+                    Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25)))
+            )
+        }
+
+        "selects a CST stream document by reader document index" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n").getOrThrow
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            assert(Yaml.pipeline.reader(config).decode[MTPerson](stream) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "fails decoding a CST stream when the document index is out of range" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n").getOrThrow
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(5)))
+
+            Yaml.pipeline.reader(config).decode[MTPerson](stream) match
+                case Result.Failure(e: DecodeException) =>
+                    assert(e.getMessage.contains("out of range"))
+                case other =>
+                    fail(s"Expected out-of-range failure, got $other")
+            end match
+        }
+
+        "merges CST stream top-level mappings when configured" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\n---\nage: 30\n").getOrThrow
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.pipeline.reader(config).decode[MTPerson](stream) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
         "renders a source-less CST stream with StartAndEnd markers" in {
             // A processor-backed cstAll produces source-less documents, exercising the marker path.
             val stream =
