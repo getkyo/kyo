@@ -374,6 +374,9 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def inline: Style                              = display(Display.inline)
     def inlineBlock: Style                         = display(Display.inlineBlock)
     def listItem: Style                            = display(Display.listItem)
+    def table: Style                               = display(Display.table)
+    def tableRow: Style                            = display(Display.tableRow)
+    def tableCell: Style                           = display(Display.tableCell)
 
     // List marker
 
@@ -570,6 +573,9 @@ object Style:
     def inline: Style                                                          = empty.inline
     def inlineBlock: Style                                                     = empty.inlineBlock
     def listItem: Style                                                        = empty.listItem
+    def table: Style                                                           = empty.table
+    def tableRow: Style                                                        = empty.tableRow
+    def tableCell: Style                                                       = empty.tableCell
     def listStyle(v: ListStyle): Style                                         = empty.listStyle(v)
     def listStyle(f: ListStyle.type => ListStyle): Style                       = empty.listStyle(f)
     def borderCollapse(v: BorderCollapse): Style                               = empty.borderCollapse(v)
@@ -764,9 +770,14 @@ object Style:
       *   - `inlineBlock`: an inline-level box that still honors width/height and padding
       *     (`display: inline-block`), used for inline pills that need box metrics yet flow in a line.
       *   - `listItem`: a list item (`display: list-item`) so the element renders its list marker.
+      *   - `table`: a table box (`display: table`) that runs the CSS table-layout algorithm, so an
+      *     explicit `width` is distributed across columns instead of shrinking each column to content.
+      *   - `tableRow`: a table row (`display: table-row`), the row box inside a `table`.
+      *   - `tableCell`: a table cell (`display: table-cell`) that participates in the shared column
+      *     widths and border grid of its `table`.
       */
     enum Display derives CanEqual:
-        case block, inline, inlineBlock, listItem
+        case block, inline, inlineBlock, listItem, table, tableRow, tableCell
 
     /** Maps to the CSS `list-style-type` property: the marker a `list-item` renders. `disc` is the
       * filled bullet for unordered lists, `decimal` the number for ordered lists, `none` suppresses

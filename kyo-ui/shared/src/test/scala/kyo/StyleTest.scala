@@ -702,6 +702,24 @@ class StyleTest extends Test:
             assert(s.toCss == "display: list-item;")
         }
 
+        "table" in {
+            val s = Style.display(Display.table)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.table))
+            assert(s.toCss == "display: table;")
+        }
+
+        "tableRow" in {
+            val s = Style.display(Display.tableRow)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.tableRow))
+            assert(s.toCss == "display: table-row;")
+        }
+
+        "tableCell" in {
+            val s = Style.display(Display.tableCell)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.tableCell))
+            assert(s.toCss == "display: table-cell;")
+        }
+
         "block convenience" in {
             assert(Style.block.props(0) == Style.Prop.DisplayProp(Display.block))
             assert(Style.block.toCss == "display: block;")
@@ -722,6 +740,21 @@ class StyleTest extends Test:
             assert(Style.listItem.toCss == "display: list-item;")
         }
 
+        "table convenience" in {
+            assert(Style.table.props(0) == Style.Prop.DisplayProp(Display.table))
+            assert(Style.table.toCss == "display: table;")
+        }
+
+        "tableRow convenience" in {
+            assert(Style.tableRow.props(0) == Style.Prop.DisplayProp(Display.tableRow))
+            assert(Style.tableRow.toCss == "display: table-row;")
+        }
+
+        "tableCell convenience" in {
+            assert(Style.tableCell.props(0) == Style.Prop.DisplayProp(Display.tableCell))
+            assert(Style.tableCell.toCss == "display: table-cell;")
+        }
+
         "selector overload" in {
             val s = Style.display(_.inline)
             assert(s.props(0) == Style.Prop.DisplayProp(Display.inline))
@@ -739,6 +772,9 @@ class StyleTest extends Test:
             assert(Display.inline != Display.inlineBlock)
             assert(Display.inlineBlock != Display.listItem)
             assert(Display.listItem != Display.block)
+            assert(Display.table != Display.tableRow)
+            assert(Display.tableRow != Display.tableCell)
+            assert(Display.tableCell != Display.block)
         }
     }
 

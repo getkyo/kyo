@@ -78,7 +78,7 @@ object WebsiteStyles:
                 "radius-sm"    -> "10px",
                 "wrap"         -> "1120px",
                 "sidebar-w"    -> "260px",
-                "content-w"    -> "820px",
+                "content-w"    -> "860px",
                 "header-h"     -> "60px"
             )
             ++ baseTypography
@@ -653,13 +653,19 @@ object WebsiteStyles:
     private def docsShell: Stylesheet =
         Stylesheet.empty
             // The 2-pane row: a fixed-width left rail (.docs-sidebar) and a growing content column
-            // (.docs-content, capped to a comfortable reading width via .docs-content-wrap). The right
-            // TOC pane is gone; its content now nests in the rail under the active module. The shell
-            // stays capped at 1500px so it never exceeds the unified header's inner row.
+            // (.docs-content, capped to a comfortable reading width). The right TOC pane is gone; its
+            // content now nests in the rail under the active module.
+            //
+            // The shell is capped to the rail width (260px) + the article cap (860px) = 1120px and
+            // centered (margin 0 auto), so on a wide viewport the rail+article group sits centered with
+            // the leftover space split EVENLY on both sides. The old 1500px cap left the 820px article
+            // pinned next to the rail with ~420px of dead space dumped on the right, making the page look
+            // lopsided. 1120px also matches the landing `--wrap`, so the docs body lines up with the
+            // landing body under the shared full-width header.
             .rule(
                 "docs-shell",
                 Style.row.align(_.start).flexWrap(_.noWrap)
-                    .maxWidth(1500.px).margin(0.px, Length.Auto).width(Length.Pct(100))
+                    .maxWidth(1120.px).margin(0.px, Length.Auto).width(Length.Pct(100))
             )
             // The header search box (rendered by SiteApp). The dead docs-header chrome
             // (.docs-header/.docs-header-right/.docs-nav) is folded into the unified .site-header*
@@ -716,9 +722,12 @@ object WebsiteStyles:
             // the outline both pinned to the left edge.
             .rule(
                 "nav-item-active",
+                // A stronger highlight than the .08 accent-ghost hover tint: a .14 accent fill, a 3px
+                // accent left bar, and a semibold label so the current module clearly reads as selected
+                // rather than as a barely-there wash.
                 Style.column.align(_.start)
-                    .color(_.variable("accent")).bg(_.variable("accent-ghost"))
-                    .borderLeft(2.px, _.variable("accent"))
+                    .color(_.variable("accent")).bg(Color.rgba(78, 70, 224, 0.14)).fontWeight(_.w600)
+                    .borderLeft(3.px, _.variable("accent"))
             )
             // the inner anchor fills the row so the whole item is the link target. Scope to the DIRECT
             // anchor child so the nested section links (.sidebar-section, descendants of the same
@@ -767,14 +776,15 @@ object WebsiteStyles:
     private def docsContent: Stylesheet =
         Stylesheet.empty
             // The article column. With the right TOC pane gone, prose would stretch across the whole
-            // remaining width and read poorly, so cap it to a comfortable measure (var --content-w,
-            // 820px) and keep it left-aligned right next to the rail: the column still flex-grows to
-            // claim the row, but maxWidth holds the line length and the empty space falls to the right
-            // (NOT centered), so the article sits beside the sidebar rather than drifting to the middle.
+            // remaining width and read poorly, so cap it to a comfortable measure (860px, which after the
+            // 52px side padding leaves a ~756px text measure). The column flex-grows to claim its half of
+            // the shell and the maxWidth holds the line length; because the shell itself is capped to
+            // rail + this cap and centered, the article fills its column with no internal dead space and
+            // the whole rail+article group is centered in the viewport.
             .rule(
                 "docs-content",
                 Style.column.flexGrow(1.0).flexBasis(0.px).minWidth(0.px)
-                    .maxWidth(820.px)
+                    .maxWidth(860.px)
                     .overflow(_.auto).padding(40.px, 52.px, 90.px, 52.px)
             )
             // prev/next footer (two boxes)
@@ -811,28 +821,37 @@ object WebsiteStyles:
             // after the base reset already win the cascade, so display:inline overrides display:flex.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("h1")),
-                Style.block
+                Style.block.margin(0.px, 0.px, 16.px, 0.px)
             )
-            // article headings + paragraphs (the transpiled content lives inside docs-content)
+            // article headings + paragraphs (the transpiled content lives inside docs-content).
+            //
+            // Vertical rhythm: .docs-content is a flex column, so child margins NEVER collapse (they
+            // always add). The rhythm is therefore expressed on ONE side per block. Body blocks
+            // (p/pre/table/callout/blockquote/ul/ol) carry a uniform 22px BOTTOM margin and zero top
+            // margin, so any two consecutive blocks sit a calm 22px apart regardless of order (the old
+            // top-margin-only scheme broke because a heading's 0 top margin left no gap after a code
+            // block). Headings add a larger TOP margin to open a section break above them (stacking on
+            // the preceding block's 22px gives ~40px) plus a small bottom margin so the heading stays
+            // attached to the content it introduces.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("h2")),
                 Style.block.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontSize(32.px)
                     .fontWeight(_.w600).letterSpacing(Length.Em(-0.01)).lineHeight(1.16)
-                    .margin(0.px, 0.px, 4.px, 0.px).color(_.variable("ink"))
+                    .margin(20.px, 0.px, 10.px, 0.px).color(_.variable("ink"))
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("h3")),
                 Style.block.fontSize(19.px).fontWeight(_.w700).letterSpacing(Length.Em(-0.005)).color(_.variable("text"))
-                    .margin(42.px, 0.px, 0.px, 0.px)
+                    .margin(16.px, 0.px, 6.px, 0.px)
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("h4")),
                 Style.block.fontSize(16.px).fontWeight(_.w700).color(_.variable("text"))
-                    .margin(28.px, 0.px, 0.px, 0.px)
+                    .margin(12.px, 0.px, 4.px, 0.px)
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("p")),
-                Style.block.color(_.variable("ink-prose")).margin(17.px, 0.px, 0.px, 0.px).fontSize(16.5.px).lineHeight(1.78)
+                Style.block.color(_.variable("ink-prose")).margin(0.px, 0.px, 22.px, 0.px).fontSize(16.5.px).lineHeight(1.78)
             )
             // inline runs flow within a line of text (links, bold/italic spans, inline images)
             .rule(
@@ -857,13 +876,15 @@ object WebsiteStyles:
             // shows. padding-left indents the markers and nests sublists one level deeper.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("ul")),
-                Style.block.listStyle(_.disc).padding(0.px, 0.px, 0.px, 26.px).margin(14.px, 0.px, 0.px, 0.px)
+                Style.block.listStyle(_.disc).padding(0.px, 0.px, 0.px, 26.px).margin(0.px, 0.px, 22.px, 0.px)
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("ol")),
-                Style.block.listStyle(_.decimal).padding(0.px, 0.px, 0.px, 26.px).margin(14.px, 0.px, 0.px, 0.px)
+                Style.block.listStyle(_.decimal).padding(0.px, 0.px, 0.px, 26.px).margin(0.px, 0.px, 22.px, 0.px)
             )
-            // a nested list tightens its top margin and indents under its parent item
+            // a nested list tightens its spacing under its parent item: a small top margin sets it
+            // apart from the item text, and no bottom margin so it does not inherit the list's 22px
+            // block gap inside the surrounding list.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("li")).descendant(Selector.tag("ul")),
                 Style.margin(4.px, 0.px, 0.px, 0.px)
@@ -887,7 +908,7 @@ object WebsiteStyles:
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("pre")),
                 Style.block.bg(_.variable("ink-section")).rounded(12.px).padding(18.px, 20.px)
-                    .margin(24.px, 0.px, 0.px, 0.px).overflow(_.auto)
+                    .margin(0.px, 0.px, 22.px, 0.px).overflow(_.auto)
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("pre")).descendant(Selector.tag("code")),
@@ -904,10 +925,16 @@ object WebsiteStyles:
             // tables: border-collapse:collapse merges adjacent cell edges so the per-cell borders
             // below render as single shared row + column dividers (B4). The previous separate-collapse
             // default left the cell borders invisible, so the table had only an outer frame and a
-            // tinted header. block display opts the <table> out of the flex reset into table layout.
+            // tinted header.
+            //
+            // display:table (not block) is load-bearing for the column width: the <table> keeps the CSS
+            // table-layout algorithm so width:100% is distributed across the columns and the table fills
+            // the article column. display:block instead made the table a 100%-wide block box whose
+            // table-row/table-cell children fell into an anonymous shrink-to-fit table, collapsing the
+            // grid to ~55% of the column with dead space on the right.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("table")),
-                Style.block.borderCollapse(_.collapse).width(Length.Pct(100)).margin(20.px, 0.px, 0.px, 0.px)
+                Style.table.borderCollapse(_.collapse).width(Length.Pct(100)).margin(0.px, 0.px, 22.px, 0.px)
                     .border(1.px, _.variable("line")).rounded(12.px).overflow(_.hidden).fontSize(14.px)
             )
             // every cell carries a right + bottom divider; collapse merges them with the neighbor's
@@ -928,13 +955,16 @@ object WebsiteStyles:
                 Style.padding(10.px, 14.px).color(_.variable("ink-prose")).borderStyle(_.solid)
                     .borderTop(1.px, _.variable("line")).borderRight(1.px, _.variable("line"))
             )
-            // callouts: `callout` is the base; `callout-note`/`callout-caution` set the accent edge
+            // callouts: `callout` is the base; `callout-note`/`callout-caution` set the accent edge.
+            // Bottom-margin rhythm (22px) matches the other body blocks; var(--text) is the normal body
+            // text color so the note/caution body reads at full strength rather than the muted ink-prose
+            // tone it carried before.
             .rule(
                 "callout",
-                Style.row.align(_.start).gap(14.px).margin(24.px, 0.px, 0.px, 0.px).padding(16.px, 18.px)
+                Style.row.align(_.start).gap(14.px).margin(0.px, 0.px, 22.px, 0.px).padding(16.px, 18.px)
                     .bg(_.variable("surface")).border(1.px, _.variable("line-soft"))
                     .borderLeft(2.px, _.variable("accent")).rounded(10.px)
-                    .fontSize(15.px).color(_.variable("ink-prose")).lineHeight(1.62)
+                    .fontSize(15.px).color(_.variable("text")).lineHeight(1.62)
             )
             .rule(
                 "callout-note",
@@ -947,7 +977,7 @@ object WebsiteStyles:
             // generic blockquote
             .rule(
                 "blockquote",
-                Style.column.margin(24.px, 0.px, 0.px, 0.px).padding(8.px, 18.px)
+                Style.column.margin(0.px, 0.px, 22.px, 0.px).padding(8.px, 18.px)
                     .borderLeft(3.px, _.variable("line")).color(_.variable("dim")).fontStyle(_.italic)
             )
             // bold inline run

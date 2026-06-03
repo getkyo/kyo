@@ -197,6 +197,9 @@ private[kyo] object CssStyleRenderer:
                 case Display.inline      => "display: inline;"
                 case Display.inlineBlock => "display: inline-block;"
                 case Display.listItem    => "display: list-item;"
+                case Display.table       => "display: table;"
+                case Display.tableRow    => "display: table-row;"
+                case Display.tableCell   => "display: table-cell;"
         case ListStyleProp(v) => v match
                 case ListStyle.disc    => "list-style-type: disc;"
                 case ListStyle.decimal => "list-style-type: decimal;"
