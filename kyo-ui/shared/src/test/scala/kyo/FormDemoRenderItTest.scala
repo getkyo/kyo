@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Browser.*
 import kyo.Length.*
+import kyo.UI.Ast.HtmlContent
 import kyo.UI.foreach
 import scala.language.implicitConversions
 
@@ -43,16 +44,16 @@ class FormDemoRenderItTest extends UITest:
                         else status.set("Required")
                 yield ()
             },
-            status.map(s => UI.span(s).id("status"): UI),
+            status.map(s => UI.span(s).id("status")),
             UI.h2("Employees"),
             entries.map { items =>
-                if items.isEmpty then UI.span("No entries").id("empty"): UI
+                if items.isEmpty then UI.span("No entries").id("empty"): HtmlContent
                 else
                     val header = UI.tr(UI.th("Name"), UI.th("Email"), UI.th("Role"))
                     val rows = items.toSeq.map { case (n, e, r) =>
                         UI.tr(UI.td(n), UI.td(e), UI.td(r))
                     }
-                    UI.table((header +: rows)*).id("table"): UI
+                    UI.table((header +: rows).map(UI.Ast.HtmlChildVal.lift(_))*).id("table"): HtmlContent
             }
         )
 
@@ -272,8 +273,8 @@ class FormDemoRenderItTest extends UITest:
             yield UI.div(
                 UI.input.id("a").value(a).onInput(v => a.set(v)),
                 UI.input.id("b").value(b).onInput(v => b.set(v)),
-                a.map(v => UI.span(s"a-val:$v").id("va"): UI),
-                b.map(v => UI.span(s"b-val:$v").id("vb"): UI)
+                a.map(v => UI.span(s"a-val:$v").id("va")),
+                b.map(v => UI.span(s"b-val:$v").id("vb"))
             )
         withUI(app) {
             for
@@ -298,8 +299,8 @@ class FormDemoRenderItTest extends UITest:
             yield UI.div(
                 UI.input.id("a").value(a).onInput(v => a.set(v)),
                 UI.input.id("b").value(b).onInput(v => b.set(v)),
-                a.map(v => UI.span(s"a:$v").id("va"): UI),
-                b.map(v => UI.span(s"b:$v").id("vb"): UI)
+                a.map(v => UI.span(s"a:$v").id("va")),
+                b.map(v => UI.span(s"b:$v").id("vb"))
             )
         withUI(app) {
             for

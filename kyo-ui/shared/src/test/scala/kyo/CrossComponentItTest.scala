@@ -279,8 +279,8 @@ class CrossComponentItTest extends UITest:
         val app: UI < Async =
             for refs <- Kyo.foreach(Chunk.from(0 until 5))(i => Signal.initRef("").map(r => (i, r)))
             yield
-                val children: Seq[UI] = refs.toSeq.flatMap { case (i, r) =>
-                    Seq(
+                val children: Seq[UI.Ast.HtmlChildVal] = refs.toSeq.flatMap { case (i, r) =>
+                    Seq[UI.Ast.HtmlChildVal](
                         UI.input.id(s"i$i").value(r).onInput(v => r.set(v)),
                         r.map(v => UI.span(s"v$i:$v").id(s"v$i"))
                     )

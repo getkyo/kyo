@@ -3,6 +3,7 @@ package demo
 import kyo.*
 import kyo.Style.*
 import kyo.UI.*
+import kyo.UI.Ast.HtmlContent
 
 /** Trello-style Kanban board served as a server-push HTML-over-SSE app.
   *
@@ -68,12 +69,12 @@ object Kanban extends KyoApp:
         left: Maybe[Card => Any < Async],
         right: Maybe[Card => Any < Async],
         delete: Card => Any < Async
-    ): UI =
+    ): HtmlContent =
         li.style(cardStyle)(
             span(c.title).style(cardTextStyle),
             div.style(actionsStyle)(
-                left.map(f => button("◀").id(s"left-${c.id}").onClick(f(c))).getOrElse(UI.empty),
-                right.map(f => button("▶").id(s"right-${c.id}").onClick(f(c))).getOrElse(UI.empty),
+                if left.isDefined then button("◀").id(s"left-${c.id}").onClick(left.get(c)) else UI.empty,
+                if right.isDefined then button("▶").id(s"right-${c.id}").onClick(right.get(c)) else UI.empty,
                 button("✕").id(s"del-${c.id}").onClick(delete(c))
             )
         )
@@ -84,7 +85,7 @@ object Kanban extends KyoApp:
         left: Maybe[Card => Any < Async],
         right: Maybe[Card => Any < Async],
         delete: Card => Any < Async
-    ): UI =
+    ): HtmlContent =
         div.style(colStyle)(
             div.style(headerStyle)(
                 span(title).style(titleStyle),

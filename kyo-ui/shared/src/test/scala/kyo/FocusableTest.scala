@@ -67,10 +67,7 @@ class FocusableTest extends UITest:
             for show <- Signal.initRef(false)
             yield UI.div(
                 UI.button("Show").id("s").onClick(show.set(true)),
-                show.map { v =>
-                    if v then UI.button("Target").id("t")
-                    else UI.empty
-                }
+                UI.when(show)(UI.button("Target").id("t"))
             )
         withUI(app) {
             for
@@ -105,10 +102,7 @@ class FocusableTest extends UITest:
             for show <- Signal.initRef(true)
             yield UI.div(
                 UI.button("Remove").id("r").onClick(show.set(false)),
-                show.map { v =>
-                    if v then UI.button("Target").id("t")
-                    else UI.empty
-                }
+                UI.when(show)(UI.button("Target").id("t"))
             )
         withUI(app) {
             for

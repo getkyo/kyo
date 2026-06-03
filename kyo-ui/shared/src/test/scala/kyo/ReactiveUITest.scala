@@ -103,7 +103,7 @@ class ReactiveUITest extends UITest:
             for show <- Signal.initRef(true)
             yield UI.div(
                 UI.button("Toggle").id("tog").onClick(show.getAndUpdate(!_).unit),
-                show.map(s => if s then UI.span("visible").id("target") else UI.empty)
+                UI.when(show)(UI.span("visible").id("target"))
             )
         withUI(app) {
             for
@@ -147,10 +147,7 @@ class ReactiveUITest extends UITest:
             yield UI.div(
                 UI.button("HideOuter").id("ho").onClick(outer.set(false)),
                 UI.button("UpdateInner").id("ui").onClick(inner.set("inner-new")),
-                outer.map { o =>
-                    if o then (inner.map(t => UI.span(t).id("inner")): UI)
-                    else UI.empty
-                }
+                UI.when(outer)(UI.div(inner.map(t => UI.span(t).id("inner"))))
             )
         withUI(app) {
             for

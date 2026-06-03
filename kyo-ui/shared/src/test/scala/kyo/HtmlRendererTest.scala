@@ -510,7 +510,7 @@ class HtmlRendererTest extends UITest:
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield
-                def nest(depth: Int, inner: UI): UI =
+                def nest(depth: Int, inner: HtmlContent): HtmlContent =
                     if depth <= 0 then inner
                     else nest(depth - 1, UI.div(inner))
                 UI.div(

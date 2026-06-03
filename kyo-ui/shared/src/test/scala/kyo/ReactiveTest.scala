@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Browser.*
+import kyo.UI.Ast.HtmlContent
 import kyo.UI.foreach
 import kyo.UI.foreachIndexed
 import kyo.UI.foreachKeyed
@@ -83,7 +84,7 @@ class ReactiveTest extends UITest:
                 UI.button("Show").id("b").onClick(show.set(true)),
                 show.map(s =>
                     if s then UI.span("visible").id("vis")
-                    else UI.span("hidden").id("hid"): UI
+                    else UI.span("hidden").id("hid")
                 )
             )
         withUI(app) {
@@ -148,8 +149,8 @@ class ReactiveTest extends UITest:
             yield UI.div(
                 UI.button("Toggle").id("t").onClick(flag.getAndUpdate(!_).unit),
                 flag.map { b =>
-                    if b then UI.div("DIV"): UI
-                    else UI.span("SPAN"): UI
+                    if b then UI.div("DIV"): HtmlContent
+                    else UI.span("SPAN"): HtmlContent
                 }
             )
         withUI(app) {
@@ -655,7 +656,7 @@ class ReactiveTest extends UITest:
     "Signal[String] as child" in run {
         val app: UI < Async =
             for ref <- Signal.initRef("text content")
-            yield UI.div(ref: UI)
+            yield UI.div(ref)
         withUI(app) {
             assertContains("text content").andThen(succeed)
         }
@@ -665,7 +666,7 @@ class ReactiveTest extends UITest:
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
-                ref: UI,
+                ref,
                 UI.button("Change").id("btn").onClick(ref.set("updated"))
             )
         withUI(app) {
@@ -677,18 +678,18 @@ class ReactiveTest extends UITest:
         }
     }
 
-    "Signal[UI] as child" in run {
+    "Signal[SpanElement] as child" in run {
         val app: UI < Async =
-            for ref <- Signal.initRef[UI](UI.span("from signal").id("s"))
+            for ref <- Signal.initRef[UI.Ast.SpanElement](UI.span("from signal").id("s"))
             yield UI.div(ref)
         withUI(app) {
             Browser.assertText(Selector.id("s"), "from signal").andThen(succeed)
         }
     }
 
-    "Signal[UI] updates" in run {
+    "Signal[SpanElement] updates" in run {
         val app: UI < Async =
-            for ref <- Signal.initRef[UI](UI.span("first"))
+            for ref <- Signal.initRef[UI.Ast.SpanElement](UI.span("first"))
             yield UI.div(
                 ref,
                 UI.button("Change").id("btn").onClick(ref.set(UI.span("second")))

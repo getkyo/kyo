@@ -33,7 +33,7 @@ class DomBackendTest extends UITest:
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
-                show.map(s => if s then UI.span("content").id("content") else UI.empty)
+                UI.when(show)(UI.span("content").id("content"))
             )
         withUI(app) {
             // When signal is false, show is absent; placeholder span should exist in DOM

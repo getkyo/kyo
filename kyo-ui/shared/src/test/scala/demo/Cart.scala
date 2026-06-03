@@ -47,7 +47,7 @@ object Cart extends KyoApp:
             button("Add").id(s"add-${p.id}").onClick(add(p))
         )
 
-    private def cartRow(p: Product, qty: Int, setQty: (String, Int) => Any < Async): UI =
+    private def cartRow(p: Product, qty: Int, setQty: (String, Int) => Any < Async): UI.Ast.Li =
         li.style(rowStyle)(
             span(p.name).style(grow),
             button("-").id(s"dec-${p.id}").style(stepBtn).onClick(setQty(p.id, qty - 1)),
