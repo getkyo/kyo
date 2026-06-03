@@ -142,10 +142,9 @@ object Snake extends KyoApp:
 
     private val boardPx = cols * cell
 
-    private val pageStyle  = Style.column.gap(12.px).padding(20.px).bg(pageBg).color(textCol).fontFamily(_.SansSerif)
-    private val titleStyle = Style.fontSize(22.px).fontWeight(_.bold)
-    private val statStyle  = Style.fontSize(16.px).fontWeight(_.bold)
-    private val hintStyle  = Style.fontSize(12.px).color(mutedCol)
+    private val pageStyle = Style.column.gap(12.px).padding(20.px).bg(pageBg).color(textCol).fontFamily(_.SansSerif)
+    private val statStyle = Style.fontSize(16.px).fontWeight(_.bold)
+    private val hintStyle = Style.fontSize(12.px).color(mutedCol)
 
     // ---- rendering: the whole board is one SVG, redrawn each tick ----
 
@@ -179,7 +178,7 @@ object Snake extends KyoApp:
                 Loop(()) { _ =>
                     for
                         g <- state.get
-                        _ <- (if g.running && !g.dead then state.set(step(g)) else ()): (Unit < Async)
+                        _ <- Kyo.when(g.running && !g.dead)(state.set(step(g)))
                         _ <- Async.sleep(120.millis)
                     yield Loop.continue(())
                 }
