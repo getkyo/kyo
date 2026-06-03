@@ -9,6 +9,10 @@ import java.lang.ref.WeakReference
   */
 class STMStressTest extends kyo.test.Test[Any]:
 
+    // Sequential leaves (as the ScalaTest base ran them): the GC-reclamation leaf finds its TRefs still reachable
+    // (cleared=0) when the other stress leaves' fibers are live alongside it.
+    override def config = super.config.sequential
+
     "every transaction under heavy single-ref contention commits, none starves".notJs in {
         // 64 reader-writer fibers plus one writer all contend the same TRef. Barging bounds the
         // politeness yield a writer makes to fresher readers, so every contended transaction

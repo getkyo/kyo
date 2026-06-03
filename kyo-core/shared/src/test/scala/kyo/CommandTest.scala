@@ -5,6 +5,9 @@ import java.nio.charset.StandardCharsets
 
 class CommandTest extends kyo.test.Test[Any]:
 
+    // Sequential leaves: these spawn and pipe between OS processes; concurrent leaves race the multi-process pipe (notably on Node).
+    override def config = super.config.sequential
+
     private val isWindows = kyo.internal.Platform.isWindows
 
     // Platform-aware command helpers
