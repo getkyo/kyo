@@ -624,7 +624,12 @@ final case class AxisConfig(
     axisLabel: Maybe[String],
     showGrid: Boolean,
     tickCount: Int,
-    tickFormat: Maybe[Double => String]
+    tickFormat: Maybe[Double => String],
+    tickRotation: Double = 0.0,                 // D17 (rendered Phase 6)
+    tickAnchor: TextAnchor = TextAnchor.Middle, // D17 (rendered Phase 6)
+    reversed: Boolean = false,                  // D20
+    padding: Double = 0.0,                      // D21
+    labelAllBands: Boolean = true               // D18
 ):
     def left: AxisConfig                        = copy(side = Present(Side.Left))
     def right: AxisConfig                       = copy(side = Present(Side.Right))
@@ -634,6 +639,8 @@ final case class AxisConfig(
     def grid: AxisConfig                        = copy(showGrid = true)
     def ticks(n: Int): AxisConfig               = copy(tickCount = n)
     def format(f: Double => String): AxisConfig = copy(tickFormat = Present(f))
+    def reverse: AxisConfig                     = copy(reversed = true)
+    def pad(fraction: Double): AxisConfig       = copy(padding = fraction)
 
 end AxisConfig
 
@@ -765,17 +772,31 @@ object AnimateConfig:
 
 /** Overrides the automatically-inferred scale for an axis.
   *
-  * Builder methods return a copy with the override set. Used as the argument to
-  * `.xScale(f)` or `.yScale(f)`: write `_.band`, `_.linear(0, 5000)`, or
-  * `_.log`. An unset override (the default) leaves the scale inferred from the
-  * accessor's `Plottable` kind and the data extent.
+  * Builder methods return a copy with the override set. Used as the argument to `.xScale(f)` or `.yScale(f)`:
+  * write `_.band`, `_.linear(0, 5000)`, or `_.log`. An unset override (the default) leaves the scale inferred
+  * from the accessor's `Plottable` kind and the data extent.
+  *
+  * `nice`, `clamp`, and `pad` are additive knobs that refine the fitted domain. `nice=true` (default) snaps
+  * domain bounds to round values; `clamp=false` (default) allows extrapolation beyond the domain. `pad` widens
+  * the domain symmetrically by the given fraction before fitting (INV-007, Q-003).
   */
 final case class ScaleOverride(
-    kind: Maybe[ScaleKind]
+    kind: Maybe[ScaleKind],
+    nice: Boolean = true,
+    clamp: Boolean = false,
+    pad: Double = 0.0
 ):
     def band: ScaleOverride                           = copy(kind = Present(ScaleKind.Band))
     def log: ScaleOverride                            = copy(kind = Present(ScaleKind.Log))
     def linear(lo: Double, hi: Double): ScaleOverride = copy(kind = Present(ScaleKind.Linear(lo, hi)))
+    def time: ScaleOverride                           = copy(kind = Present(ScaleKind.Time))
+    def ordinal: ScaleOverride                        = copy(kind = Present(ScaleKind.Ordinal))
+    def point: ScaleOverride                          = copy(kind = Present(ScaleKind.Point))
+    def symlog: ScaleOverride                         = copy(kind = Present(ScaleKind.Symlog))
+    def withNice(on: Boolean): ScaleOverride          = copy(nice = on)
+    def noNice: ScaleOverride                         = copy(nice = false)
+    def withClamp(on: Boolean): ScaleOverride         = copy(clamp = on)
+    def withPad(fraction: Double): ScaleOverride      = copy(pad = fraction)
 
 end ScaleOverride
 
@@ -787,4 +808,8 @@ enum ScaleKind derives CanEqual:
     case Band
     case Log
     case Linear(lo: Double, hi: Double)
+    case Time    // D11
+    case Ordinal // D11
+    case Point   // D11
+    case Symlog  // D11
 end ScaleKind

@@ -73,4 +73,96 @@ class ScaleTest extends Test:
         assert(scale.apply(Domain.Category("purple")) == -1.0)
     }
 
+    // ---- Phase 2: Symlog (INV-008) ----
+
+    // Test 1: symlog is finite and zero-centered at 0 (G9).
+    // f(-100) = -log10(101) ~ -2.00432, f(100) = log10(101) ~ 2.00432.
+    // apply(0) = 0 + (f(0)-fMin)/(fMax-fMin)*200 = (2.00432)/(4.00864)*200 = 100.0 exactly.
+    "INV-008: Symlog apply(Continuous(0.0)) is the range midpoint for symmetric domain" in {
+        val s   = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
+        val mid = s.apply(Domain.Continuous(0.0))
+        assert(math.abs(mid - 100.0) < 1e-9, s"Expected 100.0 but got $mid")
+    }
+
+    // Test 2: symlog is symmetric about the zero pixel.
+    "INV-008: Symlog apply(v) and apply(-v) are mirror-equidistant from the midpoint" in {
+        val s   = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
+        val mid = 100.0
+        val v   = 37.0
+        val pos = s.apply(Domain.Continuous(v))
+        val neg = s.apply(Domain.Continuous(-v))
+        assert(math.abs((pos - mid) - (mid - neg)) < 1e-9, s"pos=$pos neg=$neg not symmetric about $mid")
+    }
+
+    // Test 3: symlog invert round-trips.
+    "INV-008: Symlog invert(apply(v)) recovers v within 1e-6" in {
+        val s  = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
+        val px = s.apply(Domain.Continuous(12.5))
+        val back = s.invert(px) match
+            case Domain.Continuous(v) => v
+            case _                    => Double.NaN
+        assert(math.abs(back - 12.5) < 1e-6, s"Expected 12.5 but got $back")
+    }
+
+    // Test 4: symlog is monotone across a signed domain.
+    "INV-008: Symlog pixel positions are strictly increasing across -50,-1,0,1,50" in {
+        val s      = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
+        val values = Chunk(-50.0, -1.0, 0.0, 1.0, 50.0)
+        val pixels = values.map(v => s.apply(Domain.Continuous(v)))
+        // Each pixel must be strictly greater than the previous one.
+        val ok = (1 until pixels.size).forall(i => pixels(i) > pixels(i - 1))
+        assert(ok, s"Expected strictly increasing pixels but got: $pixels")
+    }
+
+    // ---- Phase 2: Band/Ordinal stride ticks (INV-009) ----
+
+    // Test 5: band axis emits all 7 labels when maxTicks >= n.
+    "INV-009: Band ticks(7) over 7 keys produces 7 ticks including the last key" in {
+        val keys  = Chunk("a", "b", "c", "d", "e", "f", "g")
+        val scale = Scale.fit(Scale.Kind.Band, Extent.categories(keys), 0.0, 700.0)
+        val ticks = scale.ticks(7)
+        assert(ticks.size == 7, s"Expected 7 ticks but got ${ticks.size}")
+        assert(ticks(6).label == "g", s"Expected last label 'g' but got '${ticks(6).label}'")
+    }
+
+    // Test 6: band axis uses stride so indices 0,3,6 (not first 3) are selected for 7 keys / maxTicks=3.
+    "INV-009: Band ticks(3) over 7 keys selects stride-3 indices 0,3,6 (first, fourth, seventh)" in {
+        val keys  = Chunk("a", "b", "c", "d", "e", "f", "g")
+        val scale = Scale.fit(Scale.Kind.Band, Extent.categories(keys), 0.0, 700.0)
+        val ticks = scale.ticks(3)
+        assert(ticks.size == 3, s"Expected 3 ticks but got ${ticks.size}")
+        assert(ticks(0).label == "a", s"Expected first label 'a' but got '${ticks(0).label}'")
+        assert(ticks(1).label == "d", s"Expected second label 'd' (index 3) but got '${ticks(1).label}'")
+        assert(ticks(2).label == "g", s"Expected third label 'g' (index 6) but got '${ticks(2).label}'")
+    }
+
+    // ---- Phase 2: Log domain drops non-positive (INV-011) ----
+
+    // Test 9: fitLog with a manually constructed extent starting at 10.0 does not floor to 1e-10.
+    "INV-011: fitLog over extent [10,1000] sets domainMin == 10.0, not the old 1e-10 floor" in {
+        val scale = Scale.fit(Scale.Kind.Log, Extent.continuous(10.0, 1000.0), 0.0, 300.0)
+        scale match
+            case Scale.Log(domainMin, _, _, _) =>
+                assert(domainMin == 10.0, s"Expected domainMin=10.0 but got $domainMin")
+            case other => fail(s"Expected Scale.Log but got $other")
+        end match
+    }
+
+    // ---- Phase 2: Clamp (INV-012) ----
+
+    // Test 10: existing Scale.Linear unconditionally clamps out-of-range values.
+    "INV-012: Scale.Linear apply clamps a value beyond domainMax to rangeHi" in {
+        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 10.0), 0.0, 100.0)
+        assert(scale.apply(Domain.Continuous(20.0)) == 100.0, "Expected 100.0 (clamped to rangeHi)")
+    }
+
+    // Symlog clamp=true: input 20.0 clamped to domainMax=10 before transform.
+    "INV-012: Symlog with clamp=true pins out-of-domain input to the domain boundary" in {
+        val s = Scale.Symlog(0.0, 10.0, 0.0, 100.0, clamp = true)
+        // apply(20.0) with clamp=true should equal apply(10.0): both domainMax.
+        val clamped = s.apply(Domain.Continuous(20.0))
+        val atMax   = s.apply(Domain.Continuous(10.0))
+        assert(math.abs(clamped - atMax) < 1e-9, s"Clamped=$clamped should equal atMax=$atMax")
+    }
+
 end ScaleTest

@@ -330,11 +330,30 @@ private[kyo] object ChartLower:
             else
                 val markExtent: Maybe[Extent] = marks(i) match
                     case m: Mark.Bar[A, ?, ?] if m.axis == Axis.Left =>
-                        foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])))
+                        // INV-011: filter non-positive values so the log scale domain starts at the smallest positive value.
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
                     case m: Mark.Line[A, ?, ?] if m.axis == Axis.Left =>
-                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
                     case m: Mark.Point[A, ?, ?] if m.axis == Axis.Left =>
-                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
                     case _: Mark.Text[A, ?, ?]     => Absent // DEV: Text/ErrorBar lowering lands in Phase 4 (placeholder)
                     case _: Mark.ErrorBar[A, ?, ?] => Absent // DEV: Text/ErrorBar lowering lands in Phase 4 (placeholder)
                     case _                         => Absent
@@ -474,38 +493,72 @@ private[kyo] object ChartLower:
         layout: Layout,
         xOverride: Maybe[ScaleOverride],
         yOverride: Maybe[ScaleOverride],
-        computeRight: Boolean
+        computeRight: Boolean,
+        xAxisCfg: AxisConfig = AxisConfig.default,
+        yAxisCfg: AxisConfig = AxisConfig.default
     ): ResolvedScales =
+
+        // Compute effective pad (INV-007, Q-003): ScaleOverride wins over AxisConfig.
+        def effectivePad(ov: Maybe[ScaleOverride], axisCfg: AxisConfig): Double =
+            ov.flatMap(o => if o.pad != 0.0 then Present(o.pad) else Absent).getOrElse(axisCfg.padding)
+
+        // Apply symmetric fractional padding to a continuous extent (G5).
+        def padExtent(ext: Extent, pad: Double): Extent = ext match
+            case Extent.Continuous(lo, hi) if pad != 0.0 =>
+                val delta = pad * (hi - lo)
+                Extent.Continuous(lo - delta, hi + delta)
+            case other => other
+
         // X scale
-        val xExt = xExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+        val xExt     = xExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+        val xPad     = effectivePad(xOverride, xAxisCfg)
+        val xNice    = xOverride.map(_.nice).getOrElse(true)
+        val xReverse = xAxisCfg.reversed
+
         val xKindOpt: Maybe[Scale.Kind] = xOverride.flatMap(_.kind) match
             case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
             case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
             case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
+            case Present(ScaleKind.Time)         => Present(Scale.Kind.Time)
+            case Present(ScaleKind.Ordinal)      => Present(Scale.Kind.Ordinal)
+            case Present(ScaleKind.Point)        => Present(Scale.Kind.Point)
+            case Present(ScaleKind.Symlog)       => Present(Scale.Kind.Symlog)
             case _                               => Absent
         val xKind = xKindOpt.getOrElse(inferKind(xExt, marks, isX = true))
-        val (xExtFinal, xLo, xHi) = xOverride.flatMap(_.kind) match
+        val (xExtFinal, xLoRaw, xHiRaw) = xOverride.flatMap(_.kind) match
             case Present(ScaleKind.Linear(domLo, domHi)) => (Extent.Continuous(domLo, domHi), layout.plotX, layout.plotX + layout.plotW)
-            case _                                       => (xExt, layout.plotX, layout.plotX + layout.plotW)
-        val xs = Scale.fit(xKind, xExtFinal, xLo, xHi)
+            case _                                       => (padExtent(xExt, xPad), layout.plotX, layout.plotX + layout.plotW)
+        // Swap range bounds when reverse=true so the first datum appears at the far end (D20).
+        val (xLo, xHi) = if xReverse then (xHiRaw, xLoRaw) else (xLoRaw, xHiRaw)
+        val xs         = Scale.fit(xKind, xExtFinal, xLo, xHi, nice = xNice)
 
         // Y left scale
-        val yExt = yLeftExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+        val yExt     = yLeftExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+        val yPad     = effectivePad(yOverride, yAxisCfg)
+        val yNice    = yOverride.map(_.nice).getOrElse(true)
+        val yReverse = yAxisCfg.reversed
+
         val yKindOpt: Maybe[Scale.Kind] = yOverride.flatMap(_.kind) match
             case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
             case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
             case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
+            case Present(ScaleKind.Time)         => Present(Scale.Kind.Time)
+            case Present(ScaleKind.Ordinal)      => Present(Scale.Kind.Ordinal)
+            case Present(ScaleKind.Point)        => Present(Scale.Kind.Point)
+            case Present(ScaleKind.Symlog)       => Present(Scale.Kind.Symlog)
             case _                               => Absent
         val yKind    = yKindOpt.getOrElse(Scale.Kind.Linear)
         val baseline = layout.plotBaseline
         val top      = layout.plotY
+        // Swap range bounds when reverse=true (D20).
+        val (yRLoBase, yRHiBase) = if yReverse then (top, baseline) else (baseline, top)
         val (yExtFinal, yRLo, yRHi, useNice) = yOverride.flatMap(_.kind) match
-            case Present(ScaleKind.Linear(domLo, domHi)) => (Extent.Continuous(domLo, domHi), baseline, top, false)
+            case Present(ScaleKind.Linear(domLo, domHi)) => (Extent.Continuous(domLo, domHi), yRLoBase, yRHiBase, false)
             // G7: log scale uses the no-zero extent computation
             case Present(ScaleKind.Log) =>
                 val rawExt = yLeftExtentNoZero(rows, marks).getOrElse(Extent.Continuous(1.0, 10.0))
-                (rawExt, baseline, top, false)
-            case _ => (yExt, baseline, top, true)
+                (rawExt, yRLoBase, yRHiBase, false)
+            case _ => (padExtent(yExt, yPad), yRLoBase, yRHiBase, yNice)
         val ysL = Scale.fit(yKind, yExtFinal, yRLo, yRHi, nice = useNice)
 
         // Y right scale (optional)
@@ -2382,7 +2435,16 @@ private[kyo] object ChartLower:
         val computeRight = hasRight || spec.yAxisRightCfg.isDefined
         // Resolve initial scales for the static frame using resolveAllScales (INV-004).
         val ResolvedScales(xs, ysLInitial, ysRFixed) =
-            resolveAllScales(initialRows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight)
+            resolveAllScales(
+                initialRows,
+                spec.marks,
+                layout,
+                spec.xScaleOverride,
+                spec.yScaleOverride,
+                computeRight,
+                spec.xAxisCfg,
+                spec.yAxisCfg
+            )
         // For fixed domain, compute ysL once from the override; for inferred domain, ysL is recomputed per
         // emission inside the reactive region.
         val ysLFixed: Maybe[Scale] =
@@ -2419,7 +2481,16 @@ private[kyo] object ChartLower:
         val reactiveMarks: UI.Ast.Reactive[Svg.G] = signal.render: rows =>
             // Re-resolve scales from the current rows so categorical axes expand when categories are added.
             val ResolvedScales(xsLive, ysLLiveResolved, ysRLive) =
-                resolveAllScales(rows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight)
+                resolveAllScales(
+                    rows,
+                    spec.marks,
+                    layout,
+                    spec.xScaleOverride,
+                    spec.yScaleOverride,
+                    computeRight,
+                    spec.xAxisCfg,
+                    spec.yAxisCfg
+                )
             val ysLLive = ysLFixed.getOrElse(ysLLiveResolved)
             buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe, internalHoverRef)
         val withMarks = withFrame(reactiveMarks)
@@ -2510,7 +2581,7 @@ private[kyo] object ChartLower:
             case _: Mark.ErrorBar[A, ?, ?] => false
         val computeRight = hasRight || spec.yAxisRightCfg.isDefined
         val ResolvedScales(xs, ysL, ysR) =
-            resolveAllScales(rows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight)
+            resolveAllScales(rows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight, spec.xAxisCfg, spec.yAxisCfg)
         val vb    = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
         val frame = buildFrame(layout, xs, ysL, ysR, spec, rows)
         // Phase 07: create an internal hover ref when a tooltip is configured so shape handlers can drive it.

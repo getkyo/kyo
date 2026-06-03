@@ -31,7 +31,7 @@ private[kyo] object Scale:
 
     /** Selects the scale family for a channel. */
     enum Kind derives CanEqual:
-        case Linear, Log, Band, Time, Ordinal
+        case Linear, Log, Band, Time, Ordinal, Point, Symlog
     end Kind
 
     /** A single tick: the domain value, a formatted label, and the pixel position on the range axis.
@@ -63,6 +63,8 @@ private[kyo] object Scale:
             case Kind.Band    => fitBand(extent, rangeLo, rangeHi)
             case Kind.Time    => fitTime(extent, rangeLo, rangeHi, nice)
             case Kind.Ordinal => fitOrdinal(extent, rangeLo, rangeHi)
+            case Kind.Point   => fitPoint(extent, rangeLo, rangeHi)
+            case Kind.Symlog  => fitSymlog(extent, rangeLo, rangeHi)
     end fit
 
     /** Produce at most `maxTicks` evenly-spaced tick values covering `[min, max]`, snapped to a nice step.
@@ -103,7 +105,8 @@ private[kyo] object Scale:
 
         def apply(d: Domain): Double = d match
             case Domain.Continuous(v) =>
-                if domainMax == domainMin then rangeLo
+                if !v.isFinite then rangeLo
+                else if domainMax == domainMin then rangeLo
                 else
                     val t   = (v - domainMin) / (domainMax - domainMin)
                     val out = rangeLo + t * (rangeHi - rangeLo)
@@ -139,7 +142,8 @@ private[kyo] object Scale:
 
         def apply(d: Domain): Double = d match
             case Domain.Continuous(v) =>
-                if v <= 0 then rangeLo
+                if !v.isFinite then rangeLo
+                else if v <= 0 then rangeLo
                 else if logMax == logMin then rangeLo
                 else
                     val t   = (math.log10(v) - logMin) / (logMax - logMin)
@@ -224,9 +228,17 @@ private[kyo] object Scale:
                 Domain.Category(keys(i))
 
         def ticks(maxTicks: Int): Chunk[Tick] =
-            keys.take(maxTicks).zipWithIndex.map: (k, i) =>
+            val n = keys.size
+            // Use original key indices so pixel positions reflect actual band positions (G4).
+            val visible: Chunk[(String, Int)] =
+                if maxTicks >= n then keys.zipWithIndex.to(Chunk)
+                else
+                    val stride = math.max(1, math.ceil(n.toDouble / maxTicks).toInt)
+                    keys.zipWithIndex.collect { case (k, i) if i % stride == 0 => (k, i) }.to(Chunk)
+            visible.map: (k, i) =>
                 val xOffset = i.toDouble * slot + (slot - bandW) / 2.0 + bandW / 2.0
                 Tick(i.toDouble, k, rangeLo + xOffset)
+        end ticks
 
         def bandwidth: Double = bandW
     end Band
@@ -251,8 +263,11 @@ private[kyo] object Scale:
             case other                => other
 
         def ticks(maxTicks: Int): Chunk[Tick] =
-            niceTicks(domainMin.toDouble, domainMax.toDouble, maxTicks).map: v =>
-                Tick(v, v.toLong.toString, apply(Domain.Temporal(v.toLong)))
+            val ts   = niceTicks(domainMin.toDouble, domainMax.toDouble, maxTicks)
+            val step = if ts.size >= 2 then (ts(1) - ts(0)).toLong else (domainMax - domainMin)
+            ts.map: v =>
+                Tick(v, TimeFormat.epochMillisLabel(v.toLong, step), apply(Domain.Temporal(v.toLong)))
+        end ticks
 
         def bandwidth: Double = 0.0
     end Time
@@ -286,8 +301,15 @@ private[kyo] object Scale:
         end invert
 
         def ticks(maxTicks: Int): Chunk[Tick] =
-            keys.take(maxTicks).zipWithIndex.map: (k, i) =>
+            val n = keys.size
+            val visible: Chunk[(String, Int)] =
+                if maxTicks >= n then keys.zipWithIndex.to(Chunk)
+                else
+                    val stride = math.max(1, math.ceil(n.toDouble / maxTicks).toInt)
+                    keys.zipWithIndex.collect { case (k, i) if i % stride == 0 => (k, i) }.to(Chunk)
+            visible.map: (k, i) =>
                 Tick(i.toDouble, k, i.toDouble)
+        end ticks
 
         def bandwidth: Double = 0.0
     end Ordinal
@@ -315,7 +337,9 @@ private[kyo] object Scale:
         val (lo, hi) = extent match
             case Extent.Continuous(mn, mx) => (mn, mx)
             case Extent.Categories(keys)   => (1.0, keys.size.toDouble)
-        Log(math.max(lo, 1e-10), math.max(hi, 1e-10), rangeLo, rangeHi)
+        // INV-011: non-positive values are filtered upstream in yLeftExtentNoZero; lo is positive by construction.
+        // math.max(hi, lo) guards a degenerate empty domain after filtering.
+        Log(lo, math.max(hi, lo), rangeLo, rangeHi)
     end fitLog
 
     private def fitBand(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
@@ -344,6 +368,75 @@ private[kyo] object Scale:
                 Chunk.from(lo.to(hi).map(_.toString))
         Ordinal(keys, rangeLo, rangeHi)
     end fitOrdinal
+
+    // Point scale: like Band but each band has zero inner width (marks placed at band centers).
+    // Reuses Band internally with padding = 0.5 so each slot's band collapses to zero width.
+    private def fitPoint(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
+        val keys = extent match
+            case Extent.Categories(ks) => ks
+            case Extent.Continuous(mn, mx) =>
+                val lo = mn.toInt
+                val hi = mx.toInt
+                Chunk.from(lo.to(hi).map(_.toString))
+        Band(keys, rangeLo, rangeHi, padding = 0.5)
+    end fitPoint
+
+    private def fitSymlog(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
+        val (rawLo, rawHi) = extent match
+            case Extent.Continuous(mn, mx) => (mn, mx)
+            case Extent.Categories(_)      => (-1.0, 1.0)
+        Symlog(rawLo, rawHi, rangeLo, rangeHi, clamp = false)
+    end fitSymlog
+
+    /** Symmetric-log scale for data spanning negative-to-positive values (catalog #30/D11, Q-001).
+      *
+      * Forward transform: f(v) = sign(v) * log10(1 + |v| / C), C=1 fixed. Exact algebraic inverse: g(u) =
+      * sign(u) * C * (10^|u| - 1). Finite at zero (f(0)=0), monotone, symmetric about zero. Ticks are
+      * generated in the transformed domain via niceTicks then mapped back through g. No public C knob; C=1
+      * matches D3's default, log10 base gives readable power-of-10 labels.
+      */
+    final case class Symlog(
+        domainMin: Double,
+        domainMax: Double,
+        rangeLo: Double,
+        rangeHi: Double,
+        clamp: Boolean
+    ) extends Scale:
+        private val C                    = 1.0
+        private def f(v: Double): Double = math.signum(v) * math.log10(1.0 + math.abs(v) / C)
+        private def g(u: Double): Double = math.signum(u) * C * (math.pow(10.0, math.abs(u)) - 1.0)
+        private val fMin                 = f(domainMin)
+        private val fMax                 = f(domainMax)
+
+        private def applyRaw(raw: Double): Double =
+            if fMax == fMin then rangeLo
+            else rangeLo + (f(raw) - fMin) / (fMax - fMin) * (rangeHi - rangeLo)
+
+        def apply(d: Domain): Double = d match
+            case Domain.Continuous(v) =>
+                if !v.isFinite then rangeLo
+                else if clamp then applyRaw(math.max(domainMin, math.min(domainMax, v)))
+                else applyRaw(v)
+            case Domain.Temporal(ms) =>
+                val v = ms.toDouble
+                if clamp then applyRaw(math.max(domainMin, math.min(domainMax, v)))
+                else applyRaw(v)
+            case Domain.Category(_) => applyRaw(domainMin)
+        end apply
+
+        def invert(px: Double): Domain =
+            if rangeHi == rangeLo then Domain.Continuous(domainMin)
+            else
+                val t = (px - rangeLo) / (rangeHi - rangeLo)
+                Domain.Continuous(g(fMin + t * (fMax - fMin)))
+
+        def ticks(maxTicks: Int): Chunk[Tick] =
+            niceTicks(fMin, fMax, maxTicks).map: u =>
+                val v = g(u)
+                Tick(v, NumberFormat.double(v), apply(Domain.Continuous(v)))
+
+        def bandwidth: Double = 0.0
+    end Symlog
 
 end Scale
 
