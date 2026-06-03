@@ -371,6 +371,13 @@ extension [A](spec: ChartSpec[A])
     def tooltip(f: A => String): ChartSpec[A] =
         spec.copy(tooltip = Present(f))
 
+    /** Lowers this chart spec to an `Svg.Root`.
+      *
+      * Equivalent to `summon[Conversion[ChartSpec[A], Svg.Root]](spec)`. Provided as an explicit
+      * method for callers that do not have `scala.language.implicitConversions` in scope.
+      */
+    def toSvg: Svg.Root = internal.ChartLower.lower(spec)
+
 end extension
 
 /** Converts a `ChartSpec[A]` to an `Svg.Root` wherever one is expected.

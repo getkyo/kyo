@@ -16,6 +16,7 @@ Event handlers are typed `Any < Async` and can call anything in the kyo ecosyste
 ```scala
 import UI.*
 import kyo.*
+import scala.language.implicitConversions
 case class Todo(id: String, text: String, done: Boolean)
 ```
 -->
@@ -1036,6 +1037,213 @@ val barChart: UI =
 end barChart
 ```
 
+## Charts
+
+A chart is a value of type `Svg.Root`. Drop it into any `UI` container. The marks and channels are named parameters, so the row type is fixed before the lambda is read and no type annotations are needed.
+
+### A first chart
+
+`Chart(data)` opens a chart over a `Chunk[A]`, fixing the row type. The second application `(marks*)` names the visual layers. Configuration methods chain fluently and each returns a copy:
+
+```scala
+enum Region derives CanEqual, Plottable:
+    case NA, EU, APAC
+
+opaque type Usd <: Double = Double
+object Usd:
+    def apply(d: Double): Usd = d
+    given Plottable[Usd]      = Plottable.numeric
+    given CanEqual[Usd, Usd]  = CanEqual.derived
+end Usd
+
+case class Sale(month: String, revenue: Usd, region: Region)
+
+val sales: Chunk[Sale] = Chunk(
+    Sale("Jan", Usd(49800.0), Region.EU),
+    Sale("Feb", Usd(61200.0), Region.NA)
+)
+
+val chart: Svg.Root =
+    Chart(sales)(
+        bar(x = _.month, y = _.revenue, color = _.region),
+        rule[Sale, Usd](y = RuleValue.Const(Usd(1000.0), summon[Plottable[Usd]]))
+    )
+        .yAxis(_.left.grid.ticks(5).format(v => f"$$$v%,.0f"))
+        .legend(_.top)
+        .size(640, 360)
+        .toSvg
+
+UI.div(UI.h2("Revenue by region"), chart)
+```
+
+### Marks compose; there is no chart zoo
+
+There is one `Chart` and a list of marks. The mark you pick, and the channels you map onto it, determine the chart type:
+
+```scala
+case class DataPoint(label: String, value: Double, weight: Double)
+
+val pts: Chunk[DataPoint] = Chunk(DataPoint("a", 1.0, 3.0), DataPoint("b", 2.0, 5.0))
+
+val barChart: Svg.Root  = Chart(pts)(bar(x = _.label, y = _.value)).toSvg
+val lineChart: Svg.Root = Chart(pts)(line(x = _.label, y = _.value)).toSvg
+val scatter: Svg.Root   = Chart(pts)(point(x = _.value, y = _.weight)).toSvg
+```
+
+A combo chart is two marks in the same list. Marks share the chart's x-scale automatically:
+
+```scala
+case class Row(month: String, revenue: Double, movingAvg: Double)
+
+val rows: Chunk[Row] = Chunk(Row("Jan", 100.0, 90.0), Row("Feb", 120.0, 110.0))
+
+val combo: Svg.Root =
+    Chart(rows)(
+        bar(x = _.month, y = _.revenue),
+        line(x = _.month, y = _.movingAvg),
+        rule[Row, Double](y = RuleValue.Const(80.0, summon[Plottable[Double]]))
+    ).toSvg
+```
+
+### Named-parameter channels
+
+Channels are named parameters, not chained method calls. This is what keeps the accessor lambdas inferring without annotations. A chained `.color(by = _.region)` after `bar(...)` would collapse the row type to `Any`; the named form does not:
+
+```scala
+case class Sale2(month: String, revenue: Double, region: String)
+val s2: Chunk[Sale2] = Chunk.empty
+
+// named parameter: row type inferred before the lambda is read
+val grouped: ChartSpec[Sale2] = Chart(s2)(bar(x = _.month, y = _.revenue, color = _.region))
+
+// stack carries its grouping; normalize is a named parameter
+val stacked: ChartSpec[Sale2]    = Chart(s2)(bar(x = _.month, y = _.revenue, stack = by(_.region)))
+val normalized: ChartSpec[Sale2] = Chart(s2)(bar(x = _.month, y = _.revenue, stack = by(_.region, normalize = true)))
+```
+
+### Typed values
+
+The scale for a channel is selected by the static type of its accessor. `Plottable` is an open typeclass. The library provides instances for `Int`, `Long`, `Double`, `String`, and `Instant`. Enum types derive instances automatically. Opaque numeric quantities use `Plottable.numeric`:
+
+```scala
+enum Category derives CanEqual, Plottable:
+    case Alpha, Beta, Gamma
+
+opaque type Kg <: Double = Double
+object Kg:
+    def apply(d: Double): Kg = d
+    given Plottable[Kg]      = Plottable.numeric
+end Kg
+
+case class Item(label: Category, weight: Kg)
+val items: Chunk[Item] = Chunk(Item(Category.Alpha, Kg(1.5)), Item(Category.Beta, Kg(2.0)))
+
+// Category selects a band (categorical) x-scale; Kg selects a linear y-scale
+val weightChart: Svg.Root = Chart(items)(bar(x = _.label, y = _.weight)).toSvg
+```
+
+For control over which color each enum case gets, supply a typed total function. The compiler checks exhaustiveness when the argument is a match on a sealed type:
+
+```scala
+enum Zone derives CanEqual, Plottable:
+    case North, South
+
+case class Measure(zone: Zone, value: Double)
+val measures: Chunk[Measure] = Chunk(Measure(Zone.North, 10.0), Measure(Zone.South, 20.0))
+
+val colored: Svg.Root =
+    Chart(measures)(bar(x = _.zone, y = _.value, color = _.zone))
+        .legend(_.colorScale[Zone]:
+            case Zone.North => Style.Color.blue
+            case Zone.South => Style.Color.orange)
+        .toSvg
+```
+
+### Scales, axes, and legends
+
+Scales are inferred from the accessor type and are overridable. Axes and legends appear automatically and are configured through builder lambdas:
+
+```scala
+case class YearRow(year: Int, revenue: Double)
+val yearRows: Chunk[YearRow] = Chunk(YearRow(2022, 1000.0), YearRow(2023, 2000.0))
+
+val axisChart: Svg.Root =
+    Chart(yearRows)(bar(x = _.year, y = _.revenue))
+        .xScale(_.band)
+        .yScale(_.linear(0.0, 5000.0))
+        .xAxis(_.bottom.label("Year"))
+        .yAxis(_.left.grid.ticks(5).format(v => f"$$$v%,.0f"))
+        .legend(_.top)
+        .theme(_.light)
+        .size(640, 360)
+        .toSvg
+```
+
+### Two axes
+
+A mark opts onto the right y-axis with `axis = Axis.Right`. Each axis gets its own independent scale:
+
+```scala
+case class ComboRow(month: String, revenue: Double, growthPct: Double)
+val comboRows: Chunk[ComboRow] = Chunk(ComboRow("Jan", 1000.0, 5.0), ComboRow("Feb", 1200.0, 7.0))
+
+val twoAxis: Svg.Root =
+    Chart(comboRows)(
+        bar(x = _.month, y = _.revenue),
+        line(x = _.month, y = _.growthPct, axis = Axis.Right)
+    )
+        .yAxis(_.left.label("Revenue"))
+        .yAxisRight(_.right.label("Growth %"))
+        .toSvg
+```
+
+### Reactivity
+
+Pass a `Signal[Chunk[A]]` instead of a `Chunk[A]` to get a live chart. The marks region redraws on each emission; the frame, axes, and legend stay put. The marks and channels are identical to the static form:
+
+```scala
+case class LiveRow(label: String, value: Double) derives CanEqual
+
+val livePage: UI < Async =
+    for
+        data <- Signal.initRef(Chunk(LiveRow("a", 1.0), LiveRow("b", 2.0)))
+    yield
+        val chart: Svg.Root =
+            Chart(data)(bar(x = _.label, y = _.value))
+                .animate(_.ease(300.millis))
+                .toSvg
+        UI.div(chart)
+```
+
+### Interaction
+
+Hover and selection are published to `SignalRef`s. The hovered datum becomes an ordinary signal readable anywhere on the page:
+
+```scala
+case class SaleItem(month: String, revenue: Double) derives CanEqual
+val saleItems: Chunk[SaleItem] = Chunk(SaleItem("Jan", 1000.0), SaleItem("Feb", 1200.0))
+
+val interactivePage: UI < Async =
+    for
+        hovered  <- Signal.initRef(Maybe.empty[SaleItem])
+        selected <- Signal.initRef(Maybe.empty[SaleItem])
+    yield
+        val chart: Svg.Root =
+            Chart(saleItems)(bar(x = _.month, y = _.revenue))
+                .onHover(hovered)
+                .onSelect(selected)
+                .toSvg
+        val withTooltip: Svg.Root =
+            Chart(saleItems)(bar(x = _.month, y = _.revenue))
+                .tooltip(s => s"${s.month}: ${s.revenue}")
+                .toSvg
+        UI.div(
+            chart,
+            hovered.render(s => UI.div(s.map(i => s"${i.month}: ${i.revenue}").getOrElse("hover a bar"))),
+            withTooltip
+        )
+```
+
 ## Running a UI
 
 The same `UI` value plugs into different targets. The runner picks the transport; the UI shape is unchanged.
@@ -1306,4 +1514,5 @@ Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cov
 - [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshot.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
 - [**Flamegraph**](shared/src/test/scala/demo/Flamegraph.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
 - [**BarChart**](shared/src/test/scala/demo/BarChart.scala): animated [SVG](#svg) bar chart with a SMIL grow-in and a signal-driven refresh tween.
+- [**BarChartViaLayer**](shared/src/test/scala/demo/BarChartViaLayer.scala): the same BarChart dataset re-expressed using `Chart(data)(bar(...))`, demonstrating the chart layer over the raw SVG API.
 - [**LineChart**](shared/src/test/scala/demo/LineChart.scala): animated [SVG](#svg) line chart with a stroke-dashoffset draw-in, point markers, and an area fill.
