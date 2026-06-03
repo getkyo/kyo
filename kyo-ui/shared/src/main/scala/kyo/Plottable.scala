@@ -31,9 +31,9 @@ end Plottable
   * comma-joined label string) so that any two summons for the same enum type return the same object regardless
   * of call site, compilation unit, or JVM class loader.
   *
-  * // Unsafe: the `enumCache` ConcurrentHashMap is shared mutable state. It is safe because
-  * ConcurrentHashMap is thread-safe by contract, values are computed once and never mutated after insertion,
-  * and computeIfAbsent provides the atomic read-or-create semantic without locks at the call site.
+  * The `enumCache` field is a `ConcurrentHashMap`, which is thread-safe by contract. Values are computed once
+  * and never mutated after insertion, and `computeIfAbsent` provides the atomic read-or-create semantic without
+  * requiring explicit locks at the call site.
   */
 object Plottable:
 
@@ -64,7 +64,7 @@ object Plottable:
                 case Present(v) => inner.label(v)
                 case Absent     => ""
 
-    /** Derives a band/ordinal `Plottable` for an opaque numeric quantity with an upper `<: Double` bound.
+    /** Derives a linear `Plottable` for an opaque numeric quantity with an upper `<: Double` bound.
       *
       * The underlying `double` instance is reused directly; the cast is sound because the `<: Double` bound
       * guarantees that `A` is a `Double` at runtime (the opaque alias is erased).
@@ -110,11 +110,17 @@ object Plottable:
         new Plottable[A]:
             def kind: Scale.Kind = Scale.Kind.Band
             def toDomain(a: A): Maybe[Domain] =
+                // Unsafe: sound because derivation is gated on Mirror.SumOf[A], guaranteeing A is a
+                // scala.reflect.Enum whose ordinal is in range of the mirrored element labels.
                 val idx = a.asInstanceOf[scala.reflect.Enum].ordinal
                 Present(Domain.Category(if idx >= 0 && idx < labels.size then labels(idx) else idx.toString))
+            end toDomain
             def label(a: A): String =
+                // Unsafe: sound because derivation is gated on Mirror.SumOf[A], guaranteeing A is a
+                // scala.reflect.Enum whose ordinal is in range of the mirrored element labels.
                 val idx = a.asInstanceOf[scala.reflect.Enum].ordinal
                 if idx >= 0 && idx < labels.size then labels(idx) else idx.toString
+            end label
         end new
     end deriveEnum
 

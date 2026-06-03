@@ -348,7 +348,7 @@ private[kyo] object ChartLower:
             case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
             case _                               => Absent
         val kind = kindOpt.getOrElse(Scale.Kind.Linear)
-        // y-axis: rangeLo=baseline (large pixel), rangeHi=top (small pixel) -- inverts SVG so big values are up
+        // y-axis: rangeLo=baseline (large pixel), rangeHi=top (small pixel), inverts SVG so big values are up
         val baseline = layout.plotBaseline
         val top      = layout.plotY
         val (extFinal, rLo, rHi, useNice) = yOverride.flatMap(_.kind) match
@@ -1432,7 +1432,7 @@ private[kyo] object ChartLower:
       * values for bar SMIL transitions.
       *
       * `LinePath` stores the full `PathData` produced by the previous emission. On the next emission,
-      * if the new path has the same command count as the stored one (a structural match -- same number
+      * if the new path has the same command count as the stored one (a structural match: same number
       * of MoveTo/LineTo/Close in the same order), a declarative SMIL `animate` is emitted on the `d`
       * attribute with `from` = the previous rendered `d` string and `to` = the new one. The browser
       * drives the interpolation; no fiber is required, which fits the pure `Svg.Root` lowering.
@@ -1600,7 +1600,7 @@ private[kyo] object ChartLower:
     /** Lower a simple bar mark with keyed enter/update SMIL transitions.
       *
       * For each row:
-      *   - UPDATE (key in `fromGeom`): emit a rect with two `Svg.Animate` children -- one for `height`
+      *   - UPDATE (key in `fromGeom`): emit a rect with two `Svg.Animate` children: one for `height`
       *     (from previous height to new) and one for `y` (from previous y to new).
       *   - ENTER (key absent in `fromGeom`): emit a rect with two `Svg.Animate` children where `from`
       *     is the baseline (height=0, y=baseline), animating from the baseline up to the new position.
@@ -1669,7 +1669,7 @@ private[kyo] object ChartLower:
       *
       * When animation is enabled and a previous `MarkGeom.LinePath` entry exists in `fromGeom` for the
       * same path slot, the command counts of the previous and new paths are compared:
-      *   - Same count (structural match -- stable x-categories, changing y-values): the path is emitted
+      *   - Same count (structural match, stable x-categories, changing y-values): the path is emitted
       *     with one `Svg.animate` child `attributeName="d" from={prevD} to={newD}`. The browser drives
       *     the interpolation declaratively; no fiber or mount hook is required.
       *   - Different count (structural change, e.g. a category added or removed): the path snaps with no
