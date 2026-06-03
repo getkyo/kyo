@@ -24,6 +24,8 @@ import kyo.*
   *   <outDir>/<prefix>/<slug>/content.md  -- raw README Markdown (== module.readme, D6)
   *   <outDir>/<prefix>/manifest.json      -- module/slug list + TOC outlines + prev/next (D5)
   *   <outDir>/versions.json   -- version manifest (INV-010)
+  *   <outDir>/sitemap.xml     -- canonical-indexable route set (SEO-3)
+  *   <outDir>/robots.txt      -- allow-all + sitemap directive (SEO-3)
   *   <outDir>/CNAME           -- exactly "getkyo.io" (INV-011)
   *   <outDir>/.nojekyll       -- empty (INV-011)
   *   <outDir>/kyo.png         -- logo (copied from repo root)
@@ -66,14 +68,20 @@ object WebsiteGenerator:
         outDir: Path,
         config: Config
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
-        val versions = content.map(_.version)
+        val versions  = content.map(_.version)
+        val latestTag = pickLatest(content).map(_.version.tag)
         for
-            _ <- emitLanding(content, versions, outDir)
-            _ <- Kyo.foreachDiscard(content)(c => emitVersion(c, versions, outDir))
-            _ <- emitLatest(content, versions, outDir)
-            _ <- writeVersionsJson(versions, outDir)
-            _ <- writeArtifactRootFiles(outDir)
-            _ <- copyAssets(outDir, config.repoRoot, config.bundleDir)
+            // DECISION-SEO-C: sitemap `<lastmod>` is the build date, computed ONCE here and threaded
+            // to the pure builders so the emitted artifacts are deterministic for a given run.
+            lastmod <- Sync.defer(java.time.LocalDate.now().toString)
+            _       <- emitLanding(content, versions, outDir)
+            _       <- Kyo.foreachDiscard(content)(c => emitVersion(c, versions, latestTag, outDir))
+            _       <- emitLatest(content, versions, outDir)
+            _       <- writeVersionsJson(versions, outDir)
+            _       <- writeArtifactRootFiles(outDir)
+            _       <- writeSitemap(content, lastmod, outDir)
+            _       <- writeRobots(outDir)
+            _       <- copyAssets(outDir, config.repoRoot, config.bundleDir)
         yield ()
         end for
     end emit
@@ -94,12 +102,13 @@ object WebsiteGenerator:
         c: WebsiteContent,
         versions: Chunk[WebsiteVersion],
         prefix: String,
-        outDir: Path
+        outDir: Path,
+        isCurrentLatest: Boolean
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val modules = c.groups.flatMap(_.modules)
         for
-            _ <- emitIntroPage(c, versions, prefix, outDir)
-            _ <- Kyo.foreachDiscard(modules)(m => emitModulePage(c, versions, prefix, m, outDir))
+            _ <- emitIntroPage(c, versions, prefix, outDir, isCurrentLatest)
+            _ <- Kyo.foreachDiscard(modules)(m => emitModulePage(c, versions, prefix, m, outDir, isCurrentLatest))
             _ <- writeManifest(c, prefix, outDir)
         yield ()
         end for
@@ -108,9 +117,12 @@ object WebsiteGenerator:
     private def emitVersion(
         c: WebsiteContent,
         versions: Chunk[WebsiteVersion],
+        latestTag: Maybe[String],
         outDir: Path
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
-        emitDocs(c, versions, c.version.tag, outDir)
+        // DECISION-SEO-A: the current-latest version's own versioned tree (/v<X>/<slug>/) duplicates
+        // /latest/<slug>/, so its module pages canonicalize to /latest/ rather than self.
+        emitDocs(c, versions, c.version.tag, outDir, isCurrentLatest = latestTag.contains(c.version.tag))
 
     /** Mirror the newest stable version (or the newest pre-release when no stable tag exists, Q-005)
       * under `latest/`, as a duplicate emission (Pages serves files, not symlinks). The mirrored
@@ -127,7 +139,8 @@ object WebsiteGenerator:
             case Present(c) =>
                 val latestVersion = c.version.copy(latest = true)
                 val latestContent = c.copy(version = latestVersion)
-                emitDocs(latestContent, versions, "latest", outDir)
+                // The /latest/ tree is the canonical home: every page under it is self-canonical.
+                emitDocs(latestContent, versions, "latest", outDir, isCurrentLatest = false)
         end match
     end emitLatest
 
@@ -155,14 +168,15 @@ object WebsiteGenerator:
         c: WebsiteContent,
         versions: Chunk[WebsiteVersion],
         prefix: String,
-        outDir: Path
+        outDir: Path,
+        isCurrentLatest: Boolean
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val route = s"/$prefix/"
         for
             fixedRoute <- Signal.initRef(route)
             body       <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(Chunk.empty[DocsMarkdown.Heading]), UI.empty)
             view       <- siteShell(versions, docsHome(c, prefix), body)
-            html       <- wrapFirst(docOpts(c, prefix, "", route), view)
+            html       <- wrapFirst(docOpts(c, prefix, "", route, isCurrentLatest), view)
             island = docsIsland(c, versions, "")
             _ <- writeRoute(outDir / prefix / "index.html", injectIslands(html, island, versions))
         yield ()
@@ -174,7 +188,8 @@ object WebsiteGenerator:
         versions: Chunk[WebsiteVersion],
         prefix: String,
         module: WebsiteModule,
-        outDir: Path
+        outDir: Path,
+        isCurrentLatest: Boolean
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val route = s"/$prefix/${module.slug}/"
         for
@@ -182,7 +197,7 @@ object WebsiteGenerator:
             fixedRoute <- Signal.initRef(route)
             body       <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article)
             view       <- siteShell(versions, docsHome(c, prefix), body)
-            html       <- wrapFirst(docOpts(c, prefix, module.slug, route), view)
+            html       <- wrapFirst(docOpts(c, prefix, module.slug, route, isCurrentLatest), view)
             island = docsIsland(c, versions, module.readme)
             _ <- writeRoute(outDir / prefix / module.slug / "index.html", injectIslands(html, island, versions))
             _ <- writeString(
@@ -226,17 +241,54 @@ object WebsiteGenerator:
     private def docsHome(c: WebsiteContent, prefix: String): String =
         c.groups.flatMap(_.modules).headOption.fold(s"/$prefix/")(m => s"/$prefix/${m.slug}/")
 
-    private def docOpts(c: WebsiteContent, prefix: String, slug: String, route: String): WebsitePage.Options =
+    private def docOpts(
+        c: WebsiteContent,
+        prefix: String,
+        slug: String,
+        route: String,
+        isCurrentLatest: Boolean
+    ): WebsitePage.Options =
         val title =
             if slug.isEmpty then s"Kyo docs ${c.version.label}"
             else s"$slug | Kyo docs ${c.version.label}"
+        val selfCanonical = s"https://getkyo.io$route"
+        // DECISION-SEO-A: the current-latest version's own versioned module pages (/v<X>/<slug>/)
+        // duplicate /latest/<slug>/, so they canonicalize to the /latest/ home instead of self. The
+        // /latest/ tree (prefix == "latest") and every other versioned/intro page stays self-canonical.
+        val canonical =
+            if isCurrentLatest && prefix != "latest" && slug.nonEmpty then s"https://getkyo.io/latest/$slug/"
+            else selfCanonical
+        // DECISION-SEO-B: the empty docs intro (/<prefix>/) is thin content; noindex it so crawlers
+        // do not index it while it remains reachable.
+        val noindex = slug.isEmpty
         WebsitePage.Options(
             title = title,
             description = s"Kyo ${c.version.label} documentation.",
-            canonical = s"https://getkyo.io$route",
-            bundleHref = "/main.js"
+            canonical = canonical,
+            bundleHref = "/main.js",
+            jsonLd = buildJsonLd(if slug.isEmpty then "intro" else "docs", title, selfCanonical),
+            noindex = noindex
         )
     end docOpts
+
+    /** Build the schema.org JSON-LD payload for a page (SEO-5). `kind` is `"landing"`, `"docs"`, or
+      * `"intro"`. `title` is the page headline; `url` is the page's own self URL. The landing emits a
+      * `@graph` with `WebSite` + `SoftwareSourceCode`; docs and intro pages emit a single `TechArticle`
+      * that is `isPartOf` the site `WebSite`. All string fields are JSON-escaped via `escJson`.
+      */
+    private def buildJsonLd(kind: String, title: String, url: String): String =
+        kind match
+            case "landing" =>
+                s"""{"@context": "https://schema.org", "@graph": [""" +
+                    s"""{"@type": "WebSite", "name": "Kyo", "url": "https://getkyo.io/"}, """ +
+                    s"""{"@type": "SoftwareSourceCode", "name": "Kyo", "url": "https://getkyo.io/", """ +
+                    s""""codeRepository": "https://github.com/getkyo/kyo", "programmingLanguage": "Scala"}]}"""
+            case _ =>
+                s"""{"@context": "https://schema.org", "@type": "TechArticle", """ +
+                    s""""headline": "${escJson(title)}", "url": "${escJson(url)}", "inLanguage": "en", """ +
+                    s""""isPartOf": {"@type": "WebSite", "name": "Kyo", "url": "https://getkyo.io/"}}"""
+        end match
+    end buildJsonLd
 
     /** Serialize the version's modules to `<prefix>/manifest.json` as a flat JSON array of module
       * objects, each carrying `slug`, `group`, `title`, `prev`, `next`, and a `toc` outline. The flat
@@ -326,7 +378,8 @@ object WebsiteGenerator:
             description =
                 "Kyo is the reliability foundation for AI-built software: structured effects, typed errors, and production-grade concurrency on JVM, JS, and Native.",
             canonical = "https://getkyo.io/",
-            bundleHref = "main.js"
+            bundleHref = "main.js",
+            jsonLd = buildJsonLd("landing", "Kyo", "https://getkyo.io/")
         )
         // The landing's header Docs/Modules/Get-started target and its seeded island are the latest
         // version's first module under `latest/`. The same content seeds the #docs-island so the
@@ -387,6 +440,55 @@ object WebsiteGenerator:
             _ <- writeString("CNAME", outDir / "CNAME", "getkyo.io")
             _ <- writeString(".nojekyll", outDir / ".nojekyll", "")
         yield ()
+
+    // ---- sitemap.xml + robots.txt (SEO-3) ----
+
+    /** The canonical-indexable route set (DECISION-SEO-A): the landing root `/` plus each
+      * `/latest/<slug>/` for the picked-latest version's modules. This is the single source of truth
+      * for sitemap.xml, so the sitemap never lists the duplicate `/v<current>/<slug>/` versioned tree,
+      * the thin intro pages, historical versions, or any non-page file.
+      */
+    private def sitemapRoutes(content: Chunk[WebsiteContent]): Chunk[String] =
+        Chunk("/") ++ pickLatest(content).fold(Chunk.empty)(c =>
+            c.groups.flatMap(_.modules).map(m => s"/latest/${m.slug}/")
+        )
+
+    /** Build the sitemap.xml document. `routes` are absolute-URL paths (each starting with `/`);
+      * `lastmod` is a `YYYY-MM-DD` build date (DECISION-SEO-C). Pure and deterministic so tests can
+      * inject a fixed date. Each `<loc>` is `https://getkyo.io` + route.
+      */
+    private def buildSitemapXml(routes: Chunk[String], lastmod: String): String =
+        val urls = routes.toSeq.map { route =>
+            s"""  <url>
+               |    <loc>https://getkyo.io$route</loc>
+               |    <lastmod>$lastmod</lastmod>
+               |  </url>""".stripMargin
+        }.mkString("\n")
+        s"""<?xml version="1.0" encoding="UTF-8"?>
+           |<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+           |$urls
+           |</urlset>""".stripMargin
+    end buildSitemapXml
+
+    /** Build the robots.txt document: allow all crawlers (no `Disallow`, so the AI crawlers
+      * GPTBot/ClaudeBot/PerplexityBot can read the server-rendered HTML for SEO-1) and declare the
+      * sitemap URL. Pure.
+      */
+    private def buildRobotsTxt(): String =
+        """User-agent: *
+          |Allow: /
+          |Sitemap: https://getkyo.io/sitemap.xml
+          |""".stripMargin
+
+    private def writeSitemap(
+        content: Chunk[WebsiteContent],
+        lastmod: String,
+        outDir: Path
+    )(using Frame): Unit < (Sync & Abort[WebsiteException]) =
+        writeString("sitemap.xml", outDir / "sitemap.xml", buildSitemapXml(sitemapRoutes(content), lastmod))
+
+    private def writeRobots(outDir: Path)(using Frame): Unit < (Sync & Abort[WebsiteException]) =
+        writeString("robots.txt", outDir / "robots.txt", buildRobotsTxt())
 
     private def copyFile(route: String, src: Path, dst: Path)(using Frame): Unit < (Sync & Abort[WebsiteException]) =
         Abort.run[FileFsException](src.copy(dst, replaceExisting = true)).map {

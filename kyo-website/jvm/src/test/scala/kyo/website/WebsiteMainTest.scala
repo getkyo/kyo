@@ -58,6 +58,29 @@ class WebsiteMainTest extends Test:
         end for
     }
 
+    // ---- SEO-3: sitemap.xml and robots.txt are always written, even for empty content ----
+
+    "sitemap.xml and robots.txt always written, even for empty content (SEO-3)" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            repoRoot = Path(findRepoRoot().toString)
+            _ <- WebsiteGenerator.emit(
+                Chunk.empty[WebsiteContent],
+                out,
+                WebsiteGenerator.Config(repoRoot, bundleDir)
+            )
+            sitemapExists <- (out / "sitemap.xml").exists
+            robotsExists  <- (out / "robots.txt").exists
+            sitemap       <- readFile(out / "sitemap.xml")
+        yield
+            assert(sitemapExists, "sitemap.xml must be written")
+            assert(robotsExists, "robots.txt must be written")
+            // The root is always indexable, so even empty content lists "/".
+            assert(sitemap.contains("<loc>https://getkyo.io/</loc>"), s"empty-content sitemap must list the root: $sitemap")
+        end for
+    }
+
     // ---- Test 12: --out flag is parsed correctly ----
 
     "emit to the specified output directory" in run {

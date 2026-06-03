@@ -679,12 +679,21 @@ class WebsiteGeneratorTest extends Test:
             // The mirrored latest tree.
             latestHtml <- readFile(out / "latest" / "kyo-data" / "index.html")
         yield
-            // The v1.0.0/ page links within /v1.0.0/, never to /latest/.
-            assert(vHtml.contains("/v1.0.0/kyo-data/"), s"v1.0.0 page must link within v1.0.0: $vHtml")
-            assert(vHtml.contains("/v1.0.0/kyo-core/"), s"v1.0.0 page must link within v1.0.0: $vHtml")
+            // The v1.0.0/ page's BODY links within /v1.0.0/, never to /latest/. The check is scoped to
+            // the <body> because the current-latest version's <head> now carries the DECISION-SEO-A
+            // canonical -> /latest/kyo-data/ (this version IS the latest, so its versioned tree
+            // canonicalizes to the /latest/ home); that intentional head tag is not a body nav link.
+            val vBody = vHtml.substring(vHtml.indexOf("<body>"), vHtml.indexOf("</body>"))
+            assert(vBody.contains("/v1.0.0/kyo-data/"), s"v1.0.0 page body must link within v1.0.0: $vBody")
+            assert(vBody.contains("/v1.0.0/kyo-core/"), s"v1.0.0 page body must link within v1.0.0: $vBody")
             assert(
-                !vHtml.contains("/latest/kyo-data/") && !vHtml.contains("/latest/kyo-core/"),
-                s"latest version's v1.0.0 page must NOT link to /latest/: $vHtml"
+                !vBody.contains("/latest/kyo-data/") && !vBody.contains("/latest/kyo-core/"),
+                s"latest version's v1.0.0 page body must NOT link to /latest/: $vBody"
+            )
+            // The head canonical IS the /latest/ dedup target (DECISION-SEO-A), distinct from body nav.
+            assert(
+                canonical(vHtml) == "https://getkyo.io/latest/kyo-data/",
+                s"v1.0.0 canonical must dedup to /latest/: ${canonical(vHtml)}"
             )
             // The latest/ page links within /latest/.
             assert(latestHtml.contains("/latest/kyo-data/"), s"latest page must link within latest: $latestHtml")
@@ -696,7 +705,199 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
+    // ---- SEO-3: sitemap.xml lists / and every latest slug, excludes versioned/intro/asset URLs ----
+
+    "sitemap.xml lists / and every latest slug, no /v<X>/ or intro or asset URLs (SEO-3)" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules, vIntroOnly), out, bundleDir)
+            sitemap   <- readFile(out / "sitemap.xml")
+            // Cross-check the <loc> count against the actual emitted latest/<slug>/ pages + 1 (the root).
+            latestSlugPages <- Sync.defer {
+                val latestDir = java.nio.file.Paths.get(out.toString, "latest")
+                if Files.exists(latestDir) then
+                    Files.list(latestDir).filter(Files.isDirectory(_)).count().toInt
+                else 0
+            }
+        yield
+            assert(sitemap.startsWith("<?xml"), s"sitemap must be valid XML: $sitemap")
+            assert(sitemap.contains("<urlset"), s"sitemap must contain a <urlset>: $sitemap")
+            // Included: the root and each /latest/<slug>/.
+            assert(sitemap.contains("<loc>https://getkyo.io/</loc>"), s"sitemap must list the root: $sitemap")
+            assert(sitemap.contains("<loc>https://getkyo.io/latest/kyo-data/</loc>"), s"sitemap must list kyo-data: $sitemap")
+            assert(sitemap.contains("<loc>https://getkyo.io/latest/kyo-kernel/</loc>"), s"sitemap must list kyo-kernel: $sitemap")
+            // Excluded: the current-latest versioned tree, the historical version, intros, and non-pages.
+            assert(!sitemap.contains("/v1.0.0-RC2/"), s"sitemap must NOT list the versioned tree: $sitemap")
+            assert(!sitemap.contains("/v0.9.3/"), s"sitemap must NOT list the old version: $sitemap")
+            assert(!sitemap.contains("<loc>https://getkyo.io/latest/</loc>"), s"sitemap must NOT list the intro page: $sitemap")
+            assert(!sitemap.contains("content.md"), s"sitemap must NOT list content.md: $sitemap")
+            assert(!sitemap.contains("manifest.json"), s"sitemap must NOT list manifest.json: $sitemap")
+            assert(!sitemap.contains("versions.json"), s"sitemap must NOT list versions.json: $sitemap")
+            // Every <url> block carries a non-empty <lastmod>.
+            val locCount     = countOccurrences(sitemap, "<loc>")
+            val lastmodCount = countOccurrences(sitemap, "<lastmod>")
+            assert(locCount == lastmodCount, s"every <loc> must have a <lastmod>, got $locCount loc / $lastmodCount lastmod")
+            assert(!sitemap.contains("<lastmod></lastmod>"), s"<lastmod> must be non-empty: $sitemap")
+            // Cross-check: <loc> count == count of latest/<slug>/ dirs + 1 (the root /).
+            assert(
+                locCount == latestSlugPages + 1,
+                s"sitemap <loc> count ($locCount) must equal latest slug pages ($latestSlugPages) + 1"
+            )
+        end for
+    }
+
+    // ---- SEO-3: robots.txt allows all and points to the sitemap ----
+
+    "robots.txt allows all crawlers and points to sitemap, blocks no AI crawler (SEO-3)" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            robots    <- readFile(out / "robots.txt")
+        yield
+            assert(robots.contains("User-agent: *"), s"robots must allow all user-agents: $robots")
+            assert(robots.contains("Allow: /"), s"robots must allow crawling: $robots")
+            assert(robots.contains("Sitemap: https://getkyo.io/sitemap.xml"), s"robots must declare the sitemap: $robots")
+            assert(!robots.contains("Disallow"), s"robots must NOT block any path (AI crawlers need raw HTML): $robots")
+            assert(!robots.contains("GPTBot"), s"robots must NOT name-block GPTBot: $robots")
+            assert(!robots.contains("ClaudeBot"), s"robots must NOT name-block ClaudeBot: $robots")
+        end for
+    }
+
+    // ---- SEO-3: sitemap.xml and robots.txt are always written, even for empty content ----
+
+    "sitemap.xml and robots.txt always written, even for empty content (SEO-3)" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk.empty[WebsiteContent], out, bundleDir)
+            sitemap   <- readFile(out / "sitemap.xml")
+            robots    <- readFile(out / "robots.txt")
+        yield
+            // Empty content: pickLatest is Absent, so the sitemap lists only the always-indexable root.
+            assert(sitemap.contains("<loc>https://getkyo.io/</loc>"), s"empty sitemap must still list the root: $sitemap")
+            assert(countOccurrences(sitemap, "<loc>") == 1, s"empty sitemap must have exactly one <loc> (the root): $sitemap")
+            assert(robots.contains("Sitemap: https://getkyo.io/sitemap.xml"), s"robots must declare the sitemap: $robots")
+        end for
+    }
+
+    // ---- SEO-5: module page head carries TechArticle JSON-LD ----
+
+    "module page head has TechArticle JSON-LD with the correct self url (SEO-5)" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            html      <- readFile(out / "latest" / "kyo-data" / "index.html")
+        yield
+            assert(html.contains("""<script type="application/ld+json">"""), s"module head must carry a JSON-LD block: $html")
+            val ld = extractJsonLd(html)
+            assert(ld.contains(""""@type": "TechArticle""""), s"module JSON-LD must be a TechArticle: $ld")
+            assert(ld.contains("https://getkyo.io/latest/kyo-data/"), s"module JSON-LD url must be the self route: $ld")
+            assert(!ld.contains("</script>"), s"JSON-LD must not contain a literal </script>: $ld")
+            // The JSON-LD block must be inside the <head>.
+            val ldIdx   = html.indexOf("application/ld+json")
+            val headEnd = html.indexOf("</head>")
+            assert(ldIdx >= 0 && ldIdx < headEnd, "JSON-LD must be inside the <head>")
+        end for
+    }
+
+    // ---- SEO-5: landing page head carries WebSite + SoftwareSourceCode JSON-LD ----
+
+    "landing page head has WebSite + SoftwareSourceCode JSON-LD (SEO-5)" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            html      <- readFile(out / "index.html")
+        yield
+            assert(html.contains("""<script type="application/ld+json">"""), s"landing head must carry a JSON-LD block: $html")
+            val ld = extractJsonLd(html)
+            assert(ld.contains("WebSite"), s"landing JSON-LD must declare a WebSite: $ld")
+            assert(ld.contains("SoftwareSourceCode"), s"landing JSON-LD must declare a SoftwareSourceCode: $ld")
+            assert(ld.contains("https://github.com/getkyo/kyo"), s"landing JSON-LD must carry the repo url: $ld")
+            assert(!ld.contains("</script>"), s"JSON-LD must not contain a literal </script>: $ld")
+        end for
+    }
+
+    // ---- DECISION-SEO-A/B: canonical dedup + intro noindex ----
+
+    "current-latest /v<X>/ page canonicalizes to /latest/, intro gets noindex (DECISION-SEO-A/B)" in run {
+        for
+            out           <- tmpDir
+            bundleDir     <- stubBundleDir
+            _             <- emit(Chunk(vWithModules), out, bundleDir)
+            versionedHtml <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "index.html")
+            latestHtml    <- readFile(out / "latest" / "kyo-data" / "index.html")
+            latestIntro   <- readFile(out / "latest" / "index.html")
+        yield
+            // DECISION-SEO-A: the current-latest versioned page points to /latest/, not self.
+            assert(
+                canonical(versionedHtml) == "https://getkyo.io/latest/kyo-data/",
+                s"versioned page canonical must be /latest/, got: ${canonical(versionedHtml)}"
+            )
+            // The /latest/ page is self-canonical.
+            assert(
+                canonical(latestHtml) == "https://getkyo.io/latest/kyo-data/",
+                s"latest page must be self-canonical, got: ${canonical(latestHtml)}"
+            )
+            // DECISION-SEO-B: the intro page is noindex; module pages are not.
+            assert(
+                latestIntro.contains("""<meta name="robots" content="noindex">"""),
+                s"intro page must carry a noindex robots meta: $latestIntro"
+            )
+            assert(
+                !versionedHtml.contains("""content="noindex""""),
+                s"a module page must NOT be noindex: $versionedHtml"
+            )
+        end for
+    }
+
+    // ---- SEO-4 golden: SSG title/canonical match updateHead strings for each route kind ----
+
+    "SEO-4 golden: SSG title/canonical match updateHead strings for each route kind" in run {
+        // These are the EXACT strings WebsiteBundleMain.updateHead emits for the same route kinds; the
+        // cross-check pins the SSG and bundle head strings together so they cannot drift silently.
+        for
+            out         <- tmpDir
+            bundleDir   <- stubBundleDir
+            _           <- emit(Chunk(vWithModules), out, bundleDir)
+            landingHtml <- readFile(out / "index.html")
+            introHtml   <- readFile(out / "latest" / "index.html")
+            moduleHtml  <- readFile(out / "latest" / "kyo-data" / "index.html")
+        yield
+            assert(
+                headField(landingHtml, "title") == "Kyo | Build with AI. Ship something that holds.",
+                s"landing title mismatch: ${headField(landingHtml, "title")}"
+            )
+            assert(canonical(landingHtml) == "https://getkyo.io/", s"landing canonical mismatch: ${canonical(landingHtml)}")
+            assert(headField(introHtml, "title") == "Kyo docs 1.0.0-RC2", s"intro title mismatch: ${headField(introHtml, "title")}")
+            assert(canonical(introHtml) == "https://getkyo.io/latest/", s"intro canonical mismatch: ${canonical(introHtml)}")
+            assert(
+                headField(moduleHtml, "title") == "kyo-data | Kyo docs 1.0.0-RC2",
+                s"module title mismatch: ${headField(moduleHtml, "title")}"
+            )
+            assert(
+                canonical(moduleHtml) == "https://getkyo.io/latest/kyo-data/",
+                s"module canonical mismatch: ${canonical(moduleHtml)}"
+            )
+        end for
+    }
+
     // ---- Helpers ----
+
+    /** The JSON text inside the first `<script type="application/ld+json">...</script>` block. */
+    private def extractJsonLd(html: String): String =
+        val open  = """<script type="application/ld+json">"""
+        val start = html.indexOf(open)
+        if start < 0 then ""
+        else
+            val from = start + open.length
+            val end  = html.indexOf("</script>", from)
+            if end < 0 then "" else html.substring(from, end)
+        end if
+    end extractJsonLd
 
     private def extractIsland(html: String, id: String): String =
         val open  = s"""<script type="application/json" id="$id">"""

@@ -138,6 +138,63 @@ class WebsitePageTest extends Test:
         }
     }
 
+    // ---- SEO-5: JSON-LD injection ----
+
+    "wrap injects application/ld+json block when jsonLd is non-empty, escaping angle brackets (SEO-5)" in run {
+        renderPage(defaultOpts.copy(jsonLd = """{"@type":"TechArticle","x":"</script>"}"""), UI.div).map { html =>
+            assert(html.contains("""<script type="application/ld+json">"""), s"JSON-LD block must be present: $html")
+            val block = extractJsonLd(html)
+            assert(block.contains("@type"), s"JSON-LD must carry the payload: $block")
+            assert(block.contains("TechArticle"), s"JSON-LD must carry the type: $block")
+            // The escape turns the literal </script> into <.../> so it cannot close the element.
+            assert(!block.contains("</script>"), s"JSON-LD must not contain a literal </script>: $block")
+            assert(block.contains("\\u003c"), s"angle brackets must be unicode-escaped: $block")
+            // The block sits inside the <head>.
+            val ldIdx   = html.indexOf("application/ld+json")
+            val headEnd = html.indexOf("</head>")
+            assert(ldIdx >= 0 && ldIdx < headEnd, "JSON-LD must be inside the <head>")
+        }
+    }
+
+    "wrap emits no application/ld+json block when jsonLd is empty (the default)" in run {
+        renderPage(defaultOpts, UI.div).map { html =>
+            assert(!html.contains("application/ld+json"), s"no JSON-LD block when jsonLd is empty: $html")
+        }
+    }
+
+    // ---- DECISION-SEO-B: noindex robots meta ----
+
+    "wrap emits noindex robots meta when noindex=true, absent when false (DECISION-SEO-B)" in run {
+        for
+            on  <- renderPage(defaultOpts.copy(noindex = true), UI.div)
+            off <- renderPage(defaultOpts, UI.div)
+        yield
+            assert(on.contains("""<meta name="robots" content="noindex">"""), s"noindex meta must be present: $on")
+            assert(!off.contains("""content="noindex""""), s"noindex meta must be absent by default: $off")
+        end for
+    }
+
+    // ---- AF-6: no stray rel="alternate" duplicating the canonical ----
+
+    "no stray rel=alternate link in the rendered head (AF-6)" in run {
+        renderPage(defaultOpts, UI.div).map { html =>
+            assert(!html.contains("""rel="alternate""""), s"head must not carry a stray rel=alternate: $html")
+            // The canonical is still present (the removal only dropped the duplicate alternate).
+            assert(html.contains("""<link rel="canonical" href="https://getkyo.io/">"""), s"canonical must remain: $html")
+        }
+    }
+
+    private def extractJsonLd(html: String): String =
+        val open  = """<script type="application/ld+json">"""
+        val start = html.indexOf(open)
+        if start < 0 then ""
+        else
+            val from = start + open.length
+            val end  = html.indexOf("</script>", from)
+            if end < 0 then "" else html.substring(from, end)
+        end if
+    end extractJsonLd
+
     private def extractStyleBlock(html: String): String =
         val start = html.indexOf("<style>")
         val end   = html.indexOf("</style>")

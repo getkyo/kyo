@@ -17,12 +17,21 @@ import kyo.*
   */
 object WebsitePage:
 
-    /** Per-route configuration for the page wrapper. */
+    /** Per-route configuration for the page wrapper.
+      *
+      * `jsonLd` is the schema.org structured-data JSON for this page (SEO-5). When non-empty it is
+      * injected as a `<script type="application/ld+json">` block at the end of the `<head>`. Empty
+      * (the default) emits no JSON-LD block, so existing call sites are unaffected. `noindex`, when
+      * true, emits `<meta name="robots" content="noindex">` so thin pages (the empty docs intro,
+      * DECISION-SEO-B) are excluded from search indexes while remaining reachable.
+      */
     final case class Options(
         title: String,
         description: String,
         canonical: String,
-        bundleHref: String
+        bundleHref: String,
+        jsonLd: String = "",
+        noindex: Boolean = false
     ) derives CanEqual
 
     /** Wraps `view` in a complete HTML document and returns a stream of rendered HTML.
@@ -36,28 +45,53 @@ object WebsitePage:
       */
     def wrap(opts: Options)(view: UI)(using Frame): Stream[String, Async] =
         UI.runRenderPage(pageHead(opts))(view)
+            .map(html => if opts.jsonLd.nonEmpty then injectJsonLd(html, opts.jsonLd) else html)
 
     // ---- Private helpers ----
 
     private def pageHead(opts: Options)(using Frame): UI.PageHead =
         UI.PageHead(
             title = opts.title,
-            meta = Seq(
-                "description"    -> opts.description,
-                "og:title"       -> opts.title,
-                "og:description" -> opts.description,
-                "og:type"        -> "website"
-            ) ++ (if opts.canonical.nonEmpty then Seq("og:url" -> opts.canonical) else Seq.empty),
+            // AF-6: the stray `rel="alternate"` link is removed; it duplicated the canonical href
+            // (same URL, no alternate hreflang/format) and served no purpose.
+            meta = (
+                Seq(
+                    "description"    -> opts.description,
+                    "og:title"       -> opts.title,
+                    "og:description" -> opts.description,
+                    "og:type"        -> "website"
+                ) ++ (if opts.canonical.nonEmpty then Seq("og:url" -> opts.canonical) else Seq.empty)
+                    ++ (if opts.noindex then Seq("robots" -> "noindex") else Seq.empty)
+            ),
             links = (
                 Seq("canonical" -> opts.canonical) ++
-                    fontLinks ++
-                    (if opts.canonical.nonEmpty then Seq("alternate" -> opts.canonical) else Seq.empty)
+                    fontLinks
             ).filter(_._2.nonEmpty),
             css = UI.stylesheetCss(WebsiteStyles.sheet),
             moduleScript = validBundleHref(opts.bundleHref) match
                 case s if s.nonEmpty => Present(s)
                 case _               => Absent
         )
+
+    /** Inject a `<script type="application/ld+json">` block carrying `jsonLd` immediately before the
+      * `</head>` of the rendered document (SEO-5). The JSON has its angle brackets escaped to their
+      * JSON unicode escapes (`escScript`) so a `</script>` substring in any field cannot close the
+      * element early. This is a string-level page-wrap concern (the kyo-ui `PageHead` has no raw-script
+      * slot), mirroring `WebsiteGenerator.injectIslands` at the head level instead of the body level.
+      */
+    private def injectJsonLd(html: String, jsonLd: String): String =
+        val block  = s"""<script type="application/ld+json">${escScript(jsonLd)}</script>"""
+        val marker = "</head>"
+        val idx    = html.indexOf(marker)
+        if idx < 0 then html + block
+        else html.substring(0, idx) + block + html.substring(idx)
+    end injectJsonLd
+
+    // Angle-bracket escape for JSON embedded in a <script> element. Mirrors
+    // WebsiteGenerator.escScript: a literal "</script>" in any field would otherwise close the
+    // element early, so "<"/">" become their JSON unicode escapes.
+    private def escScript(json: String): String =
+        json.replace("<", "\\u003c").replace(">", "\\u003e")
 
     private def validBundleHref(s: String): String =
         // Reject javascript: scheme and other potentially unsafe hrefs; fall back to main.js
