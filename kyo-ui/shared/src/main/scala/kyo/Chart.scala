@@ -667,15 +667,16 @@ object Theme:
 
 /** Configures animation for live charts.
   *
-  * `ease(d)` enables one-shot SMIL transitions with duration `d`.
-  * `none` disables all transitions. The easing function is fixed to
-  * ease-in-out-cubic (the demo's pattern); named easing variants are additive
-  * extensions. Used as the argument to `.animate(f)`: write `_.ease(300.millis)`
-  * or `_.none`.
+  * `ease(d)` enables one-shot SMIL transitions with duration `d`. `none` disables all transitions. The easing
+  * function is fixed to ease-in-out-cubic (the demo's pattern); named easing variants are additive extensions.
+  * `morphSteps` bounds the number of interpolation steps emitted for path-morph transitions (line/area marks)
+  * where SMIL cannot be used; this caps the server-push cost for live charts. Used as the argument to
+  * `.animate(f)`: write `_.ease(300.millis)` or `_.none`.
   */
 final case class AnimateConfig(
     enabled: Boolean,
-    duration: Duration
+    duration: Duration,
+    morphSteps: Int
 ):
     def ease(d: Duration): AnimateConfig = copy(enabled = true, duration = d)
     def none: AnimateConfig              = copy(enabled = false)
@@ -683,7 +684,8 @@ final case class AnimateConfig(
 end AnimateConfig
 
 object AnimateConfig:
-    val default: AnimateConfig = AnimateConfig(true, Duration.fromJava(java.time.Duration.ofMillis(300)))
+    val default: AnimateConfig =
+        AnimateConfig(true, Duration.fromJava(java.time.Duration.ofMillis(300)), morphSteps = 24)
 
 /** Overrides the automatically-inferred scale for an axis.
   *

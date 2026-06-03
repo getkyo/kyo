@@ -1272,6 +1272,287 @@ private[kyo] object ChartLower:
         Chunk.from(xLine.toOption.toSeq ++ yLine.toOption.toSeq)
     end lowerRule
 
+    // ---- Phase 06: keyed transitions and animation ----
+
+    /** Per-key geometry captured from one render frame.
+      *
+      * `Bar` stores the scaled height and y-coordinate so the next render can compute SMIL `from`/`to`
+      * values. `LinePath` records the SVG path command count for the bounded stepped-morph tween
+      * implemented in Phase 08 (LINE/AREA PATH-MORPH TWEEN carry-over from Phase 06 verify BLOCKER 1).
+      */
+    sealed private[kyo] trait MarkGeom
+    private[kyo] object MarkGeom:
+        final case class Bar(height: Double, y: Double) extends MarkGeom
+        final case class LinePath(commandCount: Int)    extends MarkGeom
+    end MarkGeom
+
+    /** Three-slot transition state for a live chart, held in a chart-private `AtomicRef.Unsafe`.
+      *
+      * Slots:
+      *   - `lastRows`: the row chunk used in the most-recently-committed render.
+      *   - `fromGeom`: the geometry that was current BEFORE the last row change (the animation origin).
+      *   - `currentGeom`: the geometry produced BY the last row change (the animation target).
+      *
+      * The three-slot design makes the render projection idempotent across repeated pulls of the same
+      * emission. On each call to `marksRegionWithTransitions(rows)`:
+      *   - if `rows == lastRows` (repeat pull of the same emission): use the stored `fromGeom` and
+      *     `currentGeom` unchanged; do NOT write the ref. Every repeat pull reproduces the same
+      *     from-to pair.
+      *   - else (a genuinely new emission): compute `newGeom` from the incoming rows; write
+      *     `TransState(rows, fromGeom = currentGeom, currentGeom = newGeom)`. This write happens
+      *     exactly once per distinct emission regardless of how many times the engine re-pulls it.
+      *
+      * Invariant: writes occur only when `rows != lastRows`. Repeated pulls of one emission are
+      * therefore idempotent: they always see the same stable `fromGeom`/`currentGeom` pair and
+      * produce identical SVG output. Writes are serialized by the reactive engine's single-threaded
+      * emission model, so no concurrent-write hazard exists.
+      */
+    final private[kyo] case class TransState[A](
+        lastRows: Chunk[A],
+        fromGeom: Map[String, MarkGeom],
+        currentGeom: Map[String, MarkGeom]
+    )
+
+    private[kyo] object TransState:
+        /** Initial state: empty sentinel last-rows so the first genuine emission is always treated as new.
+          *
+          * Both geometry maps are empty, so every key in the first emission is an ENTER (animates from
+          * the baseline). Repeat pulls of that first emission compare `rows == Chunk.empty` and reuse
+          * the stored from/to, which is the correct stable ENTER animation.
+          */
+        def empty[A]: TransState[A] = TransState(Chunk.empty[A], Map.empty, Map.empty)
+    end TransState
+
+    /** Compute the string key for a row in a given mark, using the spec's key function or falling back to
+      * the x channel.
+      *
+      * Default: the x channel's domain string (`domainKey`). Override: `spec.key` when `Present`.
+      */
+    private def rowKey[A](spec: ChartSpec[A], mark: Mark[A], row: A): String =
+        spec.key match
+            case Present(kf) => kf(row)
+            case Absent =>
+                mark match
+                    case m: Mark.Bar[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case m: Mark.Line[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case m: Mark.Area[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case m: Mark.Point[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case _: Mark.Rule[A] => ""
+    end rowKey
+
+    /** Format a `Duration` as a CSS/SMIL duration string (e.g. "0.3s"). */
+    private def formatDur(d: Duration): String =
+        val ms = d.toMillis
+        if ms % 1000 == 0 then s"${ms / 1000}s"
+        else s"${ms / 1000.0}s"
+    end formatDur
+
+    /** Build one SMIL `Svg.Animate` child that animates a single numeric attribute over the config duration.
+      *
+      * Uses `begin("0s")` and `repeatCount("1")` so the animation plays once on re-render, matching the demo
+      * pattern from BarChart.scala:206-207. N4-guard: no `url(#id)` refs.
+      */
+    private def smilAnimate(attributeName: String, from: Double, to: Double, dur: String)(using Frame): Svg.Animate =
+        Svg.animate
+            .attributeName(attributeName)
+            .from(from)
+            .to(to)
+            .dur(dur)
+            .begin("0s")
+            .repeatCount("1")
+    end smilAnimate
+
+    /** Lower a simple bar mark with keyed enter/update SMIL transitions.
+      *
+      * For each row:
+      *   - UPDATE (key in `fromGeom`): emit a rect with two `Svg.Animate` children -- one for `height`
+      *     (from previous height to new) and one for `y` (from previous y to new).
+      *   - ENTER (key absent in `fromGeom`): emit a rect with two `Svg.Animate` children where `from`
+      *     is the baseline (height=0, y=baseline), animating from the baseline up to the new position.
+      *   - DISABLED (animation not enabled): emit the rect with no animate children.
+      *
+      * Accumulates the new per-key `MarkGeom.Bar` into `newGeom` and returns it alongside the shapes.
+      * `fromGeom` is the stable animation-origin map for this emission (pre-computed by the caller from
+      * the `TransState`; not modified here).
+      */
+    private def lowerBarSimpleWithTransitions[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Bar[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        spec: ChartSpec[A],
+        fromGeom: Map[String, MarkGeom],
+        newGeom: Map[String, MarkGeom]
+    )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
+        val baseline = layout.plotBaseline
+        val durStr   = formatDur(spec.animateCfg.duration)
+        val animOk   = spec.animateCfg.enabled
+        @scala.annotation.tailrec
+        def loop(
+            i: Int,
+            acc: Chunk[Svg.SvgElement],
+            geom: Map[String, MarkGeom]
+        ): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
+            if i >= rows.size then (acc, geom)
+            else
+                val row     = rows(i)
+                val yDomain = mark.y.plottable.toDomain(mark.y.accessor(row))
+                val nextResult = yDomain match
+                    case Absent => (acc, geom)
+                    case Present(yd) =>
+                        val xDomain = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        xDomain match
+                            case Absent => (acc, geom)
+                            case Present(xd) =>
+                                val barX  = xs.apply(xd)
+                                val barW  = xs.bandwidth
+                                val barY  = ys.apply(yd)
+                                val barH  = baseline - barY
+                                val key   = rowKey(spec, mark, row)
+                                val newG2 = geom.updated(key, MarkGeom.Bar(barH, barY))
+                                val r: Svg.Rect =
+                                    if !animOk then
+                                        Svg.rect.x(barX).y(barY).width(barW).height(barH)
+                                    else
+                                        val (fromH, fromY) = fromGeom.get(key) match
+                                            case Some(MarkGeom.Bar(ph, py)) => (ph, py)
+                                            case _                          => (0.0, baseline) // enter from baseline
+                                        val rectBase = Svg.rect.x(barX).y(barY).width(barW).height(barH)
+                                        rectBase(
+                                            smilAnimate("height", fromH, barH, durStr),
+                                            smilAnimate("y", fromY, barY, durStr)
+                                        )
+                                (acc.append(r), newG2)
+                        end match
+                loop(i + 1, nextResult._1, nextResult._2)
+        loop(0, Chunk.empty, newGeom)
+    end lowerBarSimpleWithTransitions
+
+    /** Lower a line mark with keyed-transition awareness.
+      *
+      * Path morphs (line `d` attribute) cannot use a single SMIL `animate` across differing command counts,
+      * so no `animate` children are emitted (lines snap in Phase 06). The bounded stepped-morph tween is
+      * implemented in Phase 08. The current geometry (command count) is recorded in `newGeom` so Phase 08
+      * can use it to bound the interpolation step count via `spec.animateCfg.morphSteps`.
+      *
+      * N4-guard: no `url(#id)` refs.
+      */
+    private def lowerLineWithTransitions[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Line[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        spec: ChartSpec[A],
+        newGeom: Map[String, MarkGeom]
+    )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
+        val paths: Chunk[Svg.SvgElement] = mark.color match
+            case Absent =>
+                Chunk(lowerLineSeries(rows, mark, layout, xs, ys))
+            case Present(colorCh) =>
+                val colorKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
+                    val key = colorCh.accessor(row.asInstanceOf[A]).toString
+                    if acc.toSeq.contains(key) then acc else acc.append(key)
+                colorKeys.map: key =>
+                    val seriesRows = rows.filter(r => colorCh.accessor(r).toString == key)
+                    lowerLineSeries(seriesRows, mark, layout, xs, ys)
+        // Record command count for each path (for future stepped-tween bounding)
+        val updatedGeom = paths.foldLeft(newGeom): (g, el) =>
+            el match
+                case p: Svg.Path =>
+                    val cmdCount = Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).size
+                    val pathKey  = "line-" + g.size.toString
+                    g.updated(pathKey, MarkGeom.LinePath(cmdCount))
+                case _ => g
+        (paths, updatedGeom)
+    end lowerLineWithTransitions
+
+    /** Build the marks region `Svg.G` for a reactive emission with keyed enter/update transitions.
+      *
+      * `stateRef` is the chart-private `AtomicRef.Unsafe[TransState[A]]` created once in `lowerLive`.
+      * On each call:
+      *   1. Read the current `TransState` `t`.
+      *   2. If `rows.equals(t.lastRows)` (repeat pull of the same emission): use `t.fromGeom` as the
+      *      animation origin and `t.currentGeom` as the target; do NOT write `stateRef`. Every repeat
+      *      pull sees the same stable pair and produces identical SVG output.
+      *   3. If `rows` differ from `t.lastRows` (genuinely new emission): produce shapes AND geometry
+      *      in a single pass; write `TransState(rows, fromGeom = t.currentGeom, currentGeom = newGeom)`
+      *      exactly once.
+      *
+      * The `==` comparison uses Chunk's structural equality. Writes are serialized by the reactive
+      * engine's single-threaded emission model, so no concurrent-write hazard exists.
+      *
+      * Unsafe: `stateRef.get()` and `stateRef.set()` bypass kyo effects tracking. This is sound
+      * because the ref is private to this chart instance and writes occur only on genuine row changes.
+      */
+    private def marksRegionWithTransitions[A](
+        rows: Chunk[A],
+        spec: ChartSpec[A],
+        layout: Layout,
+        xs: Scale,
+        ysL: Scale,
+        ysR: Maybe[Scale],
+        stateRef: AtomicRef.Unsafe[TransState[A]]
+    )(using Frame): Svg.G =
+        import AllowUnsafe.embrace.danger
+        val t            = stateRef.get()
+        val animOk       = spec.animateCfg.enabled
+        val isRepeatPull = rows.equals(t.lastRows)
+        // The animation origin is the geometry from the previous emission.
+        // For a repeat pull it is t.fromGeom (already stored); for a new emission it is t.currentGeom.
+        val fromGeom: Map[String, MarkGeom] =
+            if isRepeatPull then t.fromGeom else t.currentGeom
+        // Produce SVG shapes and accumulate new geometry in a single pass.
+        val (shapes, newGeom) = spec.marks.foldLeft((Chunk.empty[Svg.SvgElement], Map.empty[String, MarkGeom])):
+            case ((accElems, accGeom), mark) =>
+                val ys = mark match
+                    case m: Mark.Bar[A, ?, ?]   => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Line[A, ?, ?]  => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Area[A, ?, ?]  => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Point[A, ?, ?] => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Rule[A]        => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                mark match
+                    case m: Mark.Bar[A, ?, ?] if m.stack.group.isEmpty && m.color.isEmpty =>
+                        // Simple ungrouped bar: supports keyed SMIL transitions.
+                        // fromGeom is the stable animation origin for this call (same on every pull of this emission).
+                        val (elems, geom) = lowerBarSimpleWithTransitions(rows, m, layout, xs, ys, spec, fromGeom, accGeom)
+                        (accElems ++ elems, geom)
+                    case m: Mark.Line[A, ?, ?] if animOk =>
+                        // Line path: no SMIL animate in Phase 06 (snaps); command counts recorded for Phase 08.
+                        val (elems, geom) = lowerLineWithTransitions(rows, m, layout, xs, ys, spec, accGeom)
+                        (accElems ++ elems, geom)
+                    case m: Mark.Bar[A, ?, ?]   => (accElems ++ lowerBar(rows, m, layout, xs, ys), accGeom)
+                    case m: Mark.Line[A, ?, ?]  => (accElems ++ lowerLine(rows, m, layout, xs, ys), accGeom)
+                    case m: Mark.Area[A, ?, ?]  => (accElems ++ lowerArea(rows, m, layout, xs, ys), accGeom)
+                    case m: Mark.Point[A, ?, ?] => (accElems ++ lowerPoint(rows, m, layout, xs, ys), accGeom)
+                    case m: Mark.Rule[A]        => (accElems ++ lowerRule(m, layout, xs, ys), accGeom)
+                end match
+        // Write the new state only when this is a genuinely new emission.
+        // On repeat pulls, the ref is left untouched so the next real emission still sees the correct fromGeom.
+        if !isRepeatPull then
+            stateRef.set(TransState(rows, fromGeom = t.currentGeom, currentGeom = newGeom))
+        shapes.foldLeft(Svg.g): (g, el) =>
+            el match
+                case r: Svg.Rect   => g(r)
+                case p: Svg.Path   => g(p)
+                case c: Svg.Circle => g(c)
+                case l: Svg.Line   => g(l)
+                case other         => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+    end marksRegionWithTransitions
+
     // ---- reactive helpers ----
 
     /** Returns true when the y-scale's domain is fully determined by the `ScaleOverride` (not the data).
@@ -1340,9 +1621,12 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ysL: Scale,
-        ysR: Maybe[Scale]
+        ysR: Maybe[Scale],
+        stateRef: Maybe[AtomicRef.Unsafe[TransState[A]]]
     )(using Frame): Svg.G =
-        val marksG     = marksRegion(rows, spec.marks, layout, xs, ysL, ysR)
+        val marksG = stateRef match
+            case Present(ref) => marksRegionWithTransitions(rows, spec, layout, xs, ysL, ysR, ref)
+            case Absent       => marksRegion(rows, spec.marks, layout, xs, ysL, ysR)
         val xAxisElems = buildXAxis(layout, xs, spec.xAxisCfg)
         if isYDomainFixed(spec.yScaleOverride) then
             // Fixed y-domain: y-axis is static; only x-axis ticks and marks are reactive.
@@ -1384,7 +1668,20 @@ private[kyo] object ChartLower:
       * axis (band scale) the category set is fixed to the initial categories; this is the Phase-05 constraint
       * (dynamic category insertion is a Phase-06+ concern).
       *
+      * Phase 06: when `spec.animateCfg.enabled` is true, a chart-private `AtomicRef.Unsafe[TransState[A]]`
+      * is created once and closed over by the reactive render function. The `TransState` carries three
+      * slots: `lastRows` (the row chunk of the last committed render), `fromGeom` (animation origin), and
+      * `currentGeom` (animation target). Each call to the render projection compares the incoming rows to
+      * `lastRows`. A new emission writes the ref once; repeat pulls of the same emission reuse the stored
+      * from/to and produce identical SVG, making the projection idempotent. Bar marks emit SMIL `animate`
+      * children; line/area marks snap (no animate) in Phase 06 with the bounded stepped-morph tween
+      * deferred to Phase 08.
+      *
       * N4-guard: no `url(#id)` references are emitted; `Frame.internal` is safe.
+      *
+      * Unsafe boundary: `stateRef` uses `AtomicRef.Unsafe` so it can be read and written from within the
+      * pure render function. The ref is private to this chart instance and writes occur only on genuine row
+      * changes, so the bypass is sound.
       */
     private[kyo] def lowerLive[A](spec: ChartSpec[A], signal: Signal[Chunk[A]])(using Frame): Svg.Root =
         val layout = buildLayout(spec)
@@ -1421,6 +1718,14 @@ private[kyo] object ChartLower:
                 case t: Svg.Text => acc(t)
                 case g: Svg.G    => acc(g)
                 case other       => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+        // Phase 06: create the chart-private transition-state ref when animation is enabled.
+        // Unsafe: AtomicRef.Unsafe bypasses kyo effects tracking; sound because the ref is private to this
+        // chart and writes occur only on genuine row changes (idempotent within any single emission).
+        val stateRefMaybe: Maybe[AtomicRef.Unsafe[TransState[A]]] =
+            if spec.animateCfg.enabled then
+                import AllowUnsafe.embrace.danger
+                Present(AtomicRef.Unsafe.init(TransState.empty[A]))
+            else Absent
         // Reactive region: re-renders on each signal emission.
         val reactiveMarks: UI.Ast.Reactive[Svg.G] = signal.render: rows =>
             // Re-resolve x-scale from the current rows so categorical axes expand when categories are added.
@@ -1429,7 +1734,7 @@ private[kyo] object ChartLower:
             val ysRLive: Maybe[Scale] =
                 if hasRight || spec.yAxisRightCfg.isDefined then Present(resolveYRightScale(rows, spec.marks, layout))
                 else Absent
-            buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive)
+            buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe)
         withFrame(reactiveMarks)
     end lowerLive
 
