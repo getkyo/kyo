@@ -38,8 +38,8 @@ final private[kyo] class NioTransport private (
     private val readBufferSize: Int
 ) extends Transport[NioHandle]:
 
-    def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[NioHandle], Abort[Closed]] =
-        val promise = new IOPromise[Closed, Connection[NioHandle]]
+    def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[NioHandle], Abort[HttpException]] =
+        val promise = new IOPromise[HttpException, Connection[NioHandle]]
 
         try
             val channel = SocketChannel.open()
@@ -60,21 +60,24 @@ final private[kyo] class NioTransport private (
             end if
         catch
             case e: IOException =>
-                promise.completeDiscard(Result.fail(Closed(
-                    "NioTransport",
-                    summon[Frame],
-                    s"connect() failed to $host:$port: ${e.getMessage}"
-                )))
+                promise.completeDiscard(Result.fail(HttpConnectException(host, port, e)))
+            case e: java.nio.channels.UnresolvedAddressException =>
+                // `new InetSocketAddress(host, port)` returns an unresolved address when DNS
+                // resolution fails (rather than throwing), and `channel.connect(unresolved)`
+                // raises `UnresolvedAddressException` (a `RuntimeException`, NOT an
+                // `IOException`). Any other `RuntimeException` from socket setup is a caller
+                // / runtime bug and propagates as a panic instead of being silently mapped.
+                promise.completeDiscard(Result.fail(HttpDnsResolutionException(host, e)))
         end try
 
-        promise.asInstanceOf[Fiber.Unsafe[Connection[NioHandle], Abort[Closed]]]
+        promise.asInstanceOf[Fiber.Unsafe[Connection[NioHandle], Abort[HttpException]]]
     end connect
 
     private def awaitConnect(
         channel: SocketChannel,
         host: String,
         port: Int,
-        promise: IOPromise[Closed, Connection[NioHandle]]
+        promise: IOPromise[HttpException, Connection[NioHandle]]
     )(using AllowUnsafe, Frame): Unit =
         // For fast localhost, check if already connected.
         // Returns true if the connect was handled (success or error), false if still pending.
@@ -89,11 +92,7 @@ final private[kyo] class NioTransport private (
             catch
                 case e: IOException =>
                     channel.close()
-                    promise.completeDiscard(Result.fail(Closed(
-                        "NioTransport",
-                        summon[Frame],
-                        s"finishConnect() failed for $host:$port: ${e.getMessage}"
-                    )))
+                    promise.completeDiscard(Result.fail(HttpConnectException(host, port, e)))
                     true
         end tryFinishConnect
 
@@ -102,10 +101,10 @@ final private[kyo] class NioTransport private (
             val handle = NioHandle.init(channel, readBufferSize)
             if !driver.registerChannel(handle) then
                 channel.close()
-                promise.completeDiscard(Result.fail(Closed(
-                    "NioTransport",
-                    summon[Frame],
-                    s"registerChannel failed for $host:$port"
+                promise.completeDiscard(Result.fail(HttpConnectException(
+                    host,
+                    port,
+                    new IOException(s"registerChannel failed for $host:$port")
                 )))
             else
                 val connectPromise = new IOPromise[Closed, Unit]
@@ -116,7 +115,11 @@ final private[kyo] class NioTransport private (
                             completeConnect(handle, promise)
                         case Result.Failure(closed) =>
                             channel.close()
-                            promise.completeDiscard(Result.fail(closed))
+                            promise.completeDiscard(Result.fail(HttpConnectException(
+                                host,
+                                port,
+                                new IOException(closed.getMessage)
+                            )))
                         case Result.Panic(e) =>
                             channel.close()
                             promise.completeDiscard(Result.panic(e))
@@ -126,9 +129,9 @@ final private[kyo] class NioTransport private (
         end if
     end awaitConnect
 
-    private def completeConnect(
+    private def completeConnect[E](
         handle: NioHandle,
-        promise: IOPromise[Closed, Connection[NioHandle]]
+        promise: IOPromise[E, Connection[NioHandle]]
     )(using AllowUnsafe, Frame): Unit =
         Log.live.unsafe.debug(s"NioTransport completeConnect channel=${handle.channel.hashCode()}")
         val connection = Connection.init(handle, driver, channelCapacity)
@@ -257,8 +260,11 @@ final private[kyo] class NioTransport private (
         acceptLoop()
     end acceptAllPending
 
-    def connect(host: String, port: Int, tls: HttpTlsConfig)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[NioHandle], Abort[Closed]] =
-        val promise = new IOPromise[Closed, Connection[NioHandle]]
+    def connect(host: String, port: Int, tls: HttpTlsConfig)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Connection[NioHandle], Abort[HttpException]] =
+        val promise = new IOPromise[HttpException, Connection[NioHandle]]
 
         try
             val channel = SocketChannel.open()
@@ -268,20 +274,21 @@ final private[kyo] class NioTransport private (
 
             val connected = channel.connect(new InetSocketAddress(host, port))
             if connected then
-                startTlsHandshake(channel, host, port, tls, isServer = false, promise)
+                startClientTlsHandshake(channel, host, port, tls, promise)
             else
                 awaitConnectThenTls(channel, host, port, tls, promise)
             end if
         catch
             case e: IOException =>
-                promise.completeDiscard(Result.fail(Closed(
-                    "NioTransport",
-                    summon[Frame],
-                    s"TLS connect() failed to $host:$port: ${e.getMessage}"
-                )))
+                promise.completeDiscard(Result.fail(HttpConnectException(host, port, e)))
+            case e: java.nio.channels.UnresolvedAddressException =>
+                // Mirrors the plain-TCP `connect` arm: DNS failure surfaces here as
+                // `UnresolvedAddressException` (a `RuntimeException`), not an `IOException`.
+                // Any other `RuntimeException` propagates as a panic.
+                promise.completeDiscard(Result.fail(HttpDnsResolutionException(host, e)))
         end try
 
-        promise.asInstanceOf[Fiber.Unsafe[Connection[NioHandle], Abort[Closed]]]
+        promise.asInstanceOf[Fiber.Unsafe[Connection[NioHandle], Abort[HttpException]]]
     end connect
 
     private def awaitConnectThenTls(
@@ -289,24 +296,20 @@ final private[kyo] class NioTransport private (
         host: String,
         port: Int,
         tls: HttpTlsConfig,
-        promise: IOPromise[Closed, Connection[NioHandle]]
+        promise: IOPromise[HttpException, Connection[NioHandle]]
     )(using AllowUnsafe, Frame): Unit =
         // For fast localhost, check if already connected.
         // Returns true if the connect was handled (success or error), false if still pending.
         def tryFinishConnect(): Boolean =
             try
                 if channel.finishConnect() then
-                    startTlsHandshake(channel, host, port, tls, isServer = false, promise)
+                    startClientTlsHandshake(channel, host, port, tls, promise)
                     true
                 else false
             catch
                 case e: IOException =>
                     channel.close()
-                    promise.completeDiscard(Result.fail(Closed(
-                        "NioTransport",
-                        summon[Frame],
-                        s"TLS finishConnect() failed for $host:$port: ${e.getMessage}"
-                    )))
+                    promise.completeDiscard(Result.fail(HttpConnectException(host, port, e)))
                     true
         end tryFinishConnect
 
@@ -315,10 +318,10 @@ final private[kyo] class NioTransport private (
             val handle = NioHandle.init(channel, readBufferSize)
             if !driver.registerChannel(handle) then
                 channel.close()
-                promise.completeDiscard(Result.fail(Closed(
-                    "NioTransport",
-                    summon[Frame],
-                    s"registerChannel failed for TLS $host:$port"
+                promise.completeDiscard(Result.fail(HttpConnectException(
+                    host,
+                    port,
+                    new IOException(s"registerChannel failed for TLS $host:$port")
                 )))
             else
                 val connectPromise = new IOPromise[Closed, Unit]
@@ -326,10 +329,14 @@ final private[kyo] class NioTransport private (
                     result match
                         case Result.Success(_) =>
                             Log.live.unsafe.debug(s"NioTransport TCP connected, starting TLS handshake channel=${channel.hashCode()}")
-                            startTlsHandshake(channel, host, port, tls, isServer = false, promise, Present(handle))
+                            startClientTlsHandshake(channel, host, port, tls, promise, Present(handle))
                         case Result.Failure(closed) =>
                             channel.close()
-                            promise.completeDiscard(Result.fail(closed))
+                            promise.completeDiscard(Result.fail(HttpConnectException(
+                                host,
+                                port,
+                                new IOException(closed.getMessage)
+                            )))
                         case Result.Panic(e) =>
                             channel.close()
                             promise.completeDiscard(Result.panic(e))
@@ -338,6 +345,33 @@ final private[kyo] class NioTransport private (
             end if
         end if
     end awaitConnectThenTls
+
+    /** Wraps `startTlsHandshake` for client-side connect: bridges its `Closed`-typed handshake
+      * plumbing to the `HttpException`-typed promise the public client `connect` returns,
+      * translating handshake failures into `HttpConnectException(host, port, cause)`.
+      */
+    private def startClientTlsHandshake(
+        channel: SocketChannel,
+        host: String,
+        port: Int,
+        tls: HttpTlsConfig,
+        outerPromise: IOPromise[HttpException, Connection[NioHandle]],
+        existingHandle: Maybe[NioHandle] = Absent
+    )(using AllowUnsafe, Frame): Unit =
+        val innerPromise = new IOPromise[Closed, Connection[NioHandle]]
+        innerPromise.onComplete { result =>
+            result match
+                case Result.Success(c) => outerPromise.completeDiscard(Result.succeed(c))
+                case Result.Failure(closed) =>
+                    outerPromise.completeDiscard(Result.fail(HttpConnectException(
+                        host,
+                        port,
+                        new IOException(closed.getMessage)
+                    )))
+                case Result.Panic(t) => outerPromise.completeDiscard(Result.panic(t))
+        }
+        startTlsHandshake(channel, host, port, tls, isServer = false, innerPromise, existingHandle)
+    end startClientTlsHandshake
 
     private def startTlsHandshake(
         channel: SocketChannel,
@@ -391,6 +425,7 @@ final private[kyo] class NioTransport private (
                     summon[Frame],
                     s"TLS handshake init failed: ${e.getMessage}"
                 )))
+        end try
     end startTlsHandshake
 
     /** Drive TLS handshake via callback-driven promise chains.
@@ -719,8 +754,8 @@ final private[kyo] class NioTransport private (
         acceptLoop()
     end acceptAllPendingTls
 
-    def connectUnix(path: String)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[NioHandle], Abort[Closed]] =
-        val promise = new IOPromise[Closed, Connection[NioHandle]]
+    def connectUnix(path: String)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[NioHandle], Abort[HttpException]] =
+        val promise = new IOPromise[HttpException, Connection[NioHandle]]
 
         try
             val addr    = java.net.UnixDomainSocketAddress.of(path)
@@ -735,18 +770,18 @@ final private[kyo] class NioTransport private (
                 discard(driver.registerChannel(handle))
                 completeConnect(handle, promise)
             else
+                // awaitConnect's failure-mapping uses host:port; for Unix sockets the path stands in
+                // for the host and port is meaningless. The failure will still surface as
+                // HttpConnectException; callers that want path-specific diagnosis can match on
+                // HttpUnixConnectException raised by the synchronous catch arm below.
                 awaitConnect(channel, path, 0, promise)
             end if
         catch
             case e: IOException =>
-                promise.completeDiscard(Result.fail(Closed(
-                    "NioTransport",
-                    summon[Frame],
-                    s"connectUnix() failed to $path: ${e.getMessage}"
-                )))
+                promise.completeDiscard(Result.fail(HttpUnixConnectException(path, e)))
         end try
 
-        promise.asInstanceOf[Fiber.Unsafe[Connection[NioHandle], Abort[Closed]]]
+        promise.asInstanceOf[Fiber.Unsafe[Connection[NioHandle], Abort[HttpException]]]
     end connectUnix
 
     def listenUnix(path: String, backlog: Int)(

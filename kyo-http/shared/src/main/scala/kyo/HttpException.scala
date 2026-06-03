@@ -58,6 +58,26 @@ case class HttpConnectException(host: String, port: Int, cause: Throwable)(using
         cause
     )
 
+/** DNS resolution failed for the host. Distinguishes "we cannot find the host" from "we found it but cannot reach it"
+  * so callers can present a precise error and avoid retrying name-resolution failures with the same DNS state.
+  */
+case class HttpDnsResolutionException(host: String, cause: Throwable)(using Frame)
+    extends HttpConnectionException(
+        s"""DNS resolution failed for '$host'.
+           |
+           |  Verify the host name is spelled correctly and reachable from this network.""".stripMargin,
+        cause
+    )
+
+/** Connection to a Unix domain socket failed (path does not exist, permission denied, no listener). */
+case class HttpUnixConnectException(path: String, cause: Throwable)(using Frame)
+    extends HttpConnectionException(
+        s"""Connection to Unix socket '$path' failed.
+           |
+           |  Verify the socket file exists and the process has permission to connect to it.""".stripMargin,
+        cause
+    )
+
 /** TCP connect exceeded the configured timeout. */
 case class HttpConnectTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
     extends HttpConnectionException(
