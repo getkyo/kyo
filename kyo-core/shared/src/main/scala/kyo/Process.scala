@@ -198,12 +198,15 @@ object Process:
     /** The source for a process's standard input.
       *
       * `Inherit` pipes the parent process's stdin through. `FromStream` reads from the given `InputStream` (feeding it into the child
-      * process's stdin via a background fiber when the process is spawned).
+      * process's stdin via a background fiber when the process is spawned). `Pipe` opens an unmanaged pipe on the child's stdin so the
+      * caller can drive it directly via `proc.unsafe.stdinJava` (no auto-pump fiber). Use `Pipe` when wiring the child into a custom
+      * protocol layer where the caller owns when bytes flow in.
       */
     sealed trait Input derives CanEqual
     object Input:
         case object Inherit                        extends Input
         case class FromStream(stream: InputStream) extends Input
+        case object Pipe                           extends Input
     end Input
 
     // --- Unsafe ---
