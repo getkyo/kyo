@@ -3812,15 +3812,21 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(roundTrip(v) == v)
             }
 
-            "Structure.Value.VariantCase round-trip" in {
+            "Structure.Value.VariantCase round-trips through shape-aware Schema as a single-field Record" in {
+                // The identity Schema[Structure.Value] (kyo.Structure.Value.valueSchema) writes VariantCase as a
+                // single-field object whose key is the variant name. A shape-aware reader cannot distinguish that
+                // wire form from a Record containing one field, so the canonical round-trip materializes a Record.
                 val v = Structure.Value.VariantCase(
                     "Circle",
                     Structure.Value.Record(Chunk(("radius", Structure.Value.primitive(5.0))))
                 )
-                assert(roundTrip(v) == v)
+                val expected = Structure.Value.Record(
+                    Chunk(("Circle", Structure.Value.Record(Chunk(("radius", Structure.Value.primitive(5.0))))))
+                )
+                assert(roundTrip(v) == expected)
             }
 
-            "Structure.Value.MapEntries round-trip" in {
+            "Structure.Value.MapEntries round-trip preserves entries through the token codec" in {
                 val v = Structure.Value.MapEntries(
                     Chunk(
                         (Structure.Value.primitive("key1"), Structure.Value.primitive(10)),
@@ -4004,7 +4010,9 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(jsonRoundTrip(v) == v)
             }
 
-            "Structure.Value.VariantCase with whole-number Double fields round-trip" in {
+            "Structure.Value.VariantCase with whole-number Double fields canonicalizes to a Record on round-trip" in {
+                // Shape-aware identity: VariantCase serializes as a single-field object keyed by the variant name; the
+                // round-trip materializes a Record(((variantName, inner)) rather than restoring the VariantCase tag.
                 val v = Structure.Value.VariantCase(
                     "Point",
                     Structure.Value.Record(
@@ -4014,7 +4022,20 @@ class SchemaTest extends kyo.test.Test[Any]:
                         )
                     )
                 )
-                assert(roundTrip(v) == v)
+                val expected = Structure.Value.Record(
+                    Chunk(
+                        (
+                            "Point",
+                            Structure.Value.Record(
+                                Chunk(
+                                    ("x", Structure.Value.primitive(0.0)),
+                                    ("y", Structure.Value.primitive(-1.0))
+                                )
+                            )
+                        )
+                    )
+                )
+                assert(roundTrip(v) == expected)
             }
 
             // Structure.Field codec round-trips
@@ -4369,14 +4390,23 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(jsonRoundTrip(v) == v)
             }
 
-            "Structure.Value MapEntries JSON round-trip" in {
+            "Structure.Value MapEntries with String keys canonicalizes to a Record on JSON round-trip" in {
+                // JSON cannot distinguish a string-keyed map from a record; the universal shape-aware identity Schema
+                // emits both as `{"key":value}` and reads them back as Record. Round-tripping a MapEntries through JSON
+                // yields the equivalent Record.
                 val v = Structure.Value.MapEntries(
                     Chunk(
                         (Structure.Value.primitive("key1"), Structure.Value.primitive(10)),
                         (Structure.Value.primitive("key2"), Structure.Value.primitive(20))
                     )
                 )
-                assert(jsonRoundTrip(v) == v)
+                val expected = Structure.Value.Record(
+                    Chunk(
+                        ("key1", Structure.Value.primitive(10)),
+                        ("key2", Structure.Value.primitive(20))
+                    )
+                )
+                assert(jsonRoundTrip(v) == expected)
             }
         }
 
