@@ -713,6 +713,21 @@ age: 30
 
             assert(Yaml.pipeline.decodeAll[MTPerson](stream).isFailure)
         }
+
+        "chains two event processors and rewrites scalars inside a sequence" in {
+            val yaml =
+                """tags:
+                  |  - one
+                  |  - two
+                  |""".stripMargin
+            val pipeline =
+                Yaml.pipeline.through(scalarRewrite("one", "1")).through(scalarRewrite("two", "2"))
+
+            assert(
+                pipeline.decode[Map[String, List[String]]](yaml) ==
+                    Result.succeed(Map("tags" -> List("1", "2")))
+            )
+        }
     }
 
     private val identityProcessor: Yaml.Events.Processor[Nothing] =

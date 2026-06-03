@@ -1295,6 +1295,61 @@ class YamlTest extends kyo.test.Test[Any]:
             assert(reader.string() == "café")
         }
 
+        "decodes UTF-8 bytes with explicit limits and document selection" in {
+            val stream = Span.from("---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n".getBytes(StandardCharsets.UTF_8))
+            val single = Span.from("name: Alice\nage: 30\n".getBytes(StandardCharsets.UTF_8))
+
+            assertResult(
+                (
+                    limited = Result.succeed(MTPerson("Alice", 30)),
+                    selected = Result.succeed(MTPerson("Bob", 25))
+                )
+            ) {
+                (
+                    limited = Yaml.decodeBytes[MTPerson](single, 64, 1024),
+                    selected = Yaml.decodeBytes[MTPerson](stream, Yaml.DocumentIndex(1))
+                )
+            }
+        }
+
+        "decodes every document of a stream with explicit limits" in {
+            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+
+            assert(
+                Yaml.decodeAll[MTPerson](yaml, 64, 1024) ==
+                    Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25)))
+            )
+        }
+
+        "fails decodeAll when a stream document is missing fields" in {
+            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\n"
+
+            assert(Yaml.decodeAll[MTPerson](yaml).isFailure)
+        }
+
+        "parses an empty source as an empty scalar" in {
+            assertResult(true) {
+                Yaml.parse("") match
+                    case Result.Success(Yaml.Node.Scalar(value, _)) => value.isEmpty
+                    case _                                          => false
+            }
+        }
+
+        "decodes a single-document CST stream through the top-level helper" in {
+            val stream = Yaml.cstAll("name: Alice\nage: 30\n").getOrThrow
+
+            assert(Yaml.decode[MTPerson](stream) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "visits scalars and aliases through a handler that overrides only mappingStart" in {
+            val countingMappings =
+                new Yaml.Events.Handler[Int, Nothing]:
+                    override def mappingStart(context: Int, meta: Yaml.Meta, size: Maybe[Int]): Result[Nothing, Int] =
+                        Result.succeed(context + 1)
+
+            assert(Yaml.Events.visit("x: &a 1\ny: *a\n", 0)(countingMappings) == Result.succeed(1))
+        }
+
     }
 
 end YamlTest
