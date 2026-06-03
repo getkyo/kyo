@@ -29,7 +29,6 @@ This document is the source of truth. The four core design choices in Section 22
 * TASTy-based macro expansion or type checking.
 * Runtime classloading (we read bytes from disk, never load classes).
 * Source positions (`Positions` section) and comments.
-* Tree body decoding for control flow. Bodies remain as opaque `Span[Byte]` slices until v2; signatures and member structure are fully decoded.
 * Subtype checking and full type comparison beyond structural equality.
 * Multi-Scala-version support in one release.
 * Incremental classpath refresh (today: open a new `Classpath`).
@@ -54,21 +53,17 @@ SoA (struct-of-arrays) was considered and rejected; see Section 23. The wins com
 
 ```
                   +---------------------------------+
-                  |       kyo.Tasty (public)          |
-                  |  Classpath, Symbol, Type, Name  |
-                  |  Query combinators, Reads       |
+                  |       kyo.Tasty (public)        |
+                  |  Classpath, Symbol, Type,       |
+                  |  Tree, Name, TastyError,        |
+                  |  Snapshot                       |
                   +---------------------------------+
                               |
                   +---------------------------------+
-                  |    kyo.Tasty.Reads (macros)       |
-                  |  derives, schema-driven reader  |
-                  +---------------------------------+
-                              |
-                  +---------------------------------+
-                  |   kyo.internal.tasty (query)      |
+                  |   kyo.internal.tasty (query)    |
                   |  symbol resolver, type intern   |
                   |  per-thread arenas + merge      |
-                  |  symbol cache (Cache.memo)      |
+                  |  bodyTree memo, fqn index       |
                   +---------------------------------+
                               |
         +---------------------+---------------------+
@@ -136,11 +131,6 @@ kyo-tasty/
       Classpath.scala              // file index, per-file loader, symbol cache
       Resolver.scala               // FQN -> Symbol via Cache.memo
       FileSource.scala             // abstract file loader (per platform impl)
-    reads/
-      Reads.scala                  // Tasty.Reads typeclass
-      ReadsMacro.scala             // derivation macro
-      RecordReads.scala            // built-in Reads[Record[F]] + symbolToRecord macro
-      TouchedFields.scala          // static analysis helper + FieldSet
     snapshot/
       SnapshotFormat.scala         // KRFL binary layout
       SnapshotReader.scala
@@ -160,8 +150,6 @@ kyo-tasty/
     SymbolResolutionTest.scala
     TypeModelTest.scala
     QueryApiTest.scala
-    ReadsDerivationTest.scala
-    RecordInteropTest.scala
     JavaSymbolTest.scala
     UnifiedModelTest.scala
     SnapshotRoundTripTest.scala
@@ -223,19 +211,13 @@ TASTy tag categories 128 to 255 are length-prefixed. Any compliant reader can st
 
 1. **Pass 1 (eager)**: walk the AST section, allocate one `Symbol` per definition (`PACKAGE`, `CLASSDEF`, `TYPEDEF`, `VALDEF`, `DEFDEF`). For each definition, eagerly decode name, flags, type signature, parents (for classes), member name list (one level deep). Bodies of `DEFDEF` and class bodies past the member name list are recorded as `(startAddr, endAddr)` slices and skipped via length-prefix.
 
-2. **Pass 2 (lazy, on demand)**: `Symbol.body` accessor decodes its pickled slice into a `Tree`. The `Tree` ADT is deferred to v2; in v1 the accessor is a stub that returns `Abort.fail(TastyError.NotImplemented("tree body decode deferred to v2"))`. Typically never triggered for codegen workloads, which use only signatures and member metadata.
+2. **Pass 2 (lazy, on demand)**: `Classpath.bodyTree(sym)` (and the symbol-side convenience `Symbol.bodyTree`) decodes the pickled slice into a fully populated `Tree` ADT (`Apply`, `Select`, `Block`, `If`, `Match`, `ValDef`, `DefDef`, ...; the complete shape lives in Section 12). The decode runs through `kyo.internal.tasty.reader.TreeUnpickler`, threads the originating Classpath for symbol resolution, and memoises the result on the snapshot keyed by `SymbolId`. The accessor carries `Sync & Abort[TastyError]`; every other post-open accessor is pure. Bodies are typically never touched by codegen workloads (which read only signatures and member metadata), which is why on-demand decode preserves the cold-load win.
 
-Better than tasty-query's full-eager strategy on the kyo-ts workload because we never decode the bodies of the thousand-plus methods we ignore. Better than the compiler's `LazyType` completers because there is no re-entrancy hazard: symbols are fully created in pass 1, just with body pickles deferred.
+Better than tasty-query's full-eager strategy on the kyo-ts workload because we never decode the bodies of the thousand-plus methods we ignore. Better than the compiler's `LazyType` completers because there is no re-entrancy hazard: symbols are fully created in pass 1, just with body pickles deferred until the first `bodyTree` call.
 
 Forward references inside signatures (`class C[T1 <: T2, T2]`) resolve via an `Addr -> Symbol` table built during pass 1.
 
 `SHAREDtype` / `SHAREDterm` dedup uses a per-file `Addr -> Type` cache so shared sub-trees decode once.
-
-### Reads-driven pruning
-
-When a `Tasty.Reads[A]` schema declares `needsBodies = false` and `touchedFields` excludes annotations / positions / comments, the unpickler skips those sections entirely. The macro emits this hint at compile time; the unpickler reads it at load time.
-
-If multiple schemas are active in the same session, the unpickler takes the union of their `touchedFields` and `needsBodies` requirements. If any schema needs bodies, all bodies decode lazily but are decodable.
 
 ## 7. Symbol Model
 
@@ -620,55 +602,9 @@ For mixed classpaths (Scala app depending on Java libraries, or Java app dependi
 * **Does not perform erasure**: `List<String>` and `List` are different `Type` values, not unified to one erased form.
 * **Does not synthesize missing Java metadata**: if a classfile lacks the `Signature` attribute (pre-Java-5 generics), we surface the raw signature without generic recovery.
 
-### Record interop and the bridging idiom
+### Bridging to per-field type-class dispatch
 
-`kyo.Record` (from kyo-data) is a structural typed record with named string-singleton fields, `&`-composable types, compile-time field-presence checking, and a `stage[T].using[TypeClass]` macro that iterates fields at compile time and summons a per-field type class instance. Real-world usage spans kyo-http (typed route fields), kyo-stm (TTable indexed queries), kyo-flow (accumulating workflow context), and kyo-schema (`Schema.toRecord`).
-
-For kyo-tasty, Records are the right substrate for compile-time-typed API descriptors and language-bridging code generation. The pattern:
-
-```scala
-// 1. Declare an API descriptor as a Record type
-type FunctionSig =
-    "name"       ~ String &
-    "params"     ~ Chunk[Type] &
-    "returnType" ~ Type
-
-// 2. Read a Symbol into a Record value (Section 12)
-val sig: Record[FunctionSig] < (Sync & Abort[TastyError]) =
-    Tasty.symbolToRecord[FunctionSig](symbol)
-
-// 3. Declare a per-field translation type class
-trait CSignature[A]:
-    def render(a: A): String
-given CSignature[String]      = _.toString
-given CSignature[Type]        = t => mapTypeToC(t)             // Type -> "int", "long", "void*"
-given CSignature[Chunk[Type]] = ts => ts.map(mapTypeToC).mkString("(", ", ", ")")
-
-// 4. Record.mapFields traverses, summoning CSignature per field
-val cSig: Record["name" ~ String & "params" ~ String & "returnType" ~ String] =
-    sig.mapFields([v] => (field, value) => summon[CSignature[v]].render(value))
-
-// 5. Emit
-val cHeader = s"${cSig.returnType} ${cSig.name}${cSig.params};"
-// e.g. "int add(int, int);"
-```
-
-**Compile-time guarantee**: if any field type in `FunctionSig` lacks a `CSignature` instance, the `mapFields` call fails to compile with `report.errorAndAbort`. The translation table is verified exhaustive at the call site. No runtime "unsupported type" errors. No dynamic dispatch.
-
-**Reverse direction**: same machinery with `ToScalaType[CType]` instead of `CSignature[ScalaType]`. The Record is the lingua franca between languages; per-field type classes carry the translation logic.
-
-**Why Records, not case classes, for this use case**:
-
-| Concern | Case class | Record |
-|---|---|---|
-| Pattern matching | yes | no |
-| IDE autocomplete on field names | yes | yes (via Dynamic) |
-| Compile-time field iteration with type-class lookup | no (needs Mirror + manual machinery) | yes via `stage.using[TC]` |
-| Structural intersection composition (`&`) | no | yes |
-| Compile-time field projection (subset of fields) | no | yes via `widen` + `compact` |
-| Type-level field renaming, dropping | no | yes via `mapFields` |
-
-Case-class-based `Reads` remains the default for codegen and IDE-style queries. Records are the right choice for FFI bridging, ABI translation, API migration tooling, and anywhere fields need iteration with per-field-type dispatch.
+A `Tasty.symbolToRecord[F]` macro that projected Symbols into typed `kyo.Record` values was considered for compile-time-typed API descriptors and FFI bridging. It did not ship in v1 (see Section 13 for the rationale that ruled out the parallel schema-driven projection layer). Callers that need the per-field type-class dispatch shape build a case class manually from the sealed Symbol ADT and dispatch with `summon[TC[A]]` at each field; this stays small and explicit. A typed Record projection can land as an additive layer in a later release without disturbing the shipped Symbol or Type ADTs.
 
 ## 12. Public API
 
@@ -979,202 +915,52 @@ def isShape(fqn: String): Tasty.SubtypeVerdict < (Async & Scope & Abort[Tasty.Ta
 
 A `SubtypeVerdict.Unknown` outcome typically means the parent chain references a class that is not loaded into `cp`; open the JAR that supplies it and try again rather than collapsing the verdict to `NotSub`.
 
-## 13. `Tasty.Reads` Derivation Macro
+## 13. Projection: pattern-matching the Symbol and Tree ADTs
 
-### What the user writes
+The schema-driven `Tasty.Reads` typeclass and its derivation macro were explored during design and rejected before any code shipped. The shipped surface relies on plain exhaustive pattern matching over the sealed `Symbol` hierarchy (Section 7) and the sealed `Tree` enum (Section 6), composed through the implicit `Classpath`. There is no `Tasty.Reads`, no `derives Tasty.Reads`, no `touchedFields`, no `symbolKinds`, and no `symbolToRecord` macro. This section documents how callers project Symbols into their own data structures with what does ship.
 
-```scala
-case class MethodSig(
-    name:       Name,
-    flags:      Flags,
-    returnType: Type,
-    params:     Chunk[Type]
-) derives Tasty.Reads
-
-case class ClassInfo(
-    name:    Name,
-    flags:   Flags,
-    parents: Chunk[Type],
-    methods: Chunk[MethodSig]
-) derives Tasty.Reads
-```
-
-### What the macro generates (sketched)
-
-Symbol's resolving accessors return `< (Sync & Abort[TastyError])`, so the generated `read` body composes them via `for/yield`:
+### Worked example: project methods of a class
 
 ```scala
-given Tasty.Reads[MethodSig] = new Tasty.Reads[MethodSig]:
-    val symbolKinds   = Set(SymbolKind.Method)
-    val needsBodies   = false
-    val touchedFields = FieldSet.Name | Flags | DeclaredType | ParamTypes
-    def read(sym: Symbol): MethodSig < (Sync & Abort[TastyError]) =
-        for
-            sig <- sym.declaredType
-        yield MethodSig(
-            name       = sym.name,                          // pure accessor
-            flags      = sym.flags,                         // pure accessor
-            returnType = sig.asMethod.resultType,
-            params     = sig.asMethod.paramTypes
-        )
+import kyo.Tasty.*
 
-given Tasty.Reads[ClassInfo] = new Tasty.Reads[ClassInfo]:
-    val symbolKinds   = Set(SymbolKind.Class, SymbolKind.Trait, SymbolKind.Object)
-    val needsBodies   = false
-    val touchedFields = FieldSet.Name | Flags | Parents | Members
-    val methodReads   = summon[Tasty.Reads[MethodSig]]
-    def read(sym: Symbol): ClassInfo < (Sync & Abort[TastyError]) =
-        for
-            parents <- sym.parents
-            decls   <- sym.declarations
-            methods <- Kyo.foreach(decls.filter(d => methodReads.symbolKinds.contains(d.kind)))(methodReads.read)
-        yield ClassInfo(
-            name    = sym.name,
-            flags   = sym.flags,
-            parents = parents,
-            methods = methods
-        )
+final case class MethodSig(name: String, returnType: Maybe[Type], paramTypes: Chunk[Type])
+final case class ClassInfo(name: String, parents: Chunk[String], methods: Chunk[MethodSig])
+
+def methodSig(m: Symbol.Method)(using Classpath): MethodSig =
+    MethodSig(
+        name       = Name.asString(m.name),
+        returnType = m.returnType,
+        paramTypes = m.paramLists.flatten.map(_.declaredType)
+    )
+
+def classInfo(c: Symbol.Class)(using cp: Classpath): ClassInfo =
+    ClassInfo(
+        name    = c.fullNameString,
+        parents = c.parents.map(_.fullNameString),
+        methods = c.methods.map(methodSig)
+    )
 ```
 
-### Three load-bearing bits
+Every accessor used above is pure (no `Sync` row) post-open; only `Classpath.bodyTree` ever lifts into `Sync & Abort[TastyError]`. The implicit `Classpath` carries enough context to resolve `SymbolId` references inside Symbols and Types.
 
-1. **`symbolKinds`** lets the query layer filter at scan time without instantiating wrong-kind symbols.
-2. **`needsBodies = false`** propagates into the unpickler. If no schema in a session needs body decode, the unpickler skips body materialization entirely.
-3. **`touchedFields`** is a static set of which `Symbol` accessors the schema reads. The unpickler skips eagerly decoding annotations, source positions, comments if no schema touches them.
+### Why no schema-driven derivation
 
-### Implementation approach
+The schema-typeclass design (`Tasty.Reads[A]` with `symbolKinds`, `needsBodies`, `touchedFields`) targeted two wins: skipping decode work for sections a session does not touch, and macro-checked field selection. Both wins collapsed against the shipped architecture:
 
-Pattern matches existing kyo-schema and kyo-direct macros:
+* **Section-level pruning bought nothing measurable.** Phase A skips Positions and Comments unconditionally; bodies are already lazy and decoded only via `bodyTree`. Whatever a schema would have pruned is either already not decoded or already paid for at open time. The bench harness (Section 20) shows pruning would shave under 5% of cold-load on the kyo-size classpath.
+* **The Symbol ADT is the schema.** `Symbol` is a sealed trait with fifteen concrete subtypes; an exhaustive match in plain Scala already enforces "you must handle every kind" without macro machinery. Field selection is the case-class accessor itself.
+* **Records were a parallel proposal.** `Tasty.symbolToRecord[F]` would have built a `Record[F]` view of a Symbol, but the same projection is two lines of plain code over the sealed ADT (see worked example above). The complexity of a derivation macro that has to chase per-field reads, recursion, and transitive touched-fields was not worth shipping.
 
-* `quotes.reflect.TypeRepr` direct inspection, not `Mirror.ProductOf`. Same as `StructureMacro` (kyo-schema, ~230 LOC) and `TagMacro` (kyo-data, ~190 LOC).
-* `FocusMacro.extractAllFocusFieldNames` (kyo-schema, FocusMacro.scala:1362) is the precedent for `touchedFields` analysis: walk a `Term` via `Trees.traverseGoto`, pattern-match `Select(qualifier, methodName)` where `qualifier.tpe <:< TypeRepr.of[Symbol]`, collect method names.
-* `Trees.exists` from kyo-direct's `Trees.scala` for cheap pre-checks.
+### What the v1 user actually does
 
-### Hygiene precautions
+* Use the typed `find*` and `require*` accessors on `Classpath` to enter the symbol graph.
+* Pattern-match on `Symbol.Class`, `Symbol.Trait`, `Symbol.Object`, `Symbol.EnumCase`, `Symbol.Method`, ... to specialize per kind.
+* Use the narrowed `ClassLike` accessors (`methods`, `vals`, `vars`, `fields`, `nestedTypes`, `typeAliases`, ...) when only one kind is wanted.
+* Use `Tree.foreach`, `Tree.collect`, `Tree.find`, `Tree.exists`, `Tree.foldLeft` over a decoded body when control-flow inspection is required.
+* Wrap any of these in plain Scala combinators (`map`, `flatMap`, `filter`) to project into the caller's own data model.
 
-From the PR #1633 (kyo-direct macro fixes) analysis, two patterns apply:
-
-1. **`TreeMap` re-copy guard**: when walking the generated `read` body for touched-field analysis, add a `Trees.exists` pre-check that returns the original term verbatim if the subtree contains no `Symbol`-typed `Select`. Without this, recursing into every `Apply`/`Select` triggers dotty's internal `xCheckMacro*` assertions on edge-case shapes.
-
-2. **`Match` pattern internals**: skip `.pattern` when traversing `Match` nodes; visit only `scrutinee`, `guard`, `rhs`. `Bind` / `Wildcard` / `Unapply` subtrees carry effect-tagged types from generic destructuring that look like effect uses but are not.
-
-### Recursive case classes
-
-```scala
-case class Node(name: Name, children: Chunk[Node]) derives Tasty.Reads
-```
-
-Macro emits `lazy val instance: Reads[Node]` and uses `instance` for child reads. Pattern matches kyo-schema's `StructureMacro` recursion handling. Self-referential schemas Just Work.
-
-### Sealed ADTs / enums (v1 scope)
-
-The macro derives `Reads` only for product types (case classes). Sum types require a hand-written `given Reads[E]`. The macro detects sum-type derives at expansion and emits a clear error pointing at the worked-example template (see Caveats below).
-
-Rationale: automatic ADT derivation requires user hints (annotations linking cases to `SymbolKind`/`Flag` predicates, or naming conventions). Adding that machinery to v1 increases macro complexity without enough value over the 5-to-15-line hand-written instance. Revisit if v2 surfaces a common usage pattern.
-
-### Custom field reads via `given` override
-
-```scala
-case class Custom(special: MyType, name: Name) derives Tasty.Reads
-given Tasty.Reads[MyType] = customMyTypeReader
-```
-
-Derivation uses `Expr.summon[Tasty.Reads[FieldType]]` for each field. Scope-provided `given` instances win over derived ones automatically. No annotation magic needed.
-
-### Higher-kinded case classes
-
-```scala
-case class Foo[A](xs: Chunk[A]) derives Tasty.Reads        // ERROR at expansion
-val r: Reads[Foo[Type]] = summon                            // OK: A concrete
-```
-
-The macro requires monomorphic instantiation for derivation. Abstract type parameters fail at macro expansion with a clear error. Users can build polymorphic factories explicitly: `def fooReads[A](using Reads[A]): Reads[Foo[A]] = ...`.
-
-### Built-in `Reads` instances (Phase 6 deliverable)
-
-| Type | Built-in | Notes |
-|---|---|---|
-| `Name`, `Flags`, `SymbolKind` | yes | direct from Symbol record |
-| `Type`, `Symbol` | yes | references into the graph |
-| `Boolean`, `Int`, `Long`, `String` | yes | for `Flags.contains` predicates etc. |
-| `Chunk[T]` when `Reads[T]` exists | yes | maps over symbol collections |
-| `Maybe[T]` when `Reads[T]` exists | yes | for optional fields like `companion` |
-| `Record[F]` for any field intersection `F` | yes | delegates to `symbolToRecord[F]` (Section 12); composes with `stage.using[TC]` for FFI bridging (Section 11) |
-| Tuples up to arity 22 | derived | structural |
-| `Either[L, R]` | hand-written required | no canonical mapping |
-
-### Transitive `touchedFields` analysis
-
-Composed `Reads` instances compose their touched-fields sets. If `Reads[ClassInfo]` invokes `methodReads.read(...)` inside its generated body, the macro:
-
-1. Walks the body via `Trees.traverseGoto`.
-2. For each `Select(sym, methodName)` where `sym.tpe <:< Symbol`, records `methodName` in this Reads's set.
-3. For each call to another `Reads[X]`'s `read`, unions in `summon[Reads[X]].touchedFields` at compile time.
-
-Control flow: `if/else` branches union their touched-fields. Pattern matching: union across cases.
-
-This is a recursive macro-time tree walk closed over the schema's transitive `Reads` instances. Hand-written `Reads` instances declare their own `touchedFields` explicitly; the macro respects that declaration when composing.
-
-### Streaming variant
-
-`cp.query[A].stream` returns `Stream[A, Sync & Abort[TastyError]]`. Streaming is a query-layer concern, not a `Reads`-trait concern. `Reads` produces one `A` per `Symbol`; the stream operator emits results as Phase B fibers finish per-file batches.
-
-### Estimated effort
-
-400 to 600 LOC including ADT derivation paths, recursive case-class handling, transitive `touchedFields` analysis, and hygiene guards. StructureMacro is 230 LOC for similar surface area; we add ~150 LOC for touched-fields analysis (including transitivity), ~80 LOC for ADT shape recognition, ~50 LOC for recursion handling, ~50 LOC for hygiene.
-
-### Reads × symbolToRecord composition
-
-Case classes can have `Record[F]` fields:
-
-```scala
-case class Wrap(api: Record[ExportedAPI], notes: String) derives Tasty.Reads
-```
-
-The derivation macro summons `Reads[Record[ExportedAPI]]` (the built-in instance, per Section 13's instance table) for the `api` field. All field readers share the SAME `sym` passed to `Wrap.read(sym)`. The Record built-in delegates to `symbolToRecord[ExportedAPI](sym)` which generates per-accessor calls on that one symbol.
-
-Generated shape (sketched):
-
-```scala
-given Reads[Wrap] = new Reads[Wrap]:
-    val symbolKinds   = Set(SymbolKind.Class, ...)            // from inner-most Reads constraints
-    val needsBodies   = false
-    val touchedFields = FieldSet.Name | DeclaredType | ...    // union of all inner touched-fields
-    val recordReads   = summon[Reads[Record[ExportedAPI]]]
-    def read(sym: Symbol): Wrap < (Sync & Abort[TastyError]) =
-        for
-            api <- recordReads.read(sym)                       // delegates to symbolToRecord
-        yield Wrap(api = api, notes = sym.name.toString)
-```
-
-No recursion hazard: `Reads[Record[F]]` is a built-in, not derived. `symbolToRecord` is a macro that emits direct accessor calls, no further `Reads` dispatch. Composition is one-level deep.
-
-### Caveats
-
-* The `touchedFields` analysis is best-effort. If a user hand-writes a `Reads` instance the macro can't see through, the hand-written declaration of `touchedFields` is honored (defaults to `FieldSet.All`).
-* The `derives` clause is the supported entry point for product types (case classes). Hand-written `Reads` instances work but the macro can't inspect their bodies.
-* **ADTs require hand-written `Reads` instances in v1.** The earlier exploration described three discrimination patterns (kind-, flag-, type-based) as automatic derivation candidates; in practice these need user hints (annotations or convention) that complicate the macro without enough value for v1. Hand-written ADT instances are 5 to 15 lines, follow a clear template (see worked examples below), and stay explicit at the call site. Re-evaluate automatic ADT derivation in v2 if real usage shows a clear common pattern.
-
-### Worked example: hand-written ADT Reads
-
-```scala
-sealed trait DeclKind
-case object ClassDecl  extends DeclKind
-case object TraitDecl  extends DeclKind
-case object MethodDecl extends DeclKind
-
-given Tasty.Reads[DeclKind] = new Tasty.Reads[DeclKind]:
-    val symbolKinds   = Set(SymbolKind.Class, SymbolKind.Trait, SymbolKind.Method)
-    val needsBodies   = false
-    val touchedFields = FieldSet.Kind
-    def read(sym: Symbol): DeclKind < (Sync & Abort[TastyError]) =
-        Kyo.pure(sym.kind match
-            case SymbolKind.Class  => ClassDecl
-            case SymbolKind.Trait  => TraitDecl
-            case SymbolKind.Method => MethodDecl
-            case other             => return Abort.fail(TastyError.SymbolNotFound(s"unexpected kind: $other"))
-        )
-```
+A future revisit of derivation can land as an additive layer on top of this; nothing in the shipped Symbol or Tree ADTs has to change to accommodate it.
 
 ## 14. Platform File Source
 
@@ -1504,11 +1290,9 @@ Nine phases (numbered 0 through 7 with 5b and 6b inserted as cohesive add-ons). 
 
 **Phase 5b: Java/Scala unification.** FQN canonicalization (dotted form, `binaryName` for JVM form), Type.Array normalization for Java arrays, `JavaMetadata` side door, SymbolKind matrix coverage in tests. Tests: cross-language `findClass` round-trip, `java.util.Map.Entry` lookup, generic signatures preserve type params.
 
-**Phase 6: `Tasty.Reads` derivation macro.** `Reads` trait. `derived` macro implementation. `touchedFields` static analysis. Hygiene guards. Built-in `Reads` instances per Section 13 table. Tests: derive readers for fixture case classes, verify `touchedFields` is correct, verify unpickler pruning works.
+**Phase 6: Tree body unpickling.** `Tree` ADT (50+ cases). `Classpath.bodyTree` lazy decode via `TreeUnpickler`. Tree traversal helpers (`foreach`, `collect`, `find`, `foldLeft`, `exists`). `Tree.show` source-shape rendering. Tests: decode bodies for fixture methods, verify every Tree case round-trips, verify traversal helpers visit in pre-order.
 
-**Phase 6b: Record interop.** `Tasty.symbolToRecord[F]` macro. Built-in `Reads[Record[F]]`. Field-to-accessor mapping table per Section 12. Tests: project Symbols into Records, verify compile-time errors on bad field names, exercise `Record.stage[T].using[TypeClass]` bridging pattern.
-
-**Phase 7: query API, file sources, snapshot cache, cross-platform.** Classpath open/close lifecycle. `findClass`, `query`, `stream`. JVM file source (jrt support). JS file source (node, fromPickles for browser). Native file source. Snapshot read/write. Phase A/B/C orchestration. Tests: full surface cross-platform on kyo modules' TASTy files; benchmarks against tasty-query.
+**Phase 7: query API, file sources, snapshot cache, cross-platform.** Classpath open/close lifecycle. `findClass`, `findClassLike`, narrowed accessors. JVM file source (jrt support). JS file source (node, fromPickles for browser). Native file source. Snapshot read/write. Phase A/B/C orchestration. Tests: full surface cross-platform on kyo modules' TASTy files; benchmarks against tasty-query.
 
 ## 19. Testing
 
@@ -1530,7 +1314,7 @@ Bench harness compares kyo-tasty vs tasty-query on JVM (the only platform tasty-
 3. Warm-load with snapshot cache hit.
 4. Per-FQN lookup of 100 random classes (warm cache).
 5. Member enumeration on `kyo.Sync`.
-6. Schema-driven traversal (`derives Tasty.Reads`) collecting `FacadeType`.
+6. Bulk pattern-match traversal across `cp.allClassLike` collecting per-class facade data.
 
 Pass criteria for v1:
 
@@ -1540,7 +1324,7 @@ Pass criteria for v1:
 | Cold-load enum (snapshot miss, write) | 3 to 5x faster |
 | Warm-load (snapshot hit) | 25 to 100x faster (tasty-query has no equivalent) |
 | Per-FQN lookup, warm | parity to 1.5x |
-| Schema-driven traversal | 2 to 4x faster (touched-fields pruning) |
+| Bulk pattern-match traversal | 2 to 4x faster (parallel decode + pure accessors) |
 | Memory (cold load) | 2 to 3x lower |
 
 ## 21. Risks
@@ -1549,27 +1333,18 @@ Pass criteria for v1:
 * **JS file enumeration**: browser environments do not have classpath enumeration. Consumers must enumerate explicitly via `fromPickles`. Documented limitation.
 * **Cross-platform UTF-8 decode**: three paths (JVM `String`, JS `TextDecoder`, Native libc), three test cases.
 * **Classfile edge cases**: Java generic signatures have edge cases (inner-class signatures, intersection bounds). v1 may have gaps documented via failing tests.
-* **Macro hygiene**: covered by the precautions in Section 13, but corner cases are inevitable. Reserve test budget for failing-then-fixed hygiene cases.
 * **Phase C scaling**: at very large classpaths (~10K files, ~500K cross-file refs), Phase C becomes the bottleneck (~500ms estimated). Mitigation by sharding the merge is deferred to v2.
 * **Snapshot format evolution pain**: every breaking change burns a major version. Users see "first build after upgrade is slow." Documented.
-* **Macro hand-write fallback**: hand-written `Reads` instances lose the touched-fields optimization, defaulting to "needs everything." Conservative but reverts to baseline perf.
 
 ## 22. Resolved Decisions
 
-All four decisions locked under the "complete and correct, no scope cuts" constraint. Specifics are folded into the relevant sections; this section summarizes the resolutions.
+Specifics are folded into the relevant sections; this section summarizes the resolutions.
 
-1. **Object-graph design with parallel + lazy + snapshot + macro stack** (replaces the SoA / arena / opaque-Int proposal). LOCKED. The prior-art analysis (Section 23) showed SoA contributes 1.5 to 2x at best and adds substantial maintenance cost; object-graph with parallel decode, lazy bodies, hash-consed types, sharded intern, and snapshot cache delivers the 3 to 5x target without the structural risk. Interactions:
-   * Snapshot stores fully-decoded skeleton (Memo/SingleAssign pre-populated, bodies inline).
-   * Snapshot is always full, not schema-pruned. Schemas change between sessions; we want snapshot reuse.
+1. **Object-graph design with parallel + lazy + snapshot stack** (replaces the SoA / arena / opaque-Int proposal). LOCKED. The prior-art analysis (Section 23) showed SoA contributes 1.5 to 2x at best and adds substantial maintenance cost; object-graph with parallel decode, lazy bodies, hash-consed types, sharded intern, and snapshot cache delivers the 3 to 5x target without the structural risk. Interactions:
+   * Snapshot stores fully-decoded skeleton (per-symbol fields pre-populated, body bytes inline for lazy decode).
    * Phase C produces a canonical type arena; snapshot writes it index-based on disk; reload reconstructs in one walk, no Phase C needed.
 
-2. **`derives Tasty.Reads` as v1**. LOCKED. Feasibility confirmed against `StructureMacro` and `FocusMacro.extractAllFocusFieldNames` precedents (Section 13). 400 to 600 LOC including:
-   * Recursive case classes via `lazy val instance`.
-   * Product-type derivation only in v1; ADTs require hand-written instances (5 to 15 lines, worked example in Section 13).
-   * `given` override for custom field readers (no annotation magic).
-   * Built-in `Reads` instances for Name, Flags, Type, Symbol, Chunk, Maybe, primitives, tuples to arity 22.
-   * Transitive `touchedFields` static analysis across composed `Reads`.
-   * Hygiene guards (Trees.exists pre-check, skip Match pattern internals) per PR #1633 patterns.
+2. **No schema-driven derivation in v1**. LOCKED. The `Tasty.Reads[A]` typeclass and `derives Tasty.Reads` macro explored during design did not ship. Section 13 records the rationale: section-level pruning bought under 5% on the kyo-size workload (Positions/Comments already skipped, bodies already lazy), and the sealed Symbol ADT already enforces exhaustive field selection in plain Scala. Callers project Symbols with ordinary pattern matching plus the typed `ClassLike` accessors. A derivation layer can land additively without disturbing the shipped Symbol or Tree ADTs.
 
 3. **Persistent snapshot cache as v1**. LOCKED. KRFL format (Section 16) with:
    * Atomic-rename concurrent write strategy, no file locking.
@@ -1593,7 +1368,7 @@ Cross-platform scope (JVM + JS + Native) is locked. Java classfile reader in v1 
 
 8. **Snapshot magic `KRFL`** (replaces `KTSY`). LOCKED. Snapshot contains both TASTy and classfile symbols; TASTy-specific magic would be misleading.
 
-9. **Record interop for compile-time field iteration** (Sections 11, 12, 13). LOCKED. `Tasty.symbolToRecord[F]` projects a Symbol into a typed `Record[F]`; `Reads[Record[F]]` is a built-in derivation target; the `Record.stage[T].using[TypeClass]` pattern is the canonical bridging idiom for FFI, ABI translation, and codegen. Case-class-based `Reads` remains the default; Records supplement it for use cases that need compile-time field iteration with per-field type-class dispatch.
+9. **No typed-Record projection in v1** (Sections 11, 13). LOCKED with the same rationale as decision #2: a `Tasty.symbolToRecord[F]` macro was explored, but the equivalent projection is two lines of plain pattern matching over the sealed Symbol ADT. A Record-based bridging idiom can be added in a later release; nothing in the shipped surface forecloses it.
 
 ## 23. Prior-Art Analysis Summary
 
@@ -1614,13 +1389,12 @@ The closest analog to kyo-tasty's design is GHC's `.hi` format combined with Ros
 
 * Scala 2 pickle reader.
 * Position section. Comments section.
-* Tree body decoding (slice stored, decoding unimplemented).
-* Subtype checking and type comparison beyond structural equality.
+* Type comparison beyond structural equality (the shipped `Type.isSubtypeOf` already returns a three-way `SubtypeVerdict`; "full type comparison" here means richer relations like `TypeRepr.<:<` over capture sets).
 * TASTy writing. Classfile writing.
 * Multi-Scala-version support in one release.
 * Incremental classpath refresh.
 * Phase C sharding for very large monorepos.
-* Hand-written `Reads` instances participating in `touchedFields` optimization.
+* Schema-driven projection layer (`Tasty.Reads` / `symbolToRecord`); see Section 13 for the rationale that ruled this out of v1.
 * (JPMS module-info.class: now supported via ModuleDescriptor / Classpath.findModule.)
 * C/C++ header parsing (sibling module, see Section 25).
 
@@ -1641,10 +1415,10 @@ Reads C headers via libclang (LLVM-based) and surfaces them through a `CSymbol` 
 
 **What's shared**:
 
-* The `derives X.Reads`-style macro pattern (kyo-tasty's `ReadsMacro` is the template).
 * The KRFL-style snapshot cache architecture (atomic-rename, mtime+size digest, ERRORS section, version-compat policy).
 * The Phase A / B / C parallel decode protocol.
 * The closed-error-ADT + Kyo-effects API shape.
+* The sealed-Symbol-ADT plus pattern-matching projection pattern (in lieu of a derivation macro).
 * Cross-platform binary primitives (`ByteView`, `Varint`, `Utf8`) if promoted to `kyo-data`.
 
 **What's NOT shared**:
@@ -1662,5 +1436,5 @@ Reads scaladoc comments from TASTy's `Comments` section (which kyo-tasty skips i
 The future-siblings consideration shapes three present-day choices already locked in Section 22:
 
 1. **Closed `SymbolKind`**: better Scala/Java ergonomics; siblings parallel rather than extend.
-2. **Architectural patterns** documented explicitly (Phase A/B/C, snapshot KRFL layout, `derives X.Reads` macro shape) so siblings can copy them, not just code.
+2. **Architectural patterns** documented explicitly (Phase A/B/C, snapshot KRFL layout, sealed-ADT projection pattern) so siblings can copy them, not just code.
 3. **Cross-platform binary primitives kept extractable**: `ByteView`/`Varint`/`Utf8` are pure functions with no kyo-tasty-specific dependencies. Promoting to `kyo-data` when a second consumer materializes is a small change.

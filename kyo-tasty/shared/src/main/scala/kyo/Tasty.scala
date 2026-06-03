@@ -85,7 +85,14 @@ object Tasty:
         /** Render the version as `"<major>.<minor>.<experimental>"` (e.g. `"28.8.0"`). */
         def show: String = s"$major.$minor.$experimental"
 
-    // The Scala 3 TASTy version this kyo-tasty release targets. Updated per release.
+    /** The Scala 3 TASTy format version this kyo-tasty release targets.
+      *
+      * Pickles whose major version differs from this value fail to load with
+      * `TastyError.UnsupportedVersion(found, supported)`. The minor version is the tail of a backwards-compatible
+      * range: pickles with a minor at or below this number are accepted. Bump this value when picking up a new
+      * Scala 3 minor release in CI; the `Version.show` rendering (e.g. `"28.8.0"`) is what `TastyError` carries
+      * to the caller for human-readable diagnostics.
+      */
     val supportedTastyVersion: Version = Version(28, 8, 0)
 
     // ── Names and flags ─────────────────────────────────────────────────────
@@ -2093,10 +2100,32 @@ object Tasty:
 
         // ── Intermediate sealed traits ────────────────────────────────────────
 
-        /** Type-system layer marker (ClassLike, TypeAlias, OpaqueType, AbstractType, TypeParam). */
+        /** Marker for symbols that introduce a type-system entity: `Class`, `Trait`, `Object`, `EnumCase` (all via
+          * `ClassLike`), plus `TypeAlias`, `OpaqueType`, `AbstractType`, and `TypeParam`. The closed membership
+          * lets callers narrow with `case t: Symbol.TypeLike => ...` before reaching for kind-specific accessors;
+          * the more specialised intermediate trait `ClassLike` collects the four `class`-shaped subtypes.
+          *
+          * Use `TypeLike` when you want to ask the type-system question and do not care which kind of declaration
+          * produced it; reach for the concrete subtype (or for `ClassLike`) when you need fields like
+          * `parentTypes`, `permittedSubclasses`, or `body` that are absent from the bare marker.
+          *
+          * Equality is inherited from `Symbol`: two `TypeLike` values are equal when their `id` is equal, regardless
+          * of which concrete subtype they happen to be at the call site.
+          */
         sealed trait TypeLike extends Symbol
 
-        /** Term layer marker (Method, Val, Var, Field, Parameter). */
+        /** Marker for symbols that live in term position: `Method`, `Val`, `Var`, `Field`, and `Parameter`. The
+          * closed membership lets a single `case t: Symbol.TermLike => ...` arm cover the term family in an
+          * exhaustive match while still allowing finer dispatch on the concrete subtype for kind-specific
+          * fields (`paramLists`, `returnType`, `defaultArg`, JVM access predicates on `Field`).
+          *
+          * `TermLike` is the dual of `TypeLike`; the two markers partition the term/type-symbol split that the
+          * library tracks throughout. `Package` and `Unresolved` sit outside both markers, which lets callers tell
+          * "structural anchor" and "placeholder for an unresolved reference" apart from real term and type
+          * definitions without listing concrete subtypes.
+          *
+          * Equality is inherited from `Symbol`: by `id`, regardless of the term-shape subtype at the call site.
+          */
         sealed trait TermLike extends Symbol
 
         /** Common Class / Trait / Object contract: raw fields plus typed resolution accessors.
@@ -2227,7 +2256,26 @@ object Tasty:
 
         // ── 14 final case classes ─────────────────────────────────────────────
 
-        // Not final: EnumCase extends Class as a subtype (see EnumCase below).
+        /** A `class` declaration: Scala source `class`, Java `class`, the lifted backing class of a Scala 3 `enum`,
+          * and the synthetic class for a Scala 3 `case` of an enum (which is represented by the subtype `EnumCase`).
+          *
+          * `parentTypes` is the source-order list of `extends`/`with` types as decoded; `parents(using cp)` resolves
+          * them through the classpath to the corresponding `ClassLike` symbols. `typeParamIds` and `declarationIds`
+          * index into `cp.symbols`; the typed accessors on `ClassLike` (`methods`, `vals`, `nestedTypes`, ...) narrow
+          * those chunks to the per-kind view.
+          *
+          * `permittedSubclassIds` is `Present(ids)` for sealed parents (the dotty `Sealed` flag is also set); for
+          * non-sealed classes the field is `Absent`. `javaMetadata` is `Present` for symbols sourced from `.class`
+          * files and carries JVM access flags, throws clauses, the enclosing-method attribute, record components,
+          * nest-host membership, and parameter-name tables. `javaAnnotations` is the parallel list to `annotations`
+          * for Java-source retention-policy annotations.
+          *
+          * `body` is the `SymbolBody` envelope for the class template's AST bytes; `cp.bodyTree(sym)` decodes it on
+          * demand. The body is `Absent` for synthetic classes whose template the unpickler chose not to keep.
+          *
+          * Not declared `final` so that `EnumCase` can extend `Class` (Scala 3 forbids case-to-case inheritance);
+          * see `EnumCase` for the structural-equality / unapply boilerplate that preserves case-class semantics.
+          */
         case class Class private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2368,6 +2416,20 @@ object Tasty:
             def unapply(e: EnumCase): Some[SymbolId] = Some(e.id)
         end EnumCase
 
+        /** A `trait` declaration: Scala source `trait` or a Java `interface` (which the loader normalizes to this
+          * representation). Shares the `ClassLike` shape with `Class` and `Object`; the difference is that a Trait
+          * cannot be `new`-ed directly and that Java interfaces collapse `default` and `static` methods into its
+          * `declarationIds`.
+          *
+          * `parentTypes` carries the source-order `extends`/`with` types; for a Java interface the head is
+          * `java.lang.Object` followed by the declared interface parents. `permittedSubclassIds` is `Present` for
+          * sealed traits, `Absent` otherwise (use `isSealed` to discriminate). `javaMetadata` is `Present` for
+          * interfaces sourced from `.class` files; `body` is the template envelope decoded lazily via `bodyTree`.
+          *
+          * The narrow `ClassLike` accessors (`methods`, `vals`, `vars`, `fields`, `nestedTypes`, ...) work the same
+          * here as on `Class`; `vars` and `fields` are typically empty for Scala-sourced traits and non-empty for
+          * Java interfaces with `default` accessors.
+          */
         final case class Trait private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2398,6 +2460,18 @@ object Tasty:
                 .getOrElse(Chunk.empty)
         end Trait
 
+        /** A Scala `object` declaration: the singleton companion of a class/trait, a top-level `object`, or the
+          * lifted companion that holds an enum's generated members. Java has no equivalent; symbols decoded from
+          * `.class` files never produce `Object`.
+          *
+          * Carries the same shape as `Class` minus `permittedSubclassIds` (objects are not sealable parents). Use
+          * `companion(using cp)` (inherited from `ClassLike`) to walk from the object to its companion class or
+          * trait, when one exists. `declarationIds` includes any nested objects, generated `values`/`valueOf` for
+          * enum companions, and any user-declared `def`s, `val`s, or nested types.
+          *
+          * Note: the case-class identifier is `Object` and shadows `java.lang.Object` and `scala.Object` inside
+          * this file; callers writing `import kyo.Tasty.Symbol.Object` should be aware of the same shadowing risk.
+          */
         final case class Object private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2414,6 +2488,22 @@ object Tasty:
             body: Maybe[SymbolBody]
         ) extends ClassLike
 
+        /** A `def`: a Scala source `def`, a Scala constructor (`<init>`), an extension method, a `transparent inline
+          * def`, or a Java method. `paramListIds` records parameter groups in source order; each inner `Chunk`
+          * resolves through `paramLists(using cp)` into `Symbol.Parameter` entries. `typeParamIds` carries the
+          * method's own type parameters; per-parameter-list type parameters appear under those parameter symbols.
+          *
+          * `declaredType` is the method's `MethodType` view (parameter types + result), `Present` for symbols with
+          * a recorded signature and `Absent` for synthetics whose type the loader did not retain. `returnType`
+          * unwraps the `Type.Function` or `Type.ContextFunction` result; for non-function shapes it returns the
+          * declared type as-is. `body` is the AST envelope for the implementation, decoded lazily via `bodyTree`;
+          * abstract methods (`flags.contains(Flag.Abstract)`) and methods sourced from `.class` files carry
+          * `Absent` here.
+          *
+          * `javaMetadata` is `Present` for Java methods and holds the throws clauses, JVM access flags, parameter
+          * names from the JVM `MethodParameters` attribute, and runtime/compile-time annotations. `annotations` is
+          * the Scala-side annotation list and is independent.
+          */
         final case class Method private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2473,6 +2563,15 @@ object Tasty:
 
         end Method
 
+        /** A Scala `val`: an immutable value member of a class, trait, object, or top-level package. Also represents
+          * a Scala 3 enum case that has no parameters (the case is lifted to a `Val` on the enum's companion with
+          * `Flag.Case | Flag.Enum` set). Java has no Scala-shaped `val`; Java `final` fields surface as `Field`.
+          *
+          * `declaredType` is `Present` for any Scala-sourced `val`; the only `Absent` case is synthetic ValDefs the
+          * loader has reason to keep without a recorded type. `body` is the AST for the right-hand side, decoded
+          * lazily through `bodyTree`; `Absent` for abstract members and for cases where the loader did not retain
+          * the initializer.
+          */
         final case class Val private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2485,6 +2584,13 @@ object Tasty:
             body: Maybe[SymbolBody]
         ) extends TermLike
 
+        /** A Scala `var`: a mutable value member. Carries `Flag.Mutable`. Same shape as `Val`; the distinction is
+          * the semantics that callers expect from the symbol's flags, not the field layout. Synthetic getter/setter
+          * `Method` symbols are emitted alongside the `Var` on the owning class.
+          *
+          * Java mutable fields surface as `Field` (with the JVM access-flag projection), not as `Var`; only Scala
+          * sources produce `Var`.
+          */
         final case class Var private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2497,6 +2603,15 @@ object Tasty:
             body: Maybe[SymbolBody]
         ) extends TermLike
 
+        /** A Java field decoded from a `.class` file. Holds the field's declared type, the JVM access flags via
+          * `javaMetadata`, and any class-retention annotations under `javaAnnotations`. Has no `body` slot because
+          * the JVM does not carry field initializers as serialized bytes; constant-pool literal values are visible
+          * via the field's owner's `bodyTree` if needed.
+          *
+          * Scala-sourced backing fields surface as `Val` or `Var`, not as `Field`; the `Field` case is the Java
+          * side of the split. The `isJvmPublic` / `isJvmPrivate` / `isJvmProtected` / `isJvmStatic` / `isJvmFinal`
+          * predicates project the access-flags bitmask without forcing callers to know the JVMS bit positions.
+          */
         final case class Field private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2531,6 +2646,14 @@ object Tasty:
 
         end Field
 
+        /** A Scala `type X[T] = Body` declaration: a transparent name for another type. `body` is the right-hand
+          * side as a fully-resolved `Type`; pattern-match on its shape to follow the alias. `typeParamIds` records
+          * any type parameters introduced by the alias and resolves via `typeParams(using cp)` into
+          * `Symbol.TypeParam` entries.
+          *
+          * Unlike `OpaqueType`, type aliases do not introduce a new identity at the type level: the alias and its
+          * body are interchangeable. Java has no source equivalent; type aliases come only from Scala sources.
+          */
         final case class TypeAlias private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2552,6 +2675,15 @@ object Tasty:
 
         end TypeAlias
 
+        /** A Scala 3 `opaque type X = Body` (with optional bounds and type parameters). Unlike a `TypeAlias`,
+          * an opaque type carries its own identity outside the defining scope: callers see only the declared
+          * `bounds` and cannot substitute `body` freely.
+          *
+          * `body` is the underlying type as visible inside the defining scope; `bounds` are the public upper and
+          * lower bounds used by the outside world. `typeParamIds` carries any type parameters in the declaration.
+          * `Flag.Opaque` is always set; carrying both the `bounds` and `body` lets a caller render either the
+          * public or the private view without re-decoding.
+          */
         final case class OpaqueType private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2574,6 +2706,16 @@ object Tasty:
 
         end OpaqueType
 
+        /** A Scala abstract type member: `type X` (with optional bounds) declared inside a class, trait, or object
+          * without a right-hand side. Distinct from `TypeParam` (which appears as a parameter of a generic class
+          * or method) and from `TypeAlias` (which carries a body).
+          *
+          * `bounds` is the declared `>: lower <: upper` bound pair; both default to `Type.Nothing` / `Type.Any`
+          * when no bound was written. Java has no source equivalent; abstract type members come only from Scala.
+          *
+          * Annotation positions and source positions are preserved when present; flags carry the visibility and
+          * other modifiers such as `Flag.Sealed` (rare but legal for abstract types in dotty).
+          */
         final case class AbstractType private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2585,6 +2727,17 @@ object Tasty:
             annotations: Chunk[Annotation]
         ) extends TypeLike
 
+        /** A type parameter symbol of a generic class, trait, type alias, opaque type, or method. The owning symbol
+          * is reachable via `ownerId`; the parameter's index in its owner's parameter list is its position in the
+          * owner's `typeParams(using cp)`.
+          *
+          * `bounds` carries the declared `>: lower <: upper` constraints (defaulting to `Type.Nothing` and
+          * `Type.Any` when absent). `variance` is one of `Invariant`, `Covariant`, `Contravariant`; the
+          * `varianceLabel` convenience returns the matching source sigil (`""`, `"+"`, `"-"`) for printing.
+          *
+          * No `scaladoc` is recorded for type parameters (they are accessor-shadowed to `Absent`); flags carry
+          * `Flag.TypeParameter` plus any user annotations such as `Flag.Sealed` on bounded type parameters.
+          */
         final case class TypeParam private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2604,6 +2757,22 @@ object Tasty:
 
         end TypeParam
 
+        /** A value parameter of a method or constructor. Owned by the enclosing `Method`; its position in the
+          * enclosing `paramLists` reflects the parameter's source order within its parameter group.
+          *
+          * `declaredType` is the parameter's declared type after by-name and repeated wrapping (so an `=> Foo`
+          * parameter has `declaredType = Type.ByName(Type.Named(foo))` and a `Foo*` parameter has
+          * `Type.Repeated(...)`). The `isByName` and `isRepeated` predicates inspect those wrappers without
+          * forcing a manual pattern match. `isImplicit` returns true for `given` and `implicit` parameters
+          * (`Flag.Given` is set in both cases).
+          *
+          * `defaultArgId` is `Present` for parameters that have a default value; the referenced symbol is the
+          * synthetic accessor method emitted by dotty (`foo$default$1` and friends). `defaultArg(using cp)`
+          * resolves the id without forcing the caller to deal with the indirection.
+          *
+          * No `scaladoc` is carried (parameters do not get their own scaladoc blocks); `annotations` covers any
+          * source-level annotations on the parameter itself.
+          */
         final case class Parameter private[kyo] (
             id: SymbolId,
             name: Name,
@@ -2637,6 +2806,18 @@ object Tasty:
 
         end Parameter
 
+        /** A package symbol: the root package or any nested package. The root package has `name` equal to the empty
+          * `Name` and `ownerId == id` (it is its own owner); descend through `members(using cp)` to walk a
+          * classpath as a tree.
+          *
+          * `memberIds` carries direct children: every top-level `Class`, `Trait`, `Object`, top-level `Method` or
+          * `Val` from a Scala package object, and any nested `Package`. The narrowed accessors (`classes`,
+          * `traits`, `objects`, `classLike`, plus `subPackages(using cp)`) project this chunk by kind without
+          * forcing the caller to pattern-match.
+          *
+          * Packages carry no `scaladoc`, no `sourcePosition`, no `annotations`, and no `body`: they are purely
+          * structural anchors in the symbol graph. Equality is by `id`, as for every Symbol.
+          */
         final case class Package private[kyo] (
             id: SymbolId,
             name: Name,
@@ -3780,6 +3961,15 @@ object Tasty:
 
     // ── FQN helper ──────────────────────────────────────────────────────────
 
+    /** Expand to the fully-qualified dotted name of `A` at compile time via the `Tag` machinery.
+      *
+      * Use when the type is known statically and the caller wants the FQN string for a `findClass` / `requireClass`
+      * lookup without spelling out the literal. `classFqn[example.Circle]` evaluates to `"example.Circle"`;
+      * `classFqn[scala.collection.immutable.List]` evaluates to `"scala.collection.immutable.List"`.
+      *
+      * The dotted form matches what `Classpath.findClass`, `findClassLike`, and `findSymbol` accept; the JVM
+      * binary form (`example/Circle$Inner`) is reachable through `Classpath.findClassByBinary` instead.
+      */
     inline def classFqn[A](using t: Tag[A]): String = t.show
 
     // ── Snapshot management ─────────────────────────────────────────────────

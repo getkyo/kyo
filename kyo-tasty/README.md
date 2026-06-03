@@ -31,7 +31,7 @@ import kyo.Tasty.*
 val program: Chunk[String] < (Async & Scope & Abort[TastyError]) =
     Classpath.init(Seq("target/scala-3.7.4/classes")).map { cp =>
         given Classpath = cp
-        cp.allClassLike.map(_.fullNameString)
+        Kyo.foreach(cp.allClassLike)(_.fullNameString)
     }
 ```
 
@@ -47,17 +47,17 @@ and chains of accessors compose.
 assume is already compiled and present on the classpath under FQN
 `example.Shape`:
 
-```scala doctest:expect=skipped
-package example
+```scala
+object example:
+    sealed trait Shape:
+        def area: Double
 
-sealed trait Shape:
-    def area: Double
+    final case class Circle(radius: Double) extends Shape:
+        def area: Double = math.Pi * radius * radius
 
-final case class Circle(radius: Double) extends Shape:
-    def area: Double = math.Pi * radius * radius
-
-final case class Box(width: Double, height: Double) extends Shape:
-    def area: Double = width * height
+    final case class Box(width: Double, height: Double) extends Shape:
+        def area: Double = width * height
+end example
 ```
 
 <!-- doctest:setup
@@ -84,11 +84,12 @@ takes as `using cp: Classpath`.
 The acquisition step has three constructors. Pick by where the bytes are coming
 from and how often you re-open the same roots:
 
-```scala doctest:expect=skipped
-def init(roots: Seq[String]): Classpath < (Async & Scope & Abort[TastyError])
-def init(roots: Seq[String], mode: ErrorMode): Classpath < (Async & Scope & Abort[TastyError])
-def initCached(roots, cacheDir: String): Classpath < (Sync & Async & Scope & Abort[TastyError])
-def fromPickles(pickles: Seq[Pickle]): Classpath < (Async & Scope & Abort[TastyError])
+```scala
+val roots: Seq[String]                                        = Seq("target/classes")
+val a: Classpath < (Async & Scope & Abort[TastyError])        = Classpath.init(roots)
+val b: Classpath < (Async & Scope & Abort[TastyError])        = Classpath.init(roots, ErrorMode.FailFast)
+val c: Classpath < (Sync & Async & Scope & Abort[TastyError]) = Classpath.initCached(roots, "/tmp/cache")
+val d: Classpath < (Async & Scope & Abort[TastyError])        = Classpath.fromPickles(Seq.empty[Pickle])
 ```
 
 `init` is the canonical entry point and runs the parallel per-file decoder.
@@ -116,10 +117,9 @@ stripped-down Scala 2 jar without the Scala 3 signatures, a section the
 unpickler does not yet support; any of these can derail a load. `ErrorMode`
 decides what happens:
 
-```scala doctest:expect=skipped
-enum ErrorMode:
-    case SoftFail // default; per-file errors accumulate in cp.errors
-    case FailFast // first decode error aborts the open
+```scala
+val softFail: ErrorMode = ErrorMode.SoftFail // default; per-file errors accumulate in cp.errors
+val failFast: ErrorMode = ErrorMode.FailFast // first decode error aborts the open
 ```
 
 In `SoftFail` mode (the default) the loader keeps going and the resulting
@@ -162,15 +162,18 @@ The narrow naming has a real trap. `findClass("example.Shape")` returns
 `Absent` because `Shape` is a `trait`, not a `class`. When the question is
 "any class-like at this FQN", reach for `findClassLike`, which returns
 `Maybe[Symbol.ClassLike]` and matches a `Class`, `Trait`, or `Object`. For
-"any symbol whatsoever", `findSymbol(fqn)` returns `Maybe[Symbol]`. A
-companion accessor, `findClassByName(simpleName: String)`, does a linear scan
-of the classpath by simple name and returns `Chunk[Symbol.Class]` (because
-two unrelated packages can both define `Circle`); `findClassByBinary` accepts
-the JVM `com/example/Foo$Inner` form. For the compile-time case where you
+"any symbol whatsoever", `findSymbol(fqn)` returns `Maybe[Symbol]`. When you
+need to restrict the result to a concrete, instantiable class (skipping sealed
+abstract bases like `scala.Option`), reach for `findConcreteClass(fqn)`; it
+behaves like `findClass` but filters out the `Abstract` flag. A companion
+accessor, `findClassesByName(simpleName: String)`, uses a prebuilt index keyed
+on simple name and returns `Chunk[Symbol.Class]` (because two unrelated
+packages can both define `Circle`); `findClassByBinary` accepts the JVM
+`com/example/Foo$Inner` form. For the compile-time case where you
 have the type statically, `Tasty.classFqn[example.Circle]` is a macro that
 expands to the FQN string via the `Tag` machinery.
 
-Within a `ClassLike`, two more lookup primitives sit on the typed Symbol: `findMember(name: String)` (returns the first declared member with that simple name) and `findMemberByName(n: Name)` (the same lookup keyed by an already-interned `Name`). `membersByKind(k: SymbolKind)` filters declarations by the legacy kind enum. These three live on every `Symbol` (not just `ClassLike`) and behave the same as the `findDeclaredMember` / `findInheritedMember` / `findAnyMember` accessors documented further down in "Navigating from a symbol"; pick whichever signature reads cleaner at the call site.
+Within a `ClassLike`, three lookup primitives sit on the typed Symbol: `findDeclaredMember(name: String)` returns the first declared member with that simple name, `findInheritedMember(name: String)` walks parents and returns the first inherited match, and `findAnyMember(name: String)` checks declared members first then falls through to inherited. All three return `Maybe[Symbol]`. `membersByKind(k: SymbolKind)` filters declarations by the kind enum.
 
 ## The Symbol model
 
@@ -179,18 +182,22 @@ this ADT is what lets you write exhaustive, type-safe code over a classpath.
 
 ### The sealed hierarchy
 
-`Symbol` is a sealed trait with fourteen final case classes, grouped under
+`Symbol` is a sealed trait with fifteen concrete subtypes, grouped under
 three intermediate sealed traits:
 
 ```
 Symbol
   TypeLike
-    ClassLike    -> Class, Trait, Object
+    ClassLike    -> Class, Trait, Object, EnumCase
     TypeAlias, OpaqueType, AbstractType, TypeParam
   TermLike       -> Method, Val, Var, Field, Parameter
   Package
   Unresolved
 ```
+
+`Symbol.EnumCase` is a `final class` that extends `Symbol.Class`: any
+`EnumCase` value also matches a `Class` pattern, so put the more specific
+`EnumCase` arm first when you need to specialize Scala 3 enum cases.
 
 Every concrete symbol carries the same five fields: `id: SymbolId`,
 `name: Name`, `flags: Flags`, `ownerId: SymbolId`, and
@@ -244,16 +251,15 @@ companion is the matching object or class at the same FQN. The first
 declared parent of a `Symbol.Class` (the `extends` class) is the head of
 `classLike.parents`, not a separate accessor.
 
-```scala doctest:expect=skipped
-given Classpath       = cp
-val box: Symbol.Class = cp.requireClass("example.Box")
-
-box.owner        // the example package (Symbol.Package)
-box.ownersChain  // Chunk(Box, example, <root>)
-box.directParent // Maybe[Symbol]  -- the owner symbol (alias of `owner`)
-box.parentTypes  // Chunk(Type)       -- raw parent Types (AnyRef and Shape)
-box.parents      // Chunk(ClassLike)  -- resolved parent ClassLikes
-box.companion    // Maybe[Symbol]     -- the companion object if any
+```scala
+val box: Maybe[Symbol.Class] = cp.findClass("example.Box")
+box.foreach { b =>
+    b.owner       // Maybe[Symbol]     -- the example package, Absent at root
+    b.ownersChain // Chunk(Box, example, <root>)
+    b.parentTypes // Chunk(Type)       -- raw parent Types (AnyRef and Shape)
+    b.parents     // Chunk(ClassLike)  -- resolved parent ClassLikes
+    b.companion   // Maybe[Symbol]     -- the companion object if any
+}
 ```
 
 For sealed hierarchies, `cls.permittedSubclasses` returns the
@@ -273,15 +279,16 @@ return `Chunk[Symbol]`. The single-symbol lookups mirror the same split:
 `findDeclaredMember(name)`, `findInheritedMember(name)`,
 `findAnyMember(name)`, each returning `Maybe[Symbol]`.
 
-```scala doctest:expect=skipped
-val shape: Symbol.Trait = cp.requireTrait("example.Shape")
+```scala
+cp.findClassLike("example.Shape").foreach { shape =>
+    shape.declaredMembers            // Chunk(area: Symbol.Method)
+    shape.findDeclaredMember("area") // Present(Symbol.Method)
+}
 
-shape.declaredMembers            // Chunk(area: Symbol.Method)
-shape.findDeclaredMember("area") // Present(Symbol.Method)
-
-val circle: Symbol.Class = cp.requireClass("example.Circle")
-circle.allMembers                  // includes Shape.area, AnyRef.toString, etc
-circle.findInheritedMember("area") // Present(Shape.area)
+cp.findClass("example.Circle").foreach { circle =>
+    circle.allMembers                  // includes Shape.area, AnyRef.toString, etc
+    circle.findInheritedMember("area") // Present(Shape.area)
+}
 ```
 
 When you want only one kind, `ClassLike` exposes narrowed accessors that
@@ -321,18 +328,17 @@ handful and let the rest be handled by traversal helpers.
 
 The cases you will actually write code against are these:
 
-```scala doctest:expect=skipped
-tpe match
-    case Type.Named(id)                  => // a class/trait/type alias reference
-    case Type.Applied(tycon, args)       => // List[Int], Map[String, Int]
-    case Type.Function(params, res, _)   => // (Int, String) => Boolean
-    case Type.ContextFunction(params, r) => // (using Ctx) => A
-    case Type.Tuple(elems)               => // (Int, String, Boolean)
-    case Type.AndType(l, r)              => // A & B
-    case Type.OrType(l, r)               => // A | B
-    case Type.Annotated(under, ann)      => // T @unchecked
-    case _                               => // ConstantType, Refinement, ByName, ...
-end match
+```scala
+def classify(tpe: Type): String = tpe match
+    case Type.Named(id)                  => "a class/trait/type alias reference"
+    case Type.Applied(tycon, args)       => "List[Int], Map[String, Int]"
+    case Type.Function(params, res, _)   => "(Int, String) => Boolean"
+    case Type.ContextFunction(params, r) => "(using Ctx) => A"
+    case Type.Tuple(elems)               => "(Int, String, Boolean)"
+    case Type.AndType(l, r)              => "A & B"
+    case Type.OrType(l, r)               => "A | B"
+    case Type.Annotated(under, ann)      => "T @unchecked"
+    case _                               => "ConstantType, Refinement, ByName, ..."
 ```
 
 Three sentinel cases stand in for missing or unresolvable bounds:
@@ -353,18 +359,21 @@ The subtype check threads the implicit classpath and returns a three-way
 verdict rather than a `Boolean`. The third case is the typed "I could not
 decide":
 
-```scala doctest:expect=skipped
-enum SubtypeVerdict:
-    case Sub
-    case NotSub
-    case Unknown
-end SubtypeVerdict
+```scala
+val sub: SubtypeVerdict     = SubtypeVerdict.Sub
+val notSub: SubtypeVerdict  = SubtypeVerdict.NotSub
+val unknown: SubtypeVerdict = SubtypeVerdict.Unknown
 
-val circleTpe: Type = Type.Named(cp.requireClass("example.Circle").id)
-val shapeTpe: Type  = Type.Named(cp.requireTrait("example.Shape").id)
-
-circleTpe.isSubtypeOf(shapeTpe) // Sub
-shapeTpe.isSubtypeOf(circleTpe) // NotSub
+for
+    circle <- cp.findClass("example.Circle")
+    shape  <- cp.findClassLike("example.Shape")
+yield
+    val circleTpe: Type    = Type.Named(circle.id)
+    val shapeTpe: Type     = Type.Named(shape.id)
+    val v1: SubtypeVerdict = circleTpe.isSubtypeOf(shapeTpe) // Sub
+    val v2: SubtypeVerdict = shapeTpe.isSubtypeOf(circleTpe) // NotSub
+    (v1, v2)
+end for
 ```
 
 `Unknown` happens when the parent chain is not fully loaded into the
@@ -396,17 +405,17 @@ else on the snapshot is pure.
 
 ### Decoding a body and traversing the AST
 
-```scala doctest:expect=skipped
-val areaMethod: Symbol.Method = cp.requireClass("example.Circle")
-    .findDeclaredMember("area")
-    .collect { case m: Symbol.Method => m }
-    .getOrThrow
+```scala
+val areaMethod: Maybe[Symbol.Method] =
+    cp.findClass("example.Circle")
+        .flatMap(_.findDeclaredMember("area"))
+        .collect { case m: Symbol.Method => m }
 
-val areaBody: Maybe[Tree] < (Sync & Abort[TastyError]) =
-    areaMethod.bodyTree
+val areaBody: Maybe[Maybe[Tree] < (Sync & Abort[TastyError])] =
+    areaMethod.map(_.bodyTree)
 ```
 
-`cp.decodeBody(sym)` is the underlying call; `bodyTree` is the
+`cp.bodyTree(sym)` is the underlying call; `sym.bodyTree` is the
 convenience that threads `using cp`. `Absent` means the symbol has no
 recorded body (an abstract method, for instance, or a body the loader
 chose not to keep).
@@ -416,14 +425,17 @@ chose not to keep).
 `DefDef`, ...). You rarely match all of them. The traversal helpers cover
 nearly every interactive use:
 
-```scala doctest:expect=skipped
-tree.children                       // Chunk[Tree]
-tree.foreach(visit: Tree => Unit)
-tree.collect[A](pf: PartialFunction[Tree, A]): Chunk[A]
-tree.find(p: Tree => Boolean): Maybe[Tree]
-tree.foldLeft(z)((acc, t) => ...)
-tree.exists(p: Tree => Boolean): Boolean
-tree.show(using cp): String         // source-shaped rendering
+```scala
+def walk(tree: Tree): Unit =
+    val a: Chunk[Tree] = tree.children
+    tree.foreach(t => ())
+    val b: Chunk[String] = tree.collect { case lit: Tree.Literal => lit.toString }
+    val c: Maybe[Tree]   = tree.find(_ => true)
+    val d: Int           = tree.foldLeft(0)((acc, _) => acc + 1)
+    val e: Boolean       = tree.exists(_ => false)
+    val f: String        = tree.show
+    ()
+end walk
 ```
 
 For "find every selection of `math.Pi` inside `Circle.area`", `collect`
@@ -444,11 +456,14 @@ loaded from a `.class` file with retention-class annotations carries
 
 The two predicates work uniformly across both sides:
 
-```scala doctest:expect=skipped
-given Classpath = cp
-val circle      = cp.requireClass("example.Circle")
-circle.hasAnnotation("scala.deprecated") // Boolean
-circle.getAnnotation("scala.deprecated") // Maybe[Annotation]
+```scala
+import kyo.AllowUnsafe.embrace.danger
+
+cp.findClass("example.Circle").foreach { circle =>
+    val has: Boolean < Sync                            = circle.hasAnnotation("scala.deprecated")
+    val one: Maybe[Annotation | JavaAnnotation] < Sync = circle.findAnnotation("scala.deprecated")
+    (has, one)
+}
 ```
 
 `hasAnnotation(fqn)` is subtype-aware: it returns true for any annotation
@@ -494,13 +509,12 @@ time, so closure queries do not scan.
 
 For a sealed hierarchy, "list every implementation" is one call:
 
-```scala doctest:expect=skipped
-given Classpath         = cp
-val shape: Symbol.Trait = cp.requireTrait("example.Shape")
-
-cp.directSubclassesOf(shape) // Chunk(Circle, Box)  -- exactly one hop
-cp.subclassesOf(shape)       // Chunk(Circle, Box)  -- transitive closure
-cp.implementationsOf(shape)  // Chunk(Circle, Box)  -- concrete classes only
+```scala
+cp.findClassLike("example.Shape").foreach { shape =>
+    cp.directSubclassesOf(shape) // Chunk(Circle, Box)  -- exactly one hop
+    cp.subclassesOf(shape)       // Chunk(Circle, Box)  -- transitive closure
+    cp.implementationsOf(shape)  // Chunk(Circle, Box)  -- concrete classes only
+}
 ```
 
 `directSubclassesOf` returns only the immediate subclasses;
@@ -577,19 +591,20 @@ import kyo.AllowUnsafe.embrace.danger
 import kyo.Tasty.*
 
 def shapeImplementations(roots: Seq[String]): Chunk[String] < (Async & Scope & Abort[TastyError]) =
-    Classpath.init(roots).map { cp =>
+    Classpath.init(roots, ErrorMode.FailFast).map { cp =>
         given Classpath = cp
 
         cp.requireTrait("example.Shape").map { shape =>
-            cp.implementationsOf(shape)
-                .sortBy(_.fullNameString)
-                .map { impl =>
+            val impls = cp.implementationsOf(shape).sortBy(_.simpleName)
+            Kyo.foreach(impls) { impl =>
+                impl.fullNameString.map { fqn =>
                     val overrides = impl.methods
                         .filter(_.isOverride)
                         .map(_.simpleName)
                         .mkString(", ")
-                    s"${impl.fullNameString} overrides: [$overrides]"
+                    s"$fqn overrides: [$overrides]"
                 }
+            }
         }
     }
 ```
@@ -597,4 +612,7 @@ def shapeImplementations(roots: Seq[String]): Chunk[String] < (Async & Scope & A
 The composition pattern that makes this idiomatic Kyo: `Classpath.init`
 once at the boundary, `.map` to project into pure data, and let the
 effect row stay where the I/O actually lives. Everything between the open
-and the final `.map` is plain data manipulation.
+and the final `.map` is plain data manipulation. `ErrorMode.FailFast` raises
+the first decode error through `Abort`; the soft-fail default would instead
+accumulate them into `cp.errors`, where `cp.errors.headOption` is the
+minimum check before trusting any query result.
