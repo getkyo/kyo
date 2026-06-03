@@ -84,93 +84,245 @@ object Tasty:
         end extension
     end Name
 
-    final class Flags(val bits: Long) extends AnyVal:
-        def contains(flag: Flag): Boolean = (bits & flag.bit) != 0L
-        def |(other: Flags): Flags        = new Flags(bits | other.bits)
-
-        /** True when no flag bits are set. Equivalent to `this == Flags.empty`. */
-        def isEmpty: Boolean = bits == 0L
-
-        /** Human-readable representation: `Flags.empty.show == "Flags()"`. Delegates to `toString`. */
-        def show: String = toString
-
-    end Flags
+    /** A bitmask of modifier flags. Combine via `|`; test membership via `contains`.
+      *
+      * Backed by an opaque `Long`. The underlying bits are accessible only via `private[kyo]` accessors
+      * (`bits`, `Flags.fromBits`) used by the internal unpicklers and snapshot writer; public callers
+      * construct flag sets through `Flags.empty`, `Flags(flag, ...)`, or by `|`.
+      */
+    opaque type Flags = Long
 
     object Flags:
-        /** The empty flag set (no modifiers).
-          *
-          * Example:
-          * {{{
-          *   Tasty.Flags.empty.bits == 0L
-          * }}}
-          */
-        val empty: Flags = new Flags(0L)
+        /** The empty flag set (no modifiers). */
+        val empty: Flags = 0L
 
-        /** Convenience constructor: combine one or more flags into a `Flags` value. */
+        /** Combine one or more flags into a `Flags` value. */
         def apply(head: Flag, rest: Flag*): Flags =
-            var bits = head.bit
-            rest.foreach(f => bits |= f.bit)
-            new Flags(bits)
+            var b = Flag.bits(head)
+            rest.foreach(f => b |= Flag.bits(f))
+            b
         end apply
+
+        /** Construct a `Flags` directly from its underlying bitmask. For use by kyo-internal
+          * unpicklers and snapshot reader/writer that need to materialise an accumulated mask.
+          */
+        private[kyo] def fromBits(bits: Long): Flags = bits
+
+        /** Reference equality on the underlying Long; safe because Flags is a pure bitmask. */
+        given CanEqual[Flags, Flags] = CanEqual.canEqualAny
     end Flags
 
-    final class Flag(val bit: Long, val name: String):
-        override def toString: String = name
+    /** Public operations on [[Flags]]. Defined at `Tasty` scope so they are in implicit scope
+      * for any code that already references `Tasty.Flags`, mirroring how nested opaque-type
+      * extensions are surfaced in this file.
+      */
+    extension (flags: Flags)
+        /** True when `flag`'s bit is set in this flag set. */
+        def contains(flag: Flag): Boolean = (flags & Flag.bits(flag)) != 0L
 
-        /** Human-readable flag name. Equivalent to `toString`. */
-        def show: String = name
-    end Flag
+        /** Union of two flag sets. */
+        def |(other: Flags): Flags = flags | other
+
+        /** The raw bitmask. Used by the internal snapshot writer and any other kyo-internal
+          * code that must persist the flag set; not part of the public API.
+          */
+        private[kyo] def bits: Long = flags
+
+        /** True when no flag bits are set. Equivalent to `flags == Flags.empty`. */
+        def isEmpty: Boolean = flags == 0L
+
+        /** Human-readable representation: `Flags.empty.show == "Flags()"`. */
+        @scala.annotation.targetName("flagsShow")
+        def show: String =
+            val sb       = new java.lang.StringBuilder("Flags(")
+            var firstOne = true
+            var i        = 0
+            while i < Flag.all.length do
+                val f = Flag.all(i)
+                if (flags & Flag.bits(f)) != 0L then
+                    if firstOne then firstOne = false
+                    else discard(sb.append(", "))
+                    discard(sb.append(Flag.name(f)))
+                end if
+                i += 1
+            end while
+            sb.append(')').toString
+        end show
+    end extension
+
+    /** A single modifier flag. Backed by an opaque single-bit `Long`. Each declared `val` on the
+      * `Flag` companion is a distinct flag with a unique bit. The bit pattern is not part of the
+      * public API; equality identifies a flag uniquely.
+      */
+    opaque type Flag = Long
 
     object Flag:
         // Core access flags (bits 0-15)
-        val Inline: Flag      = Flag(1L << 0, "Inline")
-        val Private: Flag     = Flag(1L << 1, "Private")
-        val Protected: Flag   = Flag(1L << 2, "Protected")
-        val Public: Flag      = Flag(1L << 3, "Public")
-        val Final: Flag       = Flag(1L << 4, "Final")
-        val Sealed: Flag      = Flag(1L << 5, "Sealed")
-        val Abstract: Flag    = Flag(1L << 6, "Abstract")
-        val Given: Flag       = Flag(1L << 7, "Given")
-        val Implicit: Flag    = Flag(1L << 8, "Implicit")
-        val Opaque: Flag      = Flag(1L << 9, "Opaque")
-        val Case: Flag        = Flag(1L << 10, "Case")
-        val Module: Flag      = Flag(1L << 11, "Module")
-        val Synthetic: Flag   = Flag(1L << 12, "Synthetic")
-        val JavaDefined: Flag = Flag(1L << 13, "JavaDefined")
-        val Enum: Flag        = Flag(1L << 14, "Enum")
-        val JavaRecord: Flag  = Flag(1L << 15, "JavaRecord")
+        val Inline: Flag      = 1L << 0
+        val Private: Flag     = 1L << 1
+        val Protected: Flag   = 1L << 2
+        val Public: Flag      = 1L << 3
+        val Final: Flag       = 1L << 4
+        val Sealed: Flag      = 1L << 5
+        val Abstract: Flag    = 1L << 6
+        val Given: Flag       = 1L << 7
+        val Implicit: Flag    = 1L << 8
+        val Opaque: Flag      = 1L << 9
+        val Case: Flag        = 1L << 10
+        val Module: Flag      = 1L << 11
+        val Synthetic: Flag   = 1L << 12
+        val JavaDefined: Flag = 1L << 13
+        val Enum: Flag        = 1L << 14
+        val JavaRecord: Flag  = 1L << 15
         // Extended modifier flags (bits 16+)
-        val Open: Flag          = Flag(1L << 16, "Open")
-        val ParamAccessor: Flag = Flag(1L << 17, "ParamAccessor")
-        val Lazy: Flag          = Flag(1L << 18, "Lazy")
-        val Override: Flag      = Flag(1L << 19, "Override")
-        val Mutable: Flag       = Flag(1L << 20, "Mutable")
-        val Erased: Flag        = Flag(1L << 21, "Erased")
-        val Tracked: Flag       = Flag(1L << 22, "Tracked")
-        val Tailrec: Flag       = Flag(1L << 23, "Tailrec")
-        val Infix: Flag         = Flag(1L << 24, "Infix")
-        val Transparent: Flag   = Flag(1L << 25, "Transparent")
-        val Trait: Flag         = Flag(1L << 26, "Trait")
-        val CaseAccessor: Flag  = Flag(1L << 27, "CaseAccessor")
-        val FieldAccessor: Flag = Flag(1L << 28, "FieldAccessor")
-        val Macro: Flag         = Flag(1L << 29, "Macro")
-        val InlineProxy: Flag   = Flag(1L << 30, "InlineProxy")
-        val Extension: Flag     = Flag(1L << 31, "Extension")
-        val Exported: Flag      = Flag(1L << 32, "Exported")
-        val CoVariant: Flag     = Flag(1L << 33, "CoVariant")
-        val ContraVariant: Flag = Flag(1L << 34, "ContraVariant")
-        val HasDefault: Flag    = Flag(1L << 35, "HasDefault")
-        val Stable: Flag        = Flag(1L << 36, "Stable")
-        val Local: Flag         = Flag(1L << 37, "Local")
-        val Artifact: Flag      = Flag(1L << 38, "Artifact")
-        val Invisible: Flag     = Flag(1L << 39, "Invisible")
-        val Into: Flag          = Flag(1L << 40, "Into")
-        val PARAMsetter: Flag   = Flag(1L << 41, "PARAMsetter")
-        val PARAMalias: Flag    = Flag(1L << 42, "PARAMalias")
-        val Static: Flag        = Flag(1L << 43, "Static")
+        val Open: Flag          = 1L << 16
+        val ParamAccessor: Flag = 1L << 17
+        val Lazy: Flag          = 1L << 18
+        val Override: Flag      = 1L << 19
+        val Mutable: Flag       = 1L << 20
+        val Erased: Flag        = 1L << 21
+        val Tracked: Flag       = 1L << 22
+        val Tailrec: Flag       = 1L << 23
+        val Infix: Flag         = 1L << 24
+        val Transparent: Flag   = 1L << 25
+        val Trait: Flag         = 1L << 26
+        val CaseAccessor: Flag  = 1L << 27
+        val FieldAccessor: Flag = 1L << 28
+        val Macro: Flag         = 1L << 29
+        val InlineProxy: Flag   = 1L << 30
+        val Extension: Flag     = 1L << 31
+        val Exported: Flag      = 1L << 32
+        val CoVariant: Flag     = 1L << 33
+        val ContraVariant: Flag = 1L << 34
+        val HasDefault: Flag    = 1L << 35
+        val Stable: Flag        = 1L << 36
+        val Local: Flag         = 1L << 37
+        val Artifact: Flag      = 1L << 38
+        val Invisible: Flag     = 1L << 39
+        val Into: Flag          = 1L << 40
+        val PARAMsetter: Flag   = 1L << 41
+        val PARAMalias: Flag    = 1L << 42
+        val Static: Flag        = 1L << 43
         // Scala 2 origin flag (bit 44): identifies symbols decoded from Scala 2 pickles embedded in classfiles.
-        val Scala2: Flag = Flag(1L << 44, "Scala2")
+        val Scala2: Flag = 1L << 44
+
+        /** All declared flags in declaration order. Used by `Flags.show` and the
+          * static `nameOf` table; not a stable part of the public API.
+          */
+        private[kyo] val all: IArray[Flag] = IArray(
+            Inline,
+            Private,
+            Protected,
+            Public,
+            Final,
+            Sealed,
+            Abstract,
+            Given,
+            Implicit,
+            Opaque,
+            Case,
+            Module,
+            Synthetic,
+            JavaDefined,
+            Enum,
+            JavaRecord,
+            Open,
+            ParamAccessor,
+            Lazy,
+            Override,
+            Mutable,
+            Erased,
+            Tracked,
+            Tailrec,
+            Infix,
+            Transparent,
+            Trait,
+            CaseAccessor,
+            FieldAccessor,
+            Macro,
+            InlineProxy,
+            Extension,
+            Exported,
+            CoVariant,
+            ContraVariant,
+            HasDefault,
+            Stable,
+            Local,
+            Artifact,
+            Invisible,
+            Into,
+            PARAMsetter,
+            PARAMalias,
+            Static,
+            Scala2
+        )
+
+        private val nameOf: Map[Long, String] = Map(
+            Inline        -> "Inline",
+            Private       -> "Private",
+            Protected     -> "Protected",
+            Public        -> "Public",
+            Final         -> "Final",
+            Sealed        -> "Sealed",
+            Abstract      -> "Abstract",
+            Given         -> "Given",
+            Implicit      -> "Implicit",
+            Opaque        -> "Opaque",
+            Case          -> "Case",
+            Module        -> "Module",
+            Synthetic     -> "Synthetic",
+            JavaDefined   -> "JavaDefined",
+            Enum          -> "Enum",
+            JavaRecord    -> "JavaRecord",
+            Open          -> "Open",
+            ParamAccessor -> "ParamAccessor",
+            Lazy          -> "Lazy",
+            Override      -> "Override",
+            Mutable       -> "Mutable",
+            Erased        -> "Erased",
+            Tracked       -> "Tracked",
+            Tailrec       -> "Tailrec",
+            Infix         -> "Infix",
+            Transparent   -> "Transparent",
+            Trait         -> "Trait",
+            CaseAccessor  -> "CaseAccessor",
+            FieldAccessor -> "FieldAccessor",
+            Macro         -> "Macro",
+            InlineProxy   -> "InlineProxy",
+            Extension     -> "Extension",
+            Exported      -> "Exported",
+            CoVariant     -> "CoVariant",
+            ContraVariant -> "ContraVariant",
+            HasDefault    -> "HasDefault",
+            Stable        -> "Stable",
+            Local         -> "Local",
+            Artifact      -> "Artifact",
+            Invisible     -> "Invisible",
+            Into          -> "Into",
+            PARAMsetter   -> "PARAMsetter",
+            PARAMalias    -> "PARAMalias",
+            Static        -> "Static",
+            Scala2        -> "Scala2"
+        )
+
+        /** The raw bit pattern. Used by `Flags.contains` and the internal unpicklers that
+          * accumulate a Long mask before constructing a `Flags`; not part of the public API.
+          */
+        private[kyo] def bits(flag: Flag): Long = flag
+
+        /** Human-readable flag name (e.g., "Inline"). */
+        def name(flag: Flag): String = nameOf.getOrElse(flag, s"Flag($flag)")
+
+        /** Multiversal equality: two `Flag` values are equal iff they share the same bit. */
+        given CanEqual[Flag, Flag] = CanEqual.canEqualAny
     end Flag
+
+    /** Public operations on [[Flag]]. */
+    extension (flag: Flag)
+        /** Human-readable flag name. */
+        @scala.annotation.targetName("flagShow")
+        def show: String = Flag.name(flag)
+    end extension
 
     // ── Symbol kinds ────────────────────────────────────────────────────────
 
@@ -570,10 +722,326 @@ object Tasty:
       *
       * Reference: dotty TastyFormat.scala AST tag layout.
       */
-    sealed trait Tree:
+    enum Tree derives CanEqual:
+        /** Term reference by name (IDENT tag). */
+        case Ident(name: Name, tpe: Type)
+
+        /** Member selection (SELECT tag). */
+        case Select(qualifier: Tree, name: Name, tpe: Type)
+
+        /** Function application (APPLY tag). */
+        case Apply(fun: Tree, args: Chunk[Tree])
+
+        /** Type application (TYPEAPPLY tag). */
+        case TypeApply(fun: Tree, args: Chunk[Type])
+
+        /** Block of statements followed by an expression (BLOCK tag). */
+        case Block(stats: Chunk[Tree], expr: Tree)
+
+        /** Conditional expression (IF tag). */
+        case If(cond: Tree, thenp: Tree, elsep: Tree)
+
+        /** Pattern match (MATCH tag). */
+        case Match(selector: Tree, cases: Chunk[Tree.CaseDef])
+
+        /** Single case in a match (CASEDEF tag). */
+        case CaseDef(pattern: Tree, guard: Maybe[Tree], body: Tree)
+
+        /** Literal constant (various const tags). */
+        case Literal(constant: Constant)
+
+        /** Object allocation (NEW tag). */
+        case New(tpe: Type)
+
+        /** Assignment (ASSIGN tag). */
+        case Assign(lhs: Tree, rhs: Tree)
+
+        /** Return statement (RETURN tag). */
+        case Return(expr: Maybe[Tree], from: Symbol)
+
+        /** Throw expression (THROW tag). */
+        case Throw(expr: Tree)
+
+        /** Lambda / anonymous function (LAMBDA tag). */
+        case Lambda(method: Tree, tpe: Maybe[Type])
+
+        /** Type ascription (TYPED tag). */
+        case Typed(expr: Tree, tpe: Type)
+
+        /** Inlined call expansion (INLINED tag). */
+        case Inlined(call: Maybe[Tree], bindings: Chunk[Tree], body: Tree)
+
+        /** Try/catch/finally (TRY tag). */
+        case Try(expr: Tree, cases: Chunk[Tree.CaseDef], finalizer: Maybe[Tree])
+
+        /** While loop (WHILE tag). */
+        case While(cond: Tree, body: Tree)
+
+        /** Pattern binding (BIND tag). */
+        case Bind(name: Name, pattern: Tree)
+
+        /** Alternative patterns in a case (ALTERNATIVE tag). */
+        case Alternative(patterns: Chunk[Tree])
+
+        /** Unapply extractor call (UNAPPLY tag). */
+        case Unapply(fun: Tree, implicits: Chunk[Tree], patterns: Chunk[Tree])
+
+        /** Val or var definition (VALDEF tag). */
+        case ValDef(sym: Symbol, tpt: Type, rhs: Maybe[Tree])
+
+        /** Method definition (DEFDEF tag). */
+        case DefDef(sym: Symbol, paramss: Chunk[Chunk[Tree]], tpt: Type, rhs: Maybe[Tree])
+
+        /** Type alias or abstract type definition (TYPEDEF tag). */
+        case TypeDef(sym: Symbol, rhs: Type)
+
+        /** Package definition (PACKAGE tag). */
+        case PackageDef(sym: Symbol, stats: Chunk[Tree])
+
+        /** Class definition (TYPEDEF with TEMPLATE). */
+        case ClassDef(sym: Symbol, template: Tree.Template)
+
+        /** Class template body (TEMPLATE tag). */
+        case Template(parents: Chunk[Tree], self: Maybe[Symbol], body: Chunk[Tree])
+
+        /** Super reference (SUPER tag). */
+        case Super(qual: Tree, mix: Maybe[Name])
+
+        /** This reference (THIS tag). */
+        case This(cls: Symbol)
+
+        /** Named argument in an application (NAMEDARG tag). */
+        case NamedArg(name: Name, value: Tree)
+
+        /** Annotated tree (ANNOTATEDtpt/ANNOTATEDtype). */
+        case Annotated(expr: Tree, annotation: Tree)
+
+        /** Shared sub-tree back-reference (SHAREDtype or SHAREDterm tag). `addr` is the byte address of the original node. */
+        case Shared(addr: Int)
+
+        /** TASTy category-1 modifier tag (single-byte, no payload; tag in range [1, 59]). */
+        case Modifier(flag: Flag)
+
+        /** Recursive type wrapper (RECtype tag). */
+        case RecType(parent: Tree)
+
+        /** Super type pair (SUPERtype tag). */
+        case SuperType(thistpe: Tree, supertpe: Tree)
+
+        /** Structural refinement type (REFINEDtype tag). */
+        case RefinedType(parent: Tree, name: Name, info: Tree)
+
+        /** Type constructor applied to arguments (APPLIEDtype tag). */
+        case AppliedType(tycon: Tree, args: Chunk[Tree])
+
+        /** Type bounds (TYPEBOUNDS tag). */
+        case TypeBounds(lo: Tree, hi: Tree)
+
+        /** Annotated type (ANNOTATEDtype tag). */
+        case AnnotatedType(parent: Tree, annot: Tree)
+
+        /** Intersection type (ANDtype tag). */
+        case AndType(left: Tree, right: Tree)
+
+        /** Union type (ORtype tag). */
+        case OrType(left: Tree, right: Tree)
+
+        /** By-name type (BYNAMEtype tag). */
+        case ByNameType(arg: Tree)
+
+        /** Match type with scrutinee and cases (MATCHtype tag). */
+        case MatchType(bound: Tree, scrutinee: Tree, cases: Chunk[Tree])
+
+        /** Flexible (Java-nullable) type (FLEXIBLEtype tag). */
+        case FlexibleType(arg: Tree)
+
+        /** Type-position identifier (IDENTtpt tag): nameRef + type. */
+        case IdentTpt(name: Name, tpe: Type)
+
+        /** Type-position selection (SELECTtpt tag): qualifier + name. */
+        case SelectTpt(qual: Tree, name: Name)
+
+        /** Singleton type (SINGLETONtpt tag): ref tree. */
+        case SingletonTpt(tpe: Tree)
+
+        /** Package-level term reference (TERMREFpkg tag): package name only. */
+        case TermRefPkg(name: Name)
+
+        /** Package-level type reference (TYPEREFpkg tag): package name only. */
+        case TypeRefPkg(name: Name)
+
+        /** Symbol-addressed term reference (TERMREFsymbol tag): addr + qualifier. */
+        case TermRefSymbol(addr: Int, qual: Tree)
+
+        /** Symbol-addressed type reference (TYPEREFsymbol tag): addr + qualifier. */
+        case TypeRefSymbol(addr: Int, qual: Tree)
+
+        /** Direct-address term reference (TERMREFdirect tag): symbol address. */
+        case TermRefDirect(addr: Int)
+
+        /** Direct-address type reference (TYPEREFdirect tag): symbol address. */
+        case TypeRefDirect(addr: Int)
+
+        /** Owner-qualified selection (SELECTin tag): qualifier + name + owner. */
+        case SelectIn(qual: Tree, name: Name, owner: Tree)
+
+        /** Import statement (IMPORT tag): qualifier expression and selector trees. */
+        case Import(qual: Tree, selectors: Chunk[Tree])
+
+        /** Export clause (EXPORT tag): qualifier expression and selector trees. */
+        case Export(qual: Tree, selectors: Chunk[Tree])
+
+        /** In-tree annotation node (ANNOTATION tag): annotation class type tree and annotation argument tree. */
+        case AnnotationNode(annotType: Tree, arg: Tree)
+
+        /** Recursive-this reference (RECthis tag): address of the enclosing Rec frame. */
+        case RecThisAddr(addr: Int)
+
+        /** Import selector: the imported name (IMPORTED tag). */
+        case Imported(qual: Tree)
+
+        /** Import rename: the renamed-to name (RENAMED tag). */
+        case Renamed(name: Name)
+
+        /** By-name type annotation in type position (BYNAMEtpt tag). */
+        case ByNameTpt(inner: Type)
+
+        /** Bounded wildcard type (BOUNDED tag): the bound tree. */
+        case Bounded(bound: Tree)
+
+        /** Explicit type annotation in type position (EXPLICITtpt tag). */
+        case ExplicitTpt(inner: Type)
+
+        /** Elided (inferred) type position (ELIDED tag). */
+        case Elided(inner: Type)
+
+        /** Type-position reference by name and qualifier (TYPEREF tag). */
+        case TypeRefTree(qual: Tree, name: Name)
+
+        /** Term-position path-dependent reference (F-B-004). Wire tag TERMREFin (174).
+          *
+          * prefix is the qualifier tree (encoded as Tree.Ident(name, qualType)). name identifies the
+          * referenced member. Replaces the fabricated Tree.Select placeholder from Phase 05.
+          */
+        case TermRef(prefix: Tree, name: Name)
+
+        /** Repeated (varargs) sequence literal (F-B-005). Wire tag REPEATED (149).
+          *
+          * elems are the element trees. tpe is Type.Wildcard(Nothing, Any) as a placeholder until
+          * a future phase infers the element type from context.
+          * Replaces the fabricated Tree.Apply(Ident("_repeated", ...), trees) placeholder.
+          */
+        case SeqLiteral(elems: Chunk[Tree], tpe: Type)
+
+        /** Self type definition in a class template (SELFDEF tag). */
+        case SelfDef(name: Name, tpe: Tree)
+
+        /** Outer reference (SELECTouter tag): outer class at given level. */
+        case SelectOuter(qual: Tree, name: Name, levels: Int, tpe: Type)
+
+        /** Unknown tag: encountered a tag not covered by this ADT version. */
+        case Unknown(tag: Int, length: Int)
 
         /** Direct structural child trees of this node. Leaf nodes return `Chunk.empty`. */
-        def children: Chunk[Tree]
+        def children: Chunk[Tree] = this match
+            case Tree.Ident(_, _)             => Chunk.empty
+            case Tree.Select(qualifier, _, _) => Chunk(qualifier)
+            case Tree.Apply(fun, args)        => Chunk(fun) ++ args
+            case Tree.TypeApply(fun, _)       => Chunk(fun)
+            case Tree.Block(stats, expr)      => stats :+ expr
+            case Tree.If(cond, thenp, elsep)  => Chunk(cond, thenp, elsep)
+            case Tree.Match(selector, cases)  => Chunk(selector) ++ cases
+            case Tree.CaseDef(pattern, guard, body) =>
+                val guardChunk = guard match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+                Chunk(pattern) ++ guardChunk :+ body
+            case Tree.Literal(_)       => Chunk.empty
+            case Tree.New(_)           => Chunk.empty
+            case Tree.Assign(lhs, rhs) => Chunk(lhs, rhs)
+            case Tree.Return(expr, _) =>
+                expr match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+            case Tree.Throw(expr)       => Chunk(expr)
+            case Tree.Lambda(method, _) => Chunk(method)
+            case Tree.Typed(expr, _)    => Chunk(expr)
+            case Tree.Inlined(call, bindings, body) =>
+                val callChunk = call match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+                callChunk ++ bindings :+ body
+            case Tree.Try(expr, cases, finalizer) =>
+                val finChunk = finalizer match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+                Chunk(expr) ++ cases ++ finChunk
+            case Tree.While(cond, body)     => Chunk(cond, body)
+            case Tree.Bind(_, pattern)      => Chunk(pattern)
+            case Tree.Alternative(patterns) => patterns
+            case Tree.Unapply(fun, implicits, patterns) =>
+                Chunk(fun) ++ implicits ++ patterns
+            case Tree.ValDef(_, _, rhs) =>
+                rhs match
+                    case Maybe.Present(t) => Chunk(t)
+                    case Maybe.Absent     => Chunk.empty
+            case Tree.DefDef(_, paramss, _, rhs) =>
+                val params = paramss.flatMap(identity)
+                rhs match
+                    case Maybe.Present(t) => params :+ t
+                    case Maybe.Absent     => params
+            case Tree.TypeDef(_, _)         => Chunk.empty
+            case Tree.PackageDef(_, stats)  => stats
+            case Tree.ClassDef(_, template) => Chunk(template)
+            case Tree.Template(parents, _, body) =>
+                parents ++ body
+            case Tree.Super(qual, _)         => Chunk(qual)
+            case Tree.This(_)                => Chunk.empty
+            case Tree.NamedArg(_, value)     => Chunk(value)
+            case Tree.Annotated(expr, annot) => Chunk(expr, annot)
+            case Tree.Shared(_)              => Chunk.empty
+            case Tree.Modifier(_)            => Chunk.empty
+            case Tree.RecType(parent)        => Chunk(parent)
+            case Tree.SuperType(t1, t2)      => Chunk(t1, t2)
+            case Tree.RefinedType(parent, _, info) =>
+                Chunk(parent, info)
+            case Tree.AppliedType(tycon, args) => Chunk(tycon) ++ args
+            case Tree.TypeBounds(lo, hi)       => Chunk(lo, hi)
+            case Tree.AnnotatedType(parent, a) => Chunk(parent, a)
+            case Tree.AndType(l, r)            => Chunk(l, r)
+            case Tree.OrType(l, r)             => Chunk(l, r)
+            case Tree.ByNameType(arg)          => Chunk(arg)
+            case Tree.MatchType(bound, scrutinee, cases) =>
+                Chunk(bound, scrutinee) ++ cases
+            case Tree.FlexibleType(arg)        => Chunk(arg)
+            case Tree.IdentTpt(_, _)           => Chunk.empty
+            case Tree.SelectTpt(qual, _)       => Chunk(qual)
+            case Tree.SingletonTpt(tpe)        => Chunk(tpe)
+            case Tree.TermRefPkg(_)            => Chunk.empty
+            case Tree.TypeRefPkg(_)            => Chunk.empty
+            case Tree.TermRefSymbol(_, qual)   => Chunk(qual)
+            case Tree.TypeRefSymbol(_, qual)   => Chunk(qual)
+            case Tree.TermRefDirect(_)         => Chunk.empty
+            case Tree.TypeRefDirect(_)         => Chunk.empty
+            case Tree.SelectIn(qual, _, owner) => Chunk(qual, owner)
+            case Tree.Import(qual, selectors)  => Chunk(qual) ++ selectors
+            case Tree.Export(qual, selectors)  => Chunk(qual) ++ selectors
+            case Tree.AnnotationNode(annotType, arg) =>
+                Chunk(annotType, arg)
+            case Tree.RecThisAddr(_)             => Chunk.empty
+            case Tree.Imported(qual)             => Chunk(qual)
+            case Tree.Renamed(_)                 => Chunk.empty
+            case Tree.ByNameTpt(_)               => Chunk.empty
+            case Tree.Bounded(bound)             => Chunk(bound)
+            case Tree.ExplicitTpt(_)             => Chunk.empty
+            case Tree.Elided(_)                  => Chunk.empty
+            case Tree.TypeRefTree(qual, _)       => Chunk(qual)
+            case Tree.TermRef(prefix, _)         => Chunk(prefix)
+            case Tree.SeqLiteral(elems, _)       => elems
+            case Tree.SelfDef(_, tpe)            => Chunk(tpe)
+            case Tree.SelectOuter(qual, _, _, _) => Chunk(qual)
+            case Tree.Unknown(_, _)              => Chunk.empty
+        end children
 
         /** Pre-order traversal: visits this node then all descendants. */
         def foreach(f: Tree => Unit): Unit =
@@ -616,329 +1084,6 @@ object Tasty:
         /** Human-readable formatting; resolves symbols and types via the Classpath. */
         def show(using cp: Classpath): String =
             kyo.internal.tasty.reader.TreeShow.show(this, cp)
-    end Tree
-
-    object Tree:
-        /** Term reference by name (IDENT tag). */
-        final case class Ident(name: Name, tpe: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Member selection (SELECT tag). */
-        final case class Select(qualifier: Tree, name: Name, tpe: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk(qualifier)
-
-        /** Function application (APPLY tag). */
-        final case class Apply(fun: Tree, args: Chunk[Tree]) extends Tree:
-            def children: Chunk[Tree] = Chunk(fun) ++ args
-
-        /** Type application (TYPEAPPLY tag). */
-        final case class TypeApply(fun: Tree, args: Chunk[Type]) extends Tree:
-            def children: Chunk[Tree] = Chunk(fun)
-
-        /** Block of statements followed by an expression (BLOCK tag). */
-        final case class Block(stats: Chunk[Tree], expr: Tree) extends Tree:
-            def children: Chunk[Tree] = stats :+ expr
-
-        /** Conditional expression (IF tag). */
-        final case class If(cond: Tree, thenp: Tree, elsep: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(cond, thenp, elsep)
-
-        /** Pattern match (MATCH tag). */
-        final case class Match(selector: Tree, cases: Chunk[CaseDef]) extends Tree:
-            def children: Chunk[Tree] = Chunk(selector) ++ cases
-
-        /** Single case in a match (CASEDEF tag). */
-        final case class CaseDef(pattern: Tree, guard: Maybe[Tree], body: Tree) extends Tree:
-            def children: Chunk[Tree] =
-                val guardChunk = guard match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
-                Chunk(pattern) ++ guardChunk :+ body
-            end children
-        end CaseDef
-
-        /** Literal constant (various const tags). */
-        final case class Literal(constant: Constant) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Object allocation (NEW tag). */
-        final case class New(tpe: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Assignment (ASSIGN tag). */
-        final case class Assign(lhs: Tree, rhs: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(lhs, rhs)
-
-        /** Return statement (RETURN tag). */
-        final case class Return(expr: Maybe[Tree], from: Symbol) extends Tree:
-            def children: Chunk[Tree] =
-                expr match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
-        end Return
-
-        /** Throw expression (THROW tag). */
-        final case class Throw(expr: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(expr)
-
-        /** Lambda / anonymous function (LAMBDA tag). */
-        final case class Lambda(method: Tree, tpe: Maybe[Type]) extends Tree:
-            def children: Chunk[Tree] = Chunk(method)
-
-        /** Type ascription (TYPED tag). */
-        final case class Typed(expr: Tree, tpe: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk(expr)
-
-        /** Inlined call expansion (INLINED tag). */
-        final case class Inlined(call: Maybe[Tree], bindings: Chunk[Tree], body: Tree) extends Tree:
-            def children: Chunk[Tree] =
-                val callChunk = call match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
-                callChunk ++ bindings :+ body
-            end children
-        end Inlined
-
-        /** Try/catch/finally (TRY tag). */
-        final case class Try(expr: Tree, cases: Chunk[CaseDef], finalizer: Maybe[Tree]) extends Tree:
-            def children: Chunk[Tree] =
-                val finChunk = finalizer match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
-                Chunk(expr) ++ cases ++ finChunk
-            end children
-        end Try
-
-        /** While loop (WHILE tag). */
-        final case class While(cond: Tree, body: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(cond, body)
-
-        /** Pattern binding (BIND tag). */
-        final case class Bind(name: Name, pattern: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(pattern)
-
-        /** Alternative patterns in a case (ALTERNATIVE tag). */
-        final case class Alternative(patterns: Chunk[Tree]) extends Tree:
-            def children: Chunk[Tree] = patterns
-
-        /** Unapply extractor call (UNAPPLY tag). */
-        final case class Unapply(fun: Tree, implicits: Chunk[Tree], patterns: Chunk[Tree]) extends Tree:
-            def children: Chunk[Tree] = Chunk(fun) ++ implicits ++ patterns
-
-        /** Val or var definition (VALDEF tag). */
-        final case class ValDef(sym: Symbol, tpt: Type, rhs: Maybe[Tree]) extends Tree:
-            def children: Chunk[Tree] =
-                rhs match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
-        end ValDef
-
-        /** Method definition (DEFDEF tag). */
-        final case class DefDef(sym: Symbol, paramss: Chunk[Chunk[Tree]], tpt: Type, rhs: Maybe[Tree]) extends Tree:
-            def children: Chunk[Tree] =
-                val params = paramss.flatMap(identity)
-                rhs match
-                    case Maybe.Present(t) => params :+ t
-                    case Maybe.Absent     => params
-            end children
-        end DefDef
-
-        /** Type alias or abstract type definition (TYPEDEF tag). */
-        final case class TypeDef(sym: Symbol, rhs: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Package definition (PACKAGE tag). */
-        final case class PackageDef(sym: Symbol, stats: Chunk[Tree]) extends Tree:
-            def children: Chunk[Tree] = stats
-
-        /** Class definition (TYPEDEF with TEMPLATE). */
-        final case class ClassDef(sym: Symbol, template: Template) extends Tree:
-            def children: Chunk[Tree] = Chunk(template)
-
-        /** Class template body (TEMPLATE tag). */
-        final case class Template(parents: Chunk[Tree], self: Maybe[Symbol], body: Chunk[Tree]) extends Tree:
-            def children: Chunk[Tree] = parents ++ body
-
-        /** Super reference (SUPER tag). */
-        final case class Super(qual: Tree, mix: Maybe[Name]) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual)
-
-        /** This reference (THIS tag). */
-        final case class This(cls: Symbol) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Named argument in an application (NAMEDARG tag). */
-        final case class NamedArg(name: Name, value: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(value)
-
-        /** Annotated tree (ANNOTATEDtpt/ANNOTATEDtype). */
-        final case class Annotated(expr: Tree, annotation: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(expr, annotation)
-
-        /** Shared sub-tree back-reference (SHAREDtype or SHAREDterm tag). `addr` is the byte address of the original node. */
-        final case class Shared(addr: Int) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** TASTy category-1 modifier tag (single-byte, no payload; tag in range [1, 59]). */
-        final case class Modifier(flag: Flag) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Recursive type wrapper (RECtype tag). */
-        final case class RecType(parent: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(parent)
-
-        /** Super type pair (SUPERtype tag). */
-        final case class SuperType(thistpe: Tree, supertpe: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(thistpe, supertpe)
-
-        /** Structural refinement type (REFINEDtype tag). */
-        final case class RefinedType(parent: Tree, name: Name, info: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(parent, info)
-
-        /** Type constructor applied to arguments (APPLIEDtype tag). */
-        final case class AppliedType(tycon: Tree, args: Chunk[Tree]) extends Tree:
-            def children: Chunk[Tree] = Chunk(tycon) ++ args
-
-        /** Type bounds (TYPEBOUNDS tag). */
-        final case class TypeBounds(lo: Tree, hi: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(lo, hi)
-
-        /** Annotated type (ANNOTATEDtype tag). */
-        final case class AnnotatedType(parent: Tree, annot: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(parent, annot)
-
-        /** Intersection type (ANDtype tag). */
-        final case class AndType(left: Tree, right: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(left, right)
-
-        /** Union type (ORtype tag). */
-        final case class OrType(left: Tree, right: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(left, right)
-
-        /** By-name type (BYNAMEtype tag). */
-        final case class ByNameType(arg: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(arg)
-
-        /** Match type with scrutinee and cases (MATCHtype tag). */
-        final case class MatchType(bound: Tree, scrutinee: Tree, cases: Chunk[Tree]) extends Tree:
-            def children: Chunk[Tree] = Chunk(bound, scrutinee) ++ cases
-
-        /** Flexible (Java-nullable) type (FLEXIBLEtype tag). */
-        final case class FlexibleType(arg: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(arg)
-
-        /** Type-position identifier (IDENTtpt tag): nameRef + type. */
-        final case class IdentTpt(name: Name, tpe: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Type-position selection (SELECTtpt tag): qualifier + name. */
-        final case class SelectTpt(qual: Tree, name: Name) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual)
-
-        /** Singleton type (SINGLETONtpt tag): ref tree. */
-        final case class SingletonTpt(tpe: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(tpe)
-
-        /** Package-level term reference (TERMREFpkg tag): package name only. */
-        final case class TermRefPkg(name: Name) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Package-level type reference (TYPEREFpkg tag): package name only. */
-        final case class TypeRefPkg(name: Name) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Symbol-addressed term reference (TERMREFsymbol tag): addr + qualifier. */
-        final case class TermRefSymbol(addr: Int, qual: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual)
-
-        /** Symbol-addressed type reference (TYPEREFsymbol tag): addr + qualifier. */
-        final case class TypeRefSymbol(addr: Int, qual: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual)
-
-        /** Direct-address term reference (TERMREFdirect tag): symbol address. */
-        final case class TermRefDirect(addr: Int) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Direct-address type reference (TYPEREFdirect tag): symbol address. */
-        final case class TypeRefDirect(addr: Int) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Owner-qualified selection (SELECTin tag): qualifier + name + owner. */
-        final case class SelectIn(qual: Tree, name: Name, owner: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual, owner)
-
-        /** Import statement (IMPORT tag): qualifier expression and selector trees. */
-        final case class Import(qual: Tree, selectors: Chunk[Tree]) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual) ++ selectors
-
-        /** Export clause (EXPORT tag): qualifier expression and selector trees. */
-        final case class Export(qual: Tree, selectors: Chunk[Tree]) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual) ++ selectors
-
-        /** In-tree annotation node (ANNOTATION tag): annotation class type tree and annotation argument tree. */
-        final case class AnnotationNode(annotType: Tree, arg: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(annotType, arg)
-
-        /** Recursive-this reference (RECthis tag): address of the enclosing Rec frame. */
-        final case class RecThisAddr(addr: Int) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Import selector: the imported name (IMPORTED tag). */
-        final case class Imported(qual: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual)
-
-        /** Import rename: the renamed-to name (RENAMED tag). */
-        final case class Renamed(name: Name) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** By-name type annotation in type position (BYNAMEtpt tag). */
-        final case class ByNameTpt(inner: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Bounded wildcard type (BOUNDED tag): the bound tree. */
-        final case class Bounded(bound: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(bound)
-
-        /** Explicit type annotation in type position (EXPLICITtpt tag). */
-        final case class ExplicitTpt(inner: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Elided (inferred) type position (ELIDED tag). */
-        final case class Elided(inner: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
-
-        /** Type-position reference by name and qualifier (TYPEREF tag). */
-        final case class TypeRefTree(qual: Tree, name: Name) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual)
-
-        /** Term-position path-dependent reference (F-B-004). Wire tag TERMREFin (174).
-          *
-          * prefix is the qualifier tree (encoded as Tree.Ident(name, qualType)). name identifies the
-          * referenced member. Replaces the fabricated Tree.Select placeholder from Phase 05.
-          */
-        final case class TermRef(prefix: Tree, name: Name) extends Tree:
-            def children: Chunk[Tree] = Chunk(prefix)
-
-        /** Repeated (varargs) sequence literal (F-B-005). Wire tag REPEATED (149).
-          *
-          * elems are the element trees. tpe is Type.Wildcard(Nothing, Any) as a placeholder until
-          * a future phase infers the element type from context.
-          * Replaces the fabricated Tree.Apply(Ident("_repeated", ...), trees) placeholder.
-          */
-        final case class SeqLiteral(elems: Chunk[Tree], tpe: Type) extends Tree:
-            def children: Chunk[Tree] = elems
-
-        /** Self type definition in a class template (SELFDEF tag). */
-        final case class SelfDef(name: Name, tpe: Tree) extends Tree:
-            def children: Chunk[Tree] = Chunk(tpe)
-
-        /** Outer reference (SELECTouter tag): outer class at given level. */
-        final case class SelectOuter(qual: Tree, name: Name, levels: Int, tpe: Type) extends Tree:
-            def children: Chunk[Tree] = Chunk(qual)
-
-        /** Unknown tag -- encountered a tag not covered by this ADT version. */
-        final case class Unknown(tag: Int, length: Int) extends Tree:
-            def children: Chunk[Tree] = Chunk.empty
     end Tree
 
     // ── Supporting ADTs for the Symbol hierarchy ────────────────────────────

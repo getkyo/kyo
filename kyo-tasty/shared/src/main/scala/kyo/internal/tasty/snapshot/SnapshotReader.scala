@@ -1020,7 +1020,7 @@ object SnapshotReader:
         for idx <- order do
             val raw        = raws(idx)
             val kind       = kindFromOrd(raw.kindOrd)
-            val flags      = new Tasty.Flags(raw.flagBits)
+            val flags      = Tasty.Flags.fromBits(raw.flagBits)
             val name       = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
             val ownerIdInt = raw.ownerId
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
@@ -1332,7 +1332,7 @@ object SnapshotReader:
         for idx <- order do
             val raw        = raws(idx)
             val kind       = kindFromOrd(raw.kindOrd)
-            val flags      = new Tasty.Flags(raw.flagBits)
+            val flags      = Tasty.Flags.fromBits(raw.flagBits)
             val name       = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
             val ownerIdInt = raw.ownerId
             // ownerId: use index directly; -1 means self-referential (root sentinel).

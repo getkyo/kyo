@@ -14,7 +14,7 @@ class FlagPredicatePreservationTest extends Test:
     // Given: Symbol.Class final case class fixture; When: invoke all 40 predicates; Then: isFinal/isCase/isClass true; 37 others false
     // Pins: INV-003
     "40-predicates-on-class: isFinal/isCase/isClass true; 37 others false" in {
-        val flags = new Tasty.Flags(Tasty.Flag.Final.bit | Tasty.Flag.Case.bit)
+        val flags = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
         val sym = Tasty.Symbol.Class(
             SymbolId(1),
             Tasty.Name("Foo"),
@@ -48,7 +48,7 @@ class FlagPredicatePreservationTest extends Test:
     // Given: Symbol.Method inline given def; When: invoke all 40 predicates; Then: isInline/isGiven/isContextual/isMethod true; 36 others false
     // Pins: INV-003
     "40-predicates-on-method: isInline/isGiven/isMethod true" in {
-        val flags = new Tasty.Flags(Tasty.Flag.Inline.bit | Tasty.Flag.Given.bit)
+        val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Given)
         val sym = Tasty.Symbol.Method(
             SymbolId(1),
             Tasty.Name("foo"),

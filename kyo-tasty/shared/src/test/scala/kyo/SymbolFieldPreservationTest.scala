@@ -184,7 +184,7 @@ class SymbolFieldPreservationTest extends Test:
     // Then: returns true on all 14 subtypes.
     // Pins: INV-002, INV-003.
     "Leaf 16: Flags(Flag.Synthetic) is preserved on all 14 subtypes" in {
-        val sf = new Tasty.Flags(Tasty.Flag.Synthetic.bit)
+        val sf = Tasty.Flags(Tasty.Flag.Synthetic)
         val syms: Seq[Tasty.Symbol] = Seq(
             Tasty.Symbol.Class(
                 SymbolId(1),

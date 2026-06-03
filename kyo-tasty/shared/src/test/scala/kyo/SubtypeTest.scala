@@ -47,7 +47,7 @@ class SubtypeTest extends Test:
         Tasty.Symbol.TypeParam(
             id = freshId(),
             name = Tasty.Name(name),
-            flags = new Tasty.Flags(Tasty.Flag.CoVariant.bit),
+            flags = Tasty.Flags(Tasty.Flag.CoVariant),
             ownerId = SymbolId(-1),
             sourcePosition = Maybe.Absent,
             bounds = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),

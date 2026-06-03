@@ -38,7 +38,7 @@ class SymbolPredicateTest extends Test:
             case pk: Tasty.Symbol.Package      => pk.copy(id = SymbolId(1), ownerId = SymbolId(0))
 
     private def flagsOf(flags: Tasty.Flag*): Tasty.Flags =
-        flags.foldLeft(Tasty.Flags.empty)((acc, f) => new Tasty.Flags(acc.bits | f.bit))
+        flags.foldLeft(Tasty.Flags.empty)((acc, f) => acc | Tasty.Flags(f))
 
     // ── Leaf 1: every flag predicate reflects flags.contains ─────────────────
 

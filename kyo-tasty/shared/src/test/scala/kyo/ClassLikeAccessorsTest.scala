@@ -180,7 +180,7 @@ class ClassLikeAccessorsTest extends Test:
         Tasty.Symbol.TypeParam(
             SymbolId(id),
             Tasty.Name(name),
-            new Tasty.Flags(Tasty.Flag.CoVariant.bit),
+            Tasty.Flags(Tasty.Flag.CoVariant),
             SymbolId(ownerId),
             Maybe.Absent,
             Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
@@ -191,7 +191,7 @@ class ClassLikeAccessorsTest extends Test:
         Tasty.Symbol.TypeParam(
             SymbolId(id),
             Tasty.Name(name),
-            new Tasty.Flags(Tasty.Flag.ContraVariant.bit),
+            Tasty.Flags(Tasty.Flag.ContraVariant),
             SymbolId(ownerId),
             Maybe.Absent,
             Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
@@ -509,7 +509,7 @@ class ClassLikeAccessorsTest extends Test:
     // Then: each predicate returns the correct boolean per INV-003
     // Pins: INV-003
     "prior-flag-predicates-still-work-on-classlike: flag predicates on Class/Trait return expected values" in {
-        val classFlags = new Tasty.Flags(Tasty.Flag.Final.bit | Tasty.Flag.Case.bit)
+        val classFlags = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
         val classSym = Tasty.Symbol.Class(
             SymbolId(1),
             Tasty.Name("CaseFoo"),
@@ -526,7 +526,7 @@ class ClassLikeAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent
         )
-        val traitFlags = new Tasty.Flags(Tasty.Flag.Abstract.bit | Tasty.Flag.Sealed.bit)
+        val traitFlags = Tasty.Flags(Tasty.Flag.Abstract, Tasty.Flag.Sealed)
         val traitSym = Tasty.Symbol.Trait(
             SymbolId(2),
             Tasty.Name("SealedTrait"),

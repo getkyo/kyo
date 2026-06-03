@@ -56,7 +56,7 @@ class SymbolCaseClassTest extends Test:
             id = 7,
             name = "Bar",
             ownerId = 3,
-            flags = new Tasty.Flags(Tasty.Flag.Final.bit),
+            flags = Tasty.Flags(Tasty.Flag.Final),
             scaladoc = Maybe("/** doc */"),
             parentTypes = Chunk(Tasty.Type.Named(makeTestSymbol(id = 1, name = "AnyRef").id))
         )

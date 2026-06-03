@@ -23,45 +23,45 @@ object Flags:
       */
     def fromTastyModifierTag(tag: Int): Tasty.Flags =
         tag match
-            case TastyFormat.PRIVATE       => new Tasty.Flags(Flag.Private.bit)
-            case TastyFormat.PROTECTED     => new Tasty.Flags(Flag.Protected.bit)
-            case TastyFormat.ABSTRACT      => new Tasty.Flags(Flag.Abstract.bit)
-            case TastyFormat.FINAL         => new Tasty.Flags(Flag.Final.bit)
-            case TastyFormat.SEALED        => new Tasty.Flags(Flag.Sealed.bit)
-            case TastyFormat.CASE          => new Tasty.Flags(Flag.Case.bit)
-            case TastyFormat.IMPLICIT      => new Tasty.Flags(Flag.Implicit.bit)
-            case TastyFormat.LAZY          => new Tasty.Flags(Flag.Lazy.bit)
-            case TastyFormat.OVERRIDE      => new Tasty.Flags(Flag.Override.bit)
-            case TastyFormat.INLINEPROXY   => new Tasty.Flags(Flag.InlineProxy.bit)
-            case TastyFormat.INLINE        => new Tasty.Flags(Flag.Inline.bit)
-            case TastyFormat.STATIC        => new Tasty.Flags(Flag.JavaDefined.bit)
-            case TastyFormat.OBJECT        => new Tasty.Flags(Flag.Module.bit)
-            case TastyFormat.TRAIT         => new Tasty.Flags(Flag.Trait.bit)
-            case TastyFormat.ENUM          => new Tasty.Flags(Flag.Enum.bit)
-            case TastyFormat.LOCAL         => new Tasty.Flags(Flag.Local.bit)
-            case TastyFormat.SYNTHETIC     => new Tasty.Flags(Flag.Synthetic.bit)
-            case TastyFormat.ARTIFACT      => new Tasty.Flags(Flag.Artifact.bit)
-            case TastyFormat.MUTABLE       => new Tasty.Flags(Flag.Mutable.bit)
-            case TastyFormat.FIELDaccessor => new Tasty.Flags(Flag.FieldAccessor.bit)
-            case TastyFormat.CASEaccessor  => new Tasty.Flags(Flag.CaseAccessor.bit)
-            case TastyFormat.COVARIANT     => new Tasty.Flags(Flag.CoVariant.bit)
-            case TastyFormat.CONTRAVARIANT => new Tasty.Flags(Flag.ContraVariant.bit)
-            case TastyFormat.HASDEFAULT    => new Tasty.Flags(Flag.HasDefault.bit)
-            case TastyFormat.STABLE        => new Tasty.Flags(Flag.Stable.bit)
-            case TastyFormat.MACRO         => new Tasty.Flags(Flag.Macro.bit)
-            case TastyFormat.ERASED        => new Tasty.Flags(Flag.Erased.bit)
-            case TastyFormat.OPAQUE        => new Tasty.Flags(Flag.Opaque.bit)
-            case TastyFormat.EXTENSION     => new Tasty.Flags(Flag.Extension.bit)
-            case TastyFormat.GIVEN         => new Tasty.Flags(Flag.Given.bit)
-            case TastyFormat.PARAMsetter   => new Tasty.Flags(Flag.PARAMsetter.bit)
-            case TastyFormat.EXPORTED      => new Tasty.Flags(Flag.Exported.bit)
-            case TastyFormat.OPEN          => new Tasty.Flags(Flag.Open.bit)
-            case TastyFormat.PARAMalias    => new Tasty.Flags(Flag.PARAMalias.bit)
-            case TastyFormat.TRANSPARENT   => new Tasty.Flags(Flag.Transparent.bit)
-            case TastyFormat.INFIX         => new Tasty.Flags(Flag.Infix.bit)
-            case TastyFormat.INVISIBLE     => new Tasty.Flags(Flag.Invisible.bit)
-            case TastyFormat.INTO          => new Tasty.Flags(Flag.Into.bit)
-            case TastyFormat.TRACKED       => new Tasty.Flags(Flag.Tracked.bit)
+            case TastyFormat.PRIVATE       => Tasty.Flags(Flag.Private)
+            case TastyFormat.PROTECTED     => Tasty.Flags(Flag.Protected)
+            case TastyFormat.ABSTRACT      => Tasty.Flags(Flag.Abstract)
+            case TastyFormat.FINAL         => Tasty.Flags(Flag.Final)
+            case TastyFormat.SEALED        => Tasty.Flags(Flag.Sealed)
+            case TastyFormat.CASE          => Tasty.Flags(Flag.Case)
+            case TastyFormat.IMPLICIT      => Tasty.Flags(Flag.Implicit)
+            case TastyFormat.LAZY          => Tasty.Flags(Flag.Lazy)
+            case TastyFormat.OVERRIDE      => Tasty.Flags(Flag.Override)
+            case TastyFormat.INLINEPROXY   => Tasty.Flags(Flag.InlineProxy)
+            case TastyFormat.INLINE        => Tasty.Flags(Flag.Inline)
+            case TastyFormat.STATIC        => Tasty.Flags(Flag.JavaDefined)
+            case TastyFormat.OBJECT        => Tasty.Flags(Flag.Module)
+            case TastyFormat.TRAIT         => Tasty.Flags(Flag.Trait)
+            case TastyFormat.ENUM          => Tasty.Flags(Flag.Enum)
+            case TastyFormat.LOCAL         => Tasty.Flags(Flag.Local)
+            case TastyFormat.SYNTHETIC     => Tasty.Flags(Flag.Synthetic)
+            case TastyFormat.ARTIFACT      => Tasty.Flags(Flag.Artifact)
+            case TastyFormat.MUTABLE       => Tasty.Flags(Flag.Mutable)
+            case TastyFormat.FIELDaccessor => Tasty.Flags(Flag.FieldAccessor)
+            case TastyFormat.CASEaccessor  => Tasty.Flags(Flag.CaseAccessor)
+            case TastyFormat.COVARIANT     => Tasty.Flags(Flag.CoVariant)
+            case TastyFormat.CONTRAVARIANT => Tasty.Flags(Flag.ContraVariant)
+            case TastyFormat.HASDEFAULT    => Tasty.Flags(Flag.HasDefault)
+            case TastyFormat.STABLE        => Tasty.Flags(Flag.Stable)
+            case TastyFormat.MACRO         => Tasty.Flags(Flag.Macro)
+            case TastyFormat.ERASED        => Tasty.Flags(Flag.Erased)
+            case TastyFormat.OPAQUE        => Tasty.Flags(Flag.Opaque)
+            case TastyFormat.EXTENSION     => Tasty.Flags(Flag.Extension)
+            case TastyFormat.GIVEN         => Tasty.Flags(Flag.Given)
+            case TastyFormat.PARAMsetter   => Tasty.Flags(Flag.PARAMsetter)
+            case TastyFormat.EXPORTED      => Tasty.Flags(Flag.Exported)
+            case TastyFormat.OPEN          => Tasty.Flags(Flag.Open)
+            case TastyFormat.PARAMalias    => Tasty.Flags(Flag.PARAMalias)
+            case TastyFormat.TRANSPARENT   => Tasty.Flags(Flag.Transparent)
+            case TastyFormat.INFIX         => Tasty.Flags(Flag.Infix)
+            case TastyFormat.INVISIBLE     => Tasty.Flags(Flag.Invisible)
+            case TastyFormat.INTO          => Tasty.Flags(Flag.Into)
+            case TastyFormat.TRACKED       => Tasty.Flags(Flag.Tracked)
             case _                         => Tasty.Flags.empty
 
     /** Convert JVM access flags (from a classfile) to Flags bitmask.
@@ -70,18 +70,18 @@ object Flags:
       */
     def fromJvmAccessFlags(acc: Int): Tasty.Flags =
         var bits = 0L
-        if (acc & 0x0001) != 0 then bits |= Flag.Public.bit    // ACC_PUBLIC
-        if (acc & 0x0002) != 0 then bits |= Flag.Private.bit   // ACC_PRIVATE
-        if (acc & 0x0004) != 0 then bits |= Flag.Protected.bit // ACC_PROTECTED
-        if (acc & 0x0010) != 0 then bits |= Flag.Final.bit     // ACC_FINAL
-        if (acc & 0x0400) != 0 then bits |= Flag.Abstract.bit  // ACC_ABSTRACT (0x0400), not ACC_INTERFACE (0x0200)
-        if (acc & 0x0200) != 0 then bits |= Flag.Trait.bit     // ACC_INTERFACE -> Trait
-        if (acc & 0x0008) != 0 then bits |= Flag.Static.bit    // ACC_STATIC
-        if (acc & 0x1000) != 0 then bits |= Flag.Synthetic.bit // ACC_SYNTHETIC
-        if (acc & 0x4000) != 0 then bits |= Flag.Enum.bit      // ACC_ENUM
+        if (acc & 0x0001) != 0 then bits |= Flag.bits(Flag.Public)    // ACC_PUBLIC
+        if (acc & 0x0002) != 0 then bits |= Flag.bits(Flag.Private)   // ACC_PRIVATE
+        if (acc & 0x0004) != 0 then bits |= Flag.bits(Flag.Protected) // ACC_PROTECTED
+        if (acc & 0x0010) != 0 then bits |= Flag.bits(Flag.Final)     // ACC_FINAL
+        if (acc & 0x0400) != 0 then bits |= Flag.bits(Flag.Abstract)  // ACC_ABSTRACT (0x0400), not ACC_INTERFACE (0x0200)
+        if (acc & 0x0200) != 0 then bits |= Flag.bits(Flag.Trait)     // ACC_INTERFACE -> Trait
+        if (acc & 0x0008) != 0 then bits |= Flag.bits(Flag.Static)    // ACC_STATIC
+        if (acc & 0x1000) != 0 then bits |= Flag.bits(Flag.Synthetic) // ACC_SYNTHETIC
+        if (acc & 0x4000) != 0 then bits |= Flag.bits(Flag.Enum)      // ACC_ENUM
         // Flag.JavaRecord is NOT set here; set by ClassfileUnpickler when Record attribute found.
         // Flag.JavaDefined is set unconditionally by ClassfileUnpickler for every Java symbol.
-        new Tasty.Flags(bits)
+        Tasty.Flags.fromBits(bits)
     end fromJvmAccessFlags
 
 end Flags

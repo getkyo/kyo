@@ -244,8 +244,7 @@ object Scala2PickleReader:
                 nameTable(i) = new String(entry.data, java.nio.charset.StandardCharsets.UTF_8)
         }
 
-        val scala2Bit   = Tasty.Flag.Scala2.bit | Tasty.Flag.JavaDefined.bit
-        val scala2Flags = new Tasty.Flags(scala2Bit)
+        val scala2Flags = Tasty.Flags(Tasty.Flag.Scala2, Tasty.Flag.JavaDefined)
 
         var symbols    = Chunk.empty[Tasty.Symbol]
         var firstClass = Maybe.empty[Tasty.Symbol]
@@ -320,7 +319,7 @@ object Scala2PickleReader:
         val symName = nameTable.getOrElse(nameRef, s"<module$idx>")
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
-        val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags) | new Tasty.Flags(Tasty.Flag.Module.bit)
+        val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags) | Tasty.Flags(Tasty.Flag.Module)
         makePickleSym(Tasty.SymbolKind.Object, flags, symName, interner)
     end decodeModuleSym
 
@@ -503,7 +502,7 @@ object Scala2PickleReader:
         // declaredType=Absent (Named(sym) self-ref approximation).
         val anyRefSym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
-            new Tasty.Flags(Tasty.Flag.Scala2.bit | Tasty.Flag.JavaDefined.bit),
+            Tasty.Flags(Tasty.Flag.Scala2, Tasty.Flag.JavaDefined),
             Tasty.Name("AnyRef")
         )
         Tasty.Type.Named(anyRefSym.id)
@@ -552,18 +551,18 @@ object Scala2PickleReader:
     /** Map Scala 2 pickle flag bits to Tasty.Flags. */
     private def pickleFlags2TastyFlags(rawFlags: Long): Tasty.Flags =
         var bits = 0L
-        if (rawFlags & FINAL_FLAG) != 0 then bits |= Tasty.Flag.Final.bit
-        if (rawFlags & PRIVATE_FLAG) != 0 then bits |= Tasty.Flag.Private.bit
-        if (rawFlags & PROTECTED_FLAG) != 0 then bits |= Tasty.Flag.Protected.bit
-        if (rawFlags & IMPLICIT_FLAG) != 0 then bits |= Tasty.Flag.Implicit.bit
-        if (rawFlags & SEALED_FLAG) != 0 then bits |= Tasty.Flag.Sealed.bit
-        if (rawFlags & OVERRIDE_FLAG) != 0 then bits |= Tasty.Flag.Override.bit
-        if (rawFlags & CASE_FLAG) != 0 then bits |= Tasty.Flag.Case.bit
-        if (rawFlags & ABSTRACT_FLAG) != 0 then bits |= Tasty.Flag.Abstract.bit
-        if (rawFlags & TRAIT_FLAG) != 0 then bits |= Tasty.Flag.Trait.bit
-        if (rawFlags & MODULE_FLAG) != 0 then bits |= Tasty.Flag.Module.bit
-        if (rawFlags & LAZY_FLAG) != 0 then bits |= Tasty.Flag.Lazy.bit
-        new Tasty.Flags(bits)
+        if (rawFlags & FINAL_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Final)
+        if (rawFlags & PRIVATE_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Private)
+        if (rawFlags & PROTECTED_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Protected)
+        if (rawFlags & IMPLICIT_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Implicit)
+        if (rawFlags & SEALED_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Sealed)
+        if (rawFlags & OVERRIDE_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Override)
+        if (rawFlags & CASE_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Case)
+        if (rawFlags & ABSTRACT_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Abstract)
+        if (rawFlags & TRAIT_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Trait)
+        if (rawFlags & MODULE_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Module)
+        if (rawFlags & LAZY_FLAG) != 0 then bits |= Tasty.Flag.bits(Tasty.Flag.Lazy)
+        Tasty.Flags.fromBits(bits)
     end pickleFlags2TastyFlags
 
 end Scala2PickleReader

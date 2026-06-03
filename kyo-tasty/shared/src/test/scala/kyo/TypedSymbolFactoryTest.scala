@@ -74,7 +74,7 @@ class TypedSymbolFactoryTest extends Test:
     // Then: Symbol.TypeParam; variance==Covariant
     // Pins: INV-009
     "dispatch-on-kind-typeparam-variance: Covariant flag produces Variance.Covariant" in {
-        val coFlags = new Tasty.Flags(Tasty.Flag.CoVariant.bit)
+        val coFlags = Tasty.Flags(Tasty.Flag.CoVariant)
         val d       = makeDesc(id = 7, kind = Tasty.SymbolKind.TypeParam, flags = coFlags, name = "A")
         val sym     = TypedSymbolFactory.from(d)
         assert(sym.isInstanceOf[Tasty.Symbol.TypeParam], s"Expected Symbol.TypeParam but got ${sym.getClass.getSimpleName}")

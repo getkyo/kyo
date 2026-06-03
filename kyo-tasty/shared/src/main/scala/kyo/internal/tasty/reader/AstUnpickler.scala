@@ -286,7 +286,7 @@ object AstUnpickler:
                     val valTpe               = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
                     val (flagBits, pendAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                     val kind                 = InternalSymbolKind.fromValdefFlags(flagBits)
-                    val flags                = new Tasty.Flags(flagBits)
+                    val flags                = Tasty.Flags.fromBits(flagBits)
                     val sym                  = InternalSymbol.makeSymbol(kind, flags, symName)
                     ownerBySymbol(sym) = owner
                     bodyDataByAddr(sym) = (Math.toIntExact(payloadBody), Math.toIntExact(payloadEnd))
@@ -306,7 +306,7 @@ object AstUnpickler:
                     val owner               = currentOwner(ownerStack)
                     val payloadBody         = view.position
                     val (flagBits, defAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
-                    val flags               = new Tasty.Flags(flagBits)
+                    val flags               = Tasty.Flags.fromBits(flagBits)
                     val sym                 = InternalSymbol.makeSymbol(Tasty.SymbolKind.Method, flags, symName)
                     ownerBySymbol(sym) = owner
                     bodyDataByAddr(sym) = (Math.toIntExact(payloadBody), Math.toIntExact(payloadEnd))
@@ -383,7 +383,7 @@ object AstUnpickler:
                         // Modifiers follow the TEMPLATE node.
                         val (flagBits, tmplAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                         val kind                 = InternalSymbolKind.fromTypedefTemplateFlags(flagBits)
-                        val flags                = new Tasty.Flags(flagBits)
+                        val flags                = Tasty.Flags.fromBits(flagBits)
                         val sym                  = InternalSymbol.makeSymbol(kind, flags, symName)
                         ownerBySymbol(sym) = owner
                         bodyDataByAddr(sym) = (Math.toIntExact(templateBodyStart), Math.toIntExact(templatePayloadEnd))
@@ -436,7 +436,7 @@ object AstUnpickler:
                                     Absent
                         val (flagBits, typeAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                         val kind                 = InternalSymbolKind.fromTypedefTypeFlagsAndBody(flagBits, nextTag)
-                        val flags                = new Tasty.Flags(flagBits)
+                        val flags                = Tasty.Flags.fromBits(flagBits)
                         // Type-level TYPEDEF: no body to decode; bodyStart == bodyEnd == payloadEnd sentinel.
                         val sym = InternalSymbol.makeSymbol(kind, flags, symName)
                         ownerBySymbol(sym) = owner
@@ -458,7 +458,7 @@ object AstUnpickler:
                     // Decode type bounds (first type node after NameRef), if present.
                     val tpBounds           = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
                     val (flagBits, tpAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
-                    val flags              = new Tasty.Flags(flagBits)
+                    val flags              = Tasty.Flags.fromBits(flagBits)
                     val sym                = InternalSymbol.makeSymbol(Tasty.SymbolKind.TypeParam, flags, symName)
                     ownerBySymbol(sym) = owner
                     addrMap(nodeAddr) = sym
@@ -478,7 +478,7 @@ object AstUnpickler:
                     // Decode parameter type (first type node after NameRef), if present.
                     val paramTpe              = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
                     val (flagBits, paramAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
-                    val flags                 = new Tasty.Flags(flagBits)
+                    val flags                 = Tasty.Flags.fromBits(flagBits)
                     val sym                   = InternalSymbol.makeSymbol(Tasty.SymbolKind.Parameter, flags, symName)
                     ownerBySymbol(sym) = owner
                     addrMap(nodeAddr) = sym
@@ -774,10 +774,10 @@ object AstUnpickler:
                             case Present(ann) => annBuf += ann
                             case Absent       => ()
                     case TastyFormat.PRIVATEqualified =>
-                        flagBits |= Tasty.Flag.Private.bit
+                        flagBits |= Tasty.Flag.bits(Tasty.Flag.Private)
                         skipTree(view)
                     case TastyFormat.PROTECTEDqualified =>
-                        flagBits |= Tasty.Flag.Protected.bit
+                        flagBits |= Tasty.Flag.bits(Tasty.Flag.Protected)
                         skipTree(view)
                     case modTag =>
                         flagBits |= InternalFlags.fromTastyModifierTag(modTag).bits
@@ -816,10 +816,10 @@ object AstUnpickler:
                         case Present(ann) => annBuf += ann
                         case Absent       => ()
                 case TastyFormat.PRIVATEqualified =>
-                    flagBits |= Tasty.Flag.Private.bit
+                    flagBits |= Tasty.Flag.bits(Tasty.Flag.Private)
                     skipTree(view)
                 case TastyFormat.PROTECTEDqualified =>
-                    flagBits |= Tasty.Flag.Protected.bit
+                    flagBits |= Tasty.Flag.bits(Tasty.Flag.Protected)
                     skipTree(view)
                 case modTag if modTag >= 1 && modTag <= 59 =>
                     flagBits |= InternalFlags.fromTastyModifierTag(modTag).bits

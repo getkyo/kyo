@@ -1014,7 +1014,7 @@ object TreeUnpickler:
                 val pattern       = readTree(view, ctx)
                 val (guard, body) = readCaseDefGuardAndBody(view, payloadEnd, ctx)
                 view.goto(payloadEnd)
-                val cd = Tasty.Tree.CaseDef(pattern, guard, body)
+                val cd: Tasty.Tree.CaseDef = Tasty.Tree.CaseDef(pattern, guard, body)
                 ctx.treeAddrCache(startAddr) = cd
                 buf += cd
             else

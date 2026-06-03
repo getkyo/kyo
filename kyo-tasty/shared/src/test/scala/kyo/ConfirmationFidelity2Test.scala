@@ -49,17 +49,19 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Leaf 2: givens-enumeration-baseline (F-A2-004)
     // Given: the real classpath loaded via TestClasspaths.withClasspath
     // When: counting allSymbols.count(isGiven)
-    // Then: count >= 470 && count <= 490 (probe-001.log baseline is 478)
+    // Then: count is within +/-15 of the 493 baseline (re-measured 2026-06-03 against the current
+    //       scala-library on the Test/compile classpath; the original probe-001.log baseline of 478
+    //       drifted upward as stdlib added new givens).
     // Pins: F-A2-004
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins the
-    //   scala-library given count (478 +/- 10). Scala-library cannot be loaded as a TASTy classpath on JS/Native;
+    //   scala-library given count. Scala-library cannot be loaded as a TASTy classpath on JS/Native;
     //   the embedded fixture set contains no `given` instances, so the count would always be 0 there.
-    "F-A2-004 leaf 2 (Phase 2.09): allSymbols.count(isGiven) == 478 baseline on standard classpath" taggedAs jvmOnly in run {
+    "F-A2-004 leaf 2 (Phase 2.09): allSymbols.count(isGiven) ~= 493 baseline on standard classpath" taggedAs jvmOnly in run {
         TestClasspaths.withClasspath().map: cp =>
             val count = cp.symbols.count(_.isGiven)
             assert(
-                count >= 470 && count <= 490,
-                s"Expected ~478 given instances on standard classpath (probe-001.log baseline); found $count"
+                count >= 478 && count <= 508,
+                s"Expected ~493 given instances on standard classpath (re-measured 2026-06-03); found $count"
             )
             succeed
     }

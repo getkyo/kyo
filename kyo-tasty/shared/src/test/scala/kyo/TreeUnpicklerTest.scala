@@ -421,7 +421,7 @@ class TreeUnpicklerTest extends Test:
         val addrMap = IntMap.empty[Tasty.Symbol]
         val pickle  = Array(TastyFormat.PRIVATE.toByte)
         decodeAnnPickle(pickle, names, addrMap) match
-            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Private.bit => succeed
+            case Result.Success(Tasty.Tree.Modifier(flag)) if flag == Tasty.Flag.Private => succeed
             case Result.Success(other) => fail(s"Expected Tree.Modifier(Flag.Private) but got $other")
             case Result.Failure(e)     => fail(s"Expected success but got failure $e")
             case Result.Panic(t)       => throw t
@@ -451,8 +451,8 @@ class TreeUnpicklerTest extends Test:
         import scala.collection.immutable.IntMap
         val pickle = Array(TastyFormat.OBJECT.toByte)
         decodeAnnPickle(pickle, Array(Tasty.Name("dummy")), IntMap.empty) match
-            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Module.bit => succeed
-            case other => fail(s"Expected Modifier(Module), got: $other")
+            case Result.Success(Tasty.Tree.Modifier(flag)) if flag == Tasty.Flag.Module => succeed
+            case other                                                                  => fail(s"Expected Modifier(Module), got: $other")
     }
 
     "Phase18a-debt-2: TRAIT byte decodes to Tree.Modifier(Flag.Trait)" in run {
@@ -460,8 +460,8 @@ class TreeUnpicklerTest extends Test:
         import scala.collection.immutable.IntMap
         val pickle = Array(TastyFormat.TRAIT.toByte)
         decodeAnnPickle(pickle, Array(Tasty.Name("dummy")), IntMap.empty) match
-            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Trait.bit => succeed
-            case other => fail(s"Expected Modifier(Trait), got: $other")
+            case Result.Success(Tasty.Tree.Modifier(flag)) if flag == Tasty.Flag.Trait => succeed
+            case other                                                                 => fail(s"Expected Modifier(Trait), got: $other")
     }
 
     "Phase18a-debt-3: ENUM byte decodes to Tree.Modifier(Flag.Enum)" in run {
@@ -469,8 +469,8 @@ class TreeUnpicklerTest extends Test:
         import scala.collection.immutable.IntMap
         val pickle = Array(TastyFormat.ENUM.toByte)
         decodeAnnPickle(pickle, Array(Tasty.Name("dummy")), IntMap.empty) match
-            case Result.Success(Tasty.Tree.Modifier(flag)) if flag.bit == Tasty.Flag.Enum.bit => succeed
-            case other => fail(s"Expected Modifier(Enum), got: $other")
+            case Result.Success(Tasty.Tree.Modifier(flag)) if flag == Tasty.Flag.Enum => succeed
+            case other                                                                => fail(s"Expected Modifier(Enum), got: $other")
     }
 
     // ── Phase 18b Tests (M1, category-2 tags) ────────────────────────────────

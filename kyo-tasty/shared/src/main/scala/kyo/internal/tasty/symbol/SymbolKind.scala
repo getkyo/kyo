@@ -20,9 +20,9 @@ object SymbolKind:
       *   - else: Class
       */
     def fromTypedefTemplateFlags(flags: Long): Tasty.SymbolKind =
-        if (flags & Tasty.Flag.Trait.bit) != 0L then Tasty.SymbolKind.Trait
-        else if (flags & Tasty.Flag.Module.bit) != 0L then Tasty.SymbolKind.Object
-        else if (flags & Tasty.Flag.Enum.bit) != 0L && (flags & Tasty.Flag.Case.bit) != 0L then
+        if (flags & Tasty.Flag.bits(Tasty.Flag.Trait)) != 0L then Tasty.SymbolKind.Trait
+        else if (flags & Tasty.Flag.bits(Tasty.Flag.Module)) != 0L then Tasty.SymbolKind.Object
+        else if (flags & Tasty.Flag.bits(Tasty.Flag.Enum)) != 0L && (flags & Tasty.Flag.bits(Tasty.Flag.Case)) != 0L then
             // F-E-007: enum-case classes carry both the Enum and Case flags.
             // Enum-case OBJECTS additionally carry Module; the Module branch above handles those,
             // ensuring only class-form enum cases (no Module flag) reach this branch.
@@ -37,8 +37,8 @@ object SymbolKind:
       *   - else: TypeAlias
       */
     def fromTypedefTypeFlagsAndBody(flags: Long, bodyTag: Int): Tasty.SymbolKind =
-        if (flags & Tasty.Flag.Opaque.bit) != 0L then Tasty.SymbolKind.OpaqueType
-        else if (flags & Tasty.Flag.Abstract.bit) != 0L
+        if (flags & Tasty.Flag.bits(Tasty.Flag.Opaque)) != 0L then Tasty.SymbolKind.OpaqueType
+        else if (flags & Tasty.Flag.bits(Tasty.Flag.Abstract)) != 0L
             || bodyTag == TastyFormat.TYPEBOUNDS
             || bodyTag == TastyFormat.TYPEBOUNDStpt
         then Tasty.SymbolKind.AbstractType
@@ -53,13 +53,13 @@ object SymbolKind:
       * Prefer fromTypedefTypeFlagsAndBody when the sub-tree tag is available, for more reliable AbstractType detection.
       */
     def fromTypedefTypeFlags(flags: Long): Tasty.SymbolKind =
-        if (flags & Tasty.Flag.Opaque.bit) != 0L then Tasty.SymbolKind.OpaqueType
-        else if (flags & Tasty.Flag.Abstract.bit) != 0L then Tasty.SymbolKind.AbstractType
+        if (flags & Tasty.Flag.bits(Tasty.Flag.Opaque)) != 0L then Tasty.SymbolKind.OpaqueType
+        else if (flags & Tasty.Flag.bits(Tasty.Flag.Abstract)) != 0L then Tasty.SymbolKind.AbstractType
         else Tasty.SymbolKind.TypeAlias
 
     /** Map a VALDEF modifier flags bitmask to Val or Var. */
     def fromValdefFlags(flags: Long): Tasty.SymbolKind =
-        if (flags & Tasty.Flag.Mutable.bit) != 0L then Tasty.SymbolKind.Var
+        if (flags & Tasty.Flag.bits(Tasty.Flag.Mutable)) != 0L then Tasty.SymbolKind.Var
         else Tasty.SymbolKind.Val
 
     /** Dispatch entry point mandated by plan line 196. Maps an AST tag and collected modifier flags to a SymbolKind. TYPEDEF with a

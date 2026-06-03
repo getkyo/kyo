@@ -21,7 +21,7 @@ class ClasspathSubclassTypedTest extends Test:
     import AllowUnsafe.embrace.danger
     import Tasty.Name.asString
 
-    private val absFlags  = new Tasty.Flags(Tasty.Flag.Abstract.bit)
+    private val absFlags  = Tasty.Flags(Tasty.Flag.Abstract)
     private val concFlags = Tasty.Flags.empty
 
     private def makeClass(id: Int, name: String, flags: Tasty.Flags): Tasty.Symbol.Class =

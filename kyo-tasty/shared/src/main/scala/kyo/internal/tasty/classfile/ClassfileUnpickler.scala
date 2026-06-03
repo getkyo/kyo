@@ -149,7 +149,7 @@ object ClassfileUnpickler:
         val simpleName = binaryName.split("[./]").last
         SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
-            new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
+            Tasty.Flags(Tasty.Flag.JavaDefined),
             Tasty.Name(simpleName)
         )
     end makeUnresolvedSymbol
@@ -157,7 +157,7 @@ object ClassfileUnpickler:
     private def unresolvedType(binaryName: String)(using AllowUnsafe): Tasty.Type =
         val sym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
-            new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
+            Tasty.Flags(Tasty.Flag.JavaDefined),
             Tasty.Name(binaryName.replace('/', '.'))
         )
         Tasty.Type.Named(sym.id)
@@ -1053,12 +1053,12 @@ object ClassfileUnpickler:
             else Tasty.SymbolKind.Class
 
         val baseFlags   = FlagsHelper.fromJvmAccessFlags(accessFlags)
-        val javaDefined = new Tasty.Flags(Tasty.Flag.JavaDefined.bit)
-        val recordFlag  = if isRecord then new Tasty.Flags(Tasty.Flag.JavaRecord.bit) else Tasty.Flags.empty
+        val javaDefined = Tasty.Flags(Tasty.Flag.JavaDefined)
+        val recordFlag  = if isRecord then Tasty.Flags(Tasty.Flag.JavaRecord) else Tasty.Flags.empty
         // F-A3-003 fix: set Sealed flag when the class has a PermittedSubclasses attribute (Java 17+ sealed
         // classes). The JVM access flags do not include a SEALED bit; the sealed status is encoded only by
         // the presence of the PermittedSubclasses classfile attribute (JVMS 4.7.31).
-        val sealedFlag = if classAttrs.permittedSubclassIdxs.nonEmpty then new Tasty.Flags(Tasty.Flag.Sealed.bit)
+        val sealedFlag = if classAttrs.permittedSubclassIdxs.nonEmpty then Tasty.Flags(Tasty.Flag.Sealed)
         else Tasty.Flags.empty
         val classFlags = baseFlags | javaDefined | recordFlag | sealedFlag
 
@@ -1214,7 +1214,7 @@ object ClassfileUnpickler:
 
     /** Add Flag.Scala2 to the class symbol of a result without merging pickle symbols. */
     private def markScala2Flag(result: ClassfileResult): ClassfileResult =
-        val scala2Flags = result.classSymbol.flags | new Tasty.Flags(Tasty.Flag.Scala2.bit)
+        val scala2Flags = result.classSymbol.flags | Tasty.Flags(Tasty.Flag.Scala2)
         // We cannot mutate the existing symbol's flags (it's a val). Build a new symbol with the added flag.
         // Since the existing symbol is already allocated and shared, we instead create a lightweight wrapper here.
         // Per the implementation contract: flags is a val on Symbol, so we cannot update it post-construction.
@@ -1349,7 +1349,7 @@ object ClassfileUnpickler:
                 val grandParent = buildPackageOwnerChain(outerOuterBinaryName, innerTable)
                 SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Class,
-                    new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
+                    Tasty.Flags(Tasty.Flag.JavaDefined),
                     Tasty.Name(outerSimpleName)
                 )
             case _ =>
@@ -1359,7 +1359,7 @@ object ClassfileUnpickler:
                 val pkgSymbol = buildPackageSymbol(segments.dropRight(1))
                 SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Class,
-                    new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
+                    Tasty.Flags(Tasty.Flag.JavaDefined),
                     Tasty.Name(className)
                 )
         end match
@@ -1378,7 +1378,7 @@ object ClassfileUnpickler:
             while i < segments.length do
                 cur = SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Package,
-                    new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
+                    Tasty.Flags(Tasty.Flag.JavaDefined),
                     Tasty.Name(segments(i))
                 )
                 i += 1
@@ -1403,7 +1403,7 @@ object ClassfileUnpickler:
                     val enclosingOwner = buildPackageOwnerChain(enclosingBinaryName, innerTable)
                     val enclosingClassSym = SymbolFactory.makeSymbol(
                         Tasty.SymbolKind.Unresolved,
-                        new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
+                        Tasty.Flags(Tasty.Flag.JavaDefined),
                         Tasty.Name(enclosingName)
                     )
                     enclosingMethodIdx match
@@ -1495,7 +1495,7 @@ object ClassfileUnpickler:
     private def primType(fqn: String)(using AllowUnsafe): Tasty.Type =
         val sym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
-            new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
+            Tasty.Flags(Tasty.Flag.JavaDefined),
             Tasty.Name(fqn.split("\\.").last)
         )
         Tasty.Type.Named(sym.id)
@@ -1571,7 +1571,7 @@ object ClassfileUnpickler:
                 else Tasty.SymbolKind.Var
 
             val baseFlags   = FlagsHelper.fromJvmAccessFlags(accessFlags)
-            val javaDefined = new Tasty.Flags(Tasty.Flag.JavaDefined.bit)
+            val javaDefined = Tasty.Flags(Tasty.Flag.JavaDefined)
             val memberFlags = baseFlags | javaDefined
 
             // Resolve member declared type from descriptor or Signature attribute.
@@ -1642,7 +1642,7 @@ object ClassfileUnpickler:
             pool.classRef(idxs(i)).map: binaryName =>
                 val exSym = SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Unresolved,
-                    new Tasty.Flags(Tasty.Flag.JavaDefined.bit),
+                    Tasty.Flags(Tasty.Flag.JavaDefined),
                     Tasty.Name(binaryName.replace('/', '.'))
                 )
                 resolveThrowsList(pool, path, idxs, i + 1, acc.appended(Tasty.Type.Named(exSym.id)))

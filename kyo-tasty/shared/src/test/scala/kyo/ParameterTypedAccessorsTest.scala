@@ -86,7 +86,7 @@ class ParameterTypedAccessorsTest extends Test:
     // Then: true
     // Pins: INV-003
     "Leaf 98: isImplicit-given: Parameter.isImplicit returns true for a Given-flagged parameter" in run {
-        val givenFlags = new Tasty.Flags(Tasty.Flag.Given.bit)
+        val givenFlags = Tasty.Flags(Tasty.Flag.Given)
         val param      = makeParameter(0, "x", Tasty.Type.Unknown, flags = givenFlags)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
             assert(param.isImplicit, "isImplicit must be true when Flag.Given is set")

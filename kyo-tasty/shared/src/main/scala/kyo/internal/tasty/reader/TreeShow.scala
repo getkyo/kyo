@@ -60,7 +60,7 @@ private[kyo] object TreeShow:
             case Tasty.Tree.NamedArg(name, value)     => s"${name.asString} = ${show(value, cp)}"
             case Tasty.Tree.Annotated(expr, ann)      => s"${show(expr, cp)}: @${show(ann, cp)}"
             case Tasty.Tree.Shared(addr)              => s"<shared@$addr>"
-            case Tasty.Tree.Modifier(flag)            => flag.name
+            case Tasty.Tree.Modifier(flag)            => Tasty.Flag.name(flag)
             case Tasty.Tree.RecType(parent)           => s"<rec:${show(parent, cp)}>"
             case Tasty.Tree.SuperType(a, b)           => s"${show(a, cp)} super ${show(b, cp)}"
             case Tasty.Tree.RefinedType(parent, n, _) => s"${show(parent, cp)} { ${n.asString} }"

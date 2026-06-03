@@ -55,7 +55,7 @@ class SymbolHierarchyTest extends Test:
         val sym: Tasty.Symbol = Tasty.Symbol.Trait(
             id = SymbolId(1),
             name = Tasty.Name("T"),
-            flags = new Tasty.Flags(Tasty.Flag.Sealed.bit),
+            flags = Tasty.Flags(Tasty.Flag.Sealed),
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
             sourcePosition = Maybe.Absent,
@@ -117,7 +117,7 @@ class SymbolHierarchyTest extends Test:
         val sym: Tasty.Symbol = Tasty.Symbol.Val(
             id = SymbolId(3),
             name = Tasty.Name("x"),
-            flags = new Tasty.Flags(Tasty.Flag.Lazy.bit),
+            flags = Tasty.Flags(Tasty.Flag.Lazy),
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
             sourcePosition = Maybe.Absent,
@@ -169,7 +169,7 @@ class SymbolHierarchyTest extends Test:
         val sym: Tasty.Symbol = Tasty.Symbol.OpaqueType(
             id = SymbolId(5),
             name = Tasty.Name("Money"),
-            flags = new Tasty.Flags(Tasty.Flag.Opaque.bit),
+            flags = Tasty.Flags(Tasty.Flag.Opaque),
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
             sourcePosition = Maybe.Absent,

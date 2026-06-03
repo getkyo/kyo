@@ -168,7 +168,7 @@ class TastySymbolTest extends Test:
         Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
 
     private def makeModule(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Object, new Tasty.Flags(Tasty.Flag.Module.bit), Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Object, Tasty.Flags(Tasty.Flag.Module), Tasty.Name(name))
 
     // Test 1 (INV: T1, Symbol.binaryName): nested Scala class produces JVM binary name with '$' separator.
     // Given: synthetic Symbol tree com.example.Outer.Inner where Outer and Inner have SymbolKind.Class.

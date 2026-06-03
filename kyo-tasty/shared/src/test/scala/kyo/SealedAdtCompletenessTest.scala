@@ -156,89 +156,24 @@ class SealedAdtCompletenessTest extends Test:
         succeed
     }
 
-    // ── ADT-003: Tasty.Tree (sealed trait - 70 final case classes) ────────────
+    // ── ADT-003: Tasty.Tree (enum - 70 cases) ─────────────────────────────────
 
-    // EXPECTED_TREE_COUNT: manually pinned. Tasty.Tree is a sealed trait (not an enum);
-    // Mirror.SumOf is not automatically available. Count was established 2026-06-02
-    // by counting all 'final case class X extends Tree' declarations in Tasty.scala.
+    // EXPECTED_TREE_COUNT: pinned via Mirror.SumOf at compile time.
     // Update this constant and the coverage map whenever a new Tree case is added.
     private inline val EXPECTED_TREE_COUNT = 70
 
-    // All Tree variant names (manually enumerated from Tasty.scala).
-    // If this list is stale (a variant was added), tests that check variant coverage will fail
-    // with a "variant not in registry" message. Update both this list and EXPECTED_TREE_COUNT.
-    private val allTreeVariants: List[String] = List(
-        "Ident",
-        "Select",
-        "Apply",
-        "TypeApply",
-        "Block",
-        "If",
-        "Match",
-        "CaseDef",
-        "Literal",
-        "New",
-        "Assign",
-        "Return",
-        "Throw",
-        "Lambda",
-        "Typed",
-        "Inlined",
-        "Try",
-        "While",
-        "Bind",
-        "Alternative",
-        "Unapply",
-        "ValDef",
-        "DefDef",
-        "TypeDef",
-        "PackageDef",
-        "ClassDef",
-        "Template",
-        "Super",
-        "This",
-        "NamedArg",
-        "Annotated",
-        "Shared",
-        "Modifier",
-        "RecType",
-        "SuperType",
-        "RefinedType",
-        "AppliedType",
-        "TypeBounds",
-        "AnnotatedType",
-        "AndType",
-        "OrType",
-        "ByNameType",
-        "MatchType",
-        "FlexibleType",
-        "IdentTpt",
-        "SelectTpt",
-        "SingletonTpt",
-        "TermRefPkg",
-        "TypeRefPkg",
-        "TermRefSymbol",
-        "TypeRefSymbol",
-        "TermRefDirect",
-        "TypeRefDirect",
-        "SelectIn",
-        "Import",
-        "Export",
-        "AnnotationNode",
-        "RecThisAddr",
-        "Imported",
-        "Renamed",
-        "ByNameTpt",
-        "Bounded",
-        "ExplicitTpt",
-        "Elided",
-        "TypeRefTree",
-        "TermRef",
-        "SeqLiteral",
-        "SelfDef",
-        "SelectOuter",
-        "Unknown"
-    )
+    private inline def checkTreeCount()(using m: Mirror.SumOf[Tasty.Tree]): Unit =
+        inline val actual = constValue[Tuple.Size[m.MirroredElemTypes]]
+        inline if actual != EXPECTED_TREE_COUNT then
+            error(
+                "Tasty.Tree variant count changed: expected " + EXPECTED_TREE_COUNT +
+                    " but found " + actual + ". Update EXPECTED_TREE_COUNT and add a test for the new variant."
+            )
+        end if
+    end checkTreeCount
+    checkTreeCount()(using summonInline[Mirror.SumOf[Tasty.Tree]])
+
+    // Tree variant names are enumerated at compile time via Mirror.SumOf[Tasty.Tree] (see checkTreeCount).
 
     // Tree variants that appear in at least one test file (70 of 70 as of 2026-06-02).
     // All 28 previously-uncovered variants were added in TreeAdtVariantCoverageTest.
@@ -318,33 +253,33 @@ class SealedAdtCompletenessTest extends Test:
     // Tree variants with no test coverage (0 of 70). All variants are now covered.
     private val treeUncoveredVariants: List[String] = List.empty
 
-    // ADT-003: Tasty.Tree - variant count pinned; all 70 variants have test coverage.
+    // ADT-003: Tasty.Tree - variant count pinned via Mirror; all 70 variants have test coverage.
     "ADT-003: Tasty.Tree - 70 variant count is pinned and 70 variants have test coverage" in {
+        val variantNames = enumVariantNames[Tasty.Tree]
         assert(
-            allTreeVariants.size == EXPECTED_TREE_COUNT,
-            s"ADT-003: allTreeVariants registry has ${allTreeVariants.size} entries but EXPECTED_TREE_COUNT is $EXPECTED_TREE_COUNT. " +
-                "Update both when adding a new Tree variant."
+            variantNames.size == EXPECTED_TREE_COUNT,
+            s"Expected $EXPECTED_TREE_COUNT Tasty.Tree variants, got ${variantNames.size}: $variantNames"
         )
-        // Every entry in treeCoveredVariants must be in allTreeVariants (no phantom registrations).
-        val phantomCovered = treeCoveredVariants.filterNot(allTreeVariants.toSet)
+        // Every entry in treeCoveredVariants must name a real variant (no phantom registrations).
+        val phantomCovered = treeCoveredVariants.filterNot(variantNames.toSet)
         assert(
             phantomCovered.isEmpty,
-            s"ADT-003: treeCoveredVariants contains names not in allTreeVariants: $phantomCovered. " +
+            s"ADT-003: treeCoveredVariants contains names not in Tasty.Tree: $phantomCovered. " +
                 "These may be renamed or removed variants; update the registry."
         )
-        // Every entry in treeUncoveredVariants must be in allTreeVariants.
-        val phantomUncovered = treeUncoveredVariants.filterNot(allTreeVariants.toSet)
+        // Every entry in treeUncoveredVariants must name a real variant.
+        val phantomUncovered = treeUncoveredVariants.filterNot(variantNames.toSet)
         assert(
             phantomUncovered.isEmpty,
-            s"ADT-003: treeUncoveredVariants contains names not in allTreeVariants: $phantomUncovered. " +
+            s"ADT-003: treeUncoveredVariants contains names not in Tasty.Tree: $phantomUncovered. " +
                 "These may be renamed or removed variants; update the registry."
         )
-        // covered + uncovered must equal allTreeVariants (no variant is lost).
+        // covered + uncovered must equal the full enum (no variant is lost).
         val documented    = treeCoveredVariants ++ treeUncoveredVariants.toSet
-        val notDocumented = allTreeVariants.filterNot(documented)
+        val notDocumented = variantNames.filterNot(documented)
         assert(
             notDocumented.isEmpty,
-            s"ADT-003: Tree variants in allTreeVariants not classified as covered or uncovered: $notDocumented. " +
+            s"ADT-003: Tasty.Tree variants not classified as covered or uncovered: $notDocumented. " +
                 "Add each new variant to treeCoveredVariants (if a test exists) or treeUncoveredVariants (if not)."
         )
         succeed

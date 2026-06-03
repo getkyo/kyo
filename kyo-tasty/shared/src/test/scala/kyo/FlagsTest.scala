@@ -9,11 +9,12 @@ import kyo.internal.tasty.symbol.Flags as InternalFlags
   */
 class FlagsTest extends Test:
 
-    // Test 1: Flag.Inline.bit is a power-of-two Long.
-    "Flag.Inline.bit is a power-of-two Long (non-zero, bit-count 1)" in run {
-        val b = Tasty.Flag.Inline.bit
-        assert(b != 0L)
-        assert((b & (b - 1)) == 0L) // power-of-two check
+    // Test 1: Flag.Inline is a single-bit flag (Flags(Flag.Inline) is non-empty and contains exactly Inline).
+    "Flag.Inline encodes a non-empty single-flag Flags value" in run {
+        val f = Tasty.Flags(Tasty.Flag.Inline)
+        assert(!f.isEmpty)
+        assert(f.contains(Tasty.Flag.Inline))
+        assert(!f.contains(Tasty.Flag.Private))
         succeed
     }
 
@@ -23,9 +24,9 @@ class FlagsTest extends Test:
         succeed
     }
 
-    // Test 3: Flags constructed from multiple bits contains those flags.
-    "Flags from Inline|Private bits contains Flag.Private" in run {
-        val flags = new Tasty.Flags(Tasty.Flag.Inline.bit | Tasty.Flag.Private.bit)
+    // Test 3: Flags constructed from multiple flags contains those flags.
+    "Flags(Inline, Private) contains both Flag.Inline and Flag.Private" in run {
+        val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Private)
         assert(flags.contains(Tasty.Flag.Private))
         assert(flags.contains(Tasty.Flag.Inline))
         succeed
@@ -45,8 +46,8 @@ class FlagsTest extends Test:
         succeed
     }
 
-    // Test 6: all ~42 Flag bit fields are distinct (no duplicates).
-    "all Flag.bit values are distinct (no two flags share a bit)" in run {
+    // Test 6: all 45 declared Flag values are pairwise distinct (no two flags collapse to the same encoding).
+    "all declared Flag values are pairwise distinct" in run {
         val allFlags = List(
             Tasty.Flag.Inline,
             Tasty.Flag.Private,
@@ -94,12 +95,26 @@ class FlagsTest extends Test:
             Tasty.Flag.Static,
             Tasty.Flag.Scala2
         )
-        val bits = allFlags.map(_.bit)
-        assert(bits.distinct.size == bits.size, s"Duplicate bit found in flags: ${allFlags.map(f => s"${f.name}=${f.bit}").mkString(", ")}")
-        // Verify each bit is a power-of-two
-        bits.foreach { b =>
-            assert(b != 0L && (b & (b - 1)) == 0L, s"Bit $b is not a power of two")
-        }
+        // Each single-flag Flags value must contain exactly the flag it was built from and no other.
+        // If two flags shared an encoding, Flags(f).contains(g) would be true for distinct f, g.
+        val collisions: List[(Tasty.Flag, Tasty.Flag)] =
+            allFlags.flatMap { f =>
+                val fOnly = Tasty.Flags(f)
+                if !fOnly.contains(f) then List((f, f))
+                else
+                    allFlags.flatMap { g =>
+                        if Tasty.Flag.name(f) != Tasty.Flag.name(g) && fOnly.contains(g) then List((f, g))
+                        else Nil
+                    }
+                end if
+            }
+        assert(
+            collisions.isEmpty,
+            s"Encoding collisions: ${collisions.map { case (f, g) => s"${Tasty.Flag.name(f)}->${Tasty.Flag.name(g)}" }.mkString(", ")}"
+        )
+        // Names must also be distinct.
+        val names = allFlags.map(Tasty.Flag.name)
+        assert(names.distinct.size == names.size, s"Duplicate flag name: ${names.diff(names.distinct).mkString(", ")}")
         succeed
     }
 
