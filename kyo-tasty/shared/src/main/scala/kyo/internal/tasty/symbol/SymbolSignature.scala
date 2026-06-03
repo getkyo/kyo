@@ -10,7 +10,7 @@ import kyo.Tasty.Name.asString
   */
 private[kyo] object SymbolSignature:
 
-    def compute(sym: Tasty.Symbol, cp: Tasty.Classpath): String =
+    def compute(sym: Tasty.Symbol, cp: Tasty.Classpath)(using AllowUnsafe): String =
         given Tasty.Classpath = cp
         sym match
             case m: Tasty.Symbol.Method       => methodSig(m)
@@ -30,7 +30,7 @@ private[kyo] object SymbolSignature:
         end match
     end compute
 
-    private def methodSig(m: Tasty.Symbol.Method)(using Tasty.Classpath): String =
+    private def methodSig(m: Tasty.Symbol.Method)(using Tasty.Classpath, AllowUnsafe): String =
         val tps =
             if m.typeParams.isEmpty then ""
             else m.typeParams.map(_.simpleName).mkString("[", ", ", "]")
@@ -53,11 +53,11 @@ private[kyo] object SymbolSignature:
         s"$kw ${c.simpleName}$tps$parents"
     end classlikeSig
 
-    private def typeAscription(t: Maybe[Tasty.Type])(using Tasty.Classpath): String = t match
+    private def typeAscription(t: Maybe[Tasty.Type])(using Tasty.Classpath, AllowUnsafe): String = t match
         case Maybe.Present(tp) => s": ${renderType(tp)}"
         case Maybe.Absent      => ""
 
-    private def renderType(t: Tasty.Type)(using cp: Tasty.Classpath): String =
+    private def renderType(t: Tasty.Type)(using cp: Tasty.Classpath, allow: AllowUnsafe): String =
         t match
             case Tasty.Type.Named(id) => cp.symbol(id).fullNameString
             case _                    => t.toString

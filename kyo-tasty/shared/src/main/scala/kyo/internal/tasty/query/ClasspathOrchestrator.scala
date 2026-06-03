@@ -398,6 +398,7 @@ object ClasspathOrchestrator:
                         TastyPerfStats.entryReads.inc()
                         TastyPerfStats.bytesRead.add(bytes.length.toLong)
                     .andThen:
+                        // Unsafe: ClassfileUnpickler reads an immutable byte array inside a Sync.Unsafe.defer block; no suspension required (§839 case 3).
                         given AllowUnsafe = AllowUnsafe.embrace.danger
                         val arena         = kyo.internal.tasty.type_.TypeArena.canonical()
                         ClassfileUnpickler.read(bytes, interner, arena)
@@ -1505,10 +1506,11 @@ object ClasspathOrchestrator:
     )(using Frame): FileResult < (Sync & Abort[TastyError]) =
         Abort.run[TastyError](
             source.read(file).flatMap: bytes =>
-                Sync.Unsafe.defer:
+                Sync.Unsafe.defer {
                     TastyPerfStats.entryReads.inc()
                     TastyPerfStats.bytesRead.add(bytes.length.toLong)
-                .andThen(decodeTastyBytes(file, bytes, interner))
+                    decodeTastyBytes(file, bytes, interner)
+                }
         ).flatMap:
             case Result.Success(fr) =>
                 // F-G-002: attempt companion .class decode in soft-fail mode
@@ -1604,11 +1606,11 @@ object ClasspathOrchestrator:
         file: String,
         bytes: Array[Byte],
         interner: Interner
-    )(using Frame): FileResult < (Sync & Abort[TastyError]) =
-        // §839 case 3; all Name.asString calls in the yield block read immutable intern-pool strings; no suspension required.
-        given AllowUnsafe = AllowUnsafe.embrace.danger
-        val view          = ByteView(bytes)
-        val arena         = new TypeArena
+    )(using Frame, AllowUnsafe): FileResult < (Sync & Abort[TastyError]) =
+        // §839 case 1: AllowUnsafe lifted to the signature. All Name.asString calls in the yield block
+        // read immutable intern-pool strings; no suspension required.
+        val view  = ByteView(bytes)
+        val arena = new TypeArena
         for
             _        <- timed(TastyPerfStats.tastyHeaderNs)(TastyHeader.read(view))
             names    <- timed(TastyPerfStats.nameUnpicklerNs)(NameUnpickler.read(view, interner))
@@ -1778,6 +1780,7 @@ object ClasspathOrchestrator:
       * This method is `private[kyo]` so it is reachable from tests in `kyo.internal.*` test packages but invisible to API consumers.
       */
     private[kyo] def triggerClasspathBuildingForTest()(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
+        // Unsafe: synthesizes a degenerate MergeState in a test-only path; constructs Name.Unsafe values that are immediately fed into finalizeMerge, which itself runs in a Sync.Unsafe.defer (§839 case 3).
         import AllowUnsafe.embrace.danger
         val state = new MergeState()
         // Insert a partial symbol into fqnIndex but deliberately do NOT add it to allSyms.

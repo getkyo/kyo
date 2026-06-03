@@ -50,8 +50,9 @@ class ShowMethodTest extends Test with TastyTestSupport:
     // Leaf id:7 -- Symbol.show, Type.show, Tree.show, Constant.show emit non-empty strings
     "Symbol.show returns non-empty string" in run {
         makeClasspath.map: cp =>
-            val sym = cp.findClass("p.Foo").get
-            val s   = sym.show(using cp)
+            given Tasty.Classpath = cp
+            val sym               = cp.findClass("p.Foo").get
+            val s                 = sym.show
             assert(s.nonEmpty, s"Symbol.show was empty for $sym")
             succeed
     }

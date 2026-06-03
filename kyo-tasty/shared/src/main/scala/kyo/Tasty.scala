@@ -94,7 +94,7 @@ object Tasty:
         /** Wrap an already-interned `Entry` as a `Name`. For use by kyo-internal unpicklers only. */
         private[kyo] def wrap(entry: Interner.Entry): Name = entry
 
-        /** Unsafe-tier intern operation.
+        /** Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details.
           *
           * Mirrors `Name.init` but runs synchronously without suspending into `Sync`. The interner is
           * monotone (same input always produces the same interned entry) and thread-safe internally; the
@@ -1706,7 +1706,7 @@ object Tasty:
 
         def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
 
-        def fullName(using cp: Classpath): Name = cp.fullName(this)
+        def fullName(using cp: Classpath, allow: AllowUnsafe): Name = cp.fullName(this)
 
         def binaryName(using cp: Classpath): String =
             kyo.internal.tasty.symbol.BinaryName.compute(this, cp)
@@ -1719,7 +1719,7 @@ object Tasty:
           * `show(ShowFormat.FullyQualified)` for the bare FQN, `show(ShowFormat.Simple)` for the simple
           * name, or `show(ShowFormat.Code)` for the source-style signature.
           */
-        def show(using cp: Classpath): String = kyo.internal.tasty.symbol.SymbolShow.show(this, cp)
+        def show(using cp: Classpath, allow: AllowUnsafe): String = kyo.internal.tasty.symbol.SymbolShow.show(this, cp)
 
         // Typed grouped queries derived from flags
         def visibility: Visibility =
@@ -1742,7 +1742,7 @@ object Tasty:
             else OpenLevel.Default
 
         /** Dotted fully-qualified name as a `String`. Mirrors `fullName(using cp).asString`. */
-        def fullNameString(using cp: Classpath): String =
+        def fullNameString(using cp: Classpath, allow: AllowUnsafe): String =
             import Name.asString
             fullName.asString
 
@@ -1770,7 +1770,7 @@ object Tasty:
         /** Subtype-aware annotation query. ClassLike / Method / Val / Var / TypeAlias / OpaqueType / AbstractType / Parameter walk both
           * Scala and Java annotation lists; Field walks `javaAnnotations` only; TypeParam / Package / Unresolved return `false`.
           */
-        def hasAnnotation(annotationFqn: String)(using cp: Classpath): Boolean =
+        def hasAnnotation(annotationFqn: String)(using cp: Classpath, allow: AllowUnsafe): Boolean =
             def matchScala(a: Annotation): Boolean =
                 import Name.asString
                 cp.typeFqnString(a.annotationType) == annotationFqn
@@ -1794,7 +1794,7 @@ object Tasty:
         end hasAnnotation
 
         /** Subtype-aware annotation lookup; first Scala match preferred, then first Java match. */
-        def findAnnotation(annotationFqn: String)(using cp: Classpath): Maybe[Annotation | JavaAnnotation] =
+        def findAnnotation(annotationFqn: String)(using cp: Classpath, allow: AllowUnsafe): Maybe[Annotation | JavaAnnotation] =
             def matchScala(a: Annotation): Boolean =
                 import Name.asString
                 cp.typeFqnString(a.annotationType) == annotationFqn
@@ -1823,11 +1823,11 @@ object Tasty:
         /** Human-readable signature. For Method: `def name[Tps](p1: T1, ...): R`. For Class / Trait / Object: `kind name[Tps] extends
           * parents`. For Val / Var / Field: `kind name: T`. For TypeAlias / OpaqueType: `name = body`. Other subtypes return `simpleName`.
           */
-        def signature(using cp: Classpath): String =
+        def signature(using cp: Classpath, allow: AllowUnsafe): String =
             kyo.internal.tasty.symbol.SymbolSignature.compute(this, cp)
 
         /** Format-selectable show. `FullyQualified` returns `fullNameString`; `Simple` returns `simpleName`; `Code` returns `signature`. */
-        def show(format: ShowFormat)(using cp: Classpath): String = format match
+        def show(format: ShowFormat)(using cp: Classpath, allow: AllowUnsafe): String = format match
             case ShowFormat.FullyQualified => fullNameString
             case ShowFormat.Simple         => simpleName
             case ShowFormat.Code           => signature
@@ -3134,7 +3134,7 @@ object Tasty:
           * Java `javaAnnotations` (via `JavaAnnotation.annotationClass` FQN). Symbols that carry neither field (TypeParam, Package,
           * Unresolved) are excluded.
           */
-        def symbolsAnnotatedWith(annotationFqn: String): Chunk[Symbol] =
+        def symbolsAnnotatedWith(annotationFqn: String)(using AllowUnsafe): Chunk[Symbol] =
             import Name.asString
             symbols.filter: sym =>
                 val scalaMatch: Boolean = sym match
@@ -3154,7 +3154,7 @@ object Tasty:
                 scalaMatch || javaMatch
         end symbolsAnnotatedWith
 
-        private def annotationFqnMatches(ann: Annotation, fqn: String): Boolean =
+        private def annotationFqnMatches(ann: Annotation, fqn: String)(using AllowUnsafe): Boolean =
             import Name.asString
             typeFqnString(ann.annotationType) == fqn
         end annotationFqnMatches
@@ -3164,7 +3164,7 @@ object Tasty:
           * Used by annotation FQN matching to support both Type.Named(id) and Type.TermRef(qual, name) tycon forms.
           * F-G-001 fix: annotation tycons decoded from TYPEREF wire tag arrive as Type.TermRef.
           */
-        private[Tasty] def typeFqnString(t: Type): String =
+        private[Tasty] def typeFqnString(t: Type)(using AllowUnsafe): String =
             import Name.asString
             t match
                 case Type.Named(id) =>
@@ -3204,8 +3204,12 @@ object Tasty:
           *
           * Walks upward collecting non-empty segment names; stops when the symbol owns itself (root sentinel), when ownerId is -1, or when
           * the same symbol appears twice (cycle guard). Depth limit of 64 prevents unbounded loops.
+          *
+          * Requires `AllowUnsafe` because the resulting `Name` is interned into the shared global pool. Callers obtain the proof from the
+          * enclosing `Sync.Unsafe.defer` (the orchestrator constructs `Classpath` inside one) or from a `given AllowUnsafe` brought into
+          * scope at the user boundary.
           */
-        def fullName(sym: Symbol): Name =
+        def fullName(sym: Symbol)(using AllowUnsafe): Name =
             import Name.asString
             val visited = new java.util.HashSet[Int]()
             @scala.annotation.tailrec
@@ -3222,10 +3226,7 @@ object Tasty:
                         else go(ownerSym, depth + 1, nextAcc)
                     end if
             val parts = go(sym, 0, Nil)
-            // Unsafe: interns into the shared globalInterner. Safe here because Classpath is constructed
-            // inside an Unsafe boundary (Sync.Unsafe.defer in ClasspathOrchestrator.runPhaseAB) and these
-            // pure-data query methods inherit that trust.
-            Name.Unsafe.init(parts.mkString("."))(using AllowUnsafe.embrace.danger)
+            Name.Unsafe.init(parts.mkString("."))
         end fullName
 
         /** Decode the body bytes of `sym` into a `Tree`, memoizing the result.

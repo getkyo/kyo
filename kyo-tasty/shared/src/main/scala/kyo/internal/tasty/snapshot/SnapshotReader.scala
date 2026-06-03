@@ -179,7 +179,7 @@ object SnapshotReader:
         path: String,
         bytes: Array[Byte]
     ): Tasty.Classpath =
-        // §839 case 3; snapshot-deserialize boundary; single-fiber synchronous symbol graph reconstruction.
+        // Unsafe: §839 case 3; snapshot-deserialize boundary; single-fiber synchronous symbol graph reconstruction.
         import AllowUnsafe.embrace.danger
         // Parse section index (starts at offset 32)
         val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
@@ -637,7 +637,7 @@ object SnapshotReader:
       * from the mapped view and throws IllegalStateException, which Symbol.body catches as ClasspathClosed.
       */
     private def deserializeMapped(path: String, view: ByteView): Tasty.Classpath =
-        // §839 case 3; snapshot-deserialize-mmap boundary; single-fiber synchronous symbol graph reconstruction.
+        // Unsafe: §839 case 3; snapshot-deserialize-mmap boundary; single-fiber synchronous symbol graph reconstruction.
         import AllowUnsafe.embrace.danger
         // Read the section index from the view.
         // SnapshotFormat.readInt32LE needs an Array[Byte]; copy 36+ bytes from the view for parsing.
