@@ -1004,37 +1004,35 @@ val interactiveCell: UI < Async =
     )
 ```
 
-### A worked example: a small bar chart
+### A worked example: a small grid
 
-Putting the pieces together, a bar chart is one `Svg.rect` per value (positioned via typed lengths), an axis baseline via `Svg.line`, and centered labels via `Svg.text`. This mirrors the in-repo `demo/BarChart.scala`:
+Putting the pieces together, a grid board is one backing `Svg.rect`, a `Svg.circle` marking a target cell, and one `Svg.rect` per occupied cell, each positioned by multiplying its grid coordinate by the cell size. This mirrors the in-repo `demo/Snake.scala` (charts have their own typed [Chart](#charts) layer, so reach for raw SVG like this when you are drawing something the chart marks do not cover):
 
 ```scala
 import UI.*
 import kyo.*
 
-val barChart: UI =
-    val values = Chunk(("kyo", 61.0), ("cats", 49.0), ("zio", 52.0))
-    val maxV   = 64.0
-    val baseY  = 110.0
-    val bars = values.zipWithIndex.flatMap { case ((label, v), i) =>
-        val x = 20.0 + i * 60.0
-        val h = (v / maxV) * 90.0
-        Chunk(
-            Svg.rect.x(x).y(baseY - h).width(40).height(h)
-                .fill(Svg.Paint.Color(Style.Color.blue)),
-            Svg.text.x(x + 20).y(baseY + 14)
-                .textAnchor(Svg.TextAnchor.Middle)
-                .fontSize(Svg.SvgLength.px(10.0))(label)
-        )
+val board: UI =
+    val cell  = 16
+    val cells = 10
+    val snake = Chunk((4, 5), (3, 5), (2, 5)) // head-first cells
+    val food  = (7, 3)
+    val backing = Svg.rect.x(0).y(0).width(cell * cells).height(cell * cells)
+        .fill(Svg.Paint.Color(Style.Color.rgb(24, 28, 42)))
+    val foodDot = Svg.circle
+        .cx(food._1 * cell + cell / 2.0).cy(food._2 * cell + cell / 2.0).r(cell / 2.0 - 2.0)
+        .fill(Svg.Paint.Color(Style.Color.red))
+    val segments = snake.map { case (cx, cy) =>
+        Svg.rect.x(cx * cell + 1).y(cy * cell + 1).width(cell - 2).height(cell - 2)
+            .fill(Svg.Paint.Color(Style.Color.green))
     }
-    val axis = Svg.line.x1(15).y1(baseY).x2(205).y2(baseY)
-        .stroke(Svg.Paint.Color(Style.Color.gray)).strokeWidth(1.0)
     div(
-        Svg.svg.width(220).height(130).viewBox(Svg.ViewBox(0, 0, 220, 130))(
-            (axis +: bars)*
-        )
+        Svg.svg.width(cell * cells).height(cell * cells)
+            .viewBox(Svg.ViewBox(0, 0, cell * cells, cell * cells))(
+                (backing +: foodDot +: segments)*
+            )
     )
-end barChart
+end board
 ```
 
 ## Charts
@@ -1555,6 +1553,4 @@ Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cov
 - [**Router**](shared/src/test/scala/demo/Router.scala): signal-routed multi-view SPA, including a parameterized `/users/:id` route.
 - [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshot.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
 - [**Flamegraph**](shared/src/test/scala/demo/Flamegraph.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
-- [**BarChart**](shared/src/test/scala/demo/BarChart.scala): animated [SVG](#svg) bar chart with a SMIL grow-in and a signal-driven refresh tween.
-- [**BarChartViaLayer**](shared/src/test/scala/demo/BarChartViaLayer.scala): the same BarChart dataset re-expressed using `Chart(data)(bar(...))`, demonstrating the chart layer over the raw SVG API.
-- [**LineChart**](shared/src/test/scala/demo/LineChart.scala): animated [SVG](#svg) line chart with a stroke-dashoffset draw-in, point markers, and an area fill.
+- [**Snake**](shared/src/test/scala/demo/Snake.scala): the classic game on the raw [SVG](#svg) API: a grid of `Svg.rect`s driven by a background game-loop fiber and arrow-key / WASD input, with all state in one `SignalRef`.
