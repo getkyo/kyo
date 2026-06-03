@@ -15,8 +15,8 @@ import kyo.*
   */
 object LinkedSelectionShot extends KyoApp:
 
-    private val W = 960
-    private val H = 460
+    private val W = 1200
+    private val H = 440
 
     run {
         val outDir = if args.nonEmpty then args(0) else "/tmp"
@@ -26,7 +26,7 @@ object LinkedSelectionShot extends KyoApp:
             url = s"http://localhost:${server.port}/"
             _    <- Console.printLine(s"LinkedSelectionShot serving $url")
             base <- Browser.chromeForTestingLaunchConfig()
-            launch = base.copy(extraArgs = base.extraArgs ++ Chunk("--window-size=960,460", "--hide-scrollbars"))
+            launch = base.copy(extraArgs = base.extraArgs ++ Chunk("--window-size=1200,440", "--hide-scrollbars"))
             _ <- Browser.run(launch) {
                 for
                     _ <- Browser.goto(url)

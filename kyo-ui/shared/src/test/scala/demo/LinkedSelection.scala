@@ -54,8 +54,10 @@ object LinkedSelection extends KyoApp:
                     .onSelect(selected)
                     .yAxis(_.left.grid.ticks(4))
                     .theme(_.dark)
-                    .size(420, 300)
+                    .size(560, 300)
                     .toSvg
+
+            val totalsTitle = UI.h3("Total by product")
 
             // INTERACTION IS AN ORDINARY APP SIGNAL.
             // `.onSelect(selected)` above is the only write; the title and detail line below are the only
@@ -70,18 +72,19 @@ object LinkedSelection extends KyoApp:
             val detailChart =
                 selected.render { _ =>
                     Chart(selected.map(s => s.fold(Chunk.empty[Pt])(c => seriesFor(c.name))))(line(x = _.month, y = _.value))
+                        .xScale(_.linear(1.0, 12.0))
                         .yScale(_.linear(0.0, 130.0))
                         .xAxis(_.bottom)
                         .yAxis(_.left.grid.ticks(4))
                         .theme(_.dark)
-                        .size(420, 300)
+                        .size(560, 300)
                         .toSvg
                 }
 
             UI.div.style(Style.column.gap(16.px).padding(20.px).bg(Color.rgb(15, 18, 28)).color(Color.rgb(226, 232, 240)))(
                 UI.h2("Linked selection"),
                 UI.div.style(Style.row.gap(24.px).align(_.start))(
-                    UI.div(totalsChart),
+                    UI.div.style(Style.column.gap(8.px))(totalsTitle, UI.div(totalsChart)),
                     UI.div.style(Style.column.gap(8.px))(detailTitle, detailChart)
                 )
             )
