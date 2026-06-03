@@ -164,7 +164,7 @@ class ChartInteractionTest extends Test:
         for
             rows = Chunk(Sale("May", Rev(500.0)))
             spec = Chart(rows)(bar(x = _.month, y = _.revenue))
-                .tooltip(s => s"${s.month}: ${s.revenue}")
+                .tooltip(s => s"${s.month}: ${s.revenue.toInt}")
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             // Locate the tooltip overlay: last Reactive child of root.
             topReactives = reactivesIn(root)
@@ -180,9 +180,10 @@ class ChartInteractionTest extends Test:
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             // The rendered HTML should contain the exact formatted tooltip text.
+            // Using .toInt avoids platform-dependent Double.toString ("500.0" on JVM, "500" on JS).
             assert(
-                html.contains("May: 500.0"),
-                s"Expected tooltip text 'May: 500.0' in rendered HTML but got:\n${html.take(2000)}"
+                html.contains("May: 500"),
+                s"Expected tooltip text 'May: 500' in rendered HTML but got:\n${html.take(2000)}"
             )
     }
 
