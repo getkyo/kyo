@@ -13,8 +13,8 @@ import scala.language.implicitConversions
   *     it one step (move the head, eat and grow, detect wall/self collisions), and writes it back. It threads a
   *     pure linear-congruential seed (carried in the state) for food placement, so there is no `var`, no
   *     `while`, and no blocked thread.
-  *   - `onKeyDown` on the focusable board maps the arrow keys / WASD to a queued turn and Space to a restart,
-  *     by updating the same ref. A turn is rejected if it reverses the snake straight into its own neck.
+  *   - `onKeyDown` on the focusable board maps the arrow keys / WASD to a queued turn and Space/Enter to a
+  *     restart, by updating the same ref. A turn is rejected if it reverses the snake straight into its own neck.
   *   - The board and the status line `render` off the ref, so each tick redraws the grid reactively.
   *
   * Click the board once to focus it, then steer with the arrow keys (the snake waits for the first key before it
@@ -185,9 +185,9 @@ object Snake extends KyoApp:
                 }
             }
         yield
-            // Arrow keys / WASD queue a turn; Space restarts. All three just update the shared ref.
+            // Arrow keys / WASD queue a turn; Space or Enter restarts. All three just update the shared ref.
             val onKey: KeyboardEvent => (Any < Async) = e =>
-                if e.key == Keyboard.Space then state.updateAndGet(g => newGame(g.seed))
+                if e.key == Keyboard.Space || e.key == Keyboard.Enter then state.updateAndGet(g => newGame(g.seed))
                 else
                     dirOf(e.key) match
                         case Present(d) => state.updateAndGet(_.turn(d))
@@ -196,7 +196,7 @@ object Snake extends KyoApp:
             val status =
                 state.render { g =>
                     val msg =
-                        if g.dead then s"Game over. Score ${g.score}. Press Space to restart."
+                        if g.dead then s"Game over. Score ${g.score}. Press Space or Enter to restart."
                         else if !g.running then "Press an arrow key or WASD to start."
                         else s"Score ${g.score}"
                     UI.div(msg).style(statStyle)
@@ -207,7 +207,7 @@ object Snake extends KyoApp:
                 UI.h2("Snake"),
                 state.render(g => UI.div(board(g))),
                 status,
-                UI.div("Click the board, then steer with the arrow keys or WASD. Space restarts.").style(hintStyle)
+                UI.div("Click the board, then steer with the arrow keys or WASD. Space or Enter restarts.").style(hintStyle)
             )
     end app
 
