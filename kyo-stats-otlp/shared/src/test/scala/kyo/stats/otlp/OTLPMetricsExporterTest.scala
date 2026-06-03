@@ -3,7 +3,12 @@ package kyo.stats.otlp
 import kyo.*
 import kyo.stats.*
 
-class OTLPMetricsExporterTest extends Test:
+class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
+
+    // The periodic-export leaves read the PROCESS-GLOBAL stats registry (it also holds the scheduler's own metrics) and
+    // register WeakReference-held counters/histograms that a concurrent leaf's GC pressure can collect before the export
+    // interval fires. Run this suite sequentially (shared global registry); ScalaTest ran it sequentially too.
+    override def config = super.config.sequential
 
     import AllowUnsafe.embrace.danger
 
@@ -50,7 +55,7 @@ class OTLPMetricsExporterTest extends Test:
 
     "periodic export" - {
 
-        "exports registered counter at interval" in runJVM {
+        "exports registered counter at interval".onlyJvm in {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.counter." + java.util.UUID.randomUUID().toString.take(8)
                 val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")
@@ -82,7 +87,7 @@ class OTLPMetricsExporterTest extends Test:
             }
         }
 
-        "exports registered histogram at interval" in runJVM {
+        "exports registered histogram at interval".onlyJvm in {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.histogram." + java.util.UUID.randomUUID().toString.take(8)
                 val histogram  = Stat.initScope("test", "export").initHistogram(uniqueName, "test histogram")
@@ -120,7 +125,7 @@ class OTLPMetricsExporterTest extends Test:
             }
         }
 
-        "exports registered gauge at interval" in runJVM {
+        "exports registered gauge at interval".onlyJvm in {
             withCollector { (config, metricCh) =>
                 val uniqueName           = "test.export.gauge." + java.util.UUID.randomUUID().toString.take(8)
                 @volatile var gaugeValue = 99.5
@@ -138,7 +143,7 @@ class OTLPMetricsExporterTest extends Test:
             }
         }
 
-        "multiple intervals trigger multiple exports" in runJVM {
+        "multiple intervals trigger multiple exports".onlyJvm in {
             withCollector { (config, metricCh) =>
                 val uniqueName = "test.export.multi." + java.util.UUID.randomUUID().toString.take(8)
                 val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "test counter")

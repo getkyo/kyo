@@ -13,7 +13,7 @@ import scala.language.implicitConversions
   * handler returned by ReactiveUI.subscribe, and assert on AtomicRef values set by the typed handlers. This exercises
   * the full server-side typed dispatch path without CDP overhead.
   */
-class TypedEventTest extends Test:
+class TypedEventTest extends kyo.test.Test[Any]:
 
     import UI.*
 
@@ -30,7 +30,7 @@ class TypedEventTest extends Test:
 
     // ---- typed onClick fires with Modifiers.none ----
 
-    "typed onClick fires with modifiers.none when Click dispatched with Modifiers.none" in run {
+    "typed onClick fires with modifiers.none when Click dispatched with Modifiers.none" in {
         for
             fired <- AtomicRef.init(false)
             ui = UI.div.onClick { (mouse: UI.MouseEvent) =>
@@ -44,7 +44,7 @@ class TypedEventTest extends Test:
 
     // ---- typed onClick handler observes shift=true ----
 
-    "typed onClick observes mouse.modifiers.shift == true when wire payload shift is true" in run {
+    "typed onClick observes mouse.modifiers.shift == true when wire payload shift is true" in {
         for
             observed <- AtomicRef.init(false)
             ui = UI.div.onClick { (mouse: UI.MouseEvent) =>
@@ -59,7 +59,7 @@ class TypedEventTest extends Test:
 
     // ---- typed onClick handler observes targetId ----
 
-    "typed onClick handler observes mouse.targetId == Present(id) when wire payload sets targetId" in run {
+    "typed onClick handler observes mouse.targetId == Present(id) when wire payload sets targetId" in {
         for
             captured <- AtomicRef.init(Absent: Maybe[String])
             ui = UI.div.onClick { (mouse: UI.MouseEvent) =>
@@ -74,7 +74,7 @@ class TypedEventTest extends Test:
 
     // ---- both by-name onClick and typed onClick(f) fire ----
 
-    "both onClick(action) and onClick(f) fire on dispatch; typed fires first, then by-name" in run {
+    "both onClick(action) and onClick(f) fire on dispatch; typed fires first, then by-name" in {
         for
             order <- AtomicRef.init(Chunk.empty[String])
             ui = UI.div
@@ -90,7 +90,7 @@ class TypedEventTest extends Test:
 
     // ---- bubbling. Parent onClick still fires after child ----
 
-    "bubbling: parent onClick fires after child typed onClick when child does not stop propagation" in run {
+    "bubbling: parent onClick fires after child typed onClick when child does not stop propagation" in {
         for
             order <- AtomicRef.init(Chunk.empty[String])
             child = UI.button("child").id("btn").onClick { (mouse: UI.MouseEvent) =>
@@ -106,7 +106,7 @@ class TypedEventTest extends Test:
 
     // ---- renamed KeyboardEvent carries key and Modifiers ----
 
-    "renamed KeyboardEvent: onKeyDown fires correctly for KeyDown with ctrl=true" in run {
+    "renamed KeyboardEvent: onKeyDown fires correctly for KeyDown with ctrl=true" in {
         for
             captured <- AtomicRef.init(Absent: Maybe[(UI.Keyboard, Boolean)])
             ui = UI.div.onKeyDown { (ke: UI.KeyboardEvent) =>
@@ -121,7 +121,7 @@ class TypedEventTest extends Test:
 
     // ---- handler that throws does not prevent bubbling ----
 
-    "a handler that throws does not prevent the bubble chain from continuing" in run {
+    "a handler that throws does not prevent the bubble chain from continuing" in {
         for
             parentFired <- AtomicRef.init(false)
             child = UI.button("child").id("c").onClick { (_: UI.MouseEvent) =>
@@ -154,7 +154,7 @@ class TypedEventTest extends Test:
 
     // ---- Form typed onSubmit ----
 
-    "Form.onSubmit(f) typed overload fires with correct MouseEvent" in run {
+    "Form.onSubmit(f) typed overload fires with correct MouseEvent" in {
         for
             captured <- AtomicRef.init(Absent: Maybe[UI.MouseEvent])
             form = UI.form.id("login").onSubmit { (mouse: UI.MouseEvent) =>
@@ -172,7 +172,7 @@ class TypedEventTest extends Test:
 
     // ---- typed onFocus overload ----
 
-    "typed onFocus overload fires with correct MouseEvent on UIEvent.Focus dispatch" in run {
+    "typed onFocus overload fires with correct MouseEvent on UIEvent.Focus dispatch" in {
         for
             captured <- AtomicRef.init(Absent: Maybe[UI.MouseEvent])
             ui = UI.div.tabIndex(0).onFocus { (mouse: UI.MouseEvent) =>
@@ -189,7 +189,7 @@ class TypedEventTest extends Test:
 
     // ---- typed onBlur overload ----
 
-    "typed onBlur overload fires with correct MouseEvent on UIEvent.Blur dispatch" in run {
+    "typed onBlur overload fires with correct MouseEvent on UIEvent.Blur dispatch" in {
         for
             captured <- AtomicRef.init(Absent: Maybe[UI.MouseEvent])
             ui = UI.div.onBlur { (mouse: UI.MouseEvent) =>
@@ -212,7 +212,7 @@ class TypedEventTest extends Test:
     // (the canonical "enable submit only when valid" pattern) no longer submits the form. Regression
     // for that bug.
 
-    "Form.onSubmit fires when a Click targets a submit button wrapped in .disabled(Signal=false)" in run {
+    "Form.onSubmit fires when a Click targets a submit button wrapped in .disabled(Signal=false)" in {
         for
             fired    <- AtomicRef.init(false)
             disabled <- Signal.initRef(false)
@@ -227,7 +227,7 @@ class TypedEventTest extends Test:
         yield assert(result)
     }
 
-    "Form.onSubmit does NOT fire when the wrapped submit button is disabled via Signal=true" in run {
+    "Form.onSubmit does NOT fire when the wrapped submit button is disabled via Signal=true" in {
         for
             fired    <- AtomicRef.init(false)
             disabled <- Signal.initRef(true)
@@ -241,7 +241,7 @@ class TypedEventTest extends Test:
         yield assert(!result)
     }
 
-    "Form.onSubmit fires after a disabled-wrapped submit button is re-enabled by its Signal" in run {
+    "Form.onSubmit fires after a disabled-wrapped submit button is re-enabled by its Signal" in {
         for
             fired    <- AtomicRef.init(false)
             disabled <- Signal.initRef(true)

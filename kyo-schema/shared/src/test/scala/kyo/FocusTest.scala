@@ -2,7 +2,7 @@ package kyo
 
 import Record.*
 
-class FocusTest extends Test:
+class FocusTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -234,7 +234,7 @@ class FocusTest extends Test:
             val nav                               = FocusTest.dummyFocus[MTPerson, "name" ~ String & "age" ~ Int]
             val result                            = nav.name
             val _: Focus.Select[MTPerson, String] = result
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav nested field" in {
@@ -243,28 +243,28 @@ class FocusTest extends Test:
             val _: Focus.Select[MTPersonAddr, MTAddress] = addr
             val city                                     = addr.city
             val _: Focus.Select[MTPersonAddr, String]    = city
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav deeply nested" in {
             val nav                                = FocusTest.dummyFocus[MTCompany, "name" ~ String & "hq" ~ MTTeam]
             val zip                                = nav.hq.lead.address.zip
             val _: Focus.Select[MTCompany, String] = zip
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav sum variant" in {
             val nav                                  = FocusTest.dummyFocus[MTDrawing, "title" ~ String & "shape" ~ MTShape]
             val circle                               = nav.shape.MTCircle
             val _: Focus.Select[MTDrawing, MTCircle] = circle
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav sum variant field" in {
             val nav                                = FocusTest.dummyFocus[MTDrawing, "title" ~ String & "shape" ~ MTShape]
             val radius                             = nav.shape.MTCircle.radius
             val _: Focus.Select[MTDrawing, Double] = radius
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav generic case class" in {
@@ -273,7 +273,7 @@ class FocusTest extends Test:
             val _: Focus.Select[MTPair[Int, String], Int]    = first
             val second                                       = nav.second
             val _: Focus.Select[MTPair[Int, String], String] = second
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav option field" in {
@@ -281,35 +281,35 @@ class FocusTest extends Test:
             val nav  = FocusTest.dummyFocus[MTOptionalLocal, "name" ~ String & "nick" ~ Option[String]]
             val nick = nav.nick
             val _: Focus.Select[MTOptionalLocal, Option[String]] = nick
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav list field" in {
             val nav     = FocusTest.dummyFocus[MTTeam, "name" ~ String & "lead" ~ MTPersonAddr & "members" ~ List[MTPersonAddr]]
             val members = nav.members
             val _: Focus.Select[MTTeam, List[MTPersonAddr]] = members
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav field named get" in {
             val nav = FocusTest.dummyFocus[MTEvil, "get" ~ String & "set" ~ Int & "path" ~ String & "selectDynamic" ~ Boolean]
             val get = nav.get
             val _: Focus.Select[MTEvil, String] = get
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav field named set" in {
             val nav = FocusTest.dummyFocus[MTEvil, "get" ~ String & "set" ~ Int & "path" ~ String & "selectDynamic" ~ Boolean]
             val set = nav.set
             val _: Focus.Select[MTEvil, Int] = set
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav field named path" in {
             val nav  = FocusTest.dummyFocus[MTEvil, "get" ~ String & "set" ~ Int & "path" ~ String & "selectDynamic" ~ Boolean]
             val path = nav.path
             val _: Focus.Select[MTEvil, String] = path
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "nav nonexistent field compile error" in {
@@ -326,7 +326,7 @@ class FocusTest extends Test:
             val nav                                  = FocusTest.dummyFocus[MTPerson, "name" ~ String & "age" ~ Int]
             val name: Focus.Select[MTPerson, String] = nav.name
             val age: Focus.Select[MTPerson, Int]     = nav.age
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "lambda nested path type check" in {
@@ -334,14 +334,14 @@ class FocusTest extends Test:
             val street: Focus.Select[MTPersonAddr, String] = nav.address.street
             val city: Focus.Select[MTPersonAddr, String]   = nav.address.city
             val zip: Focus.Select[MTPersonAddr, String]    = nav.address.zip
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "lambda product getter generation" - {
             "type resolves correctly" in {
                 val nav                               = FocusTest.dummyFocus[MTPerson, "name" ~ String & "age" ~ Int]
                 val _: Focus.Select[MTPerson, String] = nav.name
-                succeed
+                succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
             }
         }
 
@@ -349,7 +349,7 @@ class FocusTest extends Test:
             "type resolves correctly" in {
                 val nav                            = FocusTest.dummyFocus[MTPerson, "name" ~ String & "age" ~ Int]
                 val _: Focus.Select[MTPerson, Int] = nav.age
-                succeed
+                succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
             }
         }
 
@@ -357,7 +357,7 @@ class FocusTest extends Test:
             "type resolves correctly" in {
                 val nav = FocusTest.dummyFocus[MTPersonAddr, "name" ~ String & "age" ~ Int & "address" ~ MTAddress]
                 val _: Focus.Select[MTPersonAddr, String] = nav.address.city
-                succeed
+                succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
             }
         }
 
@@ -365,7 +365,7 @@ class FocusTest extends Test:
             "type resolves correctly" in {
                 val nav = FocusTest.dummyFocus[MTPersonAddr, "name" ~ String & "age" ~ Int & "address" ~ MTAddress]
                 val _: Focus.Select[MTPersonAddr, String] = nav.address.zip
-                succeed
+                succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
             }
         }
 
@@ -373,7 +373,7 @@ class FocusTest extends Test:
             "type resolves correctly" in {
                 val nav                                  = FocusTest.dummyFocus[MTDrawing, "title" ~ String & "shape" ~ MTShape]
                 val _: Focus.Select[MTDrawing, MTCircle] = nav.shape.MTCircle
-                succeed
+                succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
             }
         }
 
@@ -381,7 +381,7 @@ class FocusTest extends Test:
             "type resolves correctly" in {
                 val nav                                     = FocusTest.dummyFocus[MTDrawing, "title" ~ String & "shape" ~ MTShape]
                 val _: Focus.Select[MTDrawing, MTRectangle] = nav.shape.MTRectangle
-                succeed
+                succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
             }
         }
 
@@ -389,7 +389,7 @@ class FocusTest extends Test:
             "type resolves correctly" in {
                 val nav                                = FocusTest.dummyFocus[MTDrawing, "title" ~ String & "shape" ~ MTShape]
                 val _: Focus.Select[MTDrawing, Double] = nav.shape.MTCircle.radius
-                succeed
+                succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
             }
         }
 
@@ -403,7 +403,7 @@ class FocusTest extends Test:
             val _: Focus.Select[MTEvil, String]  = path
             val sd                               = nav.selectDynamic("selectDynamic")
             val _: Focus.Select[MTEvil, Boolean] = sd
-            succeed
+            succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
         }
 
         "focus on sum type returns Focus with Maybe automatically" in {
@@ -777,7 +777,7 @@ class FocusTest extends Test:
         "foreach get returns Chunk and set accepts Chunk" in {
             val each  = Schema[MTEachOrder].foreach(_.items)
             val items = each.get(eachOrder2Items)
-            assert(items.isInstanceOf[Chunk[?]])
+            assert(items == Chunk(eachItem1, eachItem2))
             val result = each.set(eachOrder2Items, items)
             assert(each.get(result) == items)
         }

@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpResponseTest extends Test:
+class HttpResponseTest extends BaseHttpTest:
 
     "construction" - {
         "from status" in {

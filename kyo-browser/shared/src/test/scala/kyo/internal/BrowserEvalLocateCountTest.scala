@@ -17,7 +17,7 @@ class BrowserEvalLocateCountTest extends kyo.BrowserTest:
 
     // ── locateCount FirstOf short-circuit (live) ────────────────────
 
-    "BrowserEval.locateCount FirstOf returns the first non-zero alternative's count (short-circuit)" in run {
+    "BrowserEval.locateCount FirstOf returns the first non-zero alternative's count (short-circuit)" in {
         // First alternative (#first.m) matches exactly 1; second (#second.m) matches 3. If the
         // short-circuit semantics hold, the returned count is 1 (the first alternative's count).
         // Without short-circuit the answer would be 4 (or some other concatenated combination).
@@ -41,7 +41,7 @@ class BrowserEvalLocateCountTest extends kyo.BrowserTest:
         }
     }
 
-    "BrowserEval.locateCount FirstOf falls through to subsequent alternatives when earlier ones miss" in run {
+    "BrowserEval.locateCount FirstOf falls through to subsequent alternatives when earlier ones miss" in {
         // First alternative misses (.miss matches nothing); second matches 2. The walk must visit
         // the second alternative and return 2.
         val html = page(
@@ -62,7 +62,7 @@ class BrowserEvalLocateCountTest extends kyo.BrowserTest:
         }
     }
 
-    "BrowserEval.locateCount FirstOf returns 0 when no alternative matches" in run {
+    "BrowserEval.locateCount FirstOf returns 0 when no alternative matches" in {
         val html = page("<div><p>nothing</p></div>")
         withBrowserOnLocalhost {
             Browser.goto(html).andThen {
@@ -76,17 +76,17 @@ class BrowserEvalLocateCountTest extends kyo.BrowserTest:
 
     // ── translateContextDestroyed (pure) ─────────────────────────────
 
-    "translateContextDestroyed surfaces the CDP context-destroyed message as BrowserIFrameInvalidException(ContextDestroyed)" in run {
+    "translateContextDestroyed surfaces the CDP context-destroyed message as BrowserIFrameInvalidException(ContextDestroyed)" in {
         val wire =
             s"""{"id":1,"error":{"code":-32000,"message":"${CdpErrorStrings.ContextDestroyedErrorMessage}"}}"""
         Abort.run[BrowserReadException](BrowserEval.translateContextDestroyed(wire)).map {
             case Result.Failure(BrowserIFrameInvalidException(BrowserIFrameInvalidException.Reason.ContextDestroyed)) =>
-                succeed
+                ()
             case other => fail(s"expected BrowserIFrameInvalidException(ContextDestroyed) but got $other")
         }
     }
 
-    "translateContextDestroyed passes a successful eval reply through unchanged (no translation)" in run {
+    "translateContextDestroyed passes a successful eval reply through unchanged (no translation)" in {
         val wire = """{"id":1,"result":{"result":{"type":"string","value":"hello"}}}"""
         Abort.run[BrowserReadException](BrowserEval.translateContextDestroyed(wire)).map {
             case Result.Success(out) =>
@@ -95,7 +95,7 @@ class BrowserEvalLocateCountTest extends kyo.BrowserTest:
         }
     }
 
-    "translateContextDestroyed passes an unrelated CDP error through unchanged (only ContextDestroyed is translated)" in run {
+    "translateContextDestroyed passes an unrelated CDP error through unchanged (only ContextDestroyed is translated)" in {
         val wire = """{"id":1,"error":{"code":-32602,"message":"Invalid params"}}"""
         Abort.run[BrowserReadException](BrowserEval.translateContextDestroyed(wire)).map {
             case Result.Success(out) =>

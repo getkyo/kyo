@@ -1,13 +1,11 @@
 package kyo.internal
 
-import kyo.Test
-
 /** Spot-check tests for the generated [[FastFloatPow10Table]].
   *
   * Reference values cross-checked against Go's `strconv/atofeisel.go` table
   * ([[https://github.com/golang/go/blob/master/src/strconv/atofeisel.go BSD-3-Clause]]).
   */
-class FastFloatPow10TableTest extends Test:
+class FastFloatPow10TableTest extends kyo.test.Test[Any]:
 
     "table length" - {
         "pow10Hi has 696 entries" in {

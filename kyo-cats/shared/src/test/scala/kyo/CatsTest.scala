@@ -6,17 +6,16 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kyo.*
 import kyo.internal.Platform
-import org.scalatest.compatible.Assertion
-import org.scalatest.concurrent.Eventually.*
-import scala.concurrent.Future
 
-class CatsTest extends Test:
+class CatsTest extends kyo.test.Test[Any]:
 
-    def runCatsIO[T](v: CatsIO[T]): Future[T] =
-        v.unsafeToFuture()
+    // Run the body THROUGH the cats-effect runtime (preserving the kyo<->cats interop these tests cover),
+    // bridging the resulting Future back into a kyo computation so it can be a kyo-test leaf body.
+    def runCatsIO[T](v: CatsIO[T]): T < Async =
+        Async.fromFuture(v.unsafeToFuture())
 
-    def runKyo(v: => Assertion < (Abort[Nothing] & Async)): Future[Assertion] =
-        Cats.run(v).unsafeToFuture()
+    def runKyo(v: => Unit < (Abort[Nothing] & Async)): Unit < Async =
+        Async.fromFuture(Cats.run(v).unsafeToFuture())
 
     "Abort ordering" - {
         "kyo then cats" in runKyo {

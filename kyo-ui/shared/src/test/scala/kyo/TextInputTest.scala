@@ -5,13 +5,13 @@ import scala.language.implicitConversions
 
 class TextInputTest extends UITest:
 
-    "password type" in run {
+    "password type" in {
         withUI(UI.div(UI.passwordInput.id("p"))) {
-            Browser.assertAttribute(Selector.id("p"), "type", "password").andThen(succeed)
+            Browser.assertAttribute(Selector.id("p"), "type", "password").unit
         }
     }
 
-    "password onInput" in run {
+    "password onInput" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -22,23 +22,23 @@ class TextInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("p"), "secret")
                 _ <- Browser.assertText(Selector.id("v"), "secret")
-            yield succeed
+            yield ()
         }
     }
 
-    "password placeholder" in run {
+    "password placeholder" in {
         withUI(UI.div(UI.passwordInput.placeholder("Enter password").id("p"))) {
-            Browser.assertAttribute(Selector.id("p"), "placeholder", "Enter password").andThen(succeed)
+            Browser.assertAttribute(Selector.id("p"), "placeholder", "Enter password").unit
         }
     }
 
-    "password disabled" in run {
+    "password disabled" in {
         withUI(UI.div(UI.passwordInput.disabled(true).id("p"))) {
-            Browser.assertDisabled(Selector.id("p")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("p")).unit
         }
     }
 
-    "password value signalRef" in run {
+    "password value signalRef" in {
         val app: UI < Async =
             for ref <- Signal.initRef("init")
             yield UI.div(
@@ -50,17 +50,17 @@ class TextInputTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "init")
                 _ <- Browser.fill(Selector.id("p"), "new")
                 _ <- Browser.assertText(Selector.id("v"), "new")
-            yield succeed
+            yield ()
         }
     }
 
-    "email type" in run {
+    "email type" in {
         withUI(UI.div(UI.emailInput.id("e"))) {
-            Browser.assertAttribute(Selector.id("e"), "type", "email").andThen(succeed)
+            Browser.assertAttribute(Selector.id("e"), "type", "email").unit
         }
     }
 
-    "email onInput" in run {
+    "email onInput" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -71,29 +71,29 @@ class TextInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("e"), "test@example.com")
                 _ <- Browser.assertText(Selector.id("v"), "test@example.com")
-            yield succeed
+            yield ()
         }
     }
 
-    "email placeholder" in run {
+    "email placeholder" in {
         withUI(UI.div(UI.emailInput.placeholder("your@email.com").id("e"))) {
-            Browser.assertAttribute(Selector.id("e"), "placeholder", "your@email.com").andThen(succeed)
+            Browser.assertAttribute(Selector.id("e"), "placeholder", "your@email.com").unit
         }
     }
 
-    "email disabled" in run {
+    "email disabled" in {
         withUI(UI.div(UI.emailInput.disabled(true).id("e"))) {
-            Browser.assertDisabled(Selector.id("e")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("e")).unit
         }
     }
 
-    "tel type" in run {
+    "tel type" in {
         withUI(UI.div(UI.telInput.id("t"))) {
-            Browser.assertAttribute(Selector.id("t"), "type", "tel").andThen(succeed)
+            Browser.assertAttribute(Selector.id("t"), "type", "tel").unit
         }
     }
 
-    "tel onInput" in run {
+    "tel onInput" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -104,23 +104,23 @@ class TextInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("t"), "+1234567890")
                 _ <- Browser.assertText(Selector.id("v"), "+1234567890")
-            yield succeed
+            yield ()
         }
     }
 
-    "tel disabled" in run {
+    "tel disabled" in {
         withUI(UI.div(UI.telInput.disabled(true).id("t"))) {
-            Browser.assertDisabled(Selector.id("t")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("t")).unit
         }
     }
 
-    "url type" in run {
+    "url type" in {
         withUI(UI.div(UI.urlInput.id("u"))) {
-            Browser.assertAttribute(Selector.id("u"), "type", "url").andThen(succeed)
+            Browser.assertAttribute(Selector.id("u"), "type", "url").unit
         }
     }
 
-    "url onInput" in run {
+    "url onInput" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -131,23 +131,23 @@ class TextInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("u"), "https://kyo.dev")
                 _ <- Browser.assertText(Selector.id("v"), "https://kyo.dev")
-            yield succeed
+            yield ()
         }
     }
 
-    "url disabled" in run {
+    "url disabled" in {
         withUI(UI.div(UI.urlInput.disabled(true).id("u"))) {
-            Browser.assertDisabled(Selector.id("u")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("u")).unit
         }
     }
 
-    "search type" in run {
+    "search type" in {
         withUI(UI.div(UI.searchInput.id("s"))) {
-            Browser.assertAttribute(Selector.id("s"), "type", "search").andThen(succeed)
+            Browser.assertAttribute(Selector.id("s"), "type", "search").unit
         }
     }
 
-    "search onInput" in run {
+    "search onInput" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -158,23 +158,23 @@ class TextInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("s"), "query")
                 _ <- Browser.assertText(Selector.id("v"), "query")
-            yield succeed
+            yield ()
         }
     }
 
-    "search placeholder" in run {
+    "search placeholder" in {
         withUI(UI.div(UI.searchInput.placeholder("Search...").id("s"))) {
-            Browser.assertAttribute(Selector.id("s"), "placeholder", "Search...").andThen(succeed)
+            Browser.assertAttribute(Selector.id("s"), "placeholder", "Search...").unit
         }
     }
 
-    "search disabled" in run {
+    "search disabled" in {
         withUI(UI.div(UI.searchInput.disabled(true).id("s"))) {
-            Browser.assertDisabled(Selector.id("s")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("s")).unit
         }
     }
 
-    "two different types independent" in run {
+    "two different types independent" in {
         val app: UI < Async =
             for
                 p <- Signal.initRef("")
@@ -191,11 +191,11 @@ class TextInputTest extends UITest:
                 _ <- Browser.fill(Selector.id("e"), "mail")
                 _ <- Browser.assertText(Selector.id("pv"), "p:pass")
                 _ <- Browser.assertText(Selector.id("ev"), "e:mail")
-            yield succeed
+            yield ()
         }
     }
 
-    "all variants readOnly" in run {
+    "all variants readOnly" in {
         withUI(UI.div(
             UI.passwordInput.readOnly(true).id("p"),
             UI.emailInput.readOnly(true).id("e"),
@@ -209,11 +209,11 @@ class TextInputTest extends UITest:
                 _ <- Browser.assertAttribute(Selector.id("t"), "readonly", "")
                 _ <- Browser.assertAttribute(Selector.id("u"), "readonly", "")
                 _ <- Browser.assertAttribute(Selector.id("s"), "readonly", "")
-            yield succeed
+            yield ()
         }
     }
 
-    "all variants focus" in run {
+    "all variants focus" in {
         withUI(UI.div(
             UI.passwordInput.id("p"),
             UI.emailInput.id("e"),
@@ -228,7 +228,7 @@ class TextInputTest extends UITest:
                 _ <- Browser.click(Selector.id("u"))
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.assertVisible(Selector.id("s"))
-            yield succeed
+            yield ()
         }
     }
 
@@ -236,7 +236,7 @@ class TextInputTest extends UITest:
         "input value delegates through textInputAttrs" in {
             import kyo.UI.Bound
             UI.input.value("x").value match
-                case Present(Bound.Const("x")) => succeed
+                case Present(Bound.Const("x")) => ()
                 case other                     => fail(s"expected Present(Bound.Const(x)) but got $other")
         }
 
@@ -263,7 +263,7 @@ class TextInputTest extends UITest:
         "number retains extra fields and shared attrs" in {
             import kyo.UI.Bound
             UI.numberInput.min(0).max(100).value("5").value match
-                case Present(Bound.Const("5")) => succeed
+                case Present(Bound.Const("5")) => ()
                 case other                     => fail(s"expected Present(Bound.Const(5)) but got $other")
         }
 

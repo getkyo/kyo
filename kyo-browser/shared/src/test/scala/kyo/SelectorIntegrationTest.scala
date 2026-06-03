@@ -24,7 +24,7 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // ---- Single selectors ----
 
-    "button(Save) finds matching element" in run {
+    "button(Save) finds matching element" in {
         withBrowser {
             Browser.goto(formPage).andThen {
                 Browser.count(Browser.Selector.button("Save")).map { n =>
@@ -34,7 +34,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "button (any) finds all buttons" in run {
+    "button (any) finds all buttons" in {
         // `Selector.button` matches BOTH explicit `role="button"` (the 2 first buttons) and implicit
         // ARIA buttons (the `<button type="submit">Submit</button>`). Union is deduplicated by querySelectorAll, so total
         // is 3 = 2 explicit + 1 <button> element that lacks role="button".
@@ -47,7 +47,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "textbox finds input" in run {
+    "textbox finds input" in {
         withBrowser {
             Browser.goto(formPage).andThen {
                 Browser.count(Browser.Selector.textbox).map { n =>
@@ -57,7 +57,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "text(Submit) finds elements containing text" in run {
+    "text(Submit) finds elements containing text" in {
         withBrowser {
             Browser.goto(formPage).andThen {
                 Browser.count(Browser.Selector.text("Submit")).map { n =>
@@ -67,21 +67,21 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "id(name) finds element" in run {
+    "id(name) finds element" in {
         withBrowser {
             Browser.goto(formPage).andThen {
                 Browser.assertExists(Browser.Selector.id("name")).map { _ =>
-                    succeed
+                    ()
                 }
             }
         }
     }
 
-    "css(#name) finds same element as id(name)" in run {
+    "css(#name) finds same element as id(name)" in {
         withBrowser {
             Browser.goto(formPage).andThen {
                 Browser.assertExists(Browser.Selector.css("#name")).map { _ =>
-                    succeed
+                    ()
                 }
             }
         }
@@ -89,27 +89,27 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // ---- Composition against real DOM ----
 
-    "button(Save).or(button(OK)) finds Save" in run {
+    "button(Save).or(button(OK)) finds Save" in {
         withBrowser {
             Browser.goto(formPage).andThen {
                 Browser.assertExists(Browser.Selector.button("Save").or(Browser.Selector.button("OK"))).map { _ =>
-                    succeed
+                    ()
                 }
             }
         }
     }
 
-    "button(Missing).or(button(Save)) falls back to Save" in run {
+    "button(Missing).or(button(Save)) falls back to Save" in {
         withBrowser {
             Browser.goto(formPage).andThen {
                 Browser.assertExists(Browser.Selector.button("Missing").or(Browser.Selector.button("Save"))).map { _ =>
-                    succeed
+                    ()
                 }
             }
         }
     }
 
-    "button(Missing).or(button(AlsoMissing)) fails" in run {
+    "button(Missing).or(button(AlsoMissing)) fails" in {
         withBrowser {
             Browser.goto(formPage).andThen {
                 tight {
@@ -119,14 +119,14 @@ class SelectorIntegrationTest extends BrowserTest:
                         )
                     }
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.getMessage.contains("Element not found"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
         }
     }
 
-    "css within finds child inside parent" in run {
+    "css within finds child inside parent" in {
         val dialogPage = page(
             "<div id='login-dialog'>" +
                 "<button id='signin-btn'>Sign in</button>" +
@@ -136,13 +136,13 @@ class SelectorIntegrationTest extends BrowserTest:
         withBrowser {
             Browser.goto(dialogPage).andThen {
                 Browser.assertExists(Browser.Selector.css("#login-dialog").find(Browser.Selector.css("#signin-btn"))).map { _ =>
-                    succeed
+                    ()
                 }
             }
         }
     }
 
-    "css within does not find child outside parent" in run {
+    "css within does not find child outside parent" in {
         val dialogPage = page(
             "<div id='login-dialog'>" +
                 "<button id='signin-btn'>Sign in</button>" +
@@ -158,7 +158,7 @@ class SelectorIntegrationTest extends BrowserTest:
                         )
                     }
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.getMessage.contains("Element not found"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
@@ -167,7 +167,7 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // ---- Edge cases ----
 
-    "non-existent selector fails" in run {
+    "non-existent selector fails" in {
         withBrowser {
             onPage("<div>Nothing</div>") {
                 tight {
@@ -175,18 +175,18 @@ class SelectorIntegrationTest extends BrowserTest:
                         Browser.assertExists(Browser.Selector.button("NonExistent"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.getMessage.contains("Element not found"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
         }
     }
 
-    "CSS selector with special chars works" in run {
+    "CSS selector with special chars works" in {
         withBrowser {
             onPage("<div id='my-el' class='foo:bar'>Content</div>") {
                 Browser.assertExists(Browser.Selector.css("#my-el")).map { _ =>
-                    succeed
+                    ()
                 }
             }
         }
@@ -195,7 +195,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // ── Resolution primitives ───────────────────────────────────────────
 
     // 1. `resolveOne` returns `Absent` for a selector that matches nothing.
-    "resolveOne returns Absent for a selector that matches nothing" in run {
+    "resolveOne returns Absent for a selector that matches nothing" in {
         withBrowser {
             val html = page("<div id='only'>hi</div>")
             Browser.goto(html).andThen(Resolver.resolveOne(Browser.Selector.id("ghost"))).map { result =>
@@ -205,7 +205,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // 2. `resolveOne` returns `Present(ref)` for a single match.
-    "resolveOne returns Present for a single match" in run {
+    "resolveOne returns Present for a single match" in {
         withBrowser {
             val html = page("<button id='go'>Go</button>")
             Browser.goto(html).andThen(Resolver.resolveOne(Browser.Selector.id("go"))).map { result =>
@@ -221,7 +221,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // 3. `resolveOne` returns the first match in document order for a multi-match.
-    "resolveOne returns the first match in document order" in run {
+    "resolveOne returns the first match in document order" in {
         withBrowser {
             val html = page("""
                 <p class="p">A</p>
@@ -243,7 +243,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // 4. `resolveAll` returns an empty `Chunk` for a selector that matches no DOM node.
-    "resolveAll returns an empty Chunk when nothing matches" in run {
+    "resolveAll returns an empty Chunk when nothing matches" in {
         withBrowser {
             val html = page("<div id='only'>hi</div>")
             Browser.goto(html).andThen(Resolver.resolveAll(Browser.Selector.css(".missing"))).map { chunk =>
@@ -253,7 +253,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // 5. `resolveAll` preserves document order when multiple match.
-    "resolveAll preserves document order across matches" in run {
+    "resolveAll preserves document order across matches" in {
         withBrowser {
             val html = page("""
                 <p class="m" id="p1">1</p>
@@ -281,7 +281,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // 6. `NodeRef` equality is by backend node id.
-    "NodeRef equality is by backend node id" in run {
+    "NodeRef equality is by backend node id" in {
         withBrowser {
             val html = page("<button id='only'>X</button>")
             Browser.goto(html).andThen {
@@ -299,7 +299,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // 10. Round-trip: resolveOne then resolveAll returns refs pointing at identical backend ids.
-    "resolveOne ref is contained in resolveAll refs" in run {
+    "resolveOne ref is contained in resolveAll refs" in {
         withBrowser {
             val html = page("""
                 <div class="t">one</div>
@@ -320,7 +320,7 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // ── Implicit ARIA role matching ────────────────────────────────
 
-    "Selector.role(button) matches <button> without explicit role attribute" in run {
+    "Selector.role(button) matches <button> without explicit role attribute" in {
         withBrowser {
             onPage("""<button id="go">Go</button>""") { Browser.count(Browser.Selector.button) }.map { n =>
                 assert(n == 1, s"expected 1 implicit-button match but got $n")
@@ -328,7 +328,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.role(link) matches <a href=…>" in run {
+    "Selector.role(link) matches <a href=…>" in {
         withBrowser {
             onPage("""<a href="/next">Next</a>""") { Browser.count(Browser.Selector.link) }.map { n =>
                 assert(n == 1, s"expected 1 implicit-link match but got $n")
@@ -336,7 +336,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.role(textbox) matches <input type=text>" in run {
+    "Selector.role(textbox) matches <input type=text>" in {
         withBrowser {
             onPage("""<input id="u" type="text">""") { Browser.count(Browser.Selector.textbox) }.map { n =>
                 assert(n == 1, s"expected 1 implicit-textbox match but got $n")
@@ -344,7 +344,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.role(checkbox) matches <input type=checkbox>" in run {
+    "Selector.role(checkbox) matches <input type=checkbox>" in {
         withBrowser {
             onPage("""<input id="c" type="checkbox">""") { Browser.count(Browser.Selector.checkbox) }.map { n =>
                 assert(n == 1, s"expected 1 implicit-checkbox match but got $n")
@@ -352,7 +352,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.role(heading) matches <h1>..<h6>" in run {
+    "Selector.role(heading) matches <h1>..<h6>" in {
         withBrowser {
             onPage("""
             <h1>A</h1>
@@ -369,15 +369,15 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // ── new selector kinds; live DOM ──────────────────────────────
 
-    "Selector.testId resolves by data-testid attribute" in run {
+    "Selector.testId resolves by data-testid attribute" in {
         withBrowser {
             onPage("""<button data-testid="login">Login</button>""") { Browser.assertExists(Browser.Selector.testId("login")) }.map(_ =>
-                succeed
+                ()
             )
         }
     }
 
-    "Selector.label resolves via <label for=…> linkage" in run {
+    "Selector.label resolves via <label for=…> linkage" in {
         val p = page("""
             <label for="email-id">Email</label>
             <input id="email-id" type="email">
@@ -390,7 +390,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.label resolves via nested <label>Text<input></label>" in run {
+    "Selector.label resolves via nested <label>Text<input></label>" in {
         val p = page("""
             <label>Password<input id="pw-id" type="password"></label>
         """)
@@ -402,7 +402,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.placeholder resolves <input placeholder=…>" in run {
+    "Selector.placeholder resolves <input placeholder=…>" in {
         val p = page("""<input id="q" placeholder="Search">""")
         withBrowser {
             Browser.goto(p)
@@ -412,10 +412,10 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.title resolves [title=…]" in run {
+    "Selector.title resolves [title=…]" in {
         withBrowser {
             onPage("""<a id="h" href="#" title="Home">link</a>""") { Browser.assertExists(Browser.Selector.title("Home")) }.map(_ =>
-                succeed
+                ()
             )
         }
     }
@@ -423,7 +423,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // `Browser.count(a or b or c)` (a `FirstOf`) must short-circuit on the first non-empty alternative. The page below has
     // only the first selector's element present; if the short-circuit broke, the second alternative would hit a non-existent
     // element. A working short-circuit yields exactly the count from the first match.
-    "Selector or short-circuits on first matching alternative" in run {
+    "Selector or short-circuits on first matching alternative" in {
         withBrowser {
             onPage("""<button id="primary">P</button>""") {
                 Browser.count(
@@ -440,7 +440,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // attaches the button element after a 200 ms delay, so the assertion goes through several retry cycles before
     // succeeding. Functional success implies the memoised CSS string is correct (a cache that returned a stale or
     // wrong CSS union would fail to find the element).
-    "Selector.role(button) resolution is stable across retry ticks (memoisation)" in run {
+    "Selector.role(button) resolution is stable across retry ticks (memoisation)" in {
         val html = """<div id="container"></div>""" +
             """<script>setTimeout(function(){var b=document.createElement('button');""" +
             """b.id='delayed';b.textContent='Click';document.getElementById('container').appendChild(b)},200)</script>"""
@@ -460,7 +460,7 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // combobox: native <select> (non-multiple) has implicit combobox role;
     // [role="combobox"] is the explicit ARIA form.
-    "Selector.combobox matches native <select> AND [role='combobox']" in run {
+    "Selector.combobox matches native <select> AND [role='combobox']" in {
         withBrowser {
             onPage("""
             <select id="native"><option>x</option></select>
@@ -474,7 +474,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // listbox: <select multiple> does NOT have an implicit listbox mapping in
     // implicitRoleMappings; only [role="listbox"] is resolved. We put BOTH
     // on the page to verify ONLY the explicit ARIA form is counted (count == 1).
-    "Selector.listbox matches [role='listbox'] (no implicit mapping for <select multiple>)" in run {
+    "Selector.listbox matches [role='listbox'] (no implicit mapping for <select multiple>)" in {
         withBrowser {
             onPage("""
             <select id="multi" multiple><option>a</option><option>b</option></select>
@@ -486,7 +486,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // radio: native <input type="radio"> has implicit radio role AND [role="radio"]
-    "Selector.radio matches native <input type='radio'> AND [role='radio']" in run {
+    "Selector.radio matches native <input type='radio'> AND [role='radio']" in {
         withBrowser {
             onPage("""
             <input id="native" type="radio" name="g">
@@ -499,7 +499,7 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // dialog: <dialog> does NOT have an implicit dialog mapping; only [role="dialog"]
     // is resolved. We put BOTH on the page to verify ONLY the explicit ARIA form is counted (count == 1).
-    "Selector.dialog matches [role='dialog'] (no implicit mapping for <dialog> element)" in run {
+    "Selector.dialog matches [role='dialog'] (no implicit mapping for <dialog> element)" in {
         withBrowser {
             onPage("""
             <dialog id="native" open>native dialog</dialog>
@@ -511,7 +511,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // tab: no native HTML element has an implicit tab role; only [role="tab"] is resolved
-    "Selector.tab matches [role='tab'] (ARIA-only role, no native HTML mapping)" in run {
+    "Selector.tab matches [role='tab'] (ARIA-only role, no native HTML mapping)" in {
         withBrowser {
             onPage("""
             <div role="tablist">
@@ -525,7 +525,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // menuitem: no native HTML element has an implicit menuitem role; only [role="menuitem"]
-    "Selector.menuitem matches [role='menuitem'] (ARIA-only role, no native HTML mapping)" in run {
+    "Selector.menuitem matches [role='menuitem'] (ARIA-only role, no native HTML mapping)" in {
         withBrowser {
             onPage("""
             <ul role="menu">
@@ -541,7 +541,7 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // form: <form> does NOT have an implicit form role mapping; only [role="form"] is resolved.
     // We put BOTH on the page to verify ONLY the explicit ARIA form is counted (count == 1).
-    "Selector.form matches [role='form'] (no implicit mapping for <form> element)" in run {
+    "Selector.form matches [role='form'] (no implicit mapping for <form> element)" in {
         withBrowser {
             onPage("""
             <form id="native" action="#"><input type="text"></form>
@@ -553,7 +553,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // img: native <img> has implicit img role AND SVG [role="img"] is the explicit ARIA form
-    "Selector.img matches native <img> AND [role='img'] (e.g. SVG with role)" in run {
+    "Selector.img matches native <img> AND [role='img'] (e.g. SVG with role)" in {
         withBrowser {
             onPage("""
             <img id="native" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="dot">
@@ -569,7 +569,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // Text selector should click the correct element.
     // selectorToCss maps Text to "*" which matches <html>, so click dispatches
     // at <html>'s center instead of the button containing "Submit".
-    "click with Selector.text finds the right element" in run {
+    "click with Selector.text finds the right element" in {
         withBrowser {
             val html = page("""
                 <div>
@@ -589,7 +589,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // locateCount uses JS fallback: el.getAttribute('aria-label') || el.textContent.trim()
     // but selectorToCss generates [role='button'][aria-label='Login'] which requires aria-label attribute.
     // So assertExists finds the button via textContent, but click fails because CSS selector doesn't match.
-    "click with Selector.button matches textContent" in run {
+    "click with Selector.button matches textContent" in {
         withBrowser {
             val html = page("""
                 <div>
@@ -606,7 +606,7 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // Text selector fill variant.
     // focusElement uses selectorToCss which returns "*" for Text, focusing <html> instead of the input.
-    "fill with Selector.text targets correct input" in run {
+    "fill with Selector.text targets correct input" in {
         withBrowser {
             val html = page("""
                 <div>
@@ -624,7 +624,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // assertExists works but click fails for ARIA button with textContent only.
     // assertExists -> locateCount (JS with textContent fallback) -> succeeds
     // click -> elementCenter -> selectorToCss -> [role='button'][aria-label='Save'] -> not found
-    "ARIA button found by assertExists should also be clickable" in run {
+    "ARIA button found by assertExists should also be clickable" in {
         withBrowser {
             val html = page("""
                 <button role="button" onclick="this.textContent='done'">Save</button>
@@ -647,7 +647,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // `document.querySelector('input[name='search']')`; invalid JS. Chrome threw on it, `evalJs` silently ate the error and returned "",
     // and every downstream op (click/fill/focus/text/count) became a quiet no-op. This was the demo-tour failure that made the bug visible.
 
-    "click works on CSS selector with single-quoted attribute value" in run {
+    "click works on CSS selector with single-quoted attribute value" in {
         withBrowser {
             val html = page("""
                 <form>
@@ -663,7 +663,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "fill works on CSS selector with single-quoted attribute value" in run {
+    "fill works on CSS selector with single-quoted attribute value" in {
         withBrowser {
             val html = page("""<input name="search" type="text">""")
             Browser.goto(html)
@@ -673,7 +673,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "focus works on CSS selector with single-quoted attribute value" in run {
+    "focus works on CSS selector with single-quoted attribute value" in {
         withBrowser {
             val html = page("""<input id="a" name="search" type="text">""")
             Browser.goto(html)
@@ -683,7 +683,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "text works on CSS selector with single-quoted attribute value" in run {
+    "text works on CSS selector with single-quoted attribute value" in {
         withBrowser {
             val html = page("""<p data-role="lead">Hello</p>""")
             Browser.goto(html)
@@ -692,7 +692,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "count works on CSS selector with single-quoted attribute value" in run {
+    "count works on CSS selector with single-quoted attribute value" in {
         withBrowser {
             val html = page("""<input name="q"><input name="q"><input name="r">""")
             Browser.goto(html)
@@ -701,7 +701,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "textAll works on CSS selector with single-quoted attribute value" in run {
+    "textAll works on CSS selector with single-quoted attribute value" in {
         withBrowser {
             val html = page("""<span data-k="a">one</span><span data-k="a">two</span><span data-k="b">three</span>""")
             Browser.goto(html)
@@ -710,7 +710,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "attributeAll works on CSS selector with single-quoted attribute value" in run {
+    "attributeAll works on CSS selector with single-quoted attribute value" in {
         withBrowser {
             val html = page("""<a data-g="x" href="/1">a</a><a data-g="x" href="/2">b</a>""")
             Browser.goto(html)
@@ -719,7 +719,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "assertExists works on CSS selector with single-quoted attribute value" in run {
+    "assertExists works on CSS selector with single-quoted attribute value" in {
         withBrowser {
             val html = page("""<input name="search">""")
             Browser.goto(html)
@@ -732,7 +732,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "CSS selector with backslash-escaped colon (Tailwind-style class)" in run {
+    "CSS selector with backslash-escaped colon (Tailwind-style class)" in {
         withBrowser {
             // `.hover:bg-red` needs `.hover\:bg-red` in CSS because `:` is a pseudo-class separator.
             val html = page("""<div class="hover:bg-red">X</div>""")
@@ -742,7 +742,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "ARIA button name containing apostrophe is clickable" in run {
+    "ARIA button name containing apostrophe is clickable" in {
         // `Selector.button(name)` matches `[role="button"]` attribute (explicit role), so the element needs `role="button"`.
         withBrowser {
             val html = page("""<button role="button" onclick="this.textContent='done'">don't submit</button>""")
@@ -757,7 +757,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "ARIA link name containing apostrophe is clickable" in run {
+    "ARIA link name containing apostrophe is clickable" in {
         withBrowser {
             val html = page("""
                 <a role="link" href="#target" onclick="document.getElementById('out').textContent='hit'">O'Reilly</a>
@@ -770,7 +770,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "count on ARIA selector whose name contains an apostrophe" in run {
+    "count on ARIA selector whose name contains an apostrophe" in {
         withBrowser {
             val html = page("""
                 <button role="button">don't submit</button>
@@ -783,7 +783,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Text selector containing apostrophe matches correctly" in run {
+    "Text selector containing apostrophe matches correctly" in {
         withBrowser {
             val html = page("""<div id="target" onclick="this.textContent='hit'">can't find</div>""")
             Browser.goto(html)
@@ -793,7 +793,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Text selector containing double quotes matches correctly" in run {
+    "Text selector containing double quotes matches correctly" in {
         withBrowser {
             val html = page("""<div id="target" onclick="this.textContent='hit'">He said "hi"</div>""")
             Browser.goto(html)
@@ -803,7 +803,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.id containing apostrophe resolves correctly" in run {
+    "Selector.id containing apostrophe resolves correctly" in {
         // Server-side interpolation can produce such ids; they should round-trip.
         withBrowser {
             val html = page("""<div id="foo'bar">hello</div>""")
@@ -813,7 +813,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Within with child CSS containing a single-quoted attribute is scoped to the parent" in run {
+    "Within with child CSS containing a single-quoted attribute is scoped to the parent" in {
         withBrowser {
             val html = page("""
                 <div id="p"><input name="q" value="inner"></div>
@@ -825,7 +825,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Within count is scoped correctly with single-quoted child CSS" in run {
+    "Within count is scoped correctly with single-quoted child CSS" in {
         withBrowser {
             val html = page("""
                 <div id="p"><input name="q"><input name="q"></div>
@@ -844,7 +844,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // tests assert that a malformed selector now fails loudly as a typed BrowserProtocolErrorException whose message mentions the offending
     // selector substring; never as a quiet Success with a default value (0 / empty / "").
 
-    "malformed CSS selector in Browser.count fails loudly, not silent 0" in run {
+    "malformed CSS selector in Browser.count fails loudly, not silent 0" in {
         withBrowser {
             onPage("<body><input></body>") { Abort.run[Throwable](Browser.count(Browser.Selector.css(">>>>invalid<<<<"))) }
                 .map(result =>
@@ -859,7 +859,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "malformed CSS selector in Browser.text fails loudly" in run {
+    "malformed CSS selector in Browser.text fails loudly" in {
         withBrowser {
             onPage("<body><p>hi</p></body>") { Abort.run[Throwable](Browser.text(Browser.Selector.css(">>>>invalid<<<<"))) }
                 .map(result =>
@@ -874,7 +874,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "malformed CSS selector in Browser.click fails loudly" in run {
+    "malformed CSS selector in Browser.click fails loudly" in {
         withBrowser {
             onPage("<body><button>X</button></body>") { Abort.run[Throwable](Browser.click(Browser.Selector.css(">>>>invalid<<<<"))) }
                 .map(result =>
@@ -889,7 +889,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "malformed CSS selector in Browser.fill fails loudly" in run {
+    "malformed CSS selector in Browser.fill fails loudly" in {
         withBrowser {
             onPage("<body><input></body>") { Abort.run[Throwable](Browser.fill(Browser.Selector.css(">>>>invalid<<<<"), "x")) }
                 .map(result =>
@@ -904,7 +904,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "malformed CSS selector in Browser.textAll fails loudly, not empty chunk" in run {
+    "malformed CSS selector in Browser.textAll fails loudly, not empty chunk" in {
         withBrowser {
             onPage("<body><p>hi</p></body>") { Abort.run[Throwable](Browser.textAll(Browser.Selector.css(">>>>invalid<<<<"))) }
                 .map(result =>
@@ -919,7 +919,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "valid selector matching nothing still raises typed ElementNotFound, not library panic" in run {
+    "valid selector matching nothing still raises typed ElementNotFound, not library panic" in {
         withBrowser {
             onPage("<body></body>") {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(20.millis).take(3))) {
@@ -930,8 +930,9 @@ class SelectorIntegrationTest extends BrowserTest:
             }
                 .map(result =>
                     result match
-                        case Result.Failure(_: BrowserElementException) => succeed
-                        case other                                      => fail(s"expected typed BrowserElementException but got $other")
+                        case Result.Failure(_: BrowserElementException) =>
+                            succeed("clicking a missing element surfaces as a typed BrowserElementException")
+                        case other => fail(s"expected typed BrowserElementException but got $other")
                 )
         }
     }
@@ -942,7 +943,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // Gated interactions treat "unresolved" as a NotAttached actionability failure, so the surfaced exception is
     // BrowserElementNotActionableException rather than BrowserElementNotFoundException. The invariants the test cares about; typed
     // exception, human-readable selector in the message, no `__NOT_FOUND__` sentinel; remain preserved.
-    "click on unresolved selector raises a typed BrowserElementException with readable selector description" in run {
+    "click on unresolved selector raises a typed BrowserElementException with readable selector description" in {
         withBrowser {
             val html = page("<body></body>")
             Browser.goto(html).andThen {
@@ -956,7 +957,6 @@ class SelectorIntegrationTest extends BrowserTest:
                             val msg = ex.getMessage
                             assert(msg.contains("nope-nope-nope"), s"expected selector description in message but got: $msg")
                             assert(!msg.contains("__NOT_FOUND__"), s"message must not contain sentinel: $msg")
-                            succeed
                         case other =>
                             fail(s"expected Failure(BrowserElementException) but got $other")
                 }
@@ -965,19 +965,23 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // 8. `assertExists` succeeds when the resolver returns Present.
-    "assertExists succeeds when element is present" in run {
+    "assertExists succeeds when element is present" in {
         withBrowser {
             val html = page("<div id='here'>hi</div>")
             Browser.goto(html).andThen {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(20.millis).take(3))) {
                     Browser.assertExists(Browser.Selector.id("here"))
-                }.map(_ => succeed)
+                }.andThen {
+                    Browser.count(Browser.Selector.id("here")).map { n =>
+                        assert(n >= 1, s"Expected at least one element with id='here' after assertExists but got $n")
+                    }
+                }
             }
         }
     }
 
     // 9. `assertExists` raises ElementNotFound after schedule exhausts, with readable selector reference.
-    "assertExists raises ElementNotFound after schedule exhausts" in run {
+    "assertExists raises ElementNotFound after schedule exhausts" in {
         withBrowser {
             val html = page("<body></body>")
             Browser.goto(html).andThen {
@@ -990,7 +994,6 @@ class SelectorIntegrationTest extends BrowserTest:
                         case Result.Failure(ex: BrowserElementNotFoundException) =>
                             val msg = ex.getMessage
                             assert(msg.contains("missing-id-123"), s"expected selector reference in message but got: $msg")
-                            succeed
                         case other =>
                             fail(s"expected Failure(BrowserElementNotFoundException) but got $other")
                 }
@@ -1003,7 +1006,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // Pins that `Within(parent, Text("..."))` resolves through the scoped JS matcher and lands on the
     // child whose text matches, not on the parent's first descendant.
 
-    "Within(parent, text(inner)) targets the parent's inner-text child, not the first descendant" in run {
+    "Within(parent, text(inner)) targets the parent's inner-text child, not the first descendant" in {
         withBrowser {
             val html = page("""
                 <div id="scope">
@@ -1022,7 +1025,7 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // ── CSS-escaped id chars ───────────────────────────
 
-    "Selector.id(\"my:id\") emits CSS-escaped ident and resolves" in run {
+    "Selector.id(\"my:id\") emits CSS-escaped ident and resolves" in {
         withBrowser {
             val html = page("""<div id="my:id">hello</div>""")
             Browser.goto(html)
@@ -1031,7 +1034,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.id(\"id with spaces\") escapes whitespace and resolves" in run {
+    "Selector.id(\"id with spaces\") escapes whitespace and resolves" in {
         withBrowser {
             val html = page("""<div id="id with spaces">bingo</div>""")
             Browser.goto(html)
@@ -1041,7 +1044,7 @@ class SelectorIntegrationTest extends BrowserTest:
     }
 
     // ── JsStringUtil.escapeJsString golden test ──────────────
-    "JsStringUtil.escapeJsString escapes \\t, \\n, \\r, \", ', and \\\\" in run {
+    "JsStringUtil.escapeJsString escapes \\t, \\n, \\r, \", ', and \\\\" in {
         val raw     = "tab=\twindows=\r\nquote='back\\slash also \"double\""
         val escaped = JsStringUtil.escapeJsString(raw)
         // Backslash → \\, single quote → \', \n → \n, \r → \r, \t → \t. Double quote is left alone (single-quoted JS literal).
@@ -1059,7 +1062,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // the visible one; visibility-filtered semantic selectors mirror the platform's accessibility-tree view.
     // -------------------------------------------------------------------------
 
-    "Selector.textbox skips display:none inputs and matches the visible one" in run {
+    "Selector.textbox skips display:none inputs and matches the visible one" in {
         withBrowser {
             onPage(
                 """<input id="hidden" type="search" style="display:none">
@@ -1087,7 +1090,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.button skips visibility:hidden and aria-hidden ancestors" in run {
+    "Selector.button skips visibility:hidden and aria-hidden ancestors" in {
         withBrowser {
             onPage(
                 """<button id="b-vh" style="visibility:hidden">Go</button>
@@ -1110,7 +1113,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // needs a different selector; the second needs `setViewport` / a click-to-open / etc).
     // -------------------------------------------------------------------------
 
-    "ARIA selector against a page with ZERO role candidates fails with a clear 'no element with role' message" in run {
+    "ARIA selector against a page with ZERO role candidates fails with a clear 'no element with role' message" in {
         // No textbox-role elements anywhere on the page.
         withBrowser {
             onPage("<div>just a div</div>") {
@@ -1133,7 +1136,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "ARIA selector against a page with hidden candidates fails with a clear 'filtered by visibility' message" in run {
+    "ARIA selector against a page with hidden candidates fails with a clear 'filtered by visibility' message" in {
         // ONE textbox-role candidate, but it's display:none; the visibility filter drops it.
         withBrowser {
             onPage("""<input type="text" aria-label="Search" style="display:none">""") {
@@ -1165,7 +1168,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // into the shared filter without changing default behavior for callers that deliberately target hidden scaffolding.
     // -------------------------------------------------------------------------
 
-    "Selector.id(...).visible skips a hidden first match and resolves the visible one" in run {
+    "Selector.id(...).visible skips a hidden first match and resolves the visible one" in {
         withBrowser {
             // Two inputs share the same id (illegal HTML but real on responsive sites that swap layouts via CSS).
             // The first is display:none. Plain Selector.id matches the first by document order; .visible skips it.
@@ -1183,7 +1186,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.<x>.visible is a no-op when the inner selector already resolves to a visible element" in run {
+    "Selector.<x>.visible is a no-op when the inner selector already resolves to a visible element" in {
         withBrowser {
             onPage("""<input id='solo' value='start'/>""") {
                 Browser.fill(Browser.Selector.id("solo").visible, "new-value").map { _ =>
@@ -1198,7 +1201,7 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
-    "Selector.<x>.visible without a visible match raises a typed NotActionable" in run {
+    "Selector.<x>.visible without a visible match raises a typed NotActionable" in {
         withBrowser {
             // The id matches but only as a hidden element. .visible filters it out; should fail like 'no match'.
             onPage("""<input id='only-hidden' style='display:none' value='nope'/>""") {
@@ -1206,15 +1209,16 @@ class SelectorIntegrationTest extends BrowserTest:
                     Abort.run[BrowserElementException] {
                         Browser.click(Browser.Selector.id("only-hidden").visible)
                     }.map {
-                        case Result.Failure(_: BrowserElementNotActionableException) => succeed
-                        case other                                                   => fail(s"expected NotActionable but got $other")
+                        case Result.Failure(ex: BrowserElementNotActionableException) =>
+                            assert(ex.reason.isInstanceOf[BrowserElementNotActionableException.Reason.NotVisible])
+                        case other => fail(s"expected NotActionable but got $other")
                     }
                 }
             }
         }
     }
 
-    "Selector.css(...).visible composes with .or fallback and lands on the visible alternative" in run {
+    "Selector.css(...).visible composes with .or fallback and lands on the visible alternative" in {
         withBrowser {
             // First branch matches a hidden element; second branch matches a visible one. The `or` would normally pick
             // the first hit; with `.visible` wrapping the union it skips the hidden first and lands on the second.
@@ -1238,7 +1242,7 @@ class SelectorIntegrationTest extends BrowserTest:
     // `css=`). Driving `Browser.assertExists` against each prefix exercises the typed routing end-to-end against a real Chrome session;
     // a miswired prefix would either fail to find the element (wrong typed lookup) or land on the wrong one.
 
-    "prefixed-string DSL routes each prefix to the correct typed selector against live DOM" in run {
+    "prefixed-string DSL routes each prefix to the correct typed selector against live DOM" in {
         val fixture = page("""
             <div>
                 <p id="text-target">Sign in</p>
@@ -1256,7 +1260,12 @@ class SelectorIntegrationTest extends BrowserTest:
                 .andThen(Browser.assertExists("label=Email"))
                 .andThen(Browser.assertExists("id=id-target"))
                 .andThen(Browser.assertExists("css=.btn-primary"))
-                .map(_ => succeed)
+                .andThen {
+                    // Verify at least one element matched each prefix by checking count > 0.
+                    Browser.count(Browser.Selector.css("#text-target")).map { n =>
+                        assert(n >= 1, s"Expected element addressable via text= prefix but count was $n")
+                    }
+                }
         }
     }
 

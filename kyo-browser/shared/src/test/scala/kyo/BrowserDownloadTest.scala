@@ -49,7 +49,7 @@ class BrowserDownloadTest extends BrowserTest:
 
     // data: URL + <a download> trigger. Wait for the terminal Progress event before reading the file
     // bytes, otherwise Chrome may not have finished flushing.
-    "allowDownloads(toPath = Present(absoluteTmp)) lands a downloaded file at the requested path" in run {
+    "allowDownloads(toPath = Present(absoluteTmp)) lands a downloaded file at the requested path" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-allow-")
@@ -76,7 +76,7 @@ class BrowserDownloadTest extends BrowserTest:
     // chrome-headless-shell silently no-ops `Page.setDownloadBehavior(allow)` when no `downloadPath` is given (the
     // WillBegin event never fires, downloads vanish). The kyo-browser API rejects the combination up front via
     // BrowserInvalidArgumentException so the failure is explicit and behaves the same on every supported binary.
-    "allowDownloads aborts with BrowserInvalidArgumentException when no toPath is supplied" in run {
+    "allowDownloads aborts with BrowserInvalidArgumentException when no toPath is supplied" in {
         withBrowser {
             // Calling the internal setDownloadBehavior directly is the only way to hit the Absent code path now that
             // `allowDownloads` requires a `String` at the type level. The validation lives in setDownloadBehavior so a
@@ -102,7 +102,7 @@ class BrowserDownloadTest extends BrowserTest:
     // still emits Page.downloadWillBegin (the policy fires AFTER the wire-side signal), so we cannot
     // assert "no WillBegin within 1s". The observable that distinguishes Deny from Allow is "file does
     // NOT land at the previously-set Allow path". Pin that.
-    "denyDownloads drops the download (no file lands at the previously-set toPath)" in run {
+    "denyDownloads drops the download (no file lands at the previously-set toPath)" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-deny-")
@@ -117,7 +117,9 @@ class BrowserDownloadTest extends BrowserTest:
                 _ <- Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl")))
                 // Inverse poll: loop exits cleanly iff file never landed; Abort.fail = file landed.
                 _ <- assertNeverLands(tempPath / fileName, s"denyDownloads-no-landing-at-$fileName", 10, 50.millis)
-            yield succeed
+                // Confirm the file is absent after the full poll window (the deny contract was upheld).
+                absent <- (tempPath / fileName).exists
+            yield assert(!absent, s"Expected file to remain absent after denyDownloads but it landed at ${tempPath / fileName}")
             end for
         }
     }
@@ -126,7 +128,7 @@ class BrowserDownloadTest extends BrowserTest:
     // back to Allow → it lands again. Phase B uses eval-click (no Browser.click + no onDownload) because
     // click's mutation-settle would wait for DOM changes a download trigger doesn't produce. Phases A and C
     // use the canonical onDownload + collectEvents pattern.
-    "setDownloadBehavior(Default) resets to Chrome's default after a previous Allow" in run {
+    "setDownloadBehavior(Default) resets to Chrome's default after a previous Allow" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-default-")
@@ -173,7 +175,7 @@ class BrowserDownloadTest extends BrowserTest:
         }
     }
 
-    "onDownload(f)(trigger) fires f with DownloadEvent.WillBegin(guid, url, suggestedFilename)" in run {
+    "onDownload(f)(trigger) fires f with DownloadEvent.WillBegin(guid, url, suggestedFilename)" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-willbegin-")
@@ -213,7 +215,7 @@ class BrowserDownloadTest extends BrowserTest:
     // Progress(state="completed"). The plan's strict assertion ("at least one Progress before the
     // terminal completed") holds. If a future Chrome batches the body into a single completed event,
     // weaken to "at least one Progress at all".
-    "onDownload emits at least one Progress before the WillBegin's guid sees state=completed (1 MB body)" in run {
+    "onDownload emits at least one Progress before the WillBegin's guid sees state=completed (1 MB body)" in {
         val bigBody = Span.fromUnsafe(new Array[Byte](1024 * 1024)) // 1 MB of zeros
         val handler = HttpRoute.getRaw("/big").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(bigBody).addHeader("Content-Type", "application/octet-stream")
@@ -258,7 +260,7 @@ class BrowserDownloadTest extends BrowserTest:
     }
 
     // A trigger fired AFTER the onDownload scope exits must not call f.
-    "onDownload(f)(action1).andThen(action2) - f is called for action1's downloads only" in run {
+    "onDownload(f)(action1).andThen(action2) - f is called for action1's downloads only" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-unsub-")
@@ -319,7 +321,7 @@ class BrowserDownloadTest extends BrowserTest:
     }
 
     // API misuse before any CDP call is issued surfaces as BrowserInvalidArgumentException.
-    "allowDownloads('relative/path') aborts with BrowserInvalidArgumentException" in run {
+    "allowDownloads('relative/path') aborts with BrowserInvalidArgumentException" in {
         withBrowser {
             Abort.run[BrowserReadException](Browser.allowDownloads("relative/path")).map {
                 case Result.Failure(ex: BrowserInvalidArgumentException) =>
@@ -341,7 +343,7 @@ class BrowserDownloadTest extends BrowserTest:
     }
 
     // tab1 sees only its own download's events; tab2 sees only its own.
-    "Two concurrent tabs each running onDownload do not cross-talk" in run {
+    "Two concurrent tabs each running onDownload do not cross-talk" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-tabs-")
@@ -394,20 +396,19 @@ class BrowserDownloadTest extends BrowserTest:
 
     // The public DownloadBehavior maps to the right CDP wire string and the internal PageDownload.Behavior
     // case. This locks the public-to-internal boundary helper directly without any browser dependency.
-    "Browser.DownloadBehavior.{Allow,Deny,Default}.wire and .toInternal pin the boundary helper" in run {
+    "Browser.DownloadBehavior.{Allow,Deny,Default}.wire and .toInternal pin the boundary helper" in {
         assert(Browser.DownloadBehavior.Allow.wire == "allow")
         assert(Browser.DownloadBehavior.Deny.wire == "deny")
         assert(Browser.DownloadBehavior.Default.wire == "default")
         assert(Browser.DownloadBehavior.Allow.toInternal == PageDownload.Behavior.Allow)
         assert(Browser.DownloadBehavior.Deny.toInternal == PageDownload.Behavior.Deny)
         assert(Browser.DownloadBehavior.Default.toInternal == PageDownload.Behavior.Default)
-        succeed
     }
 
     // ── withDownloads; scoped form of allowDownloads ──
     // Body sees Allow with the requested path; on exit the policy reverts to Deny. We assert (a) the file
     // lands during the block, and (b) a subsequent download triggered AFTER the block exits is dropped.
-    "withDownloads(toPath) allows downloads in the body and reverts to Deny on exit" in run {
+    "withDownloads(toPath) allows downloads in the body and reverts to Deny on exit" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-with-")
@@ -446,7 +447,7 @@ class BrowserDownloadTest extends BrowserTest:
     // The body waits via a Promise that the test's own onDownload handler completes when the THIRD
     // WillBegin event lands; this gates the body's return on the drainer fiber having delivered all three
     // events into the recordDownloads chunk. Mirror of the L1 / L5 collectEvents + done.get pattern.
-    "recordDownloads captures every DownloadEvent emitted during the body in arrival order" in run {
+    "recordDownloads captures every DownloadEvent emitted during the body in arrival order" in {
         withBrowser {
             for
                 tempPath <- Path.tempDir("kyo-dl-record-")

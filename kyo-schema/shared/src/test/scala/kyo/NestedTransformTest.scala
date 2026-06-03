@@ -29,7 +29,7 @@ final case class NestedAddInner(x: Int) derives CanEqual
 given Schema[NestedAddInner] = Schema[NestedAddInner].add("derived")(_.x * 2)
 final case class NestedAddOuter(inner: NestedAddInner) derives CanEqual, Schema
 
-class NestedTransformTest extends Test:
+class NestedTransformTest extends kyo.test.Test[Any]:
 
     "discriminator survives one level of nesting (reporter's repro)" in {
         val v  = NestedEnvelope(NestedRO.`string`("hi"))
@@ -62,8 +62,10 @@ class NestedTransformTest extends Test:
         assert(js.contains("\"derived\":6"), js)
     }
 
-    "discriminator + drop combine on a nested schema" in {
-        pending
+    "discriminator + drop combine on a nested schema".pending(
+        "chaining .discriminator and .drop on the same sum-type schema is not expressible today: the API rejects .drop on sealed traits"
+    ) in {
+        ()
         // Design follow-up: chaining `.discriminator(...)` and `.drop(...)` on
         // the same sum-type schema is not expressible today — the API rejects
         // `.drop` on sealed traits at compile time ("Schema.drop is not

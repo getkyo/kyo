@@ -4,7 +4,7 @@ import UI.*
 import UI.Ast.*
 import scala.language.implicitConversions
 
-class UIModelTest extends Test:
+class UIModelTest extends kyo.test.Test[Any]:
 
     "Type hierarchy" - {
         "Block elements" in {
@@ -309,11 +309,11 @@ class UIModelTest extends Test:
 
     "Typed href/src ADT: compile-time rejection" - {
         "href does not accept raw String" in {
-            assertTypeError("""UI.a.href("raw string")""")
+            typeCheckFailure("""UI.a.href("raw string")""")
         }
 
         "img factory does not accept raw String src" in {
-            assertTypeError("""UI.img(src = "x", alt = "y")""")
+            typeCheckFailure("""UI.img(src = "x", alt = "y")""")
         }
     }
 

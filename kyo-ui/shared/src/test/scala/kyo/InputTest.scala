@@ -7,21 +7,21 @@ class InputTest extends UITest:
 
     // ---- Rendering ----
 
-    "input exists" in run {
+    "input exists" in {
         withUI(UI.div(UI.input.id("i"))) {
-            Browser.assertVisible(Selector.id("i")).andThen(succeed)
+            Browser.assertVisible(Selector.id("i")).unit
         }
     }
 
     // ---- disabled / readOnly ----
 
-    "input disabled" in run {
+    "input disabled" in {
         withUI(UI.div(UI.input.disabled(true).id("i"))) {
-            Browser.assertDisabled(Selector.id("i")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("i")).unit
         }
     }
 
-    "input disabled via signal" in run {
+    "input disabled via signal" in {
 
         val app: UI < Async =
             for disabled <- Signal.initRef(true)
@@ -34,13 +34,13 @@ class InputTest extends UITest:
                 _ <- Browser.assertDisabled(Selector.id("i"))
                 _ <- Browser.click(Selector.id("en"))
                 _ <- Browser.assertEnabled(Selector.id("i"))
-            yield succeed
+            yield ()
         }
     }
 
     // ---- onInput ----
 
-    "onInput fires on typing" in run {
+    "onInput fires on typing" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -52,11 +52,11 @@ class InputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "hello world")
                 _ <- Browser.assertText(Selector.id("v"), "hello world")
-            yield succeed
+            yield ()
         }
     }
 
-    "onInput clear shows empty" in run {
+    "onInput clear shows empty" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -71,11 +71,11 @@ class InputTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "[test]")
                 _ <- Browser.fill(Selector.id("i"), "")
                 _ <- Browser.assertText(Selector.id("v"), "[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "type in input updates sibling span" in run {
+    "type in input updates sibling span" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -88,11 +88,11 @@ class InputTest extends UITest:
                 _ <- Browser.assertText(Selector.id("echo"), "Echo:")
                 _ <- Browser.fill(Selector.id("i"), "abc")
                 _ <- Browser.assertText(Selector.id("echo"), "Echo:abc")
-            yield succeed
+            yield ()
         }
     }
 
-    "retype updates echo" in run {
+    "retype updates echo" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -106,11 +106,11 @@ class InputTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "first")
                 _ <- Browser.fill(Selector.id("i"), "second")
                 _ <- Browser.assertText(Selector.id("v"), "second")
-            yield succeed
+            yield ()
         }
     }
 
-    "two inputs independent" in run {
+    "two inputs independent" in {
 
         val app: UI < Async =
             for
@@ -127,11 +127,11 @@ class InputTest extends UITest:
                 _ <- Browser.fill(Selector.id("ia"), "hello")
                 _ <- Browser.assertText(Selector.id("va"), "a:hello")
                 _ <- Browser.assertText(Selector.id("vb"), "b:")
-            yield succeed
+            yield ()
         }
     }
 
-    "onChange fires" in run {
+    "onChange fires" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -143,19 +143,19 @@ class InputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "hello")
                 _ <- Browser.assertText(Selector.id("v"), "Changed:hello")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Input variants ----
 
-    "password input exists" in run {
+    "password input exists" in {
         withUI(UI.div(UI.passwordInput.id("p"))) {
-            Browser.assertVisible(Selector.id("p")).andThen(succeed)
+            Browser.assertVisible(Selector.id("p")).unit
         }
     }
 
-    "password onInput works" in run {
+    "password onInput works" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -167,43 +167,43 @@ class InputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("p"), "secret")
                 _ <- Browser.assertText(Selector.id("v"), "pw:secret")
-            yield succeed
+            yield ()
         }
     }
 
-    "email input exists" in run {
+    "email input exists" in {
         withUI(UI.div(UI.emailInput.id("e"))) {
-            Browser.assertVisible(Selector.id("e")).andThen(succeed)
+            Browser.assertVisible(Selector.id("e")).unit
         }
     }
 
-    "search input exists" in run {
+    "search input exists" in {
         withUI(UI.div(UI.searchInput.id("s"))) {
-            Browser.assertVisible(Selector.id("s")).andThen(succeed)
+            Browser.assertVisible(Selector.id("s")).unit
         }
     }
 
-    "tel input exists" in run {
+    "tel input exists" in {
         withUI(UI.div(UI.telInput.id("t"))) {
-            Browser.assertVisible(Selector.id("t")).andThen(succeed)
+            Browser.assertVisible(Selector.id("t")).unit
         }
     }
 
-    "url input exists" in run {
+    "url input exists" in {
         withUI(UI.div(UI.urlInput.id("u"))) {
-            Browser.assertVisible(Selector.id("u")).andThen(succeed)
+            Browser.assertVisible(Selector.id("u")).unit
         }
     }
 
     // ---- Value binding ----
 
-    "value initial" in run {
+    "value initial" in {
         withUI(UI.div(UI.input.id("i").value("initial"))) {
-            Browser.assertAttribute(Selector.id("i"), "value", "initial").andThen(succeed)
+            Browser.assertAttribute(Selector.id("i"), "value", "initial").unit
         }
     }
 
-    "value SignalRef fill updates ref" in run {
+    "value SignalRef fill updates ref" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -215,11 +215,11 @@ class InputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "typed")
                 _ <- Browser.assertText(Selector.id("v"), "val:typed")
-            yield succeed
+            yield ()
         }
     }
 
-    "value SignalRef external set updates display" in run {
+    "value SignalRef external set updates display" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("before")
@@ -232,11 +232,11 @@ class InputTest extends UITest:
                 _ <- Browser.assertAttribute(Selector.id("i"), "value", "before")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertAttribute(Selector.id("i"), "value", "after")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill special chars" in run {
+    "fill special chars" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -248,11 +248,11 @@ class InputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "&<>")
                 _ <- Browser.assertText(Selector.id("v"), "&<>")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill unicode" in run {
+    "fill unicode" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -264,29 +264,29 @@ class InputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "\u65e5\u672c\u8a9e")
                 _ <- Browser.assertText(Selector.id("v"), "\u65e5\u672c\u8a9e")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Placeholder ----
 
-    "placeholder attribute" in run {
+    "placeholder attribute" in {
         withUI(UI.div(UI.input.placeholder("hint").id("i"))) {
-            Browser.assertAttribute(Selector.id("i"), "placeholder", "hint").andThen(succeed)
+            Browser.assertAttribute(Selector.id("i"), "placeholder", "hint").unit
         }
     }
 
     // ---- ReadOnly ----
 
-    "readOnly attribute" in run {
+    "readOnly attribute" in {
         withUI(UI.div(UI.input.readOnly(true).id("i"))) {
-            Browser.assertAttribute(Selector.id("i"), "readonly", "").andThen(succeed)
+            Browser.assertAttribute(Selector.id("i"), "readonly", "").unit
         }
     }
 
     // ---- Events ----
 
-    "onInput and onChange both fire" in run {
+    "onInput and onChange both fire" in {
 
         val app: UI < Async =
             for
@@ -302,13 +302,13 @@ class InputTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "test")
                 _ <- Browser.assertText(Selector.id("vi"), "input:test")
                 _ <- Browser.assertText(Selector.id("vc"), "change:test")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Focus ----
 
-    "focus input onFocus fires" in run {
+    "focus input onFocus fires" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(false)
@@ -320,11 +320,11 @@ class InputTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("i"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus elsewhere onBlur fires" in run {
+    "focus elsewhere onBlur fires" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(false)
@@ -338,13 +338,13 @@ class InputTest extends UITest:
                 _ <- Browser.click(Selector.id("i"))
                 _ <- Browser.click(Selector.id("other"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Keyboard ----
 
-    "pressKey fires onKeyDown" in run {
+    "pressKey fires onKeyDown" in {
 
         val app: UI < Async =
             for keyRef <- Signal.initRef("")
@@ -356,11 +356,11 @@ class InputTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.ArrowLeft)
                 _ <- Browser.assertText(Selector.id("vk"), "key:ArrowLeft")
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey chars accumulate in input" in run {
+    "pressKey chars accumulate in input" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -374,21 +374,21 @@ class InputTest extends UITest:
                 _ <- Browser.press(Selector.id("i"), Key('b'))
                 _ <- Browser.press(Selector.id("i"), Key('c'))
                 _ <- Browser.assertText(Selector.id("v"), "result:abc")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus input assertFocused" in run {
+    "focus input assertFocused" in {
 
         withUI(UI.div(UI.input.id("i"))) {
             for
                 _ <- Browser.click(Selector.id("i"))
                 _ <- Browser.assertVisible(Selector.id("i"))
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey Char a onInput fires" in run {
+    "pressKey Char a onInput fires" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -400,17 +400,17 @@ class InputTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key('a'))
                 _ <- Browser.assertText(Selector.id("v"), "val:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "placeholder visible when empty" in run {
+    "placeholder visible when empty" in {
         withUI(UI.div(UI.input.placeholder("Type here").id("i"))) {
-            Browser.assertAttribute(Selector.id("i"), "placeholder", "Type here").andThen(succeed)
+            Browser.assertAttribute(Selector.id("i"), "placeholder", "Type here").unit
         }
     }
 
-    "placeholder gone after fill" in run {
+    "placeholder gone after fill" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -422,13 +422,13 @@ class InputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "hello")
                 _ <- Browser.assertText(Selector.id("v"), "val:hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "input type is text" in run {
+    "input type is text" in {
         withUI(UI.div(UI.input.id("i"))) {
-            Browser.assertAttribute(Selector.id("i"), "type", "text").andThen(succeed)
+            Browser.assertAttribute(Selector.id("i"), "type", "text").unit
         }
     }
 

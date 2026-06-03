@@ -4,18 +4,16 @@ import izumi.reflect.Tag as ITag
 import kyo.Ansi.yellow
 import kyo.Frame
 import kyo.Tag
-import org.scalatest.Assertions.assert
-import org.scalatest.compatible.Assertion
 import scala.concurrent.Future
 import scala.quoted.Expr
 import scala.quoted.Quotes
 import scala.quoted.Type
 
 abstract class RegisterFunction:
-    def apply(name: String, test: => Assertion, pending: Boolean): Unit
+    def apply(name: String, test: => Unit, pending: Boolean): Unit
 
 object TagTestMacro:
-    case class Test(name: String, body: () => Assertion)
+    case class Test(name: String, body: () => Unit)
 
     inline def test[T1, T2](using k1: Tag[T1], i1: ITag[T1], k2: Tag[T2], i2: ITag[T2], register: RegisterFunction, frame: Frame): Unit =
         test[T1, T2]()

@@ -1,9 +1,9 @@
 package kyo
 
-class LayerTest extends Test:
+class LayerTest extends kyo.test.Test[Any]:
 
     "composition" - {
-        "a to b" in run {
+        "a to b" in {
             case class Food(calories: Int)
             case class Stomach(food: Food)
 
@@ -67,7 +67,7 @@ class LayerTest extends Test:
 
         }
 
-        "provide should not allow circular deps" in pendingUntilFixed {
+        "provide should not allow circular deps".pendingUntilFixed("circular layer dependencies are not yet detected") in {
             trait Dummy
             case class Guppy(name: String)
             case class Shark(belly: Guppy, dummy: Dummy)
@@ -78,21 +78,21 @@ class LayerTest extends Test:
             discard(typeCheckFailure("""sharkLayer provide guppyLayer""")("circular"))
         }
 
-        "from 2" in:
-            pendingUntilFixed:
-                case class R2(a: String, b: Int)
+        "from 2".pendingUntilFixed(
+            "Layer.from with an intersection-type Env (String & Int) does not yet resolve the combined TypeMap value"
+        ) in:
+            case class R2(a: String, b: Int)
 
-                // adding a type annotation to layer here is creating the issue
-                val layer: Layer[R2, Env[String & Int]] = Layer.from(R2.apply)
+            // adding a type annotation to layer here is creating the issue
+            val layer: Layer[R2, Env[String & Int]] = Layer.from(R2.apply)
 
-                val v: TypeMap[R2] < (Env[String & Int] & Memo) = layer.run
+            val v: TypeMap[R2] < (Env[String & Int] & Memo) = layer.run
 
-                val r2: R2 = v.handle(Env.run(1), Env.run("abc"), Memo.run, _.eval, _.get[R2])
+            val r2: R2 = v.handle(Env.run(1), Env.run("abc"), Memo.run, _.eval, _.get[R2])
 
-                // fatal: kyo.TypeMap of contents [TypeMap(java.lang.String -> abc, scala.Int -> 1)] missing value of type: [(scala.Int & java.lang.String)].
-                assert(r2.a == "abc")
-                assert(r2.b == 1)
-                ()
+            // fatal: kyo.TypeMap of contents [TypeMap(java.lang.String -> abc, scala.Int -> 1)] missing value of type: [(scala.Int & java.lang.String)].
+            assert(r2.a == "abc")
+            assert(r2.b == 1)
 
         "In =:= Out" in {
             trait Value:
@@ -132,7 +132,7 @@ class LayerTest extends Test:
     }
 
     "memoization" - {
-        "shared to a and shared to b" in run {
+        "shared to a and shared to b" in {
             case class MagicSource(name: String)
             case class Wizard(name: String, source: MagicSource)
             case class Spell(powerLevel: Int, source: MagicSource)
@@ -249,7 +249,7 @@ class LayerTest extends Test:
                 "Ambigious Inputs: a, b for: scala.Int"
             )
         }
-        "complex layer" in run {
+        "complex layer" in {
             val s = Layer("Start")
             val i = Layer.from((s: String) => s.size)
             val b = Layer.from((i: Int) => i % 2 == 0)
@@ -274,7 +274,7 @@ class LayerTest extends Test:
                 assert(env.size == 1)
             }.handle(Memo.run)
         }
-        "effects" in run {
+        "effects" in {
             class A
             case class B(a: A)
             case class C(b: B)
@@ -285,7 +285,7 @@ class LayerTest extends Test:
             discard(a, b, c)
             typeCheck("""Layer.init[C](a, b, c)""")
         }
-        "pruneable inputs" in pendingUntilFixed {
+        "pruneable inputs".pendingUntilFixed("unused (pruneable) layer inputs are not yet pruned") in {
             val a = Layer("")
             val b = Layer(true)
             val c = Layer(0)
@@ -299,20 +299,20 @@ class LayerTest extends Test:
                 "Missing Input: scala.Boolean"
             )
         }
-        "one layer" in run {
+        "one layer" in {
             class Foo:
                 def bar: Boolean = true
             val foo = Layer(Foo())
             Memo.run(Env.runLayer(foo)(Env.get[Foo].map(_.bar).map(assert(_))))
         }
-        "multiple layers" in run {
+        "multiple layers" in {
             val a = Layer(42)
             val b = Layer.from((i: Int) => i.toString)
             val c = Layer.from((s: String) => (s.length % 2 == 0))
 
             Memo.run(Env.runLayer(a, b, c)(Env.get[Boolean].map(assert(_))))
         }
-        "multiple layers with effects and infer types correctly" in run {
+        "multiple layers with effects and infer types correctly" in {
             val a = Layer(Var.get[Int])
             val b = Layer.from((i: Int) => i.toString: String < Abort[String])
             val c = Layer.from((s: String) => (s.length % 2 == 0))
@@ -331,8 +331,13 @@ class LayerTest extends Test:
                 "Missing Input: java.lang.String"
             )
         }
-        "intersection" in run {
-            Memo.run(Env.runLayer(Layer(42), Layer("hello"))(Env.get[Int].map(_ => Env.get[String]).map(_ => succeed)))
+        "intersection" in {
+            Memo.run(Env.runLayer(Layer(42), Layer("hello"))(
+                for
+                    i <- Env.get[Int]
+                    s <- Env.get[String]
+                yield assert(i == 42 && s == "hello")
+            ))
         }
     }
 end LayerTest

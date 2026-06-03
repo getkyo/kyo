@@ -4,7 +4,7 @@ import kyo.Browser.Selector.find
 import kyo.Browser.Selector.or
 import kyo.internal.SelectorNode
 
-class SelectorTest extends Test:
+class SelectorTest extends BaseBrowserTest:
 
     // CanEqual instance for strict equality
     given CanEqual[SelectorNode, SelectorNode] = CanEqual.derived
@@ -361,7 +361,7 @@ class SelectorTest extends Test:
             val actual = kyo.internal.SelectorJs.escapeCssIdent(input)
             assert(actual == expected, s"escapeCssIdent($input) = '$actual', expected '$expected'")
         }
-        succeed
+        ()
     }
 
 end SelectorTest

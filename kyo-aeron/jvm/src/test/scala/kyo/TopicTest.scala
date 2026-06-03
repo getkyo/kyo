@@ -3,7 +3,7 @@ package kyo
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
 
-class TopicTest extends Test:
+class TopicTest extends kyo.test.Test[Any]:
 
     case class Message(value: Int) derives CanEqual, Topic.AsMessage
     case class GenericMessage[A](value: A) derives CanEqual, Topic.AsMessage
@@ -28,7 +28,7 @@ class TopicTest extends Test:
         s"with uri $uri" - {
 
             "basic publish/subscribe" - {
-                "single message type" in run {
+                "single message type" in {
                     val messages = Seq(Message(1), Message(2), Message(3))
                     Topic.run {
                         for
@@ -44,7 +44,7 @@ class TopicTest extends Test:
                     }
                 }
 
-                "multiple message types" in run {
+                "multiple message types" in {
                     val strings = Seq("hello", "world")
                     val ints    = Seq(42, 43)
                     Topic.run {
@@ -63,7 +63,7 @@ class TopicTest extends Test:
                     }
                 }
 
-                "generic message types" in run {
+                "generic message types" in {
                     val strMessages = Seq(GenericMessage("hello"), GenericMessage("world"))
                     val intMessages = Seq(GenericMessage(1), GenericMessage(2))
 
@@ -89,7 +89,7 @@ class TopicTest extends Test:
                     }
                 }
 
-                "complex message types" in run {
+                "complex message types" in {
                     val messages = Seq(
                         ComplexMessage(1, List("a", "b")),
                         ComplexMessage(2, List("c", "d"))
@@ -107,7 +107,7 @@ class TopicTest extends Test:
             }
 
             "multiple subscribers" - {
-                "fan-out to multiple subscribers" in run {
+                "fan-out to multiple subscribers" in {
                     val messages = Seq(Message(1), Message(2), Message(3))
 
                     Topic.run {
@@ -125,7 +125,7 @@ class TopicTest extends Test:
                     }
                 }
 
-                "subscribers with different consumption rates" in run {
+                "subscribers with different consumption rates" in {
                     val messages = Seq(Message(1), Message(2))
 
                     Topic.run {
@@ -160,7 +160,7 @@ class TopicTest extends Test:
                 case class Derived1(value: Int)    extends Base derives CanEqual, Topic.AsMessage
                 case class Derived2(value: String) extends Base derives CanEqual, Topic.AsMessage
 
-                "base type cannot receive subtypes" in run {
+                "base type cannot receive subtypes" in {
                     val messages = Seq(Derived1(1), Derived1(2))
 
                     Topic.run {
@@ -174,7 +174,7 @@ class TopicTest extends Test:
                     }
                 }
 
-                "subtype cannot receive base type" in run {
+                "subtype cannot receive base type" in {
                     val messages = Seq[Base](Derived1(1), Derived1(2))
 
                     Topic.run {
@@ -188,7 +188,7 @@ class TopicTest extends Test:
                     }
                 }
 
-                "generic base type cannot receive generic subtype" in run {
+                "generic base type cannot receive generic subtype" in {
                     sealed trait GenericBase[A] derives Topic.AsMessage
                     case class GenericDerived[A](value: A) extends GenericBase[A] derives CanEqual, Topic.AsMessage
 
@@ -205,7 +205,7 @@ class TopicTest extends Test:
                     }
                 }
 
-                "different subtypes maintain separation" in run {
+                "different subtypes maintain separation" in {
                     val messages1 = Seq(Derived1(1), Derived1(2))
                     val messages2 = Seq(Derived2("a"), Derived2("b"))
 
@@ -226,7 +226,9 @@ class TopicTest extends Test:
                 }
             }
 
-            "maintains message order for large batches (pendingUntilFixed)" in run {
+            "maintains message order for large batches (pendingUntilFixed)".pendingUntilFixed(
+                "large-batch publish currently panics; message ordering is not yet verifiable"
+            ) in {
                 val count    = 200
                 val messages = Seq.tabulate(count)(Message(_))
                 Topic.run {
@@ -236,14 +238,13 @@ class TopicTest extends Test:
                         _       <- started.await
                         result  <- Abort.run(Topic.publish[Message](uri)(Stream.init(messages)))
                     yield
-                        if result.isPanic then
-                            pending
-                        else
-                            fail("Pending test should have failed")
+                        // pendingUntilFixed: today the publish panics, so this assert fails -> the leaf reports Pending;
+                        // once the panic is fixed the assert passes -> Failed, the tripwire to remove the marker.
+                        assert(!result.isPanic, "large-batch publish should not panic once ordering is fixed")
                 }
             }
 
-            "handles empty streams" in run {
+            "handles empty streams" in {
                 Topic.run {
                     for
                         started <- Latch.init(1)
@@ -255,7 +256,7 @@ class TopicTest extends Test:
                 }
             }
 
-            "partial subscriber failure" in run {
+            "partial subscriber failure" in {
                 val messageCount = 10
                 val messages     = (0 until messageCount).map(Message(_))
 
@@ -288,7 +289,7 @@ class TopicTest extends Test:
             }
 
             "isolation" - {
-                "publisher without subscribers" in run {
+                "publisher without subscribers" in {
                     Topic.run {
                         for
                             result <- Abort.run(Topic.publish(uri, failSchedule)(Stream.init(Seq(Message(1)))))
@@ -296,7 +297,7 @@ class TopicTest extends Test:
                     }
                 }
 
-                "subscriber without publisher" in run {
+                "subscriber without publisher" in {
                     Topic.run {
                         for
                             fiber  <- Fiber.initUnscoped(Topic.stream[Message](uri, failSchedule).take(1).run)
@@ -305,7 +306,7 @@ class TopicTest extends Test:
                     }
                 }
 
-                "subscriber starts after publisher" in run {
+                "subscriber starts after publisher" in {
                     Topic.run {
                         for
                             started <- Latch.init(1)

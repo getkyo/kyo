@@ -4,7 +4,7 @@ import kyo.*
 import kyo.kernel.*
 import kyo.kernel.internal.*
 
-class ArrowEffectTest extends Test:
+class ArrowEffectTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
     sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Int]]
@@ -20,8 +20,9 @@ class ArrowEffectTest extends Test:
         ArrowEffect.suspend[Any](Tag[TestEffect3], b)
 
     "suspend" in {
-        val effect = testEffect1(42)
-        assert(effect.isInstanceOf[String < TestEffect1])
+        val effect: String < TestEffect1 = testEffect1(42)
+        discard(effect)
+        succeed("ArrowEffect.suspend produces a String < TestEffect1; the type ascription above is the verification")
     }
 
     "handle" - {
@@ -531,7 +532,7 @@ class ArrowEffectTest extends Test:
 
             end Delim
 
-            "multi shot" in run {
+            "multi shot" in {
                 Delim.shift[Int, Int, Any] { k =>
                     k(42).map(a => k(42 + 1).map(b => a + b))
                 }.map(_ * 10)
@@ -541,7 +542,7 @@ class ArrowEffectTest extends Test:
                     }
             }
 
-            "multi shot with other effect" in run {
+            "multi shot with other effect" in {
                 Delim.shift[Int, Int, TestEffect2] { k =>
                     k(42).map(a => testEffect2("a").map(k).map(b => a + b))
                 }.map(_ * 10)
@@ -555,7 +556,7 @@ class ArrowEffectTest extends Test:
                     }
             }
 
-            "multiple shift with different effect sets" in run {
+            "multiple shift with different effect sets" in {
                 Delim.shift[Int, Int, TestEffect2] { k =>
                     k(42).map { r =>
                         testEffect2("a").map(v => r + v)
@@ -580,7 +581,7 @@ class ArrowEffectTest extends Test:
                     }
             }
 
-            "short circuiting" in run {
+            "short circuiting" in {
                 def test(numbers: List[Int], expected: Int) =
                     Kyo.foldLeft(numbers)(0) { (acc, n) =>
                         if n < 0 || n == 42 then
@@ -597,7 +598,7 @@ class ArrowEffectTest extends Test:
                     _ <- test(List(1, 2), 3)
                     _ <- test(List(1, 2, -1), -1)
                     _ <- test(List(1, 2, 42, 3), -1)
-                yield succeed
+                yield ()
                 end for
             }
         }
@@ -633,7 +634,7 @@ class ArrowEffectTest extends Test:
 
             end Flow
 
-            "single poll" in run {
+            "single poll" in {
                 def test(source: Chunk[Int], in: Chunk[Int], out: Chunk[Int], result: Maybe[Int]) =
                     Flow.poll[Int]
                         .handle(Flow.run(source))
@@ -646,11 +647,11 @@ class ArrowEffectTest extends Test:
                     _ <- test(Chunk.empty, Chunk.empty, Chunk.empty, Absent)
                     _ <- test(Chunk(1), Chunk.empty, Chunk.empty, Present(1))
                     _ <- test(Chunk(1, 2), Chunk(2), Chunk.empty, Present(1))
-                yield succeed
+                yield ()
                 end for
             }
 
-            "poll and emit" in run {
+            "poll and emit" in {
                 def test(source: Chunk[Int], out: Chunk[Int], result: Int) =
                     Loop(0) { acc =>
                         Flow.poll[Int].map {
@@ -666,12 +667,12 @@ class ArrowEffectTest extends Test:
                     _ <- test(Chunk.empty, Chunk.empty, 0)
                     _ <- test(Chunk(1), Chunk(2), 1)
                     _ <- test(Chunk(1, 2), Chunk(2, 3), 3)
-                yield succeed
+                yield ()
                 end for
 
             }
 
-            "multiple flows in the same computation" in run {
+            "multiple flows in the same computation" in {
                 def test(
                     iSource: Chunk[Int],
                     sSource: Chunk[String],
@@ -701,7 +702,7 @@ class ArrowEffectTest extends Test:
                     _ <- test(Chunk.empty, Chunk("a"), Chunk.empty, Chunk.empty)
                     _ <- test(Chunk(1), Chunk("a"), Chunk(2), Chunk("aa"))
                     _ <- test(Chunk(1, 2), Chunk("a", "b"), Chunk(2, 3), Chunk("aa", "ba"))
-                yield succeed
+                yield ()
                 end for
             }
 

@@ -8,7 +8,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertExists ----
 
-    "assertExists element present returns immediately" in run {
+    "assertExists element present returns immediately" in {
         withBrowser {
             onPage("<button role='button'>Save</button>") {
                 Browser.assertExists(Browser.Selector.css("button")).andThen {
@@ -20,7 +20,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertExists element appears after delay retries and succeeds" in run {
+    "assertExists element appears after delay retries and succeeds" in {
         withBrowser {
             onPage(
                 "<div id='container'></div><script>setTimeout(function(){document.getElementById('container').innerHTML='<span id=\"delayed\">Hi</span>'},200)</script>"
@@ -34,7 +34,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertExists element never appears fails" in run {
+    "assertExists element never appears fails" in {
         withBrowser {
             onPage("<div>Nothing</div>") {
                 tight {
@@ -42,14 +42,14 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertExists(Browser.Selector.css("#never-exists"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.selector.contains("#never-exists"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
         }
     }
 
-    "assertExists works with CSS selector" in run {
+    "assertExists works with CSS selector" in {
         withBrowser {
             onPage("<div id='target'>Here</div>") {
                 Browser.assertExists(Browser.Selector.css("#target")).andThen {
@@ -61,7 +61,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertExists works with ID selector" in run {
+    "assertExists works with ID selector" in {
         withBrowser {
             onPage("<div id='myid'>Found</div>") {
                 Browser.assertExists(Browser.Selector.id("myid")).andThen {
@@ -75,7 +75,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertNotExists ----
 
-    "assertNotExists element absent returns immediately" in run {
+    "assertNotExists element absent returns immediately" in {
         withBrowser {
             onPage("<div>Just text</div>") {
                 Browser.assertNotExists(Browser.Selector.css("#absent")).andThen {
@@ -87,7 +87,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertNotExists element always present fails" in run {
+    "assertNotExists element always present fails" in {
         withBrowser {
             onPage("<button id='present'>Click</button>") {
                 tight {
@@ -95,7 +95,7 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertNotExists(Browser.Selector.css("#present"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -104,7 +104,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertText ----
 
-    "assertText matches immediately" in run {
+    "assertText matches immediately" in {
         withBrowser {
             onPage("<div id='msg'>Hello</div>") {
                 Browser.assertText(Browser.Selector.css("#msg"), "Hello").andThen {
@@ -116,7 +116,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertText matches after dynamic JS update retries" in run {
+    "assertText matches after dynamic JS update retries" in {
         withBrowser {
             onPage(
                 "<div id='msg'>loading</div><script>setTimeout(function(){document.getElementById('msg').textContent='done'},200)</script>"
@@ -130,7 +130,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertText never matches fails with expected actual" in run {
+    "assertText never matches fails with expected actual" in {
         withBrowser {
             onPage("<div id='msg'>wrong</div>") {
                 tight {
@@ -138,14 +138,15 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertText(Browser.Selector.css("#msg"), "correct")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                        assert(ex.expected.contains("correct") && ex.actual.contains("wrong"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
         }
     }
 
-    "assertText exact match only partial fails" in run {
+    "assertText exact match only partial fails" in {
         withBrowser {
             onPage("<div id='msg'>Hello World</div>") {
                 tight {
@@ -153,14 +154,15 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertText(Browser.Selector.css("#msg"), "Hello")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                        assert(ex.expected.contains("Hello") && ex.actual.contains("Hello World"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
         }
     }
 
-    "assertText empty expected vs empty actual succeeds" in run {
+    "assertText empty expected vs empty actual succeeds" in {
         withBrowser {
             onPage("<div id='empty'></div>") {
                 Browser.assertText(Browser.Selector.css("#empty"), "").andThen {
@@ -174,7 +176,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertAttribute ----
 
-    "assertAttribute value matches" in run {
+    "assertAttribute value matches" in {
         withBrowser {
             onPage("<a id='link' href='https://example.com'>Link</a>") {
                 Browser.assertAttribute(Browser.Selector.css("#link"), "href", "https://example.com").andThen {
@@ -186,7 +188,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertAttribute wrong value fails" in run {
+    "assertAttribute wrong value fails" in {
         withBrowser {
             onPage("<a id='link' href='https://example.com'>Link</a>") {
                 tight {
@@ -194,7 +196,8 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertAttribute(Browser.Selector.css("#link"), "href", "https://wrong.com")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                        assert(ex.expected.contains("wrong.com") && ex.actual.contains("example.com"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -203,7 +206,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertRole / assertAccessibleName ----
 
-    "assertRole succeeds for a matching role" in run {
+    "assertRole succeeds for a matching role" in {
         withBrowser {
             onPage("<button id='b'>x</button>") {
                 Browser.assertRole(Browser.Selector.id("b"), "button").andThen {
@@ -215,7 +218,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertRole mismatch raises with both actual and expected in the message" in run {
+    "assertRole mismatch raises with both actual and expected in the message" in {
         withBrowser {
             onPage("<button id='b'>x</button>") {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).take(4))) {
@@ -236,7 +239,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertRole retries across a delayed setAttribute('role',...) swap" in run {
+    "assertRole retries across a delayed setAttribute('role',...) swap" in {
         withBrowser {
             onPage(
                 "<div id='d' role='generic'>x</div>" +
@@ -251,7 +254,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertAccessibleName mismatch raises with both actual and expected in the message" in run {
+    "assertAccessibleName mismatch raises with both actual and expected in the message" in {
         withBrowser {
             onPage("<button id='b'>Submit</button>") {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).take(4))) {
@@ -272,7 +275,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertAccessibleName retries across a delayed aria-label swap" in run {
+    "assertAccessibleName retries across a delayed aria-label swap" in {
         withBrowser {
             onPage(
                 "<button id='b' aria-label='Submit'>x</button>" +
@@ -287,7 +290,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertAccessibleName succeeds for a matching aria-label" in run {
+    "assertAccessibleName succeeds for a matching aria-label" in {
         withBrowser {
             onPage("<button id='b' aria-label='Save'>Discard</button>") {
                 Browser.assertAccessibleName(Browser.Selector.id("b"), "Save").andThen {
@@ -301,7 +304,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertUrl ----
 
-    "assertUrl matches after goto" in run {
+    "assertUrl matches after goto" in {
         val p = page("<h1>URL</h1>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -314,7 +317,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertUrl never matches fails" in run {
+    "assertUrl never matches fails" in {
         withBrowser {
             onPage("<h1>Page</h1>") {
                 tight {
@@ -322,7 +325,7 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertUrl("https://never-match.example.com")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.expected.contains("never-match.example.com"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -331,7 +334,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertTitle ----
 
-    "assertTitle matches" in run {
+    "assertTitle matches" in {
         withBrowser {
             onPage("<html><head><title>MyTitle</title></head><body></body></html>") {
                 Browser.assertTitle("MyTitle").andThen {
@@ -343,7 +346,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertTitle JS sets title after delay retries and succeeds" in run {
+    "assertTitle JS sets title after delay retries and succeeds" in {
         withBrowser {
             onPage(
                 "<html><head><title></title></head><body><script>setTimeout(function(){document.title='Delayed'},200)</script></body></html>"
@@ -359,7 +362,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- Settlement ----
 
-    "goto then assertExists heading works" in run {
+    "goto then assertExists heading works" in {
         withBrowser {
             onPage("<h1 role='heading'>Title</h1>") {
                 Browser.assertExists(Browser.Selector.heading("Title")).andThen {
@@ -371,7 +374,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "goto then assertText heading matches immediately" in run {
+    "goto then assertText heading matches immediately" in {
         withBrowser {
             onPage("<h1 role='heading' aria-label='Title'>Title</h1>") {
                 Browser.assertText(Browser.Selector.heading("Title"), "Title").andThen {
@@ -383,7 +386,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "goto page with delayed JS then assertText retries until JS runs" in run {
+    "goto page with delayed JS then assertText retries until JS runs" in {
         withBrowser {
             onPage(
                 "<div id='target'>initial</div><script>setTimeout(function(){document.getElementById('target').textContent='loaded'},200)</script>"
@@ -397,7 +400,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertVisible succeeds for a visible element" in run {
+    "assertVisible succeeds for a visible element" in {
         withBrowser {
             onPage("<div id='v'>visible</div>") {
                 Browser.assertVisible(Browser.Selector.css("#v")).andThen {
@@ -412,7 +415,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertVisible waits for a delayed-visibility element" in run {
+    "assertVisible waits for a delayed-visibility element" in {
         withBrowser {
             onPage(
                 "<div id='v' style='display:none'>later</div>" +
@@ -432,7 +435,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertVisible fails with Hidden-phrased message when the element stays hidden" in run {
+    "assertVisible fails with Hidden-phrased message when the element stays hidden" in {
         withBrowser {
             onPage("<div id='h' style='display:none'>never</div>") {
                 tight {
@@ -452,23 +455,31 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertNotVisible succeeds for a display:none element" in run {
+    "assertNotVisible succeeds for a display:none element" in {
         withBrowser {
             onPage("<div id='h' style='display:none'>hidden</div>") {
-                Browser.assertNotVisible(Browser.Selector.css("#h")).map(_ => succeed)
+                Browser.assertNotVisible(Browser.Selector.css("#h")).andThen {
+                    Browser.isVisible(Browser.Selector.css("#h")).map { visible =>
+                        assert(!visible, "element must not be visible after assertNotVisible passed")
+                    }
+                }
             }
         }
     }
 
-    "assertNotVisible succeeds for a hidden attribute element" in run {
+    "assertNotVisible succeeds for a hidden attribute element" in {
         withBrowser {
             onPage("<div id='h' hidden>hidden</div>") {
-                Browser.assertNotVisible(Browser.Selector.css("#h")).map(_ => succeed)
+                Browser.assertNotVisible(Browser.Selector.css("#h")).andThen {
+                    Browser.isVisible(Browser.Selector.css("#h")).map { visible =>
+                        assert(!visible, "element must not be visible after assertNotVisible passed")
+                    }
+                }
             }
         }
     }
 
-    "assertNotVisible waits for an element that becomes hidden" in run {
+    "assertNotVisible waits for an element that becomes hidden" in {
         withBrowser {
             onPage(
                 "<div id='v'>visible</div>" +
@@ -476,12 +487,16 @@ class BrowserAssertionTest extends BrowserTest:
             ) {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(5.seconds))) {
                     Browser.assertNotVisible(Browser.Selector.css("#v"))
-                }.map(_ => succeed)
+                }.andThen {
+                    Browser.isVisible(Browser.Selector.css("#v")).map { visible =>
+                        assert(!visible, "element must not be visible after assertNotVisible passed")
+                    }
+                }
             }
         }
     }
 
-    "assertNotVisible fails when the element stays visible" in run {
+    "assertNotVisible fails when the element stays visible" in {
         withBrowser {
             onPage("<div id='v'>still here</div>") {
                 tight {
@@ -501,7 +516,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertNotVisible fails fast with BrowserElementException when element is missing" in run {
+    "assertNotVisible fails fast with BrowserElementException when element is missing" in {
         withBrowser {
             onPage("<div>nothing</div>") {
                 tight {
@@ -509,14 +524,14 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertNotVisible(Browser.Selector.css("#absent"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.selector.contains("#absent"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
         }
     }
 
-    "assertEnabled on button without disabled succeeds" in run {
+    "assertEnabled on button without disabled succeeds" in {
         withBrowser {
             onPage("<button id='b'>Go</button>") {
                 Browser.assertEnabled(Browser.Selector.css("#b")).andThen {
@@ -529,7 +544,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertEnabled on disabled button fails" in run {
+    "assertEnabled on disabled button fails" in {
         withBrowser {
             onPage("<button id='b' disabled>Go</button>") {
                 tight {
@@ -549,7 +564,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertChecked on checked checkbox succeeds" in run {
+    "assertChecked on checked checkbox succeeds" in {
         withBrowser {
             onPage("<input id='c' type='checkbox' checked>") {
                 Browser.assertChecked(Browser.Selector.css("#c")).andThen {
@@ -564,7 +579,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertChecked on unchecked checkbox fails" in run {
+    "assertChecked on unchecked checkbox fails" in {
         withBrowser {
             onPage("<input id='c' type='checkbox'>") {
                 tight {
@@ -582,15 +597,19 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertNotChecked on unchecked checkbox succeeds" in run {
+    "assertNotChecked on unchecked checkbox succeeds" in {
         withBrowser {
             onPage("<input id='c' type='checkbox'>") {
-                Browser.assertNotChecked(Browser.Selector.css("#c")).map(_ => succeed)
+                Browser.assertNotChecked(Browser.Selector.css("#c")).andThen {
+                    Browser.eval("document.getElementById('c').checked").map { v =>
+                        assert(v == "false", s"expected unchecked checkbox but got checked=$v")
+                    }
+                }
             }
         }
     }
 
-    "assertNotChecked waits for a checkbox that becomes unchecked" in run {
+    "assertNotChecked waits for a checkbox that becomes unchecked" in {
         withBrowser {
             onPage(
                 "<input id='c' type='checkbox' checked>" +
@@ -598,12 +617,16 @@ class BrowserAssertionTest extends BrowserTest:
             ) {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(5.seconds))) {
                     Browser.assertNotChecked(Browser.Selector.css("#c"))
-                }.map(_ => succeed)
+                }.andThen {
+                    Browser.eval("document.getElementById('c').checked").map { v =>
+                        assert(v == "false", s"expected unchecked after assertNotChecked passed but got checked=$v")
+                    }
+                }
             }
         }
     }
 
-    "assertNotChecked on checked checkbox fails" in run {
+    "assertNotChecked on checked checkbox fails" in {
         withBrowser {
             onPage("<input id='c' type='checkbox' checked>") {
                 tight {
@@ -621,7 +644,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertNotChecked fails fast with BrowserElementException when element is missing" in run {
+    "assertNotChecked fails fast with BrowserElementException when element is missing" in {
         withBrowser {
             onPage("<div>nothing</div>") {
                 tight {
@@ -629,14 +652,14 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertNotChecked(Browser.Selector.css("#absent"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.selector.contains("#absent"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
         }
     }
 
-    "assertDisabled on disabled button succeeds" in run {
+    "assertDisabled on disabled button succeeds" in {
         withBrowser {
             onPage("<button id='b' disabled>Go</button>") {
                 Browser.assertDisabled(Browser.Selector.css("#b")).andThen {
@@ -650,17 +673,21 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertFocused succeeds when document.activeElement matches the selector" in run {
+    "assertFocused succeeds when document.activeElement matches the selector" in {
         withBrowser {
             onPage("<input id='a' autofocus/><input id='b'/>") {
                 Browser.eval("document.getElementById('a').focus()").andThen {
-                    Browser.assertFocused(Browser.Selector.id("a")).map(_ => succeed)
+                    Browser.assertFocused(Browser.Selector.id("a")).andThen {
+                        Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                            assert(focused == "a", s"Expected activeElement to be 'a' after assertFocused but was '$focused'")
+                        }
+                    }
                 }
             }
         }
     }
 
-    "assertFocused fails (Abort) when a different element has focus" in run {
+    "assertFocused fails (Abort) when a different element has focus" in {
         withBrowser {
             onPage("<input id='a' autofocus/><input id='b'/>") {
                 Browser.eval("document.getElementById('a').focus()").andThen {
@@ -669,7 +696,8 @@ class BrowserAssertionTest extends BrowserTest:
                             Browser.assertFocused(Browser.Selector.id("b"))
                         }
                     }.map {
-                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                            assert(ex.getMessage.contains("Assertion failed"))
                         case other =>
                             fail(s"Expected Result.Failure(BrowserAssertionTimedOutException) but got $other")
                     }
@@ -678,7 +706,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertFocused fails (Abort) when the selector matches no element" in run {
+    "assertFocused fails (Abort) when the selector matches no element" in {
         withBrowser {
             onPage("<input id='a'/>") {
                 tight {
@@ -697,17 +725,21 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertNotFocused succeeds when the element is not focused" in run {
+    "assertNotFocused succeeds when the element is not focused" in {
         withBrowser {
             onPage("<input id='a' autofocus/><input id='b'/>") {
                 Browser.eval("document.getElementById('a').focus()").andThen {
-                    Browser.assertNotFocused(Browser.Selector.id("b")).map(_ => succeed)
+                    Browser.assertNotFocused(Browser.Selector.id("b")).andThen {
+                        Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                            assert(focused != "b", s"Expected activeElement to NOT be 'b' after assertNotFocused but was '$focused'")
+                        }
+                    }
                 }
             }
         }
     }
 
-    "assertNotFocused fails (Abort) when the element is focused" in run {
+    "assertNotFocused fails (Abort) when the element is focused" in {
         withBrowser {
             onPage("<input id='a' autofocus/><input id='b'/>") {
                 Browser.eval("document.getElementById('a').focus()").andThen {
@@ -716,7 +748,8 @@ class BrowserAssertionTest extends BrowserTest:
                             Browser.assertNotFocused(Browser.Selector.id("a"))
                         }
                     }.map {
-                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                            assert(ex.getMessage.contains("Assertion failed"))
                         case other =>
                             fail(s"Expected Result.Failure(BrowserAssertionTimedOutException) but got $other")
                     }
@@ -725,7 +758,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertNotFocused fails (Abort) when the selector matches no element" in run {
+    "assertNotFocused fails (Abort) when the selector matches no element" in {
         withBrowser {
             onPage("<input id='a'/>") {
                 tight {
@@ -744,7 +777,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertCount(3) on three matching elements succeeds" in run {
+    "assertCount(3) on three matching elements succeeds" in {
         withBrowser {
             onPage("<ul><li class='x'>a</li><li class='x'>b</li><li class='x'>c</li></ul>") {
                 Browser.assertCount(Browser.Selector.css("li.x"), 3).andThen {
@@ -756,7 +789,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertCount(3) on two matching waits then fails" in run {
+    "assertCount(3) on two matching waits then fails" in {
         withBrowser {
             onPage("<ul><li class='x'>a</li><li class='x'>b</li></ul>") {
                 tight {
@@ -776,7 +809,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- accessibility / aria parsing ----
 
-    "accessibility parseAxTree projects a well-formed AX node into the public AxNode shape" in run {
+    "accessibility parseAxTree projects a well-formed AX node into the public AxNode shape" in {
         // End-to-end parsing exercises the custom AxValue Schema and the AxNodeWire decoder.
         val wire =
             """{"id":1,"result":{"nodes":[
@@ -797,7 +830,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "accessibility parseAxTree projects an empty/default wire node into AxNode with all field defaults" in run {
+    "accessibility parseAxTree projects an empty/default wire node into AxNode with all field defaults" in {
         // Permissive contract: every wire entry yields exactly one AxNode;
         // missing nodeId / role / name / properties default to empty rather than dropping the node entirely.
         val wire = """{"id":1,"result":{"nodes":[{}]}}"""
@@ -816,7 +849,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- curried predicate overloads ----
 
-    "assertText with curried predicate passes when the predicate matches" in run {
+    "assertText with curried predicate passes when the predicate matches" in {
         withBrowser {
             onPage("<h1 id='h'>Hello World</h1>") {
                 // Postcondition: pin the observed text via Browser.text so a regression that makes
@@ -831,7 +864,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertText with curried predicate aborts with the configured message in the error when the predicate fails" in run {
+    "assertText with curried predicate aborts with the configured message in the error when the predicate fails" in {
         withBrowser {
             onPage("<h1 id='h'>Hello World</h1>") {
                 tight {
@@ -852,7 +885,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertUrl with curried predicate accepts a starts-with check" in run {
+    "assertUrl with curried predicate accepts a starts-with check" in {
         withBrowser {
             onPage("<h1>any</h1>") {
                 // Postcondition: read the URL explicitly and pin it satisfies the same predicate, so a
@@ -870,14 +903,18 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertTitle with curried predicate is point-equivalent to the equals overload when the predicate is _ == expected" in run {
+    "assertTitle with curried predicate is point-equivalent to the equals overload when the predicate is _ == expected" in {
         // Drive both forms against the same page; both must succeed without retry. The behavioral contract is "same outcome
         // as the equals overload when the predicate is _ == expected".
         val expected = "My App Settings"
         withBrowser {
             onPage(s"<html><head><title>$expected</title></head><body></body></html>") {
-                Browser.assertTitle(expected).map { _ =>
-                    Browser.assertTitleSatisfies("equals expected")(_ == expected).map(_ => succeed)
+                Browser.assertTitle(expected).andThen {
+                    Browser.assertTitleSatisfies("equals expected")(_ == expected).andThen {
+                        Browser.title.map { t =>
+                            assert(t == expected, s"Expected title '$expected' but got '$t'")
+                        }
+                    }
                 }
             }
         }
@@ -885,7 +922,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertion failure paths; assert on Abort shape, not message strings ----
 
-    "assertDisabled on an enabled element fails with Abort[BrowserAssertionException]" in run {
+    "assertDisabled on an enabled element fails with Abort[BrowserAssertionException]" in {
         withBrowser {
             onPage("<button id='b'>Active</button>") {
                 tight {
@@ -893,7 +930,8 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertDisabled(Browser.Selector.css("#b"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(_: BrowserAssertionTimedOutException) =>
+                        succeed("assertDisabled on an enabled element surfaces as BrowserAssertionTimedOutException")
                     case other =>
                         fail(s"Expected Result.Failure(BrowserAssertionTimedOutException) but got $other")
                 }
@@ -901,7 +939,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertAttribute predicate returning false fails with Abort[BrowserAssertionException]" in run {
+    "assertAttribute predicate returning false fails with Abort[BrowserAssertionException]" in {
         withBrowser {
             onPage("<a id='link' href='https://example.com/page'>Link</a>") {
                 tight {
@@ -913,7 +951,8 @@ class BrowserAssertionTest extends BrowserTest:
                         )(_ => false)
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(_: BrowserAssertionTimedOutException) =>
+                        succeed("assertAttributeSatisfies with a false predicate surfaces as BrowserAssertionTimedOutException")
                     case other =>
                         fail(s"Expected Result.Failure(BrowserAssertionTimedOutException) but got $other")
                 }
@@ -921,7 +960,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertUrl predicate returning false fails with Abort[BrowserAssertionException]" in run {
+    "assertUrl predicate returning false fails with Abort[BrowserAssertionException]" in {
         withBrowser {
             onPage("<h1>URL</h1>") {
                 tight {
@@ -929,7 +968,8 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertUrlSatisfies("always-false predicate")(_ => false)
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(_: BrowserAssertionTimedOutException) =>
+                        succeed("assertUrlSatisfies with a false predicate surfaces as BrowserAssertionTimedOutException")
                     case other =>
                         fail(s"Expected Result.Failure(BrowserAssertionTimedOutException) but got $other")
                 }
@@ -937,7 +977,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertTitle predicate returning false fails with Abort[BrowserAssertionException]" in run {
+    "assertTitle predicate returning false fails with Abort[BrowserAssertionException]" in {
         withBrowser {
             onPage("<html><head><title>SomeTitle</title></head><body></body></html>") {
                 tight {
@@ -945,7 +985,8 @@ class BrowserAssertionTest extends BrowserTest:
                         Browser.assertTitleSatisfies("always-false predicate")(_ => false)
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(_: BrowserAssertionTimedOutException) =>
+                        succeed("assertTitleSatisfies with a false predicate surfaces as BrowserAssertionTimedOutException")
                     case other =>
                         fail(s"Expected Result.Failure(BrowserAssertionTimedOutException) but got $other")
                 }
@@ -953,7 +994,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "accessibility AxValue Schema decodes a boolean variant and fails decode on an unknown discriminator" in run {
+    "accessibility AxValue Schema decodes a boolean variant and fails decode on an unknown discriminator" in {
         // The polymorphic AXValue is modelled as a discriminated sum type on `type`. Boolean / integer / number / string variants
         // decode into their own typed case-class variant; unknown discriminators surface as a typed UnknownVariantException so the
         // caller observes the wire-shape drift rather than silently losing data.
@@ -969,25 +1010,29 @@ class BrowserAssertionTest extends BrowserTest:
             case other => fail(s"expected AxValue.boolean(true): $other")
         end match
         Json.decode[AxValue](invalidJson) match
-            case Result.Failure(_: kyo.UnknownVariantException) => succeed
+            case Result.Failure(ex: kyo.UnknownVariantException) => assert(ex.variantName == "unsupportedKind")
             case other => fail(s"expected UnknownVariantException for unsupported kind, got $other")
         end match
     }
 
     // ---- Predicate-overload coverage for negative / ordering checks ----
 
-    "assertAttribute predicate succeeds when attribute is missing (assertNoAttribute workaround)" in run {
+    "assertAttribute predicate succeeds when attribute is missing (assertNoAttribute workaround)" in {
         // `readAttributeCore` returns "" when `getAttribute` returns null, so `_.isEmpty` is the negative
         // form of assertAttribute (covers absence checks via the predicate overload).
         withBrowser {
             onPage("<a id='a' href='/x'>x</a>") {
                 // No 'target' attribute; predicate '_.isEmpty' succeeds.
-                Browser.assertAttributeSatisfies(Browser.Selector.id("a"), "target", "absent")(_.isEmpty).map(_ => succeed)
+                Browser.assertAttributeSatisfies(Browser.Selector.id("a"), "target", "absent")(_.isEmpty).andThen {
+                    Browser.eval("document.getElementById('a').getAttribute('target')").map { v =>
+                        assert(v == "null", s"Expected 'target' attribute to be absent (null) but got '$v'")
+                    }
+                }
             }
         }
     }
 
-    "assertText body predicate succeeds when substrings appear in order (assertTextOrder workaround)" in run {
+    "assertText body predicate succeeds when substrings appear in order (assertTextOrder workaround)" in {
         // Ordered-substring assertions ride on the assertText predicate against body text; `t.indexOf`
         // checks within the predicate express the ordering constraint.
         withBrowser {
@@ -995,14 +1040,21 @@ class BrowserAssertionTest extends BrowserTest:
                 Browser.assertTextSatisfies(Browser.Selector.css("body"), "alpha then beta then gamma in order") { t =>
                     val a = t.indexOf("alpha"); val b = t.indexOf("beta"); val g = t.indexOf("gamma")
                     a >= 0 && b > a && g > b
-                }.map(_ => succeed)
+                }.andThen {
+                    Browser.text(Browser.Selector.css("body")).map { t =>
+                        assert(
+                            t.indexOf("alpha") < t.indexOf("beta") && t.indexOf("beta") < t.indexOf("gamma"),
+                            s"Expected alpha, beta, gamma in order in body text but got: $t"
+                        )
+                    }
+                }
             }
         }
     }
 
     // ---- assertText predicate ----
 
-    "assertText predicate passes when contains check succeeds" in run {
+    "assertText predicate passes when contains check succeeds" in {
         withBrowser {
             onPage("<h1 id='title'>Welcome to Dashboard</h1>") {
                 // Postcondition: confirm the read text actually contains "Dashboard" so a regression that
@@ -1021,7 +1073,7 @@ class BrowserAssertionTest extends BrowserTest:
         }
     }
 
-    "assertText predicate fails when never matches" in run {
+    "assertText predicate fails when never matches" in {
         withBrowser {
             onPage("<h1 id='title'>Hello World</h1>") {
                 tight {
@@ -1032,7 +1084,8 @@ class BrowserAssertionTest extends BrowserTest:
                         )(_.contains("Dashboard"))
                     }.map { result =>
                         result match
-                            case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                            case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                                assert(ex.getMessage.contains("Assertion failed"))
                             case other => fail(s"Expected BrowserAssertionTimedOutException for non-matching predicate but got $other")
                     }
                 }
@@ -1042,21 +1095,25 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertAttribute predicate ----
 
-    "assertAttribute predicate passes" in run {
+    "assertAttribute predicate passes" in {
         withBrowser {
             onPage("<a id='link' href='https://example.com/page'>Link</a>") {
                 Browser.assertAttributeSatisfies(
                     Browser.Selector.css("#link"),
                     "href",
                     "href contains example.com"
-                )(_.contains("example.com")).map(_ => succeed)
+                )(_.contains("example.com")).andThen {
+                    Browser.eval("document.getElementById('link').getAttribute('href')").map { v =>
+                        assert(v.contains("example.com"), s"Expected href to contain 'example.com' but got '$v'")
+                    }
+                }
             }
         }
     }
 
     // ---- assertUrl predicate ----
 
-    "assertUrl predicate with startsWith check" in run {
+    "assertUrl predicate with startsWith check" in {
         withBrowser {
             onPage("<h1>Page</h1>") {
                 // Postcondition: read the URL explicitly so the no-throw test becomes an observation test.
@@ -1072,7 +1129,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertTitle predicate ----
 
-    "assertTitle predicate passes" in run {
+    "assertTitle predicate passes" in {
         withBrowser {
             onPage("<html><head><title>My App - Settings</title></head><body></body></html>") {
                 // Postcondition: read the title explicitly so the no-throw test becomes an observation test
@@ -1097,7 +1154,7 @@ class BrowserAssertionTest extends BrowserTest:
     // "running this against the wrong page" failures self-diagnosing.
     // -------------------------------------------------------------------------
 
-    "BrowserAssertionTimedOutException message embeds the current page URL" in run {
+    "BrowserAssertionTimedOutException message embeds the current page URL" in {
         withBrowser {
             // Page with a div that's deliberately NOT going to match the assertion; so the message we read is the
             // timeout-failure path.
@@ -1121,7 +1178,7 @@ class BrowserAssertionTest extends BrowserTest:
 
     // ---- assertCount predicate form accepts schedule ----
 
-    "assertCount(sel, message, Present(shortSched))(predicate) honors the schedule override" in run {
+    "assertCount(sel, message, Present(shortSched))(predicate) honors the schedule override" in {
         // Five matching elements rendered at page load; the predicate matches immediately, so a short
         // schedule succeeds. This verifies the new schedule parameter threads through to withStability.
         withBrowser {

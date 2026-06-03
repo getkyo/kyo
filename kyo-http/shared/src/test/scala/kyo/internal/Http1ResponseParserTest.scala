@@ -6,7 +6,7 @@ import kyo.internal.codec.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
 
-class Http1ResponseParserTest extends kyo.Test:
+class Http1ResponseParserTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -69,7 +69,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp.isKeepAlive)
             assert(body.size == 4)
             assert(new String(body.toArray, StandardCharsets.US_ASCII) == "body")
-            succeed
         }
 
         // Test 2
@@ -81,7 +80,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp.isChunked)
             assert(resp.contentLength == -1)
             assert(resp.statusCode == 200)
-            succeed
         }
 
         // Test 3
@@ -91,7 +89,6 @@ class Http1ResponseParserTest extends kyo.Test:
             )
             assert(resp != null, "Response should have been parsed")
             assert(!resp.isKeepAlive)
-            succeed
         }
 
         // Test 4
@@ -102,7 +99,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp != null, "Response should have been parsed")
             // HTTP/1.0 default: keep-alive is false unless explicitly requested
             assert(!resp.isKeepAlive, "HTTP/1.0 without Connection header should not be keep-alive")
-            succeed
         }
 
         // Test 5
@@ -123,7 +119,6 @@ class Http1ResponseParserTest extends kyo.Test:
             // 999 is outside 100-599 range, should trigger onClosed
             assert(closedCalled, "Parser should call onClosed for status code 999")
             assert(parsed == null, "Parser should not produce a response for status code 999")
-            succeed
         }
 
         // Test 6
@@ -145,7 +140,6 @@ class Http1ResponseParserTest extends kyo.Test:
             // Status code 0 is outside 100-599, should trigger onClosed
             assert(closedCalled, "Parser should call onClosed for garbage status line")
             assert(parsed == null, "Parser should not produce a response for garbage status line")
-            succeed
         }
 
         // Test 7
@@ -155,7 +149,6 @@ class Http1ResponseParserTest extends kyo.Test:
             )
             assert(resp != null, "Response should have been parsed")
             assert(resp.statusCode == 404)
-            succeed
         }
 
         // Test 8
@@ -165,7 +158,6 @@ class Http1ResponseParserTest extends kyo.Test:
             )
             assert(resp != null, "Response should have been parsed")
             assert(resp.statusCode == 200)
-            succeed
         }
 
         // Test 9
@@ -175,7 +167,6 @@ class Http1ResponseParserTest extends kyo.Test:
             )
             assert(resp != null, "Response should have been parsed")
             assert(resp.contentLength == 12345)
-            succeed
         }
 
         // Test 10
@@ -186,7 +177,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp != null, "Response should have been parsed")
             // parseContentLength returns -1 on non-digit characters
             assert(resp.contentLength == -1, "Content-Length with non-digits should be -1")
-            succeed
         }
 
         // Test 11
@@ -196,7 +186,6 @@ class Http1ResponseParserTest extends kyo.Test:
             )
             assert(resp != null, "Response should have been parsed")
             assert(resp.contentLength == 42, "Case-insensitive content-length should be extracted")
-            succeed
         }
 
         // Test 12
@@ -216,7 +205,6 @@ class Http1ResponseParserTest extends kyo.Test:
             // Leading space after colon should be skipped; value should be "no-cache"
             assert(headers.get("Cache-Control") == Present("no-cache"))
             assert(headers.get("Content-Length") == Present("0"))
-            succeed
         }
 
         // Test 13
@@ -228,7 +216,6 @@ class Http1ResponseParserTest extends kyo.Test:
             val headers = resp.headers
             // After skipping the space, value is empty
             assert(headers.get("X-Empty") == Present(""), "Header with only space value should be empty string")
-            succeed
         }
 
         // Test 14
@@ -245,7 +232,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp != null, "Response should have been parsed from incremental chunks")
             assert(resp.statusCode == 200)
             assert(resp.contentLength == 0)
-            succeed
         }
 
         // Test 15
@@ -261,7 +247,6 @@ class Http1ResponseParserTest extends kyo.Test:
             parser.start()
 
             assert(closedCalled, "onClosed should be called when channel is closed during parse")
-            succeed
         }
 
         // Test 16
@@ -296,7 +281,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(r2.contentLength == 6)
             assert(r2.headers.get("X-Seq") == Present("second"))
             assert(new String(b2.toArray, StandardCharsets.US_ASCII) == "world!")
-            succeed
         }
 
         // Test 17
@@ -309,7 +293,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp.statusCode == 200)
             assert(resp.headers.get("Host") == Present("example.com"))
             assert(resp.headers.get("Accept") == Present("*/*"))
-            succeed
         }
 
         // Test 18
@@ -321,7 +304,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp.contentLength == 13)
             assert(body.size == 13)
             assert(new String(body.toArray, StandardCharsets.US_ASCII) == "Hello, World!")
-            succeed
         }
 
         // Test 19
@@ -336,7 +318,6 @@ class Http1ResponseParserTest extends kyo.Test:
             // body extracted is min(remaining, contentLength) = min(5, 100) = 5
             assert(body.size == 5)
             assert(new String(body.toArray, StandardCharsets.US_ASCII) == "hello")
-            succeed
         }
 
         // Test 20
@@ -357,7 +338,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(headers.get("Content-Length") == Present("2"))
             // Non-existent header should be Absent
             assert(headers.get("X-Not-Present") == Absent)
-            succeed
         }
 
         // Test 21
@@ -377,7 +357,6 @@ class Http1ResponseParserTest extends kyo.Test:
             // Spot check first and last
             assert(headers.get("X-Header-0") == Present("value-0"))
             assert(headers.get("X-Header-34") == Present("value-34"))
-            succeed
         }
 
         // Test 22
@@ -389,7 +368,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp.statusCode == 200)
             assert(resp.contentLength == -1)
             assert(!resp.isChunked)
-            succeed
         }
 
         // Test 23
@@ -403,7 +381,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp.contentLength == 0)
             // Malformed line should not appear in headers (no colon = not stored)
             assert(resp.headers.get("MalformedHeaderNoColon") == Absent)
-            succeed
         }
 
         // Test 24
@@ -426,7 +403,6 @@ class Http1ResponseParserTest extends kyo.Test:
 
             assert(closedCalled, "Parser should call onClosed when headers exceed maxHeaderSize")
             assert(parsed == null, "Parser should not produce a response when headers exceed maxHeaderSize")
-            succeed
         }
 
         // Test 25
@@ -438,7 +414,6 @@ class Http1ResponseParserTest extends kyo.Test:
             assert(resp.statusCode == 204)
             assert(resp.contentLength == 0, "Content-Length: 0 should be 0, not -1")
             assert(body.size == 0)
-            succeed
         }
     }
 

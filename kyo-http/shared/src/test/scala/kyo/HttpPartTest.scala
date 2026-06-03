@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpRequestPartTest extends Test:
+class HttpRequestPartTest extends BaseHttpTest:
 
     "construction" - {
         "minimal" in {

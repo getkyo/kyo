@@ -7,11 +7,11 @@ object TChunkTest:
     final case class MidFilterBoom()    extends RuntimeException
 end TChunkTest
 
-class TChunkTest extends Test:
+class TChunkTest extends kyo.test.Test[Any]:
     import TChunkTest.*
 
     "init" - {
-        "creates an empty chunk" in run {
+        "creates an empty chunk" in {
             for
                 chunk  <- TChunk.init[Int]
                 empty  <- STM.run(chunk.isEmpty)
@@ -23,7 +23,7 @@ class TChunkTest extends Test:
                 assert(result.isEmpty)
         }
 
-        "creates a chunk with initial values" in run {
+        "creates a chunk with initial values" in {
             for
                 chunk  <- TChunk.init(1, 2, 3)
                 empty  <- STM.run(chunk.isEmpty)
@@ -37,7 +37,7 @@ class TChunkTest extends Test:
     }
 
     "basic operations" - {
-        "append" in run {
+        "append" in {
             for
                 chunk  <- TChunk.init[Int]
                 _      <- STM.run(chunk.append(1))
@@ -47,7 +47,7 @@ class TChunkTest extends Test:
             yield assert(result == Chunk(1, 2, 3))
         }
 
-        "get" in run {
+        "get" in {
             for
                 chunk  <- TChunk.init(1, 2, 3)
                 first  <- STM.run(chunk.get(0))
@@ -59,7 +59,7 @@ class TChunkTest extends Test:
                 assert(third == 3)
         }
 
-        "head and last" in run {
+        "head and last" in {
             for
                 chunk <- TChunk.init(1, 2, 3)
                 head  <- STM.run(chunk.head)
@@ -69,7 +69,7 @@ class TChunkTest extends Test:
                 assert(last == 3)
         }
 
-        "compact" in run {
+        "compact" in {
             for
                 chunk <- TChunk.init[Int]
                 _     <- STM.run(chunk.append(1))
@@ -82,7 +82,7 @@ class TChunkTest extends Test:
                 assert(snap == Chunk(1, 2, 3))
         }
 
-        "use" in run {
+        "use" in {
             for
                 chunk  <- TChunk.init(1, 2, 3)
                 sum    <- STM.run(chunk.use(_.sum))
@@ -96,7 +96,7 @@ class TChunkTest extends Test:
     }
 
     "modification operations" - {
-        "take" in run {
+        "take" in {
             for
                 chunk  <- TChunk.init(1, 2, 3, 4, 5)
                 _      <- STM.run(chunk.take(3))
@@ -104,7 +104,7 @@ class TChunkTest extends Test:
             yield assert(result == Chunk(1, 2, 3))
         }
 
-        "drop" in run {
+        "drop" in {
             for
                 chunk  <- TChunk.init(1, 2, 3, 4, 5)
                 _      <- STM.run(chunk.drop(2))
@@ -112,7 +112,7 @@ class TChunkTest extends Test:
             yield assert(result == Chunk(3, 4, 5))
         }
 
-        "dropRight" in run {
+        "dropRight" in {
             for
                 chunk  <- TChunk.init(1, 2, 3, 4, 5)
                 _      <- STM.run(chunk.dropRight(2))
@@ -120,7 +120,7 @@ class TChunkTest extends Test:
             yield assert(result == Chunk(1, 2, 3))
         }
 
-        "slice" in run {
+        "slice" in {
             for
                 chunk  <- TChunk.init(1, 2, 3, 4, 5)
                 _      <- STM.run(chunk.slice(1, 4))
@@ -128,7 +128,7 @@ class TChunkTest extends Test:
             yield assert(result == Chunk(2, 3, 4))
         }
 
-        "concat" in run {
+        "concat" in {
             for
                 chunk  <- TChunk.init(1, 2, 3)
                 _      <- STM.run(chunk.concat(Chunk(4, 5, 6)))
@@ -137,7 +137,7 @@ class TChunkTest extends Test:
         }
     }
 
-    "filter" in run {
+    "filter" in {
         for
             chunk  <- TChunk.init(1, 2, 3, 4, 5)
             _      <- STM.run(chunk.filter(_ % 2 == 0))
@@ -146,7 +146,7 @@ class TChunkTest extends Test:
     }
 
     "transaction isolation" - {
-        "concurrent modifications" in run {
+        "concurrent modifications" in {
             for
                 chunk  <- TChunk.init[Int]
                 _      <- Async.foreach(1 to 100, 100)(i => STM.run(chunk.append(i)))
@@ -156,7 +156,7 @@ class TChunkTest extends Test:
                 assert(result.length == 100)
         }
 
-        "rollback on failure" in run {
+        "rollback on failure" in {
             for
                 chunk <- TChunk.init(1, 2, 3)
                 result <- Abort.run {
@@ -174,7 +174,7 @@ class TChunkTest extends Test:
                 assert(snapshot == Chunk(1, 2, 3))
         }
 
-        "maintains compactness after transaction" in run {
+        "maintains compactness after transaction" in {
             for
                 chunk <- TChunk.init(1, 2, 3)
                 _     <- STM.run(chunk.compact)
@@ -195,7 +195,7 @@ class TChunkTest extends Test:
     "concurrency" - {
         val repeats = 100
 
-        "concurrent modifications" in run {
+        "concurrent modifications" in {
             (for
                 size     <- Choice.eval(1, 10, 100)
                 chunk    <- TChunk.init[Int]()
@@ -206,10 +206,10 @@ class TChunkTest extends Test:
                     snapshot.toSet == (1 to size).toSet
             ))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent filtering" in run {
+        "concurrent filtering" in {
             val retries = STM.defaultRetrySchedule.forever
             (for
                 size  <- Choice.eval(1, 10, 100)
@@ -226,10 +226,10 @@ class TChunkTest extends Test:
                     snapshot.length == size / 2
             ))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent slice operations" in run {
+        "concurrent slice operations" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             (for
                 size  <- Choice.eval(1, 10, 100)
@@ -251,10 +251,10 @@ class TChunkTest extends Test:
                     snapshot.toSet.subsetOf((1 to size).toSet)
             ))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent compaction" in run {
+        "concurrent compaction" in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             (for
                 size  <- Choice.eval(1, 10, 100)
@@ -272,14 +272,14 @@ class TChunkTest extends Test:
                     snapshot.toSet == (1 to size).toSet
             ))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
     }
 
     "TChunk" - {
 
         "init" - {
-            "supports non-Int element types (String)" in run {
+            "supports non-Int element types (String)" in {
                 for
                     chunk <- TChunk.init("a", "b", "c")
                     size  <- STM.run(chunk.size)
@@ -289,7 +289,7 @@ class TChunkTest extends Test:
                     assert(snap == Chunk("a", "b", "c"))
             }
 
-            "no-arg with String type parameter" in run {
+            "no-arg with String type parameter" in {
                 for
                     chunk <- TChunk.init[String]
                     empty <- STM.run(chunk.isEmpty)
@@ -301,7 +301,7 @@ class TChunkTest extends Test:
                     assert(snap == Chunk.empty[String])
             }
 
-            "empty vararg yields empty chunk" in run {
+            "empty vararg yields empty chunk" in {
                 for
                     chunk <- TChunk.init[Int]()
                     size  <- STM.run(chunk.size)
@@ -313,7 +313,7 @@ class TChunkTest extends Test:
                     assert(snap.isEmpty)
             }
 
-            "single-value vararg" in run {
+            "single-value vararg" in {
                 for
                     chunk <- TChunk.init(42)
                     size  <- STM.run(chunk.size)
@@ -323,7 +323,7 @@ class TChunkTest extends Test:
                     assert(snap == Chunk(42))
             }
 
-            "large vararg (>100 elements) preserves all in order" in run {
+            "large vararg (>100 elements) preserves all in order" in {
                 val xs = (1 to 1024)
                 for
                     chunk <- TChunk.init(xs*)
@@ -335,7 +335,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "direct Chunk argument is wrapped verbatim" in run {
+            "direct Chunk argument is wrapped verbatim" in {
                 val input: Chunk[Int] = Chunk(7, 8, 9)
                 for
                     chunk <- TChunk.init(input)
@@ -347,7 +347,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "Chunk.Indexed and very large direct Chunk" in run {
+            "Chunk.Indexed and very large direct Chunk" in {
                 val indexed: Chunk[Int] = Chunk.from(1 to 500).toIndexed
                 val sliced: Chunk[Int]  = Chunk.from(1 to 100).drop(10).take(80)
                 for
@@ -363,7 +363,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "direct Chunk overload is distinct from no-arg and vararg overloads" in run {
+            "direct Chunk overload is distinct from no-arg and vararg overloads" in {
                 val xs = Chunk.from(100 to 105)
                 for
                     direct <- TChunk.init[Int](xs: Chunk[Int])
@@ -377,14 +377,14 @@ class TChunkTest extends Test:
         }
 
         "initWith" - {
-            "directly invoked returns f(tchunk) result" in run {
+            "directly invoked returns f(tchunk) result" in {
                 val input: Chunk[Int] = Chunk(10, 20, 30)
                 TChunk.initWith(input) { tc =>
                     STM.run(tc.size)
                 }.map(out => assert(out == 3))
             }
 
-            "non-identity lambda with effectful S returns B in Sync & S" in run {
+            "non-identity lambda with effectful S returns B in Sync & S" in {
                 val initial = Chunk(1, 2, 3)
                 val program: String < (Sync & Async & Abort[String | FailedTransaction]) =
                     TChunk.initWith(initial) { tc =>
@@ -395,7 +395,7 @@ class TChunkTest extends Test:
                 Abort.run(program).map(res => assert(res == Result.succeed("1,2,3")))
             }
 
-            "combines init and first op in single transaction" in run {
+            "combines init and first op in single transaction" in {
                 val initial = Chunk(1, 2, 3)
                 val r: (Int, Chunk[Int]) < (Sync & Async & Abort[FailedTransaction]) =
                     TChunk.initWith(initial) { tc =>
@@ -415,7 +415,7 @@ class TChunkTest extends Test:
                 }
             }
 
-            "observable atomicity (writes inside f visible without external commit boundary)" in run {
+            "observable atomicity (writes inside f visible without external commit boundary)" in {
                 val initial = Chunk(1, 2, 3)
                 val program: Chunk[Int] < (Sync & Async & Abort[FailedTransaction]) =
                     TChunk.initWith(initial) { tc =>
@@ -429,14 +429,14 @@ class TChunkTest extends Test:
                 program.map(seen => assert(seen == Chunk(1, 2, 3, 4)))
             }
 
-            "f that throws surfaces the thrown exception" in run {
+            "f that throws surfaces the thrown exception" in {
                 val program: Int < Sync = TChunk.initWith(Chunk(1)) { _ => throw InitWithBoom() }
                 Abort.run[Throwable](program).map { r =>
                     assert(r.isError && r.failureOrPanic.get.isInstanceOf[InitWithBoom])
                 }
             }
 
-            "f performs STM operations on the freshly created chunk" in run {
+            "f performs STM operations on the freshly created chunk" in {
                 val program: Chunk[Int] < (Sync & Async & Abort[FailedTransaction]) =
                     TChunk.initWith(Chunk(1, 2, 3)) { tc =>
                         STM.run {
@@ -451,7 +451,7 @@ class TChunkTest extends Test:
                 program.map(out => assert(out == Chunk(1, 3, 5)))
             }
 
-            "preserves S effect across return-type boundary" in run {
+            "preserves S effect across return-type boundary" in {
                 val expected: Chunk[Int] = Chunk(1, 2, 3)
                 val a: Chunk[Int] < (Sync & Abort[String]) =
                     TChunk.initWith(expected)(_ => Abort.fail("S=Abort"))
@@ -470,7 +470,7 @@ class TChunkTest extends Test:
         }
 
         "size" - {
-            "single-element and large (>100) chunks" in run {
+            "single-element and large (>100) chunks" in {
                 for
                     one     <- TChunk.init(42)
                     big     <- TChunk.init(Chunk.from(1 to 5000))
@@ -481,7 +481,7 @@ class TChunkTest extends Test:
                     assert(bigSize == 5000)
             }
 
-            "reflects mutations within the same transaction" in run {
+            "reflects mutations within the same transaction" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     sizes <- STM.run {
@@ -512,7 +512,7 @@ class TChunkTest extends Test:
         }
 
         "isEmpty" - {
-            "after drop(size), slice(0,0), and take(0) mutations" in run {
+            "after drop(size), slice(0,0), and take(0) mutations" in {
                 val base = Chunk(1, 2, 3, 4)
                 for
                     a  <- TChunk.init(base)
@@ -531,7 +531,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "true after drop(size) and slice(0,0) within same transaction" in run {
+            "true after drop(size) and slice(0,0) within same transaction" in {
                 for
                     a  <- TChunk.init(1, 2, 3)
                     r1 <- STM.run(for _ <- a.drop(3); e <- a.isEmpty yield e)
@@ -544,7 +544,7 @@ class TChunkTest extends Test:
         }
 
         "get" - {
-            "boundary indices (0, size-1) on larger chunk" in run {
+            "boundary indices (0, size-1) on larger chunk" in {
                 val xs = (1 to 50).toList
                 for
                     chunk <- TChunk.init(xs*)
@@ -558,7 +558,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "throws IndexOutOfBoundsException for -1, size, Int.MaxValue, and on empty chunk" in run {
+            "throws IndexOutOfBoundsException for -1, size, Int.MaxValue, and on empty chunk" in {
                 for
                     chunk   <- TChunk.init(1, 2, 3)
                     empty   <- TChunk.init[Int]
@@ -575,7 +575,7 @@ class TChunkTest extends Test:
         }
 
         "use" - {
-            "arbitrary B (Unit, String, tuple)" in run {
+            "arbitrary B (Unit, String, tuple)" in {
                 for
                     ref   <- AtomicInt.init(0)
                     chunk <- TChunk.init(1, 2, 3)
@@ -590,7 +590,7 @@ class TChunkTest extends Test:
                     assert(t == (1, 3))
             }
 
-            "effectful read function aborting leaves chunk unchanged" in run {
+            "effectful read function aborting leaves chunk unchanged" in {
                 val baseline = Chunk(1, 2, 3)
                 for
                     chunk <- TChunk.init(baseline)
@@ -606,7 +606,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "effectful f (Abort.fail) rolls back surrounding STM updates" in run {
+            "effectful f (Abort.fail) rolls back surrounding STM updates" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     r <- Abort.run {
@@ -626,7 +626,7 @@ class TChunkTest extends Test:
                     assert(snap == Chunk(1, 2, 3))
             }
 
-            "f that throws surfaces panic and rolls back" in run {
+            "f that throws surfaces panic and rolls back" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     r <- Abort.run[Throwable] {
@@ -646,7 +646,7 @@ class TChunkTest extends Test:
         }
 
         "head" - {
-            "returns first element for singleton and large chunks" in run {
+            "returns first element for singleton and large chunks" in {
                 for
                     single <- TChunk.init(42)
                     big    <- TChunk.init(Chunk.from(100 to 200))
@@ -657,7 +657,7 @@ class TChunkTest extends Test:
                     assert(h2 == 100)
             }
 
-            "throws NoSuchElementException on empty" in run {
+            "throws NoSuchElementException on empty" in {
                 for
                     empty <- TChunk.init[Int]
                     r     <- Abort.run[Throwable](STM.run(empty.head))
@@ -666,7 +666,7 @@ class TChunkTest extends Test:
         }
 
         "last" - {
-            "returns final element for singleton and large chunks" in run {
+            "returns final element for singleton and large chunks" in {
                 for
                     single <- TChunk.init(42)
                     big    <- TChunk.init(Chunk.from(100 to 200))
@@ -677,7 +677,7 @@ class TChunkTest extends Test:
                     assert(l2 == 200)
             }
 
-            "throws NoSuchElementException on empty" in run {
+            "throws NoSuchElementException on empty" in {
                 for
                     empty <- TChunk.init[Int]
                     r     <- Abort.run[Throwable](STM.run(empty.last))
@@ -686,7 +686,7 @@ class TChunkTest extends Test:
         }
 
         "append" - {
-            "preserves order under interleaved sub-transaction rollbacks inside a successful outer transaction" in run {
+            "preserves order under interleaved sub-transaction rollbacks inside a successful outer transaction" in {
                 for
                     chunk <- TChunk.init[Int]
                     _ <- STM.run {
@@ -700,7 +700,7 @@ class TChunkTest extends Test:
                 yield assert(snap == Chunk(1, 3))
             }
 
-            "null for reference-type A is stored without NPE" in run {
+            "null for reference-type A is stored without NPE" in {
                 val s: String = null
                 for
                     chunk <- TChunk.init[String]
@@ -714,7 +714,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "two TChunks created in the same STM.run are independent" in run {
+            "two TChunks created in the same STM.run are independent" in {
                 for
                     a <- TChunk.init(1, 2)
                     b <- TChunk.init(10, 20)
@@ -734,7 +734,7 @@ class TChunkTest extends Test:
         }
 
         "take" - {
-            "n = 0 yields empty chunk" in run {
+            "n = 0 yields empty chunk" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     _     <- STM.run(chunk.take(0))
@@ -745,7 +745,7 @@ class TChunkTest extends Test:
                     assert(snap.isEmpty)
             }
 
-            "on empty chunk is a no-op" in run {
+            "on empty chunk is a no-op" in {
                 for
                     chunk <- TChunk.init[Int]
                     _     <- STM.run(chunk.take(5))
@@ -753,7 +753,7 @@ class TChunkTest extends Test:
                 yield assert(snap.isEmpty)
             }
 
-            "rolls back on STM failure" in run {
+            "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     r <- Abort.run {
@@ -767,7 +767,7 @@ class TChunkTest extends Test:
         }
 
         "drop" - {
-            "n = 0 is a no-op" in run {
+            "n = 0 is a no-op" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     _     <- STM.run(chunk.drop(0))
@@ -775,7 +775,7 @@ class TChunkTest extends Test:
                 yield assert(snap == Chunk(1, 2, 3))
             }
 
-            "on empty chunk is a no-op" in run {
+            "on empty chunk is a no-op" in {
                 for
                     chunk <- TChunk.init[Int]
                     _     <- STM.run(chunk.drop(5))
@@ -783,7 +783,7 @@ class TChunkTest extends Test:
                 yield assert(snap.isEmpty)
             }
 
-            "rolls back on STM failure" in run {
+            "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     r <- Abort.run {
@@ -797,7 +797,7 @@ class TChunkTest extends Test:
         }
 
         "dropRight" - {
-            "n = 0 is a no-op" in run {
+            "n = 0 is a no-op" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     _     <- STM.run(chunk.dropRight(0))
@@ -805,7 +805,7 @@ class TChunkTest extends Test:
                 yield assert(snap == Chunk(1, 2, 3))
             }
 
-            "on empty chunk is a no-op" in run {
+            "on empty chunk is a no-op" in {
                 for
                     chunk <- TChunk.init[Int]
                     _     <- STM.run(chunk.dropRight(3))
@@ -813,7 +813,7 @@ class TChunkTest extends Test:
                 yield assert(snap.isEmpty)
             }
 
-            "rolls back on STM failure" in run {
+            "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     r <- Abort.run {
@@ -827,7 +827,7 @@ class TChunkTest extends Test:
         }
 
         "slice" - {
-            "(0, 0) yields empty chunk" in run {
+            "(0, 0) yields empty chunk" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     _     <- STM.run(chunk.slice(0, 0))
@@ -835,7 +835,7 @@ class TChunkTest extends Test:
                 yield assert(snap.isEmpty)
             }
 
-            "from > until yields empty chunk" in run {
+            "from > until yields empty chunk" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     _     <- STM.run(chunk.slice(10, 5))
@@ -843,7 +843,7 @@ class TChunkTest extends Test:
                 yield assert(snap.isEmpty)
             }
 
-            "on empty chunk is a no-op" in run {
+            "on empty chunk is a no-op" in {
                 for
                     chunk <- TChunk.init[Int]
                     _     <- STM.run(chunk.slice(0, 3))
@@ -851,7 +851,7 @@ class TChunkTest extends Test:
                 yield assert(snap.isEmpty)
             }
 
-            "rolls back on STM failure" in run {
+            "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     r <- Abort.run {
@@ -863,7 +863,7 @@ class TChunkTest extends Test:
                     assert(snap == Chunk(1, 2, 3, 4, 5))
             }
 
-            "concurrent slice assertion is non-vacuous" in runNotJS {
+            "concurrent slice assertion is non-vacuous".notJs in {
                 val retrySchedule = STM.defaultRetrySchedule.forever
                 val size          = 100
                 for
@@ -883,7 +883,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "degenerate ranges per Akka MatchError family" in run {
+            "degenerate ranges per Akka MatchError family" in {
                 val cases = List(
                     (0, 0),
                     (5, 5),
@@ -903,13 +903,13 @@ class TChunkTest extends Test:
                         val ((f, u), snap) = r
                         assert(snap.isEmpty, s"slice($f, $u) should yield empty, got $snap")
                     }
-                    succeed
+                    ()
                 }
             }
         }
 
         "concat" - {
-            "with Chunk.empty is identity" in run {
+            "with Chunk.empty is identity" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     _     <- STM.run(chunk.concat(Chunk.empty[Int]))
@@ -917,7 +917,7 @@ class TChunkTest extends Test:
                 yield assert(snap == Chunk(1, 2, 3))
             }
 
-            "onto empty self produces other" in run {
+            "onto empty self produces other" in {
                 for
                     chunk <- TChunk.init[Int]
                     _     <- STM.run(chunk.concat(Chunk(7, 8, 9)))
@@ -925,7 +925,7 @@ class TChunkTest extends Test:
                 yield assert(snap == Chunk(7, 8, 9))
             }
 
-            "self-concat using snapshot doubles the chunk" in run {
+            "self-concat using snapshot doubles the chunk" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     _ <- STM.run {
@@ -938,7 +938,7 @@ class TChunkTest extends Test:
                 yield assert(out == Chunk(1, 2, 3, 1, 2, 3))
             }
 
-            "rolls back on STM failure" in run {
+            "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     r <- Abort.run {
@@ -950,7 +950,7 @@ class TChunkTest extends Test:
                     assert(snap == Chunk(1, 2, 3))
             }
 
-            "large other (>100) preserves order" in run {
+            "large other (>100) preserves order" in {
                 val big = Chunk.from(1 to 1024)
                 for
                     chunk <- TChunk.init(0)
@@ -965,7 +965,7 @@ class TChunkTest extends Test:
         }
 
         "filter" - {
-            "effectful predicate aborting leaves chunk unchanged" in run {
+            "effectful predicate aborting leaves chunk unchanged" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     r <- Abort.run {
@@ -981,7 +981,7 @@ class TChunkTest extends Test:
                     assert(snap == Chunk(1, 2, 3, 4, 5))
             }
 
-            "always-true predicate is identity" in run {
+            "always-true predicate is identity" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     _     <- STM.run(chunk.filter(_ => true))
@@ -989,7 +989,7 @@ class TChunkTest extends Test:
                 yield assert(snap == Chunk(1, 2, 3, 4, 5))
             }
 
-            "always-false predicate yields empty" in run {
+            "always-false predicate yields empty" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     _     <- STM.run(chunk.filter(_ => false))
@@ -1000,7 +1000,7 @@ class TChunkTest extends Test:
                     assert(snap.isEmpty)
             }
 
-            "on empty chunk is a no-op" in run {
+            "on empty chunk is a no-op" in {
                 for
                     callCount <- AtomicInt.init(0)
                     chunk     <- TChunk.init[Int]
@@ -1012,7 +1012,7 @@ class TChunkTest extends Test:
                     assert(count == 0)
             }
 
-            "predicate that throws rolls back chunk" in run {
+            "predicate that throws rolls back chunk" in {
                 for
                     chunk <- TChunk.init((1 to 10)*)
                     r <- Abort.run[Throwable] {
@@ -1027,7 +1027,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "preserves order on a 50-element chunk" in run {
+            "preserves order on a 50-element chunk" in {
                 val xs       = (1 to 50).toList
                 val expected = xs.filter(_ % 3 == 0)
                 for
@@ -1038,7 +1038,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "resulting chunk has a stable Chunk representation across calls" in run {
+            "resulting chunk has a stable Chunk representation across calls" in {
                 for
                     a     <- TChunk.init((1 to 20)*)
                     _     <- STM.run(a.filter(_ % 2 == 0))
@@ -1052,7 +1052,7 @@ class TChunkTest extends Test:
                     assert(snapA.getClass.equals(snapB.getClass))
             }
 
-            "predicate invocation count equals chunk size on single successful attempt" in run {
+            "predicate invocation count equals chunk size on single successful attempt" in {
                 val n = 30
                 for
                     counter <- AtomicInt.init(0)
@@ -1068,7 +1068,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "predicate panic mid-iteration rolls back without partial removals" in run {
+            "predicate panic mid-iteration rolls back without partial removals" in {
                 for
                     chunk <- TChunk.init((1 to 10)*)
                     r <- Abort.run[Throwable] {
@@ -1087,7 +1087,7 @@ class TChunkTest extends Test:
         }
 
         "compact" - {
-            "on empty chunk yields empty indexed chunk" in run {
+            "on empty chunk yields empty indexed chunk" in {
                 for
                     chunk <- TChunk.init[Int]
                     _     <- STM.run(chunk.compact)
@@ -1097,7 +1097,7 @@ class TChunkTest extends Test:
                     assert(snap.isInstanceOf[Chunk.Indexed[Int]])
             }
 
-            "is idempotent on an already-indexed chunk" in run {
+            "is idempotent on an already-indexed chunk" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     _     <- STM.run(chunk.compact)
@@ -1111,7 +1111,7 @@ class TChunkTest extends Test:
                     assert(snap2 == Chunk(1, 2, 3))
             }
 
-            "after slice yields an indexed chunk whose representation is independent" in run {
+            "after slice yields an indexed chunk whose representation is independent" in {
                 val initial = Chunk.from(1 to 1000)
                 for
                     chunk           <- TChunk.init(initial)
@@ -1131,7 +1131,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "rolls back on STM failure" in run {
+            "rolls back on STM failure" in {
                 for
                     chunk   <- TChunk.init(1, 2, 3)
                     _       <- STM.run(chunk.slice(0, 2))
@@ -1145,7 +1145,7 @@ class TChunkTest extends Test:
                     assert(postSnap == preSnap)
             }
 
-            "converts a non-indexed (sliced) chunk into Chunk.Indexed" in run {
+            "converts a non-indexed (sliced) chunk into Chunk.Indexed" in {
                 val big = Chunk.from(1 to 100)
                 for
                     chunk    <- TChunk.init(big)
@@ -1163,7 +1163,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "maintainsCompactness — second compact is a no-op without regressing representation" in run {
+            "maintainsCompactness — second compact is a no-op without regressing representation" in {
                 val big = Chunk.from(1 to 200)
                 for
                     chunk <- TChunk.init(big)
@@ -1187,7 +1187,7 @@ class TChunkTest extends Test:
         }
 
         "snapshot" - {
-            "repeated calls return the same value and do not mutate" in run {
+            "repeated calls return the same value and do not mutate" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     s1    <- STM.run(chunk.snapshot)
@@ -1201,7 +1201,7 @@ class TChunkTest extends Test:
                     assert(sz == 5)
             }
 
-            "preserves order under concurrent appends" in runNotJS {
+            "preserves order under concurrent appends".notJs in {
                 val n = 200
                 for
                     chunk <- TChunk.init[Int]
@@ -1211,7 +1211,7 @@ class TChunkTest extends Test:
                 end for
             }
 
-            "sees writes made earlier in the same transaction" in run {
+            "sees writes made earlier in the same transaction" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     out <- STM.run {
@@ -1232,7 +1232,7 @@ class TChunkTest extends Test:
         }
 
         "transaction isolation" - {
-            "take / drop / dropRight / slice / concat / filter / compact each roll back individually" in run {
+            "take / drop / dropRight / slice / concat / filter / compact each roll back individually" in {
                 val initialA = Chunk(1, 2, 3, 4, 5)
                 val ops: List[(String, TChunk[Int] => Unit < STM)] = List(
                     "take"      -> (_.take(2)),
@@ -1257,11 +1257,11 @@ class TChunkTest extends Test:
                         assert(res.isFailure, s"$name: expected abort to surface")
                         assert(snap == initialA, s"$name: expected chunk unchanged after rollback, got $snap")
                     }
-                    succeed
+                    ()
                 }
             }
 
-            "multiple TChunks in one transaction roll back together" in run {
+            "multiple TChunks in one transaction roll back together" in {
                 for
                     a <- TChunk.init(1)
                     b <- TChunk.init(10)
@@ -1284,7 +1284,7 @@ class TChunkTest extends Test:
         }
 
         "concurrent appends" - {
-            "each value appears exactly once with no duplicates or substitutions" in runNotJS {
+            "each value appears exactly once with no duplicates or substitutions".notJs in {
                 val n = 100
                 for
                     chunk <- TChunk.init[Int]
@@ -1301,7 +1301,7 @@ class TChunkTest extends Test:
         }
 
         "compositional" - {
-            "append then take then snapshot in one transaction" in run {
+            "append then take then snapshot in one transaction" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
                     snap <- STM.run {
@@ -1317,7 +1317,7 @@ class TChunkTest extends Test:
         }
 
         "extension methods" - {
-            "compose inside one outer STM.run without nested STM.run" in run {
+            "compose inside one outer STM.run without nested STM.run" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
                     out <- STM.run {

@@ -1,59 +1,29 @@
 package kyo
 
-import kyo.internal.BaseKyoCoreTest
 import kyo.internal.ChromeDownloader
-import kyo.internal.Platform
-import org.scalatest.NonImplicitAssertions
-import org.scalatest.freespec.AsyncFreeSpec
-import scala.concurrent.ExecutionContext
-import scala.concurrent.Future
 
-// ── Test discoverability: the nested `freespec` `-` convention ────────────────
-//
-// Several test files use the `"<parent string>" - { ... "<leaf>" in { ... } }`
-// form to group related scenarios. ScalaTest's `-z` narrowing matches anywhere
-// in the FULL test name (parent strings concatenated with the leaf), so the
-// leaf's words alone may not be enough.
-//
-// Example:
-//   "Accessibility.AxValue Schema decodes each CDP discriminator" - {
-//       "string lifts the JSON string to a typed Wire.Str" in { ... }
-//   }
-//
-// To run that one leaf via `testOnly`:
-//   sbt 'kyo-browser/testOnly *AccessibilityTest -- -z "string lifts"'
-//
-// The `-z` substring will match if your filter appears anywhere in the joined
-// path, including the parent. Files that currently use this style:
-//   - internal/MutationSettlementTest.scala
-//   - internal/cdp/AccessibilityTest.scala
-//   - internal/CdpTypesTest.scala
-//   - internal/ActionabilityTest.scala
-//   - internal/CdpParamsRoundTripTest.scala
-//   - internal/NavigationWatcherTest.scala
-//
-// New tests should prefer the flat form unless the grouping carries genuine
-// semantic value (cf. CLAUDE.md "test placement: topic-based files").
-// ──────────────────────────────────────────────────────────────────────────────
+abstract class BaseBrowserTest extends kyo.test.Test[Any]:
 
-abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
-
-    type Assertion = org.scalatest.Assertion
-    def assertionSuccess              = succeed
-    def assertionFailure(msg: String) = fail(msg)
-
-    override given executionContext: ExecutionContext = Platform.executionContext
+    // Browser suites drive a single per-suite Chrome (the sbt build forks one JVM + one SharedChrome per suite
+    // and runs suites serially). Run each suite's leaves sequentially too: under kyo-test's default leaf
+    // parallelism dozens of leaves hammer that one Chrome at once, producing BrowserProtocolErrorExceptions and
+    // timeouts. ScalaTest's AsyncFreeSpec ran leaves sequentially within a suite; this restores that.
+    //
+    // failOnNoAssertion is disabled for the same reason kyo-ui's UITest disables it: browser suites verify
+    // through Browser.assert* domain helpers and expected-exception fail-paths (Abort.run(...) { case Failure(_: X)
+    // => () ; case _ => fail(...) }) that do not flow through the kyo.test assert macros, so the per-leaf
+    // evaluation counter sees zero even though the leaf does verify behavior. The check is a false positive here.
+    override def config = super.config.sequential.failOnNoAssertion(false)
 
     // Pre-flight: check whether the current (OS, arch) tuple has a chrome-headless-shell artifact
     // (mac-arm64 / mac-x64 / linux64 / win64 / win32). Linux/Aarch64 and Windows/ARM have no published
-    // artifact, so any test that needs Chrome cannot run; cancel the test cleanly with the install
-    // instructions instead of letting the BrowserSetupException leak as a red failure for every test that
-    // is not wrapped by `BrowserTest.cancelOnUnsupportedPlatform`. Reuses `ChromeDownloader.resolvePlatform`
-    // as the single source of truth for which tuples are supported.
+    // artifact, so any test that needs Chrome cannot run; cancel the leaf cleanly with the install
+    // instructions instead of letting the BrowserSetupException leak as a red failure. Reuses
+    // `ChromeDownloader.resolvePlatform` as the single source of truth for which tuples are supported.
     private lazy val chromeUnsupportedReason: Option[String] =
         import AllowUnsafe.embrace.danger
-        // Unsafe: tests are off the main effect stack; evaluating the platform check synchronously is
-        // the cleanest way to make the verdict available to the `run` override below.
+        // Unsafe: tests are off the main effect stack; evaluating the platform check synchronously is the
+        // cleanest way to make the verdict available to the `aroundLeaf` hook below.
         Sync.Unsafe.evalOrThrow {
             for
                 os      <- System.operatingSystem
@@ -66,13 +36,16 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
         }
     end chromeUnsupportedReason
 
-    override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
+    // Cancel every leaf cleanly on platforms with no chrome-headless-shell artifact. Ported from the ScalaTest
+    // base's `run` override to the kyo-test `aroundLeaf` hook; the cancel is deferred into a `Sync` so the runner
+    // discharges it as a Cancelled result rather than an eager throw.
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
         chromeUnsupportedReason match
-            case Some(reason) => cancel(reason)
-            case None         => super.run(v)
+            case Some(reason) => Sync.defer(cancel(reason))
+            case None         => body
 
     /** JSON decode helper used across CDP tests. */
-    def decode[A: Schema](json: String)(using Frame): A =
+    def decode[A: Schema](json: String)(using Frame, kyo.test.AssertScope): A =
         Json.decode[A](json) match
             case Result.Success(v) => v
             case other             => fail(s"decode failed: $other")
@@ -81,7 +54,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       * dispatcher carrier is the entire wire frame, so any test that takes a `client.send(...)` reply and wants
       * the typed result calls this helper instead of `decode[A]` directly.
       */
-    def decodeCdpResult[A: Schema](wire: String)(using Frame): A =
+    def decodeCdpResult[A: Schema](wire: String)(using Frame, kyo.test.AssertScope): A =
         Json.decode[kyo.internal.CdpReply[A]](wire) match
             case Result.Success(reply) =>
                 reply.result match
@@ -105,11 +78,11 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       * same shape of fail message and a panic could be mistaken for an expected typed-error path that was caught too loosely.
       */
     extension [E <: Throwable, A, S](v: Result[E, A] < (Async & S))
-        def orFail(label: String)(using Frame): A < (Async & S) =
+        def orFail(label: String)(using Frame, kyo.test.AssertScope): A < (Async & S) =
             v.map {
                 case Result.Success(a)   => a
                 case Result.Failure(err) => fail(s"$label failed: ${err.getMessage}")
                 case Result.Panic(ex)    => fail(s"PANIC: $label panic: ${ex.getMessage}")
             }
     end extension
-end Test
+end BaseBrowserTest

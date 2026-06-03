@@ -4,7 +4,7 @@ import UI.*
 import UI.Ast.*
 import scala.language.implicitConversions
 
-class UIDslTest extends Test:
+class UIDslTest extends kyo.test.Test[Any]:
 
     "div builder" in {
         val result = div("hello")

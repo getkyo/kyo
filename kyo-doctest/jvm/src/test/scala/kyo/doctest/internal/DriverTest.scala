@@ -4,7 +4,7 @@ import kyo.*
 import kyo.doctest.*
 
 /** Tests for Driver covering init, close, and compile behaviour including sequential safety, warnings, and -Werror. */
-class DriverTest extends Test:
+class DriverTest extends kyo.test.Test[Any]:
 
     private def testClasspath(using Frame): Chunk[kyo.Path] < Sync =
         for
@@ -22,11 +22,11 @@ class DriverTest extends Test:
             }
         }
 
-    "Driver.init with real classpath succeeds" in run {
+    "Driver.init with real classpath succeeds" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>
-                    driver.close.map(_ => succeed)
+                    driver.close.andThen(succeed("driver initialized successfully and closed without error"))
                 case Result.Failure(e) =>
                     Sync.defer(fail(s"expected success but got failure: $e"))
                 case Result.Panic(t) =>
@@ -35,7 +35,7 @@ class DriverTest extends Test:
         }
     }
 
-    "Driver.init with a bad classpath surfaces DriverInitFailed at init or compile time" in run {
+    "Driver.init with a bad classpath surfaces DriverInitFailed at init or compile time" in {
         val badClasspath = Chunk(kyo.Path("/this/path/does/not/exist/nowhere.jar"))
         val scalacOpts   = Chunk("-release", "17")
 
@@ -49,11 +49,12 @@ class DriverTest extends Test:
                 }
             }
         ).map {
-            case Result.Failure(_: Doctest.Error.DriverInitFailed) => succeed
-            case Result.Success(result)                            =>
+            case Result.Failure(_: Doctest.Error.DriverInitFailed) =>
+                succeed("correct: bad classpath surfaced DriverInitFailed")
+            case Result.Success(result) =>
                 // Driver init may have accepted a bad classpath; the compile MUST fail since the source needs kyo on the classpath
                 result match
-                    case _: Driver.Outcome.Failed => succeed
+                    case _: Driver.Outcome.Failed => succeed("correct: compile failed on bad classpath")
                     case _                        => fail(s"expected DriverInitFailed or Driver.Outcome.Failed, got Ok: $result")
             case Result.Panic(t)
                 if t.getMessage != null && (
@@ -65,18 +66,20 @@ class DriverTest extends Test:
                         t.getClass.getSimpleName.toLowerCase.contains("library") ||
                         (t.getCause != null && t.getCause.isInstanceOf[java.io.IOException])
                 ) =>
-                // dotty panics with a classpath-related message when stdlib is missing; this counts as detected bad-classpath
-                succeed
+                succeed("dotty panics with a classpath-related message when stdlib is missing; counts as detected bad-classpath")
             case Result.Panic(t) =>
                 fail(s"unexpected panic (not classpath-related): ${t.getClass.getSimpleName}: ${t.getMessage}")
         }
     }
 
-    "Driver.close is idempotent" in run {
+    "Driver.close is idempotent" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>
-                    driver.close.flatMap(_ => driver.close).map(_ => succeed)
+                    // Two sequential close() calls must not throw; idempotency of close IS the assertion.
+                    driver.close.flatMap(_ => driver.close).andThen(succeed(
+                        "two sequential close calls did not throw: close is idempotent"
+                    ))
                 case Result.Failure(e) =>
                     Sync.defer(fail(s"init failed: $e"))
                 case Result.Panic(t) =>
@@ -85,7 +88,7 @@ class DriverTest extends Test:
         }
     }
 
-    "Driver.compile of trivial source returns Driver.Outcome.Ok" in run {
+    "Driver.compile of trivial source returns Driver.Outcome.Ok" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>
@@ -93,7 +96,7 @@ class DriverTest extends Test:
                     driver.compile(src).flatMap { result =>
                         driver.close.map { _ =>
                             result match
-                                case Driver.Outcome.Ok(_) => succeed
+                                case Driver.Outcome.Ok(_) => succeed("trivial source compiled without errors")
                                 case Driver.Outcome.Failed(errors, _) =>
                                     fail(s"expected Ok but got Failed: ${errors.map(_.message).mkString(", ")}")
                         }
@@ -106,7 +109,7 @@ class DriverTest extends Test:
         }
     }
 
-    "Driver.compile of source with type error returns Driver.Outcome.Failed" in run {
+    "Driver.compile of source with type error returns Driver.Outcome.Failed" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>
@@ -128,7 +131,7 @@ class DriverTest extends Test:
         }
     }
 
-    "Driver.compile of source using derives Schema succeeds (macro resolution)" in run {
+    "Driver.compile of source using derives Schema succeeds (macro resolution)" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>
@@ -143,7 +146,7 @@ class DriverTest extends Test:
                     driver.compile(src).flatMap { result =>
                         driver.close.map { _ =>
                             result match
-                                case Driver.Outcome.Ok(_) => succeed
+                                case Driver.Outcome.Ok(_) => succeed("Schema macro resolved and compiled cleanly")
                                 case Driver.Outcome.Failed(errors, _) =>
                                     fail(s"macro compilation failed: ${errors.map(_.message).mkString("; ")}")
                         }
@@ -156,7 +159,7 @@ class DriverTest extends Test:
         }
     }
 
-    "Driver.compile respects -Werror scalac option: warning becomes error" in run {
+    "Driver.compile respects -Werror scalac option: warning becomes error" in {
         val opts = Chunk("-release", "17", "-Werror", "-Wunused:imports", "-deprecation")
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, opts, false)).flatMap {
@@ -170,7 +173,7 @@ class DriverTest extends Test:
                     driver.compile(src).flatMap { result =>
                         driver.close.map { _ =>
                             result match
-                                case _: Driver.Outcome.Failed => succeed
+                                case _: Driver.Outcome.Failed => succeed("-Werror promoted the warning to an error")
                                 case _: Driver.Outcome.Ok =>
                                     fail("expected -Werror to convert unused-import warning to compile error, but got Ok")
                         }
@@ -183,7 +186,7 @@ class DriverTest extends Test:
         }
     }
 
-    "Driver.compile captures warnings in Driver.Outcome.Ok.warnings" in run {
+    "Driver.compile captures warnings in Driver.Outcome.Ok.warnings" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk("-deprecation"), false)).flatMap {
                 case Result.Success(driver) =>
@@ -213,7 +216,7 @@ class DriverTest extends Test:
         }
     }
 
-    "Failed diagnostics carry file, line, and message" in run {
+    "Failed diagnostics carry file, line, and message" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>
@@ -246,7 +249,7 @@ class DriverTest extends Test:
         }
     }
 
-    "Driver.Diagnostic.Severity.Error assigned to type errors" in run {
+    "Driver.Diagnostic.Severity.Error assigned to type errors" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>
@@ -276,7 +279,7 @@ class DriverTest extends Test:
         }
     }
 
-    "two sequential Driver.compile calls on the same Driver produce independent results" in run {
+    "two sequential Driver.compile calls on the same Driver produce independent results" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>
@@ -304,7 +307,7 @@ class DriverTest extends Test:
         }
     }
 
-    "Driver.Outcome.Ok has no errors" in run {
+    "Driver.Outcome.Ok has no errors" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>
@@ -312,7 +315,7 @@ class DriverTest extends Test:
                     driver.compile(src).flatMap { result =>
                         driver.close.map { _ =>
                             result match
-                                case Driver.Outcome.Ok(_) => succeed
+                                case Driver.Outcome.Ok(_) => succeed("source compiled cleanly as expected")
                                 case Driver.Outcome.Failed(errors, _) =>
                                     fail(s"expected Ok but got errors: ${errors.map(_.message).mkString(", ")}")
                         }
@@ -325,7 +328,7 @@ class DriverTest extends Test:
         }
     }
 
-    "compile of source with syntax error returns Driver.Outcome.Failed (not panic)" in run {
+    "compile of source with syntax error returns Driver.Outcome.Failed (not panic)" in {
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, Chunk.empty, false)).flatMap {
                 case Result.Success(driver) =>

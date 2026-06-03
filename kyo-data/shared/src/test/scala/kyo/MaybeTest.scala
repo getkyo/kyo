@@ -3,7 +3,7 @@ package kyo
 import kyo.Maybe.*
 import kyo.Maybe.internal.PresentAbsent
 
-class MaybeTest extends Test:
+class MaybeTest extends kyo.test.Test[Any]:
 
     "apply" - {
         "creates Present for non-null values" in {
@@ -42,7 +42,7 @@ class MaybeTest extends Test:
             assert(Present("hello").get == "hello")
         }
         "throws NoSuchElementException for Absent" in {
-            assertThrows[NoSuchElementException] {
+            interceptThrown[NoSuchElementException] {
                 Absent.get
             }
         }

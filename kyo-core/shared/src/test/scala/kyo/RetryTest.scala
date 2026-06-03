@@ -1,11 +1,11 @@
 package kyo
 
-class RetryTest extends Test:
+class RetryTest extends kyo.test.Test[Any]:
 
     val ex = new Exception
 
     "no retries" - {
-        "ok" in run {
+        "ok" in {
             var calls = 0
             Retry[Any](Schedule.never) {
                 calls += 1
@@ -14,7 +14,7 @@ class RetryTest extends Test:
                 assert(v == 42 && calls == 1)
             }
         }
-        "nok" in run {
+        "nok" in {
             var calls = 0
             Abort.run[Exception] {
                 Retry[Exception](Schedule.never) {
@@ -28,7 +28,7 @@ class RetryTest extends Test:
     }
 
     "retries" - {
-        "ok" in run {
+        "ok" in {
             var calls = 0
             Retry[Any](Schedule.repeat(3)) {
                 calls += 1
@@ -37,7 +37,7 @@ class RetryTest extends Test:
                 assert(v == 42 && calls == 1)
             }
         }
-        "nok" in run {
+        "nok" in {
             var calls = 0
             Abort.run[Exception] {
                 Retry[Exception](Schedule.repeat(3)) {
@@ -50,7 +50,7 @@ class RetryTest extends Test:
         }
     }
 
-    "backoff" in run {
+    "backoff" in {
         var calls = 0
         val start = java.lang.System.currentTimeMillis()
         Abort.run[Exception] {
@@ -64,7 +64,7 @@ class RetryTest extends Test:
     }
 
     "default schedule" - {
-        "succeeds immediately without retries" in run {
+        "succeeds immediately without retries" in {
             var calls = 0
             Retry[Any] {
                 calls += 1
@@ -74,7 +74,7 @@ class RetryTest extends Test:
             }
         }
 
-        "retries up to max attempts" in run {
+        "retries up to max attempts" in {
             var calls = 0
             Abort.run[Exception] {
                 Retry[Exception] {
@@ -88,7 +88,7 @@ class RetryTest extends Test:
     }
 
     "panics" - {
-        "should not retry on panic" in run {
+        "should not retry on panic" in {
             var calls = 0
             Abort.run[Exception] {
                 Retry[Exception](Schedule.repeat(3)) {
@@ -100,7 +100,7 @@ class RetryTest extends Test:
             }
         }
 
-        "should not retry on panic with default schedule" in run {
+        "should not retry on panic with default schedule" in {
             var calls = 0
             Abort.run[Exception] {
                 Retry[Exception] {

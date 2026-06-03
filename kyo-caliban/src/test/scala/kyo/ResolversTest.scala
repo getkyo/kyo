@@ -10,7 +10,7 @@ import caliban.wrappers.Caching.GQLCacheControl
 import scala.concurrent.Future
 import zio.ZLayer
 
-class ResolverTest extends Test:
+class ResolverTest extends BaseCalibanTest:
 
     case class Query(
         k1: Int < Abort[Throwable],
@@ -110,7 +110,7 @@ class ResolverTest extends Test:
 
     // ==================== Server - POST ====================
 
-    "POST - JSON body" in run {
+    "POST - JSON body" in {
         for
             server <- startServer
             res    <- HttpClient.postText(s"http://localhost:${server.port}/api/graphql", """{"query":"{ k1 k2 k3 k4 k5 }"}""")
@@ -118,7 +118,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "POST - application/graphql content-type" in run {
+    "POST - application/graphql content-type" in {
         for
             server            <- startServer
             (status, body, _) <- postGql(server.port, "{ k1 }", "Content-Type" -> "application/graphql")
@@ -128,7 +128,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "POST - federation tracing header is accepted (request not rejected)" in run {
+    "POST - federation tracing header is accepted (request not rejected)" in {
         // The actual `ftv1` tracing extension only appears when the GraphQL is decorated with
         // `caliban.federation.tracing.ApolloFederatedTracing.wrapper` (a separate caliban-federation
         // module not on this classpath). This test verifies that setting the header does NOT crash
@@ -142,7 +142,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "POST - malformed JSON body returns a non-2xx with a GraphQL error envelope" in run {
+    "POST - malformed JSON body returns a non-2xx with a GraphQL error envelope" in {
         val route = HttpRoute.postRaw("api/graphql").request(_.bodyBinary).response(_.bodyBinary)
         for
             server <- startServer
@@ -161,7 +161,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "POST - empty body returns a GraphQL error envelope" in run {
+    "POST - empty body returns a GraphQL error envelope" in {
         val route = HttpRoute.postRaw("api/graphql").request(_.bodyBinary).response(_.bodyBinary)
         for
             server <- startServer
@@ -182,7 +182,7 @@ class ResolverTest extends Test:
 
     // ==================== Server - GET ====================
 
-    "GET - query param" in run {
+    "GET - query param" in {
         for
             server <- startServer
             resp   <- HttpClient.getText(s"http://localhost:${server.port}/api/graphql?query=%7B%20k1%20%7D")
@@ -190,7 +190,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "GET - query with variables" in run {
+    "GET - query with variables" in {
         val api = graphQL(RootResolver(ArgsQuery(args => args.a + args.b)))
         for
             interpreter <- Resolvers.get(api)
@@ -203,7 +203,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "GET - query with operationName" in run {
+    "GET - query with operationName" in {
         for
             server       <- startServer
             (_, body, _) <- getGql(server.port, "query=query%20MyOp%7Bk1%7D&operationName=MyOp")
@@ -211,7 +211,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "GET - query with extensions" in run {
+    "GET - query with extensions" in {
         for
             server       <- startServer
             (_, body, _) <- getGql(server.port, "query=%7Bk1%7D&extensions=%7B%7D")
@@ -219,7 +219,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "GET - no query param returns a GraphQL error envelope" in run {
+    "GET - no query param returns a GraphQL error envelope" in {
         for
             server            <- startServer
             (status, body, _) <- getGql(server.port, "")
@@ -231,7 +231,7 @@ class ResolverTest extends Test:
 
     // ==================== Server - Config ====================
 
-    "Config - custom config" in run {
+    "Config - custom config" in {
         val api = graphQL(RootResolver(defaultQuery))
         for
             interpreter <- Resolvers.get(api)
@@ -241,7 +241,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - CalibanRunner with default config" in run {
+    "Config - CalibanRunner with default config" in {
         type Environment = Var[Int] & Env[String]
         object schema extends SchemaDerivation[CalibanRunner[Environment]]
 
@@ -265,7 +265,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - CalibanRunner with custom config" in run {
+    "Config - CalibanRunner with custom config" in {
         type Environment = Var[Int] & Env[String]
         object schema extends SchemaDerivation[CalibanRunner[Environment]]
 
@@ -284,7 +284,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - custom path" in run {
+    "Config - custom path" in {
         val api = graphQL(RootResolver(defaultQuery))
         for
             interpreter <- Resolvers.get(api)
@@ -294,7 +294,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - graphiql disabled" in run {
+    "Config - graphiql disabled" in {
         val graphiqlRoute = HttpRoute.getRaw("graphiql").response(_.bodyBinary)
         val api           = graphQL(RootResolver(defaultQuery))
         for
@@ -305,7 +305,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - filter adds response header" in run {
+    "Config - filter adds response header" in {
         val filter = new HttpFilter.Passthrough[Nothing]:
             def apply[In, Out, E2](
                 request: HttpRequest[In],
@@ -322,7 +322,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - skipValidation allows invalid query" in run {
+    "Config - skipValidation allows invalid query" in {
         val api = graphQL(RootResolver(defaultQuery))
         for
             interpreter       <- Resolvers.get(api)
@@ -336,7 +336,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - enableIntrospection false rejects __schema queries" in run {
+    "Config - enableIntrospection false rejects __schema queries" in {
         val api = graphQL(RootResolver(defaultQuery))
         for
             interpreter       <- Resolvers.get(api)
@@ -346,7 +346,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - enableIntrospection true allows __schema queries" in run {
+    "Config - enableIntrospection true allows __schema queries" in {
         val api = graphQL(RootResolver(defaultQuery))
         for
             interpreter       <- Resolvers.get(api)
@@ -359,7 +359,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - allowMutationsOverGetRequests false blocks GET mutations" in run {
+    "Config - allowMutationsOverGetRequests false blocks GET mutations" in {
         val api = graphQL(RootResolver(defaultQuery, Mutation(99)))
         for
             interpreter       <- Resolvers.get(api)
@@ -374,7 +374,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - allowMutationsOverGetRequests true allows GET mutations" in run {
+    "Config - allowMutationsOverGetRequests true allows GET mutations" in {
         val api = graphQL(RootResolver(defaultQuery, Mutation(99)))
         for
             interpreter       <- Resolvers.get(api)
@@ -386,7 +386,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "Config - queryExecution Sequential executes fields sequentially" in run {
+    "Config - queryExecution Sequential executes fields sequentially" in {
         val api = graphQL(RootResolver(defaultQuery))
         for
             interpreter <- Resolvers.get(api)
@@ -400,7 +400,7 @@ class ResolverTest extends Test:
 
     // ==================== Server - SSE ====================
 
-    "SSE - one-shot query" in run {
+    "SSE - one-shot query" in {
         val sseClientRoute = HttpRoute.postRaw("api/graphql/sse").request(_.bodyBinary).response(_.bodyBinary)
         for
             server <- startServer
@@ -416,7 +416,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "SSE - subscription streaming" in run {
+    "SSE - subscription streaming" in {
         case class Subscriptions(values: zio.stream.ZStream[Any, Nothing, Int]) derives Schema.SemiAuto
 
         val api            = graphQL(RootResolver(defaultQuery, Mutation(0), Subscriptions(zio.stream.ZStream(1, 2, 3))))
@@ -438,7 +438,7 @@ class ResolverTest extends Test:
 
     // ==================== Server - @defer ====================
 
-    "defer - multipart response" in run {
+    "defer - multipart response" in {
         val deferClientRoute = HttpRoute.postRaw("api/graphql/defer").request(_.bodyBinary).response(_.bodyBinary)
         for
             server <- startServer
@@ -453,7 +453,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "defer - deferred fragment streams as a second part" in run {
+    "defer - deferred fragment streams as a second part" in {
         case class Slow(slow: Int < Async) derives Schema.SemiAuto
         case class CombinedQuery(k1: Int, sub: Slow) derives Schema.SemiAuto
         // The `@defer` directive must be explicitly enabled via IncrementalDelivery.defer wrapper.
@@ -480,7 +480,7 @@ class ResolverTest extends Test:
 
     // ==================== Server - Upload ====================
 
-    "upload - single file" in run {
+    "upload - single file" in {
         val uploadRoute = HttpRoute.postRaw("api/graphql/upload").request(_.bodyMultipart).response(_.bodyBinary)
         for
             server <- startServer
@@ -510,7 +510,7 @@ class ResolverTest extends Test:
     // but kyo-caliban's schema derivation does not yet support resolvers that require Uploads in their R parameter,
     // so the full end-to-end "resolver reads file bytes" assertion is not yet expressible. This test verifies the
     // multipart parsing and handler dispatch accept a file part with a plain non-Upload-aware schema.
-    "upload - handler accepts a multipart file part" in run {
+    "upload - handler accepts a multipart file part" in {
         // Server uses a plain non-Upload-aware schema (the resolver doesn't read the file). The point of the
         // test is that the multipart parser + handler dispatch don't crash on a request that includes file parts.
         val uploadRoute = HttpRoute.postRaw("api/graphql/upload").request(_.bodyMultipart).response(_.bodyBinary)
@@ -544,7 +544,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "upload - malformed operations JSON returns a GraphQL error response" in run {
+    "upload - malformed operations JSON returns a GraphQL error response" in {
         val uploadRoute = HttpRoute.postRaw("api/graphql/upload").request(_.bodyMultipart).response(_.bodyBinary)
         for
             server <- startServer
@@ -578,7 +578,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "upload - missing operations part" in run {
+    "upload - missing operations part" in {
         val uploadRoute = HttpRoute.postRaw("api/graphql/upload").request(_.bodyMultipart).response(_.bodyBinary)
         for
             server <- startServer
@@ -601,7 +601,7 @@ class ResolverTest extends Test:
 
     // ==================== Server - GraphiQL ====================
 
-    "GraphiQL - serves HTML" in run {
+    "GraphiQL - serves HTML" in {
         for
             server <- startServer
             resp   <- HttpClient.getText(s"http://localhost:${server.port}/graphiql")
@@ -613,7 +613,7 @@ class ResolverTest extends Test:
 
     // ==================== Response encoding ====================
 
-    "response - error in JSON identifies the specific validation problem" in run {
+    "response - error in JSON identifies the specific validation problem" in {
         for
             server       <- startServer
             (_, body, _) <- postGql(server.port, """{"query":"{ nonexistent }"}""")
@@ -623,7 +623,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "response - Accept application/graphql-response+json" in run {
+    "response - Accept application/graphql-response+json" in {
         for
             server <- startServer
             (status, body, headers) <- postGql(
@@ -638,7 +638,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "response - 400 for validation error with graphql-response+json" in run {
+    "response - 400 for validation error with graphql-response+json" in {
         for
             server <- startServer
             (status, body, _) <- postGql(
@@ -653,7 +653,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "response - mutation over GET returns 400 with the exact mutation-over-get message" in run {
+    "response - mutation over GET returns 400 with the exact mutation-over-get message" in {
         val api = graphQL(RootResolver(defaultQuery, Mutation(99)))
         for
             interpreter       <- Resolvers.get(api)
@@ -665,7 +665,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "response - cache-control header reflects exact max-age=60" in run {
+    "response - cache-control header reflects exact max-age=60" in {
         @GQLCacheControl(maxAge = Some(zio.Duration.fromSeconds(60)))
         case class CachedQuery(value: Int) derives Schema.SemiAuto
 
@@ -681,7 +681,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "response - cache-control scope=Private emits private directive" in run {
+    "response - cache-control scope=Private emits private directive" in {
         @GQLCacheControl(scope = Some(caliban.wrappers.Caching.CacheScope.Private), maxAge = Some(zio.Duration.fromSeconds(30)))
         case class PrivateQuery(value: Int) derives Schema.SemiAuto
 
@@ -697,7 +697,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "response - cache-control scope=Public emits public directive" in run {
+    "response - cache-control scope=Public emits public directive" in {
         @GQLCacheControl(scope = Some(caliban.wrappers.Caching.CacheScope.Public), maxAge = Some(zio.Duration.fromSeconds(10)))
         case class PublicQuery(value: Int) derives Schema.SemiAuto
 
@@ -732,7 +732,8 @@ class ResolverTest extends Test:
       * prematurely. Returns the collected frames in arrival order.
       */
     private def collectMessages(ws: HttpWebSocket, expected: Int, deadline: Duration = 3.seconds)(using
-        Frame
+        Frame,
+        kyo.test.AssertScope
     ): Chunk[String] < Async =
         AtomicRef.initWith(Chunk.empty[String]) { buf =>
             val loop = Loop.foreach {
@@ -763,7 +764,8 @@ class ResolverTest extends Test:
 
     /** Take frames until one matches `predicate`, ignoring non-matching frames silently. Fails loudly on Timeout or premature Closed. */
     private def expectMessage(ws: HttpWebSocket, predicate: String => Boolean, deadline: Duration = 3.seconds)(using
-        Frame
+        Frame,
+        kyo.test.AssertScope
     ): String < Async =
         val loop = Loop.foreach {
             ws.take().map {
@@ -785,7 +787,8 @@ class ResolverTest extends Test:
       * runners with CPU contention and GC pauses regularly add another 1-2 seconds.
       */
     private def awaitClose(ws: HttpWebSocket, deadline: Duration = 5.seconds)(using
-        Frame
+        Frame,
+        kyo.test.AssertScope
     ): (Int, String) < Async =
         val loop = Loop.foreach {
             ws.closeReason.map {
@@ -798,7 +801,7 @@ class ResolverTest extends Test:
         }
     end awaitClose
 
-    "WS - graphql-transport-ws - subscription happy path" in run {
+    "WS - graphql-transport-ws - subscription happy path" in {
         val api = subscriptionApi(1, 2, 3)
         for
             interpreter <- Resolvers.get(api)
@@ -826,7 +829,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - graphql-transport-ws - subscribe before connection_init returns 4401" in run {
+    "WS - graphql-transport-ws - subscribe before connection_init returns 4401" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -844,7 +847,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - graphql-transport-ws - ping returns pong" in run {
+    "WS - graphql-transport-ws - ping returns pong" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -862,7 +865,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - graphql-transport-ws - one-shot query over WS" in run {
+    "WS - graphql-transport-ws - one-shot query over WS" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -884,7 +887,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - graphql-ws (legacy) - subscription happy path" in run {
+    "WS - graphql-ws (legacy) - subscription happy path" in {
         val api = subscriptionApi(10, 20)
         for
             interpreter <- Resolvers.get(api)
@@ -911,7 +914,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - protocol defaults to graphql-ws when no subprotocol header sent" in run {
+    "WS - protocol defaults to graphql-ws when no subprotocol header sent" in {
         // kyo-http config without subprotocols means server does not advertise any either.
         // Caliban's Protocol.fromName returns Legacy for any unrecognized name; we default to graphql-ws.
         val api = subscriptionApi(7)
@@ -929,7 +932,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - keep-alive ping sent at configured interval" in run {
+    "WS - keep-alive ping sent at configured interval" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -949,7 +952,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - complete from client cancels subscription" in run {
+    "WS - complete from client cancels subscription" in {
         case class Forever(values: zio.stream.ZStream[Any, Nothing, Int]) derives caliban.schema.Schema.SemiAuto
         val api =
             graphQL(RootResolver(
@@ -977,7 +980,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - CalibanRunner with default config" in run {
+    "WS - CalibanRunner with default config" in {
         type Environment = Var[Int] & Env[String]
         object schema extends caliban.schema.SchemaDerivation[CalibanRunner[Environment]]
         case class RunnerQuery(k: Int < Environment) derives schema.SemiAuto
@@ -1014,7 +1017,7 @@ class ResolverTest extends Test:
 
     // ==================== WS - Payload variants ====================
 
-    "WS - transport-ws subscription with variables" in run {
+    "WS - transport-ws subscription with variables" in {
         val api = graphQL(RootResolver(ArgsQuery(args => args.a + args.b)))
         for
             interpreter <- Resolvers.get(api)
@@ -1034,7 +1037,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - transport-ws subscription with operationName picks named operation" in run {
+    "WS - transport-ws subscription with operationName picks named operation" in {
         for
             interpreter <- Resolvers.get(graphQL(RootResolver(defaultQuery)))
             server      <- Resolvers.run(interpreter)
@@ -1055,7 +1058,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - transport-ws subscription without payload causes error" in run {
+    "WS - transport-ws subscription without payload causes error" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1078,7 +1081,7 @@ class ResolverTest extends Test:
 
     // ==================== WS - Error paths ====================
 
-    "WS - transport-ws validation error emits next with errors then complete" in run {
+    "WS - transport-ws validation error emits next with errors then complete" in {
         for
             interpreter <- Resolvers.get(graphQL(RootResolver(defaultQuery)))
             server      <- Resolvers.run(interpreter)
@@ -1100,7 +1103,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - transport-ws resolver Abort failure emits errors in next" in run {
+    "WS - transport-ws resolver Abort failure emits errors in next" in {
         case class FailQuery(boom: Int < Abort[Throwable]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(FailQuery(Abort.fail(new RuntimeException("boom")))))
         for
@@ -1123,7 +1126,7 @@ class ResolverTest extends Test:
 
     // ==================== WS - Lifecycle ====================
 
-    "WS - transport-ws concurrent subscriptions interleave on one connection" in run {
+    "WS - transport-ws concurrent subscriptions interleave on one connection" in {
         case class TwoSubs(
             a: zio.stream.ZStream[Any, Nothing, Int],
             b: zio.stream.ZStream[Any, Nothing, Int]
@@ -1162,7 +1165,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - transport-ws client disconnect mid-stream cleans up subscription" in run {
+    "WS - transport-ws client disconnect mid-stream cleans up subscription" in {
         // Subscription that emits forever; we disconnect and verify the WS handler exits cleanly
         // (no leaked fiber leaves the test hung). Test passes if the run block returns.
         case class Forever(values: zio.stream.ZStream[Any, Nothing, Int]) derives caliban.schema.Schema.SemiAuto
@@ -1186,11 +1189,11 @@ class ResolverTest extends Test:
                 yield ()
             } // lambda returns -> HttpClient.webSocket closes WS; server should clean up
             _ <- Async.sleep(100.millis)
-        yield succeed
+        yield succeed("client disconnect mid-stream lets the server handler exit cleanly, with no leaked fiber")
         end for
     }
 
-    "WS - transport-ws unsupported op closes with 4400" in run {
+    "WS - transport-ws unsupported op closes with 4400" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1206,7 +1209,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - transport-ws invalid JSON closes with 4400" in run {
+    "WS - transport-ws invalid JSON closes with 4400" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1222,7 +1225,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - transport-ws subscribe without id closes with 4400" in run {
+    "WS - transport-ws subscribe without id closes with 4400" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1242,7 +1245,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - transport-ws complete without id closes 4400" in run {
+    "WS - transport-ws complete without id closes 4400" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1260,7 +1263,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - transport-ws complete for unknown id is ignored" in run {
+    "WS - transport-ws complete for unknown id is ignored" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1275,11 +1278,11 @@ class ResolverTest extends Test:
                     p <- expectMessage(ws, _.contains(""""type":"pong""""))
                 yield p
             }
-        yield succeed
+        yield succeed("a complete for an unknown id is ignored; the connection stays open and answers ping with pong")
         end for
     }
 
-    "WS - transport-ws client pong is silently accepted" in run {
+    "WS - transport-ws client pong is silently accepted" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1294,11 +1297,11 @@ class ResolverTest extends Test:
                     p <- expectMessage(ws, _.contains(""""type":"pong""""))
                 yield p
             }
-        yield succeed
+        yield succeed("a client pong is accepted silently; the connection stays open and answers ping with pong")
         end for
     }
 
-    "WS - transport-ws binary frames are ignored" in run {
+    "WS - transport-ws binary frames are ignored" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1311,13 +1314,13 @@ class ResolverTest extends Test:
                     _ <- expectMessage(ws, _.contains("connection_ack"))
                 yield ()
             }
-        yield succeed
+        yield succeed("a leading binary frame is ignored; connection_init still receives its ack")
         end for
     }
 
     // graphql-transport-ws says the server MAY close 4429 on a second connection_init; we take the permissive
     // behavior of re-acking instead. Wrap with a beforeInit hook that fails on repeat to get strict 4429.
-    "WS - transport-ws second connection_init re-acks (deliberate deviation from spec MAY 4429)" in run {
+    "WS - transport-ws second connection_init re-acks (deliberate deviation from spec MAY 4429)" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1334,7 +1337,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - transport-ws custom config path serves WS at /custom/ws" in run {
+    "WS - transport-ws custom config path serves WS at /custom/ws" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1352,7 +1355,7 @@ class ResolverTest extends Test:
 
     // ==================== WS - Legacy graphql-ws gaps ====================
 
-    "WS - legacy start before connection_init closes with 4401" in run {
+    "WS - legacy start before connection_init closes with 4401" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1370,7 +1373,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - legacy stop cancels subscription" in run {
+    "WS - legacy stop cancels subscription" in {
         case class Forever(values: zio.stream.ZStream[Any, Nothing, Int]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(
             defaultQuery,
@@ -1393,11 +1396,11 @@ class ResolverTest extends Test:
                     _ <- Async.sleep(100.millis)
                 yield ()
             }
-        yield succeed
+        yield succeed("legacy stop cancels the subscription server-side, with no hung emitter")
         end for
     }
 
-    "WS - legacy keep-alive emits ka frames at interval" in run {
+    "WS - legacy keep-alive emits ka frames at interval" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1414,7 +1417,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - legacy unknown op is silently ignored (no close)" in run {
+    "WS - legacy unknown op is silently ignored (no close)" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -1432,13 +1435,13 @@ class ResolverTest extends Test:
                     d <- expectMessage(ws, _.contains(""""type":"data""""))
                 yield d
             }
-        yield succeed
+        yield succeed("an unknown legacy op is ignored with no close; the connection can still start a subscription")
         end for
     }
 
     // ==================== WS - Hooks ====================
 
-    "WS - hook onAck attaches payload to connection_ack" in run {
+    "WS - hook onAck attaches payload to connection_ack" in {
         val api = wsApi
         val hooks = caliban.ws.WebSocketHooks.ack[Any, CalibanError](
             zio.ZIO.succeed(caliban.ResponseValue.ObjectValue(List("hello" -> caliban.Value.StringValue("world"))))
@@ -1459,7 +1462,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook beforeInit accepts when token matches" in run {
+    "WS - hook beforeInit accepts when token matches" in {
         val api = wsApi
         val hooks = caliban.ws.WebSocketHooks.init[Any, CalibanError] { payload =>
             payload match
@@ -1482,7 +1485,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook beforeInit rejects with close 4403 when it fails" in run {
+    "WS - hook beforeInit rejects with close 4403 when it fails" in {
         val api   = wsApi
         val hooks = caliban.ws.WebSocketHooks.init[Any, CalibanError](_ => zio.ZIO.fail(CalibanError.ExecutionError("nope")))
         for
@@ -1499,7 +1502,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook afterInit failure closes with 4401" in run {
+    "WS - hook afterInit failure closes with 4401" in {
         val api = wsApi
         val hooks = caliban.ws.WebSocketHooks.afterInit[Any, CalibanError](
             zio.ZIO.fail(CalibanError.ExecutionError("auth expired"))
@@ -1519,7 +1522,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook onPing customizes pong payload" in run {
+    "WS - hook onPing customizes pong payload" in {
         val api   = wsApi
         val hooks = caliban.ws.WebSocketHooks.empty[Any, CalibanError]
         val hooks2 = new caliban.ws.WebSocketHooks[Any, CalibanError]:
@@ -1544,7 +1547,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook onPong observes client pong" in run {
+    "WS - hook onPong observes client pong" in {
         val api       = wsApi
         val callCount = new java.util.concurrent.atomic.AtomicInteger(0)
         val hooks = new caliban.ws.WebSocketHooks[Any, CalibanError]:
@@ -1567,7 +1570,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook onMessage transforms subscription outputs" in run {
+    "WS - hook onMessage transforms subscription outputs" in {
         // onMessage pipeline that tags every output with an extra payload field
         val hooks = new caliban.ws.WebSocketHooks[Any, CalibanError]:
             override def onMessage
@@ -1603,7 +1606,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook onMessage applies to legacy protocol too" in run {
+    "WS - hook onMessage applies to legacy protocol too" in {
         val hooks = new caliban.ws.WebSocketHooks[Any, CalibanError]:
             override def onMessage
                 : Option[zio.stream.ZPipeline[Any, CalibanError, caliban.GraphQLWSOutput, caliban.GraphQLWSOutput]] =
@@ -1636,7 +1639,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook afterInit success runs side effect" in run {
+    "WS - hook afterInit success runs side effect" in {
         val api     = wsApi
         val counter = new java.util.concurrent.atomic.AtomicInteger(0)
         val hooks = caliban.ws.WebSocketHooks.afterInit[Any, CalibanError](
@@ -1660,7 +1663,7 @@ class ResolverTest extends Test:
     // Per graphql-transport-ws PROTOCOL.md the Error message itself terminates the subscription:
     // "This message terminates the operation and no further messages will be sent. If the server dispatched
     // the Error message relative to the original Subscribe message, no Complete message will be emitted."
-    "WS - subscription stream failure emits next frames then a terminating error" in run {
+    "WS - subscription stream failure emits next frames then a terminating error" in {
         case class Streamy(values: zio.stream.ZStream[Any, CalibanError, Int]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(
             defaultQuery,
@@ -1690,7 +1693,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - legacy subscription with variables" in run {
+    "WS - legacy subscription with variables" in {
         val api = graphQL(RootResolver(ArgsQuery(args => args.a + args.b)))
         for
             interpreter <- Resolvers.get(api)
@@ -1710,7 +1713,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - many concurrent subscriptions complete cleanly" in run {
+    "WS - many concurrent subscriptions complete cleanly" in {
         case class Multi(s: zio.stream.ZStream[Any, Nothing, Int]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(defaultQuery, Mutation(0), Multi(zio.stream.ZStream(1, 2, 3))))
         val n   = 5
@@ -1740,7 +1743,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook combinator (++) merges disjoint object keys" in run {
+    "WS - hook combinator (++) merges disjoint object keys" in {
         // Caliban 3.1.0 fixed ResponseValue.deepMerge to include keys from BOTH operands; before 3.1.0 the
         // merge silently dropped keys present only in the RHS. With the fix, disjoint object-keyed payloads
         // compose as users would naturally expect.
@@ -1767,7 +1770,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - hook combinator (++) concatenates overlapping list-valued keys" in run {
+    "WS - hook combinator (++) concatenates overlapping list-valued keys" in {
         // Complements the object-keyed test above: when two hooks contribute under the same key with
         // list values, ResponseValue.deepMerge concatenates the lists. Exercises that branch of deepMerge.
         val h1 = caliban.ws.WebSocketHooks.ack[Any, CalibanError](
@@ -1801,7 +1804,7 @@ class ResolverTest extends Test:
 
     // Non-CalibanError throwables get wrapped into a typed ExecutionError by caliban's executeRequest. As with
     // any typed failure, the spec says the Error message is itself terminal (no Complete follows).
-    "WS - non-CalibanError ZStream failure surfaces as a terminating error" in run {
+    "WS - non-CalibanError ZStream failure surfaces as a terminating error" in {
         case class WeirdSub(values: zio.stream.ZStream[Any, Throwable, Int]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(
             defaultQuery,
@@ -1831,7 +1834,7 @@ class ResolverTest extends Test:
 
     // Resolver defects (ZIO.die) get caught and wrapped as a typed ExecutionError by `executeRequest`. The
     // resulting Error message is itself the terminator per spec.
-    "WS - resolver panic in subscription stream is reported as a terminating error" in run {
+    "WS - resolver panic in subscription stream is reported as a terminating error" in {
         case class PanicSub(values: zio.stream.ZStream[Any, Nothing, Int]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(
             defaultQuery,
@@ -1858,7 +1861,7 @@ class ResolverTest extends Test:
 
     // After a fast one-shot subscribe completes, the same id must be reusable for another subscribe on the
     // same connection.
-    "WS - one-shot query then resubscribe with the same id succeeds" in run {
+    "WS - one-shot query then resubscribe with the same id succeeds" in {
         for
             interpreter <- Resolvers.get(graphQL(RootResolver(defaultQuery)))
             server      <- Resolvers.run(interpreter)
@@ -1892,7 +1895,7 @@ class ResolverTest extends Test:
 
     // onAck is documented as the connection_ack payload provider; caliban catches a typed failure via
     // `.option` and acks with no payload rather than rejecting the connection.
-    "WS - onAck failure falls back to ack with no payload" in run {
+    "WS - onAck failure falls back to ack with no payload" in {
         val hooks = caliban.ws.WebSocketHooks.ack[Any, CalibanError](zio.ZIO.fail(CalibanError.ExecutionError("ack fail")))
         for
             interpreter <- Resolvers.get(wsApi)
@@ -1913,7 +1916,7 @@ class ResolverTest extends Test:
     // Caliban's onMessage scaladoc says the pipeline is applied to "the resulting ZStream for every active
     // subscription" — that stream is `(resp ++ toStreamComplete).catchAll(toStreamError)`, so the user hook
     // sees the protocol-level Complete frame in addition to data frames.
-    "WS - onMessage hook is applied to all output frames including Complete" in run {
+    "WS - onMessage hook is applied to all output frames including Complete" in {
         val sawComplete = new java.util.concurrent.atomic.AtomicBoolean(false)
         val hooks = new caliban.ws.WebSocketHooks[Any, CalibanError]:
             override def onMessage
@@ -1947,7 +1950,7 @@ class ResolverTest extends Test:
     // Legacy graphql-ws PROTOCOL.md is silent on unknown ops. Caliban's `Legacy.make` has `case _ => ZIO.unit`
     // so unknown messages are dropped silently. Verified by sending a recognized message after the unknown
     // one and observing that the connection is still alive and processes it.
-    "WS - legacy unknown op is dropped silently and the connection stays alive" in run {
+    "WS - legacy unknown op is dropped silently and the connection stays alive" in {
         for
             interpreter <- Resolvers.get(wsApi)
             server      <- Resolvers.run(interpreter)
@@ -1969,7 +1972,7 @@ class ResolverTest extends Test:
     // Legacy graphql-ws PROTOCOL.md describes `id` as the operation identifier on `GQL_START` but doesn't
     // explicitly mandate behavior on missing id. Caliban's `Legacy.Start` uses `id.getOrElse("")`, so a start
     // without an id is accepted and the operation runs under the empty-string id.
-    "WS - legacy start without id is accepted with id defaulted to empty string" in run {
+    "WS - legacy start without id is accepted with id defaulted to empty string" in {
         for
             interpreter <- Resolvers.get(wsApi)
             server      <- Resolvers.run(interpreter)
@@ -1988,7 +1991,7 @@ class ResolverTest extends Test:
 
     // subscribe with a non-object payload (StringValue, IntValue, NullValue) must not crash the dispatch loop:
     // buildRequest falls through to GraphQLRequest() and caliban responds with a missing-query error.
-    "WS - subscribe with non-object payload is handled" in run {
+    "WS - subscribe with non-object payload is handled" in {
         for
             interpreter <- Resolvers.get(wsApi)
             server      <- Resolvers.run(interpreter)
@@ -2005,7 +2008,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - subscribe with null payload is handled" in run {
+    "WS - subscribe with null payload is handled" in {
         for
             interpreter <- Resolvers.get(wsApi)
             server      <- Resolvers.run(interpreter)
@@ -2022,7 +2025,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - afterInit panic closes 4401" in run {
+    "WS - afterInit panic closes 4401" in {
         val hooks = caliban.ws.WebSocketHooks.afterInit[Any, CalibanError](zio.ZIO.die(new RuntimeException("after boom!")))
         for
             interpreter <- Resolvers.get(wsApi)
@@ -2039,7 +2042,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - subscription with string values containing JSON-escape characters" in run {
+    "WS - subscription with string values containing JSON-escape characters" in {
         case class StrSub(messages: zio.stream.ZStream[Any, Nothing, String]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(
             defaultQuery,
@@ -2070,7 +2073,7 @@ class ResolverTest extends Test:
         end for
     }
 
-    "WS - subscription with nested object values" in run {
+    "WS - subscription with nested object values" in {
         case class Point(x: Int, y: Int) derives caliban.schema.Schema.SemiAuto
         case class PointSub(points: zio.stream.ZStream[Any, Nothing, Point]) derives caliban.schema.Schema.SemiAuto
         val api = graphQL(RootResolver(defaultQuery, Mutation(0), PointSub(zio.stream.ZStream(Point(1, 2), Point(3, 4)))))

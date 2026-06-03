@@ -2,10 +2,9 @@ package kyo.internal
 
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import kyo.Test
 
 // USR2 signal doesn't exist on Windows, and signal handling is Unix-specific.
-class OsSignalTest extends Test:
+class OsSignalTest extends kyo.test.Test[Any]:
 
     private val isLinux = java.lang.System.getProperty("os.name", "").toLowerCase.contains("linux")
 

@@ -7,7 +7,13 @@ import java.util.logging.SimpleFormatter
 import java.util.logging.StreamHandler
 import scala.util.control.NoStackTrace
 
-class JavaLogTest extends Test:
+class JavaLogTest extends kyo.test.Test[Any]:
+
+    // Every leaf mutates the level of the SAME global JUL logger named "kyo.logging" via
+    // Logger.getLogger("kyo.logging").setLevel(...) and reads it back through the JPL wrapper.
+    // ScalaTest's AsyncFreeSpec ran a suite's leaves sequentially; kyo-test runs them in parallel
+    // by default, so concurrent leaves clobber each other's level. Serialize this suite's leaves.
+    override def config = super.config.sequential
 
     case object ex extends NoStackTrace
 
@@ -53,7 +59,7 @@ class JavaLogTest extends Test:
         assert(loggerWithLevel(Level.OFF).level == Log.Level.silent)
     }
 
-    "log" in run {
+    "log" in {
         val buffer = new StringBuilder()
         val out = new java.io.OutputStream:
             def write(b: Int): Unit = buffer.append(b.toChar)

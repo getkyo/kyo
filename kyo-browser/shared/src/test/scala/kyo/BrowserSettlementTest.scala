@@ -13,7 +13,7 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ---- goto with explicit settle ----
 
-    "goto with explicit Settle.DomContentLoaded returns after DOMContentLoaded" in run {
+    "goto with explicit Settle.DomContentLoaded returns after DOMContentLoaded" in {
         val p = page("<h1>CustomSchedule</h1>")
         withBrowser {
             Browser.goto(p, Browser.Settle.DomContentLoaded).map { _ =>
@@ -26,7 +26,7 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ---- expectNavigation ----
 
-    "expectNavigation completes when the trigger causes a navigation" in run {
+    "expectNavigation completes when the trigger causes a navigation" in {
         // Source is a real localhost http page (the Chrome DevTools /json/version endpoint). Trigger navigates to a
         // sibling localhost endpoint (`/json`, which serves the page-list JSON). DOM is JSON text, so we settle on
         // DomContentLoaded (no idle network needed) and verify by reading window.location.pathname after settle.
@@ -50,7 +50,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "expectNavigation aborts with a navigation-failed exception when the trigger does not navigate within the budget" in run {
+    "expectNavigation aborts with a navigation-failed exception when the trigger does not navigate within the budget" in {
         val p = page("<body><button id='b'>noop</button></body>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -62,7 +62,8 @@ class BrowserSettlementTest extends BrowserTest:
                             Abort.run[BrowserScriptException](Browser.eval("'no-op'")).unit
                         }
                     }.map {
-                        case Result.Failure(_: BrowserNavigationFailedException) => succeed
+                        case Result.Failure(ex: BrowserNavigationFailedException) =>
+                            assert(ex.getMessage.contains("Navigation failed"))
                         case other =>
                             fail(s"Expected Result.Failure(BrowserNavigationFailedException) but got $other")
                     }
@@ -71,7 +72,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "expectNavigation honors failOnHttpError for 4xx responses" in run {
+    "expectNavigation honors failOnHttpError for 4xx responses" in {
         // Navigate via expectNavigation to a localhost path that the Chrome DevTools HTTP server returns 404 for.
         // failOnHttpError = true (the default) raises BrowserNavigationFailedException carrying the HTTP status.
         withBrowserOnLocalhost {
@@ -86,7 +87,8 @@ class BrowserSettlementTest extends BrowserTest:
                             ).unit
                         }
                     }.map {
-                        case Result.Failure(_: BrowserNavigationFailedException) => succeed
+                        case Result.Failure(ex: BrowserNavigationFailedException) =>
+                            assert(ex.url.contains("never-exists"))
                         case other =>
                             fail(s"Expected Result.Failure(BrowserNavigationFailedException) but got $other")
                     }
@@ -97,7 +99,7 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ---- waitForText ----
 
-    "waitForText finds text after delay" in run {
+    "waitForText finds text after delay" in {
         val p = page("""<body>
             <div id="target">loading</div>
             <script>
@@ -115,7 +117,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitForText fails when predicate never satisfied" in run {
+    "waitForText fails when predicate never satisfied" in {
         val p = page("<div id='target'>never-changes</div>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -126,7 +128,8 @@ class BrowserSettlementTest extends BrowserTest:
                             _ == "will-not-match"
                         )
                     }.map {
-                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                            assert(ex.getMessage.contains("Assertion failed"))
                         case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                     }
                 }
@@ -134,7 +137,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitForText retries until non-empty" in run {
+    "waitForText retries until non-empty" in {
         val p = page("""<body>
             <div id="target"></div>
             <script>
@@ -154,7 +157,7 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ---- waitForAttribute ----
 
-    "waitForAttribute finds attribute after delay" in run {
+    "waitForAttribute finds attribute after delay" in {
         val p = page("""<body>
             <div id="target" data-state="pending"></div>
             <script>
@@ -172,7 +175,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitForAttribute fails when predicate never satisfied" in run {
+    "waitForAttribute fails when predicate never satisfied" in {
         val p = page("<div id='target' data-status='fixed'></div>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -184,7 +187,8 @@ class BrowserSettlementTest extends BrowserTest:
                             _ == "will-not-match"
                         )
                     }.map {
-                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                            assert(ex.getMessage.contains("Assertion failed"))
                         case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                     }
                 }
@@ -194,7 +198,7 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ---- waitFor ----
 
-    "waitFor succeeds when JS becomes truthy" in run {
+    "waitFor succeeds when JS becomes truthy" in {
         val p = page("""<body>
             <script>
                 window.appReady = false;
@@ -212,7 +216,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitFor fails when JS stays falsy" in run {
+    "waitFor fails when JS stays falsy" in {
         val p = page("<body><script>window.neverTrue = false;</script></body>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -220,7 +224,8 @@ class BrowserSettlementTest extends BrowserTest:
                     Abort.run[BrowserAssertionException] {
                         Browser.waitFor("window.neverTrue")
                     }.map {
-                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                            assert(ex.getMessage.contains("Assertion failed"))
                         case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                     }
                 }
@@ -228,7 +233,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitFor returns the truthy value" in run {
+    "waitFor returns the truthy value" in {
         val p = page("""<body>
             <script>
                 window.counter = 0;
@@ -251,7 +256,7 @@ class BrowserSettlementTest extends BrowserTest:
     // A click that triggers a React-like re-render awaits the resulting mutation batch.
     // The onclick schedules a setTimeout(..., 100ms) that mutates the button text. Without mutation settlement the first
     // `text` read would observe the stale "0". With settlement, the click blocks until the async text update lands.
-    "click awaits a deferred re-render before returning" in run {
+    "click awaits a deferred re-render before returning" in {
         val p = page(
             """<body>
                 <button id="b">0</button>
@@ -275,7 +280,7 @@ class BrowserSettlementTest extends BrowserTest:
     // fill that triggers a debounced validation awaits the validation tick.
     // The oninput handler defers a DOM mutation by 50ms; the validation output div gets populated asynchronously after the
     // fill completes. With mutation settlement the first read of the validation text observes 'valid'.
-    "fill awaits debounced validation DOM mutation" in run {
+    "fill awaits debounced validation DOM mutation" in {
         val p = page(
             """<body>
                 <input id="i">
@@ -304,7 +309,7 @@ class BrowserSettlementTest extends BrowserTest:
     // raises [[BrowserAssertionTimedOutException]] after `mutationSettlementTimeout`. This test pins the document-body scoping: a
     // target-subtree observer (the abandoned design) would have ignored the chatter and returned cleanly. The shorter timeout keeps
     // the test fast.
-    "settlement observes mutations across the whole document body and raises on continuous chatter" in run {
+    "settlement observes mutations across the whole document body and raises on continuous chatter" in {
         val p = page(
             """<body>
                 <div id="chatter"><span>0</span></div>
@@ -356,7 +361,7 @@ class BrowserSettlementTest extends BrowserTest:
     // `--disable-features=IntensiveWakeUpThrottling`) which keep the 5ms interval firing regardless of
     // tab visibility or backgrounding. Settlement therefore never quiesces and raises
     // BrowserAssertionTimedOutException after `mutationSettlementTimeout`.
-    "mutation settlement raises assertion timeout on pages that never quiesce" in run {
+    "mutation settlement raises assertion timeout on pages that never quiesce" in {
         // Static button on page load (no mutations yet); actionability passes immediately.
         // The onclick handler starts the setInterval churn, so settlement begins observing mutations
         // only AFTER the click dispatches.
@@ -418,7 +423,7 @@ class BrowserSettlementTest extends BrowserTest:
     }
 
     // Quiescence window is configured via Browser.SessionConfig.default: default is 50ms.
-    "Browser.SessionConfig.default.mutationQuiescenceWindow is 50ms" in run {
+    "Browser.SessionConfig.default.mutationQuiescenceWindow is 50ms" in {
         assert(
             Browser.SessionConfig.default.mutationQuiescenceWindow == 50.millis,
             s"expected mutationQuiescenceWindow == 50.millis but got ${Browser.SessionConfig.default.mutationQuiescenceWindow}"
@@ -434,7 +439,7 @@ class BrowserSettlementTest extends BrowserTest:
     // window, resetting the observer's __kyoMutLast. With a 50ms window, quiescence is reached no earlier than t=70+50=120ms.
     // The click should return around 120-200ms post-action, NOT at t=60ms (10+50), which would be the wrong "first mutation then
     // wait the window" behavior that ignores later mutations within the same burst.
-    "nested mutations within the quiescence window reset the timer" in run {
+    "nested mutations within the quiescence window reset the timer" in {
         val p = page(
             """<body>
                 <button id="b">click</button>
@@ -469,7 +474,7 @@ class BrowserSettlementTest extends BrowserTest:
     // The observer is removed after settlement: no leaks.
     // After a click completes, the release scope exits and the ref count drops to 0, disconnecting the observer and deleting the
     // window-level state. `window.__kyoMutObs === undefined` should read 'true'.
-    "MutationObserver and window state are cleaned up after settlement" in run {
+    "MutationObserver and window state are cleaned up after settlement" in {
         val p = page(
             """<body>
                 <button id="b" onclick="document.getElementById('b').textContent = '1'">0</button>
@@ -494,7 +499,7 @@ class BrowserSettlementTest extends BrowserTest:
     // Two sequential back-to-back clicks on elements in different subtrees. Both should return cleanly without deadlocking or
     // observing stale state from the previous observer. Uses the ref-count path: first click installs, cleans up; second click
     // installs fresh, cleans up.
-    "back-to-back clicks on different subtrees each settle independently" in run {
+    "back-to-back clicks on different subtrees each settle independently" in {
         val p = page(
             """<body>
                 <div id="leftTree"><button id="left">L0</button></div>
@@ -529,7 +534,7 @@ class BrowserSettlementTest extends BrowserTest:
     // ── Per-scope retry config: `Browser.withConfig` threads a retry schedule ──
 
     // withConfig(maxDuration 100ms) on a never-matching waitForText fails within ~100ms ± 50ms.
-    "Browser.withConfig(retrySchedule maxDuration 100ms) with never-matching waitForText fails within ~100ms" in run {
+    "Browser.withConfig(retrySchedule maxDuration 100ms) with never-matching waitForText fails within ~100ms" in {
         withBrowser {
             onPage("<div id='target'>never-changes</div>") {
                 timed {
@@ -556,7 +561,7 @@ class BrowserSettlementTest extends BrowserTest:
     }
 
     // Nested withConfig: inner config is used for the inner call, not the outer.
-    "Nested withConfig uses innermost value" in run {
+    "Nested withConfig uses innermost value" in {
         withBrowser {
             onPage("<div id='target'>never-changes</div>") {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(500.millis))) {
@@ -585,7 +590,7 @@ class BrowserSettlementTest extends BrowserTest:
     }
 
     // Browser.SessionConfig.default has 5s retry schedule.
-    "Browser.SessionConfig.default retrySchedule has 5s maxDuration" in run {
+    "Browser.SessionConfig.default retrySchedule has 5s maxDuration" in {
         Browser.configLocal.use { cfg =>
             val schedule = cfg.retrySchedule
             assert(
@@ -596,7 +601,7 @@ class BrowserSettlementTest extends BrowserTest:
     }
 
     // withConfig retrySchedule unbounded: a slow-but-eventually-true waitForText succeeds.
-    "Browser.withConfig(unbounded retrySchedule) with eventually-true waitForText succeeds" in run {
+    "Browser.withConfig(unbounded retrySchedule) with eventually-true waitForText succeeds" in {
         withBrowser {
             onPage("""<body>
             <div id="target"></div>
@@ -616,8 +621,8 @@ class BrowserSettlementTest extends BrowserTest:
     }
 
     // waitForText, assertExists, click, fill honor the retry schedule from withConfig.
-    "waitForText and assertExists honor withConfig retrySchedule" in run {
-        def assertBounded(label: String, exception: BrowserException, elapsedMs: Long): Assertion =
+    "waitForText and assertExists honor withConfig retrySchedule" in {
+        def assertBounded(label: String, exception: BrowserException, elapsedMs: Long): Unit =
             // Behavior contract: each operation MUST fail (the scope's 100ms maxDuration was reached). Failure shape is the
             // deterministic contract; upper bound relaxed 3× for CI tolerance.
             assert(
@@ -662,14 +667,14 @@ class BrowserSettlementTest extends BrowserTest:
                                     assertBounded("fill", e, d.toMillis)
                                 case other => fail(s"fill: expected BrowserElementException but got $other")
                         }
-                    ).map(_ => succeed)
+                    ).map(_ => ())
                 }
             }
         }
     }
 
     // Sibling fibers in Async.zip each see their own withConfig scope.
-    "Sibling Async.zip fibers see their own withConfig scope" in run {
+    "Sibling Async.zip fibers see their own withConfig scope" in {
         val slowPage = page("""<body>
             <div id="slow"></div>
             <script>
@@ -714,14 +719,14 @@ class BrowserSettlementTest extends BrowserTest:
                             }
                         }
                     }
-                ).map { (_, _) => succeed }
+                ).map { (_, _) => () }
             }
         }
     }
 
     // ---- Settle.Load + signature normalization + catalog deliverable ----
 
-    "Settle.Load is accepted by goto and the back/forward/reload paths" in run {
+    "Settle.Load is accepted by goto and the back/forward/reload paths" in {
         // Two distinct pages so back/forward have somewhere to navigate between.
         val first  = page("<h1>first</h1>")
         val second = page("<h1>second</h1>")
@@ -750,7 +755,7 @@ class BrowserSettlementTest extends BrowserTest:
     // with `settle timeout after NetworkIdle`.
     // -------------------------------------------------------------------------
 
-    "Settle.NetworkIdle degrades to Load when load fires but network never quiesces" in run {
+    "Settle.NetworkIdle degrades to Load when load fires but network never quiesces" in {
         // Use a localhost server so the fetch loop has a real same-origin endpoint to hit (data: URLs can't host
         // fetch targets without CORS gymnastics, and chronic CDN-cached redirects flake on remote hosts).
         val html =
@@ -795,7 +800,7 @@ class BrowserSettlementTest extends BrowserTest:
     // tell "same URL, already loaded, proceed" from "Chrome actually failed to navigate".
     // -------------------------------------------------------------------------
 
-    "same-URL Browser.goto after a typed 4xx failure succeeds (no-op when already on target URL)" in run {
+    "same-URL Browser.goto after a typed 4xx failure succeeds (no-op when already on target URL)" in {
         val bytes = Span.fromUnsafe(
             """<!doctype html><html><body><h1>Not Found</h1><p>This is a 404 page</p></body></html>""".getBytes("UTF-8")
         )
@@ -811,7 +816,8 @@ class BrowserSettlementTest extends BrowserTest:
                         Browser.goto(url)
                     }
                     _ = firstAttempt match
-                        case Result.Failure(_: BrowserNavigationFailedException) => ()
+                        case Result.Failure(ex: BrowserNavigationFailedException) =>
+                            assert(ex.url.contains("/missing"))
                         case other => fail(s"expected BrowserNavigationFailedException but got $other")
                     // Step 2: re-goto the SAME URL with failOnHttpError=false; should be a no-op success.
                     // BUG today: this times out with "navigation never committed (still at original URL)" because the
@@ -828,7 +834,7 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ---- wait predicates ----
 
-    "waitForUrl returns matched URL when navigation happens after a delay" in run {
+    "waitForUrl returns matched URL when navigation happens after a delay" in {
         // history.pushState fires after a short setTimeout; waitForUrl returns the matched URL.
         withBrowser {
             onPage(
@@ -842,7 +848,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitForTitle returns matched title when document.title is set via JS after a delay" in run {
+    "waitForTitle returns matched title when document.title is set via JS after a delay" in {
         withBrowser {
             onPage(
                 "<title>initial</title><div>x</div>" +
@@ -855,7 +861,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitForCount returns the first stable matching count when items are appended via setInterval" in run {
+    "waitForCount returns the first stable matching count when items are appended via setInterval" in {
         withBrowser {
             onPage(
                 "<ul id='list'></ul>" +
@@ -868,7 +874,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitForVisible returns Unit when display:none is removed asynchronously" in run {
+    "waitForVisible returns Unit when display:none is removed asynchronously" in {
         withBrowser {
             onPage(
                 "<div id='t' style='display:none'>delayed</div>" +
@@ -883,7 +889,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitForExists returns Unit when the element is appended via setTimeout" in run {
+    "waitForExists returns Unit when the element is appended via setTimeout" in {
         withBrowser {
             onPage(
                 "<div id='container'></div>" +
@@ -898,7 +904,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitForText equality overload resolves once the text matches" in run {
+    "waitForText equality overload resolves once the text matches" in {
         withBrowser {
             onPage(
                 "<div id='msg'>loading</div>" +
@@ -911,7 +917,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "waitForAttribute equality overload resolves once the attribute matches" in run {
+    "waitForAttribute equality overload resolves once the attribute matches" in {
         withBrowser {
             onPage(
                 "<div id='ready' data-state='loading'>x</div>" +
@@ -931,7 +937,7 @@ class BrowserSettlementTest extends BrowserTest:
       * Load event alone (which would yield elapsed under ~200ms). Lower bound `>= 200.millis` is the load-bearing claim; upper bound absorbs
       * Chrome roundtrip + network-idle window + CI jitter.
       */
-    "Settle.NetworkIdle waits for chatty fetches to quiesce (3-fetch positive case)" in run {
+    "Settle.NetworkIdle waits for chatty fetches to quiesce (3-fetch positive case)" in {
         // Three deferred fetches plus a same-origin /ping endpoint. data: URLs cannot host cross-origin fetch targets without CORS
         // gymnastics, so the localhost server pattern mirrors the line ~746 NetworkIdle degradation test.
         val html =
@@ -975,7 +981,7 @@ class BrowserSettlementTest extends BrowserTest:
       * `<img>`) finishes. With a server-delayed image, elapsed must be >= the server delay; an early return would mean `Settle.Load` is
       * firing on DOMContentLoaded.
       */
-    "Settle.Load waits for slow <img> subresource to load before returning" in run {
+    "Settle.Load waits for slow <img> subresource to load before returning" in {
         // Minimal valid 1x1 transparent GIF89a (35 bytes). Chrome fires `load` only on valid image bytes; a bogus payload would fire
         // `error` and the load gate would never open.
         val tinyGifBytes: Span[Byte] = Span.fromUnsafe(
@@ -1080,7 +1086,7 @@ class BrowserSettlementTest extends BrowserTest:
       * elapsed is bounded BELOW the "all 5 mutations + window" total (320 + 10 = 330ms minimum) so the test fails if the resolver started
       * capturing later mutations under a tighter window.
       */
-    "mutationQuiescenceWindow(10ms) lets 30ms-spaced mutations resolve in the first window" in run {
+    "mutationQuiescenceWindow(10ms) lets 30ms-spaced mutations resolve in the first window" in {
         val p = page(quiescenceMatrixHtml)
         withBrowser {
             for
@@ -1110,7 +1116,7 @@ class BrowserSettlementTest extends BrowserTest:
       * settlement waits for the LAST mutation + 500ms quiet. Elapsed must exceed the wide window's lower bound; an early return would mean
       * the window was ignored.
       */
-    "mutationQuiescenceWindow(500ms) waits for all 30ms-spaced mutations to quiesce" in run {
+    "mutationQuiescenceWindow(500ms) waits for all 30ms-spaced mutations to quiesce" in {
         val p = page(quiescenceMatrixHtml)
         withBrowser {
             for
@@ -1139,7 +1145,7 @@ class BrowserSettlementTest extends BrowserTest:
       * 20ms-spaced mutations against the default 50ms quiescence window (never quiesces), settlement raises
       * `BrowserAssertionTimedOutException` after ~500ms, NOT 2s.
       */
-    "mutationSettlementTimeout(500ms) shortens the never-quiesce timeout" in run {
+    "mutationSettlementTimeout(500ms) shortens the never-quiesce timeout" in {
         // Mirror the never-quiesce shape used by the default-timeout test (settlement raises
         // BrowserAssertionTimedOutException on chatty pages). Combine a wide mutationQuiescenceWindow(500ms)
         // (so the observer never sees a quiet 500ms gap inside the 5ms-interval churn) with the custom

@@ -1,10 +1,9 @@
 package kyo.scheduler
 
 import kyo.*
-import org.scalatest.compatible.Assertion
 import scala.annotation.tailrec
 
-class IOPromiseBlockingTest extends Test:
+class IOPromiseBlockingTest extends kyo.test.Test[Any]:
 
     def deadline(after: Duration = timeout) =
         import AllowUnsafe.embrace.danger
@@ -18,19 +17,19 @@ class IOPromiseBlockingTest extends Test:
             assert(result == Result.succeed(42))
         }
 
-        "timeout" in runNotJS {
+        "timeout".notJs in {
             val p      = new IOPromise[Nothing, Int]()
             val result = p.block(deadline(10.millis))
             assert(result.isFailure)
         }
 
-        "block with very short timeout" in runNotJS {
+        "block with very short timeout".notJs in {
             val p      = new IOPromise[Nothing, Int]()
             val result = p.block(deadline(10.millis))
             assert(result.isFailure)
         }
 
-        def threadInterruption[E, A](promise: IOPromise[E, A])(assertion: Result[E | Timeout, A] => Assertion) =
+        def threadInterruption[E, A](promise: IOPromise[E, A])(assertion: Result[E | Timeout, A] => Unit) =
             @volatile var threadStarted = false
             val thread = new Thread:
                 override def run(): Unit =
@@ -56,7 +55,7 @@ class IOPromiseBlockingTest extends Test:
                     assert(result.isPanic)
                 }
             }
-            "linked" in runNotJS {
+            "linked".notJs in {
                 val p = new IOPromise[Nothing, Int]()
                 p.becomeDiscard(new IOPromise[Nothing, Int]())
                 threadInterruption(p) { result =>

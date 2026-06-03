@@ -1,41 +1,43 @@
 package kyo
 
-class GateTest extends Test:
+class GateTest extends kyo.test.Test[Any]:
 
     "init" - {
-        "initWith" in run {
+        "initWith" in {
             Gate.initWith(2) { gate =>
                 for
                     f <- Fiber.initUnscoped(gate.pass)
                     _ <- gate.pass
                     _ <- f.get
-                yield succeed
+                    c <- gate.passCount
+                yield assert(c == 1)
             }
         }
 
-        "initWith resource safety" in run {
+        "initWith resource safety" in {
             for
                 gate <- Scope.run(Gate.init(2))
                 c    <- gate.closed
             yield assert(c)
         }
 
-        "initUnscoped" in run {
+        "initUnscoped" in {
             for
                 gate <- Gate.initUnscoped(2)
                 f    <- Fiber.initUnscoped(gate.pass)
                 _    <- gate.pass
                 _    <- f.get
-            yield succeed
+                c    <- gate.passCount
+            yield assert(c == 1)
         }
 
-        "initUnscopedWith" in run {
+        "initUnscopedWith" in {
             Gate.initUnscopedWith(1) { gate =>
-                gate.pass.andThen(succeed)
+                gate.pass.andThen(gate.passCount.map(c => assert(c == 1)))
             }
         }
 
-        "initUnscoped with stop condition" in run {
+        "initUnscoped with stop condition" in {
             for
                 gate <- Gate.initUnscoped(1, (ph, _) => ph >= 2)
                 _    <- gate.pass
@@ -48,7 +50,7 @@ class GateTest extends Test:
                 assert(c)
         }
 
-        "initUnscoped with totalPasses" in run {
+        "initUnscoped with totalPasses" in {
             for
                 gate <- Gate.initUnscoped(1, totalPasses = 2)
                 _    <- gate.pass
@@ -60,53 +62,57 @@ class GateTest extends Test:
                 assert(c)
         }
 
-        "zero parties creates noop" in run {
+        "zero parties creates noop" in {
             for
                 gate <- Gate.initUnscoped(0)
                 c    <- gate.closed
             yield assert(c)
         }
 
-        "negative parties creates noop" in run {
+        "negative parties creates noop" in {
             for
                 gate <- Gate.initUnscoped(-1)
                 c    <- gate.closed
             yield assert(c)
         }
 
-        "noop pass returns immediately" in run {
+        "noop pass returns immediately" in {
             for
                 gate <- Gate.initUnscoped(0)
                 _    <- gate.pass
-            yield succeed
+                c    <- gate.closed
+            yield assert(c)
         }
     }
 
     "pass" - {
-        "single party" in run {
+        "single party" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- gate.pass
-            yield succeed
+                c    <- gate.passCount
+            yield assert(c == 1)
         }
 
-        "two parties" in run {
+        "two parties" in {
             for
                 gate <- Gate.initUnscoped(2)
                 _    <- Async.zip(gate.pass, gate.pass)
-            yield succeed
+                c    <- gate.passCount
+            yield assert(c == 1)
         }
 
-        "two parties with fibers" in run {
+        "two parties with fibers" in {
             for
                 gate <- Gate.initUnscoped(2)
                 f    <- Fiber.initUnscoped(gate.pass)
                 _    <- gate.pass
                 _    <- f.get
-            yield succeed
+                c    <- gate.passCount
+            yield assert(c == 1)
         }
 
-        "resets after each pass (multi-pass)" in run {
+        "resets after each pass (multi-pass)" in {
             for
                 gate <- Gate.initUnscoped(2)
                 _    <- Async.zip(gate.pass, gate.pass)
@@ -116,7 +122,7 @@ class GateTest extends Test:
             yield assert(c == 3)
         }
 
-        "single party multi-pass" in run {
+        "single party multi-pass" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- gate.pass
@@ -126,16 +132,17 @@ class GateTest extends Test:
             yield assert(c == 3)
         }
 
-        "contention (1000 parties)" in run {
+        "contention (1000 parties)" in {
             for
                 gate <- Gate.initUnscoped(1000)
                 _    <- Async.fill(1000, 1000)(gate.pass)
-            yield succeed
+                c    <- gate.passCount
+            yield assert(c == 1)
         }
     }
 
     "passWith" - {
-        "applies continuation after pass" in run {
+        "applies continuation after pass" in {
             for
                 gate <- Gate.initUnscoped(1)
                 v    <- gate.passWith(42)
@@ -144,7 +151,7 @@ class GateTest extends Test:
     }
 
     "arrive" - {
-        "returns immediately without waiting" in run {
+        "returns immediately without waiting" in {
             for
                 gate <- Gate.initUnscoped(2)
                 _    <- gate.arrive
@@ -152,17 +159,17 @@ class GateTest extends Test:
             yield assert(p == 1)
         }
 
-        "last arrival triggers pass for waiters" in run {
+        "last arrival triggers pass for waiters" in {
             for
                 gate <- Gate.initUnscoped(2)
                 f    <- Fiber.initUnscoped(gate.pass)
-                _    <- untilTrue(gate.arrivedCount.map(_ == 1))
+                _    <- assertEventually(gate.arrivedCount.map(_ == 1))
                 _    <- gate.arrive
                 _    <- f.get
-            yield succeed
+            yield ()
         }
 
-        "no-op on closed gate" in run {
+        "no-op on closed gate" in {
             for
                 gate <- Gate.initUnscoped(2)
                 _    <- gate.close
@@ -171,14 +178,14 @@ class GateTest extends Test:
             yield assert(a == 0)
         }
 
-        "arriveWith applies continuation" in run {
+        "arriveWith applies continuation" in {
             for
                 gate <- Gate.initUnscoped(1)
                 v    <- gate.arriveWith(42)
             yield assert(v == 42)
         }
 
-        "single party rapid arrive" in run {
+        "single party rapid arrive" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- Kyo.foreach(1 to 10)(_ => gate.arrive)
@@ -186,25 +193,25 @@ class GateTest extends Test:
             yield assert(c == 10)
         }
 
-        "arrive as last party completes promise for waiters" in run {
+        "arrive as last party completes promise for waiters" in {
             for
                 gate <- Gate.initUnscoped(3)
                 f1   <- Fiber.initUnscoped(gate.pass)
                 f2   <- Fiber.initUnscoped(gate.pass)
-                _    <- untilTrue(gate.arrivedCount.map(_ == 2))
+                _    <- assertEventually(gate.arrivedCount.map(_ == 2))
                 _    <- gate.arrive
                 _    <- f1.get
                 _    <- f2.get
-            yield succeed
+            yield ()
         }
     }
 
     "mixed pass and arrive" - {
-        "some pass, some arrive, gate advances correctly" in run {
+        "some pass, some arrive, gate advances correctly" in {
             for
                 gate <- Gate.initUnscoped(3)
                 f    <- Fiber.initUnscoped(gate.pass)
-                _    <- untilTrue(gate.arrivedCount.map(_ == 1))
+                _    <- assertEventually(gate.arrivedCount.map(_ == 1))
                 _    <- gate.arrive
                 _    <- gate.arrive
                 _    <- f.get
@@ -212,19 +219,19 @@ class GateTest extends Test:
             yield assert(c == 1)
         }
 
-        "arrive triggers advance, pass waiters released" in run {
+        "arrive triggers advance, pass waiters released" in {
             for
                 gate <- Gate.initUnscoped(2)
                 f    <- Fiber.initUnscoped(gate.pass)
-                _    <- untilTrue(gate.arrivedCount.map(_ == 1))
+                _    <- assertEventually(gate.arrivedCount.map(_ == 1))
                 _    <- gate.arrive
                 _    <- f.get
-            yield succeed
+            yield ()
         }
     }
 
     "arrivedCount" - {
-        "tracks arrivals within a pass" in run {
+        "tracks arrivals within a pass" in {
             for
                 gate <- Gate.initUnscoped(3)
                 a0   <- gate.arrivedCount
@@ -238,7 +245,7 @@ class GateTest extends Test:
                 assert(a2 == 2)
         }
 
-        "resets after pass completes" in run {
+        "resets after pass completes" in {
             for
                 gate <- Gate.initUnscoped(2)
                 _    <- gate.arrive
@@ -247,7 +254,7 @@ class GateTest extends Test:
             yield assert(a == 0)
         }
 
-        "reflects arrived count at time of close" in run {
+        "reflects arrived count at time of close" in {
             for
                 gate <- Gate.initUnscoped(3)
                 _    <- gate.arrive
@@ -259,14 +266,14 @@ class GateTest extends Test:
     }
 
     "pendingCount" - {
-        "initial value equals parties" in run {
+        "initial value equals parties" in {
             for
                 gate <- Gate.initUnscoped(5)
                 p    <- gate.pendingCount
             yield assert(p == 5)
         }
 
-        "decreases on arrival" in run {
+        "decreases on arrival" in {
             for
                 gate <- Gate.initUnscoped(3)
                 _    <- gate.arrive
@@ -274,7 +281,7 @@ class GateTest extends Test:
             yield assert(p == 2)
         }
 
-        "resets after pass completes" in run {
+        "resets after pass completes" in {
             for
                 gate <- Gate.initUnscoped(2)
                 _    <- Async.zip(gate.pass, gate.pass)
@@ -282,7 +289,7 @@ class GateTest extends Test:
             yield assert(p == 2)
         }
 
-        "reflects pending count at time of close" in run {
+        "reflects pending count at time of close" in {
             for
                 gate <- Gate.initUnscoped(5)
                 _    <- gate.arrive
@@ -294,7 +301,7 @@ class GateTest extends Test:
     }
 
     "passAt" - {
-        "n=0 waits for first pass" in run {
+        "n=0 waits for first pass" in {
             for
                 gate <- Gate.initUnscoped(2)
                 f    <- Fiber.initUnscoped(gate.passAt(0))
@@ -304,17 +311,18 @@ class GateTest extends Test:
             yield assert(!d)
         }
 
-        "returns immediately for past passes" in run {
+        "returns immediately for past passes" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- gate.pass
                 _    <- gate.pass
                 _    <- gate.passAt(0)
                 _    <- gate.passAt(1)
-            yield succeed
+                c    <- gate.passCount
+            yield assert(c == 2)
         }
 
-        "blocks until target pass completes" in run {
+        "blocks until target pass completes" in {
             for
                 gate <- Gate.initUnscoped(1)
                 f    <- Fiber.initUnscoped(gate.passAt(2))
@@ -332,7 +340,7 @@ class GateTest extends Test:
             end for
         }
 
-        "n equals current pass blocks until it completes" in run {
+        "n equals current pass blocks until it completes" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- gate.pass
@@ -340,10 +348,11 @@ class GateTest extends Test:
                 f    <- Fiber.initUnscoped(gate.passAt(c))
                 _    <- gate.pass
                 _    <- f.get
-            yield succeed
+                c2   <- gate.passCount
+            yield assert(c2 == 2)
         }
 
-        "waits through multiple passes" in run {
+        "waits through multiple passes" in {
             for
                 gate <- Gate.initUnscoped(1)
                 f    <- Fiber.initUnscoped(gate.passAt(5))
@@ -363,7 +372,7 @@ class GateTest extends Test:
                 assert(!d4) // not done after pass 4
         }
 
-        "does not complete early on intermediate pass" in run {
+        "does not complete early on intermediate pass" in {
             for
                 gate <- Gate.initUnscoped(2)
                 f    <- Fiber.initUnscoped(gate.passAt(3))
@@ -381,7 +390,7 @@ class GateTest extends Test:
                 assert(!d2) // must not complete until pass 3
         }
 
-        "fails with Closed if gate closes before target" in run {
+        "fails with Closed if gate closes before target" in {
             for
                 gate <- Gate.initUnscoped(1)
                 f    <- Fiber.initUnscoped(Abort.run[Closed](gate.passAt(5)))
@@ -391,18 +400,19 @@ class GateTest extends Test:
             yield assert(r.isFailure)
         }
 
-        "past pass returns success even if gate is now closed" in run {
+        "past pass returns success even if gate is now closed" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- gate.pass
                 _    <- gate.close
                 _    <- gate.passAt(0)
-            yield succeed
+                c    <- gate.closed
+            yield assert(c)
         }
     }
 
     "passAtWith" - {
-        "applies continuation after target pass" in run {
+        "applies continuation after target pass" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- gate.pass
@@ -412,14 +422,14 @@ class GateTest extends Test:
     }
 
     "passCount" - {
-        "starts at zero" in run {
+        "starts at zero" in {
             for
                 gate <- Gate.initUnscoped(3)
                 c    <- gate.passCount
             yield assert(c == 0)
         }
 
-        "increments on each completed pass" in run {
+        "increments on each completed pass" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- gate.pass
@@ -431,7 +441,7 @@ class GateTest extends Test:
                 assert(c2 == 2)
         }
 
-        "retains final value after close" in run {
+        "retains final value after close" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- gate.pass
@@ -441,7 +451,7 @@ class GateTest extends Test:
             yield assert(c == 2)
         }
 
-        "retains final value after auto-close" in run {
+        "retains final value after auto-close" in {
             for
                 gate <- Gate.initUnscoped(1, totalPasses = 3)
                 _    <- gate.pass
@@ -453,14 +463,14 @@ class GateTest extends Test:
     }
 
     "close" - {
-        "returns true on first close" in run {
+        "returns true on first close" in {
             for
                 gate <- Gate.initUnscoped(2)
                 r    <- gate.close
             yield assert(r)
         }
 
-        "returns false on subsequent close" in run {
+        "returns false on subsequent close" in {
             for
                 gate <- Gate.initUnscoped(2)
                 r1   <- gate.close
@@ -470,7 +480,7 @@ class GateTest extends Test:
                 assert(!r2)
         }
 
-        "closed returns true after close" in run {
+        "closed returns true after close" in {
             for
                 gate <- Gate.initUnscoped(2)
                 _    <- gate.close
@@ -478,7 +488,7 @@ class GateTest extends Test:
             yield assert(c)
         }
 
-        "pass fails with Abort[Closed] after close" in run {
+        "pass fails with Abort[Closed] after close" in {
             for
                 gate <- Gate.initUnscoped(2)
                 _    <- gate.close
@@ -486,12 +496,12 @@ class GateTest extends Test:
             yield assert(r.isFailure)
         }
 
-        "pending pass waiters fail with Abort[Closed]" in run {
+        "pending pass waiters fail with Abort[Closed]" in {
             for
                 gate <- Gate.initUnscoped(3)
                 f1   <- Fiber.initUnscoped(Abort.run[Closed](gate.pass))
                 f2   <- Fiber.initUnscoped(Abort.run[Closed](gate.pass))
-                _    <- untilTrue(gate.arrivedCount.map(_ == 2))
+                _    <- assertEventually(gate.arrivedCount.map(_ == 2))
                 _    <- gate.close
                 r1   <- f1.get
                 r2   <- f2.get
@@ -500,7 +510,7 @@ class GateTest extends Test:
                 assert(r2.isFailure)
         }
 
-        "pending passAt waiters fail with Abort[Closed]" in run {
+        "pending passAt waiters fail with Abort[Closed]" in {
             for
                 gate <- Gate.initUnscoped(1)
                 f    <- Fiber.initUnscoped(Abort.run[Closed](gate.passAt(5)))
@@ -509,7 +519,7 @@ class GateTest extends Test:
             yield assert(r.isFailure)
         }
 
-        "close during advancePass (stop condition) completes pass then closes" in run {
+        "close during advancePass (stop condition) completes pass then closes" in {
             for
                 gate <- Gate.initUnscoped(2, (ph, _) => ph >= 0)
                 r1   <- Fiber.initUnscoped(Abort.run[Closed](gate.pass))
@@ -525,7 +535,7 @@ class GateTest extends Test:
     }
 
     "auto-close" - {
-        "stop condition closes gate" in run {
+        "stop condition closes gate" in {
             for
                 gate <- Gate.initUnscoped(1, (ph, _) => ph >= 1)
                 _    <- gate.pass
@@ -537,7 +547,7 @@ class GateTest extends Test:
                 assert(c)
         }
 
-        "stop condition receives correct parties count" in run {
+        "stop condition receives correct parties count" in {
             var receivedParties = -1
             for
                 gate <- Gate.initUnscoped(
@@ -550,7 +560,7 @@ class GateTest extends Test:
             end for
         }
 
-        "totalPasses closes after N passes" in run {
+        "totalPasses closes after N passes" in {
             for
                 gate <- Gate.initUnscoped(1, totalPasses = 3)
                 _    <- gate.pass
@@ -563,7 +573,7 @@ class GateTest extends Test:
                 assert(c)
         }
 
-        "totalPasses=1 allows exactly one pass" in run {
+        "totalPasses=1 allows exactly one pass" in {
             for
                 gate <- Gate.initUnscoped(1, totalPasses = 1)
                 _    <- gate.pass
@@ -571,7 +581,7 @@ class GateTest extends Test:
             yield assert(r.isFailure)
         }
 
-        "totalPasses=0 creates noop" in run {
+        "totalPasses=0 creates noop" in {
             for
                 gate <- Gate.initUnscoped(1, totalPasses = 0)
                 c    <- gate.closed
@@ -579,7 +589,7 @@ class GateTest extends Test:
             yield assert(c)
         }
 
-        "negative totalPasses creates noop" in run {
+        "negative totalPasses creates noop" in {
             for
                 gate <- Gate.initUnscoped(1, totalPasses = -1)
                 c    <- gate.closed
@@ -587,7 +597,7 @@ class GateTest extends Test:
             yield assert(c)
         }
 
-        "zero parties triggers close on advance" in run {
+        "zero parties triggers close on advance" in {
             for
                 gate <- Gate.Dynamic.initUnscoped(1)
                 _    <- gate.leave
@@ -597,7 +607,7 @@ class GateTest extends Test:
     }
 
     "state after close" - {
-        "arrivedCount reflects state at time of close" in run {
+        "arrivedCount reflects state at time of close" in {
             for
                 gate <- Gate.initUnscoped(5)
                 _    <- gate.arrive
@@ -608,7 +618,7 @@ class GateTest extends Test:
             yield assert(a == 3)
         }
 
-        "pendingCount reflects state at time of close" in run {
+        "pendingCount reflects state at time of close" in {
             for
                 gate <- Gate.initUnscoped(5)
                 _    <- gate.arrive
@@ -618,7 +628,7 @@ class GateTest extends Test:
             yield assert(p == 3)
         }
 
-        "passCount reflects state at time of close" in run {
+        "passCount reflects state at time of close" in {
             for
                 gate <- Gate.initUnscoped(1)
                 _    <- gate.pass
@@ -629,7 +639,7 @@ class GateTest extends Test:
             yield assert(c == 3)
         }
 
-        "closed returns true" in run {
+        "closed returns true" in {
             for
                 gate <- Gate.initUnscoped(3)
                 _    <- gate.close
@@ -637,7 +647,7 @@ class GateTest extends Test:
             yield assert(c)
         }
 
-        "close returns false on second call" in run {
+        "close returns false on second call" in {
             for
                 gate <- Gate.initUnscoped(3)
                 r1   <- gate.close
@@ -647,7 +657,7 @@ class GateTest extends Test:
                 assert(!r2)
         }
 
-        "all counters consistent with each other" in run {
+        "all counters consistent with each other" in {
             for
                 gate <- Gate.initUnscoped(10)
                 _    <- Kyo.foreach(1 to 4)(_ => gate.arrive)
@@ -662,7 +672,7 @@ class GateTest extends Test:
                 assert(c == 0)
         }
 
-        "auto-close preserves counters" in run {
+        "auto-close preserves counters" in {
             for
                 gate <- Gate.initUnscoped(1, totalPasses = 2)
                 _    <- gate.pass
@@ -676,7 +686,7 @@ class GateTest extends Test:
                 assert(p == 1)
         }
 
-        "close with no arrivals" in run {
+        "close with no arrivals" in {
             for
                 gate <- Gate.initUnscoped(5)
                 _    <- gate.close
@@ -687,7 +697,7 @@ class GateTest extends Test:
                 assert(p == 5)
         }
 
-        "close after partial arrivals" in run {
+        "close after partial arrivals" in {
             for
                 gate <- Gate.initUnscoped(4)
                 _    <- gate.arrive
@@ -699,7 +709,7 @@ class GateTest extends Test:
                 assert(p == 3)
         }
 
-        "close immediately after pass advance" in run {
+        "close immediately after pass advance" in {
             for
                 gate <- Gate.initUnscoped(2)
                 _    <- Async.zip(gate.pass, gate.pass)
@@ -715,18 +725,18 @@ class GateTest extends Test:
     }
 
     "interrupt masking" - {
-        "interrupting one waiter does not affect others" in run {
+        "interrupting one waiter does not affect others" in {
             for
                 gate <- Gate.initUnscoped(3)
                 f1   <- Fiber.initUnscoped(gate.pass)
                 f2   <- Fiber.initUnscoped(gate.pass)
-                _    <- untilTrue(gate.arrivedCount.map(_ == 2))
+                _    <- assertEventually(gate.arrivedCount.map(_ == 2))
                 _    <- f1.interrupt
-                _    <- untilTrue(Fiber.done(f1))
+                _    <- assertEventually(Fiber.done(f1))
                 f3   <- Fiber.initUnscoped(gate.pass)
                 _    <- f2.get
                 _    <- f3.get
-            yield succeed
+            yield ()
         }
     }
 
@@ -734,7 +744,7 @@ class GateTest extends Test:
 
         val repeats = 100
 
-        "pass and close" in run {
+        "pass and close" in {
             (for
                 parties <- Choice.eval(1, 2, 3, 10)
                 gate    <- Gate.initUnscoped(parties)
@@ -752,10 +762,10 @@ class GateTest extends Test:
                 assert(results.forall(r => r.isSuccess || r.isFailure))
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "pass and arrive" in run {
+        "pass and arrive" in {
             (for
                 parties <- Choice.eval(2, 3, 5)
                 gate    <- Gate.initUnscoped(parties)
@@ -772,10 +782,10 @@ class GateTest extends Test:
                 c <- gate.passCount
             yield assert(c == 1))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent close attempts" in run {
+        "concurrent close attempts" in {
             (for
                 parties <- Choice.eval(1, 2, 3, 10)
                 gate    <- Gate.initUnscoped(parties)
@@ -787,10 +797,10 @@ class GateTest extends Test:
                 results <- closeFiber.get
             yield assert(results.count(_ == true) == 1))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "multi-pass contention" in run {
+        "multi-pass contention" in {
             (for
                 parties <- Choice.eval(2, 3, 5, 10)
                 gate    <- Gate.initUnscoped(parties)
@@ -798,10 +808,10 @@ class GateTest extends Test:
                 count   <- gate.passCount
             yield assert(count == 10))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "arrive contention with 1 party" in run {
+        "arrive contention with 1 party" in {
             (for
                 gate  <- Gate.initUnscoped(1)
                 latch <- Latch.init(1)
@@ -813,10 +823,10 @@ class GateTest extends Test:
                 count <- gate.passCount
             yield assert(count == 10))
                 .handle(Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "arrive with stop condition under contention" in run {
+        "arrive with stop condition under contention" in {
             (for
                 gate  <- Gate.initUnscoped(1, totalPasses = 5)
                 latch <- Latch.init(1)
@@ -835,51 +845,54 @@ class GateTest extends Test:
                 assert(results.count(_.isSuccess) == 5)
             )
                 .handle(Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
     }
 
     "Dynamic" - {
         "init" - {
-            "initWith" in run {
+            "initWith" in {
                 Gate.Dynamic.initWith(2) { gate =>
                     for
                         f <- Fiber.initUnscoped(gate.pass)
                         _ <- gate.pass
                         _ <- f.get
-                    yield succeed
+                        c <- gate.passCount
+                    yield assert(c == 1)
                 }
             }
 
-            "initUnscoped" in run {
+            "initUnscoped" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(1)
                     _    <- gate.pass
-                yield succeed
+                    c    <- gate.passCount
+                yield assert(c == 1)
             }
 
-            "zero parties creates noop" in run {
+            "zero parties creates noop" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(0)
                     c    <- gate.closed
                 yield assert(c)
             }
 
-            "negative parties creates noop" in run {
+            "negative parties creates noop" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(-1)
                     c    <- gate.closed
                 yield assert(c)
             }
 
-            "noop pass returns immediately" in run {
+            "noop pass returns immediately" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(0)
                     _    <- gate.pass
-                yield succeed
+                    c    <- gate.closed
+                yield assert(c)
             }
 
-            "totalPasses closes after N passes" in run {
+            "totalPasses closes after N passes" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(1, totalPasses = 2)
                     _    <- gate.pass
@@ -891,7 +904,7 @@ class GateTest extends Test:
                     assert(c)
             }
 
-            "totalPasses=0 creates noop" in run {
+            "totalPasses=0 creates noop" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(1, totalPasses = 0)
                     c    <- gate.closed
@@ -899,7 +912,7 @@ class GateTest extends Test:
                 yield assert(c)
             }
 
-            "negative totalPasses creates noop" in run {
+            "negative totalPasses creates noop" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(1, totalPasses = -1)
                     c    <- gate.closed
@@ -909,7 +922,7 @@ class GateTest extends Test:
         }
 
         "join" - {
-            "adds party" in run {
+            "adds party" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(1)
                     _    <- gate.join
@@ -917,7 +930,7 @@ class GateTest extends Test:
                 yield assert(s == 2)
             }
 
-            "join(n) adds n parties" in run {
+            "join(n) adds n parties" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(1)
                     _    <- gate.join(5)
@@ -925,14 +938,14 @@ class GateTest extends Test:
                 yield assert(s == 6)
             }
 
-            "joinWith applies continuation" in run {
+            "joinWith applies continuation" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(1)
                     v    <- gate.joinWith(42)
                 yield assert(v == 42)
             }
 
-            "no-op on closed gate" in run {
+            "no-op on closed gate" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(1)
                     _    <- gate.close
@@ -943,7 +956,7 @@ class GateTest extends Test:
         }
 
         "leave" - {
-            "removes party" in run {
+            "removes party" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(3)
                     _    <- gate.leave
@@ -951,27 +964,27 @@ class GateTest extends Test:
                 yield assert(s == 2)
             }
 
-            "leaveWith applies continuation" in run {
+            "leaveWith applies continuation" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(2)
                     v    <- gate.leaveWith(42)
                 yield assert(v == 42)
             }
 
-            "triggers pass when all remaining have arrived" in run {
+            "triggers pass when all remaining have arrived" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(3)
                     f    <- Fiber.initUnscoped(gate.pass)
-                    _    <- untilTrue(gate.arrivedCount.map(_ == 1))
+                    _    <- assertEventually(gate.arrivedCount.map(_ == 1))
                     _    <- gate.arrive
-                    _    <- untilTrue(gate.arrivedCount.map(_ == 2))
+                    _    <- assertEventually(gate.arrivedCount.map(_ == 2))
                     _    <- gate.leave
                     _    <- f.get
                     c    <- gate.passCount
                 yield assert(c == 1)
             }
 
-            "leave to zero parties closes gate" in run {
+            "leave to zero parties closes gate" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(1)
                     _    <- gate.leave
@@ -979,7 +992,7 @@ class GateTest extends Test:
                 yield assert(c)
             }
 
-            "no-op on closed gate" in run {
+            "no-op on closed gate" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(2)
                     _    <- gate.close
@@ -988,21 +1001,21 @@ class GateTest extends Test:
                 yield assert(s == 2)
             }
 
-            "leave after arrive triggers advance" in run {
+            "leave after arrive triggers advance" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(3)
                     f    <- Fiber.initUnscoped(gate.pass)
-                    _    <- untilTrue(gate.arrivedCount.map(_ == 1))
+                    _    <- assertEventually(gate.arrivedCount.map(_ == 1))
                     _    <- gate.arrive
-                    _    <- untilTrue(gate.arrivedCount.map(_ == 2))
+                    _    <- assertEventually(gate.arrivedCount.map(_ == 2))
                     _    <- gate.leave
                     _    <- f.get
-                yield succeed
+                yield ()
             }
         }
 
         "size" - {
-            "reflects current party count after join and leave" in run {
+            "reflects current party count after join and leave" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(2)
                     s0   <- gate.size
@@ -1016,7 +1029,7 @@ class GateTest extends Test:
                     assert(s2 == 2)
             }
 
-            "reflects party count at time of close" in run {
+            "reflects party count at time of close" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(3)
                     _    <- gate.join(2)
@@ -1027,7 +1040,7 @@ class GateTest extends Test:
         }
 
         "subgroup" - {
-            "subgroup pass signals parent" in run {
+            "subgroup pass signals parent" in {
                 for
                     parent <- Gate.Dynamic.initUnscoped(1)
                     sub    <- parent.subgroup(1)
@@ -1038,7 +1051,7 @@ class GateTest extends Test:
                 yield assert(c == 1)
             }
 
-            "parent waits for all subgroups" in run {
+            "parent waits for all subgroups" in {
                 for
                     parent <- Gate.Dynamic.initUnscoped(1)
                     sub1   <- parent.subgroup(1)
@@ -1052,7 +1065,7 @@ class GateTest extends Test:
                 yield assert(!d1)
             }
 
-            "subgroup close signals parent" in run {
+            "subgroup close signals parent" in {
                 for
                     parent <- Gate.Dynamic.initUnscoped(1)
                     sub    <- parent.subgroup(1)
@@ -1060,10 +1073,11 @@ class GateTest extends Test:
                     _      <- sub.close
                     _      <- parent.pass
                     _      <- pf.get
-                yield succeed
+                    c      <- parent.passCount
+                yield assert(c >= 1) // subgroup.close triggers parent pass; at least one pass completed
             }
 
-            "subgroup with zero parties" in run {
+            "subgroup with zero parties" in {
                 for
                     parent <- Gate.Dynamic.initUnscoped(1)
                     sub    <- parent.subgroup(0)
@@ -1075,7 +1089,7 @@ class GateTest extends Test:
                     assert(ps == 1)
             }
 
-            "nested subgroups (subgroup of subgroup)" in run {
+            "nested subgroups (subgroup of subgroup)" in {
                 for
                     root <- Gate.Dynamic.initUnscoped(0)
                     mid  <- root.subgroup(0)
@@ -1083,12 +1097,12 @@ class GateTest extends Test:
                     rf   <- Fiber.initUnscoped(root.pass)
                     _    <- leaf.pass
                     _    <- rf.get
-                yield succeed
+                yield succeed("leaf.pass propagates up through mid to root; no deadlock")
             }
         }
 
         "close" - {
-            "signals parent via arriveAndLeave" in run {
+            "signals parent via arriveAndLeave" in {
                 for
                     parent <- Gate.Dynamic.initUnscoped(1)
                     sub    <- parent.subgroup(2)
@@ -1100,12 +1114,12 @@ class GateTest extends Test:
                 yield assert(ps == 1)
             }
 
-            "pending waiters fail with Abort[Closed]" in run {
+            "pending waiters fail with Abort[Closed]" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(3)
                     f1   <- Fiber.initUnscoped(Abort.run[Closed](gate.pass))
                     f2   <- Fiber.initUnscoped(Abort.run[Closed](gate.pass))
-                    _    <- untilTrue(gate.arrivedCount.map(_ == 2))
+                    _    <- assertEventually(gate.arrivedCount.map(_ == 2))
                     _    <- gate.close
                     r1   <- f1.get
                     r2   <- f2.get
@@ -1116,7 +1130,7 @@ class GateTest extends Test:
         }
 
         "stop condition" - {
-            "receives correct dynamic parties count" in run {
+            "receives correct dynamic parties count" in {
                 var receivedParties = -1
                 for
                     gate <- Gate.Dynamic.initUnscoped(
@@ -1132,7 +1146,7 @@ class GateTest extends Test:
         }
 
         "state after close" - {
-            "size reflects party count at time of close" in run {
+            "size reflects party count at time of close" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(3)
                     _    <- gate.join(2)
@@ -1141,7 +1155,7 @@ class GateTest extends Test:
                 yield assert(s == 5)
             }
 
-            "arrivedCount reflects state at time of close" in run {
+            "arrivedCount reflects state at time of close" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(5)
                     _    <- gate.arrive
@@ -1151,7 +1165,7 @@ class GateTest extends Test:
                 yield assert(a == 2)
             }
 
-            "pendingCount reflects state at time of close" in run {
+            "pendingCount reflects state at time of close" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(5)
                     _    <- gate.arrive
@@ -1160,7 +1174,7 @@ class GateTest extends Test:
                 yield assert(p == 4)
             }
 
-            "close after join preserves increased size" in run {
+            "close after join preserves increased size" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(2)
                     _    <- gate.join(3)
@@ -1172,7 +1186,7 @@ class GateTest extends Test:
                     assert(p == 5)
             }
 
-            "close after leave preserves decreased size" in run {
+            "close after leave preserves decreased size" in {
                 for
                     gate <- Gate.Dynamic.initUnscoped(5)
                     _    <- gate.leave
@@ -1190,7 +1204,7 @@ class GateTest extends Test:
 
             val repeats = 100
 
-            "join races with pass" in run {
+            "join races with pass" in {
                 (for
                     parties <- Choice.eval(2, 3, 5)
                     gate    <- Gate.Dynamic.initUnscoped(parties)
@@ -1213,10 +1227,10 @@ class GateTest extends Test:
                     assert(results.forall(r => r.isSuccess || r.isFailure))
                 )
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
 
-            "subgroup contention" in run {
+            "subgroup contention" in {
                 (for
                     parent <- Gate.Dynamic.initUnscoped(1)
                     subs   <- Kyo.foreach(1 to 3)(_ => parent.subgroup(1))
@@ -1233,10 +1247,10 @@ class GateTest extends Test:
                     c <- parent.passCount
                 yield assert(c == 1))
                     .handle(Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
 
-            "close subgroup during parent arrive contention" in run {
+            "close subgroup during parent arrive contention" in {
                 (for
                     parent <- Gate.Dynamic.initUnscoped(1)
                     sub    <- parent.subgroup(1)
@@ -1249,11 +1263,12 @@ class GateTest extends Test:
                     )
                     _ <- latch.release
                     _ <- closeFiber.get
-                    _ <- passFiber.get
-                    c <- parent.closed
-                yield succeed)
+                    r <- passFiber.get
+                yield
+                    // race test: verifies no hang/panic; outcome is non-deterministic
+                    assert(r.isSuccess || r.isFailure))
                     .handle(Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
     }

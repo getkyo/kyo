@@ -6,7 +6,7 @@ class BrowserHistoryTest extends BrowserTest:
 
     // Navigate to 3 pages via a real HTTP server; assert entries contains all three URLs
     // in the order they were visited and currentIndex points to the last one.
-    "Browser.history returns the active entry plus prior entries in chronological order" in run {
+    "Browser.history returns the active entry plus prior entries in chronological order" in {
         val pageA = Span.fromUnsafe("<html><head><title>PageA</title></head><body>A</body></html>".getBytes("UTF-8"))
         val pageB = Span.fromUnsafe("<html><head><title>PageB</title></head><body>B</body></html>".getBytes("UTF-8"))
         val pageC = Span.fromUnsafe("<html><head><title>PageC</title></head><body>C</body></html>".getBytes("UTF-8"))
@@ -51,7 +51,7 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Navigate A → B → C, call back, assert currentIndex decremented; call forward, assert restored.
-    "Browser.history.currentIndex moves with back / forward" in run {
+    "Browser.history.currentIndex moves with back / forward" in {
         val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
         val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
         val pageC = Span.fromUnsafe("<html><body>C</body></html>".getBytes("UTF-8"))
@@ -96,7 +96,7 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Call history twice without any intervening navigation and assert the two results are equal.
-    "Browser.history entries are stable across reads" in run {
+    "Browser.history entries are stable across reads" in {
         val p = page("<html><head><title>Stable</title></head><body>stable</body></html>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -111,7 +111,7 @@ class BrowserHistoryTest extends BrowserTest:
 
     // Navigate to a page with <title>HistoryTitle</title>; assert that the NavigationEntry for
     // that page carries the correct title.
-    "Browser.history populates entry titles when documents have <title>" in run {
+    "Browser.history populates entry titles when documents have <title>" in {
         val p = page("<html><head><title>HistoryTitle</title></head><body>titled</body></html>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -128,7 +128,7 @@ class BrowserHistoryTest extends BrowserTest:
 
     // A fresh tab has never navigated anywhere beyond the initial about:blank;
     // assert that history has exactly one entry whose URL is about:blank.
-    "Browser.history at about:blank only: single entry" in run {
+    "Browser.history at about:blank only: single entry" in {
         withBrowser {
             Browser.history.map { h =>
                 assert(
@@ -144,12 +144,13 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Fresh withBrowser; call Browser.back immediately (currentIndex == 0); assert typed exception.
-    "back at history start raises BrowserAlreadyAtHistoryStartException" in run {
+    "back at history start raises BrowserAlreadyAtHistoryStartException" in {
         withBrowser {
             Abort.run[BrowserNavigationException] {
                 Browser.back
             }.map {
-                case Result.Failure(_: BrowserAlreadyAtHistoryStartException) => succeed
+                case Result.Failure(ex: BrowserAlreadyAtHistoryStartException) =>
+                    assert(ex.getMessage.contains("back"))
                 case other =>
                     fail(s"Expected Result.Failure(BrowserAlreadyAtHistoryStartException) but got $other")
             }
@@ -157,14 +158,15 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Navigate to page A (the only entry); call Browser.forward; assert typed exception.
-    "forward at history end raises BrowserAlreadyAtHistoryEndException" in run {
+    "forward at history end raises BrowserAlreadyAtHistoryEndException" in {
         val p = page("<html><body>end</body></html>")
         withBrowser {
             Browser.goto(p).andThen {
                 Abort.run[BrowserNavigationException] {
                     Browser.forward
                 }.map {
-                    case Result.Failure(_: BrowserAlreadyAtHistoryEndException) => succeed
+                    case Result.Failure(ex: BrowserAlreadyAtHistoryEndException) =>
+                        assert(ex.getMessage.contains("forward"))
                     case other =>
                         fail(s"Expected Result.Failure(BrowserAlreadyAtHistoryEndException) but got $other")
                 }
@@ -173,7 +175,7 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Regression: navigate A, B; call back; assert history.currentIndex decremented.
-    "back from a non-boundary index succeeds and decrements currentIndex" in run {
+    "back from a non-boundary index succeeds and decrements currentIndex" in {
         val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
         val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
         val handlerA = HttpRoute.getRaw("/a").response(_.bodyBinary).handler { _ =>
@@ -204,7 +206,7 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Regression: navigate A, B; call back; call forward; assert pointer restored.
-    "forward from a non-boundary index succeeds and increments currentIndex" in run {
+    "forward from a non-boundary index succeeds and increments currentIndex" in {
         val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
         val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
         val handlerA = HttpRoute.getRaw("/a").response(_.bodyBinary).handler { _ =>
@@ -237,7 +239,7 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Regression: navigate A, B, C; back; back; forward; forward; assert URL is C.
-    "back-then-forward round trip preserves the trailing entry" in run {
+    "back-then-forward round trip preserves the trailing entry" in {
         val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
         val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
         val pageC = Span.fromUnsafe("<html><body>C</body></html>".getBytes("UTF-8"))
@@ -276,12 +278,13 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Pin the subtype relationship: existing matchers on the BrowserNavigationException marker catch the new subclass.
-    "BrowserAlreadyAtHistoryStartException is caught by Abort[BrowserNavigationException]" in run {
+    "BrowserAlreadyAtHistoryStartException is caught by Abort[BrowserNavigationException]" in {
         withBrowser {
             Abort.run[BrowserNavigationException] {
                 Browser.back
             }.map {
-                case Result.Failure(_: BrowserAlreadyAtHistoryStartException) => succeed
+                case Result.Failure(ex: BrowserAlreadyAtHistoryStartException) =>
+                    assert(ex.getMessage.contains("back"))
                 case other =>
                     fail(s"Expected BrowserAlreadyAtHistoryStartException caught by BrowserNavigationException but got $other")
             }
@@ -289,14 +292,15 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Pin the subtype relationship: existing matchers on the BrowserNavigationException marker catch the new subclass.
-    "BrowserAlreadyAtHistoryEndException is caught by Abort[BrowserNavigationException]" in run {
+    "BrowserAlreadyAtHistoryEndException is caught by Abort[BrowserNavigationException]" in {
         val p = page("<html><body>end</body></html>")
         withBrowser {
             Browser.goto(p).andThen {
                 Abort.run[BrowserNavigationException] {
                     Browser.forward
                 }.map {
-                    case Result.Failure(_: BrowserAlreadyAtHistoryEndException) => succeed
+                    case Result.Failure(ex: BrowserAlreadyAtHistoryEndException) =>
+                        assert(ex.getMessage.contains("forward"))
                     case other =>
                         fail(s"Expected BrowserAlreadyAtHistoryEndException caught by BrowserNavigationException but got $other")
                 }
@@ -307,7 +311,7 @@ class BrowserHistoryTest extends BrowserTest:
     // Server-side AtomicInteger counts requests; Cache-Control: max-age=3600 would let Chrome
     // serve from cache on a normal reload. A hard reload bypasses the cache, so the server
     // must see more than one request after goto + reload(hardReload = true).
-    "Browser.reload(hardReload = true) bypasses HTTP cache (counter increments)" in run {
+    "Browser.reload(hardReload = true) bypasses HTTP cache (counter increments)" in {
         val counter = new java.util.concurrent.atomic.AtomicInteger(0)
         val bytes   = Span.fromUnsafe("<html><body><h1>cached</h1></body></html>".getBytes("UTF-8"))
         val handler = HttpRoute.getRaw("/cached").response(_.bodyBinary).handler { _ =>
@@ -339,7 +343,7 @@ class BrowserHistoryTest extends BrowserTest:
 
     // Chrome may or may not revalidate the cached response on a soft reload;
     // the meaningful contract is "the call returns Unit without abort" and the URL remains unchanged.
-    "Browser.reload(hardReload = false) returns normally on a cached page" in run {
+    "Browser.reload(hardReload = false) returns normally on a cached page" in {
         val counter = new java.util.concurrent.atomic.AtomicInteger(0)
         val bytes   = Span.fromUnsafe("<html><body><h1>cached</h1></body></html>".getBytes("UTF-8"))
         val handler = HttpRoute.getRaw("/cached").response(_.bodyBinary).handler { _ =>
@@ -368,7 +372,7 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // After reload returns, the DOM must be fully loaded so a synchronous text read finds the element.
-    "Browser.reload() zero-arg reloads and waits for NetworkIdle" in run {
+    "Browser.reload() zero-arg reloads and waits for NetworkIdle" in {
         val p = page("<html><body><div id='x'>hello</div></body></html>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -383,7 +387,7 @@ class BrowserHistoryTest extends BrowserTest:
 
     // Slow-tail XHR after load fires keeps the network busy for ~2s. Settle.Load must return well
     // before the tail completes; NetworkIdle would block on the chatty traffic.
-    "Browser.reload(settle = Browser.Settle.Load) returns before slow-tail XHR completes" in run {
+    "Browser.reload(settle = Browser.Settle.Load) returns before slow-tail XHR completes" in {
         val html =
             """<!doctype html><html><body><h1>chatty</h1>
               |<script>
@@ -424,7 +428,7 @@ class BrowserHistoryTest extends BrowserTest:
 
     // Handler returns 200 on the first request (so goto succeeds) and 500 on subsequent requests.
     // The reload's failOnHttpError = true (default) must surface a typed navigation-failed exception.
-    "Browser.reload(failOnHttpError = true) raises BrowserNavigationFailedException on 500" in run {
+    "Browser.reload(failOnHttpError = true) raises BrowserNavigationFailedException on 500" in {
         val counter  = new java.util.concurrent.atomic.AtomicInteger(0)
         val okBytes  = Span.fromUnsafe("<html><body><h1>first</h1></body></html>".getBytes("UTF-8"))
         val errBytes = Span.fromUnsafe("<html><body><h1>boom</h1></body></html>".getBytes("UTF-8"))
@@ -443,7 +447,8 @@ class BrowserHistoryTest extends BrowserTest:
                     Abort.run[BrowserNavigationException] {
                         Browser.reload(failOnHttpError = true)
                     }.map {
-                        case Result.Failure(_: BrowserNavigationFailedException) => succeed
+                        case Result.Failure(ex: BrowserNavigationFailedException) =>
+                            assert(ex.url.contains("/page"))
                         case other =>
                             fail(s"Expected Result.Failure(BrowserNavigationFailedException) but got $other")
                     }
@@ -453,7 +458,7 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Same setup as the hard-error test, but with failOnHttpError = false; call must complete without abort.
-    "Browser.reload(failOnHttpError = false) returns normally on 500" in run {
+    "Browser.reload(failOnHttpError = false) returns normally on 500" in {
         val counter  = new java.util.concurrent.atomic.AtomicInteger(0)
         val okBytes  = Span.fromUnsafe("<html><body><h1>first</h1></body></html>".getBytes("UTF-8"))
         val errBytes = Span.fromUnsafe("<html><body><h1>boom</h1></body></html>".getBytes("UTF-8"))
@@ -480,7 +485,7 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // Verifies the actionability gate re-resolves the selector against the post-reload DOM.
-    "Browser.reload(hardReload = true) followed by Browser.click(selector) succeeds" in run {
+    "Browser.reload(hardReload = true) followed by Browser.click(selector) succeeds" in {
         val p = page(
             "<html><body><button id='b' onclick=\"document.body.innerText='clicked'\">go</button></body></html>"
         )
@@ -505,7 +510,7 @@ class BrowserHistoryTest extends BrowserTest:
     // After one back: both predicates true; current.url ends with /b.
     // After another back: canGoBack may still be true because the initial about:blank entry sits at index 0,
     // but canGoForward is true and current.url ends with /a.
-    "NavigationHistory.canGoBack, canGoForward, current track current position across back navigation" in run {
+    "NavigationHistory.canGoBack, canGoForward, current track current position across back navigation" in {
         val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
         val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
         val pageC = Span.fromUnsafe("<html><body>C</body></html>".getBytes("UTF-8"))

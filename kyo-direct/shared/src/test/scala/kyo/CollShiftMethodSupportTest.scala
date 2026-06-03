@@ -1,11 +1,9 @@
 package kyo
 
-import org.scalatest.Assertions
-import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.nowarn
 
 @TestVariant("Coll", "List", "Vector", "Chunk", "Iterable", "IterableOneShot", "Set")
-class CollShiftMethodSupportTest extends AnyFreeSpec with Assertions:
+class CollShiftMethodSupportTest extends kyo.test.Test[Any]:
 
     extension [A](left: Iterable[A])
         @nowarn
@@ -180,7 +178,12 @@ class CollShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             val d = direct:
                 Seq(1, 2, 3, 4).dropWhile(f(_).now).toSeq
 
-            assert(d.eval == xsValues.dropWhile(_ < 3).toSeq)
+            // Materialize the expected value before asserting. For the one-shot-iterable variant `dropWhile`
+            // returns a lazy view, and the assert macro records intermediate sub-expressions (via toString),
+            // which would iterate the one-shot a first time and leave the subsequent `.toSeq` to fail with
+            // "Already consumed". Forcing to a Seq up front keeps the assert operands non-lazy.
+            val expected = xsValues.dropWhile(_ < 3).toSeq
+            assert(d.eval == expected)
         }
         "filter" in {
             def f(i: Int): Boolean < Any = i < 3

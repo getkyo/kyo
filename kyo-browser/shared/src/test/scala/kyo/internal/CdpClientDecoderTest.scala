@@ -14,7 +14,7 @@ import kyo.internal.CdpTypes.*
   *   - decodeCdpMessage four sub-cases: error-id branch, malformed error, non-Object frame, truly malformed JSON.
   *   - eventWhitelist negative-assertion: non-whitelisted event is NOT emitted.
   */
-class CdpClientDecoderTest extends kyo.Test:
+class CdpClientDecoderTest extends kyo.BaseBrowserTest:
 
     // CanEqual instance needed to pattern-match Exchange.Message.Skip in this test class.
     // Exchange.Message is a covariant enum; the Skip singleton has type
@@ -58,7 +58,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 1. CDP error-response pipeline; well-formed
     // -------------------------------------------------------------------------
 
-    "CDP error-response pipeline: well-formed error surfaces as the whole wire, callers decode via CdpReply[Any]" in run {
+    "CDP error-response pipeline: well-formed error surfaces as the whole wire, callers decode via CdpReply[Any]" in {
         // The dispatcher passes the WHOLE wire to the awaiting caller; the caller decodes a [[CdpReply]]
         // envelope which carries the typed `error: CdpError` field.
         val wire = """{"id": 1, "error": {"code": -32602, "message": "Invalid params"}}"""
@@ -83,7 +83,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 2. CDP error-response pipeline; malformed error fallback
     // -------------------------------------------------------------------------
 
-    "CDP error-response pipeline: malformed error falls back to whole-wire Response via FallbackIdEnvelope" in run {
+    "CDP error-response pipeline: malformed error falls back to whole-wire Response via FallbackIdEnvelope" in {
         // "error" is a JSON string, not an object → typed CdpWireMessage decode fails → fallbackDecode
         // recovers `id` via FallbackIdEnvelope (a permissive Maybe[Int] envelope) and routes the whole wire.
         val wire = """{"id": 2, "error": "not-an-object"}"""
@@ -97,7 +97,7 @@ class CdpClientDecoderTest extends kyo.Test:
                     case Result.Success(reply) =>
                         fail(s"Malformed error wire unexpectedly decoded as a valid CdpReply: $reply")
                     case _ =>
-                        succeed
+                        ()
                 end match
             case other => fail(s"Expected Response but got $other")
         }
@@ -107,7 +107,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 4. decodeCdpMessage four sub-cases
     // -------------------------------------------------------------------------
 
-    "decodeCdpMessage: error-id branch routes whole wire; caller's CdpReply decode surfaces the typed error (4a)" in run {
+    "decodeCdpMessage: error-id branch routes whole wire; caller's CdpReply decode surfaces the typed error (4a)" in {
         val wire = """{"id": 1, "error": {"code": -32601, "message": "Method not found"}}"""
         decode(wire).map {
             case Exchange.Message.Response(id, payload) =>
@@ -126,7 +126,7 @@ class CdpClientDecoderTest extends kyo.Test:
         }
     }
 
-    "decodeCdpMessage: malformed error JSON falls back via FallbackIdEnvelope to whole-wire Response (4b)" in run {
+    "decodeCdpMessage: malformed error JSON falls back via FallbackIdEnvelope to whole-wire Response (4b)" in {
         val wire = """{"id": 1, "error": "not-an-object"}"""
         decode(wire).map {
             case Exchange.Message.Response(id, payload) =>
@@ -136,25 +136,27 @@ class CdpClientDecoderTest extends kyo.Test:
                     case Result.Success(reply) =>
                         fail(s"Malformed error wire unexpectedly decoded as a valid CdpReply: $reply")
                     case _ =>
-                        succeed
+                        ()
                 end match
             case other => fail(s"Expected Response for malformed-error frame but got $other")
         }
     }
 
-    "decodeCdpMessage: non-Object frame (JSON array) returns Skip (4c)" in run {
+    "decodeCdpMessage: non-Object frame (JSON array) returns Skip (4c)" in {
         val wire = "[1, 2, 3]"
         decode(wire).map {
-            case Exchange.Message.Skip => succeed
-            case other                 => fail(s"Expected Skip for non-Object frame but got $other")
+            case msg @ Exchange.Message.Skip =>
+                assert(msg == Exchange.Message.Skip, s"Expected Skip for non-Object frame but got $msg")
+            case other => fail(s"Expected Skip for non-Object frame but got $other")
         }
     }
 
-    "decodeCdpMessage: truly malformed JSON returns Skip (4d)" in run {
+    "decodeCdpMessage: truly malformed JSON returns Skip (4d)" in {
         val wire = "not-json"
         decode(wire).map {
-            case Exchange.Message.Skip => succeed
-            case other                 => fail(s"Expected Skip for malformed JSON but got $other")
+            case msg @ Exchange.Message.Skip =>
+                assert(msg == Exchange.Message.Skip, s"Expected Skip for malformed JSON but got $msg")
+            case other => fail(s"Expected Skip for malformed JSON but got $other")
         }
     }
 
@@ -162,13 +164,13 @@ class CdpClientDecoderTest extends kyo.Test:
     // 5. eventWhitelist negative-assertion
     // -------------------------------------------------------------------------
 
-    "eventWhitelist: non-whitelisted event is NOT emitted as CdpEvent" in run {
+    "eventWhitelist: non-whitelisted event is NOT emitted as CdpEvent" in {
         // Verify the method is indeed not in the whitelist first (defensive)
         assert(!CdpClient.eventWhitelist.contains("NotAWhitelistedEvent"))
         val wire = """{"method": "NotAWhitelistedEvent", "params": {}}"""
         decode(wire).map {
             case Exchange.Message.Skip =>
-                succeed
+                ()
             case Exchange.Message.Push(_) =>
                 fail("Non-whitelisted event must NOT be emitted as a CdpEvent Push")
             case Exchange.Message.Response(id, _) =>

@@ -3,7 +3,7 @@ package kyo
 import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
 
-class CommandTest extends Test:
+class CommandTest extends kyo.test.Test[Any]:
 
     private val isWindows = kyo.internal.Platform.isWindows
 
@@ -28,29 +28,29 @@ class CommandTest extends Test:
     // Command execution
     // ---------------------------------------------------------------------------
 
-    "echo text returns hello newline" in run {
+    "echo text returns hello newline" in {
         echo("hello").text.map { result =>
             assert(normalize(result).trim == "hello")
         }
     }
 
-    "waitFor returns ExitCode.Success for exit 0" in run {
+    "waitFor returns ExitCode.Success for exit 0" in {
         trueCmd.waitFor.map { code =>
             assert(code == ExitCode.Success)
         }
     }
 
-    "waitFor returns ExitCode.Failure for non-zero exit" in run {
+    "waitFor returns ExitCode.Failure for non-zero exit" in {
         exitWith(3).waitFor.map { code =>
             assert(code == ExitCode.Failure(3))
         }
     }
 
-    "waitForSuccess completes without error for zero-exit" in run {
-        trueCmd.waitForSuccess.map(_ => succeed)
+    "waitForSuccess completes without error for zero-exit" in {
+        trueCmd.waitForSuccess.map(_ => succeed("no exception means zero-exit succeeded"))
     }
 
-    "waitForSuccess raises Abort[ExitCode] for non-zero exit" in run {
+    "waitForSuccess raises Abort[ExitCode] for non-zero exit" in {
         Abort.run[CommandException | ExitCode] {
             falseCmd.waitForSuccess
         }.map {
@@ -61,7 +61,7 @@ class CommandTest extends Test:
         }
     }
 
-    "stream emits stdout bytes and cleans up when scope closes" in run {
+    "stream emits stdout bytes and cleans up when scope closes" in {
         Scope.run {
             echo("streamdata").stream.run.map { bytes =>
                 val result = new String(bytes.toArray)
@@ -70,7 +70,7 @@ class CommandTest extends Test:
         }
     }
 
-    "stdin string feeds content to process stdin" in run {
+    "stdin string feeds content to process stdin" in {
         cat.stdin("hello from stdin\n").text.map { result =>
             assert(normalize(result).trim == "hello from stdin")
         }
@@ -79,14 +79,14 @@ class CommandTest extends Test:
     // TODO: andThen pipe mechanism deadlocks on Windows — needs investigation in ProcessPlatformSpecific
     "andThen pipes stdout of first command into stdin of second" in {
         assumeUnix("pipe deadlock on Windows");
-        run {
+        {
             echo("hello pipe").andThen(cat).text.map { result =>
                 assert(normalize(result).trim == "hello pipe")
             }
         }
     }
 
-    "cwd sets working directory for the process" in run {
+    "cwd sets working directory for the process" in {
         for
             tmpDir <- Path.tempDir("kyo-cmd-cwd-test")
             result <- pwd.cwd(tmpDir).text
@@ -98,7 +98,7 @@ class CommandTest extends Test:
         end for
     }
 
-    "non-existent program raises ProgramNotFoundException" in run {
+    "non-existent program raises ProgramNotFoundException" in {
         Abort.run[CommandException] {
             Command("__kyo_test_nonexistent_8f3a__").waitFor
         }.map {
@@ -109,7 +109,7 @@ class CommandTest extends Test:
         }
     }
 
-    "missing cwd raises WorkingDirectoryNotFoundException" in run {
+    "missing cwd raises WorkingDirectoryNotFoundException" in {
         val missingDir = Path / "kyo-nonexistent-cwd-xyzzy-99" / "sub"
         Abort.run[CommandException] {
             echo("hi").cwd(missingDir).waitFor
@@ -121,7 +121,7 @@ class CommandTest extends Test:
         }
     }
 
-    "CommandException cases are exhaustively matchable" in run {
+    "CommandException cases are exhaustively matchable" in {
         Abort.run[CommandException] {
             Command("__kyo_test_nonexistent_8f3a2__").waitFor
         }.map { result =>
@@ -143,7 +143,7 @@ class CommandTest extends Test:
     // Command.stdin variants
     // ---------------------------------------------------------------------------
 
-    "stdin(Span[Byte]) feeds raw bytes" in run {
+    "stdin(Span[Byte]) feeds raw bytes" in {
         val bytes: Array[Byte] = "input\n".getBytes(StandardCharsets.UTF_8)
         val span: Span[Byte]   = Span.from(bytes)
         cat.stdin(span).text.map { result =>
@@ -151,7 +151,7 @@ class CommandTest extends Test:
         }
     }
 
-    "stdin(Stream[Byte, Sync]) feeds stream" in run {
+    "stdin(Stream[Byte, Sync]) feeds stream" in {
         val bytes: Array[Byte] = "stream input\n".getBytes(StandardCharsets.UTF_8)
         val stream             = Stream.init(bytes.toSeq)
         cat.stdin(stream).text.map { result =>
@@ -159,7 +159,7 @@ class CommandTest extends Test:
         }
     }
 
-    "stdin(Process.Input.FromStream) feeds content" in run {
+    "stdin(Process.Input.FromStream) feeds content" in {
         val bytes = "fromstream input\n".getBytes(StandardCharsets.UTF_8)
         val input = Process.Input.FromStream(new ByteArrayInputStream(bytes))
         cat.stdin(input).text.map { result =>
@@ -167,7 +167,7 @@ class CommandTest extends Test:
         }
     }
 
-    "stdin(String, charset) with explicit charset" in run {
+    "stdin(String, charset) with explicit charset" in {
         val str     = "hello charset"
         val charset = java.nio.charset.Charset.forName("ISO-8859-1")
         cat.stdin(str, charset).text.map { result =>
@@ -179,7 +179,7 @@ class CommandTest extends Test:
     // IO routing
     // ---------------------------------------------------------------------------
 
-    "stdoutToFile writes stdout to file" in run {
+    "stdoutToFile writes stdout to file" in {
         for
             path    <- Path.temp("kyo-stdout-file-test", ".txt")
             _       <- echo("stdout line").stdoutToFile(path).waitFor
@@ -192,7 +192,7 @@ class CommandTest extends Test:
     // ProcessBuilder.Redirect.appendTo is broken on Scala Native Windows ARM64
     "stdoutToFile with append=true appends" in {
         assume(!(isWindows && kyo.internal.Platform.isNative), "ProcessBuilder append broken on Native Windows")
-        run {
+        {
             for
                 path    <- Path.temp("kyo-stdout-append-test", ".txt")
                 _       <- path.write("line1\n")
@@ -208,7 +208,7 @@ class CommandTest extends Test:
 
     "stderrToFile writes stderr to file" in {
         assumeUnix("stderr redirect");
-        run {
+        {
             for
                 path    <- Path.temp("kyo-stderr-file-test", ".txt")
                 _       <- Command("sh", "-c", "echo err >&2").stderrToFile(path).waitFor
@@ -221,7 +221,7 @@ class CommandTest extends Test:
 
     "stderrToFile with append=true appends" in {
         assumeUnix("stderr redirect");
-        run {
+        {
             for
                 path    <- Path.temp("kyo-stderr-append-test", ".txt")
                 _       <- path.write("first\n")
@@ -237,7 +237,7 @@ class CommandTest extends Test:
 
     "redirectErrorStream(false) leaves stderr separate" in {
         assumeUnix("stderr redirect");
-        run {
+        {
             val cmd = Command("sh", "-c", "echo stdout_data; echo stderr_data >&2")
                 .redirectErrorStream(false)
             Scope.run {
@@ -252,7 +252,7 @@ class CommandTest extends Test:
 
     "redirectErrorStream(true) merges stderr into stdout" in {
         assumeUnix("stderr redirect");
-        run {
+        {
             val cmd = Command("sh", "-c", "echo stdout_data; echo stderr_data >&2")
                 .redirectErrorStream(true)
             cmd.text.map { output =>
@@ -262,7 +262,7 @@ class CommandTest extends Test:
         }
     }
 
-    "inheritIO returns success" in run {
+    "inheritIO returns success" in {
         trueCmd.inheritIO.waitFor.map { code =>
             assert(code == ExitCode.Success)
         }
@@ -272,7 +272,7 @@ class CommandTest extends Test:
     // Command.Unsafe
     // ---------------------------------------------------------------------------
 
-    "Unsafe command.text()" in run {
+    "Unsafe command.text()" in {
         import AllowUnsafe.embrace.danger
         val fiber  = echo("hi").unsafe.text()
         val result = fiber.safe.get
@@ -281,19 +281,19 @@ class CommandTest extends Test:
         }
     }
 
-    "Command.unsafe.spawn returns Success for valid command" in run {
+    "Command.unsafe.spawn returns Success for valid command" in {
         import AllowUnsafe.embrace.danger
         val result = trueCmd.unsafe.spawn()
         result match
             case Result.Success(proc) =>
                 discard(proc.waitFor().safe.get)
-                succeed
+                succeed("spawn returned Success and waitFor completed")
             case other =>
                 fail(s"Expected Success(Process.Unsafe), got: $other")
         end match
     }
 
-    "Command.unsafe.spawn returns Failure(ProgramNotFoundException) for unknown program" in run {
+    "Command.unsafe.spawn returns Failure(ProgramNotFoundException) for unknown program" in {
         import AllowUnsafe.embrace.danger
         val result = Command("__kyo_test_nonexistent_8f3a3__").unsafe.spawn()
         result match
@@ -308,7 +308,7 @@ class CommandTest extends Test:
     // CommandException type checks
     // ---------------------------------------------------------------------------
 
-    "PermissionDeniedException type-level check" in run {
+    "PermissionDeniedException type-level check" in {
         val err: CommandException = PermissionDeniedException("/bin/denied-test")
         err match
             case PermissionDeniedException(cmd) => assert(cmd == "/bin/denied-test")
@@ -325,16 +325,16 @@ class CommandTest extends Test:
             err match
                 case ProgramNotFoundException(cmd)           => assert(cmd == "test")
                 case PermissionDeniedException(cmd)          => assert(cmd == "test")
-                case WorkingDirectoryNotFoundException(path) => succeed
+                case WorkingDirectoryNotFoundException(path) => ()
         }
-        succeed
+        ()
     }
 
     // ---------------------------------------------------------------------------
     // textWithExitCode
     // ---------------------------------------------------------------------------
 
-    "textWithExitCode returns stdout and Success for echo" in run {
+    "textWithExitCode returns stdout and Success for echo" in {
         echo("hello").textWithExitCode.map { case (text, code) =>
             assert(normalize(text).trim == "hello")
             assert(code == ExitCode.Success)
@@ -343,7 +343,7 @@ class CommandTest extends Test:
 
     "textWithExitCode returns stdout and Failure for failing command" in {
         assumeUnix("sh -c");
-        run {
+        {
             Command("sh", "-c", "echo output; exit 42").textWithExitCode.map { case (text, code) =>
                 assert(text.trim == "output")
                 assert(code == ExitCode.Failure(42))
@@ -351,11 +351,11 @@ class CommandTest extends Test:
         }
     }
 
-    "textWithExitCode raises CommandException for missing program" in run {
+    "textWithExitCode raises CommandException for missing program" in {
         Abort.run[CommandException] {
             Command("__nonexistent__").textWithExitCode
         }.map {
-            case Result.Failure(_: CommandException) => succeed
+            case Result.Failure(_: CommandException) => succeed("expected CommandException for missing program")
             case other                               => fail(s"Expected CommandException, got $other")
         }
     }
@@ -364,7 +364,7 @@ class CommandTest extends Test:
     // Path.Unsafe via Command tests
     // ---------------------------------------------------------------------------
 
-    "Path.unsafe.read returns Success for readable file" in run {
+    "Path.unsafe.read returns Success for readable file" in {
         val text = "unsafe read content"
         for
             dir <- Path.tempDir("kyo-unsafe-test")
@@ -380,13 +380,13 @@ class CommandTest extends Test:
         end for
     }
 
-    "Path.unsafe.read returns Failure(FileNotFoundException) for absent file" in run {
+    "Path.unsafe.read returns Failure(FileNotFoundException) for absent file" in {
         val absent = Path / "kyo-nonexistent-unsafe-test-xyzzy" / "missing.txt"
         val result =
             import AllowUnsafe.embrace.danger
             absent.unsafe.read()
         result match
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected FileNotFoundException for absent file")
             case other                                    => fail(s"Expected Failure(FileNotFoundException), got: $other")
     }
 
@@ -394,14 +394,14 @@ class CommandTest extends Test:
     // Additional command tests
     // ---------------------------------------------------------------------------
 
-    "textWithExitCode on process with no output returns empty string and Success" in run {
+    "textWithExitCode on process with no output returns empty string and Success" in {
         trueCmd.textWithExitCode.map { case (text, code) =>
             assert(text == "")
             assert(code == ExitCode.Success)
         }
     }
 
-    "Command with no arguments raises ProgramNotFoundException" in run {
+    "Command with no arguments raises ProgramNotFoundException" in {
         Abort.run[CommandException](Command().waitFor).map { result =>
             assert(result.isFailure)
         }
@@ -409,7 +409,7 @@ class CommandTest extends Test:
 
     "Command passes empty string argument unchanged" in {
         assumeUnix("printf");
-        run {
+        {
             Command("sh", "-c", "printf '%s' \"$1\"", "--", "").text.map { result =>
                 assert(result == "")
             }
@@ -418,7 +418,7 @@ class CommandTest extends Test:
 
     "envClear followed by envAppend produces only appended vars" in {
         assumeUnix("env command");
-        run {
+        {
             Command("env").envClear.envAppend(Map("KTEST_ONLY" -> "yes")).text.map { output =>
                 assert(output.contains("KTEST_ONLY=yes"))
                 assert(!output.contains("HOME="))
@@ -428,7 +428,7 @@ class CommandTest extends Test:
 
     "andThen chains three commands in a pipeline" in {
         assumeUnix("sort/head");
-        run {
+        {
             val step1 = Command("sort", "-r").andThen(Command("head", "-1"))
             Command("printf", "a\\nb\\nc\\n")
                 .andThen(step1)
@@ -439,7 +439,7 @@ class CommandTest extends Test:
 
     "andThen pipe transforms data through second command" in {
         assumeUnix("wc");
-        run {
+        {
             Command("echo", "hello world").andThen(Command("wc", "-w")).text.map { result =>
                 val count = result.trim
                 assert(count == "2" || count == "       2", s"Expected word count 2, got: '$count'")
@@ -449,7 +449,7 @@ class CommandTest extends Test:
 
     "andThen second command receives complete stdin from first" in {
         assumeUnix("seq/wc");
-        run {
+        {
             Command("seq", "1", "100").andThen(Command("wc", "-l")).text.map { result =>
                 val count = result.trim
                 assert(count == "100" || count == "     100", s"Expected line count 100, got: '$count'")
@@ -457,7 +457,7 @@ class CommandTest extends Test:
         }
     }
 
-    "stdin with empty string produces empty output without hanging" in run {
+    "stdin with empty string produces empty output without hanging" in {
         cat.stdin("").text.map { result =>
             assert(normalize(result) == "")
         }
@@ -465,7 +465,7 @@ class CommandTest extends Test:
 
     "stdin stream delivers all bytes correctly to child process" in {
         assumeUnix("wc");
-        run {
+        {
             val data = (1 to 100).map(i => s"line$i").mkString("\n") + "\n"
             Command("wc", "-l").stdin(data).text.map { result =>
                 val count = result.trim
@@ -476,7 +476,7 @@ class CommandTest extends Test:
 
     "stdin with multi-chunk stream is fully consumed by child" in {
         assumeUnix("wc");
-        run {
+        {
             val content = "x" * 10000
             Command("wc", "-c").stdin(content).text.map { result =>
                 val count = result.trim
@@ -485,7 +485,7 @@ class CommandTest extends Test:
         }
     }
 
-    "stdin with empty byte Stream closes stdin immediately" in run {
+    "stdin with empty byte Stream closes stdin immediately" in {
         cat.stdin(Stream.empty[Byte]).text.map { result =>
             assert(normalize(result) == "")
         }
@@ -493,7 +493,7 @@ class CommandTest extends Test:
 
     "andThen with stdin on first command pipes through pipeline" in {
         assumeUnix("wc");
-        run {
+        {
             Command("cat").stdin("input line\n").andThen(Command("wc", "-l")).text.map { result =>
                 val count = result.trim
                 assert(count == "1" || count == "       1", s"Expected 1 line, got: '$count'")
@@ -507,7 +507,7 @@ class CommandTest extends Test:
 
     "stdoutToFile with append=true preserves existing content" in {
         assume(!(isWindows && kyo.internal.Platform.isNative), "ProcessBuilder append broken on Native Windows")
-        run {
+        {
             for
                 path    <- Path.temp("kyo-stdout-append-preserve-test", ".txt")
                 _       <- path.write("line1\n")
@@ -523,7 +523,7 @@ class CommandTest extends Test:
 
     "text on command with only stderr output returns empty string" in {
         assumeUnix("sh -c stderr");
-        run {
+        {
             Command("sh", "-c", "echo error >&2").text.map { result =>
                 assert(result == "", s"Expected empty stdout, got: '$result'")
             }
@@ -532,7 +532,7 @@ class CommandTest extends Test:
 
     "textWithExitCode captures stdout while stderr goes to separate stream" in {
         assumeUnix("sh -c stderr");
-        run {
+        {
             Command("sh", "-c", "echo out; echo err >&2").textWithExitCode.map { case (text, code) =>
                 assert(text.trim == "out")
                 assert(code == ExitCode.Success)

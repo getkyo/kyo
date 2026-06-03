@@ -6,7 +6,7 @@ class BrowserNetworkTest extends BrowserTest:
 
     // ---- waitForNetworkIdle ----
 
-    "waitForNetworkIdle succeeds when no network activity" in run {
+    "waitForNetworkIdle succeeds when no network activity" in {
         withBrowser {
             onPage("<html><body><div id='static-div'>Static page</div></body></html>") {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(5.seconds))) {
@@ -22,7 +22,7 @@ class BrowserNetworkTest extends BrowserTest:
         }
     }
 
-    "waitForNetworkIdle waits for pending fetch to complete" in run {
+    "waitForNetworkIdle waits for pending fetch to complete" in {
         withBrowser {
             onPage("""<html><body>
             <div id='status'>loading</div>
@@ -56,7 +56,7 @@ class BrowserNetworkTest extends BrowserTest:
     // comfortably under the 500ms idle window.  The `Browser.SessionConfig.default.networkIdleWindow`
     // also picks 500ms (verified in BrowserConfigTest.scala), so this test's comparator
     // matches the production default.
-    "waitForNetworkIdle times out when requests keep coming" in run {
+    "waitForNetworkIdle times out when requests keep coming" in {
         withBrowser {
             onPage("""<html><body>
             <script>
@@ -72,7 +72,8 @@ class BrowserNetworkTest extends BrowserTest:
                     }
                 }.map { result =>
                     result match
-                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                            assert(ex.getMessage.contains("Assertion failed"))
                         case other => fail(s"Expected BrowserAssertionTimedOutException timeout from waitForNetworkIdle but got $other")
                 }
             }
@@ -81,7 +82,7 @@ class BrowserNetworkTest extends BrowserTest:
 
     // ---- waitForRequestUrl ----
 
-    "waitForRequestUrl returns the URL of the first matching request" in run {
+    "waitForRequestUrl returns the URL of the first matching request" in {
         withBrowser {
             onPage("<html><body></body></html>") {
                 // Mock the endpoint so the fetch resolves (the tracking interceptor only records
@@ -119,7 +120,7 @@ class BrowserNetworkTest extends BrowserTest:
     // requests but none matched the pattern, the user couldn't tell whether the tracker was even working. Surfacing
     // the observed-URL list (or an explicit "0 requests observed") makes the diagnostic instant.
 
-    "waitForRequestUrl timeout message describes tracker state (count + sample of observed URLs)" in run {
+    "waitForRequestUrl timeout message describes tracker state (count + sample of observed URLs)" in {
         withBrowser {
             onPage("""<html><body>
                 <script>
@@ -148,7 +149,7 @@ class BrowserNetworkTest extends BrowserTest:
 
     // ---- mockFetchResponse ----
 
-    "mockFetchResponse intercepts a fetch call and substitutes the mocked body" in run {
+    "mockFetchResponse intercepts a fetch call and substitutes the mocked body" in {
         withBrowser {
             onPage("""<html><body>
                 <div id="result"></div>
@@ -175,7 +176,7 @@ class BrowserNetworkTest extends BrowserTest:
 
     // The in-page __kyoMocks registry uses direct key assignment (replace semantics, not stack).
     // This test codifies that contract and guards against any future regression that switches to stack-of-mocks.
-    "mockFetchResponse same-URL second registration replaces the first" in run {
+    "mockFetchResponse same-URL second registration replaces the first" in {
         withBrowser {
             onPage("""<html><body>
                 <div id="result"></div>
@@ -190,7 +191,11 @@ class BrowserNetworkTest extends BrowserTest:
                 Browser.mockFetchResponse("/api/value", 200, "first").andThen {
                     Browser.mockFetchResponse("/api/value", 200, "second").andThen {
                         Browser.eval("loadData()").andThen {
-                            Browser.assertText(Browser.Selector.id("result"), "second").map(_ => succeed)
+                            Browser.assertText(Browser.Selector.id("result"), "second").andThen {
+                                Browser.text(Browser.Selector.id("result")).map { t =>
+                                    assert(t == "second", s"Expected second mock to replace first but got '$t'")
+                                }
+                            }
                         }
                     }
                 }
@@ -199,7 +204,7 @@ class BrowserNetworkTest extends BrowserTest:
     }
 
     // The registry is a JS object keyed by URL, so distinct URLs map to distinct entries.
-    "mockFetchResponse distinct URLs coexist; each fetch returns its own body" in run {
+    "mockFetchResponse distinct URLs coexist; each fetch returns its own body" in {
         withBrowser {
             onPage("""<html><body>
                 <div id="r1"></div><div id="r2"></div>
@@ -216,7 +221,14 @@ class BrowserNetworkTest extends BrowserTest:
                     Browser.mockFetchResponse("/api/beta", 200, "beta-body").andThen {
                         Browser.eval("fetchBoth()").andThen {
                             Browser.assertText(Browser.Selector.id("r1"), "alpha-body").andThen {
-                                Browser.assertText(Browser.Selector.id("r2"), "beta-body").map(_ => succeed)
+                                Browser.assertText(Browser.Selector.id("r2"), "beta-body").andThen {
+                                    Browser.text(Browser.Selector.id("r1")).map { t1 =>
+                                        Browser.text(Browser.Selector.id("r2")).map { t2 =>
+                                            assert(t1 == "alpha-body", s"r1 expected 'alpha-body' but got '$t1'")
+                                            assert(t2 == "beta-body", s"r2 expected 'beta-body' but got '$t2'")
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -225,7 +237,7 @@ class BrowserNetworkTest extends BrowserTest:
         }
     }
 
-    "mockFetchResponse does not intercept the top-level navigation request" in run {
+    "mockFetchResponse does not intercept the top-level navigation request" in {
         withBrowser {
             val p1 = page("<html><head><title>Page1</title></head><body><div id='marker'>page1-ok</div></body></html>")
             val p2 = page("<html><head><title>Page2</title></head><body><div id='marker'>page2-ok</div></body></html>")
@@ -245,7 +257,7 @@ class BrowserNetworkTest extends BrowserTest:
 
     // ---- waitForNetworkIdle no-arg overload ----
 
-    "waitForNetworkIdle(using Frame) waits with default idle window, same as waitForNetworkIdle(500.millis, Absent)" in run {
+    "waitForNetworkIdle(using Frame) waits with default idle window, same as waitForNetworkIdle(500.millis, Absent)" in {
         val p = page("<html><body><div id='status'>static</div></body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -260,7 +272,7 @@ class BrowserNetworkTest extends BrowserTest:
 
     // ---- clearMocks ----
 
-    "clearMocks removes a previously-registered mock" in run {
+    "clearMocks removes a previously-registered mock" in {
         withBrowser {
             onPage("""<html><body></body></html>""") {
                 // Register a mock, verify it is visible in __kyoMocks, then clear and re-check.
@@ -280,11 +292,16 @@ class BrowserNetworkTest extends BrowserTest:
         }
     }
 
-    "clearMocks on a fresh tab with no registered mocks is idempotent" in run {
+    "clearMocks on a fresh tab with no registered mocks is idempotent" in {
         withBrowser {
             onPage("<html><body></body></html>") {
                 Browser.clearMocks.andThen {
-                    Browser.clearMocks.map(_ => succeed)
+                    Browser.clearMocks.andThen {
+                        // Verify no mocks are registered after double clear.
+                        Browser.eval("Object.keys(window.__kyoMocks || {}).length").map { v =>
+                            assert(v == "0", s"Expected empty mock registry after clearMocks but got $v entries")
+                        }
+                    }
                 }
             }
         }
@@ -298,7 +315,7 @@ class BrowserNetworkTest extends BrowserTest:
     // (case-insensitive per HTTP semantics); duplicate Set-Cookie folding by Response.headers.get is
     // browser-side behaviour, this test just confirms the payload arrives without rejection and the
     // Content-Type is visible.
-    "mockFetchResponse with Seq[(String, String)] headers preserves duplicate header names and case-insensitive lookup" in run {
+    "mockFetchResponse with Seq[(String, String)] headers preserves duplicate header names and case-insensitive lookup" in {
         withBrowser {
             onPage("""<html><body>
                 <script>
@@ -339,7 +356,7 @@ class BrowserNetworkTest extends BrowserTest:
 
     // Per HTTP spec (RFC 7230), header lookup is case-insensitive. Register a mock with capitalised
     // "Content-Type" and verify the response handler can read it via lowercase "content-type".
-    "mockFetchResponse Content-Type round-trips via Seq[(String, String)] and supports case-insensitive lookup" in run {
+    "mockFetchResponse Content-Type round-trips via Seq[(String, String)] and supports case-insensitive lookup" in {
         withBrowser {
             onPage("""<html><body>
                 <script>
@@ -393,7 +410,7 @@ class BrowserNetworkTest extends BrowserTest:
 
     // Verify the envelope round-trips so a future drift in the case class shape, default values, or Schema
     // derivation is caught at the wire boundary rather than at the JS-interception path.
-    "MockResponseEnvelope round-trips through Json encode/decode" in run {
+    "MockResponseEnvelope round-trips through Json encode/decode" in {
         val original = kyo.internal.MockResponseEnvelope(
             status = 200,
             body = """{"ok":true}""",

@@ -1,6 +1,6 @@
 package kyo
 
-class Base64Test extends Test:
+class Base64Test extends kyo.test.Test[Any]:
 
     "encode" - {
         "empty input produces empty string" in {
@@ -53,7 +53,7 @@ class Base64Test extends Test:
         "rejects input whose length is not a multiple of 4" in {
             val r = Base64.decode("abc")
             r match
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => succeed("input with length not divisible by 4 is rejected; matching Failure is the verification")
                 case other             => fail(s"expected Failure, got $other")
         }
 
@@ -61,15 +61,19 @@ class Base64Test extends Test:
             // '!' is not in the standard alphabet.
             val r = Base64.decode("Zm9!")
             r match
-                case Result.Failure(_) => succeed
-                case other             => fail(s"expected Failure, got $other")
+                case Result.Failure(_) =>
+                    succeed("input containing illegal character '!' is rejected; matching Failure is the verification")
+                case other => fail(s"expected Failure, got $other")
+            end match
         }
 
         "decodeOrThrow throws on malformed input" in {
             try
                 val _ = Base64.decodeOrThrow("***")
                 fail("expected IllegalArgumentException")
-            catch case _: IllegalArgumentException => succeed
+            catch
+                case _: IllegalArgumentException =>
+                    succeed("IllegalArgumentException thrown for malformed input; catching it is the verification")
         }
     }
 

@@ -1,6 +1,6 @@
 package kyo
 
-class PipeTest extends Test:
+class PipeTest extends kyo.test.Test[Any]:
 
     val n = 100000
 
@@ -810,7 +810,7 @@ class PipeTest extends Test:
         }
 
         "edge cases" - {
-            "mapChunk with state-dependent abort" in run {
+            "mapChunk with state-dependent abort" in {
                 val stream = Stream.init(Chunk(1, 2, 3, 4, 5))
                 val result = Abort.run[String] {
                     Var.run(0) {
@@ -825,7 +825,7 @@ class PipeTest extends Test:
                 assert(result.eval == Result.fail("State too high: 5"))
             }
 
-            "take with nested aborts and environment" in run {
+            "take with nested aborts and environment" in {
                 val stream = Stream.init(Seq(1, 2, 3, 4, 5))
                 val result = Env.run(3) {
                     Abort.run[String] {
@@ -880,14 +880,14 @@ class PipeTest extends Test:
     }
 
     "contramap" - {
-        "pure" in run {
+        "pure" in {
             val pipe   = Pipe.identity[Int].contramap((str: String) => str.length)
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = stream.into(pipe).run.eval
             assert(result == Seq(1, 2, 3))
         }
 
-        "effectful" in run {
+        "effectful" in {
             val pipe   = Pipe.identity[Int].contramap((str: String) => Var.update[String](_ + str).andThen(str.length))
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = Var.runTuple("")(stream.into(pipe).run).eval
@@ -895,7 +895,7 @@ class PipeTest extends Test:
         }
     }
 
-    "contramapPure" in run {
+    "contramapPure" in {
         val pipe   = Pipe.identity[Int].contramapPure((str: String) => str.length)
         val stream = Stream.init(Seq("a", "be", "see"))
         val result = stream.into(pipe).run.eval
@@ -903,14 +903,14 @@ class PipeTest extends Test:
     }
 
     "contramapChunk" - {
-        "pure" in run {
+        "pure" in {
             val pipe   = Pipe.identity[Int].contramapChunk((chunk: Chunk[String]) => Chunk(chunk.size))
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = stream.into(pipe).run.eval
             assert(result == Seq(3))
         }
 
-        "effectful" in run {
+        "effectful" in {
             val pipe = Pipe.identity[Int].contramapChunk((chunk: Chunk[String]) =>
                 Var.update[String](_ + chunk.mkString).andThen(Chunk(chunk.size))
             )
@@ -920,7 +920,7 @@ class PipeTest extends Test:
         }
     }
 
-    "contramapChunkPure" in run {
+    "contramapChunkPure" in {
         val pipe   = Pipe.identity[Int].contramapChunkPure((chunk: Chunk[String]) => Chunk(chunk.size))
         val stream = Stream.init(Seq("a", "be", "see"))
         val result = stream.into(pipe).run.eval
@@ -928,14 +928,14 @@ class PipeTest extends Test:
     }
 
     "map" - {
-        "pure" in run {
+        "pure" in {
             val pipe   = Pipe.identity[String].map((str: String) => str.length)
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = stream.into(pipe).run.eval
             assert(result == Seq(1, 2, 3))
         }
 
-        "effectful" in run {
+        "effectful" in {
             val pipe   = Pipe.identity[String].map((str: String) => Var.update[String](_ + str).andThen(str.length))
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = Var.runTuple("")(stream.into(pipe).run).eval
@@ -943,7 +943,7 @@ class PipeTest extends Test:
         }
     }
 
-    "mapPure" in run {
+    "mapPure" in {
         val pipe   = Pipe.identity[String].mapPure((str: String) => str.length)
         val stream = Stream.init(Seq("a", "be", "see"))
         val result = stream.into(pipe).run.eval
@@ -951,14 +951,14 @@ class PipeTest extends Test:
     }
 
     "mapChunk" - {
-        "pure" in run {
+        "pure" in {
             val pipe   = Pipe.identity[String].mapChunk((chunk: Chunk[String]) => Chunk(chunk.size))
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = stream.into(pipe).run.eval
             assert(result == Seq(3))
         }
 
-        "effectful" in run {
+        "effectful" in {
             val pipe = Pipe.identity[String].mapChunk((chunk: Chunk[String]) =>
                 Var.update[String](_ + chunk.mkString).andThen(Chunk(chunk.size))
             )
@@ -968,7 +968,7 @@ class PipeTest extends Test:
         }
     }
 
-    "mapChunkPure" in run {
+    "mapChunkPure" in {
         val pipe   = Pipe.identity[String].mapChunkPure((chunk: Chunk[String]) => Chunk(chunk.size))
         val stream = Stream.init(Seq("a", "be", "see"))
         val result = stream.into(pipe).run.eval
@@ -976,14 +976,14 @@ class PipeTest extends Test:
     }
 
     "join" - {
-        "pipe" in run {
+        "pipe" in {
             val pipe   = Pipe.identity[String].join(Pipe.mapChunk[String]((chunk: Chunk[String]) => Chunk(chunk.size)))
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = stream.into(pipe).run.eval
             assert(result == Seq(3))
         }
 
-        "sink" in run {
+        "sink" in {
             val sink   = Pipe.map[String](_.length).join(Sink.fold[Int, Int](0)(_ + _))
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = stream.into(sink).eval

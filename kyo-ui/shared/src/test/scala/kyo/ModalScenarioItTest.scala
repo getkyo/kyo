@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 class ModalScenarioItTest extends UITest:
 
-    "click trigger shows modal" in run {
+    "click trigger shows modal" in {
         val app: UI < Async =
             for showModal <- Signal.initRef(false)
             yield UI.div(
@@ -24,11 +24,11 @@ class ModalScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("trigger"))
                 _ <- Browser.assertVisible(Selector.id("modal"))
                 _ <- Browser.assertText(Selector.id("msg"), "Are you sure?")
-            yield succeed
+            yield ()
         }
     }
 
-    "confirm fires action" in run {
+    "confirm fires action" in {
         val app: UI < Async =
             for
                 showModal <- Signal.initRef(false)
@@ -50,11 +50,11 @@ class ModalScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("confirm"))
                 _ <- Browser.assertText(Selector.id("v"), "confirmed:true")
                 _ <- Browser.assertNotExists(Selector.id("modal"))
-            yield succeed
+            yield ()
         }
     }
 
-    "form values preserved during modal" in run {
+    "form values preserved during modal" in {
         val app: UI < Async =
             for
                 name      <- Signal.initRef("")
@@ -76,11 +76,11 @@ class ModalScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "name:Alice")
                 _ <- Browser.click(Selector.id("cancel"))
                 _ <- Browser.assertText(Selector.id("v"), "name:Alice")
-            yield succeed
+            yield ()
         }
     }
 
-    "Tab trapped in modal" in run {
+    "Tab trapped in modal" in {
         // Modal contains 3 focusable buttons; one button sits outside.
         // Tab must wrap within the trap and never advance to the outside button.
         val app: UI < Async =
@@ -112,11 +112,11 @@ class ModalScenarioItTest extends UITest:
                 // Step 5: Shift+Tab from btn1 wraps to btn3 (last in trap)
                 _ <- Browser.press(Selector.id("btn1"), Key.Tab, KeyModifiers(shift = true))
                 _ <- Browser.assertFocused(Selector.id("btn3"))
-            yield succeed
+            yield ()
         }
     }
 
-    "Escape closes modal" in run {
+    "Escape closes modal" in {
         // Modal carries focusTrap(true) and onKeyDown that sets showModal=false on Escape.
         // The focus-trap shim lets Escape fall through to the kyo-ui onKeyDown handler.
         val app: UI < Async =
@@ -144,7 +144,7 @@ class ModalScenarioItTest extends UITest:
                 _ <- Browser.press(Selector.id("close-btn"), Key.Escape)
                 // Step 4: modal is no longer in the DOM
                 _ <- Browser.assertNotExists(Selector.id("modal"))
-            yield succeed
+            yield ()
         }
     }
 

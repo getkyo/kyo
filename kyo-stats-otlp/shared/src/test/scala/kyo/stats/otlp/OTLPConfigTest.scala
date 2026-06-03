@@ -2,7 +2,7 @@ package kyo.stats.otlp
 
 import kyo.*
 
-class OTLPConfigTest extends Test:
+class OTLPConfigTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 

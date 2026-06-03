@@ -2,14 +2,14 @@ package kyo
 
 import scala.util.Try
 
-class ChunkTest extends Test:
+class ChunkTest extends kyo.test.Test[Any]:
 
     "Chunk.from" - {
         "Array" - {
             "creates a Chunk.Indexed from a non-empty Array" in {
                 val array = Array("a", "b", "c")
                 val chunk = Chunk.from(array)
-                assert(chunk.isInstanceOf[Chunk.Indexed[String]])
+                succeed("the Array overload of Chunk.from statically returns Chunk.Indexed, so Indexed-ness is a compile-time guarantee")
                 assert(chunk == Seq("a", "b", "c"))
             }
 
@@ -55,11 +55,12 @@ class ChunkTest extends Test:
                 }
             }
 
-            "returns the same instance for Chunk input" in pendingUntilFixed {
+            "returns the same instance for Chunk input".pendingUntilFixed(
+                "Chunk.from does not yet return the same instance for a Chunk input (no identity fast-path)"
+            ) in {
                 val original = Chunk(1, 2, 3).append(4)
                 val result   = Chunk.from(original)
                 assert(result eq original)
-                ()
             }
 
             "creates a Chunk.FromSeq for non-Chunk IndexedSeq input" in {
@@ -274,14 +275,14 @@ class ChunkTest extends Test:
 
         "throws IndexOutOfBoundsException for negative index" in {
             val chunk = Chunk(1, 2, 3)
-            assertThrows[IndexOutOfBoundsException] {
+            interceptThrown[IndexOutOfBoundsException] {
                 chunk(-1)
             }
         }
 
         "throws IndexOutOfBoundsException for index >= size" in {
             val chunk = Chunk(1, 2, 3)
-            assertThrows[IndexOutOfBoundsException] {
+            interceptThrown[IndexOutOfBoundsException] {
                 chunk(3)
             }
         }

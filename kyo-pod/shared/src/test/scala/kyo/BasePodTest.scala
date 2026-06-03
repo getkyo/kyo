@@ -1,18 +1,10 @@
 package kyo
 
-import kyo.internal.BaseKyoCoreTest
-import kyo.internal.Platform
-import org.scalatest.NonImplicitAssertions
-import org.scalatest.Tag
-import org.scalatest.freespec.AsyncFreeSpec
-import scala.concurrent.ExecutionContext
-import scala.concurrent.Future
+abstract class BasePodTest extends kyo.test.Test[Any]:
 
-abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
-
-    /** Test infrastructure runs synchronously at ScalaTest discovery time (Tag init, `runBackends`/`runRuntimes` test-scope registration),
-      * so we provide a single given `AllowUnsafe` here and inherit it in subclasses. This lets `ContainerRuntime`'s file/env primitives
-      * delegate to kyo's portable sync `Unsafe` APIs without each call site repeating the import.
+    /** Test infrastructure runs synchronously at registration time (`runBackends`/`runRuntimes` test-scope registration), so we provide a
+      * single given `AllowUnsafe` here and inherit it in subclasses. This lets `ContainerRuntime`'s file/env primitives delegate to kyo's
+      * portable sync `Unsafe` APIs without each call site repeating the import.
       */
     given AllowUnsafe = AllowUnsafe.embrace.danger
 
@@ -25,42 +17,28 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     // still see the 5s default until they set their own via withConfig.
     // For tests that explicitly need a longer timeout (e.g. image pulls), use runBackendsLong /
     // runBackendLong which scope an even longer 5-minute timeout inside the test body.
-    override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
-        super.run(HttpClient.withConfig(_.timeout(60.seconds))(v))
-
-    private def runWhen(cond: => Boolean) = if cond then "" else "org.scalatest.Ignore"
-    object jvmOnly         extends Tag(runWhen(kyo.internal.Platform.isJVM))
-    object jsOnly          extends Tag(runWhen(kyo.internal.Platform.isJS))
-    object containerOnly   extends Tag(runWhen(ContainerRuntime.available.nonEmpty))
-    object httpBackendOnly extends Tag(runWhen(true))
-
-    type Assertion = org.scalatest.Assertion
-
-    def assertionSuccess = succeed
-
-    def assertionFailure(msg: String) = fail(msg)
-
-    override given executionContext: ExecutionContext = Platform.executionContext
+    // Ported from the ScalaTest base's `run` override to kyo-test's `aroundLeaf` hook.
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        HttpClient.withConfig(_.timeout(60.seconds))(body)
 
     /** Register one leaf test per available `(runtime, backend)` combination. Each registered test runs `v` with the appropriate
       * `Container.withBackendConfig` wrapper. Use as the body of `String -` in test declarations:
       * {{{"my container test" - runBackends { Container.init(image).map(_ => ()) }}}}
       *
       * The runtime scope is rendered as `[podman]` / `[docker]` in test names — bracketed so the build's testGrouping can detect, by
-      * inspecting `Suite.testNames`, which suites need per-runtime forking (the bracketed form won't appear in unit-test descriptions that
-      * happen to mention "podman" or "docker" as words). Each forked JVM is pinned to a single runtime via `KYO_POD_RUNTIME`, so this
-      * method registers leaves only for the pinned runtime; combined with sequential leaves, ≤1 in-flight container op per daemon.
+      * inspecting test names, which suites need per-runtime forking. Each forked JVM is pinned to a single runtime via `KYO_POD_RUNTIME`, so
+      * this method registers leaves only for the pinned runtime; combined with sequential leaves, ≤1 in-flight container op per daemon.
       */
-    def runBackends(v: => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
+    def runBackends(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
             s"[$runtime]" - {
                 ContainerRuntime.findSocket(runtime).foreach { path =>
-                    "http" in run {
+                    "http" in {
                         Container.withBackendConfig(_.UnixSocket(Path(path)))(v)
                     }
                 }
 
-                "shell" in run {
+                "shell" in {
                     Container.withBackendConfig(_.Shell(runtime))(v)
                 }
             }
@@ -72,18 +50,18 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       *
       * The shell arm is unaffected — it delegates to the container CLI which uses its own process timeout.
       */
-    def runBackendsLong(v: => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
+    def runBackendsLong(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
             s"[$runtime]" - {
                 ContainerRuntime.findSocket(runtime).foreach { path =>
-                    "http" in run {
+                    "http" in {
                         Container.withBackendConfig(_.UnixSocket(Path(path))) {
                             HttpClient.withConfig(_.timeout(5.minutes))(v)
                         }
                     }
                 }
 
-                "shell" in run {
+                "shell" in {
                     Container.withBackendConfig(_.Shell(runtime))(v)
                 }
             }
@@ -95,9 +73,9 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       *
       * Use as the body of `String -` in test declarations: {{{"auto-detect prefers HTTP" - runRuntimes { runtime => ... }}}}
       */
-    def runRuntimes(f: String => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
+    def runRuntimes(f: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
-            s"[$runtime]" in run {
+            s"[$runtime]" in {
                 f(runtime)
             }
         }
@@ -108,14 +86,14 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       * testGrouping does not fork the suite per runtime. For tests that need runtime variation use [[runBackends]] (both backends per
       * runtime) or [[runRuntimes]] (one leaf per runtime, body picks the backend).
       */
-    def runBackend(v: => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
+    def runBackend(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         val socket = Seq("podman", "docker")
             .filter(ContainerRuntime.isAvailable)
             .iterator
             .flatMap(rt => ContainerRuntime.findSocket(rt).iterator)
             .nextOption()
         socket.foreach { path =>
-            "http" in run {
+            "http" in {
                 Container.withBackendConfig(_.UnixSocket(Path(path)))(v)
             }
         }
@@ -124,14 +102,14 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     /** Like [[runBackend]] but raises the HTTP client's per-request timeout to 5 minutes. Use for single-leaf integration tests that pull
       * or build large images on a cold cache (e.g. predef DB tests).
       */
-    def runBackendLong(v: => Assertion < (Async & Abort[Any] & Scope))(using Frame): Unit =
+    def runBackendLong(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         val socket = Seq("podman", "docker")
             .filter(ContainerRuntime.isAvailable)
             .iterator
             .flatMap(rt => ContainerRuntime.findSocket(rt).iterator)
             .nextOption()
         socket.foreach { path =>
-            "http" in run {
+            "http" in {
                 Container.withBackendConfig(_.UnixSocket(Path(path))) {
                     HttpClient.withConfig(_.timeout(5.minutes))(v)
                 }
@@ -141,32 +119,20 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
 
     /** Returns `config` with `autoRemove = false` so tests can inspect container state after stopping.
       *
-      * Use in place of `config.autoRemove(false)` to reduce boilerplate at integration-test call sites. For example:
-      * {{{
-      * Container.init(alpinePersistent(alpine)).map { c => ... }
-      * }}}
+      * Use in place of `config.autoRemove(false)` to reduce boilerplate at integration-test call sites.
       */
     private[kyo] def alpinePersistent(config: Container.Config): Container.Config =
         config.autoRemove(false)
 
-    /** Asserts that `config` produces a container in the `Running` state.
-      *
-      * Equivalent to:
-      * {{{
-      * Container.init(config).map { c => c.state.map(s => assert(s == Container.State.Running)) }
-      * }}}
-      *
-      * Use in tests that only need to verify the container starts up successfully.
-      */
-    private[kyo] def assertRuns(config: Container.Config)(using Frame): Assertion < (Async & Abort[Any] & Scope) =
+    /** Asserts that `config` produces a container in the `Running` state. Use in tests that only need to verify the container starts up. */
+    private[kyo] def assertRuns(config: Container.Config)(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[Any] & Scope) =
         Container.init(config).map(c => c.state.map(s => assert(s == Container.State.Running)))
 
     /** Registers a `Scope.ensure` that removes `c` (force = true) on scope exit regardless of test outcome.
       *
       * Use inside `Scope.run { Container.initUnscoped(...).map { c => ... } }` blocks as a belt-and-suspenders cleanup for containers
-      * created with `initUnscoped`. The explicit `remove` in the test body is what the test asserts; this ensure covers mid-test failure
-      * paths.
+      * created with `initUnscoped`. The explicit `remove` in the test body is what the test asserts; this ensure covers mid-test failure.
       */
     private[kyo] def ensureCleanup(c: Container)(using Frame): Unit < (Async & Abort[Any] & Scope) =
         Scope.ensure(Abort.run[ContainerException](c.remove(force = true)).unit)
-end Test
+end BasePodTest

@@ -1,6 +1,6 @@
 package kyo
 
-class ChoiceCombinatorTest extends Test:
+class ChoiceCombinatorTest extends kyo.test.Test[Any]:
 
     "choice" - {
         "construct" - {
@@ -26,7 +26,7 @@ class ChoiceCombinatorTest extends Test:
         }
 
         "iteration" - {
-            "should iterate using foreach" in run {
+            "should iterate using foreach" in {
                 var state             = 0
                 def effectFor(i: Int) = Sync.defer { state += i; state }
                 val effect            = Kyo.foreach(1 to 10)(effectFor)
@@ -38,7 +38,7 @@ class ChoiceCombinatorTest extends Test:
                 }
             }
 
-            "should iterate using collect" in run {
+            "should iterate using collect" in {
                 var state = 0
                 val effect = Kyo.collect(1 to 10) { i =>
                     Sync.defer(Maybe.when(i % 2 == 0) { { state += i; i * 2 } })

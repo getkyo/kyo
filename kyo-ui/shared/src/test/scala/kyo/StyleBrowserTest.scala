@@ -8,44 +8,44 @@ class StyleBrowserTest extends UITest:
 
     // ---- Merged from HoverTest ----
 
-    "hover on button does not crash" in run {
+    "hover on button does not crash" in {
         withUI(UI.div(UI.button("Go").id("b"))) {
             for
                 _ <- Browser.hover(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("b"), "Go")
-            yield succeed
+            yield ()
         }
     }
 
-    "hover on div does not crash" in run {
+    "hover on div does not crash" in {
         withUI(UI.div(UI.div("content").id("d"))) {
             for
                 _ <- Browser.hover(Selector.id("d"))
                 _ <- Browser.assertText(Selector.id("d"), "content")
-            yield succeed
+            yield ()
         }
     }
 
-    "element with Style.hover bold renders" in run {
+    "element with Style.hover bold renders" in {
         withUI(UI.div(
             UI.span("text").style(Style.hover(Style.bold)).id("s")
         )) {
-            Browser.assertText(Selector.id("s"), "text").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "text").unit
         }
     }
 
-    "hover element with Style.hover bold renders" in run {
+    "hover element with Style.hover bold renders" in {
         withUI(UI.div(
             UI.span("text").style(Style.hover(Style.bold)).id("s")
         )) {
             for
                 _ <- Browser.hover(Selector.id("s"))
                 _ <- Browser.assertText(Selector.id("s"), "text")
-            yield succeed
+            yield ()
         }
     }
 
-    "hover then unhover does not crash" in run {
+    "hover then unhover does not crash" in {
         withUI(UI.div(UI.button("Go").id("b"), UI.span("away").id("a"))) {
             for
                 _ <- Browser.hover(Selector.id("b"))
@@ -53,29 +53,29 @@ class StyleBrowserTest extends UITest:
                 // Browser unhover = move mouse off; hover a different element to clear hover state
                 _ <- Browser.hover(Selector.id("a"))
                 _ <- Browser.assertText(Selector.id("b"), "Go")
-            yield succeed
+            yield ()
         }
     }
 
-    "unhover does not crash" in run {
+    "unhover does not crash" in {
         withUI(UI.div(UI.button("Go").id("b"), UI.span("away").id("a"))) {
             for
                 // Direct unhover (without prior hover): moving mouse to another element.
                 _ <- Browser.hover(Selector.id("a"))
                 _ <- Browser.assertText(Selector.id("b"), "Go")
-            yield succeed
+            yield ()
         }
     }
 
-    "element with Style.hover bg red renders" in run {
+    "element with Style.hover bg red renders" in {
         withUI(UI.div(
             UI.span("text").style(Style.hover(Style.bg(Style.Color.red))).id("s")
         )) {
-            Browser.assertText(Selector.id("s"), "text").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "text").unit
         }
     }
 
-    "hover then click both work" in run {
+    "hover then click both work" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -87,11 +87,11 @@ class StyleBrowserTest extends UITest:
                 _ <- Browser.hover(Selector.id("b"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "hover then pressKey both work" in run {
+    "hover then pressKey both work" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -103,20 +103,20 @@ class StyleBrowserTest extends UITest:
                 _ <- Browser.hover(Selector.id("i"))
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "Enter")
-            yield succeed
+            yield ()
         }
     }
 
-    "hover disabled element does not crash" in run {
+    "hover disabled element does not crash" in {
         withUI(UI.div(UI.button("Go").id("b").disabled(true))) {
             for
                 _ <- Browser.hover(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("b"), "Go")
-            yield succeed
+            yield ()
         }
     }
 
-    "hover element inside foreach works" in run {
+    "hover element inside foreach works" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B")))
             yield UI.div(
@@ -127,11 +127,11 @@ class StyleBrowserTest extends UITest:
                 _ <- Browser.hover(Selector.id("btn-A"))
                 _ <- Browser.hover(Selector.id("btn-B"))
                 _ <- Browser.assertText(Selector.id("btn-B"), "B")
-            yield succeed
+            yield ()
         }
     }
 
-    "hover then element disappears via signal does not crash" in run {
+    "hover then element disappears via signal does not crash" in {
         val app: UI < Async =
             for show <- Signal.initRef(true)
             yield UI.div(
@@ -143,13 +143,13 @@ class StyleBrowserTest extends UITest:
                 _ <- Browser.hover(Selector.id("target"))
                 _ <- Browser.click(Selector.id("hide"))
                 _ <- Browser.assertNotExists(Selector.id("target"))
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from HiddenElementTest ----
 
-    "hidden input not visible" in run {
+    "hidden input not visible" in {
         withUI(UI.div(
             UI.input.id("i").hidden(true).value("secret"),
             UI.span("visible").id("s")
@@ -157,11 +157,11 @@ class StyleBrowserTest extends UITest:
             for
                 _ <- Browser.assertText(Selector.id("s"), "visible")
                 _ <- Browser.assertAttribute(Selector.id("i"), "hidden", "")
-            yield succeed
+            yield ()
         }
     }
 
-    "hidden button not actionable" in run {
+    "hidden button not actionable" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -172,11 +172,11 @@ class StyleBrowserTest extends UITest:
             for
                 _ <- Browser.assertAttribute(Selector.id("b"), "hidden", "")
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "hidden element Tab skips" in run {
+    "hidden element Tab skips" in {
         withUI(UI.div(
             UI.input.id("a"),
             UI.input.id("hidden").hidden(true),
@@ -186,20 +186,20 @@ class StyleBrowserTest extends UITest:
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.press(Selector.id("a"), Key.Tab)
                 _ <- Browser.assertFocused(Selector.id("c"))
-            yield succeed
+            yield ()
         }
     }
 
     // PENDING: kyo-ui doesn't auto-advance focus when the focused element becomes hidden; the
     // browser leaves document.activeElement on the now-hidden element until something else moves it.
     /*
-    "toggle hidden on focused element focus auto advances" in run {
+    "toggle hidden on focused element focus auto advances" in {
         // Requires UIControlSession to detect when the focused element becomes hidden
         // and automatically advance focus to the next visible focusable element.
     }
      */
 
-    "toggle hidden element appears disappears" in run {
+    "toggle hidden element appears disappears" in {
         val app: UI < Async =
             for hidden <- Signal.initRef(true)
             yield UI.div(
@@ -213,11 +213,11 @@ class StyleBrowserTest extends UITest:
                 _ <- Browser.assertText(Selector.id("c"), "content")
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.assertAttribute(Selector.id("c"), "hidden", "")
-            yield succeed
+            yield ()
         }
     }
 
-    "hidden form submit does nothing" in run {
+    "hidden form submit does nothing" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -230,7 +230,7 @@ class StyleBrowserTest extends UITest:
             for
                 _ <- Browser.assertAttribute(Selector.id("f"), "hidden", "")
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
