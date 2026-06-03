@@ -127,7 +127,7 @@ object WebsiteStyles:
     private def landingChrome: Stylesheet =
         Stylesheet.empty
             // Base header tag rule: reset the default flow positioning; the .site-header rule below
-            // applies the sticky positioning with top+z-index via Position.sticky.
+            // applies the sticky positioning with top+z-index explicitly.
             .rule(
                 Selector.tag("header"),
                 Style.position(_.flow).bg(_.variable("bg")).borderBottom(1.px, _.variable("line-soft"))
@@ -135,15 +135,17 @@ object WebsiteStyles:
             // Unified site header (G2): a full-bleed sticky bar whose inner row is capped at 1500px
             // (the docs-shell width) and centered, so the one header sits above both the 1120px
             // landing body and the 1500px docs 2-pane row without ever appearing narrower than the
-            // docs content. Position.sticky renders position:sticky; top:0; z-index:100 so the bar pins
-            // at the viewport top on scroll and layers above page content. The .search-results
-            // dropdown uses Position.dropdown (z-index:50) but is a descendant of .site-header so
-            // stacking-context rules ensure it renders above siblings of the header, not below.
+            // docs content. position:sticky + top:0 + z-index:100 pin the bar at the viewport top on
+            // scroll and layer it above page content (Position.sticky emits only position:sticky; the
+            // offset and stacking are set explicitly so the docs rail can stick at its own top:60px
+            // offset below this header). The .search-results dropdown uses Position.dropdown
+            // (z-index:50) but is a descendant of .site-header so stacking-context rules ensure it
+            // renders above siblings of the header, not below.
             .rule(
                 "site-header",
                 Style.column.width(Length.Pct(100))
                     .bg(_.variable("bg")).borderBottom(1.px, _.variable("line-soft"))
-                    .position(_.sticky)
+                    .position(_.sticky).top(0.px).zIndex(100)
             )
             .rule(
                 "site-header-inner",
@@ -682,10 +684,19 @@ object WebsiteStyles:
     // ---- Docs: left sidebar ----
     private def docsSidebar: Stylesheet =
         Stylesheet.empty
+            // The left rail FLOATS with the article: position:sticky pins it under the 60px sticky
+            // header (top:60px, matching --header-h) once the page scrolls past, so a long article
+            // scrolls while the nav stays in view. align-self:flex-start keeps the rail at its own
+            // content height in the docs-shell flex row instead of stretching to the full article
+            // height (a stretched item cannot stick). max-height:calc(100vh - 60px) caps the rail to
+            // the viewport below the header, and overflow-y:auto lets a tall module list scroll WITHIN
+            // the floating rail rather than off-screen. Below 860px the responsive block flips the rail
+            // to display:none (it becomes the toggle-revealed drawer), where sticky no longer applies.
             .rule(
                 "docs-sidebar",
                 Style.column.width(260.px).flexShrink(0.0)
-                    .height(Length.Pct(100)).maxHeight(Length.Px(10000)).overflow(_.auto)
+                    .position(_.sticky).top(60.px).alignSelf(_.start)
+                    .maxHeight(Length.Calc("100vh - 60px")).overflow(_.auto)
                     .bg(_.variable("bg")).borderRight(1.px, _.variable("line-soft"))
                     .padding(22.px, 14.px, 60.px, 24.px)
             )
@@ -847,9 +858,14 @@ object WebsiteStyles:
             // pre/tables, and inline boxes for the runs (links, spans, emphasis, inline code) so they
             // wrap WITHIN a line. The article lives inside .docs-content; descendant rules emitted
             // after the base reset already win the cascade, so display:inline overrides display:flex.
+            // scroll-margin-top on every id-carrying heading (h1..h4): when a rail section link or a
+            // native `#slug` anchor scrolls a heading into view, the browser (and scrollIntoView in
+            // WebsiteBundleMain.scrollToHash) keeps 72px of room above it (the 60px sticky header plus a
+            // 12px gap) so the heading lands fully visible just below the header instead of tucking under
+            // it. Applied to all four heading levels because any of them can be an in-page anchor target.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("h1")),
-                Style.block.margin(0.px, 0.px, 16.px, 0.px)
+                Style.block.margin(0.px, 0.px, 16.px, 0.px).scrollMarginTop(72.px)
             )
             // article headings + paragraphs (the transpiled content lives inside docs-content).
             //
@@ -865,17 +881,17 @@ object WebsiteStyles:
                 Selector.cls("docs-content").descendant(Selector.tag("h2")),
                 Style.block.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontSize(32.px)
                     .fontWeight(_.w600).letterSpacing(Length.Em(-0.01)).lineHeight(1.16)
-                    .margin(20.px, 0.px, 10.px, 0.px).color(_.variable("ink"))
+                    .margin(20.px, 0.px, 10.px, 0.px).color(_.variable("ink")).scrollMarginTop(72.px)
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("h3")),
                 Style.block.fontSize(19.px).fontWeight(_.w700).letterSpacing(Length.Em(-0.005)).color(_.variable("text"))
-                    .margin(16.px, 0.px, 6.px, 0.px)
+                    .margin(16.px, 0.px, 6.px, 0.px).scrollMarginTop(72.px)
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("h4")),
                 Style.block.fontSize(16.px).fontWeight(_.w700).color(_.variable("text"))
-                    .margin(12.px, 0.px, 4.px, 0.px)
+                    .margin(12.px, 0.px, 4.px, 0.px).scrollMarginTop(72.px)
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("p")),
@@ -1093,9 +1109,14 @@ object WebsiteStyles:
                     // instead of sharing the row and squishing the article into a sliver (B6).
                     .rule("docs-shell", Style.row.flexWrap(_.wrap))
                     .rule("docs-sidebar", Style.displayNone.width(Length.Pct(100)))
+                    // The revealed drawer is a normal full-width block above the article, NOT a sticky
+                    // float: reset position back to static and top to 0 (overriding the wide-viewport
+                    // position:sticky/top:60px on the base rule) and lift the calc max-height to a tall
+                    // value, so the drawer expands inline to its content rather than pinning and
+                    // scrolling within itself on a phone.
                     .rule(
                         "docs-sidebar-open",
-                        Style.block.width(Length.Pct(100)).maxHeight(Length.Px(10000))
+                        Style.block.position(_.flow).top(0.px).width(Length.Pct(100)).maxHeight(Length.Px(10000))
                             .margin(0.px, 0.px, 12.px, 0.px).borderRight(0.px, Color.transparent)
                             .border(1.px, _.variable("line")).rounded(12.px).padding(16.px, 16.px, 20.px, 16.px)
                     )

@@ -211,6 +211,18 @@ class StyleTest extends Test:
             assert(Length.Auto.css == "auto")
         }
 
+        "vh" in {
+            assert(100.vh.css == "100vh")
+        }
+
+        "vh from double" in {
+            assert(33.5.vh.css == "33.5vh")
+        }
+
+        "calc" in {
+            assert(Length.Calc("100vh - 60px").css == "calc(100vh - 60px)")
+        }
+
         "zero" in {
             assert(0.px.css == "0")
         }
@@ -657,11 +669,18 @@ class StyleTest extends Test:
             assert(s.props(0) == Style.Prop.PositionProp(Position.dropdown))
         }
 
-        "sticky" in {
+        "sticky emits only position: sticky (no bundled top/z-index)" in {
             val s = Style.position(Position.sticky)
             assert(s.props(0) == Style.Prop.PositionProp(Position.sticky))
+            assert(s.toCss == "position: sticky;")
+            assert(!s.toCss.contains("top:"))
+            assert(!s.toCss.contains("z-index:"))
+        }
+
+        "sticky composed with explicit top + z-index" in {
+            val s = Style.position(_.sticky).top(60.px).zIndex(100)
             assert(s.toCss.contains("position: sticky;"))
-            assert(s.toCss.contains("top: 0;"))
+            assert(s.toCss.contains("top: 60px;"))
             assert(s.toCss.contains("z-index: 100;"))
         }
 
@@ -673,6 +692,89 @@ class StyleTest extends Test:
             assert(Position.sticky != Position.overlay)
             assert(Position.sticky != Position.relative)
             assert(Position.sticky != Position.dropdown)
+        }
+    }
+
+    "top" - {
+        "px offset" in {
+            val s = Style.top(60.px)
+            assert(s.props(0) == Style.Prop.Top(Length.Px(60)))
+            assert(s.toCss == "top: 60px;")
+        }
+
+        "zero offset" in {
+            assert(Style.top(0.px).toCss == "top: 0;")
+        }
+
+        "last-write-wins" in {
+            val s = Style.top(10.px).top(20.px)
+            assert(s.props.size == 1)
+            assert(s.toCss == "top: 20px;")
+        }
+
+        "companion equals instance" in {
+            assert(Style.top(5.px).props(0) == Style.empty.top(5.px).props(0))
+        }
+    }
+
+    "zIndex" - {
+        "renders z-index" in {
+            val s = Style.zIndex(100)
+            assert(s.props(0) == Style.Prop.ZIndexProp(100))
+            assert(s.toCss == "z-index: 100;")
+        }
+
+        "last-write-wins" in {
+            val s = Style.zIndex(1).zIndex(50)
+            assert(s.props.size == 1)
+            assert(s.toCss == "z-index: 50;")
+        }
+
+        "companion equals instance" in {
+            assert(Style.zIndex(7).props(0) == Style.empty.zIndex(7).props(0))
+        }
+    }
+
+    "alignSelf" - {
+        "flex-start" in {
+            val s = Style.alignSelf(Alignment.start)
+            assert(s.props(0) == Style.Prop.AlignSelf(Alignment.start))
+            assert(s.toCss == "align-self: flex-start;")
+        }
+
+        "center" in {
+            assert(Style.alignSelf(Alignment.center).toCss == "align-self: center;")
+        }
+
+        "stretch" in {
+            assert(Style.alignSelf(Alignment.stretch).toCss == "align-self: stretch;")
+        }
+
+        "selector overload" in {
+            val s = Style.alignSelf(_.start)
+            assert(s.props(0) == Style.Prop.AlignSelf(Alignment.start))
+        }
+
+        "companion equals instance" in {
+            assert(Style.alignSelf(Alignment.start).props(0) == Style.empty.alignSelf(Alignment.start).props(0))
+        }
+    }
+
+    "scrollMarginTop" - {
+        "px value" in {
+            val s = Style.scrollMarginTop(72.px)
+            assert(s.props(0) == Style.Prop.ScrollMarginTopProp(Length.Px(72)))
+            assert(s.toCss == "scroll-margin-top: 72px;")
+        }
+
+        "last-write-wins" in {
+            val s = Style.scrollMarginTop(60.px).scrollMarginTop(72.px)
+            assert(s.props.size == 1)
+            assert(s.toCss == "scroll-margin-top: 72px;")
+        }
+
+        "companion equals instance" in {
+            assert(Style.scrollMarginTop(72.px).props(0) == Style.empty.scrollMarginTop(72.px).props(0))
         }
     }
 

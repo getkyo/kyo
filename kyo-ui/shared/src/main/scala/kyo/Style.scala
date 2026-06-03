@@ -47,10 +47,12 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
             case s => Style(s.props :+ p)
 
     private def clampSize(s: Length): Length = s match
-        case Length.Px(v)  => if v < 0 then Length.Px(0) else s
-        case Length.Pct(v) => if v < 0 then Length.Pct(0) else s
-        case Length.Em(v)  => if v < 0 then Length.Em(0) else s
-        case Length.Auto   => s
+        case Length.Px(v)   => if v < 0 then Length.Px(0) else s
+        case Length.Pct(v)  => if v < 0 then Length.Pct(0) else s
+        case Length.Em(v)   => if v < 0 then Length.Em(0) else s
+        case Length.Vh(v)   => if v < 0 then Length.Vh(0) else s
+        case Length.Calc(_) => s
+        case Length.Auto    => s
 
     private def clampSizeMin1(s: Length): Length = s match
         case Length.Px(v) => if v < 1 then Length.Px(1) else s
@@ -362,6 +364,31 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def position(v: Position): Style                  = appendProp(Prop.PositionProp(v))
     def position(f: Position.type => Position): Style = position(f(Position))
 
+    /** Sets the CSS `top` offset, the distance from the top edge of the containing block (or the
+      * sticky/fixed reference). Pairs with `position(_.sticky)` or `position(_.relative)` to place a
+      * pinned element, e.g. `top(60.px)` to stick a rail directly under a 60px header.
+      */
+    def top(v: Length): Style = appendProp(Prop.Top(v))
+
+    /** Sets the CSS `z-index` stacking order of a positioned element. Higher values layer above lower
+      * ones, e.g. `zIndex(100)` to keep a sticky header above scrolling page content.
+      */
+    def zIndex(v: Int): Style = appendProp(Prop.ZIndexProp(v))
+
+    /** Sets the CSS `align-self`, overriding the parent flex container's `align-items` for this one
+      * child. `align-self: flex-start` keeps a flex item at the cross-axis start instead of stretching
+      * to the row height, e.g. a sticky rail in a flex row that must not grow to the article's height.
+      */
+    def alignSelf(v: Alignment): Style                   = appendProp(Prop.AlignSelf(v))
+    def alignSelf(f: Alignment.type => Alignment): Style = alignSelf(f(Alignment))
+
+    /** Sets the CSS `scroll-margin-top`, the extra space kept above an element when it is scrolled into
+      * view (by a `#anchor` jump or `scrollIntoView`). Use it so a heading targeted by an in-page link
+      * stops just below a sticky header rather than under it, e.g. `scrollMarginTop(72.px)` for a 60px
+      * header plus a 12px gap.
+      */
+    def scrollMarginTop(v: Length): Style = appendProp(Prop.ScrollMarginTopProp(v))
+
     // Display
 
     /** Sets the CSS `display` mode, opting an element out of the default flex layout into normal
@@ -596,6 +623,11 @@ object Style:
     def translate(x: Length.Px | Length.Pct, y: Length.Px | Length.Pct): Style = empty.translate(x, y)
     def position(v: Position): Style                                           = empty.position(v)
     def position(f: Position.type => Position): Style                          = empty.position(f)
+    def top(v: Length): Style                                                  = empty.top(v)
+    def zIndex(v: Int): Style                                                  = empty.zIndex(v)
+    def alignSelf(v: Alignment): Style                                         = empty.alignSelf(v)
+    def alignSelf(f: Alignment.type => Alignment): Style                       = empty.alignSelf(f)
+    def scrollMarginTop(v: Length): Style                                      = empty.scrollMarginTop(v)
     def display(v: Display): Style                                             = empty.display(v)
     def display(f: Display.type => Display): Style                             = empty.display(f)
     def block: Style                                                           = empty.block
@@ -790,11 +822,12 @@ object Style:
       *   - `dropdown`: an absolutely-positioned panel anchored under the right edge of its nearest
       *     positioned ancestor (`position: absolute; top: 100%; right: 0`), layered above sibling
       *     content. Used for menus and result panels that drop below a trigger.
-      *   - `sticky`: a sticky-positioned element (`position: sticky; top: 0; z-index: 100`) that
-      *     scrolls with the document until it reaches the viewport top, then pins in place. The
-      *     embedded `top: 0` and `z-index: 100` ensure the bar sticks immediately at the top edge
-      *     and layers above scrolling page content (dropdown at z-index 50 still floats above it
-      *     because the dropdown is a descendant of the sticky bar). Used for persistent site headers.
+      *   - `sticky`: a sticky-positioned element (`position: sticky`) that scrolls with the document
+      *     until it reaches its sticky offset, then pins in place. `sticky` emits ONLY the
+      *     `position: sticky` declaration; the offset and stacking are set separately with
+      *     [[kyo.Style.top]] and [[kyo.Style.zIndex]], so a sticky element can pin at the viewport top
+      *     (`top(0.px).zIndex(100)`, e.g. a site header) or just below another sticky element
+      *     (`top(60.px)`, e.g. a rail under a 60px header) without a baked-in offset.
       */
     enum Position derives CanEqual:
         case flow, overlay, relative, dropdown, sticky
@@ -916,6 +949,10 @@ object Style:
         case TranslateProp(x: Length, y: Length)
         // Position
         case PositionProp(value: Position)
+        case Top(value: Length)
+        case ZIndexProp(value: Int)
+        case AlignSelf(value: Alignment)
+        case ScrollMarginTopProp(value: Length)
         // Display
         case DisplayProp(value: Display)
         // List marker

@@ -17,10 +17,12 @@ private[kyo] object CssStyleRenderer:
         case Color.Var(name)        => s"var(--$name)"
 
     def size(s: Length): String = s match
-        case Length.Px(v)  => if v == 0 then "0" else s"${fmt(v)}px"
-        case Length.Pct(v) => s"${fmt(v)}%"
-        case Length.Em(v)  => s"${fmt(v)}em"
-        case Length.Auto   => "auto"
+        case Length.Px(v)   => if v == 0 then "0" else s"${fmt(v)}px"
+        case Length.Pct(v)  => s"${fmt(v)}%"
+        case Length.Em(v)   => s"${fmt(v)}em"
+        case Length.Vh(v)   => s"${fmt(v)}vh"
+        case Length.Calc(e) => s"calc($e)"
+        case Length.Auto    => "auto"
 
     def render(style: Style): String =
         val sb      = new StringBuilder
@@ -207,7 +209,11 @@ private[kyo] object CssStyleRenderer:
                 case Position.overlay  => "position: fixed; top: 0; left: 0; width: 100%; height: 100%;"
                 case Position.relative => "position: relative;"
                 case Position.dropdown => "position: absolute; top: 100%; right: 0; z-index: 50;"
-                case Position.sticky   => "position: sticky; top: 0; z-index: 100;"
+                case Position.sticky   => "position: sticky;"
+        case Top(v)                 => s"top: ${size(v)};"
+        case ZIndexProp(v)          => s"z-index: $v;"
+        case AlignSelf(v)           => s"align-self: ${alignment(v)};"
+        case ScrollMarginTopProp(v) => s"scroll-margin-top: ${size(v)};"
         case DisplayProp(v) => v match
                 case Display.block       => "display: block;"
                 case Display.inline      => "display: inline;"
