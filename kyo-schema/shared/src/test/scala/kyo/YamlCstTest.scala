@@ -1590,6 +1590,272 @@ class YamlCstTest extends Test:
                 )
             }
         }
+
+        def editMessage(result: Result[Yaml.Cst.Error, Yaml.Cst.Document]): String =
+            result match
+                case Result.Failure(e: Yaml.Cst.EditException) => e.getMessage
+                case other                                     => fail(s"Expected an edit failure, got $other")
+
+        "fails every structural edit on an empty document with a clear message" in {
+            val empty = Yaml.cst("").getOrThrow
+
+            assertResult(
+                (
+                    rootHasNoNode = true,
+                    replace = "Cannot replace a path in an empty YAML document",
+                    insert = "Cannot insert into an empty YAML document",
+                    remove = "Cannot remove a path from an empty YAML document"
+                )
+            ) {
+                (
+                    rootHasNoNode = empty.node.isEmpty,
+                    replace = editMessage(empty.replace(Yaml.Cst.Path.root / "name", scalar("x"))),
+                    insert = editMessage(empty.insert(Yaml.Cst.Path.root / "name", scalar("x"))),
+                    remove = editMessage(empty.remove(Yaml.Cst.Path.root / "name"))
+                )
+            }
+        }
+
+        "fails inserting at the document root and removes the root via the empty path" in {
+            val doc     = Yaml.cst("name: Alice\n").getOrThrow
+            val emptied = doc.remove(Yaml.Cst.Path.root).getOrThrow
+
+            assertResult(
+                (
+                    insertAtRoot = "Cannot insert at the YAML document root",
+                    rootRemoved = true,
+                    sourceCleared = true
+                )
+            ) {
+                (
+                    insertAtRoot = editMessage(doc.insert(Yaml.Cst.Path.root, scalar("x"))),
+                    rootRemoved = emptied.node.isEmpty,
+                    sourceCleared = emptied.source.isEmpty
+                )
+            }
+        }
+
+        "fails edits whose path does not match the document shape" in {
+            val doc = Yaml.cst("name: Alice\nitems:\n  - a\n  - b\n").getOrThrow
+
+            assertResult(
+                (
+                    keyIntoSequence = true,
+                    indexIntoMapping = true,
+                    keyIntoScalar = true,
+                    sequenceIndexOutOfRange = true
+                )
+            ) {
+                (
+                    keyIntoSequence =
+                        editMessage(doc.replace(Yaml.Cst.Path.root / "items" / "x", scalar("v"))).contains("Expected mapping"),
+                    indexIntoMapping = editMessage(doc.replace(Yaml.Cst.Path.root / 0, scalar("v"))).contains("Expected sequence"),
+                    keyIntoScalar =
+                        editMessage(doc.replace(Yaml.Cst.Path.root / "name" / "deep", scalar("v"))).contains("Expected mapping"),
+                    sequenceIndexOutOfRange =
+                        editMessage(doc.replace(Yaml.Cst.Path.root / "items" / 5, scalar("v"))).contains("out of range")
+                )
+            }
+        }
+
+        "fails insert and remove with bad sequence indices and mismatched shapes" in {
+            val doc = Yaml.cst("items:\n  - a\n  - b\nname: Alice\n").getOrThrow
+
+            assertResult(
+                (
+                    insertOutOfRange = true,
+                    insertNestedOutOfRange = true,
+                    removeOutOfRange = true,
+                    insertKeyIntoSequence = true,
+                    removeKeyIntoSequence = true,
+                    insertIndexIntoMapping = true,
+                    removeIndexIntoMapping = true
+                )
+            ) {
+                (
+                    insertOutOfRange = editMessage(doc.insert(Yaml.Cst.Path.root / "items" / 9, scalar("z"))).contains("out of range"),
+                    insertNestedOutOfRange =
+                        editMessage(doc.insert(Yaml.Cst.Path.root / "items" / 9 / "k", scalar("z"))).contains("out of range"),
+                    removeOutOfRange = editMessage(doc.remove(Yaml.Cst.Path.root / "items" / 9)).contains("out of range"),
+                    insertKeyIntoSequence =
+                        editMessage(doc.insert(Yaml.Cst.Path.root / "items" / "k", scalar("z"))).contains("Expected mapping"),
+                    removeKeyIntoSequence = editMessage(doc.remove(Yaml.Cst.Path.root / "items" / "k")).contains("Expected mapping"),
+                    insertIndexIntoMapping = editMessage(doc.insert(Yaml.Cst.Path.root / 0, scalar("z"))).contains("Expected sequence"),
+                    removeIndexIntoMapping = editMessage(doc.remove(Yaml.Cst.Path.root / 0)).contains("Expected sequence")
+                )
+            }
+        }
+
+        "edits values nested under a sequence index" in {
+            val yaml =
+                """services:
+                  |  - name: api
+                  |    port: 8080
+                  |  - name: web
+                  |    port: 9090
+                  |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "services" / 0 / "port", scalar("8081"))
+                    .flatMap(_.insert(Yaml.Cst.Path.root / "services" / 1 / "tls", scalar("true")))
+                    .flatMap(_.remove(Yaml.Cst.Path.root / "services" / 0 / "name"))
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assertResult(
+                (
+                    apiPortEdited = true,
+                    webTlsInserted = true,
+                    apiNameRemoved = true,
+                    decodes = true
+                )
+            ) {
+                (
+                    apiPortEdited = rendered.contains("port: 8081"),
+                    webTlsInserted = rendered.contains("tls: true"),
+                    apiNameRemoved = !rendered.contains("name: api"),
+                    decodes = Yaml.decode[Map[String, List[Map[String, String]]]](rendered).isSuccess
+                )
+            }
+        }
+
+        "inserts a source-backed mapping subtree copied from another document" in {
+            val template =
+                Yaml.cst("api:\n  image: app:v1\n  ports: [8080, 8081]\n").getOrThrow
+            val subtree =
+                template.node match
+                    case Present(Yaml.Cst.Node.Mapping(entries, _, _, _, _)) => entries(0).value
+                    case other                                               => fail(s"Expected mapping root, got $other")
+            val edited =
+                Yaml.cst("services:\n  web:\n    image: web:v1\n").getOrThrow
+                    .insert(Yaml.Cst.Path.root / "services" / "api", subtree)
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assertResult((sourceCleared = true, hasImage = true, hasPorts = true, reparses = true)) {
+                (
+                    sourceCleared = edited.source.isEmpty,
+                    hasImage = rendered.contains("image: app:v1"),
+                    hasPorts = rendered.contains("8080"),
+                    reparses = Yaml.cst(rendered).isSuccess
+                )
+            }
+        }
+
+        "inserts a source-backed alias copied from another document" in {
+            val template =
+                Yaml.cst("base: &b 1\nref: *b\n").getOrThrow
+            val aliasNode =
+                template.node match
+                    case Present(Yaml.Cst.Node.Mapping(entries, _, _, _, _)) => entries(1).value
+                    case other                                               => fail(s"Expected mapping root, got $other")
+            val edited =
+                Yaml.cst("anchor: &a 1\n").getOrThrow
+                    .insert(Yaml.Cst.Path.root / "copy", aliasNode)
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assertResult((isAlias = true, rendersAlias = true)) {
+                (
+                    isAlias = aliasNode.isInstanceOf[Yaml.Cst.Node.Alias],
+                    rendersAlias = rendered.contains("copy: *b")
+                )
+            }
+        }
+    }
+
+    "Yaml.Cst rendering" - {
+
+        "renders an edited commented document preserving anchors aliases and empty collections" in {
+            val yaml =
+                """# config
+                  |anchored: &base
+                  |  image: app:v1
+                  |refs:
+                  |  - *base
+                  |  - name: web
+                  |empty: {}
+                  |list: []
+                  |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "anchored" / "image", scalar("app:v2"))
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assertResult(
+                (
+                    keepsComment = true,
+                    keepsAnchor = true,
+                    keepsAlias = true,
+                    keepsEmptyMapping = true,
+                    keepsEmptySequence = true,
+                    edited = true,
+                    reparses = true
+                )
+            ) {
+                (
+                    keepsComment = rendered.contains("# config"),
+                    keepsAnchor = rendered.contains("&base"),
+                    keepsAlias = rendered.contains("*base"),
+                    keepsEmptyMapping = rendered.contains("{}"),
+                    keepsEmptySequence = rendered.contains("[]"),
+                    edited = rendered.contains("image: app:v2"),
+                    reparses = Yaml.cst(rendered).isSuccess
+                )
+            }
+        }
+
+        "renders an edited commented document with Start markers and no trailing newline" in {
+            val yaml =
+                """# top
+                  |name: Alice
+                  |age: 30
+                  |""".stripMargin
+            val config =
+                Yaml.WriterConfig.Default.copy(
+                    documentMarkers = Yaml.WriterConfig.DocumentMarkers.Start,
+                    trailingNewline = false
+                )
+            val rendered =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "age", scalar("31"))
+                    .getOrThrow
+                    .render(using config)
+
+            assertResult((startsWithMarker = true, keepsComment = true, noTrailingNewline = true, edited = true)) {
+                (
+                    startsWithMarker = rendered.startsWith("---\n"),
+                    keepsComment = rendered.contains("# top"),
+                    noTrailingNewline = !rendered.endsWith("\n"),
+                    edited = rendered.contains("age: 31")
+                )
+            }
+        }
+
+        "renders a canonical stream built from events with start and end markers" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
+            val rebuilt =
+                Yaml.Cst.Stream(
+                    stream.documents.map(doc => Yaml.Cst.fromEvents(doc.events).getOrThrow),
+                    Chunk.empty,
+                    Chunk.empty,
+                    stream.span,
+                    Absent
+                )
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+            val rendered = rebuilt.render(using config)
+
+            assertResult((startsWithMarker = true, endsWithMarker = true, decodesAll = Result.succeed(Chunk("Alice", "Bob")))) {
+                (
+                    startsWithMarker = rendered.startsWith("---\n"),
+                    endsWithMarker = rendered.contains("...\n"),
+                    decodesAll = Yaml.decodeAll[Map[String, String]](rebuilt).map(_.map(_("name")))
+                )
+            }
+        }
     }
 
     "Yaml.Cst as a source" - {
