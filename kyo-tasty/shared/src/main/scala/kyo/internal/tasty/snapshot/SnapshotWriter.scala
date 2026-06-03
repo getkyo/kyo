@@ -17,7 +17,7 @@ import scala.collection.mutable
   * Two concurrent processes decoding the same input produce identical tmp files (decode is deterministic) and both attempt rename. The last
   * rename wins; the loser's tmp is silently discarded. No file locking, no corruption.
   *
-  * Stale tmp files (from crashed writers) are removed by `Tasty.Snapshot.evictOlderThan(d)`.
+  * Stale tmp files (from crashed writers) are removed by `Tasty.Snapshot.evictOlderThan(maxAge)`.
   *
   * I/O errors (unwritable cache dir, disk full) produce `TastyError.SnapshotIoError`.
   */
@@ -505,6 +505,7 @@ object SnapshotWriter:
                 case TastyError.UnsupportedVersion(found, sup)  => writeVersion(found); writeVersion(sup)
                 case TastyError.InconsistentClasspath(file, exp, fnd) =>
                     writeStr(file); writeUUID(exp); writeUUID(fnd)
+                case TastyError.FqnCollisionError(fqn)                 => writeStr(fqn)
                 case TastyError.MalformedSection(name, reason, at)     => writeStr(name); writeStr(reason); writeLong(at)
                 case TastyError.SymbolNotFound(fqn)                    => writeStr(fqn)
                 case TastyError.NotFound(fqn)                          => writeStr(fqn)

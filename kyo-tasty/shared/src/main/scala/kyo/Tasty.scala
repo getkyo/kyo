@@ -125,7 +125,7 @@ object Tasty:
       * `Flag.Private`, ...) has a unique bit; `Flags` is the union of zero or more such bits.
       *
       * **Construction.** `Flags.empty` is the empty set. `Flags(flag, rest*)` constructs a set from one or
-      * more `Flag` values. `flags1 | flags2` is the union of two sets. The underlying bits are exposed only
+      * more `Flag` values. `flags1.union(flags2)` is the union of two sets. The underlying bits are exposed only
       * via `private[kyo]` accessors (`bits`, `Flags.fromBits`) for the internal unpicklers and snapshot
       * writer; user code should not depend on a specific bit layout because the layout is not stable across
       * kyo-tasty versions.
@@ -167,7 +167,7 @@ object Tasty:
         def contains(flag: Flag): Boolean = (flags & Flag.bits(flag)) != 0L
 
         /** Union of two flag sets. */
-        def |(other: Flags): Flags = flags | other
+        def union(other: Flags): Flags = flags | other
 
         /** The raw bitmask. Used by the internal snapshot writer and any other kyo-internal
           * code that must persist the flag set; not part of the public API.
@@ -1455,13 +1455,13 @@ object Tasty:
       * @param addrMap
       *   Maps TASTy byte address to SymbolId for IDENT/SELECT tree references during lazy body decode.
       */
-    final case class SymbolBody(
+    final case class SymbolBody private[kyo] (
         bodyStart: Int,
         bodyEnd: Int,
         sectionBytes: Span[Byte],
         names: Span[Name],
         sectionOffset: Int,
-        addrMap: IntMap[SymbolId]
+        private[kyo] val addrMap: IntMap[SymbolId]
     ):
         override def equals(other: Any): Boolean = other match
             case that: SymbolBody =>
@@ -1546,6 +1546,13 @@ object Tasty:
     // "abstract class over trait" preference is a soft performance rule; here the Symbol
     // hierarchy mixes sealed traits and case classes in patterns the Scala 3 compiler does not
     // emit correct coercions for once Symbol is a class.
+    //
+    // Kind-discriminator predicates (`isClass`, `isMethod`, `isPackage`, ...) below are retained
+    // as a convenience surface for one-off assertion sites where `sym.isClass` reads more
+    // naturally than `sym match { case _: Symbol.Class => true ; case _ => false }`. For any
+    // new code branching on more than one kind, prefer exhaustive sealed pattern matching:
+    // it gives the compiler the chance to catch missing cases when new Symbol subtypes are
+    // added, which the boolean predicates cannot.
     sealed trait Symbol derives CanEqual:
         def id: SymbolId
         def name: Name
@@ -1633,9 +1640,8 @@ object Tasty:
           * Using-clause parameters also carry `Flag.Given` but are not `given` instances in the user-facing
           * sense; excluding `isParameter` prevents false positives for every `using foo: Foo` parameter.
           */
-        def isGiven: Boolean      = flags.contains(Flag.Given) && !isParameter
-        def isContextual: Boolean = flags.contains(Flag.Given) // alias retained per layered/no-restriction
-        def isOpaque: Boolean     = flags.contains(Flag.Opaque)
+        def isGiven: Boolean  = flags.contains(Flag.Given) && !isParameter
+        def isOpaque: Boolean = flags.contains(Flag.Opaque)
 
         // 14 kind discriminators computed structurally
         def isPackage: Boolean      = this.isInstanceOf[Symbol.Package]
@@ -1664,7 +1670,13 @@ object Tasty:
             case o: Symbol.Object => o.flags.contains(Flag.Case);
             case _                => false
 
-        // SymbolKind retained for callers that use `sym.kind`
+        /** Value-level discriminator: returns the `SymbolKind` enum value that classifies this symbol.
+          *
+          * The primary consumer is the `SymbolKind` snapshot wire format, where a byte tag is written
+          * and read back into the original Symbol subtype. For in-code dispatch prefer pattern matching
+          * on the sealed Symbol hierarchy: the compiler enforces exhaustiveness, while a switch on
+          * `sym.kind` silently goes stale when new subtypes are added.
+          */
         def kind: SymbolKind = this match
             case _: Symbol.Package => SymbolKind.Package
             // EnumCase extends Class; check EnumCase before Class so the subtype takes priority.
@@ -1684,7 +1696,13 @@ object Tasty:
             case _: Symbol.Unresolved   => SymbolKind.Unresolved
 
         // Resolution accessors common to every subtype
-        def owner(using cp: Classpath): Symbol = cp.symbol(ownerId)
+
+        /** The lexically enclosing symbol. Returns `Absent` for root symbols whose `ownerId` is the
+          * `-1` sentinel; every other symbol has a defined owner.
+          */
+        def owner(using cp: Classpath): Maybe[Symbol] =
+            if ownerId.value == -1 then Maybe.Absent
+            else Maybe(cp.symbol(ownerId))
 
         def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
 
@@ -1693,6 +1711,14 @@ object Tasty:
         def binaryName(using cp: Classpath): String =
             kyo.internal.tasty.symbol.BinaryName.compute(this, cp)
 
+        /** Human-readable rendering as `"<kind> <fullName>"` (e.g. `"Class kyo.fixtures.Foo"`).
+          *
+          * This is distinct from the format-selectable `show(format)` overload below: that overload
+          * dispatches to `fullNameString` / `simpleName` / `signature`, none of which match this
+          * no-argument rendering. Use this when displaying a symbol for diagnostics or logs; reach for
+          * `show(ShowFormat.FullyQualified)` for the bare FQN, `show(ShowFormat.Simple)` for the simple
+          * name, or `show(ShowFormat.Code)` for the source-style signature.
+          */
         def show(using cp: Classpath): String = kyo.internal.tasty.symbol.SymbolShow.show(this, cp)
 
         // Typed grouped queries derived from flags
@@ -1740,11 +1766,6 @@ object Tasty:
             go(this, 0)
             out.result()
         end ownersChain
-
-        /** Direct parent symbol of this symbol. `Absent` if `ownerId == -1` or the owner is the sentinel. */
-        def directParent(using cp: Classpath): Maybe[Symbol] =
-            if ownerId.value == -1 then Maybe.Absent
-            else Maybe(cp.symbol(ownerId))
 
         /** Subtype-aware annotation query. ClassLike / Method / Val / Var / TypeAlias / OpaqueType / AbstractType / Parameter walk both
           * Scala and Java annotation lists; Field walks `javaAnnotations` only; TypeParam / Package / Unresolved return `false`.
@@ -1925,15 +1946,20 @@ object Tasty:
                 case _                   => Chunk.empty
             ).map(cp.symbol)
 
-        /** Resolve the permitted direct subclasses for sealed / enum symbols. Returns `Absent` when this symbol has no sealed subclass
-          * list.
+        /** Resolve the permitted direct subclasses for sealed / enum symbols.
+          *
+          * Returns an empty `Chunk` when this symbol is not sealed OR when it is sealed with no listed
+          * children (a sealed class whose subclass list is unrecorded in the TASTy bytes). Use
+          * `isSealed` to discriminate the two cases: an empty result with `isSealed == true` means the
+          * declaration is sealed but the children are not available, and an empty result with
+          * `isSealed == false` means the symbol is not sealed.
           */
-        def permittedSubclasses(using cp: Classpath): Maybe[Chunk[Symbol]] =
+        def permittedSubclasses(using cp: Classpath): Chunk[Symbol] =
             (this match
                 case c: Symbol.Class => c.permittedSubclassIds
                 case t: Symbol.Trait => t.permittedSubclassIds
                 case _               => Maybe.Absent
-            ).map(_.map(cp.symbol))
+            ).map(_.map(cp.symbol)).getOrElse(Chunk.empty)
 
         /** All method-kind declarations of this symbol. */
         def methods(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.isMethod)
@@ -1954,24 +1980,18 @@ object Tasty:
         /** All type-like declarations (type aliases, opaque types, abstract types, type parameters) of this symbol. */
         def typeMembers(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.isTypeLike)
 
-        /** Find a direct member by simple string name. */
-        def findMember(name: String)(using cp: Classpath): Maybe[Symbol] =
-            import Name.asString
-            declarations.find(_.name.asString == name) match
-                case Some(s) => Maybe(s)
-                case None    => Maybe.Absent
-        end findMember
-
-        /** Find a direct member by `Name` value. */
-        def findMemberByName(n: Name)(using cp: Classpath): Maybe[Symbol] =
-            import Name.given
-            declarations.find(_.name == n) match
-                case Some(s) => Maybe(s)
-                case None    => Maybe.Absent
-        end findMemberByName
-
         /** All declarations of the given kind. */
         def membersByKind(k: SymbolKind)(using cp: Classpath): Chunk[Symbol] = declarations.filter(_.kind == k)
+
+        /** Decode the body bytes of this symbol into a `Tree`, memoising the result per Classpath.
+          *
+          * Returns `Maybe.Absent` for symbols that carry no body (Package, Field, TypeAlias, OpaqueType,
+          * AbstractType, TypeParam, Parameter, Unresolved) and for body-bearing symbols whose declaration
+          * had no decoded body bytes (e.g. an abstract method). Memoisation is keyed by `id` on the
+          * `Classpath`, so repeated calls do not re-decode.
+          */
+        def bodyTree(using frame: Frame, cp: Classpath): Maybe[Tree] < (Sync & Abort[TastyError]) =
+            cp.bodyTree(this)
 
     end Symbol
 
@@ -2085,26 +2105,12 @@ object Tasty:
             /** Resolve the companion of this classlike (companion object for a Class or Trait; companion class for an Object). */
             override def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
 
-            /** Collect every direct declaration whose simple name equals `name`. The singular `findMember` returns the first match. */
+            /** Collect every direct declaration whose simple name equals `name`. The singular
+              * `findDeclaredMember` returns the first match instead.
+              */
             def collectMembers(name: String)(using cp: Classpath): Chunk[Symbol] =
                 import Name.asString
                 declarations.filter(_.name.asString == name)
-
-            /** Find the first direct declaration whose simple name equals `name`. */
-            override def findMember(name: String)(using cp: Classpath): Maybe[Symbol] =
-                import Name.asString
-                declarations.find(_.name.asString == name) match
-                    case Some(s) => Maybe(s)
-                    case None    => Maybe.Absent
-            end findMember
-
-            /** Find a direct declaration by typed `Name` value. */
-            override def findMemberByName(n: Name)(using cp: Classpath): Maybe[Symbol] =
-                import Name.given
-                declarations.find(_.name == n) match
-                    case Some(s) => Maybe(s)
-                    case None    => Maybe.Absent
-            end findMemberByName
 
         end ClassLike
 
@@ -2126,14 +2132,18 @@ object Tasty:
             javaAnnotations: Chunk[JavaAnnotation],
             body: Maybe[SymbolBody]
         ) extends ClassLike:
-            /** Resolve the permitted direct subclasses for sealed / enum classes. Returns Absent when no sealed subclass list is present.
+            /** Resolve the permitted direct subclasses for sealed / enum classes.
+              *
+              * Returns an empty `Chunk` when no sealed subclass list is recorded; use `isSealed` to
+              * tell apart a non-sealed class from a sealed class whose children are absent.
               */
-            override def permittedSubclasses(using cp: Classpath): Maybe[Chunk[ClassLike]] =
+            override def permittedSubclasses(using cp: Classpath): Chunk[ClassLike] =
                 permittedSubclassIds.map: ids =>
                     ids.flatMap: id =>
                         cp.symbol(id) match
                             case c: ClassLike => Chunk(c)
                             case _            => Chunk.empty
+                .getOrElse(Chunk.empty)
         end Class
 
         /** Enum-case symbol (F-E-007). Represents a single case of a Scala 3 enum.
@@ -2190,12 +2200,13 @@ object Tasty:
                 javaAnnotations,
                 body
             ):
-            override def permittedSubclasses(using cp: Classpath): Maybe[Chunk[ClassLike]] =
+            override def permittedSubclasses(using cp: Classpath): Chunk[ClassLike] =
                 permittedSubclassIds.map: ids =>
                     ids.flatMap: id =>
                         cp.symbol(id) match
                             case c: ClassLike => Chunk(c)
                             case _            => Chunk.empty
+                .getOrElse(Chunk.empty)
             override def equals(that: Any): Boolean = that match
                 case t: EnumCase => id == t.id
                 case _           => false
@@ -2257,13 +2268,18 @@ object Tasty:
             javaAnnotations: Chunk[JavaAnnotation],
             body: Maybe[SymbolBody]
         ) extends ClassLike:
-            /** Resolve the permitted direct subclasses for sealed traits. Returns Absent when no sealed subclass list is present. */
-            override def permittedSubclasses(using cp: Classpath): Maybe[Chunk[ClassLike]] =
+            /** Resolve the permitted direct subclasses for sealed traits.
+              *
+              * Returns an empty `Chunk` when no sealed subclass list is recorded; use `isSealed` to
+              * discriminate the not-sealed case from the sealed-with-absent-children case.
+              */
+            override def permittedSubclasses(using cp: Classpath): Chunk[ClassLike] =
                 permittedSubclassIds.map: ids =>
                     ids.flatMap: id =>
                         cp.symbol(id) match
                             case c: ClassLike => Chunk(c)
                             case _            => Chunk.empty
+                .getOrElse(Chunk.empty)
         end Trait
 
         final case class Object private[kyo] (
@@ -2339,10 +2355,6 @@ object Tasty:
             def isMacroTransparent: Boolean =
                 flags.contains(Flag.Macro) && !flags.contains(Flag.Synthetic) && flags.contains(Flag.Transparent)
 
-            /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
-            def bodyTree(using frame: Frame, cp: Classpath): Maybe[Tree] < (Sync & Abort[TastyError]) =
-                cp.bodyTree(this)
-
         end Method
 
         final case class Val private[kyo] (
@@ -2355,13 +2367,7 @@ object Tasty:
             declaredType: Maybe[Type],
             annotations: Chunk[Annotation],
             body: Maybe[SymbolBody]
-        ) extends TermLike:
-
-            /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
-            def bodyTree(using frame: Frame, cp: Classpath): Maybe[Tree] < (Sync & Abort[TastyError]) =
-                cp.bodyTree(this)
-
-        end Val
+        ) extends TermLike
 
         final case class Var private[kyo] (
             id: SymbolId,
@@ -2373,13 +2379,7 @@ object Tasty:
             declaredType: Maybe[Type],
             annotations: Chunk[Annotation],
             body: Maybe[SymbolBody]
-        ) extends TermLike:
-
-            /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
-            def bodyTree(using frame: Frame, cp: Classpath): Maybe[Tree] < (Sync & Abort[TastyError]) =
-                cp.bodyTree(this)
-
-        end Var
+        ) extends TermLike
 
         final case class Field private[kyo] (
             id: SymbolId,
@@ -2623,6 +2623,16 @@ object Tasty:
 
     // ── Pickle (in-memory TASTy + classfile bytes) ──────────────────────────
 
+    /** In-memory TASTy pickle: header UUID, format version, and raw `.tasty` bytes.
+      *
+      * **UUID representation.** The `uuid` field is a `String` because the TASTy header stores the UUID
+      * inline as two little-endian longs; treating it as an opaque hex string avoids parsing it twice
+      * (once to validate, once to render in diagnostics) on the hot path. `TastyError.InconsistentClasspath`
+      * carries `expectedUuid` and `foundUuid` as `java.util.UUID` instead: those values are constructed at
+      * the point a mismatch is detected and consumed at the API boundary, where the structured type is
+      * preferable for equality and formatting. The dual representation is intentional; do not normalise
+      * one to the other without measuring the allocation cost on the cold-load path.
+      */
     final case class Pickle(uuid: String, version: Version, bytes: Span[Byte]):
         /** Human-readable summary: `Pickle(<uuid> v<version> <n>B)`. */
         def show: String = s"Pickle($uuid v${version.show} ${bytes.size}B)"
@@ -2670,7 +2680,7 @@ object Tasty:
           * `symbolsAnnotatedWith` to find symbols annotated with `scala.deprecated` or `scala.annotation.tailrec` even on JS/Native
           * where the embedded fixture set does not include scala-library.
           */
-        unresolvedFqnByNegId: Map[Int, String]
+        private[kyo] val unresolvedFqnByNegId: Map[Int, String]
     ):
         // NOT constructor parameters -- excluded from auto-generated equals / hashCode / copy / unapply.
         // A cp.copy(...) call produces a new Classpath with fresh empty memos; this is correct because
@@ -2691,7 +2701,7 @@ object Tasty:
                     case _ => acc
         end cachedUnresolvedTypeReferenceCount
 
-        // F-W2-24: simple-name index for O(1) findClassByName. Keyed by String (decoded name); built once.
+        // F-W2-24: simple-name index for O(1) findClassesByName. Keyed by String (decoded name); built once.
         // Names in the symbols array are interned via the orchestrator's internal Interner, which is a
         // DIFFERENT Interner instance from Tasty.globalInterner. Using decoded String keys ensures that
         // Name("Foo") via globalInterner and cls.name via the orchestrator's interner both map to the
@@ -2726,7 +2736,7 @@ object Tasty:
             symbolsByKind.getOrElse(k, Chunk.empty).asInstanceOf[Chunk[A]]
 
         /** Cached ClassLike aggregate: every Class, Trait, Object, and EnumCase symbol. Materialized once
-          * on first access by `allClasses` / `allClassLike`. Empty when no such symbols exist.
+          * on first access by `allClassLike`. Empty when no such symbols exist.
           */
         private lazy val cachedAllClassLike: Chunk[Symbol.ClassLike] =
             if symbols.isEmpty then Chunk.empty
@@ -2913,11 +2923,11 @@ object Tasty:
           * Performance: O(1) lookup via an internal name index built lazily on first access.
           * The index maps interned `Name` values to `Chunk[Symbol.Class]`. Subsequent calls on the same
           * `Classpath` instance are O(1). The index is NOT preserved by `cp.copy(...)`; copying rebuilds
-          * it lazily on the next `findClassByName` call of the new Classpath.
+          * it lazily on the next `findClassesByName` call of the new Classpath.
           */
-        def findClassByName(simpleName: String): Chunk[Symbol.Class] =
+        def findClassesByName(simpleName: String): Chunk[Symbol.Class] =
             nameIndex.getOrElse(simpleName, Chunk.empty)
-        end findClassByName
+        end findClassesByName
 
         /** All package symbols in this classpath.
           *
@@ -3039,20 +3049,19 @@ object Tasty:
                     case Maybe.Absent     => Abort.fail(TastyError.NotFound(name))
 
         /** Require any symbol by fully-qualified dotted name; fails with `TastyError.InvalidFqn` when `fqn` is empty, or
-          * `TastyError.SymbolNotFound` when absent.
+          * `TastyError.NotFound` when absent.
           *
           * This accessor replaces the accidental `findSymbol(fqn).get` pattern that would throw a `NoSuchElementException` at runtime.
           * Unlike `requireClass` / `requireTrait` / `requireObject`, this method does not narrow the kind: any registered symbol satisfies
-          * the lookup regardless of its `SymbolKind`.
-          *
-          * Raises `TastyError.SymbolNotFound(fqn)` when the FQN is not present in `fqnIndex`.
+          * the lookup regardless of its `SymbolKind`. The absent case is funneled into the same `NotFound` variant the kind-specific
+          * `requireX` methods use, so callers do not have to distinguish two near-identical absent shapes.
           */
         def requireSymbol(fqn: String)(using Frame): Symbol < Abort[TastyError] =
             if fqn.isEmpty then Abort.fail(TastyError.InvalidFqn(fqn, "fqn must be non-empty"))
             else
                 findSymbol(fqn) match
                     case Maybe.Present(s) => s
-                    case Maybe.Absent     => Abort.fail(TastyError.SymbolNotFound(fqn))
+                    case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
         /** Return all FQN collisions recorded during classpath initialization.
           *
@@ -3070,23 +3079,20 @@ object Tasty:
 
         // ── typed Classpath-wide all* aggregations ──
 
-        /** All ClassLike symbols (Class, Trait, Object, EnumCase) at any nesting depth.
-          *
-          * F-G-006 fix: the prior implementation returned `Chunk[Symbol.Class]`, excluding Trait and Object. Widening to `Symbol.ClassLike`
-          * restores the invariant `allClasses.size >= topLevelClasses.size`. The return type widening is additive (ClassLike
-          * is a supertype of Class; existing code that pattern-matches on `Symbol.Class` continues to work over the subset).
-          *
-          * O(1) after first call: backed by `cachedAllClassLike`, populated lazily.
-          */
-        def allClasses: Chunk[Symbol.ClassLike] = cachedAllClassLike
-
         /** All Trait symbols in the classpath. O(1) lookup via `symbolsByKind`. */
         def allTraits: Chunk[Symbol.Trait] = symbolsOfKind(SymbolKind.Trait)
 
         /** All Object symbols in the classpath. O(1) lookup via `symbolsByKind`. */
         def allObjects: Chunk[Symbol.Object] = symbolsOfKind(SymbolKind.Object)
 
-        /** Alias for `allClasses`: all ClassLike symbols (Class, Trait, Object, EnumCase) at any nesting depth. O(1) cached. */
+        /** All ClassLike symbols (Class, Trait, Object, EnumCase) at any nesting depth.
+          *
+          * The invariant `allClassLike.size >= topLevelClasses.size` holds because the result includes
+          * nested ClassLike symbols. Use `allTraits` / `allObjects` / `symbolsOfKind(SymbolKind.Class)`
+          * to narrow to a specific subtype; the result here keeps the union of all four.
+          *
+          * O(1) after first call: backed by `cachedAllClassLike`, populated lazily.
+          */
         def allClassLike: Chunk[Symbol.ClassLike] = cachedAllClassLike
 
         /** All Method symbols in the classpath. O(1) lookup via `symbolsByKind`. */
@@ -3647,8 +3653,8 @@ object Tasty:
       * longer relevant (different commits, different sbt projects, transient builds); this companion exposes
       * the maintenance operations a long-running process needs.
       *
-      * **Eviction.** `evictOlderThan(cacheDir, d)` deletes any `*.krfl` file in `cacheDir` whose
-      * modification time is older than `d`, returning silently. It does not recurse, and it does not look
+      * **Eviction.** `evictOlderThan(cacheDir, maxAge)` deletes any `*.krfl` file in `cacheDir` whose
+      * modification time is older than `maxAge`, returning silently. It does not recurse, and it does not look
       * at file contents; the policy is purely age-based. The operation carries `Sync & Abort[TastyError]`
       * because it touches the disk; expect `SnapshotIoError` when the directory cannot be read.
       *
@@ -3659,22 +3665,22 @@ object Tasty:
       */
     object Snapshot:
 
-        /** Delete snapshot files in `cacheDir` whose modification time is older than `d`.
+        /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
           *
           * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
           *
           * Performance: stats all `.krfl` files, sorts them by mtime ascending (oldest first), deletes in order and stops at the
-          * first file whose age is within `d`. When most files are fresh this early-exit avoids unnecessary delete attempts on files that
-          * are clearly within the retention window.
+          * first file whose age is within `maxAge`. When most files are fresh this early-exit avoids unnecessary delete attempts on files
+          * that are clearly within the retention window.
           *
           * @param cacheDir
           *   directory containing snapshot files
-          * @param d
+          * @param maxAge
           *   maximum age; files older than this are deleted
           */
-        def evictOlderThan(cacheDir: String, d: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
+        def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
             val source = PlatformFileSource.get
-            evictOlderThanWithSource(cacheDir, d.toMillis, source)
+            evictOlderThanWithSource(cacheDir, maxAge.toMillis, source)
         end evictOlderThan
 
         /** Internal overload that accepts a custom FileSource for testing.

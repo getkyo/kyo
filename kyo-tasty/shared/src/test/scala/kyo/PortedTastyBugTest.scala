@@ -101,7 +101,7 @@ class PortedTastyBugTest extends Test:
                 .orElse(cp.findClass(s"$FixturePkg.PortedBug195$$Parent"))
             parent match
                 case kyo.Maybe.Present(p) =>
-                    val yMember = p.findMember("y")
+                    val yMember = p.findDeclaredMember("y")
                     assert(yMember.isDefined, s"Parent.y must be findable; got $yMember")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -178,7 +178,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug428ValueClass") match
                 case kyo.Maybe.Present(cls) =>
-                    val doubled = cls.findMember("doubled")
+                    val doubled = cls.findDeclaredMember("doubled")
                     assert(doubled.isDefined, "value class method 'doubled' must be findable")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -197,7 +197,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug134") match
                 case kyo.Maybe.Present(holder) =>
-                    val v = holder.findMember("v")
+                    val v = holder.findDeclaredMember("v")
                     assert(v.isDefined, "val v must be visible inside PortedBug134")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -269,7 +269,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug224C") match
                 case kyo.Maybe.Present(cls) =>
-                    val m = cls.findMember("m")
+                    val m = cls.findDeclaredMember("m")
                     assert(m.isDefined, "C.m must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug224C missing")
@@ -287,7 +287,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug357") match
                 case kyo.Maybe.Present(holder) =>
-                    val classify = holder.findMember("classify")
+                    val classify = holder.findDeclaredMember("classify")
                     assert(classify.isDefined, "classify method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug357 missing")
@@ -318,7 +318,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug414") match
                 case kyo.Maybe.Present(holder) =>
-                    val parsed = holder.findMember("parsed")
+                    val parsed = holder.findDeclaredMember("parsed")
                     assert(parsed.isDefined, "val parsed (calls Color.valueOf) must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug414 missing")
@@ -335,7 +335,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug424") match
                 case kyo.Maybe.Present(holder) =>
-                    val proxy = holder.findMember("proxy")
+                    val proxy = holder.findDeclaredMember("proxy")
                     assert(proxy.isDefined, "inline def proxy must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug424 missing")
@@ -354,7 +354,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug464") match
                 case kyo.Maybe.Present(holder) =>
-                    val m = holder.findMember("m")
+                    val m = holder.findDeclaredMember("m")
                     assert(m.isDefined, "val m typed as Map[String, Int] must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug464 missing")
@@ -372,7 +372,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug401") match
                 case kyo.Maybe.Present(holder) =>
-                    val x = holder.findMember("x")
+                    val x = holder.findDeclaredMember("x")
                     assert(x.isDefined, "val x typed as Flatten[Int] must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug401 missing")
@@ -389,7 +389,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug108") match
                 case kyo.Maybe.Present(cls) =>
-                    val poly = cls.findMember("poly")
+                    val poly = cls.findDeclaredMember("poly")
                     assert(poly.isDefined, "poly method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug108 missing")
@@ -425,7 +425,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug213") match
                 case kyo.Maybe.Present(holder) =>
-                    val r = holder.findMember("r")
+                    val r = holder.findDeclaredMember("r")
                     assert(r.isDefined, "val r (refined type) must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug213 missing")
@@ -442,7 +442,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug172Outer") match
                 case kyo.Maybe.Present(cls) =>
-                    val make = cls.findMember("make")
+                    val make = cls.findDeclaredMember("make")
                     assert(make.isDefined, "method make returning Outer#Inner must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug172Outer missing")
@@ -459,7 +459,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug403Container") match
                 case kyo.Maybe.Present(cls) =>
-                    val wrap = cls.findMember("wrap")
+                    val wrap = cls.findDeclaredMember("wrap")
                     assert(wrap.isDefined, "wrap method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug403Container missing")
@@ -476,7 +476,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findTrait(s"$FixturePkg.PortedBug116IArraySig") match
                 case kyo.Maybe.Present(trt) =>
-                    val from = trt.findMember("from")
+                    val from = trt.findDeclaredMember("from")
                     assert(from.isDefined, "from method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug116IArraySig missing")
@@ -511,7 +511,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug178") match
                 case kyo.Maybe.Present(holder) =>
-                    val getEntry = holder.findMember("getEntry")
+                    val getEntry = holder.findDeclaredMember("getEntry")
                     assert(getEntry.isDefined, "getEntry method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug178 missing")
@@ -548,8 +548,8 @@ class PortedTastyBugTest extends Test:
             val con               = cp.findClass(s"$FixturePkg.PortedBug11075B")
             (abs, con) match
                 case (kyo.Maybe.Present(a), kyo.Maybe.Present(c)) =>
-                    val aMethod = a.findMember("a")
-                    val cMethod = c.findMember("a")
+                    val aMethod = a.findDeclaredMember("a")
+                    val cMethod = c.findDeclaredMember("a")
                     assert(aMethod.isDefined, "abstract inline a must be visible")
                     assert(cMethod.isDefined, "concrete inline a must be visible")
                     succeed
@@ -567,7 +567,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug16843") match
                 case kyo.Maybe.Present(holder) =>
-                    val go = holder.findMember("go")
+                    val go = holder.findDeclaredMember("go")
                     assert(go.isDefined, "method go must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug16843 missing")
@@ -647,7 +647,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug284") match
                 case kyo.Maybe.Present(holder) =>
-                    val v = holder.findMember("v")
+                    val v = holder.findDeclaredMember("v")
                     assert(v.isDefined, "val v (Bounded[String]) must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug284 missing")

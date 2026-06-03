@@ -191,14 +191,14 @@ class ClasspathTypedFindTest extends Test:
                     fail("Expected Present for pkg but got Absent")
     }
 
-    // ── Leaf 107: findClassByName-typed ──────────────────────────────────────
+    // ── Leaf 107: findClassesByName-typed ──────────────────────────────────────
     // Given: fixture with "pkg.A" (id 0) and "pkg.sub.A" (id 5), both named "A".
-    // When: cp.findClassByName("A")
+    // When: cp.findClassesByName("A")
     // Then: Chunk[Symbol.Class] of size 2
     // Pins: INV-005
-    "Leaf 107: findClassByName returns all Class instances with the given simple name" in run {
+    "Leaf 107: findClassesByName returns all Class instances with the given simple name" in run {
         buildFixture.map: cp =>
-            val result = cp.findClassByName("A")
+            val result = cp.findClassesByName("A")
             assert(result.size == 2, s"Expected 2 classes named A but got ${result.size}: $result")
             assert(result.forall(_.isInstanceOf[Tasty.Symbol.Class]), "All results must be Symbol.Class")
             succeed

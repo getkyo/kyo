@@ -2,11 +2,11 @@ package kyo
 
 import kyo.internal.TestClasspaths
 
-/** Fidelity tests for collection invariants: topLevelClasses vs allClasses size relation, isGiven/isMacro predicate tightening, and
+/** Fidelity tests for collection invariants: topLevelClasses vs allClassLike size relation, isGiven/isMacro predicate tightening, and
   * javaMetadata merging.
   *
   * Pins findings F-G-002, F-G-006, F-E-004, F-E-005, F-E-006. Phase 11 un-pends these leaves by redefining
-  * `topLevelClasses`/`allClasses` to return `Chunk[Symbol.ClassLike]`, tightening `isGiven`/`isMacro`, and merging javaMetadata when both
+  * `topLevelClasses`/`allClassLike` to return `Chunk[Symbol.ClassLike]`, tightening `isGiven`/`isMacro`, and merging javaMetadata when both
   * .tasty and .class companions exist.
   *
   * Phase 2.12 corrective: leaves 1-4 assert universal invariants that hold on any classpath (embedded or stdlib). They are ungated so that
@@ -19,38 +19,38 @@ class CollectionInvariantsTest extends Test:
 
     // F-G-006 / INV-008 leaf 1 (Phase 11): all-superset-of-toplevel
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
-    // When: asserting cp.allClasses.size >= cp.topLevelClasses.size
+    // When: asserting cp.allClassLike.size >= cp.topLevelClasses.size
     // Then: post-fix the assertion holds;
-    //       before fix cp.topLevelClasses.size == 3,514 and cp.allClasses.size == 1,508
+    //       before fix cp.topLevelClasses.size == 3,514 and cp.allClassLike.size == 1,508
     // Pins: INV-008 producer (F-G-006)
     // Cross-platform: invariant holds for any classpath size.
-    "F-G-006 / INV-008 (Phase 11): cp.allClasses.size >= cp.topLevelClasses.size" in run {
+    "F-G-006 / INV-008 (Phase 11): cp.allClassLike.size >= cp.topLevelClasses.size" in run {
         val cp = TestClasspaths.withClasspath()
         cp.map: classpath =>
-            val allSz = classpath.allClasses.size
+            val allSz = classpath.allClassLike.size
             val topSz = classpath.topLevelClasses.size
             assert(
                 allSz >= topSz,
-                s"INV-008 violated: allClasses.size=$allSz < topLevelClasses.size=$topSz. " +
-                    "topLevelClasses must be a subset of allClasses."
+                s"INV-008 violated: allClassLike.size=$allSz < topLevelClasses.size=$topSz. " +
+                    "topLevelClasses must be a subset of allClassLike."
             )
             succeed
     }
 
     // F-G-006 leaf 2 (Phase 11): toplevel-subset-of-all
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
-    // When: asserting cp.topLevelClasses.toSet.subsetOf(cp.allClasses.toSet)
+    // When: asserting cp.topLevelClasses.toSet.subsetOf(cp.allClassLike.toSet)
     // Then: post-fix the assertion holds
     // Pins: F-G-006
     // Cross-platform: subset invariant holds for any classpath.
-    "F-G-006 (Phase 11): cp.topLevelClasses is a subset of cp.allClasses" in run {
+    "F-G-006 (Phase 11): cp.topLevelClasses is a subset of cp.allClassLike" in run {
         val cp = TestClasspaths.withClasspath()
         cp.map: classpath =>
-            val allSet = classpath.allClasses.toSet
+            val allSet = classpath.allClassLike.toSet
             val topSet = classpath.topLevelClasses.toSet
             assert(
                 topSet.subsetOf(allSet),
-                s"topLevelClasses is not a subset of allClasses. " +
+                s"topLevelClasses is not a subset of allClassLike. " +
                     s"Extra in top: ${(topSet -- allSet).take(5).map(_.name).mkString(", ")}"
             )
             succeed
@@ -134,7 +134,7 @@ class CollectionInvariantsTest extends Test:
     // Given: a classpath loaded via TestClasspaths.withClasspath; at least one class has both a .tasty and a
     //        companion .class file (JVM: every kyo-tasty class on the real classpath; JS/Native: PlainClass via
     //        the embedded .class fixture added alongside PlainClass.tasty).
-    // When: scanning cp.allClasses for any symbol with javaMetadata defined.
+    // When: scanning cp.allClassLike for any symbol with javaMetadata defined.
     // Then: post-fix at least one ClassLike has javaMetadata Present (companion .class decode populated it).
     // Pins: F-G-002
     // Cross-platform: Embedded.plainClassClassfile is registered as "root/PlainClass.class" alongside
@@ -143,7 +143,7 @@ class CollectionInvariantsTest extends Test:
     "F-G-002 (Phase 11): at least one class has javaMetadata Present after .class companion merge" in run {
         val cp = TestClasspaths.withClasspath()
         cp.map: classpath =>
-            val withMeta = classpath.allClasses.filter(_.javaMetadata.isDefined)
+            val withMeta = classpath.allClassLike.filter(_.javaMetadata.isDefined)
             assert(
                 withMeta.nonEmpty,
                 "F-G-002: no ClassLike symbol has javaMetadata Present after companion .class merge. " +

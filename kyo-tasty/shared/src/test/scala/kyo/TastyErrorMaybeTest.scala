@@ -126,6 +126,7 @@ class TastyErrorMaybeTest extends Test:
                 case TastyError.UnsupportedVersion(f, s)        => writeVersion(f); writeVersion(s)
                 case TastyError.InconsistentClasspath(file, e, fd) =>
                     writeStr(file); writeUUID(e); writeUUID(fd)
+                case TastyError.FqnCollisionError(fqn)         => writeStr(fqn)
                 case TastyError.MalformedSection(n, r, at)     => writeStr(n); writeStr(r); writeLong(at)
                 case TastyError.SymbolNotFound(fqn)            => writeStr(fqn)
                 case TastyError.NotFound(fqn)                  => writeStr(fqn)

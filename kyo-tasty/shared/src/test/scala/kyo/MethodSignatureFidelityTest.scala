@@ -215,7 +215,7 @@ class MethodSignatureFidelityTest extends Test:
         cp.map { classpath =>
             val traitMaybe = classpath.findSymbol("kyo.fixtures.SomeTrait")
             assert(traitMaybe.isDefined, "kyo.fixtures.SomeTrait not found in classpath")
-            val computeMaybe = traitMaybe.get.findMember("compute")(using classpath)
+            val computeMaybe = traitMaybe.get.findDeclaredMember("compute")(using classpath)
             assert(computeMaybe.isDefined, "kyo.fixtures.SomeTrait.compute not found in SomeTrait")
             val method = computeMaybe.get.asInstanceOf[Tasty.Symbol.Method]
             val dt     = method.declaredType

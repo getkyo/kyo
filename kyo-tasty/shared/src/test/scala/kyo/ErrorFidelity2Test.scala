@@ -158,26 +158,26 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 5 (F-A5-001 SymbolNotFound): requiresymbol-raises-on-absent
+    // Leaf 5 (F-A5-001 NotFound): requiresymbol-raises-on-absent
     // Given: requireSymbol('non.existent.fqn') against embedded classpath
     // When: awaiting result
-    // Then: aborts with TastyError.SymbolNotFound('non.existent.fqn')
-    // Pins: INV-103-DF2; F-A5-001 (SymbolNotFound wired via requireSymbol)
-    "F-A5-001 leaf 5 (Phase 2.08): requireSymbol raises SymbolNotFound for absent FQN" in run {
+    // Then: aborts with TastyError.NotFound('non.existent.fqn')
+    // Pins: INV-103-DF2; F-A5-001 (NotFound wired via requireSymbol; unified with kind-specific requireX)
+    "F-A5-001 leaf 5 (Phase 2.08): requireSymbol raises NotFound for absent FQN" in run {
         kyo.internal.TestClasspaths.withClasspath().flatMap: cp =>
             given Tasty.Classpath = cp
             Abort.run[TastyError](cp.requireSymbol("non.existent.fqn.abc.xyz")).map: result =>
                 result match
-                    case Result.Failure(TastyError.SymbolNotFound(fqn)) =>
+                    case Result.Failure(TastyError.NotFound(fqn)) =>
                         assert(
                             fqn == "non.existent.fqn.abc.xyz",
-                            s"Expected SymbolNotFound fqn == 'non.existent.fqn.abc.xyz'; got '$fqn'."
+                            s"Expected NotFound fqn == 'non.existent.fqn.abc.xyz'; got '$fqn'."
                         )
                         succeed
                     case Result.Success(sym) =>
-                        fail(s"Expected SymbolNotFound but requireSymbol succeeded with: $sym")
+                        fail(s"Expected NotFound but requireSymbol succeeded with: $sym")
                     case Result.Failure(other) =>
-                        fail(s"Expected TastyError.SymbolNotFound but got: $other")
+                        fail(s"Expected TastyError.NotFound but got: $other")
                     case Result.Panic(t) =>
                         fail(s"Unexpected panic: ${t.getMessage}")
     }

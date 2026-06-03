@@ -287,7 +287,7 @@ object Scala2PickleReader:
         val symName = nameTable.getOrElse(nameRef, s"<class$idx>")
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
-        val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags)
+        val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
         makePickleSym(Tasty.SymbolKind.Class, flags, symName, interner)
     end decodeClassSym
 
@@ -304,7 +304,7 @@ object Scala2PickleReader:
         val symName = nameTable.getOrElse(nameRef, s"<module$idx>")
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
-        val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags) | Tasty.Flags(Tasty.Flag.Module)
+        val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags)).union(Tasty.Flags(Tasty.Flag.Module))
         makePickleSym(Tasty.SymbolKind.Object, flags, symName, interner)
     end decodeModuleSym
 
@@ -328,7 +328,7 @@ object Scala2PickleReader:
         val symName = nameTable.getOrElse(nameRef, s"<val$idx>")
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
-        val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags)
+        val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
         // METHOD flag in Scala 2 pickle is bit 18 (0x40000)
         val isMethod = (rawFlags & METH_FLAG) != 0
         val kind =
@@ -361,7 +361,7 @@ object Scala2PickleReader:
         val symName = nameTable.getOrElse(nameRef, s"<alias$idx>")
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
-        val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags)
+        val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
         // declaredType is set at construction time via makePickleSymWithType.
         // Use a placeholder stringSym (declaredType = Absent default).
         val stringSym = makePickleSym(Tasty.SymbolKind.Class, baseFlags, "String", interner)
@@ -388,7 +388,7 @@ object Scala2PickleReader:
         val symName = nameTable.getOrElse(nameRef, s"<typeparam$idx>")
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
-        val flags    = baseFlags | pickleFlags2TastyFlags(rawFlags)
+        val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
         makePickleSym(Tasty.SymbolKind.AbstractType, flags, symName, interner)
     end decodeTypeSym
 

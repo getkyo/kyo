@@ -297,7 +297,7 @@ class DecoderFidelity5ExplorationTest extends Test:
         TestClasspaths.withClasspath().map: cp =>
             given Tasty.Classpath = cp
             import kyo.internal.tasty.symbol.SymbolId.value as idVal
-            val classWithMostMethods = cp.allClasses.toIndexedSeq.maxByOption: cl =>
+            val classWithMostMethods = cp.allClassLike.toIndexedSeq.maxByOption: cl =>
                 cl.declarationIds.count: id =>
                     cp.symbol(id).isInstanceOf[Tasty.Symbol.Method]
             classWithMostMethods match
@@ -321,7 +321,7 @@ class DecoderFidelity5ExplorationTest extends Test:
                             s"Total methods on this class: ${methods.length}."
                     )
                     assert(
-                        methods.nonEmpty || cp.allClasses.isEmpty,
+                        methods.nonEmpty || cp.allClassLike.isEmpty,
                         s"maxByOption returned a class with no methods: ${cls.simpleName}"
                     )
                     succeed

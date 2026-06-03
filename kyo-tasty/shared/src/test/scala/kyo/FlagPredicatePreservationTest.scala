@@ -45,7 +45,7 @@ class FlagPredicatePreservationTest extends Test:
     }
 
     // Leaf 44: 40-predicates-on-method
-    // Given: Symbol.Method inline given def; When: invoke all 40 predicates; Then: isInline/isGiven/isContextual/isMethod true; 36 others false
+    // Given: Symbol.Method inline given def; When: invoke all 40 predicates; Then: isInline/isGiven/isMethod true; 37 others false
     // Pins: INV-003
     "40-predicates-on-method: isInline/isGiven/isMethod true" in {
         val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Given)
@@ -66,7 +66,6 @@ class FlagPredicatePreservationTest extends Test:
         assert(sym.isMethod, "isMethod must be true")
         assert(sym.isInline, "isInline must be true")
         assert(sym.isGiven, "isGiven must be true")
-        assert(sym.isContextual, "isContextual must be true (alias for isGiven)")
         assert(!sym.isClass, "isClass must be false")
         assert(!sym.isTrait, "isTrait must be false")
         assert(!sym.isVal, "isVal must be false")

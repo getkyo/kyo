@@ -24,20 +24,21 @@ class SealedFidelityTest extends Test:
         TestClasspaths.withClasspath().map: cp =>
             cp.findClassLike("kyo.fixtures.Animal") match
                 case Present(animalSym) =>
-                    animalSym.permittedSubclasses(using cp) match
-                        case Present(children) =>
-                            val fqns = children.map(_.fullNameString(using cp)).toSet
-                            assert(
-                                fqns.exists(f => f.endsWith("Dog") || f.endsWith(".Dog")),
-                                s"Expected kyo.fixtures.Dog in permittedSubclasses of kyo.fixtures.Animal; got $fqns"
-                            )
-                            assert(
-                                fqns.exists(f => f.endsWith("Cat") || f.endsWith(".Cat")),
-                                s"Expected kyo.fixtures.Cat in permittedSubclasses of kyo.fixtures.Animal; got $fqns"
-                            )
-                            succeed
-                        case Absent =>
-                            fail("kyo.fixtures.Animal.permittedSubclasses was Absent; expected Present(Chunk(Dog, Cat))")
+                    val children = animalSym.permittedSubclasses(using cp)
+                    if children.isEmpty then
+                        fail("kyo.fixtures.Animal.permittedSubclasses was empty; expected Chunk(Dog, Cat)")
+                    else
+                        val fqns = children.map(_.fullNameString(using cp)).toSet
+                        assert(
+                            fqns.exists(f => f.endsWith("Dog") || f.endsWith(".Dog")),
+                            s"Expected kyo.fixtures.Dog in permittedSubclasses of kyo.fixtures.Animal; got $fqns"
+                        )
+                        assert(
+                            fqns.exists(f => f.endsWith("Cat") || f.endsWith(".Cat")),
+                            s"Expected kyo.fixtures.Cat in permittedSubclasses of kyo.fixtures.Animal; got $fqns"
+                        )
+                        succeed
+                    end if
                 case Absent =>
                     fail("cp.findClassLike(kyo.fixtures.Animal) returned Absent; Animal fixture must be in classpath")
     }
@@ -52,36 +53,37 @@ class SealedFidelityTest extends Test:
         TestClasspaths.withClasspath().map: cp =>
             cp.findClassLike("kyo.fixtures.Vehicle") match
                 case Present(sym) =>
-                    sym.permittedSubclasses(using cp) match
-                        case Present(children) =>
-                            val fqns = children.map(_.fullNameString(using cp)).toSet
-                            assert(
-                                fqns.exists(f => f.endsWith("Car") || f.endsWith(".Car")),
-                                s"Expected kyo.fixtures.Car in permittedSubclasses of kyo.fixtures.Vehicle; got $fqns"
-                            )
-                            assert(
-                                fqns.exists(f => f.endsWith("Bike") || f.endsWith(".Bike")),
-                                s"Expected kyo.fixtures.Bike in permittedSubclasses of kyo.fixtures.Vehicle; got $fqns"
-                            )
-                            succeed
-                        case Absent =>
-                            fail("kyo.fixtures.Vehicle.permittedSubclasses was Absent; expected Present(Chunk(Car, Bike))")
+                    val children = sym.permittedSubclasses(using cp)
+                    if children.isEmpty then
+                        fail("kyo.fixtures.Vehicle.permittedSubclasses was empty; expected Chunk(Car, Bike)")
+                    else
+                        val fqns = children.map(_.fullNameString(using cp)).toSet
+                        assert(
+                            fqns.exists(f => f.endsWith("Car") || f.endsWith(".Car")),
+                            s"Expected kyo.fixtures.Car in permittedSubclasses of kyo.fixtures.Vehicle; got $fqns"
+                        )
+                        assert(
+                            fqns.exists(f => f.endsWith("Bike") || f.endsWith(".Bike")),
+                            s"Expected kyo.fixtures.Bike in permittedSubclasses of kyo.fixtures.Vehicle; got $fqns"
+                        )
+                        succeed
+                    end if
                 case Absent =>
                     fail("cp.findClassLike(kyo.fixtures.Vehicle) returned Absent")
     }
 
     // INV-007 leaf 3 (Phase 07): every-sealed-class-has-permits
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: filtering cp.allClasses.filter(_.isSealed) and checking permittedSubclasses.isDefined
+    // When: filtering cp.allClassLike.filter(_.isSealed) and checking permittedSubclasses.nonEmpty
     // Then: post-fix >= 50% of sealed classes have permittedSubclasses populated (conservative threshold that holds for any classpath)
     // Pins: INV-007 invariant
     // Cross-platform: embedded fixtures include Animal, Vehicle, SealedBase, Color, Shape; all sealed and have permits.
     "INV-007 (Phase 07): >= 50% of sealed classes have permittedSubclasses populated" in run {
         TestClasspaths.withClasspath().map: cp =>
-            val sealedClasses = cp.allClasses.filter(_.isSealed)
+            val sealedClasses = cp.allClassLike.filter(_.isSealed)
             val total         = sealedClasses.size
             assert(total > 0, s"No sealed classes found on classpath; fixtures must include at least Animal, Vehicle, SealedBase")
-            val withPermits = sealedClasses.count(_.permittedSubclasses(using cp).isDefined)
+            val withPermits = sealedClasses.count(_.permittedSubclasses(using cp).nonEmpty)
             val pct         = withPermits.toDouble / total.toDouble * 100.0
             assert(
                 pct >= 50.0,
@@ -90,13 +92,13 @@ class SealedFidelityTest extends Test:
             succeed
     }
 
-    // F-I-003 leaf 4 (Phase 07): non-sealed-class-returns-absent
+    // F-I-003 leaf 4 (Phase 07): non-sealed-class-returns-empty
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: finding kyo.fixtures.NonSealedMarker (explicitly non-sealed) and calling permittedSubclasses
-    // Then: post-fix returns Absent
+    // Then: post-fix returns Chunk.empty
     // Pins: F-I-003 negative case (HARD RULE 2: no fabricated Child entries for non-sealed classes)
     // Cross-platform: kyo.fixtures.NonSealedMarker is in the embedded fixture set on all platforms.
-    "F-I-003 (Phase 07): non-sealed class permittedSubclasses returns Absent" in run {
+    "F-I-003 (Phase 07): non-sealed class permittedSubclasses returns empty Chunk" in run {
         TestClasspaths.withClasspath().map: cp =>
             cp.findClass("kyo.fixtures.NonSealedMarker") match
                 case Present(s) =>
@@ -104,16 +106,14 @@ class SealedFidelityTest extends Test:
                         !s.isSealed,
                         s"Expected kyo.fixtures.NonSealedMarker to be non-sealed but got isSealed=${s.isSealed}"
                     )
-                    s.permittedSubclasses(using cp) match
-                        case Absent =>
-                            succeed
-                        case Present(children) =>
-                            fail(
-                                s"Expected Absent for non-sealed kyo.fixtures.NonSealedMarker.permittedSubclasses; " +
-                                    s"got Present(${children.size} children): " +
-                                    children.map(_.fullNameString(using cp)).mkString(", ")
-                            )
-                    end match
+                    val children = s.permittedSubclasses(using cp)
+                    assert(
+                        children.isEmpty,
+                        s"Expected empty Chunk for non-sealed kyo.fixtures.NonSealedMarker.permittedSubclasses; " +
+                            s"got ${children.size} children: " +
+                            children.map(_.fullNameString(using cp)).mkString(", ")
+                    )
+                    succeed
                 case Absent =>
                     fail("cp.findClass(kyo.fixtures.NonSealedMarker) returned Absent; NonSealedMarker fixture must be in classpath")
             end match

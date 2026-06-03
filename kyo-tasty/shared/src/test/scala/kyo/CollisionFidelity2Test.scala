@@ -131,27 +131,27 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 3 (OQ-001, F-A5-001 InconsistentClasspath): failfast-raises-inconsistent-classpath
+    // Leaf 3 (OQ-001, F-A5-001 FqnCollisionError): failfast-raises-fqn-collision-error
     // Given: same collision setup but ErrorMode.FailFast
     // When: Classpath.init(collisionRoots, FailFast)
-    // Then: aborts with TastyError.InconsistentClasspath(fqn, _, _)
-    // Pins: INV-103-DF2; INV-106-DF2; F-A5-001 (InconsistentClasspath wired to collision)
-    "F-A5-001 leaf 3 (Phase 2.08): FailFast collision raises TastyError.InconsistentClasspath" in run {
+    // Then: aborts with TastyError.FqnCollisionError(fqn)
+    // Pins: INV-103-DF2; INV-106-DF2; F-A5-001 (FqnCollisionError wired to collision)
+    "F-A5-001 leaf 3 (Phase 2.08): FailFast collision raises TastyError.FqnCollisionError" in run {
         Abort.run[TastyError](withCollisionClasspathFailFast).map: result =>
             result match
-                case Result.Failure(TastyError.InconsistentClasspath(fqn, _, _)) =>
+                case Result.Failure(TastyError.FqnCollisionError(fqn)) =>
                     assert(
                         fqn.nonEmpty,
-                        "TastyError.InconsistentClasspath.file (fqn) must be non-empty on collision abort."
+                        "TastyError.FqnCollisionError.fqn must be non-empty on collision abort."
                     )
                     succeed
                 case Result.Success(_) =>
                     fail(
-                        "Expected FailFast collision init to abort with TastyError.InconsistentClasspath; " +
+                        "Expected FailFast collision init to abort with TastyError.FqnCollisionError; " +
                             "init succeeded silently. Before fix: collision not detected."
                     )
                 case Result.Failure(other) =>
-                    fail(s"Expected TastyError.InconsistentClasspath but got: $other")
+                    fail(s"Expected TastyError.FqnCollisionError but got: $other")
                 case Result.Panic(t) =>
                     fail(s"Unexpected panic: ${t.getMessage}")
     }

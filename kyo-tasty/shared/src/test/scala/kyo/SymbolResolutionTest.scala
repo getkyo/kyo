@@ -306,11 +306,12 @@ class SymbolResolutionTest extends Test:
         val pkgSym = makePkgSym9(id = 0, name = "p")
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).map: cp =>
-            given Tasty.Classpath = cp
-            val owner             = fooSym.owner
+            given Tasty.Classpath          = cp
+            val owner: Maybe[Tasty.Symbol] = fooSym.owner
+            assert(owner.isDefined, "Expected owner to be Present")
             assert(
-                owner.id == pkgSym.id,
-                s"Expected owner id ${pkgSym.id.value} but got ${owner.id.value}"
+                owner.get.id == pkgSym.id,
+                s"Expected owner id ${pkgSym.id.value} but got ${owner.get.id.value}"
             )
     }
 
@@ -358,16 +359,16 @@ class SymbolResolutionTest extends Test:
             assert(methodNames == Set("foo", "bar"), s"Expected {foo, bar} but got $methodNames")
     }
 
-    // Phase 09 Leaf 4: findMember by string name returns Maybe.Absent when missing.
+    // Phase 09 Leaf 4: findDeclaredMember by string name returns Maybe.Absent when missing.
     // Pins: INV-007
-    "Phase09: findMember by string name returns Maybe.Absent when missing" in run {
+    "Phase09: findDeclaredMember by string name returns Maybe.Absent when missing" in run {
         val classSym  = makeClassSym9(id = 0, name = "Foo", ownerId = 0)
         val memberSym = makeMethodSym9(id = 1, name = "existingMethod", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, memberSym)).map: cp =>
             given Tasty.Classpath = cp
-            val absent            = withDecls.findMember("nope")
-            val present           = withDecls.findMember("existingMethod")
+            val absent            = withDecls.findDeclaredMember("nope")
+            val present           = withDecls.findDeclaredMember("existingMethod")
             assert(absent == Maybe.Absent, s"Expected Absent for 'nope' but got $absent")
             assert(present.isDefined, s"Expected Present for 'existingMethod' but got $present")
     }
@@ -379,10 +380,10 @@ class SymbolResolutionTest extends Test:
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).map: cp =>
             given Tasty.Classpath               = cp
-            val ownerSym: Tasty.Symbol          = fooSym.owner
+            val ownerSym: Maybe[Tasty.Symbol]   = fooSym.owner
             val parentList: Chunk[Tasty.Symbol] = fooSym.parents
             val methodList: Chunk[Tasty.Symbol] = fooSym.methods
-            assert(ownerSym.id == pkgSym.id, "owner id mismatch")
+            assert(ownerSym.isDefined && ownerSym.get.id == pkgSym.id, "owner id mismatch")
             assert(parentList.isEmpty, s"Expected empty parents got ${parentList.length}")
             assert(methodList.isEmpty, s"Expected empty methods got ${methodList.length}")
     }
@@ -394,7 +395,7 @@ class SymbolResolutionTest extends Test:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
             locally:
                 given Tasty.Classpath                = cp
-                val _owner: Tasty.Symbol             = sym.owner
+                val _owner: Maybe[Tasty.Symbol]      = sym.owner
                 val _parents: Chunk[Tasty.Symbol]    = sym.parents
                 val _typeParams: Chunk[Tasty.Symbol] = sym.typeParams
                 val _decls: Chunk[Tasty.Symbol]      = sym.declarations
@@ -404,8 +405,9 @@ class SymbolResolutionTest extends Test:
                 val _fields: Chunk[Tasty.Symbol]     = sym.fields
                 val _nested: Chunk[Tasty.Symbol]     = sym.nestedTypes
                 val _typeM: Chunk[Tasty.Symbol]      = sym.typeMembers
-                val _find: Maybe[Tasty.Symbol]       = sym.findMember("anything")
-                val _findN: Maybe[Tasty.Symbol]      = sym.findMemberByName(Tasty.Name.Unsafe.init("anything"))
+                val _find: Maybe[Tasty.Symbol]       = sym.findDeclaredMember("anything")
+                val _findInh: Maybe[Tasty.Symbol]    = sym.findInheritedMember("anything")
+                val _findAny: Maybe[Tasty.Symbol]    = sym.findAnyMember("anything")
                 val _byKind: Chunk[Tasty.Symbol]     = sym.membersByKind(Tasty.SymbolKind.Method)
                 val _showStr: String                 = sym.show
             succeed

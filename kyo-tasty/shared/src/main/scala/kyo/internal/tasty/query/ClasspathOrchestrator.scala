@@ -1334,8 +1334,8 @@ object ClasspathOrchestrator:
                     val pkgIdIdx    = newPackageIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap
                     // F-G-006 fix: filter topLevelClassIds to only ClassLike symbols whose owner is a Package.
                     // The prior approach appended ALL ClassLike symbols to topLevelCls regardless of nesting
-                    // depth, producing a count (3,514) larger than allClasses (1,508). The correct invariant
-                    // is topLevelClasses.size <= allClasses.size. We filter finalSymbols directly (post-
+                    // depth, producing a count (3,514) larger than allClassLike (1,508). The correct invariant
+                    // is topLevelClasses.size <= allClassLike.size. We filter finalSymbols directly (post-
                     // materialization) so the Package kind check uses the final symbol's kind, not a partial
                     // symbol's kind.
                     val topIds: Chunk[SymbolId] = symsChunk.flatMap:
@@ -1371,7 +1371,7 @@ object ClasspathOrchestrator:
                     val brokenFqnCount = fqnIdIdx.count { case (_, sid) => sid.value < 0 }
 
                     // OQ-001 FailFast wiring:
-                    //   - If collisions exist under FailFast -> InconsistentClasspath (first colliding FQN).
+                    //   - If collisions exist under FailFast -> FqnCollisionError (first colliding FQN).
                     //   - If broken fqnIndex entries exist under FailFast -> ClasspathBuilding.
                     // Both checks produce Left(error) returned as a tuple alongside the classpath so the
                     // Sync.Unsafe.defer block can carry the error out without mixing Abort effects inside it.
@@ -1379,8 +1379,7 @@ object ClasspathOrchestrator:
                         if mode == Tasty.ErrorMode.FailFast then
                             if collisionDiagnostics.nonEmpty then
                                 val firstFqn = state.collisions.keys.head
-                                val zeroUUID = new java.util.UUID(0L, 0L)
-                                Maybe(TastyError.InconsistentClasspath(firstFqn, zeroUUID, zeroUUID))
+                                Maybe(TastyError.FqnCollisionError(firstFqn))
                             else if brokenFqnCount > 0 then
                                 Maybe(TastyError.ClasspathBuilding(s"finalizeMerge: brokenFqnCount=$brokenFqnCount"))
                             else Maybe.Absent

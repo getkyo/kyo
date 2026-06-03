@@ -179,20 +179,14 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                             s"java.lang.constant.ConstantDesc.isSealed is false on JDK $jdkVersion; " +
                                 s"expected true (PermittedSubclasses attribute decoded); flags=${sym.flags}"
                         )
-                        sym.permittedSubclasses match
-                            case Absent =>
-                                fail(
-                                    s"java.lang.constant.ConstantDesc.permittedSubclasses is Absent on JDK $jdkVersion; " +
-                                        "ClassfileUnpickler did not decode PermittedSubclasses attribute"
-                                )
-                            case Present(subs) =>
-                                assert(
-                                    subs.nonEmpty,
-                                    s"java.lang.constant.ConstantDesc.permittedSubclasses is empty on JDK $jdkVersion; " +
-                                        "expected at least one permitted subclass (e.g. Double, Integer, String)"
-                                )
-                                succeed
-                        end match
+                        val subs = sym.permittedSubclasses
+                        assert(
+                            subs.nonEmpty,
+                            s"java.lang.constant.ConstantDesc.permittedSubclasses is empty on JDK $jdkVersion; " +
+                                "expected at least one permitted subclass (e.g. Double, Integer, String); " +
+                                "ClassfileUnpickler did not decode PermittedSubclasses attribute"
+                        )
+                        succeed
                     else
                         // JDK < 12: ConstantDesc does not exist; skip.
                         succeed

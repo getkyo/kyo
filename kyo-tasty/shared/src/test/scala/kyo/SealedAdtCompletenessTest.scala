@@ -31,11 +31,11 @@ class SealedAdtCompletenessTest extends Test:
     private inline def enumVariantCount[T](using m: Mirror.SumOf[T]): Int =
         constValue[Tuple.Size[m.MirroredElemTypes]]
 
-    // ── ADT-001: TastyError (enum - 18 variants) ─────────────────────────────
+    // ── ADT-001: TastyError (enum - 19 variants) ─────────────────────────────
 
     // EXPECTED_TASTY_ERROR_COUNT: update this constant whenever a new TastyError variant is added.
     // Compile failure here means a variant was added without updating this guard.
-    private inline val EXPECTED_TASTY_ERROR_COUNT = 18
+    private inline val EXPECTED_TASTY_ERROR_COUNT = 19
 
     // Verify at compile time that the actual count matches the pinned expectation.
     // summonInline resolves the Mirror at compile time; Tuple.Size on the concrete
@@ -58,6 +58,7 @@ class SealedAdtCompletenessTest extends Test:
         "CorruptedFile"           -> "ErrorFidelity2Test",
         "UnsupportedVersion"      -> "TastyHeaderTest",
         "InconsistentClasspath"   -> "CollisionFidelity2Test",
+        "FqnCollisionError"       -> "CollisionFidelity2Test",
         "MalformedSection"        -> "TastyErrorTest",
         "SymbolNotFound"          -> "TastyErrorTest",
         "NotFound"                -> "ClasspathTypedRequireTest",
@@ -74,8 +75,8 @@ class SealedAdtCompletenessTest extends Test:
         "DigestMismatch"          -> "TastyErrorMaybeTest"
     )
 
-    // ADT-001: TastyError - all 18 variants covered by tests.
-    "ADT-001: TastyError - all 18 variants are covered by at least one named test" in {
+    // ADT-001: TastyError - all 19 variants covered by tests.
+    "ADT-001: TastyError - all 19 variants are covered by at least one named test" in {
         val variantNames = enumVariantNames[TastyError]
         assert(
             variantNames.size == EXPECTED_TASTY_ERROR_COUNT,
@@ -349,7 +350,7 @@ class SealedAdtCompletenessTest extends Test:
 
     // Summary: verifies the union of covered + uncovered equals allVariants for each ADT.
     "ADT-SUMMARY: all 4 ADTs enumerated with correct total counts" in {
-        // TastyError: 18 variants
+        // TastyError: 19 variants
         assert(
             tastyErrorCoveredByTest.size == EXPECTED_TASTY_ERROR_COUNT,
             s"TastyError coverage map has ${tastyErrorCoveredByTest.size} entries, expected $EXPECTED_TASTY_ERROR_COUNT"

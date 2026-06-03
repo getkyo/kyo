@@ -8,7 +8,7 @@ import kyo.*
   * (BaseKyoCoreTest) handles `Abort[Any] & Async & Scope`, so test bodies call `TestClasspaths.withClasspath().map(cp => ...)` directly.
   *
   * Leaves:
-  *   1. js-embedded-fixture-loads: cp.allClasses.size > 0 from embedded fixtures.
+  *   1. js-embedded-fixture-loads: cp.allClassLike.size > 0 from embedded fixtures.
   *   2. js-symbols-non-empty: cp.symbols.size > 0 (includes methods and vals).
   *   3. js-fidelity-suite-compiles: compile+run parity leaf (running proves compilation succeeded).
   *   4. js-no-classpath-errors: cp.errors.isEmpty on well-formed embedded fixtures.
@@ -22,9 +22,9 @@ class TestClasspathsJsTest extends Test:
     // When: calling TestClasspaths.withClasspath on JS.
     // Then: the resulting Classpath has at least one class-like symbol.
     // Pins: F-F-001 (JS parity).
-    "js-embedded-fixture-loads: allClasses non-empty from embedded fixtures" in run {
+    "js-embedded-fixture-loads: allClassLike non-empty from embedded fixtures" in run {
         TestClasspaths.withClasspath().map: cp =>
-            assert(cp.allClasses.size > 0, s"Expected allClasses.size > 0 but got ${cp.allClasses.size}")
+            assert(cp.allClassLike.size > 0, s"Expected allClassLike.size > 0 but got ${cp.allClassLike.size}")
             succeed
     }
 

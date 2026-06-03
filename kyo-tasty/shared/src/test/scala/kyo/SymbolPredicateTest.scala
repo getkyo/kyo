@@ -38,7 +38,7 @@ class SymbolPredicateTest extends Test:
             case pk: Tasty.Symbol.Package      => pk.copy(id = SymbolId(1), ownerId = SymbolId(0))
 
     private def flagsOf(flags: Tasty.Flag*): Tasty.Flags =
-        flags.foldLeft(Tasty.Flags.empty)((acc, f) => acc | Tasty.Flags(f))
+        flags.foldLeft(Tasty.Flags.empty)((acc, f) => acc.union(Tasty.Flags(f)))
 
     // ── Leaf 1: every flag predicate reflects flags.contains ─────────────────
 
@@ -141,7 +141,6 @@ class SymbolPredicateTest extends Test:
         assert(sym.isModule, "isModule")
         assert(sym.isJava, "isJava")
         assert(sym.isInline, "isInline")
-        assert(sym.isContextual, "isContextual")
         assert(sym.isOpaque, "isOpaque")
 
         // Verify the empty case: a symbol with no flags set has all predicates false.
@@ -150,7 +149,6 @@ class SymbolPredicateTest extends Test:
         assert(!noFlagsSym.isAbstract, "isAbstract should be false with no flags")
         assert(!noFlagsSym.isSealed, "isSealed should be false with no flags")
         assert(!noFlagsSym.isCase, "isCase should be false with no flags")
-        assert(!noFlagsSym.isContextual, "isContextual should be false with no flags")
         assert(!noFlagsSym.isOpaque, "isOpaque should be false with no flags")
 
         succeed

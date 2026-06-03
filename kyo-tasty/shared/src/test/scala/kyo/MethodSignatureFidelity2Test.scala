@@ -21,7 +21,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     import AllowUnsafe.embrace.danger
 
     // Leaf 7 (Phase 2.01): tuple-splitAt-no-sentinel
-    // Given: cp.findSymbol("scala.Tuple").get.findMember("splitAt").get.asInstanceOf[Symbol.Method].declaredType
+    // Given: cp.findSymbol("scala.Tuple").get.findDeclaredMember("splitAt").get.asInstanceOf[Symbol.Method].declaredType
     // When: traversing every Named inside the type recursively
     // Then: post-fix no Named(sym).symbolId.value == -1 is found; before fix second Applied arg was Named(-1)
     // On JS/Native: scala.Tuple is not in the embedded fixture set; the leaf produces succeed (Absent branch).
@@ -33,7 +33,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
                 case Absent =>
                     succeed
                 case Present(tupleSym) =>
-                    tupleSym.findMember("splitAt") match
+                    tupleSym.findDeclaredMember("splitAt") match
                         case Absent =>
                             succeed
                         case Present(splitAt) =>
@@ -68,7 +68,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
                 case Absent =>
                     succeed
                 case Present(tupleSym) =>
-                    tupleSym.findMember("++") match
+                    tupleSym.findDeclaredMember("++") match
                         case Absent =>
                             succeed
                         case Present(plusPlus) =>

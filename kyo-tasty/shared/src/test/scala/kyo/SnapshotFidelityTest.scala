@@ -40,7 +40,7 @@ class SnapshotFidelityTest extends Test:
                 warmAnnotCount >= coldAnnotCount,
                 s"In-memory snapshot lost deprecated annotations: cold=$coldAnnotCount warm=$warmAnnotCount"
             )
-            coldCp.allClasses.foreach:
+            coldCp.allClassLike.foreach:
                 case cold: Tasty.Symbol.Class =>
                     cold.permittedSubclassIds match
                         case Present(coldIds) =>
@@ -73,7 +73,7 @@ class SnapshotFidelityTest extends Test:
     // Migration: was jvmOnly via withRoundTrip; now uses embedded fixtures.
     "F-C-002 (Phase 12): permittedSubclassIds survives in-memory snapshot round-trip" in run {
         TestClasspaths2.withSnapshotInMemory().map: (coldCp, warmCp) =>
-            coldCp.allClasses.foreach:
+            coldCp.allClassLike.foreach:
                 case cold: Tasty.Symbol.Class =>
                     cold.permittedSubclassIds match
                         case Present(coldIds) =>
@@ -124,7 +124,7 @@ class SnapshotFidelityTest extends Test:
     // Migration: was jvmOnly (required real stdlib .class files); embedded fixtures suffice for shape assertion.
     "F-G-002 (Phase 12): javaMetadata survives in-memory snapshot round-trip" in run {
         TestClasspaths2.withSnapshotInMemory().map: (coldCp, warmCp) =>
-            coldCp.allClasses.flatMap:
+            coldCp.allClassLike.flatMap:
                 case c: Tasty.Symbol.ClassLike if c.javaMetadata.isDefined => Chunk(c)
                 case _                                                     => Chunk.empty
             .headOption match

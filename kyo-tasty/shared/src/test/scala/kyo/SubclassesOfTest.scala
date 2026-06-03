@@ -11,7 +11,7 @@ class SubclassesOfTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def flagsOf(flags: Tasty.Flag*): Tasty.Flags =
-        flags.foldLeft(Tasty.Flags.empty)((acc, f) => acc | Tasty.Flags(f))
+        flags.foldLeft(Tasty.Flags.empty)((acc, f) => acc.union(Tasty.Flags(f)))
 
     /** Build a classpath with an inheritance ladder A <: B <: C <: D.
       *

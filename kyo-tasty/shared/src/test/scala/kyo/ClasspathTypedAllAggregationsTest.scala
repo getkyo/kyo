@@ -215,15 +215,15 @@ class ClasspathTypedAllAggregationsTest extends Test:
                 canonical = TypeArena.canonical()
             )
 
-    // ── Leaf 118: allClasses-typed ────────────────────────────────────────────
-    // Given: fixture with 3 classes.
-    // When: cp.allClasses
+    // ── Leaf 118: allClassLike-typed ──────────────────────────────────────────
+    // Given: fixture with 3 classes, 2 traits, 1 object.
+    // When: cp.allClassLike
     // Then: Chunk[Symbol.ClassLike] including Class, Trait, Object -- size 6 (3+2+1)
-    // F-G-006 fix: allClasses now returns Chunk[Symbol.ClassLike] (widened from Chunk[Symbol.Class])
+    // F-G-006 fix: allClassLike returns Chunk[Symbol.ClassLike] covering Class, Trait, Object, EnumCase.
     // Pins: INV-005
-    "Leaf 118: allClasses returns Chunk[ClassLike] of size 6 (3 Class + 2 Trait + 1 Object)" in run {
+    "Leaf 118: allClassLike returns Chunk[ClassLike] of size 6 (3 Class + 2 Trait + 1 Object)" in run {
         buildFixture.map: cp =>
-            val cs: Chunk[Tasty.Symbol.ClassLike] = cp.allClasses
+            val cs: Chunk[Tasty.Symbol.ClassLike] = cp.allClassLike
             assert(cs.size == 6, s"Expected 6 classlike symbols (3 class + 2 trait + 1 object) but got ${cs.size}: $cs")
             succeed
     }
@@ -261,17 +261,6 @@ class ClasspathTypedAllAggregationsTest extends Test:
         buildFixture.map: cp =>
             val cl: Chunk[Tasty.Symbol.ClassLike] = cp.allClassLike
             assert(cl.size == 6, s"Expected 6 ClassLike symbols but got ${cl.size}: $cl")
-            succeed
-    }
-
-    // ── DF6-02: allClassLike-is-alias-of-allClasses ──────────────────────────
-    // DF6 final-probe finding: allClassLike and allClasses had byte-identical
-    // implementations. After deduplication, allClassLike is a 1-line alias.
-    // Pin the alias relationship so any future drift (e.g. one widens but the
-    // other does not) is caught immediately.
-    "DF6-02: allClassLike returns the same Chunk as allClasses (alias relationship)" in run {
-        buildFixture.map: cp =>
-            assert(cp.allClassLike == cp.allClasses, "allClassLike must equal allClasses (intentional alias)")
             succeed
     }
 

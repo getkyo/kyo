@@ -25,7 +25,7 @@ import scala.collection.mutable
   * F-W2-21 : SnapshotReader.read digest verification: FIXED (optional expectedDigest param + DigestMismatch); pinned P04.10
   * F-W2-22 : cp.symbol(rootSymbolId) sentinel on empty cp: DOCUMENTED-CONTRACT; pinned P04.11
   * F-W2-23 : SymbolBody.toString identity-hash fix: FIXED; pinned P04.12
-  * F-W2-24 : findClassByName O(1) via nameIndex: FIXED; pinned P04.13
+  * F-W2-24 : findClassesByName O(1) via nameIndex: FIXED; pinned P04.13
   * F-W2-25 : evictOlderThan sort+early-exit optimization: FIXED; pinned P04.14
   * F-W2-26 : stale SnapshotFormat home comment removed: FIXED; pinned P04.15
   * F-W2-32 : evictOlderThan units clarification: DOCUMENTED-CONTRACT; pinned P04.16
@@ -182,7 +182,7 @@ class DecoderFidelity5Phase04Test extends Test:
                 ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
                     import Tasty.Name.asString
                     var checked = 0
-                    cp.allClasses.foreach: sym =>
+                    cp.allClassLike.foreach: sym =>
                         // Build a synthetic binary name from the source FQN (slash-separator form)
                         val sourceFqn  = cp.fullName(sym).asString
                         val binaryName = sourceFqn.replace('.', '/')
@@ -397,27 +397,27 @@ class DecoderFidelity5Phase04Test extends Test:
         succeed
     }
 
-    // P04.13: F-W2-24 -- findClassByName uses nameIndex for O(1) lookup; repeated calls return same result.
+    // P04.13: F-W2-24 -- findClassesByName uses nameIndex for O(1) lookup; repeated calls return same result.
     //
     // Contract pin: repeated calls return the same Chunk (idempotency).
-    "P04.13 F-W2-24: findClassByName returns stable results across multiple calls" in run {
+    "P04.13 F-W2-24: findClassesByName returns stable results across multiple calls" in run {
         Abort.run[TastyError]:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
             Scope.run:
                 ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
                     import Tasty.Name.asString
-                    cp.allClasses.headOption match
+                    cp.allClassLike.headOption match
                         case Some(cls) =>
                             val simpleName = cls.name.asString
-                            val r1         = cp.findClassByName(simpleName)
-                            val r2         = cp.findClassByName(simpleName)
-                            val r3         = cp.findClassByName(simpleName)
+                            val r1         = cp.findClassesByName(simpleName)
+                            val r2         = cp.findClassesByName(simpleName)
+                            val r3         = cp.findClassesByName(simpleName)
                             assert(
                                 r1.length == r2.length && r2.length == r3.length,
-                                s"findClassByName('$simpleName') lengths inconsistent: ${r1.length}, ${r2.length}, ${r3.length}"
+                                s"findClassesByName('$simpleName') lengths inconsistent: ${r1.length}, ${r2.length}, ${r3.length}"
                             )
-                            assert(r1.nonEmpty, s"findClassByName('$simpleName') returned empty; expected match")
+                            assert(r1.nonEmpty, s"findClassesByName('$simpleName') returned empty; expected match")
                             succeed
                         case None =>
                             succeed
@@ -499,8 +499,8 @@ class DecoderFidelity5Phase04Test extends Test:
             Scope.run:
                 ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).flatMap: cp1 =>
                     ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp2 =>
-                        val bodies1 = cp1.allClasses.toSeq.flatMap(c => c.body.toChunk.toSeq)
-                        val bodies2 = cp2.allClasses.toSeq.flatMap(c => c.body.toChunk.toSeq)
+                        val bodies1 = cp1.allClassLike.toSeq.flatMap(c => c.body.toChunk.toSeq)
+                        val bodies2 = cp2.allClassLike.toSeq.flatMap(c => c.body.toChunk.toSeq)
                         assert(
                             bodies1.nonEmpty,
                             "Expected at least one SymbolBody from PlainClass.tasty fixture"

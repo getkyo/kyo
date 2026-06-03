@@ -9,7 +9,7 @@ package kyo
   * **Grouping.** The cases group by the surface they cover.
   *
   *   - **File-level decode**: `FileNotFound`, `CorruptedFile`, `UnsupportedVersion`, `MalformedSection`,
-  *     `ClassfileFormatError`, `UnknownTagInPosition`, `InconsistentClasspath`. Raised during `Classpath.init`;
+  *     `ClassfileFormatError`, `UnknownTagInPosition`, `InconsistentClasspath`, `FqnCollisionError`. Raised during `Classpath.init`;
   *     in `ErrorMode.SoftFail` they accumulate in `cp.errors`, in `ErrorMode.FailFast` they abort the open.
   *   - **Lookup**: `SymbolNotFound` (orphan `SymbolId`), `NotFound` (FQN absent), `InvalidFqn` (caller passed
   *     a syntactically invalid FQN to a `require*` method).
@@ -43,15 +43,24 @@ enum TastyError derives CanEqual:
     /** The TASTy file's format version is outside the range this reader supports. */
     case UnsupportedVersion(found: Tasty.Version, supported: Tasty.Version)
 
-    /** The classpath is internally inconsistent.
+    /** A TASTy file's UUID does not match the UUID recorded in the companion classfile.
       *
-      * Two uses:
-      *   1. UUID mismatch: a TASTy file's UUID does not match the UUID recorded in the companion classfile. `file` is the .tasty file path.
-      *      `expectedUuid` / `foundUuid` carry the mismatched UUIDs.
-      *   2. FQN collision under `ErrorMode.FailFast`: two source roots each define a symbol under the same fully-qualified name. `file`
-      *      carries the colliding FQN. `expectedUuid` and `foundUuid` are set to the zero UUID (sentinel) in this case.
+      * Raised during `Classpath.init` when the embedded UUID in a `.tasty` file disagrees with the UUID encoded
+      * in its sibling `.class` file's `TASTY` attribute. `file` is the `.tasty` file path, and
+      * `expectedUuid` / `foundUuid` carry the two mismatched UUIDs.
+      *
+      * For FQN-level collisions across roots, see `FqnCollisionError`.
       */
     case InconsistentClasspath(file: String, expectedUuid: java.util.UUID, foundUuid: java.util.UUID)
+
+    /** Two source roots define a symbol under the same fully-qualified name.
+      *
+      * Raised by `Classpath.init` under `ErrorMode.FailFast` on the first observed collision. The colliding
+      * fully-qualified name is carried in `fqn`. Under `ErrorMode.SoftFail` the collision is recorded as a
+      * `Classpath.FqnCollision` diagnostic and the deterministic last-write-wins winner is kept; this variant
+      * is only raised in FailFast mode.
+      */
+    case FqnCollisionError(fqn: String)
 
     /** A section of the TASTy or KRFL file could not be decoded at `byteOffset`. */
     case MalformedSection(name: String, reason: String, byteOffset: Long)

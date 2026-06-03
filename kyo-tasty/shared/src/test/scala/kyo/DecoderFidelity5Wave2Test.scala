@@ -230,7 +230,7 @@ class DecoderFidelity5Wave2Test extends Test:
     "W2.12: concurrent decodeBody returns identical Maybe[Tree] across fibers" in run {
         TestClasspaths.withClasspath().flatMap: cp =>
             given Tasty.Classpath = cp
-            val candidate = cp.allClasses.find:
+            val candidate = cp.allClassLike.find:
                 case c: Tasty.Symbol.ClassLike => c.body.isDefined
                 case _                         => false
             candidate match
@@ -313,14 +313,15 @@ class DecoderFidelity5Wave2Test extends Test:
                 case other => fail(s"expected NotFound: $other")
     }
 
-    // W2.17: SymbolNotFound is reachable by requireSymbol on missing FQN.
-    "W2.17: requireSymbol on missing FQN raises TastyError.SymbolNotFound" in run {
+    // W2.17: NotFound is reachable by requireSymbol on missing FQN (Pass 2A unified the absent
+    // channel: requireSymbol no longer raises a separate SymbolNotFound variant).
+    "W2.17: requireSymbol on missing FQN raises TastyError.NotFound" in run {
         TestClasspaths.withClasspath().map: cp =>
             Abort.run[TastyError](cp.requireSymbol("nothing.like.this.exists")).map:
-                case Result.Failure(e: TastyError.SymbolNotFound) =>
+                case Result.Failure(e: TastyError.NotFound) =>
                     assert(e.fqn == "nothing.like.this.exists")
                     succeed
-                case other => fail(s"expected SymbolNotFound: $other")
+                case other => fail(s"expected NotFound: $other")
     }
 
     // =========================================================================
@@ -529,7 +530,7 @@ class DecoderFidelity5Wave2Test extends Test:
     "W2.30: cp.copy resets bodyMemo (INV-004 pin)" in run {
         TestClasspaths.withClasspath().map: cp =>
             given Tasty.Classpath = cp
-            cp.allClasses.find(c => c.body.isDefined) match
+            cp.allClassLike.find(c => c.body.isDefined) match
                 case None => succeed
                 case Some(sym) =>
                     cp.bodyTree(sym).map: _ =>
@@ -630,7 +631,7 @@ class DecoderFidelity5Wave2Test extends Test:
     "R-F-W2-2: decodeBody produces ClasspathClosed when body read throws IllegalStateException" in run {
         TestClasspaths.withClasspath().map: cp =>
             given Tasty.Classpath = cp
-            cp.allClasses.find(_.body.isDefined) match
+            cp.allClassLike.find(_.body.isDefined) match
                 case None => succeed
                 case Some(sym) =>
                     cp.bodyTree(sym).map: tree =>
@@ -675,6 +676,7 @@ class DecoderFidelity5Wave2Test extends Test:
             TastyError.CorruptedFile("/tmp/bar.tasty", 42L, "bad magic"),
             TastyError.UnsupportedVersion(v1, v2),
             TastyError.InconsistentClasspath("/tmp/baz.tasty", zeroUUID, zeroUUID),
+            TastyError.FqnCollisionError("scala.collection.SeqOps"),
             TastyError.MalformedSection("NAMES", "truncated", 100L),
             TastyError.SymbolNotFound("scala.X"),
             TastyError.NotFound("scala.Y"),

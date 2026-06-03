@@ -1023,7 +1023,7 @@ object ClassfileUnpickler:
         // the presence of the PermittedSubclasses classfile attribute (JVMS 4.7.31).
         val sealedFlag = if classAttrs.permittedSubclassIdxs.nonEmpty then Tasty.Flags(Tasty.Flag.Sealed)
         else Tasty.Flags.empty
-        val classFlags = baseFlags | javaDefined | recordFlag | sealedFlag
+        val classFlags = baseFlags.union(javaDefined).union(recordFlag).union(sealedFlag)
 
         // Build inner class table and FQN canonicalization.
         // Must be done before constructing the class symbol so we can set the correct owner.
@@ -1177,7 +1177,7 @@ object ClassfileUnpickler:
 
     /** Add Flag.Scala2 to the class symbol of a result without merging pickle symbols. */
     private def markScala2Flag(result: ClassfileResult): ClassfileResult =
-        val scala2Flags = result.classSymbol.flags | Tasty.Flags(Tasty.Flag.Scala2)
+        val scala2Flags = result.classSymbol.flags.union(Tasty.Flags(Tasty.Flag.Scala2))
         // We cannot mutate the existing symbol's flags (it's a val). Build a new symbol with the added flag.
         // Since the existing symbol is already allocated and shared, we instead create a lightweight wrapper here.
         // Per the implementation contract: flags is a val on Symbol, so we cannot update it post-construction.
@@ -1535,7 +1535,7 @@ object ClassfileUnpickler:
 
             val baseFlags   = FlagsHelper.fromJvmAccessFlags(accessFlags)
             val javaDefined = Tasty.Flags(Tasty.Flag.JavaDefined)
-            val memberFlags = baseFlags | javaDefined
+            val memberFlags = baseFlags.union(javaDefined)
 
             // Resolve member declared type from descriptor or Signature attribute.
             pool.utf8(info.descriptorIdx).map: descriptor =>

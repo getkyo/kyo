@@ -61,12 +61,11 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
         TestClasspaths.withClasspath().map: cp =>
             given Tasty.Classpath = cp
 
-            val enums = cp.allClasses.filter(e => e.isEnum && !e.isInstanceOf[Tasty.Symbol.EnumCase]).toList
+            val enums = cp.allClassLike.filter(e => e.isEnum && !e.isInstanceOf[Tasty.Symbol.EnumCase]).toList
             assert(enums.nonEmpty, "Expected at least one enum class in the classpath (embedded: Color, Shape)")
 
             def hasEnumCase(e: Tasty.Symbol.ClassLike): Boolean =
-                val classFormCases = e.permittedSubclasses.map(_.exists(_.isInstanceOf[Tasty.Symbol.EnumCase]))
-                if classFormCases.getOrElse(false) then true
+                if e.permittedSubclasses.exists(_.isInstanceOf[Tasty.Symbol.EnumCase]) then true
                 else
                     e.declarations.exists: decl =>
                         decl match
@@ -161,9 +160,8 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
             val target = cp.findClass("kyo.TastyError").orElse(cp.findClass("kyo.fixtures.Shape"))
             target match
                 case Maybe.Present(enumClass) =>
-                    val permSubEnumCases = enumClass.permittedSubclasses.map:
-                        _.collect { case e: Tasty.Symbol.EnumCase => e }
-                    .getOrElse(Chunk.empty)
+                    val permSubEnumCases = enumClass.permittedSubclasses.collect:
+                        case e: Tasty.Symbol.EnumCase => e
                     assert(
                         permSubEnumCases.nonEmpty,
                         s"${cp.fullName(enumClass).asString} has no EnumCase permitted subclasses after Phase 2.06 " +

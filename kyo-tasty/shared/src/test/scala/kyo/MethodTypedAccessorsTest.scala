@@ -288,16 +288,15 @@ class MethodTypedAccessorsTest extends Test:
 
     // ── Leaf 84: layered-flag-predicates-still-work-on-method ────────────────
     // Given: Symbol.Method with flags Inline + Given
-    // When: invoke isInline, isGiven, isContextual
-    // Then: all three return true
+    // When: invoke isInline, isGiven
+    // Then: both return true
     // Pins: INV-003
-    "Leaf 84: flag predicates still work on typed Method (isInline, isGiven, isContextual)" in run {
+    "Leaf 84: flag predicates still work on typed Method (isInline, isGiven)" in run {
         val flags  = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Given)
         val method = makeMethod(id = 1, name = "given_inline", ownerId = 0, flags = flags)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
             assert(method.isInline, "isInline must be true for Inline-flagged method")
             assert(method.isGiven, "isGiven must be true for Given-flagged method")
-            assert(method.isContextual, "isContextual (alias for isGiven) must be true")
             succeed
     }
 

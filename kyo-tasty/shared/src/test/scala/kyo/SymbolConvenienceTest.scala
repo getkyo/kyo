@@ -5,7 +5,7 @@ import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 07 (leaves 131-136): Symbol convenience accessors.
   *
-  * Covers: fullNameString, simpleName, ownersChain, directParent.
+  * Covers: fullNameString, simpleName, ownersChain, owner.
   *
   * Pins: INV-002.
   */
@@ -152,12 +152,12 @@ class SymbolConvenienceTest extends Test:
         }
     }
 
-    // ── Leaf 135: directParent-present ────────────────────────────────────────
+    // ── Leaf 135: owner-present ───────────────────────────────────────────────
     // Given: Symbol.Method declared in Symbol.Class A.
-    // When: m.directParent.
+    // When: m.owner.
     // Then: returns Maybe.Present(a) where a.simpleName == "A".
     // Pins: INV-002
-    "Leaf 135: directParent returns Present for method with owner" in run {
+    "Leaf 135: owner returns Present for method with owner" in run {
         Sync.defer {
             val cls = makeClass(0, "A", ownerId = -1)
             val m   = makeMethod(1, "foo", ownerId = 0)
@@ -174,7 +174,7 @@ class SymbolConvenienceTest extends Test:
                 errors = Chunk.empty,
                 canonical = TypeArena.canonical()
             )
-            m.directParent(using cp) match
+            m.owner(using cp) match
                 case Maybe.Present(a) =>
                     assert(a.simpleName == "A", s"Expected A but got ${a.simpleName}")
                     succeed
@@ -184,12 +184,12 @@ class SymbolConvenienceTest extends Test:
         }
     }
 
-    // ── Leaf 136: directParent-root-is-absent ─────────────────────────────────
+    // ── Leaf 136: owner-root-is-absent ────────────────────────────────────────
     // Given: a symbol with ownerId == SymbolId(-1).
-    // When: s.directParent.
+    // When: s.owner.
     // Then: returns Maybe.Absent.
     // Pins: INV-002
-    "Leaf 136: directParent returns Absent for root symbol" in {
+    "Leaf 136: owner returns Absent for root symbol" in {
         val sym = makeClass(0, "Root", ownerId = -1)
         import AllowUnsafe.embrace.danger
         val cp = Tasty.Classpath.make(
@@ -205,7 +205,7 @@ class SymbolConvenienceTest extends Test:
             errors = Chunk.empty,
             canonical = TypeArena.canonical()
         )
-        assert(sym.directParent(using cp) == Maybe.Absent)
+        assert(sym.owner(using cp) == Maybe.Absent)
         succeed
     }
 

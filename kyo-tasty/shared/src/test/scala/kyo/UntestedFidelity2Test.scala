@@ -69,26 +69,26 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // Leaf 12: multi-version-stdlib-failfast-aborts (F-A1-OPEN-MULTI)
     // Given: Tasty.Classpath.init(multiVersionStdlibRoots, ErrorMode.FailFast)
     // When: awaiting init
-    // Then: aborts with TastyError.InconsistentClasspath
+    // Then: aborts with TastyError.FqnCollisionError
     // Pins: F-A1-OPEN-MULTI + INV-103-DF2
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): multiVersionStdlibRoots is
-    //   built from two scala-library jars at distinct versions discovered via JVM classpath. The InconsistentClasspath
+    //   built from two scala-library jars at distinct versions discovered via JVM classpath. The FqnCollisionError
     //   detection pins same-FQN-different-version collision, which requires real version-divergent stdlib jars; no
     //   embedded-fixture equivalent exists.
-    "F-A1-OPEN-MULTI leaf 12 (Phase 2.09): multi-version stdlib FailFast init aborts with InconsistentClasspath" taggedAs jvmOnly in run {
+    "F-A1-OPEN-MULTI leaf 12 (Phase 2.09): multi-version stdlib FailFast init aborts with FqnCollisionError" taggedAs jvmOnly in run {
         val multiRoots = TestClasspaths2.multiVersionStdlibRoots
         Abort.run[TastyError](
             Tasty.Classpath.init(multiRoots, Tasty.ErrorMode.FailFast)
         ).map: result =>
             result match
-                case Result.Failure(_: TastyError.InconsistentClasspath) =>
+                case Result.Failure(_: TastyError.FqnCollisionError) =>
                     succeed
                 case Result.Success(_) =>
                     fail(
-                        "Expected Abort.fail(InconsistentClasspath) when loading two roots with same-FQN symbols under FailFast; init succeeded silently"
+                        "Expected Abort.fail(FqnCollisionError) when loading two roots with same-FQN symbols under FailFast; init succeeded silently"
                     )
                 case Result.Failure(other) =>
-                    fail(s"Expected InconsistentClasspath; got different TastyError: $other")
+                    fail(s"Expected FqnCollisionError; got different TastyError: $other")
                 case Result.Panic(t) =>
                     fail(s"Unexpected panic: $t")
     }
