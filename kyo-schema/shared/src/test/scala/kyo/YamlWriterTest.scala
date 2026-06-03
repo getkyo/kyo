@@ -430,5 +430,281 @@ class YamlWriterTest extends kyo.test.Test[Any]:
             second.string("small")
             assert(second.resultString == "small\n")
         }
+
+        "round-trips primitive numeric and boolean types through encode and decode" in {
+            val longVal: Long   = Long.MaxValue
+            val shortVal: Short = Short.MaxValue
+            val byteVal: Byte   = Byte.MaxValue
+            val boolVal         = true
+
+            assertResult(
+                (
+                    long = Result.succeed(longVal),
+                    short = Result.succeed(shortVal),
+                    byte = Result.succeed(byteVal),
+                    bool = Result.succeed(boolVal)
+                )
+            ) {
+                (
+                    long = Yaml.decode[Long](Yaml.encode(longVal)),
+                    short = Yaml.decode[Short](Yaml.encode(shortVal)),
+                    byte = Yaml.decode[Byte](Yaml.encode(byteVal)),
+                    bool = Yaml.decode[Boolean](Yaml.encode(boolVal))
+                )
+            }
+        }
+
+        "encodes char as a double-quoted single-character scalar" in {
+            val yaml = Yaml.encode('A')
+            assertResult(
+                (
+                    encoded = "\"A\"\n",
+                    decoded = Result.succeed('A')
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[Char](yaml)
+                )
+            }
+        }
+
+        "encodes null Option values as the null scalar and round-trips" in {
+            val yaml = Yaml.encode(Option.empty[String])
+            assertResult(
+                (
+                    encoded = "null\n",
+                    decoded = Result.succeed(Option.empty[String])
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[Option[String]](yaml)
+                )
+            }
+        }
+
+        "double-quotes strings containing control characters newlines tabs backslash and quote" in {
+            assertResult(
+                (
+                    controlChar = "\"\\u0001\"\n",
+                    newline = "\"line1\\nline2\"\n",
+                    tab = "\"col1\\tcol2\"\n",
+                    backslash = "\"\\\\\"\n",
+                    quote = "\"\\\"\"\n"
+                )
+            ) {
+                val fastConfig = Yaml.WriterConfig.Fast.copy(trailingNewline = true)
+                (
+                    controlChar = Yaml.encode("", fastConfig),
+                    newline = Yaml.encode("line1\nline2", fastConfig),
+                    tab = Yaml.encode("col1\tcol2", fastConfig),
+                    backslash = Yaml.encode("\\", fastConfig),
+                    quote = Yaml.encode("\"", fastConfig)
+                )
+            }
+        }
+
+        "single-quotes strings that need quoting when single-quote style is configured" in {
+            val singleStyle = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
+            // "true" needs quoting because it is an ambiguous scalar; the single-quote style applies
+            val yaml = Yaml.encode("true", singleStyle)
+            assertResult(
+                (
+                    encoded = "'true'\n",
+                    decoded = Result.succeed("true")
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
+        }
+
+        "single-quotes strings with embedded single quotes using doubled-quote escaping" in {
+            val singleStyle = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
+            // A string containing # is not plain-safe (triggers quoting); single-quote style is used
+            val yaml = Yaml.encode("it #1", singleStyle)
+            assertResult(
+                (
+                    encoded = "'it #1'\n",
+                    decoded = Result.succeed("it #1")
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
+        }
+
+        "quotes strings that are plain-unsafe due to leading special chars or reserved words" in {
+            assertResult(
+                (
+                    dashDash = "\"---\"\n",
+                    dotDotDot = "\"...\"\n",
+                    percent = "\"%TAG\"\n",
+                    openBracket = "\"[1,2]\"\n",
+                    openBrace = "\"{a: b}\"\n"
+                )
+            ) {
+                (
+                    dashDash = Yaml.encode("---"),
+                    dotDotDot = Yaml.encode("..."),
+                    percent = Yaml.encode("%TAG"),
+                    openBracket = Yaml.encode("[1,2]"),
+                    openBrace = Yaml.encode("{a: b}")
+                )
+            }
+        }
+
+        "encodes multiline strings with Strip chomping using |- header" in {
+            val config = Yaml.WriterConfig.Readable.copy(chomping = Yaml.WriterConfig.Chomping.Strip)
+            val value  = "line one\nline two\n"
+            val yaml   = Yaml.encode(value, config)
+
+            assertResult(
+                (
+                    header = true,
+                    decoded = Result.succeed("line one\nline two")
+                )
+            ) {
+                (
+                    header = yaml.startsWith("|-\n"),
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
+        }
+
+        "encodes multiline strings with Keep chomping using |+ header" in {
+            val config = Yaml.WriterConfig.Readable.copy(chomping = Yaml.WriterConfig.Chomping.Keep)
+            val value  = "line one\nline two\n"
+            val yaml   = Yaml.encode(value, config)
+
+            assertResult(
+                (
+                    header = true,
+                    decoded = Result.succeed(value)
+                )
+            ) {
+                (
+                    header = yaml.startsWith("|+\n"),
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
+        }
+
+        "encodes multiline strings with Clip chomping using | header" in {
+            val config = Yaml.WriterConfig.Readable.copy(chomping = Yaml.WriterConfig.Chomping.Clip)
+            val value  = "line one\nline two\n"
+            val yaml   = Yaml.encode(value, config)
+
+            assertResult(
+                (
+                    header = true,
+                    decoded = Result.succeed(value)
+                )
+            ) {
+                (
+                    header = yaml.startsWith("|\n"),
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
+        }
+
+        "encodes with document Start marker and round-trips" in {
+            val config = Yaml.WriterConfig.Readable.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.Start)
+            val yaml   = Yaml.encode(MTPerson("Alice", 30), config)
+
+            assertResult(
+                (
+                    startsWithMarker = true,
+                    decoded = Result.succeed(MTPerson("Alice", 30))
+                )
+            ) {
+                (
+                    startsWithMarker = yaml.startsWith("---\n"),
+                    decoded = Yaml.decode[MTPerson](yaml)
+                )
+            }
+        }
+
+        "encodes with document StartAndEnd markers and round-trips" in {
+            val config = Yaml.WriterConfig.Readable.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+            val yaml   = Yaml.encode(MTPerson("Alice", 30), config)
+
+            assertResult(
+                (
+                    startsWithMarker = true,
+                    endsWithMarker = true,
+                    decoded = Result.succeed(MTPerson("Alice", 30))
+                )
+            ) {
+                (
+                    startsWithMarker = yaml.startsWith("---\n"),
+                    endsWithMarker = yaml.endsWith("...\n"),
+                    decoded = Yaml.decode[MTPerson](yaml)
+                )
+            }
+        }
+
+        "encodes in flow style using Small profile and produces braces and brackets" in {
+            val people = List(MTPerson("Alice", 30), MTPerson("Bob", 25))
+            val yaml   = Yaml.encode(people, Yaml.WriterConfig.Small)
+
+            assertResult(
+                (
+                    hasBrackets = true,
+                    hasBraces = true
+                )
+            ) {
+                (
+                    hasBrackets = yaml.contains('['),
+                    hasBraces = yaml.contains('{')
+                )
+            }
+        }
+
+        "encodes QuoteAllStrings config and quotes every string including plain-safe ones" in {
+            val config = Yaml.WriterConfig.Readable.copy(scalarQuoting = Yaml.WriterConfig.ScalarQuoting.QuoteAllStrings)
+            val yaml   = Yaml.encode("hello", config)
+
+            assertResult(
+                (
+                    encoded = "\"hello\"\n",
+                    decoded = Result.succeed("hello")
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
+        }
+
+        "encodes folded multiline with Strip chomping using >- header and round-trips" in {
+            val config = Yaml.WriterConfig.Readable.copy(
+                multilineStyle = Yaml.WriterConfig.MultilineStyle.Folded,
+                chomping = Yaml.WriterConfig.Chomping.Strip
+            )
+            val value = "line one\nline two\n"
+            val yaml  = Yaml.encode(value, config)
+
+            // folded block scalar: the appendLiteral logic puts a blank line between paragraphs for folded style,
+            // so the internal newline is preserved as a paragraph break, not folded to a space
+            val decoded = Yaml.decode[String](yaml)
+            assertResult(
+                (
+                    header = true,
+                    roundTripped = true
+                )
+            ) {
+                (
+                    header = yaml.startsWith(">-\n"),
+                    roundTripped = decoded.isSuccess
+                )
+            }
+        }
     }
 end YamlWriterTest

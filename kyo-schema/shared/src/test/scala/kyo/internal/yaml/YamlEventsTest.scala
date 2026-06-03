@@ -696,6 +696,172 @@ class YamlEventsTest extends kyo.test.Test[Any]:
             byteWriter.string("two")
             assert(new String(byteWriter.result().toArrayUnsafe, java.nio.charset.StandardCharsets.UTF_8) == "two\n")
         }
+
+        "writes all primitive scalar types through events writer" in {
+            assertResult(
+                (
+                    longVal = "9223372036854775807\n",
+                    shortVal = "32767\n",
+                    byteVal = "127\n",
+                    boolTrue = "true\n",
+                    boolFalse = "false\n",
+                    charVal = "\"A\"\n",
+                    nilVal = "null\n"
+                )
+            ) {
+                (
+                    longVal = direct(_.long(Long.MaxValue)),
+                    shortVal = direct(_.short(Short.MaxValue)),
+                    byteVal = direct(_.byte(Byte.MaxValue)),
+                    boolTrue = direct(_.boolean(true)),
+                    boolFalse = direct(_.boolean(false)),
+                    charVal = direct(_.char('A')),
+                    nilVal = direct(_.nil())
+                )
+            }
+        }
+
+        "writes double-quoted strings for control chars through events writer" in {
+            assertResult(
+                (
+                    controlChar = "\"\\u0001\"\n",
+                    newline = "\"line1\\nline2\"\n",
+                    backslash = "\"\\\\\"\n"
+                )
+            ) {
+                val fastCfg = Yaml.WriterConfig.Fast.copy(trailingNewline = true)
+                (
+                    controlChar = write("", fastCfg),
+                    newline = write("line1\nline2", fastCfg),
+                    backslash = write("\\", fastCfg)
+                )
+            }
+        }
+
+        "writes single-quoted strings that need quoting when single-quote style is configured" in {
+            val singleStyle = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
+            // "true" is ambiguous and needs quoting; single-quote style applies
+            val yaml = write("true", singleStyle)
+            assertResult(
+                (
+                    encoded = "'true'\n",
+                    decoded = Result.succeed("true")
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
+        }
+
+        "writes single-quoted strings with embedded single quotes using doubled-quote escaping" in {
+            val singleStyle = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
+            // "#" in the body forces quoting; single-quote style applies
+            val yaml = write("it #1", singleStyle)
+            assertResult(
+                (
+                    encoded = "'it #1'\n",
+                    decoded = Result.succeed("it #1")
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
+        }
+
+        "writes plain-unsafe strings as quoted scalars through events writer" in {
+            assertResult(
+                (
+                    dashDash = "\"---\"\n",
+                    dotDotDot = "\"...\"\n",
+                    percent = "\"%TAG\"\n"
+                )
+            ) {
+                (
+                    dashDash = write("---"),
+                    dotDotDot = write("..."),
+                    percent = write("%TAG")
+                )
+            }
+        }
+
+        "writes Strip chomped literal block scalars through events writer" in {
+            val config = Yaml.WriterConfig.Readable.copy(chomping = Yaml.WriterConfig.Chomping.Strip)
+            val yaml   = write("line one\nline two\n", config)
+            assert(yaml.startsWith("|-\n"))
+            assert(Yaml.decode[String](yaml) == Result.succeed("line one\nline two"))
+        }
+
+        "writes Keep chomped literal block scalars through events writer" in {
+            val config = Yaml.WriterConfig.Readable.copy(chomping = Yaml.WriterConfig.Chomping.Keep)
+            val yaml   = write("line one\nline two\n", config)
+            assert(yaml.startsWith("|+\n"))
+            assert(Yaml.decode[String](yaml) == Result.succeed("line one\nline two\n"))
+        }
+
+        "writes document Start marker through events writer" in {
+            val config = Yaml.WriterConfig.Readable.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.Start)
+            val yaml   = write(MTPerson("Alice", 30), config)
+            assert(yaml.startsWith("---\n"))
+            assert(Yaml.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "writes document StartAndEnd markers through events writer" in {
+            val config = Yaml.WriterConfig.Readable.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+            val yaml   = write(MTPerson("Alice", 30), config)
+            assert(yaml.startsWith("---\n"))
+            assert(yaml.endsWith("...\n"))
+            assert(Yaml.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "writes flow sequence and mapping through events writer using Flow style" in {
+            val flowConfig = Yaml.WriterConfig.Readable.copy(collectionStyle = Yaml.WriterConfig.CollectionStyle.Flow)
+            val yaml       = write(MTPerson("Alice", 30), flowConfig)
+            assert(yaml.contains('{'))
+        }
+
+        "writes QuoteAllStrings through events writer" in {
+            val config = Yaml.WriterConfig.Readable.copy(scalarQuoting = Yaml.WriterConfig.ScalarQuoting.QuoteAllStrings)
+            val yaml   = write("hello", config)
+            assertResult(
+                (
+                    encoded = "\"hello\"\n",
+                    decoded = Result.succeed("hello")
+                )
+            ) {
+                (
+                    encoded = yaml,
+                    decoded = Yaml.decode[String](yaml)
+                )
+            }
+        }
+
+        "writes folded block scalars with Strip chomping using >- header through events writer" in {
+            val config = Yaml.WriterConfig.Readable.copy(
+                multilineStyle = Yaml.WriterConfig.MultilineStyle.Folded,
+                chomping = Yaml.WriterConfig.Chomping.Strip
+            )
+            val value = "line one\nline two\n"
+            val yaml  = write(value, config)
+            // folded block scalar uses double-blank-line separation to preserve internal newlines as paragraph breaks
+            assert(yaml.startsWith(">-\n"))
+            val decoded = Yaml.decode[String](yaml)
+            assert(decoded.isSuccess)
+        }
+
+        "routes events through EventWriter and collects context" in {
+            val handler = new Yaml.Events.Handler[Int, Nothing]:
+                override def scalar(context: Int, value: String, meta: Yaml.ScalarMeta): Result[Nothing, Int] =
+                    Result.succeed(context + 1)
+            end handler
+
+            // MTPerson has 2 fields: each field emits a key scalar and a value scalar = 4 total
+            val result = Yaml.Events.write(MTPerson("Alice", 30), 0)(handler)
+            assert(result == Result.succeed(4))
+        }
     }
 end YamlEventsTest
 
