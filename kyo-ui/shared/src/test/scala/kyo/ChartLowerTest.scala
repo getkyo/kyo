@@ -351,4 +351,67 @@ class ChartLowerTest extends Test:
         assertClose(xs(2), 88.0 + 2 * expectedSubW, "third sub-band x")
     }
 
+    // ---- Test 9: line path has fill=None, stroke present, strokeWidth present ----
+    // Regression test for the bug where lowerLineSeries produced a filled black polygon instead of a stroked line.
+    // The old code did `Svg.path.d(pathData)` with no paint, so the browser filled the path with black (default fill).
+
+    "line mark lowers to a path with fill=Paint.None, stroke present, and strokeWidth present" in {
+        case class Row(x: String, y: Int)
+        val rows = Chunk(Row("a", 100), Row("b", 200))
+        val spec = Chart(rows)(line(x = _.x, y = _.y))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val ps   = pathsIn(root)
+        assert(ps.size == 1, s"Expected 1 path but got ${ps.size}")
+        val p = ps(0)
+        // fill must be explicitly Paint.None to suppress browser default (black) fill
+        assert(
+            p.svgAttrs.fill == Present(Svg.Paint.None),
+            s"Expected fill=Paint.None but got ${p.svgAttrs.fill}"
+        )
+        // stroke must be present so the line is visible
+        assert(p.svgAttrs.stroke.isDefined, s"Expected stroke to be Present but got ${p.svgAttrs.stroke}")
+        // strokeWidth must be present
+        assert(p.svgAttrs.strokeWidth.isDefined, s"Expected strokeWidth to be Present but got ${p.svgAttrs.strokeWidth}")
+    }
+
+    // ---- Test 10: bar rect is filled (not just stroked) ----
+    // Distinguishes bar from line: a bar should have an explicit fill color set, not fill=None.
+
+    "bar mark lowers to a rect with a non-None fill color" in {
+        val rows  = Chunk(Sale("Jan", Usd(1000)))
+        val spec  = Chart(rows)(bar(x = _.month, y = _.revenue))
+        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val rects = rectsIn(root)
+        assert(rects.size == 1, s"Expected 1 rect but got ${rects.size}")
+        val r = rects(0)
+        r.svgAttrs.fill match
+            case Present(Svg.Paint.Color(_)) => succeed // correct: a color fill, not None
+            case Present(Svg.Paint.None)     => fail("Bar fill must not be Paint.None: bars are filled shapes")
+            case other                       => fail(s"Expected a color fill but got $other")
+        end match
+    }
+
+    // ---- Test 11: dark-theme bar uses a light/visible fill color ----
+    // Regression for the bug where dark-theme bars used browser-default black fill,
+    // making them invisible on the dark (#1f2937) background.
+
+    "dark-theme bar uses a light fill color, not black" in {
+        val rows  = Chunk(Sale("Jan", Usd(1000)))
+        val spec  = Chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.dark)
+        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val rects = rectsIn(root)
+        assert(rects.size == 1, s"Expected 1 rect but got ${rects.size}")
+        val r = rects(0)
+        r.svgAttrs.fill match
+            case Present(Svg.Paint.Color(c)) =>
+                // Must NOT be black (which is the browser default that made bars invisible on dark bg)
+                assert(
+                    c != Style.Color.black,
+                    s"Dark-theme bar fill must not be black; got $c"
+                )
+            case Present(Svg.Paint.None) => fail("Dark-theme bar fill must not be None")
+            case other                   => fail(s"Expected a color fill but got $other")
+        end match
+    }
+
 end ChartLowerTest

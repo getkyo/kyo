@@ -55,6 +55,19 @@ private[kyo] object ChartLower:
     /** Light-theme background color. */
     private val LightBg: Style.Color = Style.Color.white
 
+    /** Default mark fill for dark-theme charts: a light color visible on the dark background. */
+    private val DarkThemeMarkColor: Style.Color = Style.Color.hex("#60a5fa").getOrElse(Style.Color.blue)
+
+    /** Default mark fill for light-theme charts: the first palette entry (blue). */
+    private val LightThemeMarkColor: Style.Color = Style.Color.blue
+
+    /** Reserved space at the top of the plot for the legend (pixels).
+      *
+      * When a legend is present the plot area is shifted down by this amount so that legend items fit above
+      * the bars without overlapping the data.
+      */
+    private val LegendReservedH = 20.0
+
     /** Immutable layout: the outer SVG dimensions and the inner plot rectangle. */
     final private[kyo] case class Layout(
         svgW: Double,
@@ -70,18 +83,27 @@ private[kyo] object ChartLower:
     /** Compute the `Layout` from a chart spec's `size` field.
       *
       * Widens the right margin when a right y-axis is configured so tick labels on the right margin do not overlap
-      * the plot area.
+      * the plot area. Shifts the plot down by `LegendReservedH` when the legend will actually render (not hidden
+      * AND at least one mark carries a color channel) so legend rows sit in reserved space above the plot without
+      * overlapping the bars.
       */
     private def buildLayout(spec: ChartSpec[?]): Layout =
         val (w, h)      = spec.chartSize
         val marginRight = if spec.yAxisRightCfg.isDefined then MarginRightAxis else MarginRightDefault
+        val hasColorChannel = !spec.legendCfg.isHidden && spec.marks.toSeq.exists:
+            case m: Mark.Bar[?, ?, ?]   => m.color.isDefined
+            case m: Mark.Line[?, ?, ?]  => m.color.isDefined
+            case m: Mark.Area[?, ?, ?]  => m.color.isDefined
+            case m: Mark.Point[?, ?, ?] => m.color.isDefined
+            case _                      => false
+        val legendPad = if hasColorChannel then LegendReservedH else 0.0
         Layout(
             svgW = w.toDouble,
             svgH = h.toDouble,
             plotX = MarginLeft,
-            plotY = MarginTop,
+            plotY = MarginTop + legendPad,
             plotW = w.toDouble - MarginLeft - marginRight,
-            plotH = h.toDouble - MarginTop - MarginBottom
+            plotH = h.toDouble - MarginTop - legendPad - MarginBottom
         )
     end buildLayout
 
@@ -495,21 +517,30 @@ private[kyo] object ChartLower:
                     case Absent     => Chunk[Svg.SvgElement](tickMark, tickLabel)
                 loop(i + 1, acc ++ elements)
         val base = loop(0, Chunk.empty)
-        // axis label
+        // axis label: rotate vertically so the full string fits in the margin column without clipping.
+        // Left axis: rotate -90 degrees around the label centre, place in the left margin.
+        // Right axis: rotate +90 degrees around the label centre, place in the right margin.
         cfg.axisLabel match
             case Present(lbl) =>
+                val midY = layout.plotY + layout.plotH / 2.0
                 val labelElem: Svg.SvgElement =
                     if isRight then
+                        val cx = axisX + MarginRightAxis / 2.0
                         Svg.text
-                            .x(axisX + MarginRightAxis - 8.0)
-                            .y(layout.plotY + layout.plotH / 2.0)
+                            .x(cx)
+                            .y(midY)
                             .textAnchor(Svg.TextAnchor.Middle)
+                            .dominantBaseline(Svg.DominantBaseline.Auto)
+                            .transform(Svg.Transform.Rotate(90.0, Present(cx), Present(midY)))
                             .apply(lbl)
                     else
+                        val cx = MarginLeft / 2.0
                         Svg.text
-                            .x(layout.plotX - MarginLeft + 12.0)
-                            .y(layout.plotY + layout.plotH / 2.0)
+                            .x(cx)
+                            .y(midY)
                             .textAnchor(Svg.TextAnchor.Middle)
+                            .dominantBaseline(Svg.DominantBaseline.Auto)
+                            .transform(Svg.Transform.Rotate(-90.0, Present(cx), Present(midY)))
                             .apply(lbl)
                 base.append(labelElem)
             case Absent => base
@@ -657,10 +688,13 @@ private[kyo] object ChartLower:
                             DefaultPalette.toSeq.apply(i % DefaultPalette.size)
     end resolvePalette
 
-    /** Build the legend swatch+label elements positioned at the top of the plot.
+    /** Build the legend swatch+label elements positioned in the reserved space above the plot area.
       *
       * `categories` is `Chunk[(label, rawValue)]` in enum-ordinal order. `palette` is the resolved
       * color per category. Each entry produces one swatch `Svg.rect` and one `Svg.text` label.
+      *
+      * The legend is placed in the band between the SVG top and the plot top (the `LegendReservedH`
+      * strip reserved by `buildLayout`). This ensures legend swatches never overlap the data marks.
       */
     private def buildLegendItems(
         layout: Layout,
@@ -668,32 +702,38 @@ private[kyo] object ChartLower:
         palette: Chunk[Style.Color],
         cfg: LegendConfig
     )(using Frame): Chunk[Svg.SvgElement] =
-        // Position legend above the plot area on the right side by default
-        val legendX = layout.plotX + layout.plotW - 120.0
-        val legendY = layout.plotY - MarginTop + 2.0
+        // Place the legend inside the reserved band above the plot (y in [MarginTop, plotY - 2]).
+        // The band height equals LegendReservedH; center vertically within it.
+        val legendX = layout.plotX
+        val legendY = MarginTop + (LegendReservedH - SwatchSize) / 2.0
+
+        // Lay items horizontally, each entry occupying (SwatchSize + SwatchLabelGap + labelWidth + itemGap).
+        // Approximate label pixel width at roughly 7px per character.
+        val itemGap = 16.0
 
         @scala.annotation.tailrec
-        def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
+        def loop(i: Int, curX: Double, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= categories.size then acc
             else
                 val (cat, _) = categories(i)
                 val color    = if i < palette.size then palette(i) else DefaultPalette.toSeq.apply(i % DefaultPalette.size)
-                val rowY     = legendY + i.toDouble * LegendRowH
                 val swatch: Svg.SvgElement =
                     Svg.rect
-                        .x(legendX)
-                        .y(rowY)
+                        .x(curX)
+                        .y(legendY)
                         .width(SwatchSize)
                         .height(SwatchSize)
                         .fill(Svg.Paint.Color(color))
                 val label: Svg.SvgElement =
                     Svg.text
-                        .x(legendX + SwatchSize + SwatchLabelGap)
-                        .y(rowY + SwatchSize / 2.0)
+                        .x(curX + SwatchSize + SwatchLabelGap)
+                        .y(legendY + SwatchSize / 2.0)
                         .dominantBaseline(Svg.DominantBaseline.Middle)
                         .apply(cat)
-                loop(i + 1, acc.append(swatch).append(label))
-        loop(0, Chunk.empty)
+                val approxLabelW = cat.length.toDouble * 7.0
+                val nextX        = curX + SwatchSize + SwatchLabelGap + approxLabelW + itemGap
+                loop(i + 1, nextX, acc.append(swatch).append(label))
+        loop(0, legendX, Chunk.empty)
     end buildLegendItems
 
     // ---- marks region ----
@@ -842,6 +882,11 @@ private[kyo] object ChartLower:
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val baseline = layout.plotBaseline
+        // Use a theme-aware default fill so bars are visible on both light and dark backgrounds.
+        // A bar with no explicit color uses the first palette entry rather than the browser default (black).
+        val defaultFill: Style.Color = spec match
+            case Present(s) => if s.theme.isDark then DarkThemeMarkColor else LightThemeMarkColor
+            case Absent     => LightThemeMarkColor
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= rows.size then acc
@@ -865,6 +910,7 @@ private[kyo] object ChartLower:
                                     .y(barY)
                                     .width(barW)
                                     .height(barH)
+                                    .fill(Svg.Paint.Color(defaultFill))
                                     .withAttrs(iAttrs)
                                 acc.append(r)
                         end match
@@ -1062,14 +1108,16 @@ private[kyo] object ChartLower:
     )(using Frame): Chunk[Svg.SvgElement] =
         mark.color match
             case Absent =>
-                Chunk(lowerLineSeries(rows, mark, layout, xs, ys))
+                // No color channel: single series using the first palette color.
+                Chunk(lowerLineSeries(rows, mark, layout, xs, ys, DefaultPalette(0)))
             case Present(colorCh) =>
                 val colorKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
                     val key = colorCh.accessor(row.asInstanceOf[A]).toString
                     if acc.toSeq.contains(key) then acc else acc.append(key)
-                colorKeys.map: key =>
-                    val seriesRows = rows.filter(r => colorCh.accessor(r).toString == key)
-                    lowerLineSeries(seriesRows, mark, layout, xs, ys)
+                colorKeys.zipWithIndex.map: (key, idx) =>
+                    val seriesRows  = rows.filter(r => colorCh.accessor(r).toString == key)
+                    val strokeColor = DefaultPalette.toSeq.apply(idx % DefaultPalette.size)
+                    lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor)
     end lowerLine
 
     private def lowerLineSeries[A, X, Y](
@@ -1077,7 +1125,8 @@ private[kyo] object ChartLower:
         mark: Mark.Line[A, X, Y],
         layout: Layout,
         xs: Scale,
-        ys: Scale
+        ys: Scale,
+        strokeColor: Style.Color = Style.Color.blue
     )(using Frame): Svg.Path =
         @scala.annotation.tailrec
         def loop(i: Int, pd: Svg.PathData, started: Boolean): Svg.PathData =
@@ -1114,7 +1163,13 @@ private[kyo] object ChartLower:
                             end match
                 end if
         val pathData = loop(0, Svg.PathData.empty, false)
-        Svg.path.d(pathData)
+        // A line path must be stroked, not filled. Without explicit fill=none the browser fills the
+        // closed polygon formed by the path endpoints, producing a black bowtie/filled-polygon artefact.
+        Svg.path
+            .d(pathData)
+            .fill(Svg.Paint.None)
+            .stroke(Svg.Paint.Color(strokeColor))
+            .strokeWidth(2.0)
     end lowerLineSeries
 
     /** Lower a `Mark.Area` to closed `Svg.Path`(s).
@@ -1620,9 +1675,10 @@ private[kyo] object ChartLower:
         fromGeom: Map[String, MarkGeom],
         newGeom: Map[String, MarkGeom]
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
-        val baseline = layout.plotBaseline
-        val durStr   = formatDur(spec.animateCfg.duration)
-        val animOk   = spec.animateCfg.enabled
+        val baseline    = layout.plotBaseline
+        val durStr      = formatDur(spec.animateCfg.duration)
+        val animOk      = spec.animateCfg.enabled
+        val defaultFill = if spec.theme.isDark then DarkThemeMarkColor else LightThemeMarkColor
         @scala.annotation.tailrec
         def loop(
             i: Int,
@@ -1648,12 +1704,12 @@ private[kyo] object ChartLower:
                                 val newG2 = geom.updated(key, MarkGeom.Bar(barH, barY))
                                 val r: Svg.Rect =
                                     if !animOk then
-                                        Svg.rect.x(barX).y(barY).width(barW).height(barH)
+                                        Svg.rect.x(barX).y(barY).width(barW).height(barH).fill(Svg.Paint.Color(defaultFill))
                                     else
                                         val (fromH, fromY) = fromGeom.get(key) match
                                             case Some(MarkGeom.Bar(ph, py)) => (ph, py)
                                             case _                          => (0.0, baseline) // enter from baseline
-                                        val rectBase = Svg.rect.x(barX).y(barY).width(barW).height(barH)
+                                        val rectBase = Svg.rect.x(barX).y(barY).width(barW).height(barH).fill(Svg.Paint.Color(defaultFill))
                                         rectBase(
                                             smilAnimate("height", fromH, barH, durStr),
                                             smilAnimate("y", fromY, barY, durStr)
@@ -1698,14 +1754,15 @@ private[kyo] object ChartLower:
         // Compute the raw paths first (same as non-transition path but we need the PathData for morph).
         val rawPaths: Chunk[Svg.Path] = mark.color match
             case Absent =>
-                Chunk(lowerLineSeries(rows, mark, layout, xs, ys))
+                Chunk(lowerLineSeries(rows, mark, layout, xs, ys, DefaultPalette(0)))
             case Present(colorCh) =>
                 val colorKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
                     val key = colorCh.accessor(row.asInstanceOf[A]).toString
                     if acc.toSeq.contains(key) then acc else acc.append(key)
-                colorKeys.map: key =>
-                    val seriesRows = rows.filter(r => colorCh.accessor(r).toString == key)
-                    lowerLineSeries(seriesRows, mark, layout, xs, ys)
+                colorKeys.zipWithIndex.map: (key, idx) =>
+                    val seriesRows  = rows.filter(r => colorCh.accessor(r).toString == key)
+                    val strokeColor = DefaultPalette.toSeq.apply(idx % DefaultPalette.size)
+                    lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor)
         // Build the base geom key offset to avoid collision with earlier-pass keys.
         val keyOffset = newGeom.size
         // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
