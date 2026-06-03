@@ -41,6 +41,9 @@ class ChartReactiveTest extends Test:
     case class Sale(month: String, revenue: Rev)
     given CanEqual[Sale, Sale] = CanEqual.derived
 
+    /** A status-code count per endpoint; the stack grouping over `code` drives the legend categories. */
+    case class StatusRow(name: String, code: String, count: Double) derives CanEqual
+
     // ---- layout constants (must match ChartLower) ----
     private val PlotX    = 60.0
     private val PlotY    = 20.0
@@ -211,6 +214,73 @@ class ChartReactiveTest extends Test:
             // Linear-fallback numeric labels must NOT appear: they indicate the x-axis used an empty-data
             // fallback (Linear [0,1]) instead of the real Band scale.
             assert(!html.contains(">0.25<"), s"Expected '>0.25<' absent (linear fallback) but found it:\n$html")
+        end for
+    }
+
+    // ---- Test 6: live legend with explicit colorScale emits swatches+labels in the reserved band ----
+
+    "live chart .legend(_.top.colorScale{...}) emits a legend g (swatches + labels) at in-bounds y" in run {
+        // Regression: the live (signal-backed) lowering built the static legend from an empty initial chunk,
+        // which yields zero categories and suppresses the whole legend. The dashboard's status/latency charts
+        // are live, so no legend rendered at all. The fix samples the signal's current value so the legend
+        // derives its categories (here the stack groups 2xx/4xx/5xx) from real rows.
+        val rows = Chunk(
+            StatusRow("/login", "2xx", 90.0),
+            StatusRow("/login", "4xx", 8.0),
+            StatusRow("/login", "5xx", 2.0),
+            StatusRow("/feed", "2xx", 80.0),
+            StatusRow("/feed", "4xx", 12.0),
+            StatusRow("/feed", "5xx", 4.0)
+        )
+        val scGreen = Style.Color.rgb(34, 197, 94)
+        val scAmber = Style.Color.rgb(245, 158, 11)
+        val scRed   = Style.Color.rgb(239, 68, 68)
+        for
+            ref <- Signal.initRef(rows)
+            spec = Chart(ref: Signal[Chunk[StatusRow]])(bar(x = _.name, y = _.count, stack = by(_.code)))
+                .legend(
+                    _.top.colorScale {
+                        case "2xx" => scGreen
+                        case "4xx" => scAmber
+                        case _     => scRed
+                    }
+                )
+                .theme(_.dark)
+                .size(520, 240)
+            root = summon[Conversion[ChartSpec[StatusRow], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // The three legend labels must be present (one per stack category).
+            assert(html.contains(">2xx<"), s"Expected legend label '2xx' but it was absent:\n$html")
+            assert(html.contains(">4xx<"), s"Expected legend label '4xx' but it was absent:\n$html")
+            assert(html.contains(">5xx<"), s"Expected legend label '5xx' but it was absent:\n$html")
+
+            // The legend lives in the static frame: the swatch rects and label texts are DIRECT children of
+            // root (not nested in the reactive marks g). Collect them and assert exactly three of each.
+            def coordNum(c: Maybe[Svg.Coord]): Maybe[Double] = c match
+                case Present(Svg.Coord.Num(v)) => Present(v)
+                case _                         => Absent
+            val swatchFills = root.children.collect:
+                case r: Svg.Rect if coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0) =>
+                    r.svgAttrs.fill
+            assert(swatchFills.size == 3, s"Expected 3 legend swatches (12x12 rects) but found ${swatchFills.size}")
+            // Swatch fills carry the colorScale colors (green/amber/red), not the theme chrome color.
+            val greenPaint: Maybe[Svg.Paint] = Present(Svg.Paint.Color(scGreen))
+            val amberPaint: Maybe[Svg.Paint] = Present(Svg.Paint.Color(scAmber))
+            val redPaint: Maybe[Svg.Paint]   = Present(Svg.Paint.Color(scRed))
+            assert(swatchFills.contains(greenPaint), s"Expected a green (2xx) swatch fill but fills were: $swatchFills")
+            assert(swatchFills.contains(amberPaint), s"Expected an amber (4xx) swatch fill but fills were: $swatchFills")
+            assert(swatchFills.contains(redPaint), s"Expected a red (5xx) swatch fill but fills were: $swatchFills")
+
+            // Legend label texts are static root children; assert there are 3 and each y is in-bounds (0..240)
+            // and inside the reserved band (the top 20px strip, y <= 36 covers the swatch+label centre).
+            val labelYs: Chunk[Double] = root.children.collect:
+                case t: Svg.Text if coordNum(t.svgAttrs.y).exists(_ <= 36.0) => coordNum(t.svgAttrs.y).getOrElse(-1.0)
+            assert(labelYs.size == 3, s"Expected 3 legend labels in the top band but found ${labelYs.size}: $labelYs")
+            assert(
+                labelYs.forall(y => y >= 0.0 && y <= 240.0),
+                s"Every legend label y must be inside the viewBox 0..240 but were: $labelYs"
+            )
         end for
     }
 

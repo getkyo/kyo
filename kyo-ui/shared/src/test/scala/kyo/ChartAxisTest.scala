@@ -466,11 +466,13 @@ class ChartAxisTest extends Test:
             SRow("Jan", "A", 300.0),
             SRow("Jan", "B", 700.0)
         )
+        // Legend hidden so this test isolates stack geometry (a default legend would reserve top space and
+        // shift plotY/plotH; the stacked-legend derivation is covered by the dedicated tests above).
         val spec = Chart(rows)(bar(
             x = _.x,
             y = _.value,
             stack = by(_.group)
-        ))
+        )).legend(_.hidden)
         val root = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
 
         val marksG: Svg.G = root.children.last match
@@ -494,6 +496,154 @@ class ChartAxisTest extends Test:
         val rB = rects(1)
         assertClose(numOf(rB.svgAttrs.y), ys(1000.0), "Group B rect top (ys(1000))")
         assertClose(numOf(rB.svgAttrs.height), ys(300.0) - ys(1000.0), "Group B rect height (ys(300)-ys(1000))")
+    }
+
+    // ---- Test 8b (LAYER FIX A): stacked bar derives a legend from the stack groups ----
+
+    "stacked bar with .legend(_.top): one swatch per stack category in the segment colors" in {
+        // A stacked bar grouped by `group` (no separate `color` channel) must derive its legend from the
+        // STACK groups, exactly as a `color` channel would: one swatch per stack category, in the colors the
+        // stacked segments use. Three groups A, B, C at x="Jan".
+        case class SRow(x: String, group: String, value: Double)
+        val rows = Chunk(
+            SRow("Jan", "A", 300.0),
+            SRow("Jan", "B", 500.0),
+            SRow("Jan", "C", 200.0)
+        )
+        val spec = Chart(rows)(bar(
+            x = _.x,
+            y = _.value,
+            stack = by(_.group)
+        )).legend(_.top)
+        val root = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
+
+        // Legend swatches are frame rects after the background rect ([0]=background, [1..]=swatches).
+        val frameRects = frameRectsIn(root)
+        val swatches   = frameRects.drop(1)
+        assert(swatches.size == 3, s"Expected 3 legend swatches (A, B, C) but got ${swatches.size}")
+
+        // The stacked segment rects live in the marks G; their fills are the segment colors per group.
+        val marksG: Svg.G = root.children.last match
+            case g: Svg.G => g
+            case other    => fail(s"Expected marks G but got $other")
+        val segments = marksG.children.flatMap:
+            case r: Svg.Rect => Chunk(r)
+            case _           => Chunk.empty
+        assert(segments.size == 3, s"Expected 3 stacked segments but got ${segments.size}")
+
+        // Each swatch color must equal the color of the corresponding stacked segment (group ordinal order):
+        // segment 0 = group A, segment 1 = group B, segment 2 = group C.
+        assert(colorOf(swatches(0).svgAttrs.fill) == colorOf(segments(0).svgAttrs.fill), "A swatch must match A segment color")
+        assert(colorOf(swatches(1).svgAttrs.fill) == colorOf(segments(1).svgAttrs.fill), "B swatch must match B segment color")
+        assert(colorOf(swatches(2).svgAttrs.fill) == colorOf(segments(2).svgAttrs.fill), "C swatch must match C segment color")
+
+        // And those colors are the default palette in group order (no explicit colorScale).
+        assert(colorOf(swatches(0).svgAttrs.fill) == Style.Color.blue, "A swatch should be palette(0)=blue")
+        assert(colorOf(swatches(1).svgAttrs.fill) == Style.Color.orange, "B swatch should be palette(1)=orange")
+        assert(colorOf(swatches(2).svgAttrs.fill) == Style.Color.green, "C swatch should be palette(2)=green")
+
+        // Three legend labels, one per group.
+        val legendLabels = frameTextsIn(root).filter: t =>
+            t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle) && t.svgAttrs.textAnchor.isEmpty
+        assert(legendLabels.size == 3, s"Expected 3 legend labels but got ${legendLabels.size}")
+    }
+
+    // ---- Test 8c (LAYER FIX A): stacked bar legend honors an explicit colorScale ----
+
+    "stacked bar legend + segments honor .colorScale (semantic colors)" in {
+        // The stack legend and the segments must use the SAME explicit colorScale mapping, so monitoring
+        // dashboards can map e.g. 2xx->green, 4xx->amber, 5xx->red.
+        case class SRow(x: String, code: String, count: Double)
+        val rows = Chunk(
+            SRow("/a", "2xx", 90.0),
+            SRow("/a", "4xx", 8.0),
+            SRow("/a", "5xx", 2.0)
+        )
+        val amber = Style.Color.hex("#f59e0b").getOrElse(Style.Color.orange)
+        val spec = Chart(rows)(bar(
+            x = _.x,
+            y = _.count,
+            stack = by(_.code)
+        )).legend(
+            _.top.colorScale {
+                case "2xx" => Style.Color.green
+                case "4xx" => amber
+                case _     => Style.Color.red
+            }
+        )
+        val root = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
+
+        val swatches = frameRectsIn(root).drop(1)
+        assert(swatches.size == 3, s"Expected 3 legend swatches but got ${swatches.size}")
+        assert(colorOf(swatches(0).svgAttrs.fill) == Style.Color.green, "2xx swatch green")
+        assert(colorOf(swatches(1).svgAttrs.fill) == amber, "4xx swatch amber")
+        assert(colorOf(swatches(2).svgAttrs.fill) == Style.Color.red, "5xx swatch red")
+
+        val marksG: Svg.G = root.children.last match
+            case g: Svg.G => g
+            case other    => fail(s"Expected marks G but got $other")
+        val segments = marksG.children.flatMap:
+            case r: Svg.Rect => Chunk(r)
+            case _           => Chunk.empty
+        assert(segments.size == 3, s"Expected 3 stacked segments but got ${segments.size}")
+        assert(colorOf(segments(0).svgAttrs.fill) == Style.Color.green, "2xx segment green")
+        assert(colorOf(segments(1).svgAttrs.fill) == amber, "4xx segment amber")
+        assert(colorOf(segments(2).svgAttrs.fill) == Style.Color.red, "5xx segment red")
+    }
+
+    // ---- Test 8d (DARK LEGEND FIX): legend label text uses the light theme chrome color on dark ----
+
+    "dark theme legend labels use the light theme chrome color (not black), matching axis tick labels" in {
+        // The dark-theme background panel (#1f2937) makes a black label invisible. The legend label text
+        // must take the SAME theme chrome color the axis tick labels use (DarkThemeTextColor #e5e7eb),
+        // while swatch fills stay the category/colorScale colors.
+        val darkText = Style.Color.hex("#e5e7eb").getOrElse(Style.Color.white)
+        case class SRow(x: String, code: String, count: Double)
+        val rows = Chunk(
+            SRow("/a", "2xx", 90.0),
+            SRow("/a", "4xx", 8.0),
+            SRow("/a", "5xx", 2.0)
+        )
+        val amber = Style.Color.hex("#f59e0b").getOrElse(Style.Color.orange)
+        val spec = Chart(rows)(bar(
+            x = _.x,
+            y = _.count,
+            stack = by(_.code)
+        )).theme(_.dark).legend(
+            _.top.colorScale {
+                case "2xx" => Style.Color.green
+                case "4xx" => amber
+                case _     => Style.Color.red
+            }
+        )
+        val root = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
+
+        // Legend labels: frame texts with DominantBaseline.Middle and no textAnchor.
+        val legendLabels = frameTextsIn(root).filter: t =>
+            t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle) && t.svgAttrs.textAnchor.isEmpty
+        assert(legendLabels.size == 3, s"Expected 3 legend labels but got ${legendLabels.size}")
+        legendLabels.foreach: t =>
+            assert(
+                colorOf(t.svgAttrs.fill) == darkText,
+                s"Dark theme legend label fill should be the light chrome color $darkText but was ${t.svgAttrs.fill}"
+            )
+
+        // The axis tick labels on the same dark chart use the SAME chrome color; the legend now matches.
+        val tickLabels = frameTextsIn(root).filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Middle)
+        assert(tickLabels.nonEmpty, "Expected at least one x-axis tick label")
+        tickLabels.foreach: t =>
+            assert(
+                colorOf(t.svgAttrs.fill) == darkText,
+                s"Dark theme axis tick label fill should be $darkText but was ${t.svgAttrs.fill}"
+            )
+
+        // Swatch fills stay the colorScale colors, not the chrome color.
+        val swatches = frameRectsIn(root).drop(1)
+        assert(swatches.size == 3, s"Expected 3 legend swatches but got ${swatches.size}")
+        assert(colorOf(swatches(0).svgAttrs.fill) == Style.Color.green, "2xx swatch stays green")
+        assert(colorOf(swatches(1).svgAttrs.fill) == amber, "4xx swatch stays amber")
+        assert(colorOf(swatches(2).svgAttrs.fill) == Style.Color.red, "5xx swatch stays red")
     }
 
     // ---- Test 10 (FIX 1 verification): tickFormat receives domain value, not pixel ----
@@ -547,11 +697,12 @@ class ChartAxisTest extends Test:
             SRow("Jan", "A", 300.0),
             SRow("Jan", "B", 700.0)
         )
+        // Legend hidden to isolate stack geometry (see the stacked-bar accumulation test for the rationale).
         val spec = Chart(rows)(bar(
             x = _.x,
             y = _.value,
             stack = by(_.group, normalize = true)
-        ))
+        )).legend(_.hidden)
         val root = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
 
         val marksG: Svg.G = root.children.last match
@@ -598,11 +749,12 @@ class ChartAxisTest extends Test:
             ARow(2, "A", 300.0),
             ARow(2, "B", 700.0)
         )
+        // Legend hidden to isolate stack geometry (a stacked area now derives a legend by default).
         val spec = Chart(rows)(area(
             x = _.x,
             y = _.value,
             stack = by(_.group)
-        ))
+        )).legend(_.hidden)
         val root = summon[Conversion[ChartSpec[ARow], Svg.Root]](spec)
 
         val marksG: Svg.G = root.children.last match
@@ -658,11 +810,12 @@ class ChartAxisTest extends Test:
             ARow(1, "A", 300.0),
             ARow(1, "B", 700.0)
         )
+        // Legend hidden to isolate stack geometry (a stacked area now derives a legend by default).
         val spec = Chart(rows)(area(
             x = _.x,
             y = _.value,
             stack = by(_.group, normalize = true)
-        ))
+        )).legend(_.hidden)
         val root = summon[Conversion[ChartSpec[ARow], Svg.Root]](spec)
 
         val marksG: Svg.G = root.children.last match

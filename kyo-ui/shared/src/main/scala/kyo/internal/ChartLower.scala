@@ -176,13 +176,13 @@ private[kyo] object ChartLower:
     private def buildLayout(spec: ChartSpec[?]): Layout =
         val (w, h)      = spec.chartSize
         val marginRight = if spec.yAxisRightCfg.isDefined then MarginRightAxis else MarginRightDefault
-        val hasColorChannel = !spec.legendCfg.isHidden && spec.marks.toSeq.exists:
-            case m: Mark.Bar[?, ?, ?]   => m.color.isDefined
+        val hasLegend = !spec.legendCfg.isHidden && spec.marks.toSeq.exists:
+            case m: Mark.Bar[?, ?, ?]   => m.color.isDefined || m.stack.group.isDefined
             case m: Mark.Line[?, ?, ?]  => m.color.isDefined
-            case m: Mark.Area[?, ?, ?]  => m.color.isDefined
+            case m: Mark.Area[?, ?, ?]  => m.color.isDefined || m.stack.group.isDefined
             case m: Mark.Point[?, ?, ?] => m.color.isDefined
             case _                      => false
-        val legendPad = if hasColorChannel then LegendReservedH else 0.0
+        val legendPad = if hasLegend then LegendReservedH else 0.0
         Layout(
             svgW = w.toDouble,
             svgH = h.toDouble,
@@ -733,6 +733,11 @@ private[kyo] object ChartLower:
       * Categories are collected in enum-ordinal order when the color values are enums (N3 carry-over:
       * real `Plottable` ordering, not encounter order). The palette comes from `legendCfg.colorScaleFn`
       * when set; otherwise from `theme.palette` or the `DefaultPalette`.
+      *
+      * When no mark has a `color` channel but a Bar or Area mark carries a `stack` grouping, the legend is
+      * derived from the STACK groups instead: one swatch+label per stack category, in the same colors the
+      * stacked segments use. This is the same derivation as for a `color` channel, applied to the grouping
+      * accessor that colors the stacked segments.
       */
     private def buildLegend[A](
         layout: Layout,
@@ -741,9 +746,8 @@ private[kyo] object ChartLower:
     )(using Frame): Chunk[Svg.SvgElement] =
         if spec.legendCfg.isHidden then Chunk.empty
         else
-            // Find the first mark with a color channel
-            val colorChOpt: Maybe[Channel[A, ?]] = findColorChannel(spec.marks)
-            colorChOpt match
+            // Prefer a color channel; fall back to the stack grouping that colors the stacked segments.
+            legendChannel(spec.marks) match
                 case Absent           => Chunk.empty
                 case Present(colorCh) =>
                     // categories: Chunk[(label, rawValue)] sorted by enum ordinal when applicable
@@ -751,10 +755,16 @@ private[kyo] object ChartLower:
                     if categories.isEmpty then Chunk.empty
                     else
                         val palette = resolvePalette(spec, categories)
-                        buildLegendItems(layout, categories, palette, spec.legendCfg)
+                        buildLegendItems(layout, categories, palette, spec.legendCfg, axisChromeColor(spec.theme))
                     end if
             end match
     end buildLegend
+
+    /** The channel that drives the legend: the first `color` channel, or, when none is present, the first
+      * Bar/Area `stack` grouping (which colors the stacked segments).
+      */
+    private def legendChannel[A](marks: Chunk[Mark[A]]): Maybe[Channel[A, ?]] =
+        findColorChannel(marks).orElse(findStackGroup(marks))
 
     /** Find the first color channel across all marks. */
     private def findColorChannel[A](marks: Chunk[Mark[A]]): Maybe[Channel[A, ?]] =
@@ -770,6 +780,27 @@ private[kyo] object ChartLower:
                     case _                      => loop(i + 1)
         loop(0)
     end findColorChannel
+
+    /** Find the first Bar/Area `stack` grouping accessor, wrapped as a string-keyed `Channel`.
+      *
+      * The wrapped channel mirrors how `lowerBarStacked` colors stacked segments: the grouping accessor
+      * keyed as a string category. Deriving the legend from this channel produces one swatch per stack
+      * category in the same colors the segments use.
+      */
+    private def findStackGroup[A](marks: Chunk[Mark[A]]): Maybe[Channel[A, ?]] =
+        @scala.annotation.tailrec
+        def loop(i: Int): Maybe[Channel[A, ?]] =
+            if i >= marks.size then Absent
+            else
+                val groupMaybe = marks(i) match
+                    case m: Mark.Bar[A, ?, ?]  => m.stack.group
+                    case m: Mark.Area[A, ?, ?] => m.stack.group
+                    case _                     => Absent
+                groupMaybe match
+                    case Present(g) => Present(Channel[A, Any](g, Plottable.string.asInstanceOf[Plottable[Any]]))
+                    case Absent     => loop(i + 1)
+        loop(0)
+    end findStackGroup
 
     /** Collect distinct color category labels in enum-ordinal order when possible, encounter order otherwise.
       *
@@ -829,12 +860,17 @@ private[kyo] object ChartLower:
       *
       * The legend is placed in the band between the SVG top and the plot top (the `LegendReservedH`
       * strip reserved by `buildLayout`). This ensures legend swatches never overlap the data marks.
+      *
+      * `labelColor` is the theme chrome color (the same `axisChromeColor` the axis tick labels use):
+      * light on dark, dark on light, so the labels stay readable against the panel background. The swatch
+      * fills keep the category/colorScale colors.
       */
     private def buildLegendItems(
         layout: Layout,
         categories: Chunk[(String, Any)],
         palette: Chunk[Style.Color],
-        cfg: LegendConfig
+        cfg: LegendConfig,
+        labelColor: Style.Color
     )(using Frame): Chunk[Svg.SvgElement] =
         // Place the legend inside the reserved band above the plot (y in [MarginTop, plotY - 2]).
         // The band height equals LegendReservedH; center vertically within it.
@@ -863,6 +899,7 @@ private[kyo] object ChartLower:
                         .x(curX + SwatchSize + SwatchLabelGap)
                         .y(legendY + SwatchSize / 2.0)
                         .dominantBaseline(Svg.DominantBaseline.Middle)
+                        .fill(Svg.Paint.Color(labelColor))
                         .apply(cat)
                 val approxLabelW = cat.length.toDouble * 7.0
                 val nextX        = curX + SwatchSize + SwatchLabelGap + approxLabelW + itemGap
@@ -1005,7 +1042,7 @@ private[kyo] object ChartLower:
         val specMaybe: Maybe[ChartSpec[A]] = if spec != null then Present(spec) else Absent
         mark.stack.group match
             case Present(_) =>
-                lowerBarStacked(rows, mark, layout, xs, ys)
+                lowerBarStacked(rows, mark, layout, xs, ys, specMaybe)
             case Absent =>
                 mark.color match
                     case Absent =>
@@ -1122,7 +1159,8 @@ private[kyo] object ChartLower:
         mark: Mark.Bar[A, X, Y],
         layout: Layout,
         xs: Scale,
-        ys: Scale
+        ys: Scale,
+        spec: Maybe[ChartSpec[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val groupFn  = mark.stack.group.getOrElse((_: A) => "")
         val baseline = layout.plotBaseline
@@ -1136,10 +1174,15 @@ private[kyo] object ChartLower:
                     if acc.toSeq.contains(k) then acc else acc.append(k)
                 case Absent => acc
 
-        // 2. Collect all distinct group keys in enum-ordinal order
-        // Use a temporary Channel to reuse collectColorCategories
-        val groupCh: Channel[A, Any] = Channel(groupFn, Plottable.string.asInstanceOf[Plottable[Any]])
-        val groupKeys: Chunk[String] = collectColorCategories(rows, groupCh)
+        // 2. Collect all distinct group keys (with their raw values) in enum-ordinal order.
+        // The raw values feed the same palette resolution the legend uses, so each stacked segment is
+        // painted in exactly the color its legend swatch shows (honoring an explicit `colorScale`).
+        val groupCh: Channel[A, Any]        = Channel(groupFn, Plottable.string.asInstanceOf[Plottable[Any]])
+        val groupCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, groupCh)
+        val groupKeys: Chunk[String]        = groupCats.map(_._1)
+        val groupPalette: Chunk[Style.Color] = spec match
+            case Present(s) => resolvePalette(s, groupCats)
+            case Absent     => resolvePaletteFromCfg(groupKeys)
 
         // 3. Build xKey -> groupKey -> yValue map
         @scala.annotation.tailrec
@@ -1204,8 +1247,7 @@ private[kyo] object ChartLower:
                             else if accY == 0.0 then baseline
                             else ys.apply(Domain.Continuous(accY))
                         val rectH     = rectBot - rectTop
-                        val colorIdx  = gi % DefaultPalette.size
-                        val fillColor = DefaultPalette(colorIdx)
+                        val fillColor = if gi < groupPalette.size then groupPalette(gi) else DefaultPalette(gi % DefaultPalette.size)
                         // Skip emission when the group contributes nothing at this x slot (FIX 3a)
                         val nextAcc2 =
                             if rawY == 0.0 then acc2
@@ -2076,7 +2118,7 @@ private[kyo] object ChartLower:
                         // Area path: same declarative SMIL `d` morph discipline as line.
                         val (elems, geom) = lowerAreaWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom)
                         (accElems ++ elems, geom)
-                    case m: Mark.Bar[A, ?, ?]  => (accElems ++ lowerBar(rows, m, layout, xs, ys, markColor), accGeom)
+                    case m: Mark.Bar[A, ?, ?]  => (accElems ++ lowerBar(rows, m, layout, xs, ys, markColor, spec), accGeom)
                     case m: Mark.Line[A, ?, ?] => (accElems ++ lowerLine(rows, m, layout, xs, ys, markColor), accGeom)
                     case m: Mark.Area[A, ?, ?] => (accElems ++ lowerArea(rows, m, layout, xs, ys, markColor), accGeom)
                     case m: Mark.Point[A, ?, ?] =>
@@ -2130,14 +2172,18 @@ private[kyo] object ChartLower:
         ysL: Scale,
         ysR: Maybe[Scale],
         spec: ChartSpec[A],
-        initialRows: Chunk[A]
+        initialRows: Chunk[A],
+        legendRows: Chunk[A]
     )(using Frame): Chunk[Svg.SvgElement] =
         val leftChrome  = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
         val rightChrome = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
         val gridColor   = gridlineColor(spec.theme)
         val background  = buildBackground(layout, spec.theme)
         val axisLines   = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
-        val legendElems = buildLegend(layout, spec, initialRows)
+        // Derive the legend from a sample of the live signal's current value, not from the empty `initialRows`
+        // used for the (data-independent) frame chrome. An empty chunk yields zero categories, which would
+        // suppress the legend entirely.
+        val legendElems = buildLegend(layout, spec, legendRows)
         val yAxisElems: Chunk[Svg.SvgElement] =
             if isYDomainFixed(spec.yScaleOverride) then
                 val leftAxis = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor)
@@ -2252,7 +2298,7 @@ private[kyo] object ChartLower:
       * pure render function. The ref is private to this chart instance and writes occur only on genuine row
       * changes, so the bypass is sound.
       */
-    private[kyo] def lowerLive[A](spec: ChartSpec[A], signal: Signal[Chunk[A]])(using Frame): Svg.Root =
+    private[kyo] def lowerLive[A](spec: ChartSpec[A], signal: Signal[Chunk[A]], legendRows: Chunk[A])(using Frame): Svg.Root =
         val layout = buildLayout(spec)
         // Use a fixed initial row set for the layout/x-scale/ysR-presence check.
         // For Phase 05 the x-scale is computed from the signal's current value via initConst or the first
@@ -2277,7 +2323,7 @@ private[kyo] object ChartLower:
             else Absent
         // Static frame: drawn once, never changes.
         val ysLForFrame = ysLFixed.getOrElse(resolveYScale(initialRows, spec.marks, layout, spec.yScaleOverride))
-        val staticFrame = buildStaticFrameLive(layout, xs, ysLForFrame, ysRFixed, spec, initialRows)
+        val staticFrame = buildStaticFrameLive(layout, xs, ysLForFrame, ysRFixed, spec, initialRows, legendRows)
         val vb          = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
         val baseSvg     = Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
         val withFrame = staticFrame.foldLeft(baseSvg): (acc, el) =>
@@ -2336,7 +2382,17 @@ private[kyo] object ChartLower:
         given Frame = Frame.internal
         spec.data match
             case DataSource.Static(rows) => lowerStatic(rows, spec)
-            case DataSource.Live(signal) => lowerLive(spec, signal)
+            case DataSource.Live(signal) =>
+                // Sample the signal's current value so the (static) legend can derive its categories from real
+                // rows. The legend lives in the static frame, so without a sample it would be built from an
+                // empty chunk and never emit any swatches/labels. The category set (e.g. 2xx/4xx/5xx, p50/p99)
+                // is fixed for a live chart, so one sample at lowering time is sufficient; the reactive marks
+                // region still redraws per emission. Unsafe: a synchronous read of the signal's current value
+                // is sound here because lowering is itself a pure, synchronous projection.
+                import AllowUnsafe.embrace.danger
+                val legendRows = Sync.Unsafe.evalOrThrow(signal.current)
+                lowerLive(spec, signal, legendRows)
+        end match
     end lower
 
     /** Build a tooltip overlay `Reactive[Svg.G]` driven by the chart's internal hover ref.
