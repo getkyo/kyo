@@ -14,9 +14,9 @@ import org.scalajs.dom
   *      `/<prefix>/...` route).
   *   3. Mounts the unified `SiteApp` shell ONCE around one route-reactive content slot, then drives
   *      that slot from a single nav fiber on `route.next`: `/` swaps to the landing body with no
-  *      reload (D1), `/<prefix>/<slug>/` fetches + transpiles `content.md` and swaps the article/TOC
-  *      in place, `/<prefix>/` swaps to an empty-article docs shell, and any genuinely off-tree route
-  *      falls back to a full browser navigation.
+  *      reload (D1), `/<prefix>/<slug>/` and the overview `/<prefix>/` both fetch + transpile
+  *      `content.md` and swap the article/TOC in place (the overview's `content.md` is the root-README
+  *      intro), and any genuinely off-tree route falls back to a full browser navigation.
   *
   * After every in-shell content swap the nav fiber also updates `document.title` and the
   * `<link rel=canonical>` href to match the new route (SEO-4), using the SAME title/canonical string
@@ -260,7 +260,9 @@ object WebsiteBundleMain:
       *     transpile `content.md` (cache), update `articleRef`/`tocRef`, and swap `content` to the docs
       *     body.
       *   - [[RouteKind.Intro]] (`/<knownPrefix>/`, exactly one segment naming a real tree, `latest` or a
-      *     known version tag): clear the article/TOC and swap to the empty-article docs body.
+      *     known version tag): the overview, fetched and rendered exactly like a module from the route's
+      *     `content.md` (the root-README intro), so the rail's Overview item is active and expands to the
+      *     intro's `## ` sections.
       *   - [[RouteKind.OffTree]] (an unknown single-segment prefix OR a multi-segment route whose last
       *     segment is not a known module slug, e.g. `/latest/does-not-exist/`, AF-4): a full browser
       *     navigation as the narrow safety fallback, so the server resolves the real page or a clean 404
@@ -293,34 +295,15 @@ object WebsiteBundleMain:
                                 content.set(landingBody).andThen(updateHead(nextRoute, island))
                             case RouteKind.Module =>
                                 // Module route: fetch/transpile content.md, update article + TOC, show docs.
-                                for
-                                    md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
-                                    fetched <-
-                                        if md.nonEmpty then Sync.defer(md)
-                                        else
-                                            DocsClient.fetchMarkdown(nextRoute).map { f =>
-                                                seedMarkdownCache(nextRoute, f)
-                                                f
-                                            }
-                                    rendered <- DocsMarkdown.transpile(fetched)
-                                    _        <- articleRef.set(rendered.article)
-                                    _        <- tocRef.set(rendered.headings)
-                                    _        <- content.set(docsBody)
-                                    _        <- updateHead(nextRoute, island)
-                                    // After the article re-renders, scroll to the URL hash if present (a
-                                    // heading-hit search result navigates to /<prefix>/<slug>/#<heading>;
-                                    // the anchor element only exists once this branch renders the article).
-                                    // With NO hash (sidebar nav, prev/next) reset to the top so the new
-                                    // page starts at its heading instead of inheriting the previous page's
-                                    // scrollY at the bottom (B5).
-                                    _ <- scrollToHashOrTop()
-                                yield ()
+                                showContentRoute(nextRoute, island, content, articleRef, tocRef, docsBody)
                             case RouteKind.Intro =>
-                                // Intro `/<knownPrefix>/`: empty-article docs shell, no content.md fetch.
-                                articleRef.set(UI.empty)
-                                    .andThen(tocRef.set(Chunk.empty))
-                                    .andThen(content.set(docsBody))
-                                    .andThen(updateHead(nextRoute, island))
+                                // Intro/overview `/<knownPrefix>/`: the root-README overview is now real
+                                // content served at `/<prefix>/content.md`, so the intro is a content route
+                                // exactly like a module: fetch/transpile content.md, update article + TOC,
+                                // show docs. The Overview is the active rail item (DocsApp keys it on the
+                                // single-segment intro route), and its `## ` sections come from the TOC set
+                                // here.
+                                showContentRoute(nextRoute, island, content, articleRef, tocRef, docsBody)
                             case RouteKind.OffTree =>
                                 // Off-tree route: a single segment that is not a known prefix, OR a multi-
                                 // segment route whose last segment is not a known module slug (AF-4). Hand off
@@ -333,13 +316,55 @@ object WebsiteBundleMain:
         }
     end navFiber
 
+    /** Show a content route (a module page OR the intro/overview): fetch the route's `content.md` (from
+      * the cache when seeded, else over the network, caching the result), transpile it, update the
+      * shared `articleRef`/`tocRef`, swap `content` to the one docs body, update the head (SEO-4), and
+      * scroll to the URL hash or the top (B5). Both the [[RouteKind.Module]] and [[RouteKind.Intro]]
+      * branches share this: the overview is fetched and rendered exactly like a module, so the rail's
+      * Overview item expands to the intro's `## ` sections and the overview prose renders identically to
+      * the SSG first paint (hydration parity).
+      */
+    private def showContentRoute(
+        nextRoute: String,
+        island: DocsClient.DocsIsland,
+        content: SignalRef[UI],
+        articleRef: SignalRef[UI],
+        tocRef: SignalRef[Chunk[DocsMarkdown.Heading]],
+        docsBody: UI
+    )(using Frame): Unit < Async =
+        for
+            md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
+            fetched <-
+                if md.nonEmpty then Sync.defer(md)
+                else
+                    DocsClient.fetchMarkdown(nextRoute).map { f =>
+                        seedMarkdownCache(nextRoute, f)
+                        f
+                    }
+            rendered <- DocsMarkdown.transpile(fetched)
+            _        <- articleRef.set(rendered.article)
+            _        <- tocRef.set(rendered.headings)
+            _        <- content.set(docsBody)
+            _        <- updateHead(nextRoute, island)
+            // After the article re-renders, scroll to the URL hash if present (a heading-hit search
+            // result navigates to /<prefix>/<slug>/#<heading>; the anchor element only exists once this
+            // branch renders the article). With NO hash (sidebar nav, prev/next) reset to the top so the
+            // new page starts at its heading instead of inheriting the previous page's scrollY (B5).
+            _ <- scrollToHashOrTop()
+        yield ()
+    end showContentRoute
+
     /** SEO-4: update `document.title` and the `<link rel=canonical>` href to match `route`, with no
       * reload. The strings mirror `WebsiteGenerator.docOpts` / the landing opts exactly:
       *   - root `/`: title `"Kyo | Build with AI. Ship something that holds."`, canonical
       *     `"https://getkyo.io/"`.
       *   - module `/<prefix>/<slug>/`: title `"<slug> | Kyo docs <label>"`, canonical
       *     `"https://getkyo.io/<prefix>/<slug>/"`.
-      *   - intro `/<prefix>/`: title `"Kyo docs <label>"`, canonical `"https://getkyo.io/<prefix>/"`.
+      *   - intro/overview `/<prefix>/`: title `"Overview | Kyo docs <label>"`, canonical
+      *     `"https://getkyo.io/<prefix>/"`.
+      *
+      * The intro title is `"Overview | Kyo docs <label>"`, matching `WebsiteGenerator.introOpts` whose
+      * title is the intro's H1 text (the kyo root-README intro has no H1) falling back to "Overview".
       *
       * `<label>` is the seeded island's version label, the same record the SSG used to build the head
       * for the latest tree. The canonical href is the absolute `https://getkyo.io<route>` URL, matching
@@ -352,7 +377,7 @@ object WebsiteBundleMain:
             val title =
                 if segments.isEmpty then "Kyo | Build with AI. Ship something that holds."
                 else if segments.length >= 2 then s"${segments(segments.length - 1)} | Kyo docs $label"
-                else s"Kyo docs $label"
+                else s"Overview | Kyo docs $label"
             val canonical =
                 if segments.isEmpty then "https://getkyo.io/"
                 else s"https://getkyo.io$route"

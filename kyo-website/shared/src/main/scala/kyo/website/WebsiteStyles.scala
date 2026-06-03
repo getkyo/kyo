@@ -740,8 +740,8 @@ object WebsiteStyles:
                     .gap(1.px).margin(6.px, 0.px, 2.px, 8.px)
                     .borderLeft(1.px, _.variable("line-soft"))
             )
-            // A section link: left-aligned, dim, no underline, brightening to ink on hover. The base
-            // indent (left padding) is set per level below.
+            // A section link: left-aligned, dim, no underline, brightening to ink on hover. The rail is
+            // one level deep (only `## ` sections render), so a single base indent suffices.
             .rule(
                 "sidebar-section",
                 Style.row.align(_.start).width(Length.Pct(100))
@@ -749,10 +749,6 @@ object WebsiteStyles:
                     .padding(4.px, 8.px, 4.px, 12.px).rounded(6.px).textDecoration(_.none)
                     .hover(_.color(_.variable("ink")))
             )
-            // Level-2 sits at the base indent; level-3+ steps one level deeper so the outline reads as
-            // a shallow tree.
-            .rule("sidebar-section-l2", Style.padding(4.px, 8.px, 4.px, 12.px))
-            .rule("sidebar-section-l3", Style.padding(4.px, 8.px, 4.px, 24.px).color(_.variable("faint")))
             // Mobile module-nav toggle (B6): a full-width disclosure button shown by default and
             // hidden on wide viewports by the >=861px media query (where the sidebar is always
             // visible). Clicking it flips the sidebar's `docs-sidebar-open` class, which the <860px
@@ -799,19 +795,6 @@ object WebsiteStyles:
                 Style.flexGrow(1.0).flexBasis(0.px)
                     .border(1.px, _.variable("line-soft")).rounded(16.px).padding(16.px, 18.px)
                     .color(_.variable("faint"))
-            )
-            // The intro route (no module) shows this hint instead of an empty pager (B12).
-            .rule(
-                "docs-home-hint",
-                Style.block.margin(8.px, 0.px, 0.px, 0.px).color(_.variable("dim")).fontSize(16.px).lineHeight(1.7)
-            )
-            .rule(
-                Selector.cls("docs-home-hint").descendant(Selector.tag("a")),
-                Style.inline.color(_.variable("accent")).fontWeight(_.w500).hover(_.underline)
-            )
-            .rule(
-                Selector.cls("docs-home-hint").descendant(Selector.tag("span")),
-                Style.inline
             )
     end docsContent
 

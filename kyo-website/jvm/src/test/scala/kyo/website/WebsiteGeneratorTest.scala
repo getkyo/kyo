@@ -401,22 +401,25 @@ class WebsiteGeneratorTest extends Test:
 
     "full route set + per-route content.md + per-version manifest.json (INV-009) (P7-7)" in run {
         for
-            out       <- tmpDir
-            bundleDir <- stubBundleDir
-            _         <- emit(Chunk(vWithModules, vIntroOnly), out, bundleDir)
-            vIndex    <- (out / "v1.0.0-RC2" / "index.html").exists
-            dataIndex <- (out / "v1.0.0-RC2" / "kyo-data" / "index.html").exists
-            dataMd    <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "content.md")
-            kernelMd  <- readFile(out / "v1.0.0-RC2" / "kyo-kernel" / "content.md")
-            kernelIdx <- (out / "v1.0.0-RC2" / "kyo-kernel" / "index.html").exists
-            vManifest <- readFile(out / "v1.0.0-RC2" / "manifest.json")
-            introIdx  <- (out / "v0.9.3" / "index.html").exists
-            introMan  <- readFile(out / "v0.9.3" / "manifest.json")
-            introSlug <- (out / "v0.9.3" / "kyo-data" / "index.html").exists
-            latestIdx <- (out / "latest" / "index.html").exists
-            latestMd  <- readFile(out / "latest" / "kyo-data" / "content.md")
-            latestMan <- (out / "latest" / "manifest.json").exists
-            versions  <- (out / "versions.json").exists
+            out           <- tmpDir
+            bundleDir     <- stubBundleDir
+            _             <- emit(Chunk(vWithModules, vIntroOnly), out, bundleDir)
+            vIndex        <- (out / "v1.0.0-RC2" / "index.html").exists
+            dataIndex     <- (out / "v1.0.0-RC2" / "kyo-data" / "index.html").exists
+            dataMd        <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "content.md")
+            kernelMd      <- readFile(out / "v1.0.0-RC2" / "kyo-kernel" / "content.md")
+            kernelIdx     <- (out / "v1.0.0-RC2" / "kyo-kernel" / "index.html").exists
+            vManifest     <- readFile(out / "v1.0.0-RC2" / "manifest.json")
+            vIntroMd      <- readFile(out / "v1.0.0-RC2" / "content.md")
+            introIdx      <- (out / "v0.9.3" / "index.html").exists
+            introMan      <- readFile(out / "v0.9.3" / "manifest.json")
+            introSlug     <- (out / "v0.9.3" / "kyo-data" / "index.html").exists
+            introIntroMd  <- readFile(out / "v0.9.3" / "content.md")
+            latestIdx     <- (out / "latest" / "index.html").exists
+            latestMd      <- readFile(out / "latest" / "kyo-data" / "content.md")
+            latestIntroMd <- readFile(out / "latest" / "content.md")
+            latestMan     <- (out / "latest" / "manifest.json").exists
+            versions      <- (out / "versions.json").exists
         yield
             assert(vIndex, "v1.0.0-RC2/index.html must exist")
             assert(dataIndex, "v1.0.0-RC2/kyo-data/index.html must exist")
@@ -425,13 +428,51 @@ class WebsiteGeneratorTest extends Test:
             assert(kernelIdx, "v1.0.0-RC2/kyo-kernel/index.html must exist")
             assert(vManifest.contains("\"slug\": \"kyo-data\""), s"manifest must list kyo-data: $vManifest")
             assert(vManifest.contains("\"slug\": \"kyo-kernel\""), s"manifest must list kyo-kernel: $vManifest")
+            // The intro route now writes content.md == content.intro (the root-README overview source).
+            assert(vIntroMd == "intro", s"v1.0.0-RC2/content.md must equal content.intro, got: $vIntroMd")
             assert(introIdx, "v0.9.3/index.html must exist")
             assert(introMan == "[]", s"intro-only manifest must be empty array, got: $introMan")
             assert(!introSlug, "v0.9.3 must have zero per-module pages")
+            assert(introIntroMd == "old intro", s"v0.9.3/content.md must equal its intro, got: $introIntroMd")
             assert(latestIdx, "latest/index.html must exist (mirrors v1.0.0-RC2)")
             assert(latestMd == dataReadme, "latest/kyo-data/content.md must mirror the readme")
+            assert(latestIntroMd == "intro", s"latest/content.md must equal the overview intro, got: $latestIntroMd")
             assert(latestMan, "latest/manifest.json must exist")
             assert(versions, "versions.json must exist")
+        end for
+    }
+
+    // ---- The intro route renders the root-README overview as a real article (not an empty one) ----
+
+    "intro route renders the transpiled overview article, not an empty article (overview-as-home)" in run {
+        // A distinctive prose sentence + a couple of `## ` sections in the intro: the SSG must ship the
+        // transpiled overview text AND its level-2 section anchors in the intro page HTML, and write the
+        // raw intro as content.md.
+        val prose = "Kyo is a Scala 3 toolkit for building applications across platforms."
+        val intro = s"## Introduction\n$prose\n## Coming from ZIO\nNotes.\n"
+        val mod   = WebsiteModule("kyo-core", "Foundation", "kyo-core", "# kyo-core\nCore.\n", WebsiteModule.Platforms(true, true, true))
+        val content =
+            WebsiteContent(intro, Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            introHtml <- readFile(out / "latest" / "index.html")
+            introMd   <- readFile(out / "latest" / "content.md")
+        yield
+            // The overview prose ships in the raw intro HTML (real article, not empty + a hint).
+            assert(introHtml.contains(prose), s"intro HTML must ship the transpiled overview prose: $introHtml")
+            // The intro's level-2 sections carry article anchors.
+            assert(introHtml.contains("""id="introduction""""), s"intro must carry the Introduction h2 anchor: $introHtml")
+            assert(introHtml.contains("""id="coming-from-zio""""), s"intro must carry the Coming-from-ZIO h2 anchor: $introHtml")
+            // The rail's Overview item is the active expanded item with its #slug sections.
+            assert(introHtml.contains("#introduction"), s"intro rail must list the #introduction section: $introHtml")
+            assert(introHtml.contains("nav-item-active"), s"intro rail Overview must be the active item: $introHtml")
+            // The old empty-article docs-home hint is gone.
+            assert(!introHtml.contains("docs-home-hint"), s"the old docs-home hint must be gone: $introHtml")
+            assert(!introHtml.contains("Pick a module from the sidebar"), s"the old pick-a-module hint text must be gone: $introHtml")
+            // content.md is the raw intro source.
+            assert(introMd == intro, s"intro content.md must equal content.intro, got: $introMd")
         end for
     }
 
@@ -607,15 +648,15 @@ class WebsiteGeneratorTest extends Test:
             assert(hrefs.nonEmpty, s"expected rail section fragment hrefs, found none: $html")
             for slug <- hrefs do
                 assert(html.contains(s"""id="$slug""""), s"section href #$slug has no matching article id: $html")
-            // The section outline lists level-2+ headings (beta, gamma). The level-1 page title (alpha)
-            // is the module link in the rail, NOT a #slug section link, even though the article still
-            // carries its id="alpha" anchor (so any external/deep link to it still resolves).
-            assert(
-                hrefs.contains("beta") && hrefs.contains("gamma"),
-                s"expected beta/gamma section slugs, got: $hrefs"
-            )
+            // The one-level rail lists ONLY level-2 (`## `) sections: beta is the lone rail section. The
+            // level-1 page title (alpha) is the module link, and the level-3 heading (gamma) is dropped
+            // from the rail, even though the article still carries both their id anchors (so any external
+            // or deep link to them still resolves).
+            assert(hrefs.contains("beta"), s"expected the level-2 beta section slug in the rail, got: $hrefs")
+            assert(!hrefs.contains("gamma"), s"the level-3 gamma heading must NOT be a rail section link, got: $hrefs")
             assert(!hrefs.contains("alpha"), s"the level-1 page title (alpha) must not be a section link, got: $hrefs")
             assert(html.contains("""id="alpha""""), s"the article must still carry the h1 id=alpha anchor: $html")
+            assert(html.contains("""id="gamma""""), s"the article must still carry the level-3 id=gamma anchor: $html")
         end for
     }
 
@@ -750,15 +791,16 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- SEO-3: sitemap.xml lists / and every latest slug, excludes versioned/intro/asset URLs ----
+    // ---- SEO-3: sitemap.xml lists /, the /latest/ overview, and every latest slug; excludes versioned URLs ----
 
-    "sitemap.xml lists / and every latest slug, no /v<X>/ or intro or asset URLs (SEO-3)" in run {
+    "sitemap.xml lists /, the /latest/ overview, and every latest slug; no /v<X>/ or asset URLs (SEO-3)" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
             _         <- emit(Chunk(vWithModules, vIntroOnly), out, bundleDir)
             sitemap   <- readFile(out / "sitemap.xml")
-            // Cross-check the <loc> count against the actual emitted latest/<slug>/ pages + 1 (the root).
+            // Cross-check the <loc> count against the actual emitted latest/<slug>/ pages + 2 (the root
+            // and the /latest/ overview).
             latestSlugPages <- Sync.defer {
                 val latestDir = java.nio.file.Paths.get(out.toString, "latest")
                 if Files.exists(latestDir) then
@@ -768,14 +810,14 @@ class WebsiteGeneratorTest extends Test:
         yield
             assert(sitemap.startsWith("<?xml"), s"sitemap must be valid XML: $sitemap")
             assert(sitemap.contains("<urlset"), s"sitemap must contain a <urlset>: $sitemap")
-            // Included: the root and each /latest/<slug>/.
+            // Included: the root, the /latest/ overview, and each /latest/<slug>/.
             assert(sitemap.contains("<loc>https://getkyo.io/</loc>"), s"sitemap must list the root: $sitemap")
+            assert(sitemap.contains("<loc>https://getkyo.io/latest/</loc>"), s"sitemap must list the /latest/ overview: $sitemap")
             assert(sitemap.contains("<loc>https://getkyo.io/latest/kyo-data/</loc>"), s"sitemap must list kyo-data: $sitemap")
             assert(sitemap.contains("<loc>https://getkyo.io/latest/kyo-kernel/</loc>"), s"sitemap must list kyo-kernel: $sitemap")
-            // Excluded: the current-latest versioned tree, the historical version, intros, and non-pages.
+            // Excluded: the current-latest versioned tree, the historical version, and non-pages.
             assert(!sitemap.contains("/v1.0.0-RC2/"), s"sitemap must NOT list the versioned tree: $sitemap")
             assert(!sitemap.contains("/v0.9.3/"), s"sitemap must NOT list the old version: $sitemap")
-            assert(!sitemap.contains("<loc>https://getkyo.io/latest/</loc>"), s"sitemap must NOT list the intro page: $sitemap")
             assert(!sitemap.contains("content.md"), s"sitemap must NOT list content.md: $sitemap")
             assert(!sitemap.contains("manifest.json"), s"sitemap must NOT list manifest.json: $sitemap")
             assert(!sitemap.contains("versions.json"), s"sitemap must NOT list versions.json: $sitemap")
@@ -784,10 +826,10 @@ class WebsiteGeneratorTest extends Test:
             val lastmodCount = countOccurrences(sitemap, "<lastmod>")
             assert(locCount == lastmodCount, s"every <loc> must have a <lastmod>, got $locCount loc / $lastmodCount lastmod")
             assert(!sitemap.contains("<lastmod></lastmod>"), s"<lastmod> must be non-empty: $sitemap")
-            // Cross-check: <loc> count == count of latest/<slug>/ dirs + 1 (the root /).
+            // Cross-check: <loc> count == count of latest/<slug>/ dirs + 2 (the root / and the /latest/ overview).
             assert(
-                locCount == latestSlugPages + 1,
-                s"sitemap <loc> count ($locCount) must equal latest slug pages ($latestSlugPages) + 1"
+                locCount == latestSlugPages + 2,
+                s"sitemap <loc> count ($locCount) must equal latest slug pages ($latestSlugPages) + 2 (root + overview)"
             )
         end for
     }
@@ -866,16 +908,17 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- DECISION-SEO-A/B: canonical dedup + intro noindex ----
+    // ---- DECISION-SEO-A/B: canonical dedup + intro now indexable ----
 
-    "current-latest /v<X>/ page canonicalizes to /latest/, intro gets noindex (DECISION-SEO-A/B)" in run {
+    "current-latest /v<X>/ module + intro canonicalize to /latest/; /latest/ intro is indexable (DECISION-SEO-A/B)" in run {
         for
-            out           <- tmpDir
-            bundleDir     <- stubBundleDir
-            _             <- emit(Chunk(vWithModules), out, bundleDir)
-            versionedHtml <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "index.html")
-            latestHtml    <- readFile(out / "latest" / "kyo-data" / "index.html")
-            latestIntro   <- readFile(out / "latest" / "index.html")
+            out            <- tmpDir
+            bundleDir      <- stubBundleDir
+            _              <- emit(Chunk(vWithModules), out, bundleDir)
+            versionedHtml  <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "index.html")
+            versionedIntro <- readFile(out / "v1.0.0-RC2" / "index.html")
+            latestHtml     <- readFile(out / "latest" / "kyo-data" / "index.html")
+            latestIntro    <- readFile(out / "latest" / "index.html")
         yield
             // DECISION-SEO-A: the current-latest versioned page points to /latest/, not self.
             assert(
@@ -887,10 +930,24 @@ class WebsiteGeneratorTest extends Test:
                 canonical(latestHtml) == "https://getkyo.io/latest/kyo-data/",
                 s"latest page must be self-canonical, got: ${canonical(latestHtml)}"
             )
-            // DECISION-SEO-B: the intro page is noindex; module pages are not.
+            // DECISION-SEO-A (intro): the current-latest /v<X>/ intro canonicalizes to /latest/.
             assert(
-                latestIntro.contains("""<meta name="robots" content="noindex">"""),
-                s"intro page must carry a noindex robots meta: $latestIntro"
+                canonical(versionedIntro) == "https://getkyo.io/latest/",
+                s"versioned intro canonical must dedup to /latest/, got: ${canonical(versionedIntro)}"
+            )
+            // DECISION-SEO-B (new): the /latest/ intro is the overview (real content), self-canonical
+            // and INDEXABLE (no noindex). Module pages and the intro are both indexable now.
+            assert(
+                canonical(latestIntro) == "https://getkyo.io/latest/",
+                s"latest intro must be self-canonical, got: ${canonical(latestIntro)}"
+            )
+            assert(
+                !latestIntro.contains("""content="noindex""""),
+                s"the /latest/ intro must NOT be noindex (it is now the overview content): $latestIntro"
+            )
+            assert(
+                !versionedIntro.contains("""content="noindex""""),
+                s"a versioned intro must NOT be noindex: $versionedIntro"
             )
             assert(
                 !versionedHtml.contains("""content="noindex""""),
@@ -917,7 +974,10 @@ class WebsiteGeneratorTest extends Test:
                 s"landing title mismatch: ${headField(landingHtml, "title")}"
             )
             assert(canonical(landingHtml) == "https://getkyo.io/", s"landing canonical mismatch: ${canonical(landingHtml)}")
-            assert(headField(introHtml, "title") == "Kyo docs 1.0.0-RC2", s"intro title mismatch: ${headField(introHtml, "title")}")
+            assert(
+                headField(introHtml, "title") == "Overview | Kyo docs 1.0.0-RC2",
+                s"intro title mismatch: ${headField(introHtml, "title")}"
+            )
             assert(canonical(introHtml) == "https://getkyo.io/latest/", s"intro canonical mismatch: ${canonical(introHtml)}")
             assert(
                 headField(moduleHtml, "title") == "kyo-data | Kyo docs 1.0.0-RC2",

@@ -161,28 +161,29 @@ class DocsAppTest extends Test:
         end for
     }
 
-    // Leaf 4: nested section links carry distinct per-level indent hooks (sidebar-section-l2 / -l3).
-    "nested section links carry distinct per-level indent hooks (leaf 4)" in run {
+    // Leaf 4: the rail is one level deep: ONLY level-2 (`## `) sections render. The level-1 page title
+    // is skipped (it is the module link), and level-3+ headings are dropped from the rail entirely.
+    "rail renders only level-2 sections, dropping level-1 and level-3+ (leaf 4)" in run {
         val toc = Chunk(
-            DocsMarkdown.Heading(1, "Top", "top"), // page title, skipped (becomes the module link)
-            DocsMarkdown.Heading(2, "Mid", "mid"),
-            DocsMarkdown.Heading(3, "Deep", "deep")
+            DocsMarkdown.Heading(1, "Top", "top"),  // page title, skipped (becomes the module link)
+            DocsMarkdown.Heading(2, "Mid", "mid"),  // level-2: rendered as a section
+            DocsMarkdown.Heading(3, "Deep", "deep") // level-3: dropped from the rail
         )
         for
             route <- fixedRoute("/latest/kyo-core/")
             html  <- rendered(coreContent(), route, toc, UI.empty)
         yield
-            // Level-2 and level-3 each get their own indent hook; the two are structurally distinguishable.
-            assert(html.contains("sidebar-section-l2"), s"level-2 hook (sidebar-section-l2) missing: $html")
-            assert(html.contains("sidebar-section-l3"), s"level-3 hook (sidebar-section-l3) missing: $html")
-            // The level-1 page title is skipped, so there is no level-1 section hook at all.
-            assert(!html.contains("sidebar-section-l1"), s"level-1 must not produce a section hook: $html")
-            // The hooks appear in level order (l2 before l3) since the headings are in document order.
-            val l2Idx = html.indexOf("sidebar-section-l2")
-            val l3Idx = html.indexOf("sidebar-section-l3")
-            assert(l2Idx < l3Idx, s"per-level hooks must appear in level order: l2=$l2Idx l3=$l3Idx")
-            // The level-3 link must NOT carry the level-2 hook and vice versa: the two class strings differ.
-            assert(!html.contains("sidebar-section-l2 sidebar-section-l3"), s"a single link must not carry both level hooks: $html")
+            // The single section indent hook is present on the level-2 section.
+            assert(html.contains("sidebar-section"), s"section hook (sidebar-section) missing: $html")
+            // The one-level rail carries no per-level hooks anymore.
+            assert(!html.contains("sidebar-section-l2"), s"the per-level l2 hook must be gone: $html")
+            assert(!html.contains("sidebar-section-l3"), s"the per-level l3 hook must be gone: $html")
+            // The level-2 heading renders as a #slug section link.
+            assert(html.contains("#mid"), s"level-2 section #mid must render: $html")
+            // The level-1 page title is the module link, NOT a section link.
+            assert(!html.contains("#top"), s"level-1 page title must NOT be a section link: $html")
+            // The level-3 heading is dropped from the rail (one level deep only).
+            assert(!html.contains("#deep"), s"level-3 heading must NOT render in the one-level rail: $html")
         end for
     }
 
@@ -278,15 +279,108 @@ class DocsAppTest extends Test:
         end for
     }
 
-    // Leaf 11: intro-only content renders chrome with no module links
-    "intro-only content renders shell with no module links (leaf 11)" in run {
+    // Leaf 11: intro-only content renders chrome with the Overview item but no module links
+    "intro-only content renders shell with the Overview but no module links (leaf 11)" in run {
         for
             route <- fixedRoute("/latest/")
             html  <- rendered(emptyContent(), route, Chunk.empty, UI.empty)
         yield
-            // Shell renders (has sidebar-nav), no module links present
+            // Shell renders (has sidebar-nav); the Overview item is present, no module links present.
             assert(html.contains("sidebar-nav"), s"sidebar-nav not found: $html")
+            assert(html.contains("Overview"), s"Overview rail item must be present: $html")
             assert(!html.contains("/latest/kyo-"), s"unexpected module links in empty-groups render: $html")
+        end for
+    }
+
+    // Leaf 15: the Overview is the FIRST rail item, above the module groups, linking to the intro route.
+    "Overview is the first rail item above the module groups, linking to the intro route (leaf 15)" in run {
+        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
+        val content = WebsiteContent(
+            intro = "",
+            groups = Chunk(WebsiteContent.Group("Foundation", Chunk(mod))),
+            version = WebsiteVersion("latest", "latest", true)
+        )
+        for
+            // On a module route the Overview is present but NOT active.
+            route <- fixedRoute("/latest/kyo-core/")
+            html  <- rendered(content, route, Chunk.empty, UI.empty)
+        yield
+            // The Overview links to the intro route /latest/.
+            assert(html.contains("""href="/latest/""""), s"Overview must link to the intro route /latest/: $html")
+            assert(html.contains("Overview"), s"Overview rail item must be present: $html")
+            // The Overview appears BEFORE the first module group name and the module link.
+            val overviewIdx = html.indexOf("Overview")
+            val groupIdx    = html.indexOf("Foundation")
+            val moduleIdx   = html.indexOf("/latest/kyo-core/")
+            assert(overviewIdx >= 0 && groupIdx >= 0 && moduleIdx >= 0, s"Overview/group/module all present: $html")
+            assert(overviewIdx < groupIdx, s"Overview must appear before the first group: overview=$overviewIdx group=$groupIdx")
+            assert(overviewIdx < moduleIdx, s"Overview must appear before the first module: overview=$overviewIdx module=$moduleIdx")
+        end for
+    }
+
+    // Leaf 16: on the intro/home route the Overview is the ACTIVE item and expands to its own h2 sections.
+    "on the intro home the Overview is active and expands to its h2 sections (leaf 16)" in run {
+        // The intro's own outline: no level-1 (no module title), two level-2 sections, one level-3 (dropped).
+        val introToc = Chunk(
+            DocsMarkdown.Heading(2, "Introduction", "introduction"),
+            DocsMarkdown.Heading(3, "Imports", "imports"), // level-3: dropped from the one-level rail
+            DocsMarkdown.Heading(2, "Coming from ZIO", "coming-from-zio")
+        )
+        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
+        val content = WebsiteContent(
+            intro = "",
+            groups = Chunk(WebsiteContent.Group("Foundation", Chunk(mod))),
+            version = WebsiteVersion("latest", "latest", true)
+        )
+        for
+            route <- fixedRoute("/latest/")
+            html  <- rendered(content, route, introToc, UI.empty)
+        yield
+            // The Overview is the active rail item on the intro home.
+            assert(html.contains("nav-item-active"), s"Overview must be the active item on the intro home: $html")
+            // Exactly one nested section list is emitted (the Overview's), since no module is active.
+            val sectionListCount = "sidebar-sections".r.findAllIn(html).length
+            assert(sectionListCount == 1, s"expected exactly one nested section list (the Overview's), got $sectionListCount: $html")
+            // The intro's level-2 sections render as #slug links.
+            assert(html.contains("#introduction"), s"intro level-2 section #introduction must render: $html")
+            assert(html.contains("#coming-from-zio"), s"intro level-2 section #coming-from-zio must render: $html")
+            // The level-3 heading is dropped (one level deep only).
+            assert(!html.contains("#imports"), s"intro level-3 heading must NOT render in the one-level rail: $html")
+            // The active module (kyo-core) is NOT active here (the reader is on the overview), so it shows
+            // no nested sections of its own.
+            assert(html.contains("/latest/kyo-core/"), s"module link must still be present: $html")
+        end for
+    }
+
+    // Leaf 17: prev/next treats the overview as the FIRST page (no prev; next = first module), and the
+    // first module's prev points back to the overview.
+    "prev/next: overview is the first page; first module prev points to the overview (leaf 17)" in run {
+        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
+        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
+        val content = WebsiteContent(
+            intro = "",
+            groups = Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB))),
+            version = WebsiteVersion("latest", "latest", true)
+        )
+        for
+            // On the overview: no prev (disabled), next = first module (mod-a).
+            overviewRoute <- fixedRoute("/latest/")
+            overviewHtml  <- rendered(content, overviewRoute, Chunk.empty, UI.empty)
+            // On the first module: prev = overview (/latest/), next = mod-b.
+            firstRoute <- fixedRoute("/latest/mod-a/")
+            firstHtml  <- rendered(content, firstRoute, Chunk.empty, UI.empty)
+        yield
+            // The overview pager: a disabled prev and a next link to the first module.
+            // Scope to the prev-next nav to avoid matching the sidebar Overview item.
+            val overviewPager = overviewHtml.substring(overviewHtml.indexOf("prev-next"))
+            assert(overviewPager.contains("prev-next-disabled"), s"overview must have a disabled prev: $overviewPager")
+            assert(overviewPager.contains("/latest/mod-a/"), s"overview next must link to the first module: $overviewPager")
+            // The first module's pager: prev links back to the overview /latest/, next to mod-b. The
+            // `<` in the label is HTML-escaped to `&lt;` in the rendered output.
+            val firstPager = firstHtml.substring(firstHtml.indexOf("prev-next"))
+            assert(firstPager.contains("&lt; Overview"), s"first module prev must be labelled Overview: $firstPager")
+            assert(firstPager.contains("""href="/latest/""""), s"first module prev must link to the overview /latest/: $firstPager")
+            assert(firstPager.contains("/latest/mod-b/"), s"first module next must link to mod-b: $firstPager")
         end for
     }
 

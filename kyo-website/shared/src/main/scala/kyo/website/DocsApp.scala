@@ -6,16 +6,17 @@ import kyo.UI.Href
 
 /** The 2-pane documentation content body as a kyo-ui `UI` value.
   *
-  * Assembles the docs body: a left rail listing modules by group with active-route highlighting,
-  * where the active module auto-expands into its in-page section outline (an indented, left-aligned
-  * tree), and a main content area embedding the transpiled article subtree. This is the content
-  * body ONLY: the persistent header (logo, search, version switcher) is owned by `SiteApp` (D5), so
-  * `body` no longer renders its own header, and the header-out-of-shell layout invariant is now
-  * automatic.
+  * Assembles the docs body: a left rail whose FIRST item is the Overview (the root-README intro at the
+  * intro route `/<prefix>/`), above the modules listed by group, with active-route highlighting. The
+  * active item (the Overview on the intro route, or the current module otherwise) auto-expands into its
+  * in-page section outline: exactly its top-level (`## `) headings, one level deep. The main content
+  * area embeds the transpiled article subtree. This is the content body ONLY: the persistent header
+  * (logo, search, version switcher) is owned by `SiteApp` (D5), so `body` no longer renders its own
+  * header, and the header-out-of-shell layout invariant is now automatic.
   *
   * The former right table-of-contents pane is gone: the current page's section headings now live
-  * inside the left rail, nested under the active module's entry, and auto-collapse when the reader
-  * navigates to a different module.
+  * inside the left rail, nested under the active item's entry, and auto-collapse when the reader
+  * navigates elsewhere.
   *
   * The body is a pure composition of kyo-ui elements styled via `WebsiteStyles.sheet` CSS classes.
   * No raw CSS or raw HTML is used here; the sole `UI.rawHtml` exception lives inside
@@ -114,7 +115,7 @@ object DocsApp:
     )(using Frame): UI =
         val nav =
             UI.nav.cssClass("sidebar-nav")(
-                content.groups.toSeq.map { group =>
+                (overviewItem(route, prefix, tocSignal) +: content.groups.toSeq.map { group =>
                     UI.div.cssClass("sidebar-group")(
                         UI.div.cssClass("sidebar-group-name")(UI.span(group.name)),
                         UI.ul(
@@ -142,7 +143,7 @@ object DocsApp:
                             }*
                         )
                     )
-                }*
+                })*
             )
         // The sidebar carries a reactive `docs-sidebar-open` class on mobile: when the disclosure is
         // open it overrides the <860px `display:none`, revealing the module list as a drawer. On wide
@@ -157,6 +158,35 @@ object DocsApp:
             )
         })
     end sidebar
+
+    // The overview/home entry: the FIRST rail item, above the module groups, linking to the intro
+    // route `/<prefix>/` (the root-README overview article). It mirrors the module-item mechanism: keyed
+    // on BOTH the active flag AND the page outline via combineLatest, so when the reader is on the intro
+    // route it is the active item and expands to its own `## ` sections (the intro's headings), and on
+    // any module route the flag flips to false and the outline collapses to the bare link. The intro
+    // route is the single-segment `/<prefix>/`, so active is an exact-match on that path (a module route
+    // has a trailing slug segment and never matches). The item sits in its own `<ul>` so the
+    // `.nav-item` / `.nav-item .a` rules apply identically to the module items below.
+    private def overviewItem(route: Signal[String], prefix: String, tocSignal: Signal[Chunk[DocsMarkdown.Heading]])(using
+        Frame
+    ): UI =
+        val href         = s"/$prefix/"
+        val activeSignal = route.map(r => r == href)
+        UI.ul(
+            // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
+            UI.Ast.Reactive(activeSignal.combineLatest(tocSignal).map { case (isActive, toc) =>
+                if isActive then
+                    UI.li.cssClass("nav-item").cssClass("nav-item-active")(
+                        UI.a("Overview").href(Href.Path(href)),
+                        sidebarSections(toc)
+                    )
+                else
+                    UI.li.cssClass("nav-item")(
+                        UI.a("Overview").href(Href.Path(href))
+                    )
+            })
+        )
+    end overviewItem
 
     // The mobile-only nav toggle reveals/hides the sidebar drawer (B6). It is hidden on wide viewports
     // by the stylesheet; the label flips between open/closed with the disclosure state.
@@ -176,48 +206,47 @@ object DocsApp:
     end contentArea
 
     private def sidebarSections(toc: Chunk[DocsMarkdown.Heading])(using Frame): UI =
-        // The active module's in-page section outline, nested under its rail entry. The level-1
-        // heading is the page title (it duplicates the module link directly above), so it is skipped;
-        // level-2 and level-3+ headings render as indented `#slug` links. An empty list (no level-2+
-        // sections) yields an empty <ul> that collapses to nothing, so a module with no sub-sections
-        // shows just its link.
-        val sections = toc.filter(_.level >= 2)
+        // The active item's in-page section outline, nested under its rail entry. The rail is exactly
+        // one level deep: group -> module -> its top-level (`## `) sections, so ONLY level-2 headings
+        // render here. The level-1 heading is the page title (it duplicates the link directly above)
+        // and any level-3/4 heading is dropped from the rail. An empty list (no level-2 sections)
+        // yields an empty <ul> that collapses to nothing, so an item with no sub-sections shows just
+        // its link.
+        val sections = toc.filter(_.level == 2)
         UI.ul.cssClass("sidebar-sections")(
             sections.toSeq.map { heading =>
-                // Each link carries a per-level indent hook: level-2 sits at the base indent, level-3+
-                // one step deeper, so the outline reads as a shallow tree. The <a> is wrapped in a bare
-                // <li> because a <ul> only accepts list-item children; the base reset suppresses the
-                // marker, so the wrapper is purely structural.
-                val levelClass = heading.level match
-                    case 2 => "sidebar-section sidebar-section-l2"
-                    case _ => "sidebar-section sidebar-section-l3"
+                // The <a> is wrapped in a bare <li> because a <ul> only accepts list-item children; the
+                // base reset suppresses the marker, so the wrapper is purely structural. With a single
+                // section level there is one indent hook (`sidebar-section`).
                 UI.li(
-                    UI.a(heading.text).cssClass(levelClass).href(Href.Fragment(heading.slug))
+                    UI.a(heading.text).cssClass("sidebar-section").href(Href.Fragment(heading.slug))
                 )
             }*
         )
     end sidebarSections
 
     private def prevNextNav(modules: Chunk[WebsiteModule], currentRoute: String, prefix: String)(using Frame): UI =
-        // The intro route `/<prefix>/` matches no module, so there is no page to page to. Rendering the
-        // pager there left two empty unlabeled `<`/`>` boxes (B12); on the intro show a brief
-        // docs-home hint pointing at the first module instead.
-        val idx = modules.indexWhere(m => currentRoute.endsWith(s"/${m.slug}/"))
+        // The overview/intro route `/<prefix>/` is the FIRST page in the docs sequence: it has no prev
+        // and its next is the first module. A module page's prev/next steps within the module sequence,
+        // and the first module's prev points back to the overview. The overview link is labelled
+        // "Overview" and targets the intro route `/<prefix>/`.
+        val overviewRoute = s"/$prefix/"
+        val idx           = modules.indexWhere(m => currentRoute.endsWith(s"/${m.slug}/"))
         if idx < 0 then
-            modules.headMaybe match
-                case Present(first) =>
-                    UI.div.cssClass("docs-home-hint")(
-                        UI.span("Pick a module from the sidebar to get started, or "),
-                        UI.a(s"open ${first.title}").href(Href.Path(s"/$prefix/${first.slug}/")),
-                        UI.span(".")
-                    )
-                case Absent => UI.empty
+            // On the overview itself: no prev; next is the first module (if any).
+            val nextLink = modules.headMaybe match
+                case Present(first) => UI.a(s"${first.title} >").href(Href.Path(s"/$prefix/${first.slug}/"))
+                case Absent         => UI.span.cssClass("prev-next-disabled")(">")
+            UI.nav.cssClass("prev-next")(
+                UI.span.cssClass("prev-next-disabled")("<"),
+                nextLink
+            )
         else
-            val prev: Maybe[WebsiteModule] = if idx > 0 then Present(modules(idx - 1)) else Absent
             val next: Maybe[WebsiteModule] = if idx < modules.size - 1 then Present(modules(idx + 1)) else Absent
-            val prevLink = prev match
-                case Present(m) => UI.a(s"< ${m.title}").href(Href.Path(s"/$prefix/${m.slug}/"))
-                case Absent     => UI.span.cssClass("prev-next-disabled")("<")
+            // At index 0 the prev is the overview; otherwise it is the previous module.
+            val prevLink =
+                if idx > 0 then UI.a(s"< ${modules(idx - 1).title}").href(Href.Path(s"/$prefix/${modules(idx - 1).slug}/"))
+                else UI.a("< Overview").href(Href.Path(overviewRoute))
             val nextLink = next match
                 case Present(m) => UI.a(s"${m.title} >").href(Href.Path(s"/$prefix/${m.slug}/"))
                 case Absent     => UI.span.cssClass("prev-next-disabled")(">")

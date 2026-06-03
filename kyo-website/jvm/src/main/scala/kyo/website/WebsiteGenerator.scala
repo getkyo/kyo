@@ -19,7 +19,8 @@ import kyo.*
   * Output directory layout:
   * {{{
   *   <outDir>/index.html             -- landing page (INV-009)
-  *   <outDir>/<prefix>/index.html    -- per-version intro page (prefix = v<X> or latest)
+  *   <outDir>/<prefix>/index.html    -- per-version overview page (chrome + transpiled root-README intro)
+  *   <outDir>/<prefix>/content.md    -- raw root-README intro Markdown (== content.intro, D6)
   *   <outDir>/<prefix>/<slug>/index.html  -- per-module docs page (chrome + transpiled article)
   *   <outDir>/<prefix>/<slug>/content.md  -- raw README Markdown (== module.readme, D6)
   *   <outDir>/<prefix>/manifest.json      -- module/slug list + TOC outlines + prev/next (D5)
@@ -90,14 +91,16 @@ object WebsiteGenerator:
     // ---- Private helpers: docs routes (Phase 7) ----
 
     /** Emit one version's full route set under `prefix` (the version's own tag, e.g. `v1.0.0-RC2`):
-      *   - `<prefix>/index.html`: the version intro page (chrome + empty article).
+      *   - `<prefix>/index.html`: the version overview page (chrome + the transpiled root-README intro).
+      *   - `<prefix>/content.md`: the raw root-README intro Markdown (== `content.intro`), the single
+      *     source the SPA fetches and re-transpiles client-side for the overview (D6/INV-009).
       *   - `<prefix>/<slug>/index.html`: each module's docs page (chrome + transpiled UI article).
       *   - `<prefix>/<slug>/content.md`: the raw README Markdown (== `module.readme`), the single
       *     source the SPA fetches and re-transpiles client-side (D6/INV-009).
       *   - `<prefix>/manifest.json`: the module/slug list with TOC outlines and prev/next order.
       *
-      * An intro-only version (empty groups, INV-007) emits its intro page and an empty manifest,
-      * with zero `<slug>` pages and zero `content.md` files.
+      * An intro-only version (empty groups, INV-007) emits its overview page (and its content.md) and
+      * an empty manifest, with zero `<slug>` pages and zero per-module `content.md` files.
       */
     private def emitDocs(
         c: WebsiteContent,
@@ -174,12 +177,18 @@ object WebsiteGenerator:
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val route = s"/$prefix/"
         for
+            // The intro route renders the root-README overview as its article (no longer an empty
+            // article), so the page is real content: SEO-indexable, with its OWN heading outline driving
+            // the rail's Overview sections. The raw `content.intro` is written as the route's content.md
+            // so the bundle fetches and re-transpiles it exactly like a module page (D6/INV-009).
+            rendered   <- DocsMarkdown.transpile(c.intro)
             fixedRoute <- Signal.initRef(route)
-            body       <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(Chunk.empty[DocsMarkdown.Heading]), UI.empty)
+            body       <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article)
             view       <- siteShell(versions, docsHome(c, prefix), body)
-            html       <- wrapFirst(docOpts(c, prefix, "", route, isCurrentLatest), view)
-            island = docsIsland(c, versions, "")
+            html       <- wrapFirst(introOpts(c, prefix, route, rendered.headings, isCurrentLatest), view)
+            island = docsIsland(c, versions, c.intro)
             _ <- writeRoute(outDir / prefix / "index.html", injectIslands(html, island, versions))
+            _ <- writeString(s"$prefix/content.md", outDir / prefix / "content.md", c.intro)
         yield ()
         end for
     end emitIntroPage
@@ -234,10 +243,12 @@ object WebsiteGenerator:
             )
         yield view
 
-    /** The header Docs/Modules/Get-started target for content `c` served under `prefix`: the first
-      * module's route `/<prefix>/<firstSlug>/`, falling back to the prefix root `/<prefix>/` when the
-      * version has no modules. Reused by every docs emit path and mirrored by the bundle's own
-      * `docsHome` computation so SSG and bundle agree (the header target must be identical for parity).
+    /** The header "Get started" target for content `c` served under `prefix`: the first module's route
+      * `/<prefix>/<firstSlug>/`, falling back to the prefix root `/<prefix>/` when the version has no
+      * modules. `SiteApp` derives the "Docs"/"Modules" target (the overview intro route `/<prefix>/`)
+      * from this string's first path segment. Reused by every docs emit path and mirrored by the
+      * bundle's own `docsHome` computation so SSG and bundle agree (the header target must be identical
+      * for parity).
       */
     private def docsHome(c: WebsiteContent, prefix: String): String =
         c.groups.flatMap(_.modules).headOption.fold(s"/$prefix/")(m => s"/$prefix/${m.slug}/")
@@ -249,28 +260,57 @@ object WebsiteGenerator:
         route: String,
         isCurrentLatest: Boolean
     ): WebsitePage.Options =
-        val title =
-            if slug.isEmpty then s"Kyo docs ${c.version.label}"
-            else s"$slug | Kyo docs ${c.version.label}"
+        val title         = s"$slug | Kyo docs ${c.version.label}"
         val selfCanonical = s"https://getkyo.io$route"
         // DECISION-SEO-A: the current-latest version's own versioned module pages (/v<X>/<slug>/)
         // duplicate /latest/<slug>/, so they canonicalize to the /latest/ home instead of self. The
         // /latest/ tree (prefix == "latest") and every other versioned/intro page stays self-canonical.
         val canonical =
-            if isCurrentLatest && prefix != "latest" && slug.nonEmpty then s"https://getkyo.io/latest/$slug/"
+            if isCurrentLatest && prefix != "latest" then s"https://getkyo.io/latest/$slug/"
             else selfCanonical
-        // DECISION-SEO-B: the empty docs intro (/<prefix>/) is thin content; noindex it so crawlers
-        // do not index it while it remains reachable.
-        val noindex = slug.isEmpty
         WebsitePage.Options(
             title = title,
             description = s"Kyo ${c.version.label} documentation.",
             canonical = canonical,
             bundleHref = "/main.js",
-            jsonLd = buildJsonLd(if slug.isEmpty then "intro" else "docs", title, selfCanonical),
-            noindex = noindex
+            jsonLd = buildJsonLd("docs", title, selfCanonical),
+            noindex = false
         )
     end docOpts
+
+    /** Build the page options for the intro/overview route `/<prefix>/`. The intro now renders the
+      * root-README overview as a real article (no longer thin), so unlike its former empty form it is
+      * SEO-indexable:
+      *   - The `/latest/` intro is self-canonical and added to the sitemap (see [[sitemapRoutes]]).
+      *   - The current-latest version's own `/v<X>/` intro duplicates `/latest/`, so it canonicalizes
+      *     to `/latest/` (DECISION-SEO-A, the same dedup rule the module pages follow) and stays out of
+      *     the sitemap. A past-version intro is self-canonical.
+      *
+      * The page `<title>` is the intro's H1 text when present, else "Overview", suffixed with
+      * `| Kyo docs <label>`.
+      */
+    private def introOpts(
+        c: WebsiteContent,
+        prefix: String,
+        route: String,
+        headings: Chunk[DocsMarkdown.Heading],
+        isCurrentLatest: Boolean
+    ): WebsitePage.Options =
+        val heading       = headings.find(_.level == 1).map(_.text).getOrElse("Overview")
+        val title         = s"$heading | Kyo docs ${c.version.label}"
+        val selfCanonical = s"https://getkyo.io$route"
+        val canonical =
+            if isCurrentLatest && prefix != "latest" then s"https://getkyo.io/latest/"
+            else selfCanonical
+        WebsitePage.Options(
+            title = title,
+            description = s"Kyo ${c.version.label} documentation.",
+            canonical = canonical,
+            bundleHref = "/main.js",
+            jsonLd = buildJsonLd("intro", title, selfCanonical),
+            noindex = false
+        )
+    end introOpts
 
     /** Build the schema.org JSON-LD payload for a page (SEO-5). `kind` is `"landing"`, `"docs"`, or
       * `"intro"`. `title` is the page headline; `url` is the page's own self URL. The landing emits a
@@ -506,14 +546,16 @@ object WebsiteGenerator:
 
     // ---- sitemap.xml + robots.txt (SEO-3) ----
 
-    /** The canonical-indexable route set (DECISION-SEO-A): the landing root `/` plus each
-      * `/latest/<slug>/` for the picked-latest version's modules. This is the single source of truth
-      * for sitemap.xml, so the sitemap never lists the duplicate `/v<current>/<slug>/` versioned tree,
-      * the thin intro pages, historical versions, or any non-page file.
+    /** The canonical-indexable route set (DECISION-SEO-A): the landing root `/`, the `/latest/` overview
+      * (the root-README intro, now real indexable content), plus each `/latest/<slug>/` for the
+      * picked-latest version's modules. This is the single source of truth for sitemap.xml, so the
+      * sitemap never lists the duplicate `/v<current>/<slug>/` versioned tree, the duplicate
+      * `/v<current>/` intro, historical versions, or any non-page file. The `/latest/` overview is only
+      * added when a latest version exists (so empty content still lists just the root).
       */
     private def sitemapRoutes(content: Chunk[WebsiteContent]): Chunk[String] =
         Chunk("/") ++ pickLatest(content).fold(Chunk.empty)(c =>
-            c.groups.flatMap(_.modules).map(m => s"/latest/${m.slug}/")
+            Chunk("/latest/") ++ c.groups.flatMap(_.modules).map(m => s"/latest/${m.slug}/")
         )
 
     /** Build the sitemap.xml document. `routes` are absolute-URL paths (each starting with `/`);

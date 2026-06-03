@@ -92,6 +92,34 @@ class ChromeParityTest extends Test:
         end for
     }
 
+    "SiteApp intro/overview-route shell: SSG vs RecordingBackend parity (INV-003)" in run {
+        // The intro/overview route `/latest/` renders the root-README overview as a real article (the
+        // same `content.md` the bundle fetches). The rail's Overview item is the active expanded item
+        // showing the intro's level-2 sections. Both the SSG and the bundle's first mount must produce
+        // that overview article + its rail sections identically (hydration parity at the intro route).
+        val intro = "## Introduction\n\nKyo is a toolkit.\n\n## Coming from ZIO\n\nNotes.\n"
+        for
+            rendered <- DocsMarkdown.transpile(intro)
+            route    <- Signal.initRef[String]("/latest/")
+            reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
+            body  <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive)
+            view  <- siteShell(versions2, docsHomeRoute, body)
+            ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
+            mount <- RecordingBackend.render(view)
+        yield
+            assert(
+                normalize(ssg) == normalize(mount),
+                "SSG (runRender) and mount (RecordingBackend) must produce identical HTML for the intro/overview route shell (INV-003)"
+            )
+            // The overview article prose ships in the SSG render.
+            assert(normalize(ssg).contains("Kyo is a toolkit."), s"SSG must render the overview prose: ${normalize(ssg)}")
+            // The Overview is the active expanded rail item with its level-2 sections.
+            assert(normalize(ssg).contains("nav-item-active"), s"SSG must render the Overview as the active rail item: ${normalize(ssg)}")
+            assert(normalize(ssg).contains("sidebar-sections"), s"SSG must render the Overview's nested section outline: ${normalize(ssg)}")
+            assert(normalize(ssg).contains("#introduction"), s"SSG must render the #introduction section link: ${normalize(ssg)}")
+        end for
+    }
+
     "parity holds for the header dropdown subtree under SiteApp (INV-003)" in run {
         for
             body  <- LandingApp.body(docsHomeRoute)

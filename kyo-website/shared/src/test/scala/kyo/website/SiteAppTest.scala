@@ -82,16 +82,17 @@ class SiteAppTest extends Test:
         }
     }
 
-    "Docs and Get started target docsHome; Modules targets the prefix intro route" in run {
+    "Docs and Modules target the overview intro route; Get started targets the first module" in run {
         render(versions2, home).map { html =>
-            // Docs and Get started both target docsHome (the first module).
+            // Get started targets docsHome (the first module).
             val homeRefCount = countOccurrences(html, s"""href="$home"""")
-            assert(homeRefCount >= 2, s"expected Docs + Get started to target $home, found $homeRefCount: $html")
-            // Modules targets the prefix intro route /latest/, NOT docsHome (D2 fix, C1).
-            val modulesHome = "/latest/"
-            assert(html.contains(s"""href="$modulesHome""""), s"Modules must link to prefix intro $modulesHome: $html")
-            // Docs and Modules must point to different routes.
-            assert(home != modulesHome, "docsHome and modulesHome must differ for the test to be meaningful")
+            assert(homeRefCount >= 1, s"expected Get started to target $home, found $homeRefCount: $html")
+            // Docs AND Modules both target the overview/intro route /latest/ (the overview auto-opens).
+            val overviewHome     = "/latest/"
+            val overviewRefCount = countOccurrences(html, s"""href="$overviewHome"""")
+            assert(overviewRefCount >= 2, s"expected Docs + Modules to target $overviewHome, found $overviewRefCount: $html")
+            // Get started (docsHome) and the overview route must differ for the test to be meaningful.
+            assert(home != overviewHome, "docsHome and the overview route must differ for the test to be meaningful")
             assert(html.contains("Docs"), s"Docs link text missing: $html")
             assert(html.contains("Modules"), s"Modules link text missing: $html")
             assert(html.contains("Get started"), s"Get started button missing: $html")
