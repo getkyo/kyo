@@ -81,11 +81,13 @@ private[kyo] object ChartLower:
       * excluded from axis-to-mark binding by the caller.
       */
     private def markAxisOf[A](mark: Mark[A]): Axis = mark match
-        case m: Mark.Bar[A, ?, ?]   => m.axis
-        case m: Mark.Line[A, ?, ?]  => m.axis
-        case m: Mark.Area[A, ?, ?]  => m.axis
-        case m: Mark.Point[A, ?, ?] => m.axis
-        case m: Mark.Rule[A]        => m.axis
+        case m: Mark.Bar[A, ?, ?]      => m.axis
+        case m: Mark.Line[A, ?, ?]     => m.axis
+        case m: Mark.Area[A, ?, ?]     => m.axis
+        case m: Mark.Point[A, ?, ?]    => m.axis
+        case m: Mark.Rule[A]           => m.axis
+        case m: Mark.Text[A, ?, ?]     => m.axis
+        case m: Mark.ErrorBar[A, ?, ?] => m.axis
 
     /** Whether a mark renders as ONE solid color, i.e. it has no `color` channel and is not stack-grouped.
       *
@@ -95,11 +97,13 @@ private[kyo] object ChartLower:
       * stacking, so only their `color` channel matters.
       */
     private def isSolidColorMark[A](mark: Mark[A]): Boolean = mark match
-        case m: Mark.Bar[A, ?, ?]   => m.color.isEmpty && m.stack.group.isEmpty
-        case m: Mark.Area[A, ?, ?]  => m.color.isEmpty && m.stack.group.isEmpty
-        case m: Mark.Line[A, ?, ?]  => m.color.isEmpty
-        case m: Mark.Point[A, ?, ?] => m.color.isEmpty
-        case _: Mark.Rule[A]        => false
+        case m: Mark.Bar[A, ?, ?]      => m.color.isEmpty && m.stack.group.isEmpty
+        case m: Mark.Area[A, ?, ?]     => m.color.isEmpty && m.stack.group.isEmpty
+        case m: Mark.Line[A, ?, ?]     => m.color.isEmpty
+        case m: Mark.Point[A, ?, ?]    => m.color.isEmpty
+        case _: Mark.Rule[A]           => false
+        case _: Mark.Text[A, ?, ?]     => false
+        case _: Mark.ErrorBar[A, ?, ?] => false
 
     /** Resolve the chrome color for one y-axis so a reader can tell which axis a series uses.
       *
@@ -176,12 +180,14 @@ private[kyo] object ChartLower:
     private def buildLayout(spec: ChartSpec[?]): Layout =
         val (w, h)      = spec.chartSize
         val marginRight = if spec.yAxisRightCfg.isDefined then MarginRightAxis else MarginRightDefault
-        val hasLegend = !spec.legendCfg.isHidden && spec.marks.toSeq.exists:
-            case m: Mark.Bar[?, ?, ?]   => m.color.isDefined || m.stack.group.isDefined
-            case m: Mark.Line[?, ?, ?]  => m.color.isDefined
-            case m: Mark.Area[?, ?, ?]  => m.color.isDefined || m.stack.group.isDefined
-            case m: Mark.Point[?, ?, ?] => m.color.isDefined
-            case _                      => false
+        val hasLegend = !spec.legendCfg.isHidden && spec.marks.exists:
+            case m: Mark.Bar[?, ?, ?]      => m.color.isDefined || m.stack.group.isDefined
+            case m: Mark.Line[?, ?, ?]     => m.color.isDefined
+            case m: Mark.Area[?, ?, ?]     => m.color.isDefined || m.stack.group.isDefined
+            case m: Mark.Point[?, ?, ?]    => m.color.isDefined
+            case _: Mark.Rule[?]           => false
+            case _: Mark.Text[?, ?, ?]     => false
+            case _: Mark.ErrorBar[?, ?, ?] => false
         val legendPad = if hasLegend then LegendReservedH else 0.0
         Layout(
             svgW = w.toDouble,
@@ -209,23 +215,31 @@ private[kyo] object ChartLower:
                     case Present(d) =>
                         val newAcc = d match
                             case Domain.Continuous(v) =>
-                                acc match
-                                    case Absent                             => Present(Extent.Continuous(v, v))
-                                    case Present(Extent.Continuous(lo, hi)) => Present(Extent.Continuous(math.min(lo, v), math.max(hi, v)))
-                                    case Present(Extent.Categories(_))      => Present(Extent.Continuous(v, v))
+                                // catalog #2: drop NaN/Inf to avoid poisoning min/max
+                                if !ChartFoundations.isFiniteDouble(v) then acc
+                                else
+                                    acc match
+                                        case Absent => Present(Extent.Continuous(v, v))
+                                        case Present(Extent.Continuous(lo, hi)) =>
+                                            Present(Extent.Continuous(math.min(lo, v), math.max(hi, v)))
+                                        case Present(Extent.Categories(_)) => Present(Extent.Continuous(v, v))
                             case Domain.Category(key) =>
                                 acc match
-                                    case Absent => Present(Extent.Categories(Chunk(key)))
+                                    case Absent                           => Present(Extent.Categories(Chunk(key)))
                                     case Present(Extent.Categories(keys)) =>
-                                        if keys.toSeq.contains(key) then Present(Extent.Categories(keys))
+                                        // INV-006: Chunk-native exists, no toSeq round-trip
+                                        if keys.exists(_ == key) then Present(Extent.Categories(keys))
                                         else Present(Extent.Categories(keys.append(key)))
                                     case Present(Extent.Continuous(_, _)) => Present(Extent.Categories(Chunk(key)))
                             case Domain.Temporal(ms) =>
-                                acc match
-                                    case Absent => Present(Extent.Continuous(ms.toDouble, ms.toDouble))
-                                    case Present(Extent.Continuous(lo, hi)) =>
-                                        Present(Extent.Continuous(math.min(lo, ms.toDouble), math.max(hi, ms.toDouble)))
-                                    case Present(Extent.Categories(_)) => Present(Extent.Continuous(ms.toDouble, ms.toDouble))
+                                // catalog #2: drop non-finite timestamps (e.g. Long overflow to Infinity)
+                                if !ChartFoundations.isFiniteDouble(ms.toDouble) then acc
+                                else
+                                    acc match
+                                        case Absent => Present(Extent.Continuous(ms.toDouble, ms.toDouble))
+                                        case Present(Extent.Continuous(lo, hi)) =>
+                                            Present(Extent.Continuous(math.min(lo, ms.toDouble), math.max(hi, ms.toDouble)))
+                                        case Present(Extent.Categories(_)) => Present(Extent.Continuous(ms.toDouble, ms.toDouble))
                         loop(i + 1, newAcc)
         loop(0, Absent)
     end foldExtent
@@ -237,11 +251,13 @@ private[kyo] object ChartLower:
             if i >= marks.size then acc
             else
                 val markExtent = marks(i) match
-                    case m: Mark.Bar[A, ?, ?]   => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
-                    case m: Mark.Line[A, ?, ?]  => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
-                    case m: Mark.Area[A, ?, ?]  => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
-                    case m: Mark.Point[A, ?, ?] => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
-                    case _: Mark.Rule[A]        => Absent
+                    case m: Mark.Bar[A, ?, ?]      => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.Line[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.Area[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.Point[A, ?, ?]    => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case _: Mark.Rule[A]           => Absent
+                    case m: Mark.Text[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.ErrorBar[A, ?, ?] => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
                 val merged = mergeExtents(acc, markExtent)
                 loop(i + 1, merged)
         loop(0, Absent)
@@ -295,7 +311,9 @@ private[kyo] object ChartLower:
                                     case Present(d) => Present(extentFromDomain(d))
                                     case Absent     => Absent
                             case _ => Absent
-                    case _ => Absent
+                    case _: Mark.Text[A, ?, ?]     => Absent // DEV: Text/ErrorBar lowering lands in Phase 4 (placeholder)
+                    case _: Mark.ErrorBar[A, ?, ?] => Absent // DEV: Text/ErrorBar lowering lands in Phase 4 (placeholder)
+                    case _                         => Absent
                 val merged = mergeExtents(acc, markExtent)
                 loop(i + 1, merged)
         loop(0, Absent)
@@ -317,7 +335,9 @@ private[kyo] object ChartLower:
                         foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
                     case m: Mark.Point[A, ?, ?] if m.axis == Axis.Left =>
                         foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
-                    case _ => Absent
+                    case _: Mark.Text[A, ?, ?]     => Absent // DEV: Text/ErrorBar lowering lands in Phase 4 (placeholder)
+                    case _: Mark.ErrorBar[A, ?, ?] => Absent // DEV: Text/ErrorBar lowering lands in Phase 4 (placeholder)
+                    case _                         => Absent
                 val merged = mergeExtents(acc, markExtent)
                 loop(i + 1, merged)
         loop(0, Absent)
@@ -341,7 +361,9 @@ private[kyo] object ChartLower:
                         ensureZero(base)
                     case m: Mark.Point[A, ?, ?] if m.axis == Axis.Right =>
                         foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
-                    case _ => Absent
+                    case _: Mark.Text[A, ?, ?]     => Absent // DEV: Text/ErrorBar lowering lands in Phase 4 (placeholder)
+                    case _: Mark.ErrorBar[A, ?, ?] => Absent // DEV: Text/ErrorBar lowering lands in Phase 4 (placeholder)
+                    case _                         => Absent
                 val merged = mergeExtents(acc, markExtent)
                 loop(i + 1, merged)
         loop(0, Absent)
@@ -426,7 +448,8 @@ private[kyo] object ChartLower:
                 case (Extent.Continuous(lo1, hi1), Extent.Continuous(lo2, hi2)) =>
                     Present(Extent.Continuous(math.min(lo1, lo2), math.max(hi1, hi2)))
                 case (Extent.Categories(k1), Extent.Categories(k2)) =>
-                    val merged = k2.foldLeft(k1)((acc, k) => if acc.toSeq.contains(k) then acc else acc.append(k))
+                    // INV-006: Chunk-native exists, no toSeq round-trip
+                    val merged = k2.foldLeft(k1)((acc, k) => if acc.exists(_ == k) then acc else acc.append(k))
                     Present(Extent.Categories(merged))
                 case (Extent.Continuous(lo, hi), Extent.Categories(_)) => Present(Extent.Continuous(lo, hi))
                 case (Extent.Categories(_), Extent.Continuous(lo, hi)) => Present(Extent.Continuous(lo, hi))
@@ -434,46 +457,66 @@ private[kyo] object ChartLower:
 
     // ---- scale resolution ----
 
-    private def resolveXScale[A](rows: Chunk[A], marks: Chunk[Mark[A]], layout: Layout, xOverride: Maybe[ScaleOverride]): Scale =
-        val ext = xExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
-        val kindOpt: Maybe[Scale.Kind] = xOverride.flatMap(_.kind) match
-            case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
-            case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
-            case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
-            case _                               => Absent
-        val kind = kindOpt.getOrElse(inferKind(ext, marks, isX = true))
-        val (extFinal, lo, hi) = xOverride.flatMap(_.kind) match
-            case Present(ScaleKind.Linear(domLo, domHi)) => (Extent.Continuous(domLo, domHi), layout.plotX, layout.plotX + layout.plotW)
-            case _                                       => (ext, layout.plotX, layout.plotX + layout.plotW)
-        Scale.fit(kind, extFinal, lo, hi)
-    end resolveXScale
+    /** Holds all three resolved scales from a single combined pass (catalog #34, INV-004). */
+    private case class ResolvedScales(xs: Scale, ysL: Scale, ysR: Maybe[Scale])
 
-    private def resolveYScale[A](rows: Chunk[A], marks: Chunk[Mark[A]], layout: Layout, yOverride: Maybe[ScaleOverride]): Scale =
-        val ext = yLeftExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
-        val kindOpt: Maybe[Scale.Kind] = yOverride.flatMap(_.kind) match
+    /** Resolves all three scales in one combined pass (catalog #34, INV-004).
+      *
+      * Preserves every per-mark/per-axis branch exactly (stacked vs simple, ensureZero,
+      * log-no-zero path, right-axis vs left-axis). Output is byte-identical to the prior
+      * three-fold path for any chart configuration.
+      *
+      * `computeRight`: when `false` the right scale is `Absent` without computing `yRightExtent`.
+      */
+    private def resolveAllScales[A](
+        rows: Chunk[A],
+        marks: Chunk[Mark[A]],
+        layout: Layout,
+        xOverride: Maybe[ScaleOverride],
+        yOverride: Maybe[ScaleOverride],
+        computeRight: Boolean
+    ): ResolvedScales =
+        // X scale
+        val xExt = xExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+        val xKindOpt: Maybe[Scale.Kind] = xOverride.flatMap(_.kind) match
             case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
             case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
             case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
             case _                               => Absent
-        val kind = kindOpt.getOrElse(Scale.Kind.Linear)
-        // y-axis: rangeLo=baseline (large pixel), rangeHi=top (small pixel), inverts SVG so big values are up
+        val xKind = xKindOpt.getOrElse(inferKind(xExt, marks, isX = true))
+        val (xExtFinal, xLo, xHi) = xOverride.flatMap(_.kind) match
+            case Present(ScaleKind.Linear(domLo, domHi)) => (Extent.Continuous(domLo, domHi), layout.plotX, layout.plotX + layout.plotW)
+            case _                                       => (xExt, layout.plotX, layout.plotX + layout.plotW)
+        val xs = Scale.fit(xKind, xExtFinal, xLo, xHi)
+
+        // Y left scale
+        val yExt = yLeftExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+        val yKindOpt: Maybe[Scale.Kind] = yOverride.flatMap(_.kind) match
+            case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
+            case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
+            case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
+            case _                               => Absent
+        val yKind    = yKindOpt.getOrElse(Scale.Kind.Linear)
         val baseline = layout.plotBaseline
         val top      = layout.plotY
-        val (extFinal, rLo, rHi, useNice) = yOverride.flatMap(_.kind) match
-            // Explicit linear domain: preserve exact lo/hi, skip niceTicks so the bounds are exact
+        val (yExtFinal, yRLo, yRHi, useNice) = yOverride.flatMap(_.kind) match
             case Present(ScaleKind.Linear(domLo, domHi)) => (Extent.Continuous(domLo, domHi), baseline, top, false)
-            // Log scale: use the raw extent without ensureZero adjustment (log domain must be > 0)
+            // G7: log scale uses the no-zero extent computation
             case Present(ScaleKind.Log) =>
                 val rawExt = yLeftExtentNoZero(rows, marks).getOrElse(Extent.Continuous(1.0, 10.0))
                 (rawExt, baseline, top, false)
-            case _ => (ext, baseline, top, true)
-        Scale.fit(kind, extFinal, rLo, rHi, nice = useNice)
-    end resolveYScale
+            case _ => (yExt, baseline, top, true)
+        val ysL = Scale.fit(yKind, yExtFinal, yRLo, yRHi, nice = useNice)
 
-    private def resolveYRightScale[A](rows: Chunk[A], marks: Chunk[Mark[A]], layout: Layout): Scale =
-        val ext = yRightExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
-        Scale.fit(Scale.Kind.Linear, ext, layout.plotBaseline, layout.plotY, nice = true)
-    end resolveYRightScale
+        // Y right scale (optional)
+        val ysR: Maybe[Scale] =
+            if computeRight then
+                val rExt = yRightExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+                Present(Scale.fit(Scale.Kind.Linear, rExt, layout.plotBaseline, layout.plotY, nice = true))
+            else Absent
+
+        ResolvedScales(xs, ysL, ysR)
+    end resolveAllScales
 
     private def inferKind[A](ext: Extent, marks: Chunk[Mark[A]], isX: Boolean): Scale.Kind =
         ext match
@@ -773,11 +816,13 @@ private[kyo] object ChartLower:
             if i >= marks.size then Absent
             else
                 marks(i) match
-                    case m: Mark.Bar[A, ?, ?]   => m.color.orElse(loop(i + 1))
-                    case m: Mark.Line[A, ?, ?]  => m.color.orElse(loop(i + 1))
-                    case m: Mark.Area[A, ?, ?]  => m.color.orElse(loop(i + 1))
-                    case m: Mark.Point[A, ?, ?] => m.color.orElse(loop(i + 1))
-                    case _                      => loop(i + 1)
+                    case m: Mark.Bar[A, ?, ?]      => m.color.orElse(loop(i + 1))
+                    case m: Mark.Line[A, ?, ?]     => m.color.orElse(loop(i + 1))
+                    case m: Mark.Area[A, ?, ?]     => m.color.orElse(loop(i + 1))
+                    case m: Mark.Point[A, ?, ?]    => m.color.orElse(loop(i + 1))
+                    case m: Mark.Text[A, ?, ?]     => m.color.orElse(loop(i + 1))
+                    case m: Mark.ErrorBar[A, ?, ?] => m.color.orElse(loop(i + 1))
+                    case _: Mark.Rule[A]           => loop(i + 1)
         loop(0)
     end findColorChannel
 
@@ -813,22 +858,26 @@ private[kyo] object ChartLower:
       * directly (no label-to-K roundtrip).
       */
     private def collectColorCategoriesWithRaw[A](rows: Chunk[A], colorCh: Channel[A, ?]): Chunk[(String, Any)] =
-        // Collect (label, rawValue, ordinal) triples.
+        // Dedup by CatKey (INV-002): replaces the O(n^2) toSeq.exists(_._1 == label) with O(1) HashSet lookup.
+        // Collect (label, rawValue, ordinal) triples; sort by ordinal for enum declaration order.
+        val seenKeys = scala.collection.mutable.HashSet.empty[ChartFoundations.CatKey]
         @scala.annotation.tailrec
-        def loop(i: Int, seen: Chunk[(String, Any, Int)]): Chunk[(String, Any, Int)] =
-            if i >= rows.size then seen
+        def loop(i: Int, acc: Chunk[(String, Any, Int)]): Chunk[(String, Any, Int)] =
+            if i >= rows.size then acc
             else
-                val raw   = colorCh.accessor(rows(i))
-                val label = raw.toString
-                if seen.toSeq.exists(_._1 == label) then loop(i + 1, seen)
-                else
+                val raw = colorCh.accessor(rows(i))
+                val key = ChartFoundations.categoryKey(raw)
+                if seenKeys.add(key) then
+                    val label = raw.toString
                     val ordinal = raw match
                         case e: scala.reflect.Enum => e.ordinal
-                        case _                     => seen.size // stable encounter-order index
-                    loop(i + 1, seen.append((label, raw, ordinal)))
+                        case _                     => acc.size // stable encounter-order index
+                    loop(i + 1, acc.append((label, raw, ordinal)))
+                else loop(i + 1, acc)
                 end if
         val triples = loop(0, Chunk.empty)
-        // Sort by ordinal so enum cases appear in declaration order
+        // Sort by ordinal so enum cases appear in declaration order.
+        // toSeq here is acceptable: it is a terminal operation on a small collection, not a hot membership scan.
         triples.toSeq.sortBy(_._3).foldLeft(Chunk.empty[(String, Any)])((acc, t) => acc.append((t._1, t._2)))
     end collectColorCategoriesWithRaw
 
@@ -984,11 +1033,13 @@ private[kyo] object ChartLower:
         val allShapes: Chunk[UI] = marks.zipWithIndex.flatMap: (mark, markIdx) =>
             val markColor = markDefaultColor(theme, markIdx)
             val ys = mark match
-                case m: Mark.Bar[A, ?, ?]   => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.Line[A, ?, ?]  => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.Area[A, ?, ?]  => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.Point[A, ?, ?] => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.Rule[A]        => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                case m: Mark.Bar[A, ?, ?]      => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                case m: Mark.Line[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                case m: Mark.Area[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                case m: Mark.Point[A, ?, ?]    => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                case m: Mark.Rule[A]           => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                case m: Mark.Text[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                case m: Mark.ErrorBar[A, ?, ?] => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
             mark match
                 case m: Mark.Bar[A, ?, ?] =>
                     spec match
@@ -1005,7 +1056,9 @@ private[kyo] object ChartLower:
                         case Present(s) =>
                             lowerPoint(rows, m, layout, xs, ys, markColor, Present(s), internalHoverRef, theme).asInstanceOf[Chunk[UI]]
                         case Absent => lowerPoint(rows, m, layout, xs, ys, markColor, theme = theme).asInstanceOf[Chunk[UI]]
-                case m: Mark.Rule[A] => lowerRuleChildren(m, layout, xs, ys)
+                case m: Mark.Rule[A]           => lowerRuleChildren(m, layout, xs, ys)
+                case _: Mark.Text[A, ?, ?]     => Chunk.empty[UI] // DEV: placeholder; behavior lands in Phase 4 (lowerText)
+                case _: Mark.ErrorBar[A, ?, ?] => Chunk.empty[UI] // DEV: placeholder; behavior lands in Phase 4 (lowerErrorBar)
             end match
         allShapes.foldLeft(Svg.g): (g, el) =>
             el match
@@ -1069,8 +1122,9 @@ private[kyo] object ChartLower:
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= rows.size then acc
             else
-                val row     = rows(i)
-                val yDomain = mark.y.plottable.toDomain(mark.y.accessor(row))
+                val row = rows(i)
+                // catalog #2: drop non-finite domain values; filterFinite returns Absent for NaN/Inf
+                val yDomain = ChartFoundations.filterFinite(mark.y.plottable.toDomain(mark.y.accessor(row)))
                 val nextAcc = yDomain match
                     case Absent => acc
                     case Present(yd) =>
@@ -1765,6 +1819,14 @@ private[kyo] object ChartLower:
                         m.x.plottable.toDomain(m.x.accessor(row)) match
                             case Present(d) => domainKey(d)
                             case Absent     => ""
+                    case m: Mark.Text[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case m: Mark.ErrorBar[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
                     case _: Mark.Rule[A] => ""
     end rowKey
 
@@ -2098,11 +2160,13 @@ private[kyo] object ChartLower:
             case ((accElems, accGeom), (mark, markIdx)) =>
                 val markColor = markDefaultColor(spec.theme, markIdx)
                 val ys = mark match
-                    case m: Mark.Bar[A, ?, ?]   => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.Line[A, ?, ?]  => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.Area[A, ?, ?]  => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.Point[A, ?, ?] => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.Rule[A]        => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Bar[A, ?, ?]      => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Line[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Area[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Point[A, ?, ?]    => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Rule[A]           => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.Text[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                    case m: Mark.ErrorBar[A, ?, ?] => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
                 mark match
                     case m: Mark.Bar[A, ?, ?] if m.stack.group.isEmpty && m.color.isEmpty =>
                         // Simple ungrouped bar: supports keyed SMIL transitions.
@@ -2123,7 +2187,9 @@ private[kyo] object ChartLower:
                     case m: Mark.Area[A, ?, ?] => (accElems ++ lowerArea(rows, m, layout, xs, ys, markColor), accGeom)
                     case m: Mark.Point[A, ?, ?] =>
                         (accElems ++ lowerPoint(rows, m, layout, xs, ys, markColor, theme = spec.theme), accGeom)
-                    case m: Mark.Rule[A] => (accElems ++ lowerRule(m, layout, xs, ys), accGeom)
+                    case m: Mark.Rule[A]           => (accElems ++ lowerRule(m, layout, xs, ys), accGeom)
+                    case _: Mark.Text[A, ?, ?]     => (accElems, accGeom) // DEV: placeholder; behavior lands in Phase 4
+                    case _: Mark.ErrorBar[A, ?, ?] => (accElems, accGeom) // DEV: placeholder; behavior lands in Phase 4
                 end match
         // Write the new state only when this is a genuinely new emission.
         // On repeat pulls, the ref is left untouched so the next real emission still sees the correct fromGeom.
@@ -2305,24 +2371,24 @@ private[kyo] object ChartLower:
         // emission. We resolve from Chunk.empty to get a stable layout; the reactive region re-resolves the
         // y-scale per emission.
         val initialRows: Chunk[A] = Chunk.empty
-        val xs                    = resolveXScale(initialRows, spec.marks, layout, spec.xScaleOverride)
-        val hasRight = spec.marks.toSeq.exists:
-            case m: Mark.Bar[A, ?, ?]   => m.axis == Axis.Right
-            case m: Mark.Line[A, ?, ?]  => m.axis == Axis.Right
-            case m: Mark.Area[A, ?, ?]  => m.axis == Axis.Right
-            case m: Mark.Point[A, ?, ?] => m.axis == Axis.Right
-            case _                      => false
+        val hasRight = spec.marks.exists:
+            case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
+            case m: Mark.Line[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Area[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Point[A, ?, ?]    => m.axis == Axis.Right
+            case _: Mark.Rule[A]           => false
+            case _: Mark.Text[A, ?, ?]     => false
+            case _: Mark.ErrorBar[A, ?, ?] => false
+        val computeRight = hasRight || spec.yAxisRightCfg.isDefined
+        // Resolve initial scales for the static frame using resolveAllScales (INV-004).
+        val ResolvedScales(xs, ysLInitial, ysRFixed) =
+            resolveAllScales(initialRows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight)
         // For fixed domain, compute ysL once from the override; for inferred domain, ysL is recomputed per
         // emission inside the reactive region.
         val ysLFixed: Maybe[Scale] =
-            if isYDomainFixed(spec.yScaleOverride) then Present(resolveYScale(initialRows, spec.marks, layout, spec.yScaleOverride))
-            else Absent
-        val ysRFixed: Maybe[Scale] =
-            if hasRight || spec.yAxisRightCfg.isDefined then
-                Present(resolveYRightScale(initialRows, spec.marks, layout))
-            else Absent
+            if isYDomainFixed(spec.yScaleOverride) then Present(ysLInitial) else Absent
         // Static frame: drawn once, never changes.
-        val ysLForFrame = ysLFixed.getOrElse(resolveYScale(initialRows, spec.marks, layout, spec.yScaleOverride))
+        val ysLForFrame = ysLFixed.getOrElse(ysLInitial)
         val staticFrame = buildStaticFrameLive(layout, xs, ysLForFrame, ysRFixed, spec, initialRows, legendRows)
         val vb          = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
         val baseSvg     = Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
@@ -2351,12 +2417,10 @@ private[kyo] object ChartLower:
             case Absent => Absent
         // Reactive region: re-renders on each signal emission.
         val reactiveMarks: UI.Ast.Reactive[Svg.G] = signal.render: rows =>
-            // Re-resolve x-scale from the current rows so categorical axes expand when categories are added.
-            val xsLive  = resolveXScale(rows, spec.marks, layout, spec.xScaleOverride)
-            val ysLLive = ysLFixed.getOrElse(resolveYScale(rows, spec.marks, layout, spec.yScaleOverride))
-            val ysRLive: Maybe[Scale] =
-                if hasRight || spec.yAxisRightCfg.isDefined then Present(resolveYRightScale(rows, spec.marks, layout))
-                else Absent
+            // Re-resolve scales from the current rows so categorical axes expand when categories are added.
+            val ResolvedScales(xsLive, ysLLiveResolved, ysRLive) =
+                resolveAllScales(rows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight)
+            val ysLLive = ysLFixed.getOrElse(ysLLiveResolved)
             buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe, internalHoverRef)
         val withMarks = withFrame(reactiveMarks)
         // Phase 07: append the tooltip overlay as the last child so it renders on top.
@@ -2378,7 +2442,7 @@ private[kyo] object ChartLower:
       * so `Frame.internal` is safe here. When gradient/clip/marker refs are added in a later phase, the
       * construction `Frame` must be threaded through `ChartSpec` to avoid cross-chart id collisions.
       */
-    def lower[A](spec: ChartSpec[A]): Svg.Root =
+    private[kyo] def lower[A](spec: ChartSpec[A]): Svg.Root =
         given Frame = Frame.internal
         spec.data match
             case DataSource.Static(rows) => lowerStatic(rows, spec)
@@ -2436,18 +2500,17 @@ private[kyo] object ChartLower:
 
     private def lowerStatic[A](rows: Chunk[A], spec: ChartSpec[A])(using Frame): Svg.Root =
         val layout = buildLayout(spec)
-        val xs     = resolveXScale(rows, spec.marks, layout, spec.xScaleOverride)
-        val ysL    = resolveYScale(rows, spec.marks, layout, spec.yScaleOverride)
-        val hasRight = spec.marks.toSeq.exists:
-            case m: Mark.Bar[A, ?, ?]   => m.axis == Axis.Right
-            case m: Mark.Line[A, ?, ?]  => m.axis == Axis.Right
-            case m: Mark.Area[A, ?, ?]  => m.axis == Axis.Right
-            case m: Mark.Point[A, ?, ?] => m.axis == Axis.Right
-            case _                      => false
-        val ysR: Maybe[Scale] =
-            if hasRight || spec.yAxisRightCfg.isDefined
-            then Present(resolveYRightScale(rows, spec.marks, layout))
-            else Absent
+        val hasRight = spec.marks.exists:
+            case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
+            case m: Mark.Line[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Area[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Point[A, ?, ?]    => m.axis == Axis.Right
+            case _: Mark.Rule[A]           => false
+            case _: Mark.Text[A, ?, ?]     => false
+            case _: Mark.ErrorBar[A, ?, ?] => false
+        val computeRight = hasRight || spec.yAxisRightCfg.isDefined
+        val ResolvedScales(xs, ysL, ysR) =
+            resolveAllScales(rows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight)
         val vb    = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
         val frame = buildFrame(layout, xs, ysL, ysR, spec, rows)
         // Phase 07: create an internal hover ref when a tooltip is configured so shape handlers can drive it.

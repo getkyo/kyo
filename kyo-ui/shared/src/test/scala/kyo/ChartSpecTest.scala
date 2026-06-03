@@ -33,7 +33,7 @@ class ChartSpecTest extends Test:
         val spec = Chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
         assert(spec.marks.length == 1)
         spec.marks.head match
-            case Mark.Bar(_, _, color, _, _) =>
+            case Mark.Bar(_, _, color, _, _, _, _, _) =>
                 assert(color.isDefined)
             case other =>
                 fail(s"Expected Mark.Bar but got $other")
@@ -48,14 +48,14 @@ class ChartSpecTest extends Test:
         val specColor   = Chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
 
         specNoColor.marks.head match
-            case Mark.Bar(_, _, color, _, _) =>
+            case Mark.Bar(_, _, color, _, _, _, _, _) =>
                 assert(color == Absent)
             case other =>
                 fail(s"Expected Mark.Bar but got $other")
         end match
 
         specColor.marks.head match
-            case Mark.Bar(_, _, color, _, _) =>
+            case Mark.Bar(_, _, color, _, _, _, _, _) =>
                 assert(color.isDefined)
             case other =>
                 fail(s"Expected Mark.Bar but got $other")
@@ -236,7 +236,7 @@ class ChartSpecTest extends Test:
         val rows = Chunk(Row("a", 1, "s1"), Row("b", 2, "s2"))
         val spec = Chart(rows)(line(x = _.x, y = _.y, color = _.series))
         spec.marks.head match
-            case Mark.Line(_, _, color, curve, defined, _) =>
+            case Mark.Line(_, _, color, curve, defined, _, _, _, _) =>
                 assert(color.isDefined)
                 assert(curve == Curve.linear)
                 assert(defined == Absent)
@@ -252,7 +252,7 @@ class ChartSpecTest extends Test:
         val rows = Chunk(Row(1, 2, 3.0))
         val spec = Chart(rows)(point(x = _.x, y = _.y, size = _.sz))
         spec.marks.head match
-            case Mark.Point(_, _, _, size, symbol, _) =>
+            case Mark.Point(_, _, _, size, _, symbol, _, _, _, _) =>
                 assert(size.isDefined)
                 assert(symbol == Absent)
             case other => fail(s"Expected Mark.Point but got $other")
@@ -265,7 +265,7 @@ class ChartSpecTest extends Test:
     "line with axis = Axis.Right stores Axis.Right" in {
         val spec = Chart(sales)(line(x = _.month, y = _.revenue, axis = Axis.Right))
         spec.marks.head match
-            case Mark.Line(_, _, _, _, _, axis) =>
+            case Mark.Line(_, _, _, _, _, _, _, _, axis) =>
                 assert(axis == Axis.Right)
             case other => fail(s"Expected Mark.Line but got $other")
         end match

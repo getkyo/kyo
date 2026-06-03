@@ -94,6 +94,10 @@ enum Curve derives CanEqual:
 enum Symbol derives CanEqual:
     case circle, square, triangle, diamond, cross
 
+/** Text alignment for `text` marks and rotated axis tick labels. */
+enum TextAnchor derives CanEqual:
+    case Start, Middle, End
+
 // ---- Named-parameter factories ----
 
 /** Creates a bar/column mark.
@@ -121,7 +125,7 @@ def bar[A, X: Plottable, Y: Plottable](
     val colorMaybe: Maybe[Channel[A, ?]] =
         if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
         else Absent
-    Mark.Bar(xCh, yCh, colorMaybe, stack, axis)
+    Mark.Bar(xCh, yCh, colorMaybe, stack, Absent, Absent, Absent, axis)
 end bar
 
 /** Creates a line mark.
@@ -147,7 +151,7 @@ def line[A, X: Plottable, Y: Plottable](
         else Absent
     val definedMaybe: Maybe[A => Boolean] =
         if Unset.supplied(defined) then Present(defined) else Absent
-    Mark.Line(xCh, yCh, colorMaybe, curve, definedMaybe, axis)
+    Mark.Line(xCh, yCh, colorMaybe, curve, definedMaybe, Absent, Absent, Absent, axis)
 end line
 
 /** Creates an area mark.
@@ -177,7 +181,7 @@ def area[A, X: Plottable, Y: Plottable](
     val colorMaybe: Maybe[Channel[A, ?]] =
         if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
         else Absent
-    Mark.Area(xCh, yMaybe, y0Maybe, y1Maybe, colorMaybe, stack, curve, axis)
+    Mark.Area(xCh, yMaybe, y0Maybe, y1Maybe, colorMaybe, stack, curve, Absent, Absent, Absent, axis)
 end area
 
 /** Creates a point (scatter/bubble) mark.
@@ -202,7 +206,7 @@ def point[A, X: Plottable, Y: Plottable](
         else Absent
     val sizeMaybe: Maybe[A => Double]   = if Unset.supplied(size) then Present(size) else Absent
     val symbolMaybe: Maybe[A => Symbol] = if Unset.supplied(symbol) then Present(symbol) else Absent
-    Mark.Point(xCh, yCh, colorMaybe, sizeMaybe, symbolMaybe, axis)
+    Mark.Point(xCh, yCh, colorMaybe, sizeMaybe, Absent, symbolMaybe, Absent, Absent, Absent, axis)
 end point
 
 /** Creates a reference line mark.
@@ -216,12 +220,14 @@ end point
   * where `threshold: Signal[Usd]`.
   */
 def rule[A, C: Plottable](
-    x: RuleValue[C] = null.asInstanceOf[RuleValue[C]],
-    y: RuleValue[C] = null.asInstanceOf[RuleValue[C]],
+    x: RuleValue[C] = RuleValue.unset[C],
+    y: RuleValue[C] = RuleValue.unset[C],
     axis: Axis = Axis.Left
 )(using Frame): Mark[A] =
-    val xMaybe: Maybe[RuleValue[?]] = if x != null then Present(x) else Absent
-    val yMaybe: Maybe[RuleValue[?]] = if y != null then Present(y) else Absent
+    // Pattern matching on RuleValue.Unset across type parameters requires an erased check.
+    // isInstanceOf[RuleValue.Unset.type] detects the singleton; the value arm carries the concrete case.
+    val xMaybe: Maybe[RuleValue[?]] = if x.isInstanceOf[RuleValue.Unset.type] then Absent else Present(x)
+    val yMaybe: Maybe[RuleValue[?]] = if y.isInstanceOf[RuleValue.Unset.type] then Absent else Present(y)
     Mark.Rule(xMaybe, yMaybe, axis)
 end rule
 
@@ -391,10 +397,10 @@ given [A]: Conversion[ChartSpec[A], Svg.Root] = spec => internal.ChartLower.lowe
 
 /** A single visual layer over the chart's row type `A`.
   *
-  * Sealed: the five cases (`Bar`, `Line`, `Area`, `Point`, `Rule`) are the complete
-  * mark vocabulary. All lowering in `internal/ChartLower.scala` is an exhaustive
-  * match on this sealed trait; adding a sixth case is a compile error until lowering
-  * is extended. Marks are pure immutable values; they carry no rendering logic.
+  * Sealed: the seven cases (`Bar`, `Line`, `Area`, `Point`, `Rule`, `Text`, `ErrorBar`)
+  * are the complete mark vocabulary. All lowering in `internal/ChartLower.scala` is an
+  * exhaustive match on this sealed trait; adding a new case is a compile error until
+  * lowering is extended. Marks are pure immutable values; they carry no rendering logic.
   *
   * Marks are produced by the top-level factories `bar`/`line`/`area`/`point`/`rule`
   * and consumed by `Chart(data)(marks*)`. Users never name the concrete cases
@@ -407,20 +413,27 @@ object Mark:
     /** A bar or column mark.
       *
       * Carries required positional channels `x` and `y`, and optional grouping
-      * channels `color` and `stack`. `axis` selects the y-axis.
+      * channels `color` and `stack`. `axis` selects the y-axis. The additive
+      * fields `opacity`, `label`, and `tooltip` default `Absent`; behavior lands
+      * in Phase 3/4.
       */
     final case class Bar[A, X, Y](
         x: Channel[A, X],
         y: Channel[A, Y],
         color: Maybe[Channel[A, ?]],
         stack: Grouping[A],
+        opacity: Maybe[A => Double] = Absent, // D4
+        label: Maybe[A => String] = Absent,   // D5
+        tooltip: Maybe[A => String] = Absent, // D6
         axis: Axis
     ) extends Mark[A]
 
     /** A line mark with optional gap support.
       *
       * `y` is a `ChannelMaybe` to support `Maybe[Y]` accessors (gaps). `color`
-      * splits into one line per series. `defined` overrides gap detection.
+      * splits into one line per series. `defined` overrides gap detection. The
+      * additive fields `opacity`, `label`, and `tooltip` default `Absent`; behavior
+      * lands in Phase 3/4.
       */
     final case class Line[A, X, Y](
         x: Channel[A, X],
@@ -428,13 +441,18 @@ object Mark:
         color: Maybe[Channel[A, ?]],
         curve: Curve,
         defined: Maybe[A => Boolean],
+        opacity: Maybe[A => Double] = Absent, // D4
+        label: Maybe[A => String] = Absent,   // D5
+        tooltip: Maybe[A => String] = Absent, // D6
         axis: Axis
     ) extends Mark[A]
 
     /** An area mark.
       *
       * Either `y` (fill to baseline) or the `y0`/`y1` band form must be supplied.
-      * Exactly one of the two forms is valid; a lowering-time check selects it.
+      * Exactly one of the two forms is valid; a lowering-time check selects it. The
+      * additive fields `opacity`, `label`, and `tooltip` default `Absent`; behavior
+      * lands in Phase 3/4.
       */
     final case class Area[A, X, Y](
         x: Channel[A, X],
@@ -444,20 +462,30 @@ object Mark:
         color: Maybe[Channel[A, ?]],
         stack: Grouping[A],
         curve: Curve,
+        opacity: Maybe[A => Double] = Absent, // D4
+        label: Maybe[A => String] = Absent,   // D5
+        tooltip: Maybe[A => String] = Absent, // D6
         axis: Axis
     ) extends Mark[A]
 
     /** A point (scatter/bubble) mark.
       *
       * `y` is a `ChannelMaybe` so `Maybe[Y]` accessors render gaps as absent dots.
-      * `size` controls the dot radius; `symbol` selects the glyph.
+      * `size` controls the dot radius (D7: meaning becomes sqrt-area magnitude in
+      * Phase 3); `sizePx` is the raw-pixel-radius escape hatch; `symbol` selects
+      * the glyph. The additive fields `opacity`, `label`, and `tooltip` default
+      * `Absent`; behavior lands in Phase 3/4.
       */
     final case class Point[A, X, Y](
         x: Channel[A, X],
         y: ChannelMaybe[A, Y],
         color: Maybe[Channel[A, ?]],
         size: Maybe[A => Double],
+        sizePx: Maybe[A => Double] = Absent, // D7 escape hatch: raw pixel radius
         symbol: Maybe[A => Symbol],
+        opacity: Maybe[A => Double] = Absent, // D4
+        label: Maybe[A => String] = Absent,   // D5
+        tooltip: Maybe[A => String] = Absent, // D6
         axis: Axis
     ) extends Mark[A]
 
@@ -470,6 +498,40 @@ object Mark:
     final case class Rule[A](
         x: Maybe[RuleValue[?]],
         y: Maybe[RuleValue[?]],
+        axis: Axis
+    ) extends Mark[A]
+
+    /** A text annotation mark.
+      *
+      * Renders one `Svg.text` per row at `(x, y)` with the string produced by
+      * `label`. `y` is a `ChannelMaybe` so gap rows produce no text. `color`
+      * optionally groups by category; `anchor` controls horizontal alignment;
+      * `opacity` controls per-datum transparency. Full lowering lands in Phase 4.
+      */
+    final case class Text[A, X, Y](
+        x: Channel[A, X],
+        y: ChannelMaybe[A, Y],
+        label: A => String,
+        color: Maybe[Channel[A, ?]],
+        anchor: TextAnchor,
+        opacity: Maybe[A => Double],
+        axis: Axis
+    ) extends Mark[A]
+
+    /** An error bar mark.
+      *
+      * Renders a vertical line from `low` to `high` at `x`, with horizontal
+      * caps of `capWidth` pixels, and a center marker at `y`. All three y-channels
+      * fold into the y-extent. `color` optionally groups by category. Full
+      * lowering lands in Phase 4.
+      */
+    final case class ErrorBar[A, X, Y](
+        x: Channel[A, X],
+        y: Channel[A, Y],
+        low: Channel[A, Y],
+        high: Channel[A, Y],
+        color: Maybe[Channel[A, ?]],
+        capWidth: Double,
         axis: Axis
     ) extends Mark[A]
 
@@ -514,6 +576,8 @@ end ChannelMaybe
 enum RuleValue[C]:
     case Const(value: C, plottable: Plottable[C])
     case Reactive(signal: Signal[C], plottable: Plottable[C])
+    case Unset extends RuleValue[Nothing] // D33: total absence sentinel replacing null
+end RuleValue
 
 /** Implicit conversions from plain values and signals to `RuleValue`.
   *
@@ -521,6 +585,9 @@ enum RuleValue[C]:
   * to compile without an explicit `RuleValue.Const(...)` wrapper.
   */
 object RuleValue:
+    // Unsafe: widening Nothing to C is safe because Unset is a total sentinel that is never invoked;
+    // the cast is the canonical idiom for a covariant singleton sentinel in a non-covariant enum.
+    private[kyo] def unset[C]: RuleValue[C] = RuleValue.Unset.asInstanceOf[RuleValue[C]]
     given constConversion[C: Plottable]: Conversion[C, RuleValue[C]] =
         c => RuleValue.Const(c, summon[Plottable[C]])
     given signalConversion[C: Plottable](using CanEqual[C, C]): Conversion[Signal[C], RuleValue[C]] =
