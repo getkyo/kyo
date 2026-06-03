@@ -197,7 +197,9 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // When: inspecting RetentionPolicy's declared EnumCase members
     // Then: post-fix RetentionPolicy's enum constants (RUNTIME, CLASS, SOURCE) are Symbol.EnumCase
     //       before fix they were Symbol.Field (Field + Enum + JavaDefined + Static)
-    // JVM-only: requires TestClasspaths2.standardWithPlatformModules (jrt:/ access).
+    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins
+    //   java.lang.annotation.RetentionPolicy on the jrt:/ platform-modules classpath. Loading java.base via
+    //   jrt:/ is a JVM-only loader; no equivalent on JS/Native.
     // Pins: F-A2-010 (Java enum interop); requires java.base on the classpath via Phase 2.03 infra
     "F-A2-010 (Phase 2.06): Java enum constants (RetentionPolicy) are Symbol.EnumCase" taggedAs jvmOnly in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>

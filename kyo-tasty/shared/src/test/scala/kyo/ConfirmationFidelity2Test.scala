@@ -51,7 +51,9 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // When: counting allSymbols.count(isGiven)
     // Then: count >= 470 && count <= 490 (probe-001.log baseline is 478)
     // Pins: F-A2-004
-    // JVM-only: requires real stdlib classpath; embedded fixtures have no given instances.
+    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins the
+    //   scala-library given count (478 +/- 10). Scala-library cannot be loaded as a TASTy classpath on JS/Native;
+    //   the embedded fixture set contains no `given` instances, so the count would always be 0 there.
     "F-A2-004 leaf 2 (Phase 2.09): allSymbols.count(isGiven) == 478 baseline on standard classpath" taggedAs jvmOnly in run {
         TestClasspaths.withClasspath().map: cp =>
             val count = cp.symbols.count(_.isGiven)
@@ -67,7 +69,10 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // When: awaiting both
     // Then: at most one .krfl file exists; both warm-loaded classpaths have the same symbol count
     // Pins: F-A4-003
-    // JVM-only: requires java.nio.file.Files.createTempDirectory and TestClasspaths2.standardRoots.
+    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): Tasty.Classpath.initCached
+    //   takes a real filesystem cacheDir and uses java.nio.file atomic-rename for one-writer-wins. MemoryFileSource
+    //   has no atomic-rename or concurrent-write semantics, so it cannot exercise the JVM rename-collision path
+    //   that this leaf pins.
     "F-A4-003 leaf 3 (Phase 2.09): two concurrent cold-init writers to same cacheDir produce one .krfl file" taggedAs jvmOnly in run {
         val cacheDir = TestClasspaths2.createTempDir("kyo-df2-concurrent-writers")
         val roots    = TestClasspaths2.standardRoots
@@ -184,7 +189,9 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // When: running 3 cold-init loads and computing the median time
     // Then: median < 5,000 ms
     // Pins: F-A1-009
-    // JVM-only: requires real classpath discovery and timing; performance assertion meaningless on embedded.
+    // JVM-only (exception condition 3: test asserts JVM-specific behavior): the assertion pins cold-init wall-time
+    //   on a 79,567-symbol stdlib classpath, a perf characteristic of the JVM real-classpath loader. The embedded
+    //   fixture set holds ~150 symbols; a <5000ms bound there is vacuous (typical load is <500ms).
     "F-A1-009 leaf 7 (Phase 2.09): standard 79,567-symbol classpath cold-init median < 5,000 ms" taggedAs jvmOnly in run {
         val roots = TestClasspaths2.standardRoots
         def timedLoad: Long < (Async & Scope & Abort[TastyError]) =
@@ -211,7 +218,8 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // When: counting cp.moduleIndex.size
     // Then: count == 69 (probe-001.log baseline)
     // Pins: F-A3-005
-    // JVM-only: requires jrt:/ filesystem (JPMS module loading).
+    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): jrt:/ JPMS module filesystem
+    //   is a JVM-only loader scheme; JS/Native have no equivalent module system to enumerate.
     "F-A3-005 leaf 8 (Phase 2.09): JPMS module count == 69 on platform-modules classpath" taggedAs jvmOnly in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             val count = cp.moduleIndex.size
@@ -227,7 +235,10 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // When: counting cp.symbols.count(_.isJava)
     // Then: count > 0 (Java symbols from companion .class files)
     // Pins: F-A1-OPEN (Java interop guard)
-    // JVM-only: companion .class files alongside .tasty are only present on JVM real classpath.
+    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): isJava is true for symbols
+    //   originating from Java-source .class files (Flag.JavaDefined set by scalac). The embedded fixture set has
+    //   no Java sources (only Scala-compiled classes); a Java fixture would require adding .java sources to
+    //   kyo-tasty-fixtures and a separate build step to emit Java classfile bytes for the embedded set.
     "F-A1-OPEN leaf 9 (Phase 2.09): Java-defined symbols present in standard classpath (java interop guard)" taggedAs jvmOnly in run {
         TestClasspaths.withClasspath().map: cp =>
             val javaCount = cp.symbols.count(_.isJava)

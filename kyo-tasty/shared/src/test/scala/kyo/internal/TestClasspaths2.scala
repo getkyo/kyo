@@ -112,6 +112,36 @@ private[kyo] object TestClasspaths2:
     )(using Frame): Boolean < (Async & Scope & Abort[TastyError]) =
         TestClasspaths2Platform.runConcurrentReaderWriterTest(cp, digest, tmpDir)
 
+    /** Load the embedded-fixture classpath with a warning sink (cross-platform).
+      *
+      * Mirrors `loadStandardWithSink` but uses `TestClasspaths.withClasspath()` (embedded fixtures on all platforms,
+      * including JVM) instead of the real stdlib classpath. Captures warn() messages emitted during decode so callers
+      * can assert on unknown-tag counts. Works on JVM, JS, and Native.
+      */
+    def loadEmbeddedWithSink(using Frame): (Tasty.Classpath, WarningSink) < (Sync & Async & Scope & Abort[TastyError]) =
+        import AllowUnsafe.embrace.danger
+        val buf = scala.collection.mutable.ArrayBuffer.empty[String]
+        val sinkLogger: Log.Unsafe = new Log.Unsafe:
+            def level: Log.Level                                                       = Log.Level.warn
+            def trace(msg: => String)(using Frame, AllowUnsafe): Unit                  = ()
+            def trace(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
+            def debug(msg: => String)(using Frame, AllowUnsafe): Unit                  = ()
+            def debug(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
+            def info(msg: => String)(using Frame, AllowUnsafe): Unit                   = ()
+            def info(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit  = ()
+            def warn(msg: => String)(using Frame, AllowUnsafe): Unit =
+                val m = msg; buf.synchronized { discard(buf += m) }
+            def warn(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit =
+                val m = msg; buf.synchronized { discard(buf += m) }
+            def error(msg: => String)(using Frame, AllowUnsafe): Unit                  = ()
+            def error(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
+        end sinkLogger
+        Log.let(Log(sinkLogger)) {
+            TestClasspaths.withClasspath().map: cp =>
+                (cp, WarningSink(buf.toSeq))
+        }
+    end loadEmbeddedWithSink
+
     /** Perform a cold load then write a snapshot to a MemoryFileSource and read it back, returning (cold, warm).
       *
       * Cross-platform: uses `SnapshotWriter.serializeToBytes` and `SnapshotReader.readBytes` via a MemoryFileSource. Works on JVM, JS, and

@@ -71,7 +71,10 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // When: awaiting init
     // Then: aborts with TastyError.InconsistentClasspath
     // Pins: F-A1-OPEN-MULTI + INV-103-DF2
-    // JVM-only: TestClasspaths2.multiVersionStdlibRoots requires JVM classpath discovery.
+    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): multiVersionStdlibRoots is
+    //   built from two scala-library jars at distinct versions discovered via JVM classpath. The InconsistentClasspath
+    //   detection pins same-FQN-different-version collision, which requires real version-divergent stdlib jars; no
+    //   embedded-fixture equivalent exists.
     "F-A1-OPEN-MULTI leaf 12 (Phase 2.09): multi-version stdlib FailFast init aborts with InconsistentClasspath" taggedAs jvmOnly in run {
         val multiRoots = TestClasspaths2.multiVersionStdlibRoots
         Abort.run[TastyError](
@@ -95,7 +98,11 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // When: counting Java-defined symbols
     // Then: count > 0
     // Pins: F-A3-OPEN-AP
-    // JVM-only: companion .class files alongside .tasty are JVM-only.
+    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): isJava is true for symbols
+    //   originating from Java-source .class files (Flag.JavaDefined). The embedded fixture set has no Java sources;
+    //   a Java fixture would require adding .java sources to kyo-tasty-fixtures and emitting their classfile bytes.
+    //   F-G-002 covers the companion-.class merge cross-platform via PlainClass.class; this leaf specifically pins
+    //   Java-defined (not Scala-companion) classfile decode coverage.
     "F-A3-OPEN-AP leaf 13 (Phase 2.09): Java classfile decoding path active in standard classpath (AP structural guard)" taggedAs jvmOnly in run {
         TestClasspaths.withClasspath().map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
@@ -111,7 +118,11 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // When: releasing latch and awaiting both
     // Then: read sees pre-write or post-write contents but never a corrupt mix
     // Pins: F-A4-OPEN-RW
-    // JVM-only: StutterFileSource (java.util.concurrent.Semaphore) and JvmFileSource are JVM-only.
+    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the leaf exercises atomic
+    //   rename semantics provided by java.nio.file (JvmFileSource) and a stutter latch implemented with
+    //   java.util.concurrent.Semaphore. MemoryFileSource is a non-atomic mutable HashMap; rewriting this in a
+    //   cross-platform way would require building a real atomic FileSource impl with cross-platform write
+    //   isolation, which would itself become the system-under-test and undermine the pin.
     // Delegates to TestClasspaths2.runConcurrentReaderWriterTest to avoid JVM-specific imports in shared.
     "F-A4-OPEN-RW leaf 14 (Phase 2.09): concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" taggedAs jvmOnly in run {
         val digest = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)

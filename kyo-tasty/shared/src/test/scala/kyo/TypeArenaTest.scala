@@ -122,7 +122,10 @@ class TypeArenaTest extends Test:
     // plan: phase-05; hashOf also recurses without a depth guard; at MaxDepth+1 levels of nesting either the depth check
     // fires (DepthExceededException) or hashOf stack-overflows first (StackOverflowError). Both indicate the depth limit
     // has been exceeded. Phase 09 adds a hash depth guard to fully fix this.
-    // HARD RULE 14 exemption: MaxDepth+1 (1025) levels of recursion overflow the JS/Native call stack before DepthExceededException fires.
+    // JVM-only (exception condition 3: test asserts JVM-specific behavior): the test constructs 1025 levels of nested
+    //   Applied types so that the JVM call stack (configured to -Xss10M in CI) can reach the depth-guard check at
+    //   TypeArena.MaxDepth (1024). The JS engine call stack and Scala Native default stack overflow well before depth
+    //   1024 (RangeError on JS, native SOE on Native), so the assertion would not exercise the depth-guard branch.
     "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge" taggedAs jvmOnly in run {
         nextId = 0
         val baseSym       = makeSym("DepthBase")
@@ -151,7 +154,10 @@ class TypeArenaTest extends Test:
     }
 
     // Test 7 (B8 boundary): nesting at MaxDepth-1 (1023 levels) succeeds without exception.
-    // HARD RULE 14 exemption: MaxDepth-1 (1023) levels of recursive merge overflows the JS/Native call stack.
+    // JVM-only (exception condition 3: test asserts JVM-specific behavior): 1023 levels of nested Applied types
+    //   require a JVM-sized call stack (-Xss10M in CI). JS engines and Scala Native have substantially smaller
+    //   default stacks and would overflow before reaching depth 1023, so the "merges successfully" property
+    //   cannot be observed there.
     "B8: nesting at MaxDepth-1 (1023 levels) merges successfully" taggedAs jvmOnly in run {
         nextId = 0
         val baseSym       = makeSym("BoundBase")
@@ -171,7 +177,8 @@ class TypeArenaTest extends Test:
     }
 
     // Test 8 (T4, Rec depth boundary): Rec-type nesting at MaxDepth-1 succeeds.
-    // HARD RULE 14 exemption: MaxDepth-1 (1023) levels of recursive Rec merge overflows the JS/Native call stack.
+    // JVM-only (exception condition 3: test asserts JVM-specific behavior): 1023 levels of nested Rec types require
+    //   the JVM call stack size; JS/Native default stacks overflow before reaching depth 1023.
     "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException" taggedAs jvmOnly in run {
         nextId = 0
         val leafSym          = makeSym("RecDepthLeaf")

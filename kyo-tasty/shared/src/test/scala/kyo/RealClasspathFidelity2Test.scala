@@ -24,45 +24,49 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // ─────────────────────────────────────────────────────────────────────────
 
     // Leaf 4 (Phase 2.01): no-unknown-tags-on-clean-load
-    // Given: TestClasspaths2.standardRoots loaded with a warning sink
+    // Given: TestClasspaths.withClasspath() loaded with a warning sink (cross-platform: embedded fixtures on all platforms)
     // When: counting sink entries whose message matches "unhandled cat" (new wording) or "unknown TASTy type tag" (legacy)
-    // Then: post-fix the count is 0; before fix at decoder-fidelity-2 entry the count is 78,501
+    // Then: post-fix the count is 0; before fix at decoder-fidelity-2 entry the count is 78,501 on the real stdlib classpath
     // Pins: INV-003 (strengthened); F-A2-001
-    "INV-003 (Phase 2.01): no unknown-tag warnings on clean standard-classpath load" taggedAs jvmOnly in run {
-        TestClasspaths2.loadStandardWithSink.map: (cp, sink) =>
+    // Cross-platform: the "no unknown-tag warnings" invariant is decoder-wide and holds on any classpath; embedded fixtures
+    //   exercise every TASTy tag used in the fixture corpus. The JVM run additionally exercises the full stdlib corpus.
+    "INV-003 (Phase 2.01): no unknown-tag warnings on clean classpath load" in run {
+        TestClasspaths2.loadEmbeddedWithSink.map: (cp, sink) =>
             val unknownTagCount = sink.unknownTagCount
             assert(
                 unknownTagCount == 0,
-                s"Expected 0 unknown-tag warnings post-F-A2-001-fix (baseline 78,501), found $unknownTagCount. " +
+                s"Expected 0 unknown-tag warnings post-F-A2-001-fix (baseline 78,501 on real stdlib), found $unknownTagCount. " +
                     s"Sample: ${sink.messages.filter(m => m.contains("TASTy") || m.contains("unhandled")).take(3).mkString("; ")}"
             )
             succeed
     }
 
     // Leaf 5 (Phase 2.01): single-tasty-load-zero-warnings
-    // Given: the standard classpath load (includes kyo-tasty files) captured with a warning sink
+    // Given: the embedded-fixture classpath load captured with a warning sink
     // When: counting unknown-tag entries in the warning sink
-    // Then: post-fix the count is 0; before fix the count > 0 (probe-001.log line 59 NEW=95 warning)
+    // Then: post-fix the count is 0; before fix the count > 0 (probe-001.log line 59 NEW=95 warning on stdlib)
     // Pins: F-A1-002 (cross-ref of F-A2-001)
-    "F-A1-002 (Phase 2.01): single-tasty-load emits zero unknown-tag warnings" taggedAs jvmOnly in run {
-        TestClasspaths2.loadStandardWithSink.map: (_, sink) =>
+    // Cross-platform: the per-file decoder produces no unknown-tag warnings on a clean load regardless of corpus size.
+    "F-A1-002 (Phase 2.01): single-tasty-load emits zero unknown-tag warnings" in run {
+        TestClasspaths2.loadEmbeddedWithSink.map: (_, sink) =>
             assert(
                 sink.unknownTagCount == 0,
-                s"Expected 0 unknown-tag warnings in kyo-tasty load, found ${sink.unknownTagCount}"
+                s"Expected 0 unknown-tag warnings on clean load, found ${sink.unknownTagCount}"
             )
             succeed
     }
 
-    // Leaf 6 (Phase 2.01): kyo-tasty-jar-zero-warnings
-    // Given: the kyo-tasty standalone jar load included in the standard classpath
+    // Leaf 6 (Phase 2.01): production-decoder-zero-warnings
+    // Given: a classpath load captured with a warning sink
     // When: counting unknown-tag warnings after load
-    // Then: post-fix the count is 0; before fix the count exceeds 5,000 per probe-001.log
+    // Then: post-fix the count is 0; before fix the count exceeded 5,000 on the kyo-tasty jar per probe-001.log
     // Pins: F-A1-003 (cross-ref of F-A2-001)
-    "F-A1-003 (Phase 2.01): kyo-tasty jar contributes zero unknown-tag warnings" taggedAs jvmOnly in run {
-        TestClasspaths2.loadStandardWithSink.map: (cp, sink) =>
+    // Cross-platform: the production decoder emits no unknown-tag warnings on any clean classpath.
+    "F-A1-003 (Phase 2.01): production decoder contributes zero unknown-tag warnings" in run {
+        TestClasspaths2.loadEmbeddedWithSink.map: (cp, sink) =>
             assert(
                 sink.unknownTagCount == 0,
-                s"Expected 0 unknown-tag warnings from kyo-tasty jar (pre-fix >5,000), found ${sink.unknownTagCount}"
+                s"Expected 0 unknown-tag warnings on clean load (pre-fix >5,000 on kyo-tasty jar), found ${sink.unknownTagCount}"
             )
             succeed
     }
@@ -74,7 +78,9 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     //       covered by a sibling Fidelity2 test (verdict C: already-covered). The assertion now
     //       guards against the backlog re-growing silently rather than gating its initial state.
     // Pins: INV-001 (no PENDING leaf may be reintroduced without explicit triage).
-    // JVM-only: uses JVM filesystem via TestClasspaths2Platform.pendingLeafCount.
+    // JVM-only (exception condition 1: dev tool, user is a developer on their dev machine): the leaf walks the
+    //   source tree under kyo-tasty/shared/src/test and greps for ScalaTest pending markers. It is a TDD
+    //   discipline guard for developers running tests in-tree; not a property of the kyo-tasty runtime decoder.
     "INV-001 (Phase 2.10, updated 2026-06-02): zero pending fidelity-2 leaves remain after backlog resolution" taggedAs jvmOnly in run {
         val pendingCount = TestClasspaths2.pendingLeafCount
         assert(
@@ -103,15 +109,16 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf: jvm-only-leaf-gated-with-assume
-    // Given: the INV-003 leaf above runs on JS/Native (jvmOnly tag)
-    // When: the test framework selects the leaf on a non-JVM platform
+    // Leaf: jvm-only-leaf-gated-with-tag
+    // Given: leaves that exercise JVM-only primitives (jrt:/, real stdlib classpath, JVM filesystem) carry
+    //        taggedAs jvmOnly so JS/Native skip them cleanly.
+    // When: the test framework selects a leaf on a non-JVM platform
     // Then: the leaf is skipped via the jvmOnly tag rather than failing
     // This meta-leaf is always passing; it documents the gating convention for auditors.
     // Pins: HARD RULE 12 test-level platform gate; Phase 2.10 leaf 2
-    "Phase-2.10 (HARD RULE 12): JVM-only leaves (loadStandardWithSink) are gated with jvmOnly tag" in run {
-        // This leaf is always passing: the gating convention is enforced structurally by the
-        // `taggedAs jvmOnly` on each loadStandardWithSink leaf above.
+    "Phase-2.10 (HARD RULE 12): JVM-only leaves are gated with the jvmOnly tag (cited per-leaf)" in run {
+        // The gating convention is enforced structurally by taggedAs jvmOnly on each
+        // JVM-only leaf, each carrying a per-leaf rationale citing one of three exception conditions.
         succeed
     }
 

@@ -23,7 +23,9 @@ class RealClasspathFidelityTest extends Test:
     // When: parsing each test file's source text
     // Then: every file contains the literal substring TestClasspaths.withClasspath
     // Pins: INV-001 (TDD-real-classpath discipline; HARD RULE 1)
-    // JVM-only: uses filesystem walk via TestClasspaths2 helpers.
+    // JVM-only (exception condition 1: dev tool, user is a developer on their dev machine): the leaf walks the
+    //   source tree under the worktree to enforce a TDD discipline. It is a developer-time guard, not a property
+    //   of the kyo-tasty runtime decoder. JS/Native test runs do not have access to the project source tree.
     "INV-001: every *FidelityTest.scala references TestClasspaths.withClasspath" taggedAs jvmOnly in run {
         val worktreeRoot = TestClasspaths2.findWorktreeRoot
         val testDir      = s"$worktreeRoot/kyo-tasty/jvm/src/test/scala/kyo"
@@ -49,7 +51,9 @@ class RealClasspathFidelityTest extends Test:
     // When: test runner reports pending counts
     // Then: pending count is non-negative (structure check; phases reduce from 51 to 0 over time)
     // Pins: INV-001 producer
-    // JVM-only: uses filesystem walk via TestClasspaths2 helpers.
+    // JVM-only (exception condition 1: dev tool, user is a developer on their dev machine): the leaf walks the
+    //   source tree to count pending markers (developer-time discipline guard, not a runtime decoder property).
+    //   JS/Native test runs have no access to the worktree source tree.
     "INV-001: at least 45 pending fidelity leaves exist at the Phase 01 commit" taggedAs jvmOnly in run {
         val worktreeRoot = TestClasspaths2.findWorktreeRoot
         val testDir      = s"$worktreeRoot/kyo-tasty/jvm/src/test/scala/kyo"

@@ -131,40 +131,26 @@ class CollectionInvariantsTest extends Test:
     }
 
     // F-G-002 leaf 6 (Phase 11): javametadata-present-for-mixed-class
-    // Given: the real classpath loaded via TestClasspaths.withClasspath;
-    //        every kyo-tasty class has both a .tasty and a .class file
-    // When: calling cp.findClass("kyo.Tasty$").get.javaMetadata
-    // Then: post-fix Present(meta) with meta.isJvmPublic == true
+    // Given: a classpath loaded via TestClasspaths.withClasspath; at least one class has both a .tasty and a
+    //        companion .class file (JVM: every kyo-tasty class on the real classpath; JS/Native: PlainClass via
+    //        the embedded .class fixture added alongside PlainClass.tasty).
+    // When: scanning cp.allClasses for any symbol with javaMetadata defined.
+    // Then: post-fix at least one ClassLike has javaMetadata Present (companion .class decode populated it).
     // Pins: F-G-002
-    // HARD RULE 14 exemption: companion .class decoding requires real JVM classfile alongside .tasty; embedded fixtures have no .class companions.
-    "F-G-002 (Phase 11): kyo.Tasty$.javaMetadata is Present after .class companion merge" taggedAs jvmOnly in run {
+    // Cross-platform: Embedded.plainClassClassfile is registered as "root/PlainClass.class" alongside
+    //   "root/PlainClass.tasty" in JS/Native TestClasspaths; ClasspathOrchestrator.readAndDecodeTastyFile
+    //   speculatively reads the companion via source.exists/source.read and merges javaMetadata.
+    "F-G-002 (Phase 11): at least one class has javaMetadata Present after .class companion merge" in run {
         val cp = TestClasspaths.withClasspath()
         cp.map: classpath =>
-            classpath.findClass("kyo.Tasty$") match
-                case Maybe.Present(cls) =>
-                    assert(
-                        cls.javaMetadata.isDefined,
-                        s"Expected javaMetadata to be Present for kyo.Tasty$$ after .class companion merge, but got Absent. " +
-                            "F-G-002 fix: companion .class decode must populate javaMetadata for TASTy-backed classes."
-                    )
-                    succeed
-                case Maybe.Absent =>
-                    classpath.findClassLike("kyo.Tasty") match
-                        case Maybe.Present(sym) =>
-                            val withMeta = classpath.allClasses.filter(_.javaMetadata.isDefined)
-                            assert(
-                                withMeta.nonEmpty,
-                                "F-G-002: no ClassLike symbol has javaMetadata Present after companion .class merge. " +
-                                    "Expected at least one kyo-tasty class to have both .tasty and .class decoded."
-                            )
-                            succeed
-                        case Maybe.Absent =>
-                            val withMeta = classpath.allClasses.filter(_.javaMetadata.isDefined)
-                            assert(
-                                withMeta.nonEmpty,
-                                "F-G-002: no ClassLike symbol has javaMetadata Present after companion .class merge."
-                            )
-                            succeed
+            val withMeta = classpath.allClasses.filter(_.javaMetadata.isDefined)
+            assert(
+                withMeta.nonEmpty,
+                "F-G-002: no ClassLike symbol has javaMetadata Present after companion .class merge. " +
+                    "Expected at least one class to have both .tasty and .class decoded (PlainClass on JS/Native, " +
+                    "any kyo-tasty class on JVM)."
+            )
+            succeed
     }
 
     // INV-012 completion leaf 7 (Phase 11): sentinel-count-bounded

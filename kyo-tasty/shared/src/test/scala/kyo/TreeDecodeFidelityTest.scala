@@ -233,12 +233,13 @@ class TreeDecodeFidelityTest extends Test:
     }
 
     // F-A-009 leaf (Phase 13): TYPEREF decodes to Type.TypeRef, not Type.TermRef
-    // Given: the real classpath loaded via TestClasspaths.withClasspath
+    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: scanning all method and val declared types for Type.TypeRef instances
     // Then: post-fix Type.TypeRef instances exist
     // Pins: F-A-009
-    // JVM-only: requires large real classpath for TypeRef coverage.
-    "F-A-009 (Phase 13): TYPEREF decodes to Type.TypeRef not Type.TermRef" taggedAs jvmOnly in run {
+    // Cross-platform: TYPEREF appears wherever a type names an inner type member; embedded fixtures with
+    //   inner types (Outer.Inner, HasTypeDef) produce Type.TypeRef instances on all platforms.
+    "F-A-009 (Phase 13): TYPEREF decodes to Type.TypeRef not Type.TermRef" in run {
         TestClasspaths.withClasspath().map: cp =>
             var typeRefCount = 0
             cp.allMethods.foreach { method =>

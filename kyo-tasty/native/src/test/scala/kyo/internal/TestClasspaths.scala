@@ -32,6 +32,8 @@ private[kyo] object TestClasspaths:
     def withClasspath(roots: Seq[String] = Seq.empty)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
+        // Companion .class alongside .tasty so cp.findClass populates javaMetadata cross-platform (F-G-002).
+        src.add("root/PlainClass.class", kyo.fixtures.Embedded.plainClassClassfile)
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
         src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
         src.add("root/GenericBox.tasty", kyo.fixtures.Embedded.genericBoxTasty)
